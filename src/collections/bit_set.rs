@@ -30,8 +30,6 @@ use core::mem;
 use core::ptr;
 use core::slice;
 
-use bun_alloc::AllocError;
-
 // ───────────────────────────── helpers ─────────────────────────────
 
 /// Returns `usize::MAX` if `value`, else `0`.
@@ -465,6 +463,17 @@ impl Drop for DynamicBitSetUnmanaged {
     }
 }
 
+impl Clone for DynamicBitSetUnmanaged {
+    /// Deep copy into a fresh allocation (also valid on a `DynamicBitSetList`
+    /// view; the copy owns its own storage).
+    fn clone(&self) -> Self {
+        let mut copy = Self::default();
+        copy.resize(self.bit_length, false);
+        copy.masks_slice_mut().copy_from_slice(self.masks_slice());
+        copy
+    }
+}
+
 impl DynamicBitSetUnmanaged {
     // There is no `const` empty value (the empty sentinel pointer is computed at
     // runtime); use `Self::default()`.
@@ -516,16 +525,16 @@ impl DynamicBitSetUnmanaged {
 
     /// Creates a bit set with no elements present.
     /// If bit_length is not zero, deinit must eventually be called.
-    pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
+    pub fn init_empty(bit_length: usize) -> Self {
         let mut this = Self::default();
-        this.resize(bit_length, false)?;
-        Ok(this)
+        this.resize(bit_length, false);
+        this
     }
 
     /// Resizes to a new bit_length.  If the new length is larger
     /// than the old length, fills any added bits with `fill`.
     /// If new_len is not zero, deinit must eventually be called.
-    pub fn resize(&mut self, new_len: usize, fill: bool) -> Result<(), AllocError> {
+    pub fn resize(&mut self, new_len: usize, fill: bool) {
         let old_len = self.bit_length;
 
         let old_masks = Self::num_masks(old_len);
@@ -547,7 +556,7 @@ impl DynamicBitSetUnmanaged {
             unsafe { dyn_free(alloc_base, old_alloc_len) };
             self.masks = empty_masks_ptr();
             self.bit_length = 0;
-            return Ok(());
+            return;
         }
 
         'realloc: {
@@ -563,9 +572,9 @@ impl DynamicBitSetUnmanaged {
             // SAFETY: alloc_base/old_alloc_len describe the current allocation.
             let new_alloc = match unsafe { dyn_realloc(alloc_base, old_alloc_len, new_masks + 1) } {
                 Ok(p) => p,
-                Err(err) => {
+                Err(layout) => {
                     if new_masks + 1 > old_alloc_len {
-                        return Err(err);
+                        std::alloc::handle_alloc_error(layout);
                     }
                     break 'realloc;
                 }
@@ -611,22 +620,13 @@ impl DynamicBitSetUnmanaged {
 
         // And finally, save the new length.
         self.bit_length = new_len;
-        Ok(())
     }
 
     /// deinitializes the array and releases its memory.
     /// The passed allocator must be the same one used for
     /// init* or resize in the past. Idempotent.
     pub fn deinit(&mut self) {
-        self.resize(0, false).expect("unreachable");
-    }
-
-    /// Creates a duplicate of this bit set, using the new allocator.
-    pub fn clone(&self) -> Result<Self, AllocError> {
-        let mut copy = Self::default();
-        copy.resize(self.bit_length, false)?;
-        copy.masks_slice_mut().copy_from_slice(self.masks_slice());
-        Ok(copy)
+        self.resize(0, false);
     }
 
     /// Returns the number of bits in this bit set
@@ -852,24 +852,26 @@ pub struct DynamicBitSetList {
 }
 
 impl DynamicBitSetList {
-    pub fn init_empty(n: usize, bit_length: usize) -> Result<Self, AllocError> {
+    pub fn init_empty(n: usize, bit_length: usize) -> Self {
         let masks = DynamicBitSetUnmanaged::num_masks(bit_length);
         let single_bitset_buf_size = masks + 1;
         let buf_len = single_bitset_buf_size * n;
 
         if buf_len == 0 {
-            return Ok(Self {
+            return Self {
                 buf: ptr::NonNull::dangling(),
                 buf_len: 0,
                 n,
                 bit_length,
-            });
+            };
         }
 
-        let layout = core::alloc::Layout::array::<usize>(buf_len).map_err(|_| AllocError)?;
+        let layout = core::alloc::Layout::array::<usize>(buf_len).expect("capacity overflow");
         // SAFETY: `buf_len > 0` so layout has nonzero size.
         let raw = unsafe { std::alloc::alloc_zeroed(layout) };
-        let buf = ptr::NonNull::new(raw).ok_or(AllocError)?.cast::<usize>();
+        let buf = ptr::NonNull::new(raw)
+            .unwrap_or_else(|| std::alloc::handle_alloc_error(layout))
+            .cast::<usize>();
 
         for i in 0..n {
             // SAFETY: `i * single_bitset_buf_size < buf_len`; allocation is
@@ -877,12 +879,12 @@ impl DynamicBitSetList {
             unsafe { *buf.as_ptr().add(i * single_bitset_buf_size) = single_bitset_buf_size };
         }
 
-        Ok(Self {
+        Self {
             buf,
             buf_len,
             n,
             bit_length,
-        })
+        }
     }
 
     /// Borrow the `i`th bitset as a non-owning `DynamicBitSetUnmanaged` view.
@@ -954,18 +956,21 @@ unsafe fn dyn_free(base: *mut usize, len: usize) {
     unsafe { std::alloc::dealloc(base.cast(), layout) };
 }
 
+/// On failure returns the `Layout` that could not be allocated; `resize` hands
+/// it to `handle_alloc_error` when growing and keeps the old buffer when
+/// shrinking.
 unsafe fn dyn_realloc(
     base: *mut usize,
     old_len: usize,
     new_len: usize,
-) -> Result<*mut usize, AllocError> {
-    let new_layout = core::alloc::Layout::array::<usize>(new_len).map_err(|_| AllocError)?;
+) -> Result<*mut usize, core::alloc::Layout> {
+    let new_layout = core::alloc::Layout::array::<usize>(new_len).expect("capacity overflow");
     if old_len == 0 {
         // SAFETY: new_layout is nonzero size (caller never passes new_len==0
         // through this path).
         let p = unsafe { std::alloc::alloc(new_layout) };
         if p.is_null() {
-            return Err(AllocError);
+            return Err(new_layout);
         }
         return Ok(p.cast());
     }
@@ -973,7 +978,7 @@ unsafe fn dyn_realloc(
     // SAFETY: caller guarantees `base` was allocated with `old_layout`.
     let p = unsafe { std::alloc::realloc(base.cast(), old_layout, new_layout.size()) };
     if p.is_null() {
-        return Err(AllocError);
+        return Err(new_layout);
     }
     Ok(p.cast())
 }
@@ -994,7 +999,7 @@ pub enum AutoBitSet {
 // ─── two-arm forward helper ────────────────────────────────────────────
 // This macro forwards a call to whichever arm is active and is applied to
 // every method whose Static/Dynamic arms are textually identical.
-// Asymmetric arms (clone, raw_bytes, has_intersection, Drop)
+// Asymmetric arms (Clone, raw_bytes, has_intersection, Drop)
 // stay open-coded — they genuinely differ.
 macro_rules! auto_forward {
     ($self:expr, |$b:ident| $body:expr) => {
@@ -1011,13 +1016,11 @@ impl AutoBitSet {
         bit_length > AutoBitSetStatic::BIT_LENGTH
     }
 
-    pub fn init_empty(bit_length: usize) -> Result<AutoBitSet, AllocError> {
+    pub fn init_empty(bit_length: usize) -> AutoBitSet {
         if bit_length <= AutoBitSetStatic::BIT_LENGTH {
-            Ok(AutoBitSet::Static(AutoBitSetStatic::init_empty()))
+            AutoBitSet::Static(AutoBitSetStatic::init_empty())
         } else {
-            Ok(AutoBitSet::Dynamic(DynamicBitSetUnmanaged::init_empty(
-                bit_length,
-            )?))
+            AutoBitSet::Dynamic(DynamicBitSetUnmanaged::init_empty(bit_length))
         }
     }
 
@@ -1031,13 +1034,6 @@ impl AutoBitSet {
             (AutoBitSet::Static(a), AutoBitSet::Static(b)) => a.has_intersection(b),
             (AutoBitSet::Dynamic(a), AutoBitSet::Dynamic(b)) => a.has_intersection(b),
             _ => false,
-        }
-    }
-
-    pub fn clone(&self) -> Result<AutoBitSet, AllocError> {
-        match self {
-            AutoBitSet::Static(s) => Ok(AutoBitSet::Static(*s)),
-            AutoBitSet::Dynamic(d) => Ok(AutoBitSet::Dynamic(d.clone()?)),
         }
     }
 
@@ -1102,12 +1098,21 @@ impl Drop for AutoBitSet {
     }
 }
 
+impl Clone for AutoBitSet {
+    fn clone(&self) -> Self {
+        match self {
+            AutoBitSet::Static(s) => AutoBitSet::Static(*s),
+            AutoBitSet::Dynamic(d) => AutoBitSet::Dynamic(d.clone()),
+        }
+    }
+}
+
 // ───────────────────────────── DynamicBitSet ─────────────────────────────
 
 /// A bit set with runtime-known size, backed by an allocated slice
 /// of usize.  Thin wrapper around DynamicBitSetUnmanaged which keeps
 /// track of the allocator instance.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DynamicBitSet {
     /// The number of valid items in this bit set
     pub unmanaged: DynamicBitSetUnmanaged,
@@ -1121,23 +1126,16 @@ impl DynamicBitSet {
     // type ShiftInt = u32 (inherent assoc → inline u32)
 
     /// Creates a bit set with no elements present.
-    pub fn init_empty(bit_length: usize) -> Result<Self, AllocError> {
-        Ok(Self {
-            unmanaged: DynamicBitSetUnmanaged::init_empty(bit_length)?,
-        })
+    pub fn init_empty(bit_length: usize) -> Self {
+        Self {
+            unmanaged: DynamicBitSetUnmanaged::init_empty(bit_length),
+        }
     }
 
     /// Resizes to a new length.  If the new length is larger
     /// than the old length, fills any added bits with `fill`.
-    pub fn resize(&mut self, new_len: usize, fill: bool) -> Result<(), AllocError> {
-        self.unmanaged.resize(new_len, fill)
-    }
-
-    /// Creates a duplicate of this bit set, using the new allocator.
-    pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self {
-            unmanaged: self.unmanaged.clone()?,
-        })
+    pub fn resize(&mut self, new_len: usize, fill: bool) {
+        self.unmanaged.resize(new_len, fill);
     }
 
     /// Returns the number of bits in this bit set

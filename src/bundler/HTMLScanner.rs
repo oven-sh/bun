@@ -90,10 +90,8 @@ impl<'a> HTMLScanner<'a> {
     }
 
     fn on_html_parse_error(&mut self, message: &[u8]) {
-        // Vec/Box allocations abort on OOM; just call. `IntoText for
-        // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
-        let _ = self
-            .log
+        // `IntoText for Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
+        self.log
             .add_error(Some(self.source), Loc::EMPTY, message.to_vec());
     }
 

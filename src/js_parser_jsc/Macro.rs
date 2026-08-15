@@ -177,7 +177,7 @@ impl MacroContext {
             &mut specifier_buf_len,
         );
 
-        let macro_entry = self.macros.get_or_put(hash).expect("unreachable");
+        let macro_entry = self.macros.get_or_put(hash);
         if !macro_entry.found_existing {
             *macro_entry.value_ptr = match Macro::init(
                 input_specifier,
@@ -692,7 +692,7 @@ impl<'a> Run<'a> {
             T::Array => {
                 self.is_top_level = false;
 
-                let _entry = self.visited.get_or_put(value).expect("unreachable");
+                let _entry = self.visited.get_or_put(value);
                 if _entry.found_existing {
                     return Ok(*_entry.value_ptr);
                 }
@@ -733,7 +733,7 @@ impl<'a> Run<'a> {
             // TODO: optimize this
             T::Object => {
                 self.is_top_level = false;
-                let _entry = self.visited.get_or_put(value).expect("unreachable");
+                let _entry = self.visited.get_or_put(value);
                 if _entry.found_existing {
                     return Ok(*_entry.value_ptr);
                 }

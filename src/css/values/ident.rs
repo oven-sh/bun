@@ -305,7 +305,6 @@ impl IdentOrRef {
         #[cfg(debug_assertions)]
         let this = {
             let (slice, bump) = debug_ident;
-            // bun.handleOom(arena.create(...)) → arena alloc; OOM aborts
             let heap_ptr: &mut *const [u8] = bump.alloc(std::ptr::from_ref::<[u8]>(slice));
             let addr = std::ptr::from_mut::<*const [u8]>(heap_ptr) as usize as u64;
             debug_assert!(addr & (1u64 << 63) == 0);

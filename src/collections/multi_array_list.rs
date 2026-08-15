@@ -948,16 +948,15 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Extend the list by 1 element. Allocates more memory as necessary.
-    pub(crate) fn push(&mut self, elem: T) -> Result<(), AllocError> {
-        self.ensure_unused_capacity(1)?;
+    pub(crate) fn push(&mut self, elem: T) {
+        self.ensure_unused_capacity(1);
         self.append_assume_capacity(elem);
-        Ok(())
     }
 
     /// Alias for [`push`].
     #[inline]
-    pub fn append(&mut self, elem: T) -> Result<(), AllocError> {
-        self.push(elem)
+    pub fn append(&mut self, elem: T) {
+        self.push(elem);
     }
 
     /// Extend the list by 1 element, asserting `self.capacity` is sufficient
@@ -1073,21 +1072,49 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Modify the array so that it can hold at least `new_capacity` items.
-    pub fn ensure_total_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
-        if self.capacity >= new_capacity {
-            return Ok(());
+    pub fn ensure_total_capacity(&mut self, new_capacity: usize) {
+        if let Err(layout) = self.grow_to(new_capacity) {
+            std::alloc::handle_alloc_error(layout);
         }
-        self.set_capacity(grow_capacity::<T>(self.capacity, new_capacity))
     }
 
     /// Modify the array so that it can hold at least `additional_count` **more** items.
-    pub fn ensure_unused_capacity(&mut self, additional_count: usize) -> Result<(), AllocError> {
-        self.ensure_total_capacity(self.len + additional_count)
+    pub fn ensure_unused_capacity(&mut self, additional_count: usize) {
+        self.ensure_total_capacity(self.len + additional_count);
+    }
+
+    /// `Vec::try_reserve` analog of [`ensure_total_capacity`]: reports an
+    /// allocation failure instead of aborting. For reservations sized from
+    /// untrusted input (a source map's segment count, a lexer's line estimate)
+    /// where the caller turns the failure into an error for the user.
+    pub fn try_ensure_total_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
+        self.grow_to(new_capacity).map_err(|_| AllocError)
+    }
+
+    /// [`try_ensure_total_capacity`] for `additional_count` **more** items.
+    pub fn try_ensure_unused_capacity(
+        &mut self,
+        additional_count: usize,
+    ) -> Result<(), AllocError> {
+        self.try_ensure_total_capacity(self.len + additional_count)
+    }
+
+    fn grow_to(&mut self, new_capacity: usize) -> Result<(), Layout> {
+        if self.capacity >= new_capacity {
+            return Ok(());
+        }
+        self.try_set_capacity(grow_capacity::<T>(self.capacity, new_capacity))
     }
 
     /// Modify the array so that it can hold exactly `new_capacity` items.
     /// `new_capacity` must be greater or equal to `len`.
-    pub fn set_capacity(&mut self, new_capacity: usize) -> Result<(), AllocError> {
+    pub fn set_capacity(&mut self, new_capacity: usize) {
+        if let Err(layout) = self.try_set_capacity(new_capacity) {
+            std::alloc::handle_alloc_error(layout);
+        }
+    }
+
+    fn try_set_capacity(&mut self, new_capacity: usize) -> Result<(), Layout> {
         debug_assert!(new_capacity >= self.len);
         let new_bytes = aligned_alloc::<T, _>(&self.alloc, layout_for::<T>(new_capacity))?;
         if self.len != 0 {
@@ -1100,17 +1127,19 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(())
     }
 
-    /// Create a copy of this list with a new backing store.
-    pub fn clone(&self) -> Result<Self, AllocError>
+    /// Create a copy of this list with a new backing store. This is a bitwise
+    /// copy of the columns, not `Clone::clone` (see the `Drop` impl), which is
+    /// why it is an inherent method.
+    pub fn clone(&self) -> Self
     where
         A: Clone,
     {
         let mut result = Self::new_in(self.alloc.clone());
-        result.ensure_total_capacity(self.len)?;
+        result.ensure_total_capacity(self.len);
         result.len = self.len;
         let mut dst = result.slice();
         dst.copy_rows_from(0, &self.slice(), self.len);
-        Ok(result)
+        result
     }
 
     fn sort_internal<C: SortContext, const STABLE: bool>(&mut self, a: usize, b: usize, ctx: &C) {
@@ -1238,17 +1267,21 @@ fn layout_for<T>(capacity: usize) -> Option<Layout> {
     Some(Layout::from_size_align(n, Reflected::<T>::ALIGN).expect("MultiArrayList layout overflow"))
 }
 
+/// On failure returns the `Layout` that could not be allocated: the infallible
+/// growers hand it to `handle_alloc_error` (the same path `Vec` takes, which
+/// the crash handler reports as out-of-memory), the `try_` growers report it,
+/// and `shrink_and_free` keeps the old buffer.
 fn aligned_alloc<T, A: Allocator>(
     alloc: &A,
     layout: Option<Layout>,
-) -> Result<NonNull<u8>, AllocError> {
+) -> Result<NonNull<u8>, Layout> {
     let Some(layout) = layout else {
         return Ok(Reflected::<T>::DANGLING);
     };
     alloc
         .allocate(layout)
         .map(|p| p.cast::<u8>())
-        .map_err(|_| AllocError)
+        .map_err(|_| layout)
 }
 
 // Index-based context sorts — port of `mem.sortContext` / `mem.sortUnstableContext`.
@@ -1358,8 +1391,7 @@ mod tests {
                 a: i,
                 b: i as u8,
                 c: i as u64 * 100,
-            })
-            .unwrap();
+            });
         }
         let s = list.slice();
         assert_eq!(s.items::<"c", u64>()[7], 700);
@@ -1375,8 +1407,7 @@ mod tests {
                 a: i,
                 b: i as u8,
                 c: i as u64 * 10,
-            })
-            .unwrap();
+            });
         }
         assert_eq!(list.items::<"c", u64>(), &[0u64, 10, 20, 30]);
         list.items_mut::<"a", u32>()[2] = 99;
@@ -1397,7 +1428,7 @@ mod tests {
     #[test]
     fn generic_lifetime() {
         let mut list = MultiArrayList::<Borrowed<'static>>::default();
-        list.push(Borrowed { name: b"hi", n: 7 }).unwrap();
+        list.push(Borrowed { name: b"hi", n: 7 });
         assert_eq!(list.items::<"name", &[u8]>()[0], b"hi");
         assert_eq!(list.items::<"n", u32>()[0], 7);
     }
@@ -1418,8 +1449,7 @@ mod tests {
                 a: i,
                 b: i as u8,
                 c: i as u64,
-            })
-            .unwrap();
+            });
         }
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4, 5]);
         list.ordered_remove(2);
@@ -1436,8 +1466,7 @@ mod tests {
                 a: i,
                 b: i as u8,
                 c: i as u64 * 10,
-            })
-            .unwrap();
+            });
         }
         let raw = list.items_raw::<"a", u32>();
         let len = list.len();

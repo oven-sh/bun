@@ -127,12 +127,12 @@ pub(crate) fn init_external_modules(
     match target {
         Target::Node => {
             // TODO: fix this stupid copy
-            let _ = result
+            result
                 .node_modules
                 .map
                 .ensure_total_capacity(NODE_BUILTIN_PATTERNS.len());
             for pattern in NODE_BUILTIN_PATTERNS {
-                result.node_modules.insert(pattern).expect("unreachable");
+                result.node_modules.insert(pattern);
             }
         }
         Target::Bun => {}
@@ -167,12 +167,12 @@ pub(crate) fn init_external_modules(
                 suffix: Box::from(&external[i + 1..]),
             });
         } else if bun_paths::is_package_path(external) {
-            result.node_modules.insert(external).expect("unreachable");
+            result.node_modules.insert(external);
         } else {
             let normalized = validate_path(log, fs, cwd, external, b"external path");
 
             if !normalized.is_empty() {
-                result.abs_paths.insert(&normalized).expect("unreachable");
+                result.abs_paths.insert(&normalized);
             }
         }
     }
@@ -305,19 +305,17 @@ impl TargetExt for Target {
         ];
 
         if self == Target::Node {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2)
-                .expect("OOM");
+            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() * 2);
             for &ext in OUT_EXTENSIONS_LIST {
-                exts.put_static_key(ext, b".mjs").expect("OOM");
+                exts.put_static_key(ext, b".mjs");
             }
         } else {
-            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1)
-                .expect("OOM");
-            exts.put_static_key(b".mjs", b".js").expect("OOM");
+            exts.ensure_total_capacity(OUT_EXTENSIONS_LIST.len() + 1);
+            exts.put_static_key(b".mjs", b".js");
         }
 
         for &ext in OUT_EXTENSIONS_LIST {
-            exts.put_static_key(ext, b".js").expect("OOM");
+            exts.put_static_key(ext, b".js");
         }
 
         exts
@@ -714,6 +712,7 @@ fn default_loaders_match_table() {
 }
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
+#[derive(Clone)]
 pub struct ESMConditions {
     pub(crate) default: ConditionsMap,
     pub(crate) import: ConditionsMap,
@@ -774,20 +773,6 @@ impl ESMConditions {
             import: import_condition_map,
             require: require_condition_map,
             style: style_condition_map,
-        })
-    }
-
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let default = self.default.clone()?;
-        let import = self.import.clone()?;
-        let require = self.require.clone()?;
-        let style = self.style.clone()?;
-
-        Ok(ESMConditions {
-            default,
-            import,
-            require,
-            style,
         })
     }
 
@@ -915,8 +900,8 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone());
+        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env);
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
@@ -924,7 +909,7 @@ pub(crate) fn defines_from_transform_options(
             user_defines.get_or_put_value(
                 default_user_defines::process_browser_define::KEY,
                 Box::from(value.as_bytes()),
-            )?;
+            );
         }
     }
 
@@ -938,7 +923,7 @@ pub(crate) fn defines_from_transform_options(
                     value: defines::DefineValue::EUndefined(Default::default()),
                     ..Default::default()
                 }),
-            )?;
+            );
         }
     }
 
@@ -1337,18 +1322,6 @@ pub struct BundleOptions<'a> {
 // bundle_v2.rs / transpiler.rs are unchanged.
 pub use bun_options_types::ForceNodeEnv;
 
-/// Manual deep clone for `MacroRemap` (= `StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>`).
-/// The inner map's `clone()` is an inherent fallible method (not `impl Clone`),
-/// so the outer `StringArrayHashMap::<V: Clone>::clone()` bound is unmet —
-/// rebuild entrywise instead.
-fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
-    let mut out = MacroRemap::default();
-    for (k, v) in src.iter() {
-        bun_core::handle_oom(out.put(k, bun_core::handle_oom(v.clone())));
-    }
-    out
-}
-
 impl<'a> BundleOptions<'a> {
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
@@ -1395,8 +1368,8 @@ impl<'a> BundleOptions<'a> {
             bundler_feature_flags: self
                 .bundler_feature_flags
                 .as_deref()
-                .map(|s| Box::new(bun_core::handle_oom(s.clone()))),
-            loaders: bun_core::handle_oom(self.loaders.clone()),
+                .map(|s| Box::new(s.clone())),
+            loaders: self.loaders.clone(),
             jsx: self.jsx.clone(),
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
@@ -1446,14 +1419,9 @@ impl<'a> BundleOptions<'a> {
             load_tsconfig_json: self.load_tsconfig_json,
             load_package_json: self.load_package_json,
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
-            macro_remap: clone_macro_remap(&self.macro_remap),
+            macro_remap: self.macro_remap.clone(),
             no_macros: self.no_macros,
-            conditions: ESMConditions {
-                default: bun_core::handle_oom(self.conditions.default.clone()),
-                import: bun_core::handle_oom(self.conditions.import.clone()),
-                require: bun_core::handle_oom(self.conditions.require.clone()),
-                style: bun_core::handle_oom(self.conditions.style.clone()),
-            },
+            conditions: self.conditions.clone(),
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,

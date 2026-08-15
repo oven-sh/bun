@@ -446,7 +446,7 @@ impl OverrideMap {
         new_builder: &mut StringBuilder,
     ) -> Result<OverrideMap, Error> {
         let mut new = OverrideMap::default();
-        new.map.ensure_total_capacity(self.map.count())?;
+        new.map.ensure_total_capacity(self.map.count());
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
             new.map
@@ -456,7 +456,7 @@ impl OverrideMap {
         if !self.scoped.is_empty() {
             new.scoped = Vec::with_capacity(self.scoped.len());
             new.scoped_names
-                .ensure_total_capacity(self.scoped_names.count())?;
+                .ensure_total_capacity(self.scoped_names.count());
             for rule in &self.scoped {
                 let parent = match &rule.parent {
                     None => None,
@@ -564,7 +564,7 @@ impl OverrideMap {
         };
 
         if is_flat {
-            self.map.put(name_hash, dep)?;
+            self.map.put(name_hash, dep);
         } else {
             self.push_scoped(
                 ScopedOverride {
@@ -705,7 +705,7 @@ impl OverrideMap {
             return Ok(());
         }
 
-        self.map.ensure_unused_capacity(expr.property_count())?;
+        self.map.ensure_unused_capacity(expr.property_count());
 
         expr.try_for_each_property(|k, key_loc, value_expr| {
             if k.is_empty() {
@@ -824,7 +824,7 @@ impl OverrideMap {
             );
             return Ok(());
         }
-        self.map.ensure_unused_capacity(expr.property_count())?;
+        self.map.ensure_unused_capacity(expr.property_count());
         expr.try_for_each_property(|k, key_loc, value_expr| {
             if k.is_empty() {
                 ctx.log.add_warning_fmt(

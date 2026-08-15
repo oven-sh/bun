@@ -3087,8 +3087,7 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
-            .put_mappings(source, chunk.buffer)
-            .map_err(|_| bun_js_printer::Error::WriteFailed)?;
+            .put_mappings(source, chunk.buffer);
 
         // SAFETY: `printer` is the raw `*mut BufferPrinter` passed in by the
         // caller (jsc_hooks.rs), with the SAME provenance as the `writer` arg
@@ -5285,7 +5284,7 @@ impl VirtualMachine {
                     // `log_mut()` is the centralized set-once `Option<NonNull>`
                     // accessor — single audited deref lives there.
                     if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(build_error.msg.clone());
+                        log.add_msg(build_error.msg.clone());
                     }
                 }
                 bun_core::Output::flush();
@@ -5304,7 +5303,7 @@ impl VirtualMachine {
                     // `log_mut()` is the centralized set-once `Option<NonNull>`
                     // accessor — single audited deref lives there.
                     if let Some(log) = self.log_mut() {
-                        let _ = log.add_msg(resolve_error.msg.clone());
+                        log.add_msg(resolve_error.msg.clone());
                     }
                 }
                 bun_core::Output::flush();
@@ -6459,7 +6458,7 @@ impl VirtualMachine {
                 formatter.map_node = Some(node);
             }
 
-            let entry = formatter.map.get_or_put(err).expect("unreachable");
+            let entry = formatter.map.get_or_put(err);
             if entry.found_existing {
                 writer.write_all(b"\n")?;
                 pretty_write!(writer, "<r><cyan>[Circular]<r>")?;
@@ -6724,12 +6723,12 @@ impl VirtualMachine {
         // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
         // ref into the table (reclaimed by `put_value`'s replace path /
         // `SavedSourceMap` teardown).
-        bun_core::handle_oom(self.source_mappings.put_value(
+        self.source_mappings.put_value(
             path,
             crate::saved_source_map::Value::init(std::sync::Arc::into_raw(std::sync::Arc::clone(
                 &map,
             ))),
-        ));
+        );
 
         let mapping = map.find_mapping(line, column)?;
 

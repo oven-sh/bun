@@ -34,11 +34,11 @@ use bun_collections::HashMap;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
 #[cfg(not(windows))]
 use bun_core::ZBox;
+use bun_core::ZStr;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::strings;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_core::{Output, zstr};
-use bun_core::{ZStr, handle_oom};
 use bun_paths as path;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_paths::PathBuffer;
@@ -482,7 +482,7 @@ pub(crate) fn watch(
     // scoped to this lookup.
     if let Some(&existing) = unsafe { (*manager.watchers.get()).get(key) } {
         // SAFETY: existing is a live PathWatcher under manager.mutex.
-        unsafe { handle_oom((*existing).handlers.put(ctx, ChangeEvent::default())) };
+        unsafe { (*existing).handlers.put(ctx, ChangeEvent::default()) };
         manager.mutex.unlock();
         return Ok(existing);
     }
@@ -503,9 +503,9 @@ pub(crate) fn watch(
         platform: PlatformWatch::default(),
     });
     // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
+    unsafe { (*watcher).handlers.put(ctx, ChangeEvent::default()) };
     // SAFETY: holding manager.mutex; exclusive access to manager.watchers.
-    unsafe { handle_oom((*manager.watchers.get()).put(key, watcher)) };
+    unsafe { (*manager.watchers.get()).put(key, watcher) };
 
     // Linux/FreeBSD: `addWatch` mutates the platform dispatch maps (wd_map/entries)
     // which live under `manager.mutex`, so call it while still locked.
@@ -952,7 +952,7 @@ impl Linux {
                     for &w in watchers.values() {
                         // SAFETY: w live under manager.mutex.
                         unsafe { (*w).emit_overflow() };
-                        let _ = handle_oom(touched.get_or_put(w));
+                        let _ = touched.get_or_put(w);
                     }
                     continue;
                 }
@@ -977,7 +977,7 @@ impl Linux {
                                     path::basename(w.path.as_bytes()),
                                     w.is_file,
                                 );
-                                let _ = handle_oom(touched.get_or_put(o.watcher));
+                                let _ = touched.get_or_put(o.watcher);
                             }
                             // SAFETY: exclusive scoped access to this watcher's wd
                             // list under manager.mutex; the shared borrow above is
@@ -1099,7 +1099,7 @@ impl Linux {
                                     && !watcher_is_file),
                         );
                     }
-                    let _ = handle_oom(touched.get_or_put(owner_watcher));
+                    let _ = touched.get_or_put(owner_watcher);
 
                     // Recursive: a new directory appeared under this owner's tree —
                     // start watching it so future events inside it are delivered.
@@ -1507,7 +1507,7 @@ impl Kqueue {
 
         // SAFETY: caller holds manager.mutex; exclusive access to `entries`.
         unsafe {
-            handle_oom((*plat).entries.put(
+            (*plat).entries.put(
                 fd.native() as i32,
                 KqEntry {
                     watcher: core::ptr::from_mut(watcher),
@@ -1516,7 +1516,7 @@ impl Kqueue {
                     generation,
                     is_file,
                 },
-            ));
+            );
         }
         watcher.platform.fds.push(fd.native() as i32);
         Ok(())
@@ -1604,7 +1604,7 @@ impl Kqueue {
                 };
 
                 watcher.emit(event_type, rel, entry.is_file);
-                let _ = handle_oom(touched.get_or_put(entry.watcher));
+                let _ = touched.get_or_put(entry.watcher);
             }
 
             for &w in touched.keys() {

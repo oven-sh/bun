@@ -795,17 +795,7 @@ impl TranspilerJob {
         {
             MacroRemap::default()
         } else {
-            // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
-            // has no nested `Clone` impl (the inherent `clone()` requires
-            // `V: Clone`). Re-key shallowly here
-            // matching the build-command conversion (transpiler.rs:2616).
-            // OOM during the
-            // inner `clone()` must abort — never silently drop a remapping.
-            let mut m = MacroRemap::default();
-            for (k, v) in transpiler.options.macro_remap.iter() {
-                m.insert(k, bun_core::handle_oom(v.clone()));
-            }
-            m
+            transpiler.options.macro_remap.clone()
         };
 
         // Only
@@ -994,7 +984,7 @@ impl TranspilerJob {
 
             // SAFETY: leaf-field `&mut` borrow on `*vm.source_mappings`;
             // `SavedSourceMap` takes its own internal mutex.
-            let _ = unsafe { &mut (*vm).source_mappings }.put_mappings(
+            unsafe { &mut (*vm).source_mappings }.put_mappings(
                 &parse_result.source,
                 MutableString {
                     list: core::mem::take(&mut entry.sourcemap).into_vec(),

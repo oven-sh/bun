@@ -110,8 +110,8 @@ impl ListValue {
         both_lists!(self, |list| list.memory_cost())
     }
 
-    fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
-        both_lists!(self, |list| list.ensure_total_capacity(count))
+    fn try_ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
+        both_lists!(self, |list| list.try_ensure_total_capacity(count))
     }
 }
 
@@ -139,7 +139,7 @@ impl List {
         };
 
         let mut with_names: MultiArrayList<Mapping> = MultiArrayList::default();
-        with_names.ensure_total_capacity(without_names.len())?;
+        with_names.try_ensure_total_capacity(without_names.len())?;
         // `without_names` drops at end of scope (was `defer without_names.deinit(allocator)`).
 
         // MultiArrayList has no
@@ -197,20 +197,19 @@ impl List {
         })
     }
 
-    pub(crate) fn append(&mut self, mapping: &Mapping) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append(&mut self, mapping: &Mapping) {
         match &mut self.r#impl {
             ListValue::WithoutNames(list) => {
                 list.append(MappingWithoutName {
                     generated: mapping.generated,
                     original: mapping.original,
                     source_index: mapping.source_index,
-                })?;
+                });
             }
             ListValue::WithNames(list) => {
-                list.append(*mapping)?;
+                list.append(*mapping);
             }
         }
-        Ok(())
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -277,11 +276,11 @@ impl List {
             + (self.names.len() * size_of::<SemverString>())
     }
 
-    pub(crate) fn ensure_total_capacity(
+    pub(crate) fn try_ensure_total_capacity(
         &mut self,
         count: usize,
     ) -> Result<(), bun_alloc::AllocError> {
-        self.r#impl.ensure_total_capacity(count)
+        self.r#impl.try_ensure_total_capacity(count)
     }
 }
 
@@ -459,7 +458,7 @@ pub fn parse(
     // `errdefer mapping.deinit(allocator)` deleted: `List: Drop` and this fn returns no error union.
 
     if let Some(count) = estimated_mapping_count {
-        if mapping.ensure_total_capacity(count).is_err() {
+        if mapping.try_ensure_total_capacity(count).is_err() {
             return Err(ParseFail {
                 err: crate::Error::Alloc(bun_alloc::AllocError),
                 loc: Loc::default(),
@@ -712,22 +711,19 @@ pub fn parse(
                 }
             }
         }
-        // `catch |err| bun.handleOom(err)` → panic on OOM; do not silently drop the mapping.
-        mapping
-            .append(&Mapping {
-                generated,
-                original,
-                source_index,
-                // Rows before any 5-field segment surface as name_index -1.
-                // Without the SIMD pre-pass this happens implicitly: the
-                // list is WithoutNames so append discards this field, and
-                // find()/ensure_with_names() later fill it with -1 via
-                // to_named(). The SIMD pre-pass promotes to WithNames up
-                // front when allow_names is true, so this loop's rows must
-                // carry -1 explicitly until the first 5-field segment.
-                name_index: if has_names { name_index } else { -1 },
-            })
-            .expect("OOM");
+        mapping.append(&Mapping {
+            generated,
+            original,
+            source_index,
+            // Rows before any 5-field segment surface as name_index -1.
+            // Without the SIMD pre-pass this happens implicitly: the
+            // list is WithoutNames so append discards this field, and
+            // find()/ensure_with_names() later fill it with -1 via
+            // to_named(). The SIMD pre-pass promotes to WithNames up
+            // front when allow_names is true, so this loop's rows must
+            // carry -1 explicitly until the first 5-field segment.
+            name_index: if has_names { name_index } else { -1 },
+        });
     }
 
     if needs_sort && options.sort {
@@ -800,7 +796,7 @@ fn parse_simd(
     let rows = match &mut mapping.r#impl {
         ListValue::WithoutNames(list) => {
             if list
-                .ensure_total_capacity(base.saturating_add(seg_bound))
+                .try_ensure_total_capacity(base.saturating_add(seg_bound))
                 .is_err()
             {
                 return SimdResult::OutOfMemory;
@@ -839,7 +835,7 @@ fn parse_simd(
         }
         ListValue::WithNames(list) => {
             if list
-                .ensure_total_capacity(base.saturating_add(seg_bound))
+                .try_ensure_total_capacity(base.saturating_add(seg_bound))
                 .is_err()
             {
                 return SimdResult::OutOfMemory;

@@ -98,6 +98,7 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   test.each([
     ["panic", "SIGABRT"],
     ["outOfMemory", "SIGABRT"],
+    ["allocError", "SIGABRT"],
     ["segfault", "SIGSEGV"],
     ["abort", "SIGABRT"],
     ["trap", "SIGTRAP"],
@@ -122,6 +123,11 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
       expect(stderr).toContain("abort() called");
     } else if (approach === "trap") {
       expect(stderr).toContain("Trap instruction");
+    } else if (approach === "allocError") {
+      // A failed infallible allocation goes through the alloc error hook and
+      // is reported as running out of memory, not as std's abort().
+      expect(stderr.toLowerCase()).toContain("out of memory");
+      expect(stderr).not.toContain("abort() called");
     }
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
@@ -501,7 +507,7 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
 });
 
 describe("automatic crash reporter", () => {
-  for (const approach of ["panic", "segfault", "outOfMemory"]) {
+  for (const approach of ["panic", "segfault", "outOfMemory", "allocError"]) {
     test(`${approach} should report`, async () => {
       let sent = false;
       const resolve_handler = Promise.withResolvers();
@@ -538,11 +544,12 @@ describe("automatic crash reporter", () => {
 
       expect(exitCode).not.toBe(0);
       expect(stderr).toContain(server.url.toString());
-      if (approach !== "outOfMemory") {
-        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
-      } else {
+      if (approach === "outOfMemory" || approach === "allocError") {
         expect(stderr.toLowerCase()).toContain("out of memory");
         expect(stderr.toLowerCase()).not.toContain("panic");
+        expect(stderr).not.toContain("This indicates a bug in Bun");
+      } else {
+        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
       }
       expect(sent).toBe(true);
     });

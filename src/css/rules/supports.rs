@@ -282,7 +282,7 @@ impl SupportsCondition {
                         if let SupportsCondition::Declaration(decl) = &in_parens {
                             let property_id = &decl.property_id;
                             let value = decl.value;
-                            let _ = seen_declarations.put(
+                            seen_declarations.put(
                                 SeenDeclKey(
                                     property_id.with_prefix(css::VendorPrefix::NONE),
                                     value,
@@ -305,7 +305,7 @@ impl SupportsCondition {
                                 d.property_id.add_prefix(property_id.prefix());
                             }
                         } else {
-                            let _ = seen_declarations.put(key, conditions.len());
+                            seen_declarations.put(key, conditions.len());
                             conditions.push(SupportsCondition::Declaration(Declaration {
                                 property_id,
                                 value,

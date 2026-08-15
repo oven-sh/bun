@@ -311,7 +311,7 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
                     si
                 } else {
                     if claimed.bit_length() == 0 && !row_deps.is_empty() {
-                        claimed = DynamicBitSet::init_empty(row_deps.len())?;
+                        claimed = DynamicBitSet::init_empty(row_deps.len());
                         claimed.set_range_value(
                             BitRange {
                                 start: 0,

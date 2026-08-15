@@ -824,13 +824,13 @@ impl RunCommand {
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
         if bun_io::parent_death_watchdog::is_enabled() {
-            let _ = env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
+            env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
         }
 
         // we have no way of knowing what version they're expecting without
         // running the node executable; running the node executable is too
         // slow, so we will just hardcode it to LTS
-        let _ = env_loader.map.put_default(
+        env_loader.map.put_default(
             b"npm_config_user_agent",
             // the use of npm/? is copying yarn
             // e.g.
@@ -851,7 +851,7 @@ impl RunCommand {
         if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
             if let Ok(self_exe) = bun_core::self_exe_path() {
-                let _ = env_loader
+                env_loader
                     .map
                     .put_default(b"npm_execpath", self_exe.as_bytes());
             }

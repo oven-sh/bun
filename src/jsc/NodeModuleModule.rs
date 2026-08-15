@@ -166,7 +166,7 @@ fn on_require_extension_modify(
     let vm = global.bun_vm().as_mut();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
 
-    let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
+    let gop = vm.commonjs_custom_extensions.get_or_put(str);
     if !gop.found_existing {
         // `gop.key_ptr` already owns a duped `Box<[u8]>` (StringArrayHashMap
         // boxes the key on insert).

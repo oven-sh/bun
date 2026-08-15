@@ -3,7 +3,6 @@ use core::ffi::c_char;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
-use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Output};
 use bun_core::{ZStr, strings};
@@ -450,16 +449,12 @@ impl Loader {
             return;
         }
         DID_LOAD_CCACHE_PATH.store(true, Ordering::Relaxed);
-        let _ = self.load_ccache_path_impl(fs);
-    }
 
-    fn load_ccache_path_impl(&mut self, fs: &bun_paths::fs::FileSystem) -> Result<(), AllocError> {
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
         let mut buf = PathBuffer::uninit();
-        let path = match self.get(b"PATH") {
-            Some(p) => p,
-            None => return Ok(()),
+        let Some(path) = self.get(b"PATH") else {
+            return;
         };
         // borrowck — `path` borrows `self.map`; `which` writes into `buf` and
         // returns a borrow of `buf`. Copy the result before mutating `self.map`.
@@ -470,7 +465,7 @@ impl Loader {
         if !ccache_path.is_empty() {
             let cxx_gop = self
                 .map
-                .get_or_put_without_value(b"CMAKE_CXX_COMPILER_LAUNCHER")?;
+                .get_or_put_without_value(b"CMAKE_CXX_COMPILER_LAUNCHER");
             if !cxx_gop.found_existing {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
@@ -479,13 +474,12 @@ impl Loader {
             }
             let c_gop = self
                 .map
-                .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
+                .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER");
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
                 *c_gop.value_ptr = HashTableValue { value: ccache_path };
             }
         }
-        Ok(())
     }
 
     /// Populates `NODE` /
@@ -495,7 +489,7 @@ impl Loader {
         &mut self,
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
-    ) -> crate::Result<bool> {
+    ) -> bool {
         let mut buf = PathBuffer::uninit();
 
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
@@ -510,7 +504,7 @@ impl Loader {
                 c
             } else {
                 let Some(node) = self.get_node_path(fs, &mut buf) else {
-                    return Ok(false);
+                    return false;
                 };
                 Box::from(node.as_bytes())
             }
@@ -518,9 +512,9 @@ impl Loader {
         // Cache to `NODE_PATH_TO_USE_SET_ONCE` first, then `map.put` (which
         // dupes the bytes).
         *NODE_PATH_TO_USE_SET_ONCE.write() = Some(node_path_to_use.clone());
-        self.map.put(b"NODE", &node_path_to_use)?;
-        self.map.put(b"npm_node_execpath", &node_path_to_use)?;
-        Ok(true)
+        self.map.put(b"NODE", &node_path_to_use);
+        self.map.put(b"npm_node_execpath", &node_path_to_use);
+        true
     }
 
     pub(crate) fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
@@ -595,13 +589,13 @@ impl Loader {
         }
     }
 
-    pub fn load_process(&mut self) -> Result<(), AllocError> {
+    pub fn load_process(&mut self) {
         if self.did_load_process {
-            return Ok(());
+            return;
         }
 
         let environ: &[*const c_char] = bun_sys::environ();
-        self.map.map.ensure_total_capacity(environ.len())?;
+        self.map.map.ensure_total_capacity(environ.len());
         for &_env in environ {
             // SAFETY: environ entries are NUL-terminated C strings from the OS
             let env = unsafe { bun_core::ffi::cstr(_env) }.to_bytes();
@@ -609,25 +603,21 @@ impl Loader {
                 let key = &env[..i as usize];
                 let value = &env[i as usize + 1..];
                 if !key.is_empty() {
-                    self.map.put(key, value)?;
+                    self.map.put(key, value);
                 }
             } else {
                 if !env.is_empty() {
-                    self.map.put(env, b"")?;
+                    self.map.put(env, b"");
                 }
             }
         }
         self.did_load_process = true;
-        Ok(())
     }
 
     // mostly for tests
-    pub fn load_from_string<const OVERWRITE: bool, const EXPAND: bool>(
-        &mut self,
-        str: &[u8],
-    ) -> Result<(), AllocError> {
+    pub fn load_from_string<const OVERWRITE: bool, const EXPAND: bool>(&mut self, str: &[u8]) {
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer);
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -838,7 +828,7 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer);
             }
         }
 
@@ -859,7 +849,7 @@ impl Loader {
             Ok(f) => f,
             Err(_) => {
                 // prevent retrying
-                self.custom_files_loaded.insert(file_path)?;
+                self.custom_files_loaded.insert(file_path);
                 return Ok(());
             }
         };
@@ -876,11 +866,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer);
             }
         }
 
-        self.custom_files_loaded.insert(file_path)?;
+        self.custom_files_loaded.insert(file_path);
         Ok(())
     }
 }
@@ -992,7 +982,7 @@ impl<'a> Parser<'a> {
         None
     }
 
-    fn parse_quoted<const QUOTE: u8>(&mut self) -> Result<Option<&[u8]>, AllocError> {
+    fn parse_quoted<const QUOTE: u8>(&mut self) -> Option<&[u8]> {
         debug_assert!(self.src[self.pos] == QUOTE);
         let start = self.pos;
         self.value_buffer.clear(); // Reset the buffer
@@ -1044,38 +1034,38 @@ impl<'a> Parser<'a> {
                             }
                         }
                     }
-                    return Ok(Some(self.value_buffer.as_slice()));
+                    return Some(self.value_buffer.as_slice());
                 }
                 _ => {}
             }
             end += 1;
         }
-        Ok(None)
+        None
     }
 
-    fn parse_value<const IS_PROCESS: bool>(&mut self) -> Result<&[u8], AllocError> {
+    fn parse_value<const IS_PROCESS: bool>(&mut self) -> &[u8] {
         let start = self.pos;
         self.skip_whitespaces();
         let mut end = self.pos;
         if end >= self.src.len() {
-            return Ok(&self.src[self.src.len()..]);
+            return &self.src[self.src.len()..];
         }
         // reshaped for borrowck — `parse_quoted` returns a borrow of
         // `self.value_buffer`; capture only its length, then re-borrow the buffer
         // after the match so the unquoted fallthrough can re-borrow `self`.
         let quoted_len: Option<usize> = match self.src[end] {
-            b'`' => self.parse_quoted::<b'`'>()?.map(|v| v.len()),
-            b'"' => self.parse_quoted::<b'"'>()?.map(|v| v.len()),
-            b'\'' => self.parse_quoted::<b'\''>()?.map(|v| v.len()),
+            b'`' => self.parse_quoted::<b'`'>().map(|v| v.len()),
+            b'"' => self.parse_quoted::<b'"'>().map(|v| v.len()),
+            b'\'' => self.parse_quoted::<b'\''>().map(|v| v.len()),
             _ => None,
         };
         if let Some(len) = quoted_len {
             let value = &self.value_buffer[..len];
-            return Ok(if IS_PROCESS {
+            return if IS_PROCESS {
                 value
             } else {
                 &value[1..value.len() - 1]
-            });
+            };
         }
         end = start;
         while end < self.src.len() {
@@ -1086,18 +1076,18 @@ impl<'a> Parser<'a> {
             end += 1;
         }
         self.pos = end;
-        Ok(strings::trim(&self.src[start..end], WHITESPACE_CHARS))
+        strings::trim(&self.src[start..end], WHITESPACE_CHARS)
     }
 
-    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Result<Option<&[u8]>, AllocError> {
+    fn expand_value(&mut self, map: &Map, value: &[u8]) -> Option<&[u8]> {
         if value.len() < 2 {
-            return Ok(None);
+            return None;
         }
         self.value_buffer.clear();
         if !Self::expand_into(map, value, self.value_buffer, 0) {
-            return Ok(None);
+            return None;
         }
-        Ok(Some(self.value_buffer.as_slice()))
+        Some(self.value_buffer.as_slice())
     }
 
     /// Left-to-right expansion of `$NAME` / `${NAME}` / `${NAME:-default}`.
@@ -1205,17 +1195,17 @@ impl<'a> Parser<'a> {
     fn parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         &mut self,
         map: &mut Map,
-    ) -> Result<(), AllocError> {
+    ) {
         let mut count = map.map.count();
         while self.pos < self.src.len() {
             let Some(key) = self.parse_key::<true>() else {
                 self.skip_line();
                 continue;
             };
-            let value = self.parse_value::<IS_PROCESS>()?;
+            let value = self.parse_value::<IS_PROCESS>();
             // reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
             let value_owned: Box<[u8]> = Box::from(value);
-            let entry = map.map.get_or_put(key)?;
+            let entry = map.map.get_or_put(key);
             if entry.found_existing {
                 if entry.index < count {
                     // Allow keys defined later in the same file to override keys defined earlier
@@ -1237,7 +1227,7 @@ impl<'a> Parser<'a> {
             let mut idx = count;
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
-                if let Some(expanded) = self.expand_value(map, &current)? {
+                if let Some(expanded) = self.expand_value(map, &current) {
                     map.map.values_mut()[idx] = HashTableValue {
                         value: Box::from(expanded),
                     };
@@ -1247,7 +1237,6 @@ impl<'a> Parser<'a> {
             count = 0;
         }
         let _ = count;
-        Ok(())
     }
 
     /// Builds a [`Parser`] over `src` (minus any UTF-8 BOM) and runs [`Parser::parse`] into `map`.
@@ -1255,7 +1244,7 @@ impl<'a> Parser<'a> {
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), AllocError> {
+    ) {
         // Clear the buffer before each parse to ensure no leftover data
         value_buffer.clear();
         let mut parser = Parser {
@@ -1265,7 +1254,7 @@ impl<'a> Parser<'a> {
             src: strings::without_utf8_bom(src),
             value_buffer,
         };
-        parser.parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
+        parser.parse::<OVERRIDE, IS_PROCESS, EXPAND>(map);
     }
 }
 
@@ -1285,6 +1274,7 @@ pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
 #[cfg(windows)]
 pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
 
+#[derive(Clone)]
 pub struct Map {
     pub map: HashTable,
 }
@@ -1298,7 +1288,7 @@ impl Default for Map {
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
-    pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
+    pub fn create_null_delimited_env_map(&mut self) -> NullDelimitedEnvMap {
         let envp_count = self.map.count();
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
         let mut envp_buf: Vec<*const c_char> = Vec::with_capacity(envp_count + 1);
@@ -1318,10 +1308,10 @@ impl Map {
             debug_assert!(envp_buf.len() == envp_count);
         }
         envp_buf.push(core::ptr::null()); // sentinel
-        Ok(NullDelimitedEnvMap {
+        NullDelimitedEnvMap {
             _storage: storage,
             envp: envp_buf.into_boxed_slice(),
-        })
+        }
     }
 
     /// Returns a wrapper around the env map that does not duplicate the memory of
@@ -1329,7 +1319,7 @@ impl Map {
     // `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
     // UTF-8-lossy; the lossy round-trip is accepted here.
     #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
-    pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
+    pub fn std_env_map(&mut self) -> StdEnvMapWrapper {
         let mut env_map = bun_sys::EnvMap::default();
         let mut it = self.map.iterator();
         while let Some(entry) = it.next() {
@@ -1338,9 +1328,9 @@ impl Map {
                 String::from_utf8_lossy(&entry.value_ptr.value).into_owned(),
             );
         }
-        Ok(StdEnvMapWrapper {
+        StdEnvMapWrapper {
             unsafe_map: env_map,
-        })
+        }
     }
 
     /// Build a heap-allocated Windows environment block suitable for
@@ -1395,7 +1385,7 @@ impl Map {
     }
 
     #[inline]
-    pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
+    pub fn put(&mut self, key: &[u8], value: &[u8]) {
         #[cfg(all(windows, debug_assertions))]
         {
             debug_assert!(strings::index_of_char(key, b'\x00').is_none());
@@ -1405,11 +1395,11 @@ impl Map {
             HashTableValue {
                 value: Box::from(value),
             },
-        )
+        );
     }
 
-    pub fn ensure_unused_capacity(&mut self, additional_count: usize) -> Result<(), AllocError> {
-        self.map.ensure_unused_capacity(additional_count)
+    pub fn ensure_unused_capacity(&mut self, additional_count: usize) {
+        self.map.ensure_unused_capacity(additional_count);
     }
 
     pub fn put_assume_capacity(&mut self, key: &[u8], value: &[u8]) {
@@ -1426,30 +1416,29 @@ impl Map {
     }
 
     #[inline]
-    pub fn put_alloc_key_and_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let gop = self.map.get_or_put(key)?;
+    pub fn put_alloc_key_and_value(&mut self, key: &[u8], value: &[u8]) {
+        let gop = self.map.get_or_put(key);
         *gop.value_ptr = HashTableValue {
             value: Box::from(value),
         };
         if !gop.found_existing {
             *gop.key_ptr = Box::from(key);
         }
-        Ok(())
     }
 
     #[inline]
-    pub fn put_alloc_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
+    pub fn put_alloc_value(&mut self, key: &[u8], value: &[u8]) {
         // `HashTableValue { value: Box<[u8]> }` storage forces a copy, so this is
         // equivalent to `put`. Kept as a thin wrapper to preserve call-site alloc intent
         // should storage ever change to `Cow`/borrowed.
-        self.put(key, value)
+        self.put(key, value);
     }
 
     #[inline]
     pub fn get_or_put_without_value(
         &mut self,
         key: &[u8],
-    ) -> Result<GetOrPutResult<'_, Box<[u8]>, HashTableValue>, AllocError> {
+    ) -> GetOrPutResult<'_, Box<[u8]>, HashTableValue> {
         self.map.get_or_put(key)
     }
 
@@ -1459,25 +1448,17 @@ impl Map {
     }
 
     #[inline]
-    pub fn put_default(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let _ = self.map.get_or_put_value(
+    pub fn put_default(&mut self, key: &[u8], value: &[u8]) {
+        self.map.get_or_put_value(
             key,
             HashTableValue {
                 value: Box::from(value),
             },
-        )?;
-        Ok(())
+        );
     }
 
     pub fn remove(&mut self, key: &[u8]) {
         let _ = self.map.swap_remove(key);
-    }
-
-    pub fn clone_with_allocator(&self) -> Result<Map, AllocError> {
-        // allocator param dropped — global mimalloc
-        Ok(Map {
-            map: self.map.clone()?,
-        })
     }
 }
 

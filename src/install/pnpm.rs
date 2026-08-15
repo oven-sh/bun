@@ -169,7 +169,7 @@ fn collect_patch_paths(
         let key = prop.key.as_ref().expect("infallible: prop has key");
         let value = prop.value.as_ref().expect("infallible: prop has value");
         if let (Some(key_str), Some(path_str)) = (as_string(key), as_string(value)) {
-            out.put(key_str, Box::from(path_str))?;
+            out.put(key_str, Box::from(path_str));
         }
     }
     Ok(())
@@ -242,7 +242,7 @@ fn read_named_registries(
                     let key = prop.key.as_ref().expect("infallible: prop has key");
                     let value = prop.value.as_ref().expect("infallible: prop has value");
                     if let (Some(name_str), Some(url_str)) = (as_string(key), as_string(value)) {
-                        registries.put(name_str, Box::from(url_str))?;
+                        registries.put(name_str, Box::from(url_str));
                     }
                 }
             }
@@ -251,7 +251,7 @@ fn read_named_registries(
 
     for (name, url) in BUILTIN_NAMED_REGISTRIES {
         if !registries.contains(name) {
-            registries.put(name, Box::from(url))?;
+            registries.put(name, Box::from(url));
         }
     }
 
@@ -709,7 +709,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 };
 
                 let path = sbuf!(lockfile).append(path_str)?;
-                patches.get_or_put(hash_str)?.value_ptr.push(Patch {
+                patches.get_or_put(hash_str).value_ptr.push(Patch {
                     path,
                     config_key: Box::from(config_key),
                 });
@@ -778,7 +778,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let name_hash = semver::string::Builder::string_hash(name);
 
             let path_str = sbuf!(lockfile).append(importer_path)?;
-            lockfile.workspace_paths.put(name_hash, path_str)?;
+            lockfile.workspace_paths.put(name_hash, path_str);
 
             if let Some(version_expr) = value.get(b"version") {
                 let Some(version_raw) = as_string(&version_expr) else {
@@ -793,7 +793,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 lockfile
                     .workspace_versions
-                    .put(name_hash, parsed.version.min())?;
+                    .put(name_hash, parsed.version.min());
             }
         }
 
@@ -832,7 +832,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 root_pkg.name_hash = name_hash;
             }
 
-            let importer_versions = importer_dep_res_versions.get_or_put(b".")?;
+            let importer_versions = importer_dep_res_versions.get_or_put(b".");
             *importer_versions.value_ptr = StringArrayHashMap::new();
 
             let (off, len) = parse_append_importer_dependencies(
@@ -854,13 +854,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             root_pkg.meta.id = 0;
             root_pkg.resolution = Resolution::init_root();
             let root_name_hash = root_pkg.name_hash;
-            lockfile.packages.append(root_pkg)?;
+            lockfile.packages.append(root_pkg);
             lockfile.get_or_put_id(0, root_name_hash)?;
         }
 
         let mut pkg_map: StringArrayHashMap<PackageID> = StringArrayHashMap::new();
 
-        pkg_map.put(crate::bun_fs::FileSystem::instance().top_level_dir(), 0)?;
+        pkg_map.put(crate::bun_fs::FileSystem::instance().top_level_dir(), 0);
 
         let workspace_pkgs_off = lockfile.packages.len();
 
@@ -908,7 +908,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
                 pkg.name_hash = name_hash;
 
-                let importer_versions = importer_dep_res_versions.get_or_put(path)?;
+                let importer_versions = importer_dep_res_versions.get_or_put(path);
                 if importer_versions.found_existing {
                     return Err(invalid_pnpm_lockfile());
                 }
@@ -945,7 +945,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                let entry = pkg_map.get_or_put(&abs_path)?;
+                let entry = pkg_map.get_or_put(&abs_path);
                 if entry.found_existing {
                     return Err(invalid_pnpm_lockfile());
                 }
@@ -1048,7 +1048,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             let mut abs_link_path = bun_paths::AutoAbsPath::init_top_level_dir();
                             let _ = abs_link_path.join(&[workspace_path, link_path]); // path-buffer overflow unreachable for bounded inputs
 
-                            let pkg_entry = pkg_map.get_or_put(abs_link_path.slice())?;
+                            let pkg_entry = pkg_map.get_or_put(abs_link_path.slice());
                             if pkg_entry.found_existing {
                                 // they point to the same package
                                 continue;
@@ -1114,7 +1114,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 // Pruned lockfiles (`turbo prune`) can leave peer-suffixed keys in `packages:`.
-                let entry = packages_by_key.get_or_put(remove_suffix(key_str))?;
+                let entry = packages_by_key.get_or_put(remove_suffix(key_str));
                 if entry.found_existing {
                     continue;
                 }
@@ -1250,7 +1250,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         .copied()
                         .filter(|id| (*id as usize) < workspace_pkgs_end)
                     {
-                        pkg_map.put(key_str, workspace_pkg_id)?;
+                        pkg_map.put(key_str, workspace_pkg_id);
                         continue;
                     }
                 }
@@ -1273,7 +1273,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         lockfile.patched_dependencies.put(
                             semver::string::Builder::string_hash(&patch_join_buf),
                             crate::lockfile_real::PatchedDep::with_path(patch.path),
-                        )?;
+                        );
                         if Dependency::split_name_and_maybe_version(&patch.config_key)
                             .1
                             .is_none()
@@ -1281,7 +1281,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             found_patches.put(
                                 &patch.config_key,
                                 Box::from(&patch_join_buf[name_str.len() + 1..]),
-                            )?;
+                            );
                         }
                     }
                 }
@@ -1308,7 +1308,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                         url,
                                     )) =>
                                 {
-                                    if !warned_registries.get_or_put(registry_name)?.found_existing
+                                    if !warned_registries.get_or_put(registry_name).found_existing
                                         && !silent
                                     {
                                         bun_core::warn!(
@@ -1321,7 +1321,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 }
                                 Some(_) => scope_registry,
                                 None => {
-                                    if !warned_registries.get_or_put(registry_name)?.found_existing
+                                    if !warned_registries.get_or_put(registry_name).found_existing
                                         && !silent
                                     {
                                         bun_core::warn!(
@@ -1394,10 +1394,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
                 if has_unbound_peers {
-                    packages_with_unbound_peers.put(pkg_id, ())?;
+                    packages_with_unbound_peers.put(pkg_id, ());
                 }
 
-                pkg_map.put(key_str, pkg_id)?;
+                pkg_map.put(key_str, pkg_id);
             }
         }
 
@@ -1692,14 +1692,14 @@ fn append_snapshot_dependency_version(
             let registry_qualified = split_registry_qualified_version(version_str);
             if registry_qualified.is_none() && !version_str.first().is_some_and(u8::is_ascii_digit)
             {
-                references_by_name.put(dep_name, Box::from(reference))?;
+                references_by_name.put(dep_name, Box::from(reference));
                 return Ok((sbuf!(lockfile).append(version_str)?, None));
             }
             let alias = sbuf!(lockfile).append_external(alias_str)?;
             version_buf.clear();
             let version_str = match registry_qualified {
                 Some((_, version)) => {
-                    references_by_name.put(dep_name, Box::from(reference))?;
+                    references_by_name.put(dep_name, Box::from(reference));
                     version
                 }
                 None => version_str,
@@ -1715,7 +1715,7 @@ fn append_snapshot_dependency_version(
             return Ok((version, Some(alias)));
         }
     } else if let Some((_, version_str)) = split_registry_qualified_version(reference) {
-        references_by_name.put(dep_name, Box::from(reference))?;
+        references_by_name.put(dep_name, Box::from(reference));
         return Ok((sbuf!(lockfile).append(version_str)?, None));
     }
     Ok((sbuf!(lockfile).append(reference)?, None))
@@ -1749,7 +1749,7 @@ fn declared_package_peers(
                     optional: false,
                     seen: false,
                 },
-            )?;
+            );
         }
     }
 
@@ -1776,7 +1776,7 @@ fn declared_package_peers(
                         optional: true,
                         seen: false,
                     },
-                )?,
+                ),
             }
         }
     }
@@ -1839,7 +1839,7 @@ fn parse_append_package_dependencies(
                         behavior.set_optional(decl.optional);
                         let range = sbuf!(lockfile).append(decl.range)?;
                         let range_sliced = range.sliced(string_bytes!(lockfile));
-                        references_by_name.put(name_str, Box::from(reference))?;
+                        references_by_name.put(name_str, Box::from(reference));
                         if let Some(version) = Dependency::parse(
                             name.value,
                             name.hash,
@@ -1930,7 +1930,7 @@ fn parse_append_package_dependencies(
         for (i, dep) in lockfile.buffers.dependencies[off..end].iter().enumerate() {
             if let Some(reference) = references_by_name.get(dep.name.slice(bytes)) {
                 let dep_id = u32::try_from(off + i).expect("int cast");
-                snapshot_dep_paths.put(dep_id, reference.clone())?;
+                snapshot_dep_paths.put(dep_id, reference.clone());
             }
         }
     }
@@ -1969,7 +1969,7 @@ fn bind_peers_from_variant(
             .map(remove_suffix)
             .filter(|reference| !strings::has_prefix_comptime(reference, b"link:"));
         match reference {
-            Some(reference) => snapshot_dep_paths.put(dep_id, Box::from(reference))?,
+            Some(reference) => snapshot_dep_paths.put(dep_id, Box::from(reference)),
             None => all_bound = false,
         }
     }
@@ -2067,7 +2067,7 @@ fn collect_manifest_peers(
             let key = prop.key.as_ref().expect("infallible: prop has key");
             let value = prop.value.as_ref().expect("infallible: prop has value");
             if let (Some(name_str), Some(range)) = (as_string(key), as_string(value)) {
-                peers.put(name_str, (range, false))?;
+                peers.put(name_str, (range, false));
             }
         }
     }
@@ -2084,7 +2084,7 @@ fn collect_manifest_peers(
             }
             match peers.get_mut(name_str) {
                 Some(entry) => entry.1 = true,
-                None => peers.put(name_str, (b"*", true))?,
+                None => peers.put(name_str, (b"*", true)),
             }
         }
     }
@@ -2174,7 +2174,7 @@ fn parse_append_importer_dependencies(
                     continue;
                 }
 
-                let entry = importer_versions.get_or_put(name_str)?;
+                let entry = importer_versions.get_or_put(name_str);
                 if entry.found_existing {
                     continue;
                 }

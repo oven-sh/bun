@@ -37,10 +37,7 @@ impl HeadersExt for Headers {
         for header in headers {
             buf_len += header.name().len() + header.value().len();
         }
-        result
-            .entries
-            .ensure_total_capacity(header_count)
-            .expect("OOM");
+        result.entries.ensure_total_capacity(header_count);
         result.buf.reserve_exact(buf_len);
         for header in headers {
             let name = header.name();

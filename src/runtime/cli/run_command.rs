@@ -271,12 +271,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
         let shell_bin =
             Self::find_shell(shell_search_path, cwd).ok_or(crate::Error::MissingShell)?;
-        env.map
-            .put(b"npm_lifecycle_event", name)
-            .expect("unreachable");
-        env.map
-            .put(b"npm_lifecycle_script", original_script)
-            .expect("unreachable");
+        env.map.put(b"npm_lifecycle_event", name);
+        env.map.put(b"npm_lifecycle_script", original_script);
 
         let mut copy_script_capacity: usize = original_script.len();
         for part in passthrough {
@@ -387,7 +383,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.map.create_null_delimited_env_map();
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
@@ -663,7 +659,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // does NOT straddle `run_env_loader` below (which itself derives
             // `env_mut()`, popping any outstanding `&mut Loader` tag).
             let env_loader = this_transpiler.env_mut();
-            env_loader.load_process()?;
+            env_loader.load_process();
 
             if let Some(node_env) = env_loader.get(b"NODE_ENV") {
                 if node_env == b"production" {
@@ -684,51 +680,43 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         env_loader
             .map
-            .put_default(b"npm_config_local_prefix", top_level_dir)
-            .expect("unreachable");
+            .put_default(b"npm_config_local_prefix", top_level_dir);
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
         if bun_io::ParentDeathWatchdog::is_enabled() {
-            env_loader
-                .map
-                .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")
-                .expect("unreachable");
+            env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
         }
 
         // we have no way of knowing what version they're expecting without running the node executable
         // running the node executable is too slow
         // so we will just hardcode it to LTS
-        env_loader
-            .map
-            .put_default(
-                b"npm_config_user_agent",
-                // the use of npm/? is copying yarn
-                // e.g.
-                // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-                const_format::concatcp!(
-                    "bun/",
-                    Global::package_json_version,
-                    " npm/? node/v",
-                    Environment::REPORTED_NODEJS_VERSION,
-                    " ",
-                    Global::os_name,
-                    " ",
-                    Global::arch_name
-                )
-                .as_bytes(),
+        env_loader.map.put_default(
+            b"npm_config_user_agent",
+            // the use of npm/? is copying yarn
+            // e.g.
+            // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
+            const_format::concatcp!(
+                "bun/",
+                Global::package_json_version,
+                " npm/? node/v",
+                Environment::REPORTED_NODEJS_VERSION,
+                " ",
+                Global::os_name,
+                " ",
+                Global::arch_name
             )
-            .expect("unreachable");
+            .as_bytes(),
+        );
 
         if env_loader.get(b"npm_execpath").is_none() {
             // we don't care if this fails
             if let Ok(self_exe_path) = bun_core::self_exe_path() {
                 env_loader
                     .map
-                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
-                    .expect("unreachable");
+                    .put_default(b"npm_execpath", self_exe_path.as_bytes());
             }
         }
 
@@ -737,27 +725,24 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
                     env_loader
                         .map
-                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
-                        .expect("unreachable");
+                        .put(NpmArgs::PACKAGE_NAME, &package_json.name);
                 }
             }
 
             env_loader
                 .map
-                .put_default(b"npm_package_json", package_json.source.path.text)
-                .expect("unreachable");
+                .put_default(b"npm_package_json", package_json.source.path.text);
 
             if !package_json.version.is_empty() {
                 if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
                     env_loader
                         .map
-                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
-                        .expect("unreachable");
+                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version);
                 }
             }
 
             if let Some(config) = package_json.config.as_deref() {
-                env_loader.map.ensure_unused_capacity(config.count())?;
+                env_loader.map.ensure_unused_capacity(config.count());
                 for (k, v) in config.keys().iter().zip(config.values().iter()) {
                     let key = strings::concat(&[b"npm_package_config_", &k[..]]);
                     env_loader.map.put_assume_capacity(&key, *v);
@@ -822,9 +807,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     let mut inner =
                         bun_resolver::package_json::MacroImportReplacementMap::default();
                     for (ik, iv) in v.iter() {
-                        inner.put(ik, iv.clone()).unwrap_or_oom();
+                        inner.put(ik, iv.clone());
                     }
-                    b.options.macro_remap.put(k, inner).unwrap_or_oom();
+                    b.options.macro_remap.put(k, inner);
                 }
             }
             MacroOptions::Unspecified => {}
@@ -1828,11 +1813,7 @@ impl RunCommand {
             cwd,
             force_using_bun,
         )?;
-        this_transpiler
-            .env_mut()
-            .map
-            .put(b"PATH", &new_path)
-            .unwrap_or_oom();
+        this_transpiler.env_mut().map.put(b"PATH", &new_path);
         Ok(())
     }
 
@@ -1863,16 +1844,14 @@ impl RunCommand {
         let bun_node_exe = Self::bun_node_file_utf8()?;
         let bun_node_dir_win =
             bun_paths::dirname(bun_node_exe.as_bytes()).ok_or(crate::Error::FailedToGetTempPath)?;
-        let found_node = env_loader
-            .load_node_js_config(
-                bun_paths::fs::FileSystem::instance(),
-                if force_using_bun {
-                    bun_node_exe.as_bytes()
-                } else {
-                    b""
-                },
-            )
-            .unwrap_or(false);
+        let found_node = env_loader.load_node_js_config(
+            bun_paths::fs::FileSystem::instance(),
+            if force_using_bun {
+                bun_node_exe.as_bytes()
+            } else {
+                b""
+            },
+        );
 
         let mut needs_to_force_bun = force_using_bun || !found_node;
         let mut optional_bun_self_path: &[u8] = b"";
@@ -1918,18 +1897,11 @@ impl RunCommand {
 
             if !force_using_bun {
                 let env_mut = this_transpiler.env_mut();
+                env_mut.map.put(b"NODE", bun_node_exe.as_bytes());
                 env_mut
                     .map
-                    .put(b"NODE", bun_node_exe.as_bytes())
-                    .unwrap_or_oom();
-                env_mut
-                    .map
-                    .put(b"npm_node_execpath", bun_node_exe.as_bytes())
-                    .unwrap_or_oom();
-                env_mut
-                    .map
-                    .put(b"npm_execpath", optional_bun_self_path)
-                    .unwrap_or_oom();
+                    .put(b"npm_node_execpath", bun_node_exe.as_bytes());
+                env_mut.map.put(b"npm_execpath", optional_bun_self_path);
             }
 
             needs_to_force_bun = false;
@@ -2062,7 +2034,7 @@ impl RunCommand {
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
-        let envp = env.map.create_null_delimited_env_map()?;
+        let envp = env.map.create_null_delimited_env_map();
 
         let spawn_result = match sync::spawn(&sync::Options {
             argv,
@@ -2340,10 +2312,7 @@ impl RunCommand {
             force_using_bun,
         )?;
         let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
-        env_loader
-            .map
-            .put(b"npm_command", b"run-script")
-            .expect("unreachable");
+        env_loader.map.put(b"npm_command", b"run-script");
 
         let root_dir = root_dir_info;
 
@@ -2378,10 +2347,7 @@ impl RunCommand {
                             long_running: false,
                             ..Default::default()
                         });
-                        env_loader
-                            .map
-                            .put(b"npm_lifecycle_event", target_name)
-                            .expect("unreachable");
+                        env_loader.map.put(b"npm_lifecycle_event", target_name);
 
                         // allocate enough to hold "post${scriptname}"
                         // byte 0 is a placeholder so the "pre" slice
@@ -3125,9 +3091,7 @@ impl RunCommand {
             if !u.starts_with(b"http://") && !u.starts_with(b"https://") {
                 continue;
             }
-            let Ok(gop) = seen.get_or_put(u) else {
-                continue;
-            };
+            let gop = seen.get_or_put(u);
             if gop.found_existing {
                 continue;
             }
@@ -3498,7 +3462,7 @@ impl RunCommand {
         };
 
         {
-            this_transpiler.env_mut().load_process()?;
+            this_transpiler.env_mut().load_process();
 
             if let Some(node_env) = this_transpiler.env().get(b"NODE_ENV") {
                 if node_env == b"production" {
@@ -3518,7 +3482,7 @@ impl RunCommand {
 
         if FILTER != Filter::ScriptExclude {
             if let Some(defaults) = default_completions {
-                results.ensure_unused_capacity(defaults.len())?;
+                results.ensure_unused_capacity(defaults.len());
                 for item in defaults {
                     let _ = results.get_or_put(Box::from(*item));
                 }
@@ -3586,7 +3550,7 @@ impl RunCommand {
                                 else {
                                     continue;
                                 };
-                                let _ = results.get_or_put(Box::from(appended))?;
+                                let _ = results.get_or_put(Box::from(appended));
                             }
                         }
                     }
@@ -3636,7 +3600,7 @@ impl RunCommand {
                             else {
                                 continue;
                             };
-                            let _ = results.get_or_put(Box::from(appended))?;
+                            let _ = results.get_or_put(Box::from(appended));
                         }
                     }
                 }
@@ -3651,7 +3615,7 @@ impl RunCommand {
         {
             if let Some(package_json) = root_dir_info.enclosing_package_json {
                 if let Some(scripts) = package_json.scripts.as_deref() {
-                    results.ensure_unused_capacity(scripts.count())?;
+                    results.ensure_unused_capacity(scripts.count());
                     if FILTER == Filter::ScriptAndDescriptions {
                         descriptions.reserve(scripts.count());
                     }

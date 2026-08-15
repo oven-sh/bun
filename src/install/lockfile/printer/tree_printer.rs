@@ -80,7 +80,7 @@ where
                 | ShouldPrintPackageInstallResult::Return => {}
                 ShouldPrintPackageInstallResult::Update(update_info) => {
                     if update_dedupe
-                        .get_or_put(dependencies[dep_id as usize].name_hash)?
+                        .get_or_put(dependencies[dep_id as usize].name_hash)
                         .found_existing
                     {
                         continue;
@@ -155,7 +155,7 @@ where
         let dep = &dependencies[dep_id as usize];
         let package_id = resolutions[dep_id as usize];
 
-        if dep_dedupe.get_or_put(dep.name_hash)?.found_existing {
+        if dep_dedupe.get_or_put(dep.name_hash).found_existing {
             continue;
         }
 
@@ -400,7 +400,7 @@ where
     let names = packages_slice.items_name();
     let name_hashes = packages_slice.items_name_hash();
     let pkg_resolutions = packages_slice.items_resolution();
-    let mut workspace_targets = Bitset::init_empty(pkg_resolutions.len())?;
+    let mut workspace_targets = Bitset::init_empty(pkg_resolutions.len());
     for &owner in update_owners {
         for &package_id in packages_slice.items_resolutions()[owner as usize]
             .get(lockfile.buffers.resolutions.as_slice())

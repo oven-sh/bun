@@ -956,7 +956,7 @@ impl<'a> ParseRenderer<'a> {
                     let child = entry.children.get_index(g, i as u32)?;
                     if child.is_string() {
                         let str = child.to_slice(g)?;
-                        let _ = alt_buf.extend_from_slice(str.slice());
+                        alt_buf.extend_from_slice(str.slice());
                     }
                 }
                 if !alt_buf.is_empty() {

@@ -58,7 +58,7 @@ impl WorkspaceMap {
         // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
         // workspace package). Existence is already verified by the caller via
         // `process_workspace_name`, so the check is dropped.
-        let entry = self.map.get_or_put(key)?;
+        let entry = self.map.get_or_put(key);
         if !entry.found_existing {
             *entry.key_ptr = Box::<[u8]>::from(key);
         }
@@ -226,7 +226,7 @@ impl WorkspaceMap {
 
         for i in 0..item_count {
             let Some(input_path) = arr.item_str(i, &scratch) else {
-                let _ = bun_ast::add_error_pretty!(
+                bun_ast::add_error_pretty!(
                     log,
                     Some(source),
                     arr.item_loc(source, i),
@@ -297,13 +297,13 @@ impl WorkspaceMap {
                         || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
                         || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                     {
-                        let _ = log.add_error_fmt(
+                        log.add_error_fmt(
                             Some(source),
                             arr.item_loc(source, i),
                             format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
                         );
                     } else if err == crate::Error::MissingPackageName {
-                        let _ = log.add_error_fmt(
+                        log.add_error_fmt(
                             Some(source),
                             loc,
                             format_args!(
@@ -314,7 +314,7 @@ impl WorkspaceMap {
                     } else {
                         let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
                         let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
-                        let _ = log.add_error_fmt(
+                        log.add_error_fmt(
                             Some(source),
                             arr.item_loc(source, i),
                             format_args!(
@@ -396,7 +396,7 @@ impl WorkspaceMap {
                 )? {
                     Ok(w) => w,
                     Err(e) => {
-                        let _ = bun_ast::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             log,
                             Some(source),
                             loc,
@@ -412,7 +412,7 @@ impl WorkspaceMap {
 
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
-                    let _ = bun_ast::add_error_pretty!(
+                    bun_ast::add_error_pretty!(
                         log,
                         Some(source),
                         loc,
@@ -428,7 +428,7 @@ impl WorkspaceMap {
                         Ok(Some(r)) => r,
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = bun_ast::add_error_pretty!(
+                            bun_ast::add_error_pretty!(
                                 log,
                                 Some(source),
                                 loc,
@@ -496,7 +496,7 @@ impl WorkspaceMap {
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 continue;
                             } else if err == crate::Error::MissingPackageName {
-                                let _ = log.add_error_fmt(
+                                log.add_error_fmt(
                                     Some(source),
                                     bun_ast::Loc::EMPTY,
                                     format_args!(
@@ -507,7 +507,7 @@ impl WorkspaceMap {
                                     ),
                                 );
                             } else {
-                                let _ = log.add_error_fmt(
+                                log.add_error_fmt(
                                     Some(source),
                                     bun_ast::Loc::EMPTY,
                                     format_args!(

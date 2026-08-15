@@ -1221,7 +1221,7 @@ mod _impl {
         // SAFETY: `maybe_from` is non-null (checked above) and points to a NUL-terminated C string
         // from BoringSSL's static tables.
         let from_bytes = unsafe { bun_core::ffi::cstr(maybe_from) }.to_bytes();
-        bun_core::handle_oom(hashes.put(from_bytes, ()));
+        hashes.put(from_bytes, ());
     }
 
     #[bun_jsc::host_fn]

@@ -68,13 +68,13 @@ impl List {
         use_directive: UseDirective,
         reference_source_index: IndexInt,
         ssr_source_index: IndexInt,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) {
         self.list.append(ServerComponentBoundary {
             source_index,
             use_directive,
             reference_source_index,
             ssr_source_index,
-        })?;
+        });
         // For borrowck we hand the adapter just the `source_index` column
         // it needs.
         let gop = self.map.get_or_put_adapted(
@@ -82,9 +82,8 @@ impl List {
             &Adapter {
                 source_indices: self.list.items::<"source_index", IndexInt>(),
             },
-        )?;
+        );
         debug_assert!(!gop.found_existing);
-        Ok(())
     }
 
     /// Use this to improve speed of accessing fields at the cost of
@@ -122,15 +121,12 @@ impl<'a> Slice<'a> {
         Some(self.list.items::<"reference_source_index", IndexInt>()[i])
     }
 
-    pub fn bit_set(
-        &self,
-        input_file_count: usize,
-    ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
-        let mut scb_bitset = DynamicBitSetUnmanaged::init_empty(input_file_count)?;
+    pub fn bit_set(&self, input_file_count: usize) -> DynamicBitSetUnmanaged {
+        let mut scb_bitset = DynamicBitSetUnmanaged::init_empty(input_file_count);
         for &source_index in self.list.items::<"source_index", IndexInt>() {
             scb_bitset.set(source_index as usize);
         }
-        Ok(scb_bitset)
+        scb_bitset
     }
 }
 

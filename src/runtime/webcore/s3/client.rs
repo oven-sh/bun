@@ -184,14 +184,13 @@ pub(crate) fn list_objects(
 ) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
-    let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
+    search_params.append_slice(b"?");
 
     if let Some(continuation_token) = list_options.continuation_token.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; continuation_token.len() * 3];
         let encoded =
             encode_uri_component::<true>(continuation_token, &mut buff).expect("unreachable");
-        // OOM/capacity: fire-and-forget
-        let _ = search_params.append_fmt(format_args!(
+        search_params.append_fmt(format_args!(
             "continuation-token={}",
             bstr::BStr::new(encoded)
         ));
@@ -202,19 +201,17 @@ pub(crate) fn list_objects(
         let encoded = encode_uri_component::<true>(delimiter, &mut buff).expect("unreachable");
 
         if list_options.continuation_token.is_some() {
-            let _ =
-                search_params.append_fmt(format_args!("&delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+            search_params.append_fmt(format_args!("&delimiter={}", bstr::BStr::new(encoded)));
         } else {
-            let _ =
-                search_params.append_fmt(format_args!("delimiter={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+            search_params.append_fmt(format_args!("delimiter={}", bstr::BStr::new(encoded)));
         }
     }
 
     if list_options.encoding_type.is_some() {
         if list_options.continuation_token.is_some() || list_options.delimiter.is_some() {
-            let _ = search_params.append_slice(b"&encoding-type=url"); // OOM/capacity: fire-and-forget
+            search_params.append_slice(b"&encoding-type=url");
         } else {
-            let _ = search_params.append_slice(b"encoding-type=url"); // OOM/capacity: fire-and-forget
+            search_params.append_slice(b"encoding-type=url");
         }
     }
 
@@ -223,9 +220,9 @@ pub(crate) fn list_objects(
             || list_options.delimiter.is_some()
             || list_options.encoding_type.is_some()
         {
-            let _ = search_params.append_fmt(format_args!("&fetch-owner={}", fetch_owner)); // OOM/capacity: fire-and-forget
+            search_params.append_fmt(format_args!("&fetch-owner={}", fetch_owner));
         } else {
-            let _ = search_params.append_fmt(format_args!("fetch-owner={}", fetch_owner)); // OOM/capacity: fire-and-forget
+            search_params.append_fmt(format_args!("fetch-owner={}", fetch_owner));
         }
     }
 
@@ -234,25 +231,25 @@ pub(crate) fn list_objects(
         || list_options.encoding_type.is_some()
         || list_options.fetch_owner.is_some()
     {
-        let _ = search_params.append_slice(b"&list-type=2"); // OOM/capacity: fire-and-forget
+        search_params.append_slice(b"&list-type=2");
     } else {
-        let _ = search_params.append_slice(b"list-type=2"); // OOM/capacity: fire-and-forget
+        search_params.append_slice(b"list-type=2");
     }
 
     if let Some(max_keys) = list_options.max_keys {
-        let _ = search_params.append_fmt(format_args!("&max-keys={}", max_keys)); // OOM/capacity: fire-and-forget
+        search_params.append_fmt(format_args!("&max-keys={}", max_keys));
     }
 
     if let Some(prefix) = list_options.prefix.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; prefix.len() * 3];
         let encoded = encode_uri_component::<true>(prefix, &mut buff).expect("unreachable");
-        let _ = search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+        search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded)));
     }
 
     if let Some(start_after) = list_options.start_after.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; start_after.len() * 3];
         let encoded = encode_uri_component::<true>(start_after, &mut buff).expect("unreachable");
-        let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: fire-and-forget
+        search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded)));
     }
 
     let result = match this.sign_request::<true>(
@@ -344,7 +341,7 @@ pub(crate) fn list_objects(
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
-        task.headers.entries.clone().expect("OOM"),
+        task.headers.entries.clone(),
         headers_buf,
         b"",
         bun_http::HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
@@ -1288,7 +1285,7 @@ fn download_stream(
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
         url,
-        task.headers.entries.clone().expect("OOM"),
+        task.headers.entries.clone(),
         headers_buf,
         b"",
         bun_http::HTTPClientResultCallback::new_with_release::<S3HttpDownloadStreamingTask>(

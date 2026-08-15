@@ -667,7 +667,6 @@ impl JSBundleCompletionTask {
             // with owned `Vec<u8>` payloads; drops at end of scope.
 
             if let CompileResult::Err(err) = &compile_result {
-                // `bun.handleOom(log.addError(..., bun.handleOom(dupe(..))))`
                 this.log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
@@ -930,7 +929,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.env.prefix = Box::from(config.env_prefix.list.as_slice());
         // `BundleOptions.bundler_feature_flags: Option<Box<StringSet>>` owns
         // its set, so clone rather than alias `config.features`.
-        transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()?));
+        transpiler.options.bundler_feature_flags = Some(Box::new(config.features.clone()));
         if config.force_node_env != options::ForceNodeEnv::Unspecified {
             transpiler.options.force_node_env = config.force_node_env;
         }

@@ -672,7 +672,7 @@ pub(crate) fn execute_simple_s3_request(
     let async_http = AsyncHTTP::init(
         options.method,
         url,
-        task.headers.entries.clone().expect("OOM"),
+        task.headers.entries.clone(),
         headers_buf,
         body,
         HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(

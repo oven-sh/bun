@@ -217,7 +217,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     let import_records_list = parse_graph.ast.items_import_records();
 
     // Iterate through all files in chunks to collect unique source indices
-    let mut seen_sources = DynamicBitSet::init_empty(sources.len())?;
+    let mut seen_sources = DynamicBitSet::init_empty(sources.len());
     // defer seen_sources.deinit() — handled by Drop
 
     // Mark all files that appear in chunks
@@ -828,7 +828,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         if let Some(bio) = mi_obj.get(b"bytesInOutput") {
                             if let JsonValue::Integer(bio_int) = bio {
                                 let bytes_val: u64 = u64::try_from(*bio_int).expect("int cast");
-                                let gop = bytes_in_output.get_or_put(module_path)?;
+                                let gop = bytes_in_output.get_or_put(module_path);
                                 if gop.found_existing {
                                     *gop.value_ptr += bytes_val;
                                 } else {
@@ -944,7 +944,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                                 }
 
                                 if let Some(key) = matched_key {
-                                    let gop = imported_by.get_or_put(key)?;
+                                    let gop = imported_by.get_or_put(key);
                                     if !gop.found_existing {
                                         *gop.value_ptr = Vec::new();
                                     }

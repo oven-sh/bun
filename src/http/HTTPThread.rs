@@ -558,7 +558,7 @@ impl HttpThread {
 
                 let now = self.timer_read();
                 let ctx_nn = NonNull::from(&mut *custom_context);
-                let _ = custom_ssl_context_map().put(
+                custom_ssl_context_map().put(
                     requested_config,
                     SslContextCacheEntry {
                         ctx: ctx_nn,

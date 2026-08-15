@@ -5,7 +5,6 @@ use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, OperatingSystem};
 use crate::{PackageID, PackageManager};
 use bun_collections::DynamicBitSet;
-use bun_core::UnwrapOrOom;
 
 #[derive(Clone, Copy)]
 pub struct Options {
@@ -158,7 +157,7 @@ impl<'a> Walk<'a> {
     }
 
     fn empty_seen(&self) -> DynamicBitSet {
-        DynamicBitSet::init_empty(self.dep_slices.len()).unwrap_or_oom()
+        DynamicBitSet::init_empty(self.dep_slices.len())
     }
 
     fn follows(&self, behavior: Behavior) -> bool {

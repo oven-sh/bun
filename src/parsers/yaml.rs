@@ -2318,7 +2318,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_s_white()?;
 
             self.tag_handles
-                .put(Enc::key_bytes(handle.slice(self.input)), ())?;
+                .put(Enc::key_bytes(handle.slice(self.input)), ());
 
             self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
@@ -3132,10 +3132,7 @@ impl MappingProps {
             let idx = self.merge_indexed;
             let key = self.list[idx].key.as_ref().unwrap();
             let hash = yaml_merge_key_expr_hash(key);
-            self.merge_index
-                .get_or_put(hash)?
-                .value_ptr
-                .push(idx as u32);
+            self.merge_index.get_or_put(hash).value_ptr.push(idx as u32);
             self.merge_indexed += 1;
         }
 
@@ -3161,7 +3158,7 @@ impl MappingProps {
                 ..Default::default()
             });
             self.merge_index
-                .get_or_put(merge_hash)?
+                .get_or_put(merge_hash)
                 .value_ptr
                 .push((self.list.len() - 1) as u32);
             self.merge_indexed = self.list.len();
@@ -3312,9 +3309,9 @@ impl CollectionData for E::Object {
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
-    fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
+    fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) {
         self.anchors
-            .put(Enc::key_bytes(anchor.name.slice(self.input)), node)
+            .put(Enc::key_bytes(anchor.name.slice(self.input)), node);
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3347,7 +3344,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         debug_assert!(closed.is_some_and(|c| collection_id(&c.node) == collection_id(&node)));
 
         *slot = result?;
-        self.bind_anchor(anchor, node)?;
+        self.bind_anchor(anchor, node);
         Ok(node)
     }
 
@@ -3773,7 +3770,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
         let e_node = resolved_tag.resolve_null(loc);
         if let Some(anchor) = anchor {
-            self.bind_anchor(anchor, e_node)?;
+            self.bind_anchor(anchor, e_node);
         }
         Ok(e_node)
     }
@@ -3811,7 +3808,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 if on_path.contains(&id) {
                     continue;
                 }
-                on_path.put(id, ())?;
+                on_path.put(id, ());
                 stack.push(Visit::Exit(id));
             }
             match &node.data {
@@ -4178,7 +4175,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                     let anchors = node_props.take_implicit_key_anchors(colon_line)?;
                     if let Some(key_anchor) = anchors.key_anchor {
-                        self.bind_anchor(key_anchor, first_key)?;
+                        self.bind_anchor(key_anchor, first_key);
                     }
 
                     let mapping = self.parse_block_mapping(
@@ -4286,7 +4283,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
                         let anchors = node_props.take_implicit_key_anchors(scalar_line)?;
                         if let Some(key_anchor) = anchors.key_anchor {
-                            self.bind_anchor(key_anchor, implicit_key)?;
+                            self.bind_anchor(key_anchor, implicit_key);
                         }
 
                         let mapping = self.parse_block_mapping(
@@ -4335,7 +4332,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         };
 
         if let Some(anchor) = has_anchor {
-            self.bind_anchor(anchor, resolved)?;
+            self.bind_anchor(anchor, resolved);
         }
 
         Ok(resolved)

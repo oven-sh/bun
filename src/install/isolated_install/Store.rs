@@ -128,7 +128,7 @@ impl Store {
             if parent_id == maybe_parent_id {
                 return true;
             }
-            let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result
+            parent_dedupe.put(parent_id, ());
         }
 
         len = parent_dedupe.len();
@@ -142,7 +142,7 @@ impl Store {
                 if parent_id == maybe_parent_id {
                     return true;
                 }
-                let _ = parent_dedupe.put(parent_id, ()); // OOM-only Result
+                parent_dedupe.put(parent_id, ());
                 len = parent_dedupe.len();
             }
             i += 1;
@@ -497,7 +497,7 @@ pub mod entry {
             if parent_id == Id::INVALID {
                 continue;
             }
-            let _ = parents.put(parent_id, ()); // OOM-only Result
+            parents.put(parent_id, ());
         }
 
         len = parents.len();
@@ -508,7 +508,7 @@ pub mod entry {
                 if parent_id == Id::INVALID {
                     continue;
                 }
-                let _ = parents.put(parent_id, ()); // OOM-only Result
+                parents.put(parent_id, ());
                 len = parents.len();
             }
             i += 1;

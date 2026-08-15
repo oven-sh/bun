@@ -117,7 +117,7 @@ fn invalid_trusted_dependencies(
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
 ) -> crate::Error {
-    let _ = bun_ast::add_error_pretty!(
+    bun_ast::add_error_pretty!(
         log,
         source,
         loc,
@@ -1232,7 +1232,7 @@ impl Diff {
                                 add_to_lockfile: true,
                                 name: to_name.clone(),
                             },
-                        )?;
+                        );
                     }
                 }
 
@@ -1249,7 +1249,7 @@ impl Diff {
                     if !still_trusted {
                         summary
                             .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
+                            .put(from_trusted, from_name.clone());
                     }
                 }
 
@@ -1274,7 +1274,7 @@ impl Diff {
                                 add_to_lockfile: false,
                                 name: Box::from(entry.key),
                             },
-                        )?;
+                        );
                     }
                 }
 
@@ -1283,7 +1283,7 @@ impl Diff {
                     if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
                         summary
                             .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
+                            .put(from_trusted, from_name.clone());
                     }
                 }
 
@@ -1304,7 +1304,7 @@ impl Diff {
                             add_to_lockfile: true,
                             name: to_name.clone(),
                         },
-                    )?;
+                    );
                 }
 
                 {
@@ -2014,11 +2014,11 @@ impl Package<u64> {
                     debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;
 
-                    let workspace_entry = workspace_paths.get_or_put(name_hash)?;
+                    let workspace_entry = workspace_paths.get_or_put(name_hash);
                     let found_matching_workspace = workspace_entry.found_existing;
 
                     if let Some(ver) = workspace_version {
-                        workspace_versions.put(name_hash, ver)?;
+                        workspace_versions.put(name_hash, ver);
                         for package_dep in &mut package_dependencies[0..dependencies_count as usize]
                         {
                             if match package_dep.version.tag {
@@ -2088,7 +2088,7 @@ impl Package<u64> {
             && !group.behavior.is_peer()
             && !group.behavior.is_workspace()
         {
-            let entry = duplicate_checker_map.get_or_put(external_alias.hash)?;
+            let entry = duplicate_checker_map.get_or_put(external_alias.hash);
             if entry.found_existing {
                 // duplicate dependencies are allowed in optionalDependencies
                 if group.behavior.is_optional() {
@@ -2306,7 +2306,7 @@ impl Package<u64> {
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
                 optional_peer_dependencies
-                    .ensure_unused_capacity(peer_dependencies_meta.expr.property_count())?;
+                    .ensure_unused_capacity(peer_dependencies_meta.expr.property_count());
                 peer_dependencies_meta
                     .expr
                     .for_each_property(|key, _key_loc, meta| {
@@ -2341,7 +2341,7 @@ impl Package<u64> {
                 'brk: {
                     if dependencies_q.expr.is_array() {
                         if !group.behavior.is_workspace() {
-                            let _ = bun_ast::add_error_pretty!(
+                            bun_ast::add_error_pretty!(
                                 log,
                                 source,
                                 dependencies_q.loc,
@@ -2388,7 +2388,7 @@ impl Package<u64> {
                                         value_loc_of(source, packages_query.loc)
                                     };
                                 if !packages_expr.is_array() {
-                                    let _ = log.add_error_fmt(
+                                    log.add_error_fmt(
                                         source,
                                         packages_loc,
                                         format_args!(
@@ -2418,7 +2418,7 @@ impl Package<u64> {
                         let count = rows.len() as u32;
                         for (key, value, key_loc) in rows {
                             let Some(value) = value else {
-                                let _ = bun_ast::add_error_pretty!(
+                                bun_ast::add_error_pretty!(
                                     log,
                                     source,
                                     value_loc_of(source, key_loc),
@@ -2445,14 +2445,14 @@ impl Package<u64> {
                     }
 
                     if group.behavior.is_workspace() {
-                        let _ = bun_ast::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             log,
                             source,
                             dependencies_q.loc,
                             "\"workspaces\" expects an array of strings, e.g.\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
                         );
                     } else {
-                        let _ = bun_ast::add_error_pretty!(
+                        bun_ast::add_error_pretty!(
                             log,
                             source,
                             dependencies_q.loc,
@@ -2476,7 +2476,7 @@ impl Package<u64> {
                     lockfile.trusted_dependencies = Some(Default::default());
                 }
                 let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
-                trusted.ensure_unused_capacity(count)?;
+                trusted.ensure_unused_capacity(count);
                 if let Some(mut items) = q.expr.as_array() {
                     while let Some(item) = items.next() {
                         let Some(name) = item.as_string(&bump) else {
@@ -2582,24 +2582,20 @@ impl Package<u64> {
             if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
                 lockfile
                     .patched_dependencies
-                    .ensure_total_capacity(rows.len())
-                    .expect("unreachable");
+                    .ensure_total_capacity(rows.len());
                 for (key, value, _) in rows {
                     let Some(value) = value else {
                         continue;
                     };
                     let keyhash = semver::string::Builder::string_hash(key);
                     let patch_path = string_builder.append::<String>(value);
-                    lockfile
-                        .patched_dependencies
-                        .put(
-                            keyhash,
-                            PatchedDep {
-                                path: patch_path,
-                                ..Default::default()
-                            },
-                        )
-                        .expect("unreachable");
+                    lockfile.patched_dependencies.put(
+                        keyhash,
+                        PatchedDep {
+                            path: patch_path,
+                            ..Default::default()
+                        },
+                    );
                 }
             }
         }
@@ -2728,7 +2724,7 @@ impl Package<u64> {
                                 let Some(s) = item.as_string(&bump) else {
                                     continue;
                                 };
-                                bundled_deps.insert(s)?;
+                                bundled_deps.insert(s);
                             }
                         }
                     }
@@ -2754,7 +2750,7 @@ impl Package<u64> {
                     // workspace names from their package jsons. duplicates not allowed
                     let gop = seen_workspace_names
                         .get_or_put(semver::string::Builder::string_hash(&entry.name)
-                            as TruncatedPackageNameHash)?;
+                            as TruncatedPackageNameHash);
                     if gop.found_existing {
                         // this path does alot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
@@ -2839,7 +2835,7 @@ impl Package<u64> {
                             Err(_) => bun_ast::Source::init_empty_file(abs_path.as_bytes()),
                         };
 
-                        let _ = log.add_range_error_fmt_with_notes(
+                        log.add_range_error_fmt_with_notes(
                             Some(&src),
                             src.range_of_string(entry.name_loc),
                             notes.into(),
@@ -2901,11 +2897,9 @@ impl Package<u64> {
                         package_dependencies.push(dep);
                         total_dependencies_count += 1;
 
-                        lockfile.workspace_paths.put(external_name.hash, ws_path)?;
+                        lockfile.workspace_paths.put(external_name.hash, ws_path);
                         if let Some(version) = workspace_version {
-                            lockfile
-                                .workspace_versions
-                                .put(external_name.hash, version)?;
+                            lockfile.workspace_versions.put(external_name.hash, version);
                         }
                     }
                 }
@@ -3221,7 +3215,7 @@ pub mod serializer {
             return Err(crate::Error::LockfileValidationFailedInvalidPackageListRange);
         }
         stream.pos = begin_at;
-        list.ensure_total_capacity(list_len as usize)?;
+        list.ensure_total_capacity(list_len as usize);
 
         let mut needs_update = false;
         if migrate_from_v2 {
@@ -3229,7 +3223,7 @@ pub mod serializer {
             let mut list_for_migrating_from_v2 = <List<u32>>::default();
             // defer list_for_migrating_from_v2.deinit(allocator); — Drop handles it
 
-            list_for_migrating_from_v2.ensure_total_capacity(list_len as usize)?;
+            list_for_migrating_from_v2.ensure_total_capacity(list_len as usize);
             // SAFETY: capacity reserved above; `load_fields` writes every column.
             unsafe { list_for_migrating_from_v2.set_len(list_len as usize) };
 
@@ -3288,7 +3282,7 @@ pub mod serializer {
                     },
                 };
 
-                list.append(new)?;
+                list.append(new);
             }
         } else {
             // SAFETY: capacity reserved above; `load_fields` writes every column.

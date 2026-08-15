@@ -72,7 +72,6 @@ impl<'a> StringJoiner<'a> {
         if data.is_empty() {
             return;
         }
-        // bun.handleOom(this.allocator.dupe(u8, data)) → Box<[u8]> (aborts on OOM)
         self.push_owned(Box::from(data));
     }
 

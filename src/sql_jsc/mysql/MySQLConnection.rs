@@ -527,9 +527,7 @@ impl MySQLConnection {
                         self.read_buffer.head = 0;
                         self.last_message_start = 0;
                         self.read_buffer.byte_list.clear();
-                        self.read_buffer
-                            .write(&data[offset.get()..])
-                            .unwrap_or_else(|_| panic!("failed to write to read buffer"));
+                        self.read_buffer.write(&data[offset.get()..]);
                     } else {
                         bun_core::handle_error_return_trace(err);
                         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
@@ -544,9 +542,7 @@ impl MySQLConnection {
         {
             self.read_buffer.head = self.last_message_start;
 
-            self.read_buffer
-                .write(data)
-                .unwrap_or_else(|_| panic!("failed to write to read buffer"));
+            self.read_buffer.write(data);
             // reshaped for borrowck — `self.process_packets(self.buffered_reader())`
             // borrows `&mut self` twice. Construct the reader first; it holds a
             // `*mut Self` so the second borrow doesn't conflict.
@@ -1687,9 +1683,7 @@ impl Writer {
 
 impl WriterContext for Writer {
     fn write(self, data: &[u8]) -> Result<(), AnyMySQLError> {
-        self.write_buffer()
-            .write(data)
-            .map_err(|_| AnyMySQLError::OutOfMemory)?;
+        self.write_buffer().write(data);
         Ok(())
     }
 

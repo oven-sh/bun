@@ -79,19 +79,13 @@ impl ArrayBufferSink {
     }
 
     pub fn write(&mut self, data: &streams::Result) -> streams::result::Writable {
-        let len = match self.bytes.write(data.slice()) {
-            Ok(len) => len,
-            Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
-        };
+        let len = self.bytes.write(data.slice());
         self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
 
     pub(crate) fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
-        let len = match self.bytes.write_latin1(data.slice()) {
-            Ok(len) => len,
-            Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
-        };
+        let len = self.bytes.write_latin1(data.slice());
         self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }
@@ -102,10 +96,7 @@ impl ArrayBufferSink {
         // length when the stream encoding is UTF-16. bytemuck checks both at
         // runtime.
         let utf16: &[u16] = bytemuck::cast_slice(bytes);
-        let len = match self.bytes.write_utf16(utf16) {
-            Ok(len) => len,
-            Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
-        };
+        let len = self.bytes.write_utf16(utf16);
         self.source.ready(None, None);
         streams::result::Writable::Owned(len as u64)
     }

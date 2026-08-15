@@ -936,13 +936,13 @@ impl Lockfile {
         // it (never `Box::leak` to satisfy a lifetime).
         let mut new: Box<Lockfile> = Box::default();
         new.string_pool
-            .ensure_total_capacity(old.string_pool.capacity())?;
+            .ensure_total_capacity(old.string_pool.capacity());
         new.package_index
-            .ensure_total_capacity(old.package_index.capacity())?;
-        new.packages.ensure_total_capacity(old.packages.len())?;
+            .ensure_total_capacity(old.package_index.capacity());
+        new.packages.ensure_total_capacity(old.packages.len());
         new.buffers.preallocate(&old.buffers)?;
         new.patched_dependencies
-            .ensure_total_capacity(old.patched_dependencies.count())?;
+            .ensure_total_capacity(old.patched_dependencies.count());
 
         // Reset the FIFO read cursor without discarding capacity.
         // `LinearFifo::head` is private; the queue is always drained to empty
@@ -998,9 +998,9 @@ impl Lockfile {
             // Clone workspace_paths and workspace_versions at the end.
             if old.workspace_paths.count() > 0 || old.workspace_versions.count() > 0 {
                 new.workspace_paths
-                    .ensure_total_capacity(old.workspace_paths.count())?;
+                    .ensure_total_capacity(old.workspace_paths.count());
                 new.workspace_versions
-                    .ensure_total_capacity(old.workspace_versions.count())?;
+                    .ensure_total_capacity(old.workspace_versions.count());
 
                 // Field-level split borrow of `new` (string_bytes + string_pool).
                 let mut workspace_paths_builder = string_builder!(new);
@@ -1055,7 +1055,7 @@ impl Lockfile {
                     .copy_from_slice(old.workspace_paths.keys());
 
                 new.workspace_versions
-                    .ensure_total_capacity(old.workspace_versions.count())?;
+                    .ensure_total_capacity(old.workspace_versions.count());
                 // SAFETY: capacity reserved immediately above; every slot is filled by
                 // the zip loop below before `re_index()`.
                 unsafe {
@@ -1075,8 +1075,8 @@ impl Lockfile {
 
                 workspace_paths_builder.clamp();
 
-                new.workspace_versions.re_index()?;
-                new.workspace_paths.re_index()?;
+                new.workspace_versions.re_index();
+                new.workspace_paths.re_index();
             }
         }
 
@@ -1159,7 +1159,7 @@ fn clean_migrate_patched_dependencies_cold(
         let mut patchdep = *v;
         patchdep.path = builder
             .append::<SemverString>(patchdep.path.slice(old.buffers.string_bytes.as_slice()));
-        new.patched_dependencies.put(*k, patchdep)?;
+        new.patched_dependencies.put(*k, patchdep);
     }
     Ok(())
 }
@@ -1683,7 +1683,7 @@ impl<'a> Printer<'a> {
         let mut env_loader = DotEnv::Loader::init();
         env_loader.quiet = true;
 
-        env_loader.load_process()?;
+        env_loader.load_process();
         env_loader.load(
             &entries,
             &[] as &[&[u8]],
@@ -2000,7 +2000,7 @@ impl Lockfile {
     pub(crate) fn mark_exact_pin(&mut self, id: PackageID) {
         let i = id as usize;
         if self.exact_pinned.bit_length() <= i {
-            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
+            self.exact_pinned.resize(i + 1, false);
         }
         self.exact_pinned.set(i);
     }
@@ -2121,12 +2121,12 @@ impl Lockfile {
         &mut self,
         pkg: &mut Package,
     ) -> Result<PackageID, AllocError> {
-        let entry = self.package_index.get_or_put(pkg.name_hash)?;
+        let entry = self.package_index.get_or_put(pkg.name_hash);
 
         if !entry.found_existing {
             let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
             pkg.meta.id = new_id;
-            self.packages.append(*pkg)?;
+            self.packages.append(*pkg);
             *entry.value_ptr = PackageIndexEntry::Id(new_id);
             return Ok(new_id);
         }
@@ -2147,7 +2147,7 @@ impl Lockfile {
 
                 let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
-                self.packages.append(*pkg)?;
+                self.packages.append(*pkg);
 
                 resolutions = self.packages.items_resolution();
 
@@ -2180,7 +2180,7 @@ impl Lockfile {
 
                 let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
                 pkg.meta.id = new_id;
-                self.packages.append(*pkg)?;
+                self.packages.append(*pkg);
 
                 resolutions = self.packages.items_resolution();
 
@@ -2208,7 +2208,7 @@ impl Lockfile {
         id: PackageID,
         name_hash: PackageNameHash,
     ) -> Result<(), AllocError> {
-        let gpe = self.package_index.get_or_put(name_hash)?;
+        let gpe = self.package_index.get_or_put(name_hash);
 
         if gpe.found_existing {
             let index: &mut PackageIndexEntry = gpe.value_ptr;
@@ -2277,7 +2277,7 @@ impl Lockfile {
 
         let mut package = *package_;
         package.meta.id = id;
-        self.packages.append(package)?;
+        self.packages.append(package);
         self.get_or_put_id(id, name_hash)?;
 
         debug_assert!(self.get_package_id(name_hash, None, &resolution).is_some());
@@ -2505,7 +2505,7 @@ impl<'a> StringBuilder<'a> {
         debug_assert!(self.len <= self.cap); // didn't count everything
         debug_assert!(self.ptr.is_some()); // must call allocate first
 
-        let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
+        let string_entry = self.string_pool.get_or_put(hash);
         if !string_entry.found_existing {
             // See `append_without_pool` — safe indexing into the region
             // `allocate()` already resized.

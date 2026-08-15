@@ -282,7 +282,7 @@ impl CreateCommand {
         let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
         let mut env_loader = DotEnv::Loader::init();
 
-        env_loader.load_process()?;
+        env_loader.load_process();
 
         let dirname: &[u8] = if positionals.len() == 1 {
             bun_paths::basename(template)
@@ -1301,7 +1301,7 @@ impl CreateCommand {
 
         let mut env_loader = DotEnv::Loader::init();
 
-        env_loader.load_process()?;
+        env_loader.load_process();
 
         // var unsupported_packages = UnsupportedPackages{};
         // SAFETY: single-threaded CLI access to module-level static path buffer
@@ -1937,7 +1937,7 @@ impl Example {
                         length: u32::try_from(headers_buf.len() - b"Authorization".len())
                             .expect("int cast"),
                     },
-                })?;
+                });
             }
         }
 
@@ -2323,7 +2323,7 @@ impl CreateListExamplesCommand {
         let filesystem = fs::FileSystem::init(None)?;
         let mut env_loader = DotEnv::Loader::init();
 
-        env_loader.load_process()?;
+        env_loader.load_process();
 
         let mut progress = Progress {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),

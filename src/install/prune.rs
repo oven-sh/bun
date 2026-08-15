@@ -563,14 +563,14 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
         )
     };
 
-    let mut selected = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
+    let mut selected = DynamicBitSet::init_empty(pkg_res.len());
     for id in ids {
         if (id as usize) < pkg_res.len() {
             selected.set(id as usize);
         }
     }
 
-    let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
+    let mut visited = DynamicBitSet::init_empty(pkg_res.len());
     let mut protected_aliases: Vec<Box<[u8]>> = Vec::new();
     let mut worklist: Vec<PackageID> = Vec::new();
     for importer in 0..pkg_res.len() {
@@ -697,9 +697,9 @@ impl<'a> HoistedTree<'a> {
             };
         }
 
-        let checked = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let matched = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let missing = handle_oom(DynamicBitSet::init_empty(expected.len()));
+        let checked = DynamicBitSet::init_empty(expected.len());
+        let matched = DynamicBitSet::init_empty(expected.len());
+        let missing = DynamicBitSet::init_empty(expected.len());
         HoistedTree {
             lockfile,
             trees,
@@ -923,7 +923,7 @@ fn plan_hoisted(
         None => Vec::new(),
     };
 
-    let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
+    let mut visited = DynamicBitSet::init_empty(pkg_res.len());
     for tree_idx in 0..hoisted.folders.len() {
         let folder_path = hoisted.path(tree_idx);
         if folder_path.is_empty() {
@@ -1681,7 +1681,7 @@ fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
 
 fn execute(plan: &Plan, quiet: bool) -> usize {
     let mut failed = 0usize;
-    let mut removed_from = handle_oom(DynamicBitSet::init_empty(plan.folders.len()));
+    let mut removed_from = DynamicBitSet::init_empty(plan.folders.len());
 
     for removal in &plan.removals {
         let dir = plan.dir(removal.folder);

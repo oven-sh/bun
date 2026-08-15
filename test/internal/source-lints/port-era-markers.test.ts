@@ -45,6 +45,11 @@ const banned: { pattern: RegExp; reason: string }[] = [
     pattern: /\bun-gated\b/i,
     reason: "'un-gated' is port-era progress narrative, not useful documentation",
   },
+  {
+    pattern: /\bhandleOom\b/,
+    reason:
+      "'bun.handleOom' is the Zig idiom; in Rust an allocation-only call is written bare (Vec/Box abort on OOM and the crash handler reports it), so the comment only describes wrapping that should not exist",
+  },
 ];
 
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));

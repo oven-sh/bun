@@ -265,7 +265,6 @@ fn bun_fetch_preconnect(
             .throw());
     }
 
-    // bun.handleOom(url_str.toOwnedSlice(...)) → to_owned_slice() aborts on OOM.
     // `preconnect` takes a `URL<'static>` that borrows a `Box<[u8]>` href and
     // assumes ownership when `is_url_owned == true` (it reconstructs the Box
     // to free it). Hand the allocation off via `heap::alloc`.
@@ -537,7 +536,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
+            let _ = req.ensure_url();
             break 'extract_url req.url.get().dupe_ref();
         }
 
@@ -2106,8 +2105,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // see https://github.com/oven-sh/bun/issues/2985
         promise,
     );
-    // `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
-
     // `body` has been *moved* into `FetchOptions`; the FetchTasklet now owns
     // the single live reference.
 

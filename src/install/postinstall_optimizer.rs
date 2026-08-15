@@ -62,7 +62,7 @@ impl PostinstallOptimizer {
                 continue;
             }
             list.dynamic
-                .put(semver::string::Builder::string_hash(str), value)?;
+                .put(semver::string::Builder::string_hash(str), value);
         }
 
         Ok(true)

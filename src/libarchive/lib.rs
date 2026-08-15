@@ -1417,7 +1417,7 @@ impl Archiver {
                                 &temp_buf[..path_to_use_.len()]
                             };
 
-                            let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
+                            let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use);
                             if !overwrite_entry.found_existing {
                                 *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
                             }
@@ -1831,8 +1831,7 @@ impl Archiver {
                                     if A::HAS_APPEND_MUTABLE {
                                         let result = ctx_
                                             .all_files
-                                            .get_or_put_adapted(&h, &archiver::U64Context)
-                                            .expect("unreachable");
+                                            .get_or_put_adapted(&h, &archiver::U64Context);
                                         if !result.found_existing {
                                             *result.value_ptr = appender
                                                 .append_mutable(path_slice)?

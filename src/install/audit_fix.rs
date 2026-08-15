@@ -151,7 +151,7 @@ impl AdvisoryIndex {
             spans,
             groups,
             by_name,
-            matched_before_install: DynamicBitSet::init_empty(advisories.len())?,
+            matched_before_install: DynamicBitSet::init_empty(advisories.len()),
         })
     }
 
@@ -637,7 +637,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
     let mut unfixable: Vec<UnfixableFix> = Vec::new();
     let mut manifest_unavailable: Vec<ManifestUnavailable> = Vec::new();
     let mut expected_gone: Vec<(PackageNameHash, Box<[u8]>)> = Vec::new();
-    let mut advisory_still_present = index.matched_before_install.clone()?;
+    let mut advisory_still_present = index.matched_before_install.clone();
     advisory_still_present.toggle_all();
 
     for inst in instances {
@@ -1122,7 +1122,7 @@ impl FixPlan {
         let planned = &self.advisories;
         let installed = AdvisoryIndex::build(installed_advisories).unwrap_or_oom();
 
-        let mut plan_remaining = planned.matched_before_install.clone().unwrap_or_oom();
+        let mut plan_remaining = planned.matched_before_install.clone();
         plan_remaining.toggle_all();
         let staying: Vec<(PackageNameHash, &[u8])> = self
             .blocked

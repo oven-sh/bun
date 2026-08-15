@@ -1686,10 +1686,7 @@ impl<T> PkgMap<T> {
 
     // deinit → Drop (StringHashMap drops itself)
 
-    fn get_or_put(
-        &mut self,
-        name: &[u8],
-    ) -> Result<bun_collections::string_hash_map::GetOrPutResult<'_, T>, bun_alloc::AllocError>
+    fn get_or_put(&mut self, name: &[u8]) -> bun_collections::string_hash_map::GetOrPutResult<'_, T>
     where
         T: Default,
     {
@@ -2144,7 +2141,7 @@ pub(crate) fn parse_into_binary_lockfile(
             let entry = lockfile.catalogs.default.get_or_put_adapted(
                 &dep_name,
                 &string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
-            )?;
+            );
 
             if entry.found_existing {
                 log.add_error(Some(source), row.key_loc, b"Duplicate catalog entry");
@@ -2242,7 +2239,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let entry = group.get_or_put_adapted(
                     &dep_name,
                     &string_array_hash_context(lockfile.buffers.string_bytes.as_slice()),
-                )?;
+                );
 
                 if entry.found_existing {
                     log.add_error(Some(source), row.key_loc, b"Duplicate catalog entry");
@@ -2405,7 +2402,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
         root_pkg.meta.id = 0;
         let root_name_hash = root_pkg.name_hash;
-        lockfile.packages.append(root_pkg)?;
+        lockfile.packages.append(root_pkg);
         lockfile.get_or_put_id(0, root_name_hash)?;
     }
 
@@ -2478,7 +2475,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 // there should be no duplicates
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                let entry = pkg_map.get_or_put(name)?;
+                let entry = pkg_map.get_or_put(name);
                 if entry.found_existing {
                     log.add_error_fmt(
                         source,
@@ -2702,7 +2699,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             if lockfile_version != Version::V0 {
                 if res.tag == ResolutionTag::Workspace {
-                    let entry = pkg_map.get_or_put(pkg_path)?;
+                    let entry = pkg_map.get_or_put(pkg_path);
                     if entry.found_existing {
                         // this workspace package is already in the package map, because
                         // it was added as a workspaceOnly package earlier
@@ -3029,7 +3026,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-            let entry = pkg_map.get_or_put(pkg_path)?;
+            let entry = pkg_map.get_or_put(pkg_path);
             if entry.found_existing {
                 log.add_error(Some(source), key_loc, b"Duplicate package path");
                 return Err(ParseError::InvalidPackageKey);
@@ -3115,7 +3112,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                 if !dep.behavior.is_workspace()
                     && seen_deps
-                        .get_or_put(dep.name.slice(string_buf))?
+                        .get_or_put(dep.name.slice(string_buf))
                         .found_existing
                 {
                     resolutions[dep_id as usize] = res_id;
@@ -3198,7 +3195,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    if seen_deps.get_or_put(dep_name)?.found_existing {
+                    if seen_deps.get_or_put(dep_name).found_existing {
                         resolutions[dep_id as usize] = res_id;
                         continue;
                     }

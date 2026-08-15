@@ -254,22 +254,22 @@ impl SharedEnv {
                 // A value can still be entered, but we need to find a workaround
                 // so the user can see what is being prompted. By default the settings
                 // below will cause no prompt and throw instead.
-                let mut cloned = bun_core::handle_oom(other.map.clone_with_allocator());
+                let mut cloned = other.map.clone();
 
                 if cloned.get(b"GIT_ASKPASS").is_none() {
                     let config = SloppyGlobalGitConfig::get();
                     if !config.has_askpass {
-                        bun_core::handle_oom(cloned.put(b"GIT_ASKPASS", b"echo"));
+                        cloned.put(b"GIT_ASKPASS", b"echo");
                     }
                 }
 
                 if cloned.get(b"GIT_SSH_COMMAND").is_none() {
                     let config = SloppyGlobalGitConfig::get();
                     if !config.has_ssh_command {
-                        bun_core::handle_oom(cloned.put(
+                        cloned.put(
                             b"GIT_SSH_COMMAND",
                             b"ssh -oStrictHostKeyChecking=accept-new",
-                        ));
+                        );
                     }
                 }
 
@@ -363,10 +363,8 @@ pub trait RepositoryExt: Sized {
 /// A module-level free fn because trait methods cannot be private; called only
 /// from this file's `download`/`find_commit`/`checkout`.
 fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
-    // `Map` is move-only; clone via `clone_with_allocator` so callers can
-    // hand us a shared `&Map` (matches `PackageManagerTask` call sites).
-    let mut env = bun_core::handle_oom(env.clone_with_allocator());
-    let std_map = env.std_env_map()?;
+    let mut env = env.clone();
+    let std_map = env.std_env_map();
 
     // `bun_spawn::run` does POSIX argv/envp marshalling
     // + `process::sync::spawn`. On Windows it supplies the thread's

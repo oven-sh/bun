@@ -698,10 +698,7 @@ impl PublishCommand {
             let script_env = context
                 .script_env
                 .expect("DIRECTORY_PUBLISH=true sets script_env");
-            script_env
-                .map
-                .put(b"npm_command", b"publish")
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+            script_env.map.put(b"npm_command", b"publish");
 
             // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
@@ -1277,7 +1274,7 @@ impl PublishCommand {
                     let mut req = http::AsyncHTTP::init_sync(
                         http::Method::GET,
                         done_url.clone(),
-                        auth_headers.entries.clone()?,
+                        auth_headers.entries.clone(),
                         auth_headers.content.written_slice(),
                         b"",
                         None,
@@ -1545,7 +1542,7 @@ impl PublishCommand {
                 }
             };
             let _close = scopeguard::guard(workspace_root, |fd| {
-                let _ = fd.close();
+                fd.close();
             });
 
             Self::normalize_bin(json, &bump, package_name, workspace_root)?;
@@ -1584,7 +1581,7 @@ impl PublishCommand {
     pub(crate) fn find_workspace_readme(abs_workspace_path: &[u8]) -> Option<ReadmeInfo> {
         let workspace_dir = bun_sys::open_dir_absolute(abs_workspace_path).ok()?;
         let _close = scopeguard::guard(workspace_dir, |d| {
-            let _ = d.close();
+            d.close();
         });
 
         let mut iter = DirIterator::iterate(workspace_dir);
@@ -1805,7 +1802,7 @@ impl PublishCommand {
                     let (dir, dir_subpath, close_dir) = dir_info;
                     let _close = scopeguard::guard(dir, move |d| {
                         if close_dir {
-                            let _ = d.close();
+                            d.close();
                         }
                     });
 

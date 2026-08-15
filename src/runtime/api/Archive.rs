@@ -1486,7 +1486,7 @@ fn extract_to_disk_filtered(
                         remaining -= bytes_read;
                     }
                 }
-                let _ = file_fd.close();
+                file_fd.close();
 
                 if write_success {
                     count += 1;

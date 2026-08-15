@@ -321,10 +321,10 @@ impl Listener {
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
                 if let Some(handles) = crate::jsc_hooks::active_handles() {
-                    bun_core::handle_oom(handles.put(
+                    handles.put(
                         crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
                         (),
-                    ));
+                    );
                 }
                 return Ok(this_value);
             }
@@ -592,10 +592,10 @@ impl Listener {
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         if let Some(handles) = crate::jsc_hooks::active_handles() {
-            bun_core::handle_oom(handles.put(
+            handles.put(
                 crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
                 (),
-            ));
+            );
         }
 
         Ok(this_value)

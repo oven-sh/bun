@@ -331,7 +331,7 @@ fn build_dependency_tree(
             let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
 
             // `StringHashMap::get_or_put` always boxes the key on miss.
-            let result = dependency_tree.get_or_put(resolved_name)?;
+            let result = dependency_tree.get_or_put(resolved_name);
             result.value_ptr.push(Box::<[u8]>::from(package_name));
         }
     }
@@ -509,7 +509,7 @@ fn collect_packages_for_audit(
                     versions: Vec::new(),
                 });
                 let found = (group_idx, packages_list.len() - 1);
-                by_name.put(pkg_name_hashes[idx], found)?;
+                by_name.put(pkg_name_hashes[idx], found);
                 found
             }
         };
@@ -904,7 +904,7 @@ fn find_dependency_paths(
     if let Some(dependents) = dependency_tree.get(target_package) {
         for dependent in dependents {
             queue.push_back(dependent.clone());
-            parent_map.put(dependent, Box::<[u8]>::from(target_package))?;
+            parent_map.put(dependent, Box::<[u8]>::from(target_package));
         }
     }
 
@@ -912,7 +912,7 @@ fn find_dependency_paths(
         if visited.contains_key(&*current) {
             continue;
         }
-        visited.put(&current, ())?;
+        visited.put(&current, ());
 
         let mut is_root_dep = false;
         for dependency in dep_slice {
@@ -959,7 +959,7 @@ fn find_dependency_paths(
                 }
 
                 path.path.push(trace.clone());
-                seen_in_trace.put(&trace, ())?;
+                seen_in_trace.put(&trace, ());
 
                 if let Some(parent) = parent_map.get(&*trace) {
                     trace.clone_from(parent);
@@ -984,7 +984,7 @@ fn find_dependency_paths(
             for dependent in dependents {
                 if !visited.contains_key(&**dependent) {
                     queue.push_back(dependent.clone());
-                    parent_map.put(dependent, current.clone())?;
+                    parent_map.put(dependent, current.clone());
                 }
             }
         }

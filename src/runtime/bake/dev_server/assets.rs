@@ -74,7 +74,7 @@ impl Assets {
         // `gop` holds key/value ptrs into `path_map` and cannot stay live
         // across calls that take `&mut self`. Capture `index` /
         // `found_existing` and re-derive the value slot at the end instead.
-        let gop = self.path_map.get_or_put(abs_path)?;
+        let gop = self.path_map.get_or_put(abs_path);
         let path_index = gop.index;
         let found_existing = gop.found_existing;
         let existing_entry = if found_existing {
@@ -182,7 +182,7 @@ impl Assets {
     /// `Assets.reindexIfNeeded`.
     pub(crate) fn reindex_if_needed(&mut self) -> Result<(), bun_alloc::AllocError> {
         if self.needs_reindex {
-            self.files.re_index()?;
+            self.files.re_index();
             self.needs_reindex = false;
         }
         Ok(())

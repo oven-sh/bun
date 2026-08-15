@@ -137,7 +137,7 @@ impl Writer {
     fn tee(&self, chunk: &[u8]) {
         if let Some(bl) = self.bytelist {
             // SAFETY: see doc comment.
-            let _ = unsafe { (*bl).append_slice(chunk) };
+            unsafe { (*bl).append_slice(chunk) };
         }
     }
 }

@@ -98,7 +98,7 @@ impl UntrustedCommand {
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
             if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
-                untrusted_dep_ids.put(dep_id, ())?;
+                untrusted_dep_ids.put(dep_id, ());
             }
         }
 
@@ -161,7 +161,7 @@ impl UntrustedCommand {
                     if scripts_list.total == 0 || scripts_list.items.is_empty() {
                         continue;
                     }
-                    untrusted_deps.put(dep_id, scripts_list)?;
+                    untrusted_deps.put(dep_id, scripts_list);
                 }
             }
 
@@ -319,7 +319,7 @@ impl TrustCommand {
             let pkg_name = packages.items_name()[package_id as usize].slice(buf);
             let resolution = &resolutions[package_id as usize];
             if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
-                untrusted_dep_ids.put(dep_id, ())?;
+                untrusted_dep_ids.put(dep_id, ());
             }
         }
 
@@ -414,7 +414,7 @@ impl TrustCommand {
 
                     let total = scripts_list.total as usize;
                     // even if it is skipped we still add to scripts_at_depth for logging later
-                    let entry = scripts_at_depth.get_or_put(node_modules.depth)?;
+                    let entry = scripts_at_depth.get_or_put(node_modules.depth);
                     if !entry.found_existing {
                         *entry.value_ptr = Vec::new();
                     }
@@ -425,7 +425,7 @@ impl TrustCommand {
                     });
 
                     if !skip {
-                        package_names_to_add.put(alias, ())?;
+                        package_names_to_add.put(alias, ());
                         scripts_count += total;
                     }
                 }
@@ -627,7 +627,7 @@ impl TrustCommand {
                         bun_semver::string::Builder::string_hash(name)
                             as install::TruncatedPackageNameHash,
                         Box::<[u8]>::from(&**name),
-                    )?;
+                    );
             }
         }
 

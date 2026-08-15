@@ -28,8 +28,6 @@ use bun_alloc::{DefaultAlloc, HashbrownAllocator};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use bun_alloc::AllocError;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions
 // ──────────────────────────────────────────────────────────────────────────
@@ -416,10 +414,9 @@ impl<K, V, C: Default, A: MapAllocator> Default for ArrayHashMap<K, V, C, A> {
     }
 }
 
-impl<K: Clone, V: Clone, C: Default, A: MapAllocator> ArrayHashMap<K, V, C, A> {
-    /// Fallible (OOM) clone; kept as `Result` for API stability.
-    pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self {
+impl<K: Clone, V: Clone, C: Default, A: MapAllocator> Clone for ArrayHashMap<K, V, C, A> {
+    fn clone(&self) -> Self {
+        Self {
             keys: self.keys.clone(),
             values: self.values.clone(),
             hashes: self.hashes.clone(),
@@ -427,7 +424,7 @@ impl<K: Clone, V: Clone, C: Default, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             ctx: C::default(),
             #[cfg(debug_assertions)]
             pointer_stability: core::sync::atomic::AtomicBool::new(false),
-        })
+        }
     }
 }
 
@@ -530,13 +527,8 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.index = None;
     }
 
-    pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
-        let need = n.saturating_sub(self.keys.len());
-        self.keys.reserve(need);
-        self.values.reserve(need);
-        self.hashes.reserve(need);
-        self.reserve_index_to_capacity();
-        Ok(())
+    pub fn ensure_total_capacity(&mut self, n: usize) {
+        self.reserve(n.saturating_sub(self.keys.len()));
     }
 
     /// Bulk-resize the backing columns so callers can
@@ -586,15 +578,12 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         self.push_entry(key, value, h);
     }
 
-    pub fn ensure_unused_capacity(&mut self, additional: usize) -> Result<(), AllocError> {
-        self.keys.reserve(additional);
-        self.values.reserve(additional);
-        self.hashes.reserve(additional);
-        self.reserve_index_to_capacity();
-        Ok(())
+    #[inline]
+    pub fn ensure_unused_capacity(&mut self, additional: usize) {
+        self.reserve(additional);
     }
 
-    /// std-HashMap-compat alias for `ensure_unused_capacity` (infallible).
+    /// std-HashMap-compat alias for `ensure_unused_capacity`.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
         self.keys.reserve(additional);
@@ -990,7 +979,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 
     /// Recompute every stored hash from the current keys. Call after mutating
     /// keys via `keys_mut()`.
-    pub fn re_index(&mut self) -> Result<(), AllocError> {
+    pub fn re_index(&mut self) {
         for (i, k) in self.keys.iter().enumerate() {
             self.hashes[i] = self.ctx.hash(k);
         }
@@ -998,10 +987,9 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if self.keys.len() > INDEX_THRESHOLD {
             self.rebuild_index();
         }
-        Ok(())
     }
 
-    pub fn put(&mut self, key: K, value: V) -> Result<(), AllocError> {
+    pub fn put(&mut self, key: K, value: V) {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
             // Only the value is assigned on hit; the original key is preserved.
@@ -1009,10 +997,9 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         } else {
             self.push_entry(key, value, h);
         }
-        Ok(())
     }
 
-    pub fn put_no_clobber(&mut self, key: K, value: V) -> Result<(), AllocError> {
+    pub fn put_no_clobber(&mut self, key: K, value: V) {
         let h = self.ctx.hash(&key);
         debug_assert!(
             self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx))
@@ -1020,13 +1007,12 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             "put_no_clobber: key already present",
         );
         self.push_entry(key, value, h);
-        Ok(())
     }
 
     /// PERF: skips the grow check, but `Vec::push` will still reallocate if
     /// the caller lied about capacity.
     pub fn put_assume_capacity(&mut self, key: K, value: V) {
-        let _ = self.put(key, value);
+        self.put(key, value);
     }
 
     /// std-HashMap-compat alias for `put`, returning the displaced value.
@@ -1180,45 +1166,35 @@ impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
 impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// Look up `key`; if absent, append it with a defaulted
     /// value slot and return `found_existing = false`.
-    pub fn get_or_put(&mut self, key: K) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
-        let h = self.ctx.hash(&key);
-        if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
-            return Ok(self.gop_at(i, true));
-        }
-        let i = self.push_entry(key, V::default(), h);
-        Ok(self.gop_at(i, false))
-    }
-
-    /// Like [`get_or_put`] but skips the grow
-    /// check. Caller must have called `ensure_unused_capacity` first.
-    pub fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, K, V> {
+    pub fn get_or_put(&mut self, key: K) -> GetOrPutResult<'_, K, V> {
         let h = self.ctx.hash(&key);
         if let Some(i) = self.find_hash(h, |k, idx| self.ctx.eql(&key, k, idx)) {
             return self.gop_at(i, true);
         }
-        // PERF: `push_within_capacity` is unstable; `push` is a no-grow
-        // when the prior `ensure_unused_capacity` reserved the slot.
+        // PERF: `push_within_capacity` is unstable; `push` is a no-grow when
+        // a prior `ensure_unused_capacity` reserved the slot.
         let i = self.push_entry(key, V::default(), h);
         self.gop_at(i, false)
     }
 
+    /// Alias for [`get_or_put`]; `Vec::push` still grows if the caller lied
+    /// about capacity.
+    #[inline]
+    pub fn get_or_put_assume_capacity(&mut self, key: K) -> GetOrPutResult<'_, K, V> {
+        self.get_or_put(key)
+    }
+
     /// Like `get_or_put` but writes `value` when absent.
-    pub fn get_or_put_value(
-        &mut self,
-        key: K,
-        value: V,
-    ) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
-        let gop = self.get_or_put(key)?;
+    pub fn get_or_put_value(&mut self, key: K, value: V) -> GetOrPutResult<'_, K, V> {
+        let gop = self.get_or_put(key);
         if !gop.found_existing {
-            // SAFETY: re-borrow at same index — `gop` borrows `self` so go
-            // through the slot it already points at.
             *gop.value_ptr = value;
         }
         // Can't return `gop` while it borrows in the branch above without
         // NLL gymnastics; recompute via index.
         let i = gop.index;
         let found = gop.found_existing;
-        Ok(self.gop_at(i, found))
+        self.gop_at(i, found)
     }
 }
 
@@ -1230,16 +1206,16 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         &mut self,
         key: &Q,
         adapter: &Ad,
-    ) -> Result<GetOrPutResult<'_, K, V>, AllocError>
+    ) -> GetOrPutResult<'_, K, V>
     where
         Ad: ArrayHashAdapter<Q, K>,
     {
         let h = adapter.hash(key);
         if let Some(i) = self.find_hash(h, |k, idx| adapter.eql(key, k, idx)) {
-            return Ok(self.gop_at(i, true));
+            return self.gop_at(i, true);
         }
         let i = self.push_entry(K::default(), V::default(), h);
-        Ok(self.gop_at(i, false))
+        self.gop_at(i, false)
     }
 }
 
@@ -1284,13 +1260,12 @@ impl<V, C: Default, A: MapAllocator> Default for StringArrayHashMap<V, C, A> {
     }
 }
 
-impl<V: Clone, C: Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
-    /// Fallible (OOM) clone; kept as `Result` for API stability.
-    pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self {
-            inner: self.inner.clone()?,
+impl<V: Clone, C: Default, A: MapAllocator> Clone for StringArrayHashMap<V, C, A> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
             ctx: C::default(),
-        })
+        }
     }
 }
 
@@ -1364,18 +1339,17 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         }
     }
 
-    pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
+    pub fn put(&mut self, key: &[u8], value: V) {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             self.inner.values[i] = value;
         } else {
             self.inner.push_entry(box_key::<A>(key), value, h);
         }
-        Ok(())
     }
 
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
-        let _ = self.put(key, value);
+        self.put(key, value);
     }
 
     pub fn swap_remove(&mut self, key: &[u8]) -> bool {
@@ -1399,29 +1373,26 @@ impl<V: Default, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArr
     /// See `ArrayHashMap::get_or_put`. The key is boxed on insert; callers that
     /// then write `*gop.key_ptr = Box::from(key)` are doing a redundant alloc —
     /// harmless.
-    pub fn get_or_put(
-        &mut self,
-        key: &[u8],
-    ) -> Result<GetOrPutResult<'_, Box<[u8], A>, V>, AllocError> {
+    pub fn get_or_put(&mut self, key: &[u8]) -> GetOrPutResult<'_, Box<[u8], A>, V> {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
-            return Ok(self.inner.gop_at(i, true));
+            return self.inner.gop_at(i, true);
         }
         let i = self.inner.push_entry(box_key::<A>(key), V::default(), h);
-        Ok(self.inner.gop_at(i, false))
+        self.inner.gop_at(i, false)
     }
 
     pub fn get_or_put_value(
         &mut self,
         key: &[u8],
         value: V,
-    ) -> Result<GetOrPutResult<'_, Box<[u8], A>, V>, AllocError> {
+    ) -> GetOrPutResult<'_, Box<[u8], A>, V> {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
-            return Ok(self.inner.gop_at(i, true));
+            return self.inner.gop_at(i, true);
         }
         let i = self.inner.push_entry(box_key::<A>(key), value, h);
-        Ok(self.inner.gop_at(i, false))
+        self.inner.gop_at(i, false)
     }
 }
 
@@ -1749,13 +1720,11 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         self.inner.values_mut()
     }
 
-    pub fn ensure_total_capacity(&mut self, n: usize) -> Result<(), AllocError> {
-        let need = n.saturating_sub(self.inner.len());
-        self.inner.reserve(need);
-        Ok(())
+    pub fn ensure_total_capacity(&mut self, n: usize) {
+        self.inner.reserve(n.saturating_sub(self.inner.len()));
     }
 
-    pub fn put(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
+    pub fn put(&mut self, key: &[u8], value: V) {
         use hashbrown::hash_map::RawEntryMut;
         let hash = self.hash_key(key);
         match self
@@ -1770,7 +1739,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
                 e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
             }
         }
-        Ok(())
     }
 
     /// Insert `value` under `key` **without copying the key bytes**. This is
@@ -1780,9 +1748,8 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// `EntryStore`, AST heap) where the `'static` was minted via an explicit
     /// `unsafe` lifetime widen at the call site.
     #[inline]
-    pub fn put_static_key(&mut self, key: &'static [u8], value: V) -> Result<(), AllocError> {
+    pub fn put_static_key(&mut self, key: &'static [u8], value: V) {
         self.inner.insert(StringHashMapKey::borrowed(key), value);
-        Ok(())
     }
 
     /// The hash this map's `BuildHasher` assigns `key` — exactly what
@@ -1814,12 +1781,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// recomputing. Same zero-copy / `'static`-key contract as [`put_static_key`]:
     /// overwrites the value if the key is already present.
     #[inline]
-    pub fn put_static_key_hashed(
-        &mut self,
-        hash: u64,
-        key: &'static [u8],
-        value: V,
-    ) -> Result<(), AllocError> {
+    pub fn put_static_key_hashed(&mut self, hash: u64, key: &'static [u8], value: V) {
         use hashbrown::hash_map::RawEntryMut;
         match self
             .inner
@@ -1833,7 +1795,6 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
                 e.insert_hashed_nocheck(hash, StringHashMapKey::borrowed(key), value);
             }
         }
-        Ok(())
     }
 
     /// Insert `value` under `key` **without copying the key bytes** — the
@@ -1851,20 +1812,18 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// point into source text or the lexer string-table, both of which outlive
     /// the `AstAlloc` arena that owns the `Scope` holding this map.
     #[inline]
-    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) -> Result<(), AllocError> {
+    pub unsafe fn put_borrowed(&mut self, key: &[u8], value: V) {
         // SAFETY: caller contract above. Erase the borrow's lifetime so it can
         // be stored as `Static` without a heap copy; the map never inspects the
         // lifetime, only the (ptr, len) pair.
         let key: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(key) };
         self.inner.insert(StringHashMapKey::borrowed(key), value);
-        Ok(())
     }
 
-    /// PERF: std::HashMap cannot skip the grow check, so this is
-    /// just `put` without the `Result`.
+    /// PERF: std::HashMap cannot skip the grow check, so this is just `put`.
     #[inline]
     pub fn put_assume_capacity(&mut self, key: &[u8], value: V) {
-        let _ = self.put(key, value);
+        self.put(key, value);
     }
 }
 
@@ -1879,44 +1838,38 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
     /// allocated on miss. Callers whose key bytes already outlive the map
     /// should prefer [`get_or_put_borrowed`] which also skips the miss-path
     /// box.
-    pub fn get_or_put(&mut self, key: &[u8]) -> Result<StringHashMapGetOrPut<'_, V>, AllocError> {
+    pub fn get_or_put(&mut self, key: &[u8]) -> StringHashMapGetOrPut<'_, V> {
         use hashbrown::hash_map::RawEntryMut;
         let hash = self.hash_key(key);
-        Ok(
-            match self
-                .inner
-                .raw_entry_mut()
-                .from_key_hashed_nocheck(hash, key)
-            {
-                RawEntryMut::Occupied(o) => StringHashMapGetOrPut {
-                    found_existing: true,
-                    value_ptr: o.into_mut(),
-                },
-                RawEntryMut::Vacant(v) => StringHashMapGetOrPut {
-                    found_existing: false,
-                    value_ptr: v
-                        .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
-                        .1,
-                },
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(o) => StringHashMapGetOrPut {
+                found_existing: true,
+                value_ptr: o.into_mut(),
             },
-        )
+            RawEntryMut::Vacant(v) => StringHashMapGetOrPut {
+                found_existing: false,
+                value_ptr: v
+                    .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
+                    .1,
+            },
+        }
     }
 
-    pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> Result<&mut V, AllocError> {
+    pub fn get_or_put_value(&mut self, key: &[u8], value: V) -> &mut V {
         use hashbrown::hash_map::RawEntryMut;
         let hash = self.hash_key(key);
-        Ok(
-            match self
-                .inner
-                .raw_entry_mut()
-                .from_key_hashed_nocheck(hash, key)
-            {
-                RawEntryMut::Occupied(e) => e.into_mut(),
-                RawEntryMut::Vacant(e) => {
-                    e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1
-                }
-            },
-        )
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(e) => e.into_mut(),
+            RawEntryMut::Vacant(e) => e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1,
+        }
     }
 
     /// Zero-allocation `getOrPut` — the arena-lifetime twin of
@@ -1992,7 +1945,7 @@ pub mod string_hash_map {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.StringSet` — insertion-ordered set of owned byte-string keys.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StringSet {
     pub map: StringArrayHashMap<()>,
 }
@@ -2007,12 +1960,6 @@ impl StringSet {
     #[inline]
     pub fn init() -> Self {
         Self::default()
-    }
-
-    pub fn clone(&self) -> Result<Self, AllocError> {
-        Ok(Self {
-            map: self.map.clone()?,
-        })
     }
 
     #[inline]
@@ -2030,12 +1977,11 @@ impl StringSet {
         self.map.keys()
     }
 
-    /// Insert `key`, duping it on miss. Returns `Ok(())` whether or not the key
-    /// was already present.
-    pub fn insert(&mut self, key: &[u8]) -> Result<(), AllocError> {
+    /// Insert `key`, duping it on miss. Returns whether the key was newly
+    /// inserted (`std::HashSet::insert` semantics).
+    pub fn insert(&mut self, key: &[u8]) -> bool {
         // get_or_put already boxes `key` on miss.
-        let _ = self.map.get_or_put(key)?;
-        Ok(())
+        !self.map.get_or_put(key).found_existing
     }
 
     #[inline]
@@ -2091,7 +2037,7 @@ mod index_tests {
         let mut m: ArrayHashMap<u64, u64> = ArrayHashMap::new();
         // Cross the threshold so the index is exercised.
         for i in 0..1000u64 {
-            assert!(m.put(i.wrapping_mul(2654435761), i).is_ok());
+            m.put(i.wrapping_mul(2654435761), i);
         }
         for i in 0..1000u64 {
             let k = i.wrapping_mul(2654435761);
@@ -2106,7 +2052,7 @@ mod index_tests {
             assert_eq!(m.get(&k), Some(&i));
         }
         // get_or_put on an existing key after the index was dropped+rebuilt.
-        let gop = m.get_or_put(2654435761).unwrap();
+        let gop = m.get_or_put(2654435761);
         assert!(gop.found_existing);
         assert_eq!(*gop.value_ptr, 1);
     }
@@ -2138,7 +2084,7 @@ mod index_tests {
         let mut m: StringArrayHashMap<usize> = StringArrayHashMap::new();
         let keys: Vec<String> = (0..200).map(|i| format!("key{i}")).collect();
         for (i, k) in keys.iter().enumerate() {
-            m.put(k.as_bytes(), i).unwrap();
+            m.put(k.as_bytes(), i);
         }
         for (i, k) in keys.iter().enumerate() {
             assert_eq!(m.get(k.as_bytes()), Some(&i));
@@ -2186,24 +2132,24 @@ mod index_tests {
     fn string_hash_map_no_alloc_on_hit() {
         let mut m: StringHashMap<u32, CountingAlloc> = StringHashMap::new();
         // Pre-size so the table itself does not reallocate during the test.
-        m.ensure_total_capacity(4).unwrap();
+        m.ensure_total_capacity(4);
         let base = COUNTING_ALLOCS.load(Ordering::Relaxed);
 
-        m.put(b"aa", 1).unwrap();
-        m.put(b"bb", 2).unwrap();
+        m.put(b"aa", 1);
+        m.put(b"bb", 2);
         let after_miss = COUNTING_ALLOCS.load(Ordering::Relaxed);
         assert_eq!(after_miss - base, 2, "one key Box per distinct key on miss");
 
         // Hits via every safe owning entry point must not box the key again.
-        m.put(b"aa", 10).unwrap();
+        m.put(b"aa", 10);
         m.put_assume_capacity(b"bb", 20);
-        assert!(m.get_or_put(b"aa").unwrap().found_existing);
-        assert_eq!(*m.get_or_put_value(b"bb", 0).unwrap(), 20);
+        assert!(m.get_or_put(b"aa").found_existing);
+        assert_eq!(*m.get_or_put_value(b"bb", 0), 20);
         let after_hit = COUNTING_ALLOCS.load(Ordering::Relaxed);
         assert_eq!(after_hit, after_miss, "hits must not allocate a key Box");
 
         // A fresh key via get_or_put boxes exactly once.
-        let g = m.get_or_put(b"cc").unwrap();
+        let g = m.get_or_put(b"cc");
         assert!(!g.found_existing);
         *g.value_ptr = 30;
         assert_eq!(COUNTING_ALLOCS.load(Ordering::Relaxed), after_hit + 1);

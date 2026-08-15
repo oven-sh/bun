@@ -1770,7 +1770,7 @@ impl<'a> HTTPClient<'a> {
                 uws::AnySocket::SocketTcp(uws::SocketTCP::from_any(socket.socket))
             };
             // SAFETY: HTTP-thread only; per-statement reborrow.
-            let _ = abort_tracker().put(self.async_http_id, any);
+            abort_tracker().put(self.async_http_id, any);
         }
     }
 
@@ -5203,7 +5203,7 @@ impl<'a> HTTPClient<'a> {
                                 .get_ascii_case_insensitive(name)
                                 .is_some()
                             {
-                                let _ = self.header_entries.ordered_remove(i);
+                                self.header_entries.ordered_remove(i);
                             } else {
                                 i += 1;
                             }
@@ -5231,7 +5231,7 @@ impl<'a> HTTPClient<'a> {
                             .get_ascii_case_insensitive(name)
                             .is_some()
                         {
-                            let _ = self.header_entries.ordered_remove(i);
+                            self.header_entries.ordered_remove(i);
                         } else {
                             i += 1;
                         }

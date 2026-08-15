@@ -7,7 +7,6 @@ use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_crash_handler::handle_oom::handle_oom;
 
 // `stmts` is a sub-slice of the input `stmts` argument (in-place compacted),
 // so it borrows from the caller.
@@ -382,7 +381,7 @@ impl<'a> ImportScanner<'a> {
                                 sorted.push(arena.alloc_slice_copy(alias));
                             }
                             strings::sort_desc(&mut sorted);
-                            handle_oom(p.named_imports.ensure_unused_capacity(sorted.len()));
+                            p.named_imports.ensure_unused_capacity(sorted.len());
 
                             // Create named imports for these property accesses. This will
                             // cause missing imports to generate useful warnings.
@@ -392,7 +391,7 @@ impl<'a> ImportScanner<'a> {
                             // bare identifiers even if the namespace is still needed.
                             for alias in &sorted {
                                 let item: LocRef = *existing.get(alias).unwrap();
-                                handle_oom(p.named_imports.put(
+                                p.named_imports.put(
                                     item.ref_,
                                     js_ast::NamedImport {
                                         alias: Some(js_ast::StoreStr::new(*alias)),
@@ -403,7 +402,7 @@ impl<'a> ImportScanner<'a> {
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
-                                ));
+                                );
 
                                 let name: LocRef = item;
                                 let name_ref = name.ref_;
@@ -426,20 +425,18 @@ impl<'a> ImportScanner<'a> {
                                     }));
 
                                 // Also record these automatically-generated top-level namespace alias symbols
-                                p.declared_symbols
-                                    .append(js_ast::DeclaredSymbol {
-                                        ref_: name_ref,
-                                        is_top_level: true,
-                                    })
-                                    .expect("unreachable");
+                                p.declared_symbols.append(js_ast::DeclaredSymbol {
+                                    ref_: name_ref,
+                                    is_top_level: true,
+                                });
                             }
                         }
 
-                        handle_oom(p.named_imports.ensure_unused_capacity(
+                        p.named_imports.ensure_unused_capacity(
                             st_items.len()
                                 + usize::from(st.default_name.is_some())
                                 + usize::from(!st.star_name_loc.is_empty()),
-                        ));
+                        );
 
                         if let Some(loc) = st.star_name_loc.to_nullable() {
                             record!()
@@ -523,7 +520,7 @@ impl<'a> ImportScanner<'a> {
                                     alias_is_star: false,
                                     is_exported: false,
                                 },
-                            )?;
+                            );
 
                             // Make sure the printer prints this as a property access
                             let symbol: &mut Symbol =
@@ -735,7 +732,7 @@ impl<'a> ImportScanner<'a> {
                                 is_exported: true,
                                 local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
-                        )?;
+                        );
                         let original: &'p [u8] = alias.original_name.slice();
                         p.record_export(alias.loc, original, st.namespace_ref)?;
                         p.import_records.items_mut()[st.import_record_index as usize]
@@ -751,9 +748,7 @@ impl<'a> ImportScanner<'a> {
                         .push(st.import_record_index);
                     // SAFETY: arena-owned slice valid for 'p.
                     let items = st.items.slice();
-                    p.named_imports
-                        .ensure_unused_capacity(items.len())
-                        .expect("unreachable");
+                    p.named_imports.ensure_unused_capacity(items.len());
                     for item in items.iter() {
                         let ref_ = item.name.ref_;
                         // Note that the imported alias is not item.Alias, which is the
@@ -770,7 +765,7 @@ impl<'a> ImportScanner<'a> {
                                 is_exported: true,
                                 local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                             },
-                        )?;
+                        );
                         // SAFETY: arena-owned alias slice valid for 'p.
                         let alias: &'p [u8] = item.alias.slice();
                         p.record_export(item.name.loc, alias, ref_)?;

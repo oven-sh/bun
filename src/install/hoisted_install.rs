@@ -281,14 +281,14 @@ pub(crate) fn install_hoisted_packages(
         let mut installer: PackageInstaller = 'brk: {
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
                 let trees = this.lockfile.buffers.trees.as_slice();
-                let completed_trees = Bitset::init_empty(trees.len())?;
+                let completed_trees = Bitset::init_empty(trees.len());
                 let tree_ids_to_trees_the_id_depends_on =
-                    DynamicBitSetList::init_empty(trees.len(), trees.len())?;
+                    DynamicBitSetList::init_empty(trees.len(), trees.len());
 
                 {
                     // For each tree id, traverse through it's parents and mark all visited tree
                     // ids as dependents for the current tree parent
-                    let mut deps = Bitset::init_empty(trees.len())?;
+                    let mut deps = Bitset::init_empty(trees.len());
                     for _curr in trees {
                         let mut curr = *_curr;
                         tree_ids_to_trees_the_id_depends_on.set(curr.id as usize, curr.id as usize);
@@ -393,7 +393,7 @@ pub(crate) fn install_hoisted_packages(
                 skip_delete,
                 summary: &mut summary,
                 force_install,
-                successfully_installed: Bitset::init_empty(pkg_len)?,
+                successfully_installed: Bitset::init_empty(pkg_len),
                 command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
@@ -587,10 +587,8 @@ pub(crate) fn install_hoisted_packages(
         // below. Route through `installer.summary` because `summary` itself is
         // exclusively borrowed by `installer` for this scope.
         {
-            let taken = core::mem::replace(
-                &mut installer.successfully_installed,
-                Bitset::init_empty(0)?,
-            );
+            let taken =
+                core::mem::replace(&mut installer.successfully_installed, Bitset::init_empty(0));
             installer.summary.successfully_installed = Some(taken);
         }
 

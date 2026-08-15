@@ -1,8 +1,6 @@
 //! A `StringArrayHashMap<Box<[u8]>>` plus a `dupe_keys` flag controlling
 //! whether `insert` clones the key bytes. Values are always cloned.
 
-use bun_alloc::AllocError;
-
 use crate::array_hash_map::StringArrayHashMap;
 
 pub struct StringMap {
@@ -41,19 +39,18 @@ impl StringMap {
 
     /// Dupe `value`; `key` is duped on miss regardless (`Box<[u8]>` forces a
     /// copy), so the `dupe_keys` flag is kept for API parity only.
-    pub fn insert(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        let entry = self.map.get_or_put(key)?;
+    pub fn insert(&mut self, key: &[u8], value: &[u8]) {
+        let entry = self.map.get_or_put(key);
         // get_or_put already boxed `key` on miss; duping again here would be
         // the same allocation, so skip it.
         let _ = self.dupe_keys;
         *entry.value_ptr = Box::from(value);
-        Ok(())
     }
 
     /// Alias for [`insert`](Self::insert).
     #[inline]
-    pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        self.insert(key, value)
+    pub fn put(&mut self, key: &[u8], value: &[u8]) {
+        self.insert(key, value);
     }
 
     // `deinit` → Drop on the inner Vecs.

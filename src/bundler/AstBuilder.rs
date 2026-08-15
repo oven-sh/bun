@@ -125,7 +125,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             ref_,
             is_top_level: self.scopes.is_empty()
                 || core::ptr::eq(self.current_scope, self.scopes[0]),
-        })?;
+        });
         Ok(ref_)
     }
 
@@ -267,7 +267,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             // pretend that every symbol was used
             symbol_uses: 'uses: {
                 let mut map = PartSymbolUseMap::default();
-                map.ensure_total_capacity(self.symbols.len())?;
+                map.ensure_total_capacity(self.symbols.len());
                 for i in 0..self.symbols.len() {
                     map.put_assume_capacity(
                         Ref::new(
@@ -287,7 +287,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // SAFETY: module_scope is a live arena allocation (set in init, scopes stack is empty)
         let module_scope_ref = unsafe { &*module_scope };
         let generated_len = module_scope_ref.generated.len();
-        top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
+        top_level_symbols_to_parts.ensure_total_capacity(generated_len);
         // `ArrayHashMap` keeps keys/values in private `Vec`s and rebuilds
         // hashes on every `put_assume_capacity`, so a plain pre-reserved
         // insert loop suffices (and `re_index` is a no-op here). `Vec` is
@@ -296,7 +296,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             top_level_symbols_to_parts
                 .put_assume_capacity(ref_, bun_alloc::AstAlloc::vec_from_slice(&[1]));
         }
-        top_level_symbols_to_parts.re_index()?;
+        top_level_symbols_to_parts.re_index();
 
         // For more details on this section, look at js_parser.toAST
         // This is mimicking how it calls ImportScanner
@@ -347,7 +347,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     is_exported: false,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                 },
-                            )?;
+                            );
                         }
                         // convertStmt: `deduplicatedImport` is a no-op for
                         // AstBuilder (each generated file emits at most one
@@ -396,10 +396,10 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                         parts[1].declared_symbols.append(DeclaredSymbol {
                             ref_: temp_id,
                             is_top_level: true,
-                        })?;
+                        });
                         parts[1]
                             .symbol_uses
-                            .put(temp_id, symbol::Use { count_estimate: 1 })?;
+                            .put(temp_id, symbol::Use { count_estimate: 1 });
                         VecExt::append(&mut self.current_scope_mut().generated, temp_id);
                         export_props.push(G::Property {
                             key: Some(Expr::init(E::String::init(b"default"), stmt.loc)),
@@ -456,11 +456,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 // mark a dependency on module_ref so it is renamed
                 parts[1]
                     .symbol_uses
-                    .put(self.module_ref, symbol::Use { count_estimate: 1 })?;
+                    .put(self.module_ref, symbol::Use { count_estimate: 1 });
                 parts[1].declared_symbols.append(DeclaredSymbol {
                     ref_: self.module_ref,
                     is_top_level: true,
-                })?;
+                });
             }
             // Head-part bookkeeping (only `parts[0]`, which is the empty
             // namespace-export part): mark dead and depend on `parts[1]`.
@@ -500,7 +500,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                     is_exported: false,
                                     local_parts_with_uses: bun_alloc::AstAlloc::vec(),
                                 },
-                            )?;
+                            );
                         }
                     }
                     bun_ast::StmtData::SLocal(st) if st.is_export => {
@@ -590,7 +590,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                     alias_loc: Loc::EMPTY,
                     ref_,
                 },
-            )?;
+            );
         }
         Ok(())
     }

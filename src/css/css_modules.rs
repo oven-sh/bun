@@ -166,7 +166,7 @@ impl<'a> CssModule<'a> {
         let mut k = BumpVec::with_capacity_in(2 + the_hash.len(), bump);
         k.extend_from_slice(b"--");
         k.extend_from_slice(the_hash);
-        let _ = self.references.put(k.into_bump_slice(), reference);
+        self.references.put(k.into_bump_slice(), reference);
 
         Some(the_hash)
     }

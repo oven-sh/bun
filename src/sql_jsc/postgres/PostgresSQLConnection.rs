@@ -983,8 +983,7 @@ impl PostgresSQLConnection {
                         self.read_buffer.with_mut(|rb| {
                             rb.head = 0;
                             rb.byte_list.clear();
-                            rb.write(&data[offset..])
-                                .expect("failed to write to read buffer");
+                            rb.write(&data[offset..]);
                         });
                     } else {
                         bun_core::handle_error_return_trace(err);
@@ -997,8 +996,7 @@ impl PostgresSQLConnection {
         }
         if !done {
             // read buffer is not empty, so we need to write the data to the buffer and then read it
-            self.read_buffer
-                .with_mut(|rb| rb.write(data).expect("failed to write to read buffer"));
+            self.read_buffer.with_mut(|rb| rb.write(data));
             let reader = self.buffered_reader();
             match PostgresRequest::on_data(self, reader) {
                 Ok(()) => {
@@ -1628,10 +1626,7 @@ impl Writer {
     // escape hatch needed.
 
     pub(crate) fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
-        self.connection
-            .write_buffer
-            .with_mut(|b| b.write(data))
-            .map_err(|_| AnyPostgresError::OutOfMemory)?;
+        self.connection.write_buffer.with_mut(|b| b.write(data));
         Ok(())
     }
 
@@ -2491,14 +2486,12 @@ impl PostgresSQLConnection {
             MessageType::ParameterStatus => {
                 let parameter_status =
                     protocol::ParameterStatus::decode_internal(reader.reborrow())?;
-                self.backend_parameters
-                    .with_mut(|m| {
-                        m.insert(
-                            parameter_status.name.slice(),
-                            parameter_status.value.slice(),
-                        )
-                    })
-                    .map_err(|_| AnyPostgresError::OutOfMemory)?;
+                self.backend_parameters.with_mut(|m| {
+                    m.insert(
+                        parameter_status.name.slice(),
+                        parameter_status.value.slice(),
+                    )
+                });
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {

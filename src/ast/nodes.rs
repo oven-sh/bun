@@ -910,33 +910,19 @@ impl DeclaredSymbolList {
         core::mem::take(self)
     }
 
-    pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        Ok(DeclaredSymbolList {
-            entries: self.entries.clone()?,
-        })
-    }
-
     #[inline]
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
-    pub fn append(
-        &mut self,
-        entry: DeclaredSymbol,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.ensure_unused_capacity(1)?;
+    pub fn append(&mut self, entry: DeclaredSymbol) {
+        self.ensure_unused_capacity(1);
         self.append_assume_capacity(entry);
-        Ok(())
     }
 
-    pub fn append_list(
-        &mut self,
-        other: &DeclaredSymbolList,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.ensure_unused_capacity(other.len())?;
+    pub fn append_list(&mut self, other: &DeclaredSymbolList) {
+        self.ensure_unused_capacity(other.len());
         self.append_list_assume_capacity(other);
-        Ok(())
     }
 
     pub(crate) fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
@@ -947,18 +933,12 @@ impl DeclaredSymbolList {
         self.entries.append_assume_capacity(entry);
     }
 
-    pub fn ensure_total_capacity(
-        &mut self,
-        count: usize,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.entries.ensure_total_capacity(count)
+    pub fn ensure_total_capacity(&mut self, count: usize) {
+        self.entries.ensure_total_capacity(count);
     }
 
-    pub fn ensure_unused_capacity(
-        &mut self,
-        count: usize,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.entries.ensure_unused_capacity(count)
+    pub fn ensure_unused_capacity(&mut self, count: usize) {
+        self.entries.ensure_unused_capacity(count);
     }
 
     pub fn clear_retaining_capacity(&mut self) {
@@ -967,23 +947,26 @@ impl DeclaredSymbolList {
 
     // `deinit` → Drop on MultiArrayList; no explicit body needed.
 
-    pub fn init_capacity(
-        capacity: usize,
-    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
+    pub fn init_capacity(capacity: usize) -> DeclaredSymbolList {
         let mut entries = MultiArrayList::new_in(bun_alloc::AstAlloc);
-        entries.ensure_unused_capacity(capacity)?;
-        Ok(DeclaredSymbolList { entries })
+        entries.ensure_unused_capacity(capacity);
+        DeclaredSymbolList { entries }
     }
 
-    pub fn from_slice(
-        entries: &[DeclaredSymbol],
-    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut this = Self::init_capacity(entries.len())?;
-        // errdefer this.deinit() → Drop handles it
+    pub fn from_slice(entries: &[DeclaredSymbol]) -> DeclaredSymbolList {
+        let mut this = Self::init_capacity(entries.len());
         for entry in entries {
             this.append_assume_capacity(*entry);
         }
-        Ok(this)
+        this
+    }
+}
+
+impl Clone for DeclaredSymbolList {
+    fn clone(&self) -> Self {
+        DeclaredSymbolList {
+            entries: self.entries.clone(),
+        }
     }
 }
 

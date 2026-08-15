@@ -425,7 +425,7 @@ impl<'a> AsyncHTTP<'a> {
             url.clone(),
             // Note: the same `headers` value goes in both `AsyncHTTP.request_headers`
             // and `client.header_entries`; `MultiArrayList` owns its allocation, so clone here.
-            headers.clone().expect("OOM"),
+            headers.clone(),
             headers_buf,
             options.hostname,
             signals,

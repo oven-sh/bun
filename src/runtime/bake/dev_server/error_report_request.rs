@@ -167,7 +167,7 @@ impl ErrorReportRequest {
         // HMR chunks use this too, but currently do not host their JS code.
         let mut parsed_source_maps: ArrayHashMap<SourceMapKey, Option<GetResult<'_>>> =
             ArrayHashMap::new();
-        bun_core::handle_oom(parsed_source_maps.ensure_total_capacity(4));
+        parsed_source_maps.ensure_total_capacity(4);
         // Note: `defer for (parsed_source_maps.values()) |*v| v.deinit()` deleted —
         // `GetResult` drops its owned `mappings` automatically.
 
@@ -186,7 +186,7 @@ impl ErrorReportRequest {
             };
 
             // Get and cache the parsed source map
-            let gop = bun_core::handle_oom(parsed_source_maps.get_or_put(id));
+            let gop = parsed_source_maps.get_or_put(id);
             if !gop.found_existing {
                 match dev.source_maps.get_parsed_source_map(id) {
                     None => {

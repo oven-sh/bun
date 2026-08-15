@@ -51,7 +51,7 @@ impl JsonCache {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to_maybe_recycled(log, source);
         Ok(result)
     }
 
@@ -67,7 +67,7 @@ impl JsonCache {
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let result = func(source, &mut temp_log).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        temp_log.append_to_maybe_recycled(log, source);
         Ok(result)
     }
 
@@ -517,7 +517,7 @@ impl TSConfigJSON {
                         }
                         ImportsNotUsedAsValue::Remove => {}
                         _ => {
-                            let _ = log.add_range_warning_fmt(
+                            log.add_range_warning_fmt(
                                 Some(source),
                                 source.range_of_string(loc),
                                 format_args!(
@@ -541,7 +541,7 @@ impl TSConfigJSON {
                                 if !str.is_empty() {
                                     // Only warn when there is actually content
                                     // Sometimes, people do "moduleSuffixes": [""]
-                                    let _ = log.add_warning(
+                                    log.add_warning(
                                         Some(source),
                                         loc,
                                         b"moduleSuffixes is not supported yet",
@@ -641,13 +641,13 @@ impl TSConfigJSON {
                                         // (the extends-merge in the resolver) pass the stored slice
                                         // to the allocator, which requires the original length.
                                         values.shrink_to_fit();
-                                        let _ = result.paths.put(Box::from(key), values);
+                                        result.paths.put(Box::from(key), values);
                                     }
                                     // else: Every entry was invalid; nothing to store. `values` drops here.
                                 }
                             }
                             _ => {
-                                let _ = log.add_range_warning_fmt(
+                                log.add_range_warning_fmt(
                                     Some(source),
                                     source.range_of_string(key_loc),
                                     format_args!(
@@ -680,7 +680,7 @@ impl TSConfigJSON {
             if c == b'*' {
                 if found_asterisk {
                     let r = source.range_of_string(loc);
-                    let _ = log.add_range_warning_fmt(
+                    log.add_range_warning_fmt(
                         Some(source),
                         r,
                         format_args!(
@@ -718,7 +718,7 @@ impl TSConfigJSON {
         if parts_count == 1 {
             if !js_lexer::is_identifier(text) {
                 let warn = source.range_of_string(loc);
-                let _ = log.add_range_warning_fmt(
+                log.add_range_warning_fmt(
                     Some(source),
                     warn,
                     format_args!(
@@ -738,7 +738,7 @@ impl TSConfigJSON {
         for part in iter {
             if !js_lexer::is_identifier(part) {
                 let warn = source.range_of_string(loc);
-                let _ = log.add_range_warning_fmt(
+                log.add_range_warning_fmt(
                     Some(source),
                     warn,
                     format_args!(
@@ -805,7 +805,7 @@ impl TSConfigJSON {
         }
 
         let r = source.range_of_string(loc);
-        let _ = log.add_range_warning_fmt(
+        log.add_range_warning_fmt(
             Some(source),
             r,
             format_args!(

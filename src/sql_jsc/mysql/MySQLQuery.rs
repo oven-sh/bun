@@ -298,16 +298,7 @@ impl MySQLQuery {
             query_str = Some(query);
             // errdefer signature.deinit() — `Signature: Drop` handles the error path; on the
             // found_existing success path below we explicitly drop it.
-            let entry = match connection.get_statement_from_signature_name(&signature.name) {
-                Ok(e) => e,
-                Err(err) => {
-                    // `err` is `bun_core::AllocError`; `throw_error` takes
-                    // `crate::Error` (`From<AllocError>` → OutOfMemory).
-                    let _ = global_object
-                        .throw_error(crate::Error::from(err), "failed to allocate statement");
-                    return Err(crate::Error::JSError);
-                }
-            };
+            let entry = connection.get_statement_from_signature_name(&signature.name);
 
             if entry.found_existing {
                 let stmt: *mut MySQLStatement = *entry.value_ptr;

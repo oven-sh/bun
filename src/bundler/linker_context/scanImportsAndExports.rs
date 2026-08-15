@@ -1162,10 +1162,7 @@ impl DependencyWrapper<'_> {
         }
 
         // Avoid infinite loops due to cycles in the export star graph
-        let has_visited = self
-            .export_star_map
-            .get_or_put(source_index)
-            .expect("unreachable");
+        let has_visited = self.export_star_map.get_or_put(source_index);
         if has_visited.found_existing {
             return false;
         }
@@ -1308,9 +1305,7 @@ impl<'a> ExportStarContext<'a> {
                     }
                 }
 
-                let gop = col!(resolved_exports)[target_id]
-                    .get_or_put(alias_slice)
-                    .expect("oom");
+                let gop = col!(resolved_exports)[target_id].get_or_put(alias_slice);
                 if !gop.found_existing {
                     // Initialize the re-export
                     *gop.value_ptr = ExportData {
@@ -1324,19 +1319,17 @@ impl<'a> ExportStarContext<'a> {
 
                     // Make sure the symbol is marked as imported so that code splitting
                     // imports it correctly if it ends up being shared with another chunk
-                    col!(self.imports_to_bind)[source_index as usize]
-                        .put(
-                            name.ref_,
-                            ImportData {
-                                data: ImportTracker {
-                                    import_ref: name.ref_,
-                                    source_index: Index::source(other_source_index),
-                                    ..Default::default()
-                                },
+                    col!(self.imports_to_bind)[source_index as usize].put(
+                        name.ref_,
+                        ImportData {
+                            data: ImportTracker {
+                                import_ref: name.ref_,
+                                source_index: Index::source(other_source_index),
                                 ..Default::default()
                             },
-                        )
-                        .expect("oom");
+                            ..Default::default()
+                        },
+                    );
                 } else if gop.value_ptr.data.source_index.get() != other_source_index {
                     // Two different re-exports colliding makes it potentially ambiguous
                     gop.value_ptr
@@ -1411,7 +1404,7 @@ mod __css_validation {
                     let name_v = name.v();
                     if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
-                        let _ = this.log_disjoint().add_error_fmt(
+                        this.log_disjoint().add_error_fmt(
                             &col_ref!(input_files)[record.source_index.get() as usize],
                             compose.loc,
                             format_args!(
@@ -1488,7 +1481,7 @@ mod __css_validation {
                 source_index: IndexInt,
                 range: bun_ast::Range,
             ) {
-                let entry = self.properties.get_or_put(property_name).expect("oom");
+                let entry = self.properties.get_or_put(property_name);
 
                 if !entry.found_existing {
                     *entry.value_ptr = PropertyInFile {
@@ -1511,7 +1504,7 @@ mod __css_validation {
                     .original_name
                     .slice();
 
-                let _ = self.log.add_msg(bun_ast::Msg {
+                self.log.add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Err,
                     data: bun_ast::range_data(
                         Some(&col_ref!(self.all_sources)[source_index as usize]),
@@ -1571,7 +1564,7 @@ mod __css_validation {
                 if self.visited.contains(&r#ref) {
                     return;
                 }
-                self.visited.put(r#ref, ()).expect("unreachable");
+                self.visited.put(r#ref, ());
 
                 // This local name was in a style rule that
                 if let Some(composes) = ast.composes.get(&r#ref) {

@@ -201,33 +201,28 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     pub fn with_capacity(capacity: usize) -> Self {
         let mut m = Self::default();
         if capacity > 0 {
-            let _ = m.ensure_total_capacity(capacity);
+            m.ensure_total_capacity(capacity);
         }
         m
     }
 
-    /// Grow so `new_size` elements fit without further allocation. `Result`
-    /// kept for call-site `?` symmetry.
-    pub fn ensure_total_capacity(&mut self, new_size: usize) -> Result<(), bun_alloc::AllocError> {
+    /// Grow so `new_size` elements fit without further allocation.
+    pub fn ensure_total_capacity(&mut self, new_size: usize) {
         let new_size = new_size as u32;
         if new_size > self.size {
             self.grow_if_needed(new_size - self.size);
         }
-        Ok(())
     }
 
-    pub fn ensure_unused_capacity(
-        &mut self,
-        additional: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self.ensure_total_capacity(self.size as usize + additional)
+    pub fn ensure_unused_capacity(&mut self, additional: usize) {
+        self.ensure_total_capacity(self.size as usize + additional);
     }
 
     /// std `reserve` — alias of [`ensure_unused_capacity`] for callers ported
     /// from the old `std::collections::HashMap` Deref.
     #[inline]
     pub fn reserve(&mut self, additional: usize) {
-        let _ = self.ensure_unused_capacity(additional);
+        self.ensure_unused_capacity(additional);
     }
 
     fn load(&self) -> u32 {
@@ -415,10 +410,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     /// Single-probe insert-or-lookup. Uninit values cannot be exposed through
     /// a `&mut V`, so `V: Default` and on miss the slot is default-initialised
     /// — callers overwrite `*value_ptr` when `!found_existing`.
-    pub fn get_or_put(
-        &mut self,
-        key: K,
-    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
+    pub fn get_or_put(&mut self, key: K) -> crate::hash_map::GetOrPutResult<'_, V>
     where
         V: Default,
     {
@@ -427,10 +419,10 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
             self.slots[idx] = Some((key, V::default()));
         }
         let value_ptr = &mut self.slots[idx].as_mut().unwrap().1;
-        Ok(crate::hash_map::GetOrPutResult {
+        crate::hash_map::GetOrPutResult {
             found_existing,
             value_ptr,
-        })
+        }
     }
 
     /// Alias of [`get_or_put`](Self::get_or_put) kept for call-site parity;
@@ -440,7 +432,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         &mut self,
         key: K,
         _ctx: Ctx,
-    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
+    ) -> crate::hash_map::GetOrPutResult<'_, V>
     where
         V: Default,
     {
@@ -461,16 +453,14 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
 
     /// Insert or overwrite.
     #[inline]
-    pub fn put(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
+    pub fn put(&mut self, key: K, value: V) {
         self.insert(key, value);
-        Ok(())
     }
 
     /// Insert asserting the key is new.
-    pub fn put_no_clobber(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
+    pub fn put_no_clobber(&mut self, key: K, value: V) {
         let prev = self.insert(key, value);
         debug_assert!(prev.is_none(), "putNoClobber: key already present");
-        Ok(())
     }
 
     fn remove_by_index(&mut self, idx: usize) -> Option<(K, V)> {

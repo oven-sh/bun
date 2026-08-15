@@ -330,7 +330,7 @@ bun_dispatch::link_interface! {
         fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();
-        fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;
+        fn register_barrel_with_deferrals(path: &[u8]);
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
     }
 }

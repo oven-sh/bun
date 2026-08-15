@@ -1448,12 +1448,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     },
                                 );
                                 // we have to ensure these are known to be top-level
-                                p.declared_symbols
-                                    .append(js_ast::DeclaredSymbol {
-                                        ref_,
-                                        is_top_level: true,
-                                    })
-                                    .expect("oom");
+                                p.declared_symbols.append(js_ast::DeclaredSymbol {
+                                    ref_,
+                                    is_top_level: true,
+                                });
                                 p.esm_export_keyword.loc = stmt.loc;
                                 p.esm_export_keyword.len = 5;
                                 p.had_commonjs_named_exports_this_visit = true;

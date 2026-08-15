@@ -157,11 +157,7 @@ impl Stringifier {
     }
 
     fn mark_visiting(&mut self, global: &JSGlobalObject, value: JSValue) -> StringifyResult<()> {
-        let was_present = self
-            .visiting
-            .get_or_put(value)
-            .map_err(|_| StringifyError::Js(JsError::OutOfMemory))?
-            .found_existing;
+        let was_present = self.visiting.get_or_put(value).found_existing;
         if was_present {
             return Err(global
                 .throw(format_args!("Converting circular structure to TOML"))

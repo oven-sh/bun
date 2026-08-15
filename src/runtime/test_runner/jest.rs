@@ -237,7 +237,7 @@ impl<'a> TestRunner<'a> {
     }
 
     pub(crate) fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        let entry = self.index.get_or_put(file_path).expect("unreachable");
+        let entry = self.index.get_or_put(file_path);
         if entry.found_existing {
             return GetOrPutFileResult {
                 file_id: *entry.value_ptr,
@@ -247,8 +247,7 @@ impl<'a> TestRunner<'a> {
         self.files
             .append(File {
                 source: bun_ast::Source::init_empty_file(file_path),
-            })
-            .expect("unreachable");
+            });
         *entry.value_ptr = file_id;
         GetOrPutFileResult { file_id }
     }

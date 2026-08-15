@@ -200,7 +200,7 @@ impl Default for Chunk {
         Chunk {
             unique_key: b"",
             files_with_parts_in_chunk: ArrayHashMap::new(),
-            entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
+            entry_bits: AutoBitSet::init_empty(0),
             final_rel_path: Box::default(),
             template: PathTemplate::default(),
             cross_chunk_imports: Vec::new(),

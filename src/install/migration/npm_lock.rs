@@ -126,7 +126,7 @@ pub(super) fn migrate_packages(
     debug_assert!(!packages_properties.is_empty() && packages_properties[0].key.slice().is_empty());
 
     let entry_count = packages_properties.len();
-    this.packages.ensure_total_capacity(entry_count)?;
+    this.packages.ensure_total_capacity(entry_count);
     this.package_index.reserve(entry_count);
 
     let mut index = StringHashMap::<u32>::default();
@@ -139,9 +139,9 @@ pub(super) fn migrate_packages(
         entries: packages_properties,
         workspace_map,
         index,
-        link_entries: DynamicBitSet::init_empty(entry_count)?,
-        shadowed: DynamicBitSet::init_empty(entry_count)?,
-        skipped_external: DynamicBitSet::init_empty(entry_count)?,
+        link_entries: DynamicBitSet::init_empty(entry_count),
+        shadowed: DynamicBitSet::init_empty(entry_count),
+        skipped_external: DynamicBitSet::init_empty(entry_count),
         entry_package_ids: vec![INVALID_PACKAGE_ID; entry_count],
         queue: Vec::new(),
         probe: Vec::new(),
@@ -205,14 +205,14 @@ impl<'a> Migrator<'a> {
 
             if let Some(link) = pkg.get(b"link") {
                 self.link_entries.set(j);
-                self.index.put(key, j as u32)?;
+                self.index.put(key, j as u32);
                 self.register_renamed_workspace_link(key, pkg, link)?;
                 continue;
             }
             if pkg_flag_is_true(pkg, b"extraneous") {
                 continue;
             }
-            self.index.put(key, j as u32)?;
+            self.index.put(key, j as u32);
         }
 
         if self.link_entries.is_set(0) || self.index.get(&b""[..]).copied() != Some(0) {
@@ -441,7 +441,7 @@ impl<'a> Migrator<'a> {
             meta,
             bin: bin_value,
             scripts: Default::default(),
-        })?;
+        });
         self.this.get_or_put_id(id, name_hash)?;
         self.entry_package_ids[j as usize] = id;
         self.queue.push((j, id));

@@ -632,7 +632,7 @@ impl NetworkTask {
                     offset: "Accept".len() as u32,
                     length: (header_buf.len() - "Accept".len()) as u32,
                 },
-            })?;
+            });
             header_builder.header_count = 1;
             self.header_buf = Box::default();
             header_buf.as_bytes()

@@ -183,7 +183,7 @@ impl Stringifier {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
-        prop_names.put(b"root", 0)?;
+        prop_names.put(b"root", 0);
 
         Ok(Stringifier {
             stack_check: StackCheck::init(),
@@ -235,7 +235,7 @@ impl Stringifier {
 
         debug_assert!(unwrapped.is_object());
 
-        let object_entry = self.known_collections.get_or_put(unwrapped)?;
+        let object_entry = self.known_collections.get_or_put(unwrapped);
         if object_entry.found_existing {
             // this will become an alias. increment counters here because
             // now the anchor/alias is confirmed used.
@@ -262,7 +262,7 @@ impl Stringifier {
                     } else {
                         b"value"
                     };
-                    let name_entry = self.prop_names.get_or_put(key)?;
+                    let name_entry = self.prop_names.get_or_put(key);
                     if name_entry.found_existing {
                         *name_entry.value_ptr += 1;
                     } else {
@@ -1156,7 +1156,7 @@ impl<'a> ParserCtx<'a> {
                     JSValue::create_empty_array(self.global, e_array.items.len_u32() as usize)?;
 
                 args.append(arr);
-                self.seen_objects.put(key, arr)?;
+                self.seen_objects.put(key, arr);
 
                 for (_i, item) in e_array.slice().iter().enumerate() {
                     let i: u32 = u32::try_from(_i).expect("int cast");
@@ -1178,7 +1178,7 @@ impl<'a> ParserCtx<'a> {
                 );
 
                 args.append(obj);
-                self.seen_objects.put(key, obj)?;
+                self.seen_objects.put(key, obj);
 
                 for prop in e_object.properties.slice() {
                     let key_expr = prop.key.expect("infallible: prop has key");

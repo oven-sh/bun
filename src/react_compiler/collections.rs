@@ -135,7 +135,7 @@ impl<K, V> Default for IndexMap<K, V> {
 
 impl<K: Clone, V: Clone> Clone for IndexMap<K, V> {
     fn clone(&self) -> Self {
-        Self(self.0.clone().expect("OOM"))
+        Self(self.0.clone())
     }
 }
 
@@ -281,7 +281,7 @@ impl<K> Default for IndexSet<K> {
 
 impl<K: Clone> Clone for IndexSet<K> {
     fn clone(&self) -> Self {
-        Self(self.0.clone().expect("OOM"))
+        Self(self.0.clone())
     }
 }
 

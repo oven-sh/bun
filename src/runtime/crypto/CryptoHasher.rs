@@ -654,11 +654,7 @@ impl CryptoHasher {
     pub(crate) fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
             CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(
-                inner
-                    .get()
-                    .copy(boring_engine(global))
-                    // bun.handleOom → unwrap (abort on OOM)
-                    .expect("OOM"),
+                inner.get().copy(boring_engine(global)).expect("OOM"),
             ))),
             CryptoHasher::Hmac(inner) => 'brk: {
                 // R-2: `HMAC::copy` takes `&mut self` but writes nothing

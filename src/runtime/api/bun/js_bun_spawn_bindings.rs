@@ -910,15 +910,11 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `Transpiler::env_mut()` is the audited safe `&mut Loader` accessor
         // (per-VM DotEnv loader, valid for VM lifetime; centralised
         // single-unsafe deref). `.map` is its `&'a mut Map` slot.
-        let envmap = match jsc_vm
+        let envmap = jsc_vm
             .transpiler
             .env_mut()
             .map
-            .create_null_delimited_env_map()
-        {
-            Ok(m) => m,
-            Err(_) => return Err(global_this.throw_out_of_memory()),
-        };
+            .create_null_delimited_env_map();
         // Note: `as_slice()` *includes* the trailing null, so strip it; the
         // common tail below re-appends one after the optional NODE_CHANNEL_*
         // entries.

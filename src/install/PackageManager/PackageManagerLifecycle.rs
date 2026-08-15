@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_collections::ArrayHashMap;
 use bun_core::fmt::PathSep;
-use bun_core::{Output, ZBox, fmt as bun_fmt, handle_oom};
+use bun_core::{Output, ZBox, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{join_abs_string_z, platform};
 use bun_paths::{AutoAbsPath, EnvPath};
@@ -365,7 +365,7 @@ impl PackageManager {
         let this_transpiler = self.configure_env_for_scripts(ctx, log_level)?;
 
         let env_loader = this_transpiler.env_mut();
-        let mut script_env = env_loader.map.clone_with_allocator()?;
+        let mut script_env = env_loader.map.clone();
         // `defer script_env.map.deinit()` — handled by Drop
 
         // `script_env.put` below needs `&mut`; copy PATH out so the
@@ -390,13 +390,13 @@ impl PackageManager {
         }
 
         path.append(original_path.as_slice())?;
-        script_env.put(b"PATH", path.slice())?;
+        script_env.put(b"PATH", path.slice());
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
         // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
         // this stack frame (freed by the subprocess's `Drop`).
-        let envp = script_env.create_null_delimited_env_map()?;
+        let envp = script_env.create_null_delimited_env_map();
 
         let shell_bin: Option<&ZStr> = 'shell_bin: {
             #[cfg(windows)]
@@ -473,7 +473,7 @@ fn add_package_to_set(
     lockfile: &Lockfile,
     package_id: PackageID,
 ) {
-    if handle_oom(set.get_or_put(package_id)).found_existing {
+    if set.get_or_put(package_id).found_existing {
         return;
     }
     let mut stack: Vec<PackageID> = vec![package_id];
@@ -485,7 +485,7 @@ fn add_package_to_set(
         while dep_id < end {
             let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
             if dep_package_id != invalid_package_id
-                && !handle_oom(set.get_or_put(dep_package_id)).found_existing
+                && !set.get_or_put(dep_package_id).found_existing
             {
                 stack.push(dep_package_id);
             }

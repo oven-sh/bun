@@ -1025,7 +1025,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         bstr::BStr::new(entry.name_slice())
                     );
 
-                    let active = dir.active.clone().expect("OOM: ComponentSet::clone");
+                    let active = dir.active.clone();
                     let entry_name = entry.name_slice();
                     let dir_dir_path = dir.dir_path().as_bytes();
                     let dir_fd = dir.fd;
@@ -1079,7 +1079,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             {
                                 self.walker
                                     .eval_impl(&active, entry_name)
-                                    .then(|| active.clone().expect("OOM"))
+                                    .then(|| active.clone())
                             } else {
                                 let subset = self.walker.eval_literal_subset(&active, entry_name);
                                 (subset.count() != 0).then_some(subset)
@@ -1169,7 +1169,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 bun_sys::FileKind::SymLink => {
                                     let follow_active: Option<ComponentSet> =
                                         if self.walker.follow_symlinks {
-                                            Some(active.clone().expect("OOM"))
+                                            Some(active.clone())
                                         } else {
                                             let subset = self
                                                 .walker
@@ -1791,7 +1791,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// Create an empty ComponentSet sized for this pattern.
     fn make_set(&self) -> ComponentSet {
         ComponentSet::init_empty(self.pattern_components.len())
-            .expect("OOM: ComponentSet::init_empty")
     }
 
     fn single_set(&self, idx: u32) -> ComponentSet {

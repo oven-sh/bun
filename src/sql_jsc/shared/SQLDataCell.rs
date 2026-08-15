@@ -3,7 +3,6 @@ use core::slice;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
 use bun_collections::StringHashMap;
-use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
 use bun_sql::shared::{ColumnIdentifier, Data};
 
@@ -548,10 +547,7 @@ pub(crate) fn dedupe_columns<'a>(
             ColumnIdentifier::Name(name) => {
                 // reshaped for borrowck — compute `found_existing` before
                 // mutating `*name_or_index`.
-                let found_existing = seen_fields
-                    .get_or_put(name.slice())
-                    .unwrap_or_oom()
-                    .found_existing;
+                let found_existing = seen_fields.get_or_put(name.slice()).found_existing;
                 if found_existing {
                     *name_or_index = ColumnIdentifier::Duplicate;
                     flags.insert(Flags::HAS_DUPLICATE_COLUMNS);

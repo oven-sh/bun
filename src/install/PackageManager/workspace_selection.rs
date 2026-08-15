@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
-use bun_core::{Global, Output, UnwrapOrOom as _, strings};
+use bun_core::{Global, Output, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 
@@ -158,7 +158,7 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
 }
 
 fn bitset(n: usize) -> DynamicBitSet {
-    DynamicBitSet::init_empty(n).unwrap_or_oom()
+    DynamicBitSet::init_empty(n)
 }
 
 /// `unreachable` is the root under `RootSelection::ExplicitOnly`: edges never select it, but it still seeds the walk when named.

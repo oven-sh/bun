@@ -1862,7 +1862,7 @@ impl StreamBuffer {
         // calling
         // `convert_utf16_to_utf8_append` directly (its old shortcut) handed
         // simdutf a `Vec::new()` dangling pointer (`0x1`) and segfaulted.
-        ByteVecExt::write_utf16(&mut self.list, buffer)?;
+        ByteVecExt::write_utf16(&mut self.list, buffer);
         Ok(())
     }
 

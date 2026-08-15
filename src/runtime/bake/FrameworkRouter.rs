@@ -1139,14 +1139,14 @@ impl FrameworkRouter {
                     } else {
                         p.route_path()
                     };
-                    let gop = self.static_routes.get_or_put(key)?;
+                    let gop = self.static_routes.get_or_put(key);
                     if gop.found_existing {
                         panic!("TODO: propagate aliased route error");
                     }
                     *gop.value_ptr = new_route_index;
                 }
                 InsertPattern::Dynamic(p) => {
-                    let gop = self.dynamic_routes.get_or_put(p)?;
+                    let gop = self.dynamic_routes.get_or_put(p);
                     if gop.found_existing {
                         panic!("TODO: propagate aliased route error");
                     }
@@ -1516,7 +1516,7 @@ impl FrameworkRouter {
                 let _entries_lock = fs_ref.fs.entries_mutex.lock_guard();
                 if let Some(entries) = dir_info.get_entries_const() {
                     for (k, &v) in entries.data.iter() {
-                        let _ = zig_order.put(Box::from(&**k), v);
+                        zig_order.put(Box::from(&**k), v);
                     }
                 }
             }

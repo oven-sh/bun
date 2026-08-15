@@ -132,19 +132,6 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
     bun_ast::Level::MAP.from_js(global, value)
 }
 
-/// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
-/// is needed wherever the map is assigned by value.
-fn clone_macro_map(src: &MacroMap) -> MacroMap {
-    let mut out = MacroMap::default();
-    bun_core::handle_oom(out.ensure_unused_capacity(src.count()));
-    for (k, v) in src.keys().iter().zip(src.values().iter()) {
-        // inner map: `StringArrayHashMap<&'static [u8]>` — `&[u8]: Clone` ⇒ inherent `clone()` works.
-        let inner = v.clone().expect("OOM");
-        out.put_assume_capacity(k, inner);
-    }
-    out
-}
-
 const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
     skip_empty_name: true,
     include_value: true,
@@ -498,9 +485,7 @@ impl Config {
                 if total_name_buf_len > 0 {
                     let mut buf: Vec<u8> = Vec::with_capacity(total_name_buf_len as usize);
                     // errdefer buf.deinit(allocator) → Drop
-                    bun_core::handle_oom(
-                        replacements.ensure_unused_capacity(string_count as usize),
-                    );
+                    replacements.ensure_unused_capacity(string_count as usize);
                     {
                         let mut length_iter = JSArrayIterator::init(eliminate, global)?;
                         while let Some(value) = length_iter.next()? {
@@ -551,7 +536,7 @@ impl Config {
                 // defer iter.deinit() → Drop
 
                 if iter.len > 0 {
-                    bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
+                    replacements.ensure_unused_capacity(iter.len);
 
                     // Exception cleanup is covered by RAII: a pending exception
                     // always surfaces as `Err(JsError::Thrown)` through `?`, and
@@ -582,8 +567,7 @@ impl Config {
                         // slot).
                         if let Some(expr) = export_replacement_value(value, global, arena)? {
                             replacements
-                                .put(&key, bun_ast::runtime::ReplaceableExport::Replace(expr))
-                                .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
+                                .put(&key, bun_ast::runtime::ReplaceableExport::Replace(expr));
                             continue;
                         }
 
@@ -604,15 +588,13 @@ impl Config {
                                     )));
                                 }
 
-                                replacements
-                                    .put(
-                                        &key,
-                                        bun_ast::runtime::ReplaceableExport::Inject {
-                                            name: replacement_name.into(),
-                                            value: to_replace,
-                                        },
-                                    )
-                                    .map_err(|_| bun_jsc::JsError::OutOfMemory)?;
+                                replacements.put(
+                                    &key,
+                                    bun_ast::runtime::ReplaceableExport::Inject {
+                                        name: replacement_name.into(),
+                                        value: to_replace,
+                                    },
+                                );
                                 continue;
                             }
                         }
@@ -713,7 +695,7 @@ impl TransformTask {
             input_code,
             output_code: BunString::empty(),
             transpiler: transpiler_copy,
-            macro_map: clone_macro_map(&config.macro_map),
+            macro_map: config.macro_map.clone(),
             tsconfig: config
                 .tsconfig
                 .as_deref()
@@ -723,7 +705,7 @@ impl TransformTask {
             err: None,
             loader,
             replace_exports: bun_ast::runtime::ReplaceableExportMap {
-                entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
+                entries: config.runtime.replace_exports.entries.clone(),
             },
         };
         let cx = global.js_thread();
@@ -791,14 +773,14 @@ impl TransformTask {
 
         let parse_options = ParseOptions {
             arena: arena_ref,
-            macro_remappings: clone_macro_map(&self.macro_map),
+            macro_remappings: self.macro_map.clone(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
             jsx,
             path: source.path,
             virtual_source: Some(source),
-            replace_exports: self.replace_exports.entries.clone().expect("OOM"),
+            replace_exports: self.replace_exports.entries.clone(),
             experimental_decorators: tsconfig.is_some_and(|ts| ts.experimental_decorators),
             emit_decorator_metadata: tsconfig.is_some_and(|ts| ts.emit_decorator_metadata),
             use_define_for_class_fields: tsconfig
@@ -1048,7 +1030,7 @@ impl JSTranspiler {
         }
 
         if config.macro_map.count() > 0 {
-            transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
+            transpiler.options.macro_remap = config.macro_map.clone();
         }
 
         // REPL mode disables DCE to preserve expressions like `42`
@@ -1249,14 +1231,14 @@ impl JSTranspiler {
 
         let parse_options = ParseOptions {
             arena,
-            macro_remappings: clone_macro_map(&config.macro_map),
+            macro_remappings: config.macro_map.clone(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),
             jsx,
             path: source.path,
             virtual_source: Some(source),
-            replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
+            replace_exports: config.runtime.replace_exports.entries.clone(),
             macro_js_ctx,
             experimental_decorators: config
                 .tsconfig

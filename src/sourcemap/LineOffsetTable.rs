@@ -1,7 +1,6 @@
 use core::alloc::Allocator;
 use std::alloc::Global;
 
-use bun_alloc::AllocError;
 use bun_ast::Loc;
 use bun_collections::MultiArrayList;
 use bun_core::strings;
@@ -150,7 +149,7 @@ impl LineOffsetTable {
     }
 
     /// `Global`-allocator convenience wrapper around [`generate_in`].
-    pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
+    pub fn generate(contents: &[u8], approximate_line_count: i32) -> List {
         Self::generate_in::<Global>(contents, approximate_line_count)
     }
 
@@ -161,12 +160,12 @@ impl LineOffsetTable {
     pub fn generate_in<A: Allocator + Copy + Default + 'static>(
         contents: &[u8],
         approximate_line_count: i32,
-    ) -> Result<List<A>, AllocError> {
+    ) -> List<A> {
         let alloc = A::default();
         let empty_box = || Vec::new_in(alloc).into_boxed_slice();
         let mut list = List::<A>::new_in(alloc);
         // Preallocate the top-level table using the approximate line count from the lexer
-        list.ensure_unused_capacity(approximate_line_count.max(1) as usize)?;
+        list.ensure_unused_capacity(approximate_line_count.max(1) as usize);
         let mut column: i32 = 0;
         let mut byte_offset_to_first_non_ascii: u32 = i32::MAX as u32;
         let mut column_byte_offset: u32 = 0;
@@ -276,7 +275,7 @@ impl LineOffsetTable {
                         byte_offset_to_start_of_line: line_byte_offset,
                         byte_offset_to_first_non_ascii,
                         columns_for_non_ascii: owned,
-                    })?;
+                    });
 
                     column = 0;
                     byte_offset_to_first_non_ascii = i32::MAX as u32;
@@ -314,7 +313,7 @@ impl LineOffsetTable {
                 byte_offset_to_start_of_line: line_byte_offset,
                 byte_offset_to_first_non_ascii,
                 columns_for_non_ascii: owned,
-            })?;
+            });
         }
 
         // `shrink_and_free` has no realloc-in-place fast path — it always does a fresh
@@ -327,6 +326,6 @@ impl LineOffsetTable {
         if list.capacity() > list.len() + (list.len() >> 1) {
             list.shrink_and_free(list.len());
         }
-        Ok(list)
+        list
     }
 }

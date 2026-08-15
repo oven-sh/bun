@@ -155,7 +155,7 @@ impl Framework {
                 BuiltInModule::Import(p) => BuiltInModule::Import(p.clone()),
                 BuiltInModule::Code(c) => BuiltInModule::Code(c.clone()),
             };
-            bun_core::handle_oom(built_in_modules.put(k, bv));
+            built_in_modules.put(k, bv);
         }
         let server_components = self
             .server_components
@@ -528,7 +528,7 @@ impl From<bake_body::Framework> for Framework {
     fn from(src: bake_body::Framework) -> Self {
         let mut built_in_modules = bun_collections::StringArrayHashMap::new();
         for (k, v) in src.built_in_modules.iter() {
-            bun_core::handle_oom(built_in_modules.put(*k, BuiltInModule::from(*v)));
+            built_in_modules.put(*k, BuiltInModule::from(*v));
         }
         Self {
             is_built_in_react: src.is_built_in_react,

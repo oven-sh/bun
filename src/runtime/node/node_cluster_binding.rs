@@ -140,8 +140,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     let this_seq = ipc_data.internal_msg_queue.with_mut(|q| {
         let seq = q.seq;
         if callback.is_function() {
-            let _ = q
-                .callbacks
+            q.callbacks
                 .put(seq, StrongOptional::create(callback, global));
         }
         q.seq = seq.wrapping_add(1);

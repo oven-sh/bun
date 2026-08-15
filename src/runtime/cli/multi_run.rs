@@ -6,7 +6,7 @@ use std::time::Instant;
 use crate::Error;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output, UnwrapOrOom};
+use bun_core::{self as bun, Global, Output};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::package_manager::workspace_selection;
@@ -162,13 +162,13 @@ impl<'a> ProcessHandle<'a> {
             // SAFETY: state.env points at the process-lifetime DotEnv loader.
             let env = unsafe { &mut *env_ptr };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
-            let _ = env.map.put(b"PATH", &self.config.path);
+            env.map.put(b"PATH", &self.config.path);
             let _restore = scopeguard::guard(original_path, move |original_path| {
                 // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
+                unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
             });
             // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
-            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+            envp = unsafe { (*env_ptr).map.create_null_delimited_env_map() };
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
             unsafe {
@@ -942,9 +942,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             };
             let mut owned_scripts = OwnedScriptsMap::with_capacity(pkg_scripts.count());
             for (key, value) in pkg_scripts.iter() {
-                owned_scripts
-                    .put(&key[..], Box::<[u8]>::from(&value[..]))
-                    .unwrap_or_oom();
+                owned_scripts.put(&key[..], Box::<[u8]>::from(&value[..]));
             }
 
             let run_in_bun = ctx.debug.run_in_bun;

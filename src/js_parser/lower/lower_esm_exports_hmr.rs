@@ -192,10 +192,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                             .append(js_ast::DeclaredSymbol {
                                 ref_: temp_id,
                                 is_top_level: true,
-                            })?;
+                            });
                         self.last_part
                             .symbol_uses
-                            .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 })?;
+                            .put_no_clobber(temp_id, js_ast::symbol::Use { count_estimate: 1 });
                         // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
                         VecExt::append(&mut p.current_scope_mut().generated, temp_id);
 
@@ -406,7 +406,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         let path_text = p.import_records.items()[import_record_index as usize]
             .path
             .text;
-        let gop = self.imports_seen.get_or_put(path_text)?;
+        let gop = self.imports_seen.get_or_put(path_text);
         if gop.found_existing {
             let stmt_index = gop.value_ptr.stmt_index;
             // Disable this one since an older record is getting used.  It isn't
@@ -590,10 +590,10 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .append(js_ast::DeclaredSymbol {
                     ref_: arg1,
                     is_top_level: true,
-                })?;
+                });
             self.last_part
                 .symbol_uses
-                .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 })?;
+                .put_no_clobber(arg1, js_ast::symbol::Use { count_estimate: 1 });
             // SAFETY: `current_scope` is a live arena ptr for the parser lifetime.
             VecExt::append(&mut p.current_scope_mut().generated, arg1);
 
@@ -684,13 +684,13 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             // mark a dependency on module_ref so it is renamed
             self.last_part
                 .symbol_uses
-                .put(p.module_ref, js_ast::symbol::Use { count_estimate: 1 })?;
+                .put(p.module_ref, js_ast::symbol::Use { count_estimate: 1 });
             self.last_part
                 .declared_symbols
                 .append(js_ast::DeclaredSymbol {
                     ref_: p.module_ref,
                     is_top_level: true,
-                })?;
+                });
         }
 
         if p.options.features.react_fast_refresh && p.react_refresh.register_used {
@@ -726,7 +726,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         for part in head_parts.iter_mut() {
             self.last_part
                 .declared_symbols
-                .append_list(&core::mem::take(&mut part.declared_symbols))?;
+                .append_list(&core::mem::take(&mut part.declared_symbols));
             self.last_part
                 .import_record_indices
                 .append_slice(part.import_record_indices.slice());
@@ -735,7 +735,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             for i in 0..part.symbol_uses.count() {
                 let k = part.symbol_uses.keys()[i];
                 let v = part.symbol_uses.values()[i];
-                let gop = self.last_part.symbol_uses.get_or_put(k)?;
+                let gop = self.last_part.symbol_uses.get_or_put(k);
                 if !gop.found_existing {
                     *gop.value_ptr = v;
                 } else {
@@ -757,7 +757,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
             .append_slice(p.import_records_for_current_part.as_slice());
         self.last_part
             .declared_symbols
-            .append_list(&p.declared_symbols)?;
+            .append_list(&p.declared_symbols);
 
         // Note: `Stmt` is `Copy`;
         // copy into the parser arena so the `StoreSlice<Stmt>` outlives this struct.

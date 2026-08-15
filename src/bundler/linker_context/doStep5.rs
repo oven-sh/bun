@@ -337,9 +337,7 @@ impl LinkerContext<'_> {
                 };
 
                 for &other_part_index in other_parts {
-                    let local = local_dependencies
-                        .get_or_put(other_part_index)
-                        .expect("unreachable");
+                    let local = local_dependencies.get_or_put(other_part_index);
                     if !local.found_existing || *local.value_ptr != part_index_u32 {
                         *local.value_ptr = part_index_u32;
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
@@ -400,9 +398,7 @@ impl LinkerContext<'_> {
             bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
 
         let mut ns_export_symbol_uses = PartSymbolUseMap::default();
-        ns_export_symbol_uses
-            .ensure_total_capacity(export_aliases.len())
-            .expect("OOM");
+        ns_export_symbol_uses.ensure_total_capacity(export_aliases.len());
 
         let initial_flags = *meta_flags;
         let needs_exports_variable = initial_flags.needs_exports_variable;
@@ -557,12 +553,10 @@ impl LinkerContext<'_> {
                 },
                 loc,
             ));
-            declared_symbols
-                .append(DeclaredSymbol {
-                    ref_: exports_ref,
-                    is_top_level: true,
-                })
-                .expect("unreachable");
+            declared_symbols.append(DeclaredSymbol {
+                ref_: exports_ref,
+                is_top_level: true,
+            });
         }
 
         // "__export(exports, { foo: () => foo })"

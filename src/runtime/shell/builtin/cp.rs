@@ -293,10 +293,10 @@ impl Cp {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
                     if let Some(tgt) = task.tgt_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
+                        exec.ebusy.absolute_targets.insert(&tgt);
                     }
                     if let Some(src) = task.src_absolute.take() {
-                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
+                        exec.ebusy.absolute_srcs.insert(&src);
                     }
                 }
             }

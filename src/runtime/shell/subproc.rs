@@ -641,7 +641,7 @@ impl ShellSubprocess {
         // pointers pushed into `env_array` borrow `inherited_env_storage.storage`).
         let inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> =
             if !spawn_args.override_env && spawn_args.env_array.is_empty() {
-                let envmap = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
+                let envmap = event_loop.create_null_delimited_env_map();
                 // Note: `as_slice()` *includes* the trailing null; strip it —
                 // the common tail below re-appends one null terminator.
                 let entries = envmap.as_slice();
@@ -1585,7 +1585,7 @@ impl BufferedOutput {
     pub(crate) fn append(&mut self, bytes: &[u8]) {
         match self {
             BufferedOutput::Bytelist(b) => {
-                let _ = b.append_slice(bytes); // OOM/capacity: fire-and-forget
+                b.append_slice(bytes);
             }
             BufferedOutput::ArrayBuffer { buf, i } => {
                 let array_buf_slice = buf.slice_mut();

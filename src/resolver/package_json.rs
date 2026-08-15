@@ -45,23 +45,14 @@ type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
 type MainFieldMap = StringMap;
 
-#[derive(Default)]
+/// Cloning copies the key/value vecs; `SemverString`/`Dependency` are POD
+/// over `source_buf`, which every clone keeps borrowing.
+#[derive(Default, Clone)]
 pub struct DependencyMap {
     pub map: DependencyHashMap,
     // Borrows the package.json source contents; lifetime-erased to 'static,
     // kept alive by `PackageJSON::source_contents`.
     pub source_buf: &'static [u8],
-}
-
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone().expect("OOM"),
-            source_buf: self.source_buf,
-        }
-    }
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
@@ -579,10 +570,7 @@ impl PackageJSON {
 
                 if let Some(str) = expr.as_utf8_string_literal() {
                     if !str.is_empty() {
-                        package_json
-                            .main_fields
-                            .put(main, Box::from(str))
-                            .expect("unreachable");
+                        package_json.main_fields.put(main, Box::from(str));
                     }
                 }
             }
@@ -628,17 +616,11 @@ impl PackageJSON {
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
-                                package_json
-                                    .browser_map
-                                    .put(key, Box::from(str.slice()))
-                                    .expect("unreachable");
+                                package_json.browser_map.put(key, Box::from(str.slice()));
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
                                 if !*boolean {
-                                    package_json
-                                        .browser_map
-                                        .put(key, Box::default())
-                                        .expect("unreachable");
+                                    package_json.browser_map.put(key, Box::default());
                                 }
                             }
                             _ => {
@@ -881,8 +863,7 @@ impl PackageJSON {
                     package_json
                         .dependencies
                         .map
-                        .ensure_total_capacity(total_dependency_count)
-                        .expect("unreachable");
+                        .ensure_total_capacity(total_dependency_count);
 
                     for group in dependency_groups {
                         if let Some(group_json) = json.get(group.prop) {
@@ -961,7 +942,7 @@ impl PackageJSON {
                     };
                     let obj = obj.get();
                     let mut map = StringArrayHashMap::<&'static [u8]>::default();
-                    map.ensure_total_capacity(obj.properties().len()).ok()?;
+                    map.ensure_total_capacity(obj.properties().len());
                     for p in obj.properties() {
                         let key = p.key.slice();
                         let Some(value) = p.value.as_str() else {

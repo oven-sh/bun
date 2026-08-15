@@ -497,10 +497,15 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
 
 /// `Vec<u8>`-only helpers.
 pub trait ByteVecExt {
-    fn append_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), AllocError>;
-    fn write(&mut self, str: &[u8]) -> Result<u32, AllocError>;
-    fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
-    fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
+    fn append_fmt(&mut self, args: fmt::Arguments<'_>);
+    /// Appends `str`; returns the number of bytes appended.
+    fn write(&mut self, str: &[u8]) -> u32;
+    /// Appends `str` transcoded from Latin-1 to UTF-8; returns the number of
+    /// bytes appended.
+    fn write_latin1(&mut self, str: &[u8]) -> u32;
+    /// Appends `str` transcoded from UTF-16 to UTF-8; returns the number of
+    /// bytes appended.
+    fn write_utf16(&mut self, str: &[u16]) -> u32;
 
     /// libuv `uv_alloc_cb`-style: ensure **at least** `suggested` bytes of
     /// spare capacity past `len()`, typed `&mut [u8]` so the result can be
@@ -522,23 +527,24 @@ pub trait ByteVecExt {
 }
 
 impl ByteVecExt for Vec<u8> {
-    fn append_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), AllocError> {
-        use std::io::Write;
-        write!(self, "{}", args).map_err(|_| AllocError)
+    fn append_fmt(&mut self, args: fmt::Arguments<'_>) {
+        // Writing into a `Vec<u8>` cannot fail, so like `format!` the only
+        // possible error is a `Display` impl returning `Err`.
+        std::io::Write::write_fmt(self, args)
+            .expect("a Display implementation returned an error unexpectedly");
     }
-    fn write(&mut self, str: &[u8]) -> Result<u32, AllocError> {
-        let initial = self.len();
+    fn write(&mut self, str: &[u8]) -> u32 {
         self.extend_from_slice(str);
-        Ok((self.len() - initial) as u32)
+        str.len() as u32
     }
-    fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError> {
+    fn write_latin1(&mut self, str: &[u8]) -> u32 {
         let initial = self.len();
         let old = core::mem::take(self);
         let old_len = old.len();
         *self = strings::allocate_latin1_into_utf8_with_list(old, old_len, str);
-        Ok((self.len() - initial) as u32)
+        (self.len() - initial) as u32
     }
-    fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError> {
+    fn write_utf16(&mut self, str: &[u16]) -> u32 {
         let initial = self.len();
         let estimate = if (self.capacity() - self.len()) <= (str.len() * 3 + 2) {
             bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
@@ -547,7 +553,7 @@ impl ByteVecExt for Vec<u8> {
         };
         self.reserve(estimate);
         strings::convert_utf16_to_utf8_append(self, str);
-        Ok((self.len() - initial) as u32)
+        (self.len() - initial) as u32
     }
     #[inline]
     unsafe fn uv_alloc_spare_u8(&mut self, suggested: usize) -> &mut [u8] {
@@ -578,9 +584,8 @@ pub struct OffsetByteList {
 }
 
 impl OffsetByteList {
-    pub fn write(&mut self, bytes: &[u8]) -> Result<(), AllocError> {
+    pub fn write(&mut self, bytes: &[u8]) {
         self.byte_list.extend_from_slice(bytes);
-        Ok(())
     }
 
     pub fn remaining(&self) -> &[u8] {

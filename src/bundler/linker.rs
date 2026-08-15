@@ -333,9 +333,7 @@ impl Linker {
         // the `hashed_filenames` cache never dedups — every call interns a
         // fresh copy for the life of the process. Accepted: the `'static`
         // return contract forces a copy anyway, and the alternative (the old
-        // threadlocal slice return) was unsound. `dupe` also aborts on OOM
-        // where the old path propagated `?` — consistent with the
-        // `bun.handleOom` idiom for interner allocations.
+        // threadlocal slice return) was unsound.
         // Spec passes `file_path.text` even though the param is named
         // `basename`; preserved verbatim.
         let mut hash_name_buf = [0u8; 1024];

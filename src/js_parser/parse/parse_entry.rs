@@ -417,7 +417,7 @@ impl<'a> Parser<'a> {
             // re-hash it one identifier reference at a time (≈ one tracked
             // symbol per 16 source bytes). `ensure_total_capacity` is a no-op
             // when the map already retains enough capacity from a prior file.
-            let _ = scan_pass
+            scan_pass
                 .used_symbols
                 .ensure_total_capacity(self.source.contents.len() / 16);
             p.parse_pass_symbol_uses = Some(&mut scan_pass.used_symbols);
@@ -1137,8 +1137,7 @@ impl<'a> Parser<'a> {
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
-                let mut declared_symbols =
-                    bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::init_capacity(count);
                 let decls = p
                     .arena
                     .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
@@ -1258,8 +1257,7 @@ impl<'a> Parser<'a> {
                         },
                         ns_loc,
                     );
-                    let mut declared_symbols =
-                        bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+                    let mut declared_symbols = bun_ast::DeclaredSymbolList::init_capacity(1);
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
                         ref_: ns_ref,
                         is_top_level: true,
@@ -1744,8 +1742,7 @@ impl<'a> Parser<'a> {
         if exports_kind == js_ast::ExportsKind::Esm && (uses_dirname || uses_filename) {
             debug_assert!(!p.options.bundle);
             let count = (uses_dirname as usize) + (uses_filename as usize);
-            let mut declared_symbols =
-                bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
+            let mut declared_symbols = bun_ast::DeclaredSymbolList::init_capacity(count);
             let decls = p
                 .arena
                 .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
@@ -1873,7 +1870,7 @@ impl<'a> Parser<'a> {
             }
 
             let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-            declared_symbols.ensure_total_capacity(items_count)?;
+            declared_symbols.ensure_total_capacity(items_count);
 
             // For CommonJS modules, use require instead of import
             if exports_kind == js_ast::ExportsKind::Cjs {
@@ -2144,12 +2141,12 @@ impl<'a> Parser<'a> {
                             declared_symbols.append(DeclaredSymbol {
                                 ref_: import.namespace_ref,
                                 is_top_level: true,
-                            })?;
+                            });
                             for item in import.items.iter() {
                                 declared_symbols.append(DeclaredSymbol {
                                     ref_: item.name.ref_,
                                     is_top_level: true,
-                                })?;
+                                });
                                 p.is_import_item.insert(item.name.ref_, ());
                                 p.named_imports.put(
                                     item.name.ref_,
@@ -2162,7 +2159,7 @@ impl<'a> Parser<'a> {
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
-                                )?;
+                                );
                             }
                         }
                         js_ast::StmtData::SFunction(func) => {
@@ -2170,7 +2167,7 @@ impl<'a> Parser<'a> {
                                 declared_symbols.append(DeclaredSymbol {
                                     ref_,
                                     is_top_level: true,
-                                })?;
+                                });
                             }
                         }
                         _ => {}

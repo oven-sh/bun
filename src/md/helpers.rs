@@ -458,9 +458,7 @@ pub(crate) fn generate_slug<'a>(
 
     // Deduplicate via slug_counts. `StringHashMap::get_or_put` probes
     // once (the map owns its keys, value starts at 0 on miss).
-    let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
-        return &text_buf[..out_len];
-    };
+    let gop = slug_counts.get_or_put(&text_buf[..out_len]);
     if !gop.found_existing {
         // First occurrence — value initialised to 0 by `get_or_put`.
         return &text_buf[..out_len];

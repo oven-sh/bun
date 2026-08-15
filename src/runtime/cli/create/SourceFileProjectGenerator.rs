@@ -66,8 +66,8 @@ pub(crate) fn generate(
 
     // Add Tailwind dependencies if needed
     if needs_to_inject_tailwind {
-        result.dependencies.insert(b"tailwindcss")?;
-        result.dependencies.insert(b"bun-plugin-tailwind")?;
+        result.dependencies.insert(b"tailwindcss");
+        result.dependencies.insert(b"bun-plugin-tailwind");
     }
 
     // Add shadcn-ui dependencies if needed
@@ -75,11 +75,11 @@ pub(crate) fn generate(
         // https://ui.shadcn.com/docs/installation/manual
         // This will probably be tricky to keep updated.
         // but hopefully the dependency scanning will just handle it for us.
-        result.dependencies.insert(b"tw-animate-css")?;
-        result.dependencies.insert(b"class-variance-authority")?;
-        result.dependencies.insert(b"clsx")?;
-        result.dependencies.insert(b"tailwind-merge")?;
-        result.dependencies.insert(b"lucide-react")?;
+        result.dependencies.insert(b"tw-animate-css");
+        result.dependencies.insert(b"class-variance-authority");
+        result.dependencies.insert(b"clsx");
+        result.dependencies.insert(b"tailwind-merge");
+        result.dependencies.insert(b"lucide-react");
     }
 
     let uses_tailwind = has_tailwind_in_dependencies || needs_to_inject_tailwind;
@@ -90,8 +90,8 @@ pub(crate) fn generate(
     // Add react-dom if react is used
     let _ = result.dependencies.swap_remove(b"react");
     let _ = result.dependencies.swap_remove(b"react-dom");
-    result.dependencies.insert(b"react-dom@19")?;
-    result.dependencies.insert(b"react@19")?;
+    result.dependencies.insert(b"react-dom@19");
+    result.dependencies.insert(b"react@19");
 
     let dev_dependencies: &[&[u8]] = &[b"@types/bun", b"@types/react@19", b"@types/react-dom@19"];
 
@@ -598,7 +598,7 @@ fn get_shadcn_components(
                 let import_records = &all[file.get() as usize];
                 for import_record in import_records.as_slice() {
                     if import_record.path.text.starts_with(b"@/components/ui/") {
-                        icons.insert(&import_record.path.text[b"@/components/ui/".len()..])?;
+                        icons.insert(&import_record.path.text[b"@/components/ui/".len()..]);
                     }
                 }
             }

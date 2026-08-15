@@ -560,17 +560,16 @@ describe("bunshell", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    // On Windows the message carries the absolute path (shell_openat only
+    // re-tags the error with the argument as written on POSIX).
+    const missingFileError = expect.stringMatching(/^cat: (.*[\\/])?missing\.txt: No such file or directory\n$/);
     expect(JSON.parse(stdout)).toEqual({
       "captured": { stdout: "hi\n", stderr: "", exitCode: 0 },
       "stdout to fd": { stdout: "", stderr: "", exitCode: 0 },
-      "missing file, stderr captured": {
-        stdout: "",
-        stderr: "cat: missing.txt: No such file or directory\n",
-        exitCode: 1,
-      },
+      "missing file, stderr captured": { stdout: "", stderr: missingFileError, exitCode: 1 },
       "missing file, stderr to fd": { stdout: "", stderr: "", exitCode: 1 },
       "out.txt": "hi\n",
-      "err.txt": "cat: missing.txt: No such file or directory\n",
+      "err.txt": missingFileError,
     });
     expect(exitCode).toBe(0);
   });

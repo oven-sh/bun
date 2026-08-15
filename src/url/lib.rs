@@ -390,14 +390,11 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`, or
-    /// `<displayProtocol>://<displayHost>/` when the pathname is `/`, so the
-    /// result always ends in exactly one slash.
+    /// `<displayProtocol>://<displayHost>/<trimmed pathname>/`, or just
+    /// `<displayProtocol>://<displayHost>/` when the pathname is `/`.
     ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
+    /// Assembled as bytes because `display_host()` is a `Display` impl while
+    /// the other pieces are raw byte slices.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");

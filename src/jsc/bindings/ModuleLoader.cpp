@@ -655,6 +655,43 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
+// JSC keeps the registry entry of a module whose fetch was rejected (transpile
+// errors, a failing plugin) and settles every later load of the key with
+// JSModuleLoader::duplicateError's copy of the stored error, which keeps only
+// its type and message: an AggregateError of build errors loses `errors`, a
+// SystemError its `code`. Such an entry has no module record, so nothing is
+// linked against it and it can simply be dropped; the load that follows fetches
+// the module again and gets the complete error of its own attempt, or the
+// module if the file was fixed in the meantime, as in Node. Entries that failed
+// to link or evaluate do hold a record and stay cached, as the spec requires.
+void evictFetchFailedModuleRegistryEntry(JSC::JSModuleLoader* moduleLoader, const JSC::Identifier& key)
+{
+    using Type = JSC::ScriptFetchParameters::Type;
+    // JavaScript first: resolving an import of an already loaded module, the
+    // common case, then stops at the first lookup.
+    static constexpr Type types[] = { Type::JavaScript, Type::None, Type::JSON, Type::WebAssembly, Type::HostDefined };
+
+    // removeEntry() drops every (key, type) variant at once, so only do it when
+    // all of them are fetch failures.
+    auto& moduleMap = moduleLoader->moduleMap();
+    bool fetchFailed = false;
+    for (Type type : types) {
+        auto entry = moduleMap.get({ key.impl(), type });
+        if (!entry)
+            continue;
+        if (entry->status() != JSC::ModuleRegistryEntry::Status::FetchFailed)
+            return;
+        fetchFailed = true;
+    }
+    if (!fetchFailed)
+        return;
+
+    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+    // under cellLock(); take the same lock so the removal can't race it.
+    WTF::Locker locker { moduleLoader->cellLock() };
+    moduleLoader->removeEntry(key);
+}
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
@@ -674,6 +711,11 @@ JSValue fetchCommonJSModule(
     ResolvedSourceCodeHolder sourceCodeHolder(res);
 
     BunString specifier = Bun::toString(specifierWtfString);
+
+    // Every branch below that ends in provideFetch() or $requireESM would
+    // otherwise replay an earlier failed fetch of this key.
+    auto moduleKey = JSC::Identifier::fromString(vm, specifierWtfString);
+    evictFetchFailedModuleRegistryEntry(globalObject->moduleLoader(), moduleKey);
 
     bool wasModuleMock = false;
 
@@ -788,7 +830,7 @@ JSValue fetchCommonJSModule(
     }
 
     bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
-        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
+        auto* entry = globalObject->moduleLoader()->registryEntry(moduleKey);
         return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
     }();
 

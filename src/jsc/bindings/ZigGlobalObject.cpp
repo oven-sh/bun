@@ -3619,12 +3619,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
-    JSModuleLoader* loader, JSValue key,
-    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+static JSC::Identifier resolveModuleSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
-
     ErrorableString res;
     res.success = false;
 
@@ -3702,6 +3698,22 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         throwException(scope, res.result.err, globalObject);
         return globalObject->vm().propertyNames->emptyIdentifier;
     }
+}
+
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader* loader, JSValue key,
+    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+{
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    JSC::Identifier resolved = resolveModuleSpecifier(globalObject, key, referrer);
+    RETURN_IF_EXCEPTION(scope, resolved);
+
+    // Resolution is the step the loader runs right before it looks the key up
+    // in its registry, for static imports, import() and entry points alike.
+    Bun::evictFetchFailedModuleRegistryEntry(loader, resolved);
+    return resolved;
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,

@@ -16,6 +16,7 @@ class GlobalObject;
 
 namespace JSC {
 class JSPromise;
+class JSModuleLoader;
 }
 
 namespace Bun {
@@ -104,6 +105,11 @@ JSValue fetchCommonJSModule(
     String specifier,
     BunString* referrer,
     BunString* typeAttribute);
+
+// Call right before the loader looks `key` up for a load: drops the entry left
+// behind by an earlier fetch of it that failed, so the load fetches the module
+// again instead of getting JSC's message-only copy of the stored error.
+void evictFetchFailedModuleRegistryEntry(JSC::JSModuleLoader* moduleLoader, const JSC::Identifier& key);
 
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(

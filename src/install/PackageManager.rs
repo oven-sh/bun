@@ -1481,10 +1481,8 @@ pub fn init(
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
     if cli.global {
-        // `[install] globalDir` determines where we fchdir to, so the config must be
-        // loaded before that chdir. For non-global installs, loading stays deferred
-        // until after the package.json walk (below) so `bunfig.toml` resolves next to
-        // `package.json`.
+        // `[install] globalDir` decides where we fchdir, so bunfig is read before it here
+        // and after the package.json walk (below) otherwise.
         ::bun_bunfig::arguments::load_config(
             bun_options_types::command_tag::Tag::InstallCommand,
             cli.config,

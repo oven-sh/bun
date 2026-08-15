@@ -678,7 +678,7 @@ describe.concurrent("registry URL with embedded credentials", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stderr: stderr.split(/\r?\n/), exitCode };
   }
 

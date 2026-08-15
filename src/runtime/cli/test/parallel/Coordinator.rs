@@ -827,9 +827,9 @@ impl<'a> Coordinator<'a> {
 /// Windows delivers no signals: an unhandled exception or `__fastfail`
 /// exits with the NTSTATUS as the exit code, so recognized fatal values of
 /// `Exited.raw` (the untruncated code; `Exited.code` is `u8`) classify as
-/// panics too. A fault Bun's crash handler catches still exits with code
-/// 3, indistinguishable from process.exit(3), and stays a per-file
-/// failure, recognizable only by its banner in stderr.
+/// panics too. A crash Bun's crash handler reports exits with the status
+/// the unreported crash would have had (`CrashReason::terminal_exit_code`
+/// in `bun_crash_handler`), so it classifies the same way, banner or not.
 fn is_panic_status(status: &SpawnStatus) -> bool {
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;
@@ -862,7 +862,8 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
 fn is_fatal_windows_exit_code(code: u32) -> bool {
     matches!(
         code,
-        0x8000_0003                  // STATUS_BREAKPOINT: unhandled int3 (SIGTRAP)
+        0x8000_0002                  // STATUS_DATATYPE_MISALIGNMENT (SIGBUS)
+        | 0x8000_0003                // STATUS_BREAKPOINT: int3/brk (SIGTRAP)
         | 0x8000_0004                // STATUS_SINGLE_STEP (SIGTRAP)
         | 0xC000_0005                // STATUS_ACCESS_VIOLATION (SIGSEGV)
         | 0xC000_0006                // STATUS_IN_PAGE_ERROR (SIGBUS)
@@ -875,10 +876,10 @@ fn is_fatal_windows_exit_code(code: u32) -> bool {
         | 0xC000_0096                // STATUS_PRIVILEGED_INSTRUCTION (SIGILL)
         | 0xC000_00FD                // STATUS_STACK_OVERFLOW
         | 0xC000_0374                // STATUS_HEAP_CORRUPTION
-        | 0xC000_0409                // STATUS_STACK_BUFFER_OVERRUN: __fastfail —
-                                     // Rust abort, /GS checks, abort() in an addon's
-                                     // own CRT (SIGABRT). abort() in bun.exe's CRT is
-                                     // caught by the crash handler and exits 3.
+        | 0xC000_0409                // STATUS_STACK_BUFFER_OVERRUN: __fastfail (UCRT
+                                     // abort(), Rust abort, /GS checks) and what the
+                                     // crash handler exits with for aborts, panics
+                                     // and OOM (SIGABRT)
         | 0xC000_0417                // STATUS_INVALID_CRUNTIME_PARAMETER
         | 0xC000_041D                // STATUS_FATAL_USER_CALLBACK_EXCEPTION
         | 0xC000_0420                // STATUS_ASSERTION_FAILURE

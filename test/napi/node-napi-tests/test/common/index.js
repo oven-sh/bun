@@ -699,7 +699,9 @@ function nodeProcessAborted(exitCode, signal) {
   // (ii) Otherwise, _exit(134) which is called in place of abort() due to
   // raising SIGABRT exiting with ambiguous exit code '3' by default
   if (isWindows)
-    expectedExitCodes = [0x80000003, 134, 3]; // BUN: crash handler calls std.posix.abort() resulting in code 3
+    // BUN: the crash handler exits with STATUS_STACK_BUFFER_OVERRUN (0xC0000409) for a
+    // panic, and spawnSync reports the low byte of a Windows exit code, so 9.
+    expectedExitCodes = [0x80000003, 134, 9];
 
   // When using --abort-on-uncaught-exception, V8 will use
   // base::OS::Abort to terminate the process.

@@ -258,11 +258,12 @@ test(
   isASAN || isDebug ? 60_000 : 20_000,
 );
 
-// POSIX classifies worker crashes as panics by fatal signal — see
-// is_panic_status. (On Windows a crash caught by Bun's crash handler exits
-// with code 3, indistinguishable from process.exit(3); the Windows
-// classification below works on raw NTSTATUS exit codes instead.)
-test.skipIf(isWindows)(
+// is_panic_status classifies worker crashes by fatal signal on POSIX and by
+// NTSTATUS exit code on Windows. A crash that went through Bun's crash
+// handler must classify too: the handler re-raises the signal on POSIX and
+// exits with the fault's own status on Windows (it used to exit 3 there,
+// indistinguishable from process.exit(3), so the run carried on).
+test(
   "--parallel --bail: a worker panic still prints the panic banner and stops sibling workers",
   async () => {
     using dir = tempDir("parallel-bail-panic", {
@@ -286,7 +287,9 @@ test.skipIf(isWindows)(
       stdout: "pipe",
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("a test worker process crashed with");
+    expect(stderr).toContain(
+      `a test worker process crashed with ${isWindows ? "exit code 0xC0000005" /* STATUS_ACCESS_VIOLATION */ : "SIGSEGV"}`,
+    );
     expect(stderr).toContain("Aborting");
     expect(exitCode).not.toBe(0);
   },
@@ -294,11 +297,11 @@ test.skipIf(isWindows)(
 );
 
 // Windows delivers no signals: a native fault that bypasses Bun's crash
-// handler (__fastfail: Rust aborts, /GS checks, abort() in an addon's own
-// CRT) terminates the worker with the raw NTSTATUS as its exit code. The
-// coordinator must recognize that as a crash and abort the run like the
-// fatal-signal path above, not narrow 0xC0000409 to "exit code 9" and carry
-// on as if the test had called process.exit(9).
+// handler entirely (__fastfail: Rust aborts, /GS checks, abort() in an
+// addon's own CRT) terminates the worker with the raw NTSTATUS as its exit
+// code. The coordinator must recognize that as a crash and abort the run like
+// the fatal-signal path above, not narrow 0xC0000409 to "exit code 9" and
+// carry on as if the test had called process.exit(9).
 test.skipIf(!isWindows)(
   "--parallel: a worker dying with a fatal NTSTATUS prints the crash banner and aborts",
   async () => {

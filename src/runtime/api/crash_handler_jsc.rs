@@ -168,28 +168,33 @@ pub(crate) mod js_bindings {
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGABRT);
     }
 
+    /// Executes the trap instruction WTF's `WTF_FATAL_CRASH_INST` and JSC's
+    /// JIT `abortWithReason()` / LLInt `break` compile to. SIGTRAP on POSIX;
+    /// on Windows, `EXCEPTION_BREAKPOINT` for x64's `int3` but
+    /// `EXCEPTION_ILLEGAL_INSTRUCTION` for arm64's `brk #0xbb08` (see
+    /// `CrashReason::Trap`), so the Windows test expects per architecture.
     #[bun_jsc::host_fn]
     fn js_trap(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
-        if Environment::ENABLE_ASAN || cfg!(windows) {
+        // Under ASAN the POSIX signal handlers are not installed (see js_abort).
+        if Environment::ENABLE_ASAN {
             crash_handler::crash_handler(
                 crash_handler::CrashReason::Trap(0),
                 crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),
             );
         }
-        // int3 on x86_64 / brk on aarch64: both deliver SIGTRAP, matching the
-        // instruction WTF's CRASH()/RELEASE_ASSERT emits.
-        #[cfg(all(unix, target_arch = "x86_64"))]
+        #[cfg(target_arch = "x86_64")]
         // SAFETY: single trap instruction; no inputs/outputs.
         unsafe {
             core::arch::asm!("int3", options(nomem, nostack));
         }
-        #[cfg(all(unix, target_arch = "aarch64"))]
+        // 0xbb08 is WTF_FATAL_CRASH_CODE (wtf/Assertions.h).
+        #[cfg(target_arch = "aarch64")]
         // SAFETY: single trap instruction; no inputs/outputs.
         unsafe {
-            core::arch::asm!("brk #0", options(nomem, nostack));
+            core::arch::asm!("brk #0xbb08", options(nomem, nostack));
         }
-        #[cfg(all(unix, not(any(target_arch = "x86_64", target_arch = "aarch64"))))]
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         crash_handler::crash_handler(
             crash_handler::CrashReason::Trap(0),
             crash_handler::TraceSeed::BeginAddr(crash_handler::debug::return_address()),

@@ -147,9 +147,8 @@ describe.skipIf(!canBuildNodeAddons())("#30205", () => {
   // here rather than inducing a real @panic so the test doesn't depend on
   // JIT fault-handler behaviour; from the coordinator's point of view
   // SIGABRT is indistinguishable from a JSC assertion failure. Windows has
-  // no process.kill() signals, and the panic-signal classification is
-  // POSIX-specific anyway (Windows abort() surfaces as exit code 3 and
-  // falls into the non-panic branch below).
+  // no process.kill() signals; its exit-status classification is covered in
+  // test/cli/test/parallel.test.ts.
   test.skipIf(isWindows)(
     "--parallel: worker killed by a fatal signal aborts the run instead of retrying",
     async () => {

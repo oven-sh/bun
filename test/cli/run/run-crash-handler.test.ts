@@ -516,68 +516,67 @@ describe.if(isPosix)("SIGABRT/SIGTRAP are caught by the crash handler", () => {
   });
 });
 
-// Windows twin of the SIGABRT case above. There is no signal delivery: UCRT
-// abort() (what WTF CRASH()/RELEASE_ASSERT compiles to in release builds, and
-// what mimalloc, BoringSSL and plain C code call) runs the CRT-level SIGABRT
-// handler if one is installed and otherwise __fastfail()s. A fast-fail raises
-// no exception, so the VEH/UEF crash handlers never ran and every JSC
-// assertion on Windows exited 0xC0000409 with nothing on stderr. The crash
-// handler now installs a CRT SIGABRT handler at startup.
-describe.if(isWindows)("Windows: UCRT abort() is caught by the crash handler", () => {
-  const reportingEnv = (url: string) =>
-    mergeWindowEnvs([
-      bunEnv,
-      {
-        BUN_CRASH_REPORT_URL: url,
-        BUN_ENABLE_CRASH_REPORTING: "1",
-        GITHUB_ACTIONS: undefined,
-        CI: undefined,
-      },
-    ]);
+// Windows twin of the two POSIX blocks above ("terminal signal reflects the
+// crash cause" and "SIGABRT/SIGTRAP are caught"). Windows delivers no signals:
+//  - UCRT abort() (what WTF CRASH()/RELEASE_ASSERT compiles to in release
+//    builds, and what mimalloc, BoringSSL and plain C code call) runs the
+//    CRT-level SIGABRT handler if one is installed and otherwise __fastfail()s.
+//    A fast-fail raises no exception, so the VEH/UEF crash handlers never saw
+//    it and every C++ assertion exited 0xC0000409 with nothing on stderr.
+//    init() now installs a CRT SIGABRT handler.
+//  - On x64, int3 (JSC JIT abortWithReason, LLInt break) raises
+//    EXCEPTION_BREAKPOINT, which the exception classifier did not know, so
+//    those died silently too. (arm64 Windows reports JSC's brk immediates as
+//    illegal instructions, which were already classified.)
+//  - After printing, the handler used to ExitProcess(3) for every crash, which
+//    a parent cannot tell from process.exit(3); it now exits with the status
+//    the unreported crash would have had. Bun.spawn reports the low byte of a
+//    Windows exit code, hence the truncated values below.
+describe.if(isWindows)("Windows: aborts and traps are reported, exit status reflects the crash cause", () => {
+  // The `trap` hook executes the instruction WTF/JSC emit (int3, brk #0xbb08).
+  // Either way the address printed must be the instruction's, not the 0 the
+  // hook used to pass when it called the handler directly.
+  const trapRow =
+    process.arch === "arm64"
+      ? // STATUS_ILLEGAL_INSTRUCTION 0xC000001D: only brk #0xF000 (__debugbreak) is
+        // a breakpoint to the arm64 kernel; every other immediate is this.
+        (["trap", /Illegal instruction at address 0x[0-9A-F]{6,}/, 0x1d] as const)
+      : // STATUS_BREAKPOINT 0x80000003
+        (["trap", /Trap instruction at address 0x[0-9A-F]{6,}/, 0x03] as const);
 
-  test.concurrent("abort() produces a crash report", async () => {
-    let sent = false;
-    const acked = Promise.withResolvers<void>();
-    using server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        expect(request.url).toEndWith("/ack");
-        sent = true;
-        acked.resolve();
-        return new Response("OK");
-      },
-    });
-
-    // The `abort` hook is a real UCRT abort() from bun.exe's statically
-    // linked CRT, the same call a RELEASE_ASSERT makes.
+  test.concurrent.each([
+    // STATUS_STACK_BUFFER_OVERRUN 0xC0000409: what an unreported abort() exits with
+    ["abort", "panic(main thread): abort() called", 0x09] as const,
+    ["panic", "panic(main thread): invoked crashByPanic() handler", 0x09] as const,
+    ["outOfMemory", "Bun has run out of memory", 0x09] as const,
+    // STATUS_ACCESS_VIOLATION 0xC0000005
+    ["segfault", "Segmentation fault at address 0xDEADBEEF", 0x05] as const,
+    trapRow,
+  ])("%s is reported and exits with the crash's status", async (approach, message, exitCodeLowByte) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         path.join(import.meta.dir, "fixture-crash.js"),
-        "abort",
+        approach,
         "--debug-crash-handler-use-trace-string",
       ],
-      env: reportingEnv(server.url.toString()),
+      env: noReportEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("panic(main thread): abort() called");
-    expect(stderr).toContain("oh no: Bun has crashed.");
-    expect(stderr).toContain(server.url.toString());
-    expect(exitCode).not.toBe(0);
-
-    await acked.promise;
-    expect(sent).toBe(true);
+    expect(stderr).toMatch(message);
+    expect(stderr).toContain("oh no");
+    expect(exitCode).toBe(exitCodeLowByte);
   });
 
-  // Terminations that must stay out of the new hook. process.abort() is a
-  // user action (_exit(134) on Windows); fastfail is a bare __fastfail, which
-  // never enters the CRT, so it still dies with the raw NTSTATUS 0xC0000409
-  // (low byte 9 as an exit code) that `bun test --parallel` classifies on.
+  // Terminations that must stay out of the crash handler. process.abort() is
+  // a user action (_exit(134) on Windows). fastfail is a bare __fastfail that
+  // never enters the CRT, so it still dies of the raw 0xC0000409 with nothing
+  // printed; that is the exit code the reported abort above shares with it.
   test.concurrent.each([
     ["process.abort()", 134],
-    ["crash_handler.fastfail()", 9],
+    ["crash_handler.fastfail()", 0x09],
   ] as const)("%s does not report a crash", async (code, expectedExitCode) => {
     let sent = false;
     using server = Bun.serve({
@@ -590,21 +589,27 @@ describe.if(isWindows)("Windows: UCRT abort() is caught by the crash handler", (
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `const { crash_handler } = require("bun:internal-for-testing"); ${code}`],
-      env: reportingEnv(server.url.toString()),
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
       stdio: ["ignore", "pipe", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("abort() called");
-    expect(stderr).not.toContain("Bun has crashed");
-    expect(stderr).not.toContain(server.url.toString());
+    expect(stderr).toBe("");
     expect(sent).toBe(false);
     expect(exitCode).toBe(expectedExitCode);
   });
 });
 
 describe("automatic crash reporter", () => {
-  for (const approach of ["panic", "segfault", "outOfMemory"]) {
+  for (const approach of ["panic", "segfault", "outOfMemory", "abort"]) {
     test(`${approach} should report`, async () => {
       let sent = false;
       const resolve_handler = Promise.withResolvers();

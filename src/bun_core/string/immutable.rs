@@ -997,10 +997,9 @@ pub fn starts_with_case_insensitive_ascii(self_: &[u8], prefix: &[u8]) -> bool {
         && eql_case_insensitive_ascii(&self_[0..prefix.len()], prefix, false)
 }
 
+#[inline]
 pub fn ends_with_case_insensitive_ascii(self_: &[u8], suffix: &[u8]) -> bool {
-    // `check_len = true`: an empty suffix is a match, not a comparator debug assert.
-    self_.len() >= suffix.len()
-        && eql_case_insensitive_ascii(&self_[self_.len() - suffix.len()..], suffix, true)
+    self_.len() >= suffix.len() && self_[self_.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
 pub use crate::strings_impl::{

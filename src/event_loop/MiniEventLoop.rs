@@ -79,7 +79,7 @@ pub struct MiniEventLoop {
     // Opaque ctx assigned externally; only read/cleared here.
     pub(crate) after_event_loop_callback_ctx: Option<NonNull<c_void>>,
     pub(crate) after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub pipe_read_scratch: bun_io::PipeReadScratch,
+    pub pipe_read_scratch: Box<bun_io::PipeReadScratch>,
 }
 
 thread_local! {
@@ -266,7 +266,7 @@ impl MiniEventLoop {
             top_level_dir: Box::default(),
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
-            pipe_read_scratch: bun_io::PipeReadScratch::new(),
+            pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
         }
     }
 
@@ -427,7 +427,7 @@ bun_io::link_impl_EventLoopCtx! {
             (*this).after_event_loop_callback = cb;
             (*this).after_event_loop_callback_ctx = ctx;
         },
-        pipe_read_scratch() => &raw const (*this).pipe_read_scratch,
+        pipe_read_scratch() => &raw const *(*this).pipe_read_scratch,
     }
 }
 

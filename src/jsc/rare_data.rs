@@ -266,7 +266,7 @@ pub struct RareData {
     /// owns the data, no sidecar `Mutex<()>`).
     pub(crate) listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
-    pub pipe_read_scratch: bun_event_loop::PipeReadScratch,
+    pub pipe_read_scratch: Box<bun_event_loop::PipeReadScratch>,
 
     /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
@@ -328,7 +328,7 @@ impl Default for RareData {
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
-            pipe_read_scratch: bun_event_loop::PipeReadScratch::new(),
+            pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),

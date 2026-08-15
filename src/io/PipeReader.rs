@@ -865,11 +865,9 @@ impl PosixBufferedReader {
             return (0, ReadState::Progress);
         }
         let _parent = vtable.ref_parent();
-        let mut hup = false;
         if file_type == FileType::Pipe {
             match bun_core::is_readable(fd) {
-                bun_core::Pollable::Ready => {}
-                bun_core::Pollable::Hup => hup = true,
+                bun_core::Pollable::Ready | bun_core::Pollable::Hup => {}
                 bun_core::Pollable::NotReady => {
                     // SAFETY: caller contract.
                     unsafe { Self::register_poll(this) };
@@ -883,7 +881,6 @@ impl PosixBufferedReader {
             ReadOnce::Stop(stop) => (0, Some(stop)),
         };
         match stop {
-            None if hup => (n, ReadState::Eof),
             None => (n, ReadState::Progress),
             Some(Stop::Eof | Stop::OverBudget) => {
                 // SAFETY: caller contract; `done()` may free the parent, nothing of `*this` is touched after.

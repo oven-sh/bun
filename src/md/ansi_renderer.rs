@@ -1895,10 +1895,7 @@ impl<'a> AnsiRenderer<'a> {
                 }
             }
             // http(s) URL the CLI pre-scan downloaded to a temp file.
-            // Verify the PNG header first: URL extensions aren't
-            // trustworthy, and non-PNGs sent as f=100 show as broken
-            // images. Scheme match is case-insensitive (RFC 3986 §3.1)
-            // to match `prefetch_remote_images`.
+            // Non-PNG contents fall through to the URL-label fallback.
             if let Some(map) = self.theme.remote_image_paths {
                 if strings::starts_with_case_insensitive_ascii(s, b"http://")
                     || strings::starts_with_case_insensitive_ascii(s, b"https://")

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -329,6 +329,7 @@ describe("bun test", () => {
             expect(true).toBe(true);
           });
         `,
+        expectExitCode: 1,
       });
       expect(stderr).toContain("Bailed out after 1 failure");
       expect(stderr).not.toContain("test #2");
@@ -352,9 +353,132 @@ describe("bun test", () => {
             expect(true).toBe(true);
           });
         `,
+        expectExitCode: 1,
       });
       expect(stderr).toContain("Bailed out after 3 failures");
       expect(stderr).not.toContain("test #4");
+    });
+
+    // The sanitizer lane (scripts/runner.node.mjs) runs every child with this environment. Bailing
+    // out has to exit through the same VM teardown as the end of a normal run; a bare exit leaves
+    // the objects the bun:test finalizers own allocated, and LeakSanitizer then aborts the process
+    // (exit 134) instead of it exiting 1.
+    describe.concurrent.skipIf(!isASAN)("exits cleanly under LeakSanitizer", () => {
+      const env = {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+        LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "../../leaksan.supp")}`,
+      };
+
+      /** Runs `bun test --bail` and returns what the test files logged to stdout. */
+      async function runUntilBail(files: Record<string, string>, ...args: string[]): Promise<string[]> {
+        using dir = tempDir("bun-test-bail-leak-check", files);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "--bail", ...args],
+          env,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("Bailed out after 1 failure");
+        expect(stderr).not.toContain("LeakSanitizer");
+        expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+        // Everything else on stdout is the "bun test vX.Y.Z" banner.
+        return stdout.split("\n").filter(line => line.startsWith("ran: "));
+      }
+
+      test("after a test fails", async () => {
+        const ran = await runUntilBail({
+          "a.test.ts": `
+            import { test, expect } from "bun:test";
+            test("fails", () => {
+              console.log("ran: fails");
+              expect(1).toBe(2);
+            });
+            test("unreachable", () => {
+              console.log("ran: unreachable");
+            });
+          `,
+        });
+        expect(ran).toEqual(["ran: fails"]);
+      });
+
+      // The failure arrives from a promise reaction here, so the exit starts inside a JS frame.
+      test("after an async test fails while a timer is still pending", async () => {
+        const ran = await runUntilBail({
+          "a.test.ts": `
+            import { test, expect } from "bun:test";
+            test("fails", async () => {
+              setTimeout(() => console.log("ran: timer"), 60_000);
+              await Bun.sleep(1);
+              console.log("ran: fails");
+              expect(1).toBe(2);
+            });
+            test("unreachable", () => {
+              console.log("ran: unreachable");
+            });
+          `,
+        });
+        expect(ran).toEqual(["ran: fails"]);
+      });
+
+      test("after a later file fails, with preload hooks registered", async () => {
+        const ran = await runUntilBail(
+          {
+            "preload.ts": `
+              import { afterEach, beforeAll, beforeEach } from "bun:test";
+              beforeAll(() => console.log("ran: preload beforeAll"));
+              beforeEach(() => {});
+              afterEach(() => {});
+            `,
+            "a.test.ts": `
+              import { describe, test, expect } from "bun:test";
+              describe("a", () => {
+                test("passes", () => {
+                  console.log("ran: a");
+                  expect(1).toBe(1);
+                });
+              });
+            `,
+            "b.test.ts": `
+              import { describe, test, expect } from "bun:test";
+              describe("b", () => {
+                test("fails", () => {
+                  console.log("ran: b");
+                  expect(1).toBe(2);
+                });
+              });
+            `,
+          },
+          "--preload=./preload.ts",
+          "./a.test.ts",
+          "./b.test.ts",
+        );
+        expect(ran).toEqual(["ran: preload beforeAll", "ran: a", "ran: b"]);
+      });
+
+      test("after a file fails to load", async () => {
+        const ran = await runUntilBail(
+          {
+            "a.test.ts": `
+              import { test, expect } from "bun:test";
+              test("passes", () => {
+                console.log("ran: a");
+                expect(1).toBe(1);
+              });
+            `,
+            "b.test.ts": `
+              console.log("ran: b (load)");
+              throw new Error("b failed to load");
+            `,
+          },
+          "./a.test.ts",
+          "./b.test.ts",
+        );
+        expect(ran).toEqual(["ran: a", "ran: b (load)"]);
+      });
     });
   });
   describe("--timeout", () => {
@@ -1705,6 +1829,45 @@ describe("bun test", () => {
     test("can fail the run once node:test registered a test, like node's common.mustCall()", async () => {
       const { stderr, exitCode } = await runFile("node-exit-code.test.ts", nodeTestFile(1));
       expect(stderr).toContain("1 pass");
+      expect(exitCode).toBe(1);
+    });
+
+    // --bail exits through the same on_exit() as the end of a run, so the same gate applies.
+    test("are not run when --bail stops a bun:test file", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "bail.test.ts": `
+            import { test, expect } from "bun:test";
+            process.on("exit", () => {
+              console.log("exit listener ran");
+              process.exit(7);
+            });
+            test("fails", () => expect(1).toBe(2));
+          `,
+        },
+        "--bail",
+        "bail.test.ts",
+      );
+      expect(stdout).not.toContain("exit listener ran");
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(exitCode).toBe(1);
+    });
+
+    test("run when --bail stops a file that registered a node:test test", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "node-bail.test.ts": `
+            import { test } from "node:test";
+            import assert from "node:assert";
+            process.on("exit", code => console.log("exit listener ran with", code));
+            test("fails", () => assert.strictEqual(1, 2));
+          `,
+        },
+        "--bail",
+        "node-bail.test.ts",
+      );
+      expect(stdout).toContain("exit listener ran with 1");
+      expect(stderr).toContain("Bailed out after 1 failure");
       expect(exitCode).toBe(1);
     });
 

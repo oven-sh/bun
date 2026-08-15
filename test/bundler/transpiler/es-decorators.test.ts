@@ -546,12 +546,18 @@ describe("ES Decorators", () => {
           static make() { return new Bar(); }
           id() { return this.#id; }
         }
-        // A private static method is enough to keep the name on the class as
-        // written, so the static fields that name reaches must stay there too.
+        // Any private static member (a method, or a decorated one) is enough to
+        // keep the name on the class as written, so the static fields that name
+        // reaches must stay there too.
         @wrap class Store {
           static instances = [];
           static #register(instance) { Store.instances.push(instance); }
           constructor() { Store.#register(this); }
+        }
+        @wrap class Keyed {
+          static registry = [];
+          @keep static #key = "k";
+          lookup() { return Keyed.registry; }
         }
         const store = new Store();
         Foo.create();
@@ -564,10 +570,12 @@ describe("ES Decorators", () => {
           Bar.made,
           Store.instances.length === 1 && Store.instances[0] === store,
           Object.hasOwn(Store, "instances"),
+          new Keyed().lookup(),
+          Object.hasOwn(Keyed, "registry"),
         ]));
       `);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(["wrapped", 2, 1, 2, 0, true, false]);
+      expect(JSON.parse(stdout)).toEqual(["wrapped", 2, 1, 2, 0, true, false, [], false]);
       expect(exitCode).toBe(0);
     });
 

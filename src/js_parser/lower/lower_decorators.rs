@@ -717,7 +717,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return true;
         }
         match expr.data {
-            // super.f(...) → __superGet(...).call(this, ...), or ?.call(this, ...) for super.f?.(...)
+            // super.f(...) → __superGet(...).call(this, ...); super.f?.() keeps the ?. on .call
             js_ast::ExprData::ECall(mut call) => {
                 let Some(key) = self.super_member_key(call.target, ctx) else {
                     return false;

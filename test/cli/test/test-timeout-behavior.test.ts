@@ -66,7 +66,9 @@ describe("a matcher blocked on a promise that never settles fails with the test 
     return {
       exitCode,
       stdout: normalizeBunSnapshot(stdout, String(dir)),
-      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      // Debug builds report one more stack frame than release builds for errors thrown inside async
+      // test bodies; the code frame above each error already says where it was thrown.
+      stderr: normalizeBunSnapshot(stderr, String(dir)).replace(/\n\s+at .*\(file:NN:NN\)/g, ""),
     };
   }
 
@@ -126,8 +128,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
       (fail) resolves
         ^ this test timed out after 200ms.
        9 |       test("resolves", async () => {
@@ -141,8 +141,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that rejects
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
       (fail) rejects
         ^ this test timed out after 200ms.
       13 |       test("rejects", async () => {
@@ -153,7 +151,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       18 |         expect(async () => { await never(); }).toThrow();
                                                           ^
       error: Received function returned a promise that was still pending when the test timed out
-          at <anonymous> (file:NN:NN)
       (fail) toThrow on an async function
         ^ this test timed out after 200ms.
       17 |       test("toThrow on an async function", () => {
@@ -164,7 +161,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
       22 |         expect(1).toSettle();
                              ^
       error: Matcher \`toSettle\` returned a promise that was still pending when the test timed out
-          at <anonymous> (file:NN:NN)
       (fail) async custom matcher
         ^ this test timed out after 200ms.
       21 |       test("async custom matcher", () => {
@@ -178,7 +174,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected: promise resolved to Anything
       Received: Promise {}
-          at <anonymous> (file:NN:NN)
       (fail) asymmetric resolvesTo
         ^ this test timed out after 200ms.
       27 |         console.log("unreachable: resolvesTo");
@@ -192,9 +187,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
       31 |         const outer = new Promise(resolve => setTimeout(() => {
       32 |           expect(never()).resolves.toBe("settled");
       33 |           console.log("unreachable: inner matcher");
@@ -206,8 +198,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
       (fail) nested inside the test's own blocked matcher
         ^ this test timed out after 1000ms.
       (pass) the next test runs
@@ -253,7 +243,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
       -------------------------------
 
 
@@ -303,7 +292,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
       -------------------------------
 
 
@@ -346,8 +334,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
       (fail) hook > test of the hook
         ^ a beforeEach/afterEach hook timed out for this test.
       (pass) the next test runs
@@ -396,7 +382,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
       -------------------------------
 
 
@@ -441,9 +426,6 @@ describe("a matcher blocked on a promise that never settles fails with the test 
 
       Expected promise that resolves
       Received promise that was still pending when the test timed out: Promise { <pending> }
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
-          at <anonymous> (file:NN:NN)
       (fail) sibling blocked in a matcher
         ^ this test timed out after 200ms.
       (fail) resolves after an await

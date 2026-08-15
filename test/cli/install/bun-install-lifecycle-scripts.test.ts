@@ -2469,7 +2469,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
         const out = await stdout.text();
         expect(await stderr.text()).toBe("");
-        expect(out).toBe(`${packageDir} node_modules (2)
+        expect(out).toBe(`${packageDir} node_modules (2 installed)
 └── electron@1.0.0
 `);
         expect(await exited).toBe(0);
@@ -2514,7 +2514,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         });
         const out = await stdout.text();
         expect(await stderr.text()).toBe("");
-        expect(out).toBe(`${packageDir} node_modules (2)
+        expect(out).toBe(`${packageDir} node_modules (2 installed)
 └── no-deps@1.0.0
 `);
         expect(await exited).toBe(0);

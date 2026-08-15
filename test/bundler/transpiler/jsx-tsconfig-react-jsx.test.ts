@@ -81,7 +81,7 @@ describe("tsconfig compilerOptions.jsx", () => {
 describe("the cwd tsconfig.json is not the base for files governed by another tsconfig.json", () => {
   const noNodeEnv = { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined };
   const element = `globalThis.a = <><div /></>;\n`;
-  const tsconfig = (compilerOptions: Record<string, string>) => JSON.stringify({ compilerOptions });
+  const tsconfig = (compilerOptions: Record<string, unknown>) => JSON.stringify({ compilerOptions });
 
   /**
    * What the output's JSX is wired to: the packages it imports its runtime from (the dev and prod
@@ -213,28 +213,29 @@ describe("the cwd tsconfig.json is not the base for files governed by another ts
       );
   }
 
-  function api(extraOptions: Record<string, unknown>) {
+  function api(options: Record<string, unknown>) {
     return (cwd: string, c: Case) => {
-      const options = {
+      const config = {
         entrypoints: [c.entry],
-        external: ["*"],
         ...(c.jsxImportSource ? { jsx: { importSource: c.jsxImportSource } } : {}),
-        ...extraOptions,
+        ...options,
       };
-      const script = `const result = await Bun.build(${JSON.stringify(options)});\nconsole.write(await result.outputs[0].text());`;
+      const script = `const result = await Bun.build(${JSON.stringify(config)});\nconsole.write(await result.outputs[0].text());`;
       return build([bunExe(), "-e", script], cwd);
     };
   }
 
+  type Mode = [name: string, run: (cwd: string, c: Case) => Promise<{ refs: string[]; exitCode: number }>];
+
   // Bundling modes mark everything external so the runtime imports stay visible in the output.
   // --env / env: "inline" reach the cwd tsconfig through a second code path (the env loader), so
   // they are covered separately.
-  const modes: [name: string, run: (cwd: string, c: Case) => Promise<{ refs: string[]; exitCode: number }>][] = [
+  const modes: Mode[] = [
     ["bun build", cli(["--external", "*"])],
     ["bun build --no-bundle", cli(["--no-bundle"])],
     ["bun build --env=inline", cli(["--env=inline", "--external", "*"])],
-    ["Bun.build()", api({})],
-    ['Bun.build({ env: "inline" })', api({ env: "inline" })],
+    ["Bun.build()", api({ external: ["*"] })],
+    ['Bun.build({ env: "inline" })', api({ external: ["*"], env: "inline" })],
   ];
 
   for (const [mode, run] of modes) {
@@ -243,6 +244,36 @@ describe("the cwd tsconfig.json is not the base for files governed by another ts
       expect(await run(join(String(dir), c.cwd ?? ""), c)).toEqual({ refs: c.refs, exitCode: 0 });
     });
   }
+
+  // With packages: "external", an import that matches a tsconfig "paths" alias is resolved by a
+  // separate early return in the resolver (#29590). Files found that way are files on disk like any
+  // other and get their own tsconfig: lib/ is governed by the cwd tsconfig, app/ by its own. (The
+  // runtime packages themselves are bare imports, so packages: "external" keeps them visible.)
+  const aliased: Case = {
+    files: {
+      "tsconfig.json": tsconfig({
+        jsxImportSource: "cwd-src",
+        paths: { "@lib/*": ["./lib/*"], "@app/*": ["./app/*"] },
+      }),
+      "app/tsconfig.json": tsconfig({ jsxImportSource: "nested-src" }),
+      "lib/a.jsx": element,
+      "app/b.jsx": element,
+      "main.js": `import "@lib/a";\nimport "@app/b";\n`,
+    },
+    entry: "main.js",
+    refs: ["cwd-src/jsx-runtime", "nested-src/jsx-runtime"],
+  };
+  const packagesExternalModes: Mode[] = [
+    ["bun build --packages=external", cli(["--packages=external"])],
+    ['Bun.build({ packages: "external" })', api({ packages: "external" })],
+  ];
+  test.concurrent.each(packagesExternalModes)(
+    "%s: files reached through tsconfig paths aliases get their own tsconfig",
+    async (_, run) => {
+      using dir = tempDir("jsx-tsconfig-base-paths", aliased.files);
+      expect(await run(String(dir), aliased)).toEqual({ refs: aliased.refs, exitCode: 0 });
+    },
+  );
 
   // The dev/prod bit is part of the base as well. Bundled builds then choose dev/prod per build from
   // the cwd tsconfig / NODE_ENV / --production (the force_node_env arms in bundle_v2), so the per-file

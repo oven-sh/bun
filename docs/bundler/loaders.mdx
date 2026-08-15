@@ -216,6 +216,55 @@ export default {
 
 ---
 
+### `json5`
+
+**JSON5 loader.** Default for `.json5`.
+
+JSON5 files can be directly imported. Bun parses them with its native [JSON5 parser](/runtime/json5). JSON5 is a superset of JSON that adds comments, trailing commas, unquoted keys, and single-quoted strings.
+
+```js
+import config from "./config.json5";
+console.log(config);
+
+// with an import attribute:
+import data from "./data.txt" with { type: "json5" };
+```
+
+During bundling, the parsed JSON5 is inlined into the bundle as a JavaScript object, identical to the `json` loader.
+
+```js
+var config = {
+  name: "my-app",
+  version: "1.0.0",
+  // ...other fields
+};
+```
+
+If a `.json5` file is passed as an entrypoint, it is converted to a `.js` module that `export default`s the parsed object.
+
+<CodeGroup>
+
+```json5 Input
+{
+  // Configuration
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+}
+```
+
+```js Output
+export default {
+  name: "John Doe",
+  age: 35,
+  email: "johndoe@example.com",
+};
+```
+
+</CodeGroup>
+
+---
+
 ### `xml`
 
 **XML loader.** Default for `.xml`.
@@ -307,6 +356,61 @@ Hello, world!
 
 ```js Output
 export default "Hello, world!";
+```
+
+</CodeGroup>
+
+---
+
+### `md`
+
+**Markdown loader.** Default for `.md` and `.markdown`.
+
+Markdown files can be directly imported. Bun renders them to HTML with [`Bun.markdown`](/runtime/markdown), and the import resolves to the rendered HTML as a string.
+
+```js
+import html from "./README.md";
+console.log(html); // => "<h1>My project</h1>\n..."
+
+// with an import attribute:
+import notes from "./notes.txt" with { type: "md" };
+```
+
+<Note>
+
+`bun-types` does not declare a `*.md` module, because frameworks such as Astro declare their own `*.md` module and a second declaration would override their default export. To type the import in a plain Bun project, add a `.d.ts` file with the following, plus the same block for `"*.markdown"` if you use that extension:
+
+```ts
+declare module "*.md" {
+  const html: string;
+  export default html;
+}
+```
+
+</Note>
+
+During bundling, the rendered HTML is inlined into the bundle as a string.
+
+```js
+var README_default = `<h1>My project</h1>
+<p>Some <strong>bold</strong> text.</p>
+`;
+```
+
+If a `.md` file is passed as an entrypoint, it is converted to a `.js` module that `export default`s the rendered HTML.
+
+<CodeGroup>
+
+```md Input
+# Hello
+
+Some **bold** text.
+```
+
+```js Output
+export default `<h1>Hello</h1>
+<p>Some <strong>bold</strong> text.</p>
+`;
 ```
 
 </CodeGroup>

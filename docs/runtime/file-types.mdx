@@ -337,6 +337,59 @@ export default "Hello, world!";
 
 </CodeGroup>
 
+### `md`
+
+**Markdown loader**. Default for `.md` and `.markdown`.
+
+Markdown files can be directly imported. Bun renders them to HTML with [`Bun.markdown`](/runtime/markdown), and the import resolves to the rendered HTML as a string.
+
+```ts
+import html from "./README.md";
+console.log(html); // => "<h1>My project</h1>\n..."
+
+// via import attribute:
+import notes from "./notes.txt" with { type: "md" };
+```
+
+<Note>
+
+`bun-types` does not declare a `*.md` module, because frameworks such as Astro declare their own `*.md` module and a second declaration would override their default export. To type the import in a plain Bun project, add a `.d.ts` file with the following, plus the same block for `"*.markdown"` if you use that extension:
+
+```ts
+declare module "*.md" {
+  const html: string;
+  export default html;
+}
+```
+
+</Note>
+
+During bundling, the rendered HTML is inlined into the bundle as a string.
+
+```ts
+var README_default = `<h1>My project</h1>
+<p>Some <strong>bold</strong> text.</p>
+`;
+```
+
+If a `.md` file is passed as an entrypoint, it is converted to a `.js` module that `export default`s the rendered HTML.
+
+<CodeGroup>
+
+```md Input
+# Hello
+
+Some **bold** text.
+```
+
+```ts Output
+export default `<h1>Hello</h1>
+<p>Some <strong>bold</strong> text.</p>
+`;
+```
+
+</CodeGroup>
+
 ### `napi`
 
 **Native addon loader**. Default for `.node`.

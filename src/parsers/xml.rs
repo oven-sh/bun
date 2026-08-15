@@ -2419,16 +2419,57 @@ trait Sink<'a, U: Unit> {
     fn finish(&mut self) -> Expr;
 }
 
+/// Rows staged for the tape, in the two columns the tape appends them as.
+struct Rows<T> {
+    values: Vec<T>,
+    locs: Vec<Loc>,
+}
+
+impl<T: Copy> Rows<T> {
+    fn with_capacity(capacity: usize) -> Self {
+        Rows {
+            values: Vec::with_capacity(capacity),
+            locs: Vec::with_capacity(capacity),
+        }
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    #[inline]
+    fn push(&mut self, value: T, loc: Loc) {
+        self.values.push(value);
+        self.locs.push(loc);
+    }
+
+    #[inline]
+    fn truncate(&mut self, len: usize) {
+        self.values.truncate(len);
+        self.locs.truncate(len);
+    }
+
+    #[inline]
+    fn set(&mut self, i: usize, value: T, loc: Loc) {
+        self.values[i] = value;
+        self.locs[i] = loc;
+    }
+
+    #[inline]
+    fn columns(&self, range: core::ops::Range<usize>) -> (&[T], &[Loc]) {
+        (&self.values[range.clone()], &self.locs[range])
+    }
+}
+
 /// The document's `E::JsonTape` plus the scratch stacks rows are staged on
 /// until their object or array is complete (a node's rows are contiguous on
 /// the tape, so they can only be appended once all of them are known).
 struct Tape<'a> {
     tape: core::ptr::NonNull<E::JsonTape>,
     bump: &'a Bump,
-    props: Vec<E::PropertyJSON>,
-    prop_locs: Vec<Loc>,
-    items: Vec<E::JsonValue>,
-    item_locs: Vec<Loc>,
+    props: Rows<E::PropertyJSON>,
+    items: Rows<E::JsonValue>,
     /// `{}` and `[]` are immutable and carry no data, so one row of each
     /// serves every empty object / array in the document.
     empty_object: Option<StoreRef<E::ObjectJSON>>,
@@ -2447,10 +2488,8 @@ impl<'a> Tape<'a> {
         Tape {
             tape: tape.root_ptr(),
             bump,
-            props: Vec::with_capacity(rows / 4 + 16),
-            prop_locs: Vec::with_capacity(rows / 4 + 16),
-            items: Vec::with_capacity(rows / 8 + 16),
-            item_locs: Vec::with_capacity(rows / 8 + 16),
+            props: Rows::with_capacity(rows / 4 + 16),
+            items: Rows::with_capacity(rows / 8 + 16),
             empty_object: None,
             empty_array: None,
         }
@@ -2463,18 +2502,19 @@ impl<'a> Tape<'a> {
 
     #[inline]
     fn push_prop(&mut self, key: &[u8], value: E::JsonValue, loc: Loc) {
-        self.props.push(E::PropertyJSON {
-            key: E::Str::new(key),
-            key_loc: loc,
-            value,
-        });
-        self.prop_locs.push(loc);
+        self.props.push(
+            E::PropertyJSON {
+                key: E::Str::new(key),
+                key_loc: loc,
+                value,
+            },
+            loc,
+        );
     }
 
     #[inline]
     fn push_item(&mut self, value: E::JsonValue, loc: Loc) {
-        self.items.push(value);
-        self.item_locs.push(loc);
+        self.items.push(value, loc);
     }
 
     /// Moves the properties staged since `mark` to the tape as one object.
@@ -2495,9 +2535,9 @@ impl<'a> Tape<'a> {
         // SAFETY: `tape` is the arena allocation's own pointer (`root_ptr`),
         // written only through here, and the arena outlives the AST.
         let tape = unsafe { self.tape.as_mut() };
-        let (first, count) = tape.append_props(&self.props[mark..], &self.prop_locs[mark..]);
+        let (props, locs) = self.props.columns(mark..self.props.len());
+        let (first, count) = tape.append_props(props, locs);
         self.props.truncate(mark);
-        self.prop_locs.truncate(mark);
         // SAFETY: as above — the tape's own pointer, and it outlives the node.
         let object = unsafe { E::ObjectJSON::new(self.tape, first, count, false, Some(loc)) };
         let Data::EObjectJSON(row) = Expr::init(object, loc).data else {
@@ -2517,9 +2557,9 @@ impl<'a> Tape<'a> {
             self.empty_array = Some(row);
             return row;
         }
-        let row = Self::array_of(self.tape, &self.items[mark..], &self.item_locs[mark..], loc);
+        let (items, locs) = self.items.columns(mark..self.items.len());
+        let row = Self::array_of(self.tape, items, locs, loc);
         self.items.truncate(mark);
-        self.item_locs.truncate(mark);
         row
     }
 
@@ -2563,10 +2603,9 @@ struct CompactSink<'a, U: Unit> {
     group_of: Vec<u32>,
     groups: Vec<Group>,
     /// Child indices of the repeated groups laid out run by run; `gathered`
-    /// and `gathered_locs` are its values and locations.
+    /// holds their values and locations in that order.
     gather_order: Vec<u32>,
-    gathered: Vec<E::JsonValue>,
-    gathered_locs: Vec<Loc>,
+    gathered: Rows<E::JsonValue>,
     group_index: HashMap<&'a [u8], u32>,
     root: Option<(&'a [U], E::JsonValue, Loc)>,
 }
@@ -2622,14 +2661,13 @@ impl<'a, U: Unit> CompactSink<'a, U> {
     fn new(tape: Tape<'a>) -> Self {
         CompactSink {
             stack: Vec::with_capacity(64),
-            text_runs: Vec::with_capacity(tape.items.capacity()),
+            text_runs: Vec::with_capacity(tape.items.values.capacity()),
             tape,
             key_cache: [None; KEY_CACHE_SIZE],
             group_of: Vec::new(),
             groups: Vec::new(),
             gather_order: Vec::new(),
-            gathered: Vec::new(),
-            gathered_locs: Vec::new(),
+            gathered: Rows::with_capacity(0),
             group_index: HashMap::default(),
             root: None,
         }
@@ -2662,7 +2700,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
     /// array of its values.
     #[inline]
     fn fold_repeats(&mut self, mark: usize) {
-        let children = &self.tape.props[mark..];
+        let children = &self.tape.props.values[mark..];
         let n = children.len();
         // Usually every name is distinct: settle that cheaply first. A
         // 64-slot filter on (length, first, last byte) says "all distinct"
@@ -2703,7 +2741,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
 
     #[cold]
     fn fold_repeats_slow(&mut self, mark: usize) {
-        let children = &self.tape.props[mark..];
+        let children = &self.tape.props.values[mark..];
         let n = children.len();
         // Group by name.
         self.groups.clear();
@@ -2763,36 +2801,26 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                 group.cursor += 1;
             }
         }
-        self.gathered.clear();
-        self.gathered.extend(
-            self.gather_order
-                .iter()
-                .map(|&i| children[i as usize].value),
-        );
-        self.gathered_locs.clear();
-        self.gathered_locs.extend(
-            self.gather_order
-                .iter()
-                .map(|&i| self.tape.prop_locs[mark + i as usize]),
-        );
+        self.gathered.truncate(0);
+        for &i in &self.gather_order {
+            self.gathered.push(
+                children[i as usize].value,
+                self.tape.props.locs[mark + i as usize],
+            );
+        }
         // Compact the run to one property per group (a group's first
         // property is never behind its final slot, so this is in place).
         for (slot, g) in self.groups.iter().enumerate() {
-            let mut prop = self.tape.props[mark + g.first as usize];
+            let mut prop = self.tape.props.values[mark + g.first as usize];
             if g.count > 1 {
                 let run = (g.cursor - g.count) as usize..g.cursor as usize;
-                prop.value = E::JsonValue::Array(Tape::array_of(
-                    self.tape.tape,
-                    &self.gathered[run.clone()],
-                    &self.gathered_locs[run],
-                    prop.key_loc,
-                ));
+                let (values, locs) = self.gathered.columns(run);
+                prop.value =
+                    E::JsonValue::Array(Tape::array_of(self.tape.tape, values, locs, prop.key_loc));
             }
-            self.tape.props[mark + slot] = prop;
-            self.tape.prop_locs[mark + slot] = prop.key_loc;
+            self.tape.props.set(mark + slot, prop, prop.key_loc);
         }
         self.tape.props.truncate(mark + self.groups.len());
-        self.tape.prop_locs.truncate(mark + self.groups.len());
     }
 
     /// An element with no child elements: its text if it has no attributes
@@ -2892,13 +2920,12 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
             // Every run, exactly; the placeholder (if any) is re-made last.
             let text = self.concat_text(text_mark, false);
             self.tape.props.truncate(children_mark);
-            self.tape.prop_locs.truncate(children_mark);
             self.leaf_value(&frame, text)
         } else {
             // Whitespace-only runs between child elements are layout.
             if has_text {
                 let text = self.concat_text(text_mark, true);
-                self.tape.props[frame.text_prop as usize].value = Tape::str(text);
+                self.tape.props.values[frame.text_prop as usize].value = Tape::str(text);
             }
             if self.tape.props.len() > children_mark + 1 {
                 self.fold_repeats(children_mark);

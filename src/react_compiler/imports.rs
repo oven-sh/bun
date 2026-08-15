@@ -8,12 +8,10 @@
 
 use crate::collections::{IndexMap, IndexSet};
 
-use crate::diagnostics::{
-    CompilerError, CompilerErrorDetail, ErrorCategory, Position, SourceLocation,
-};
+use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use bun_alloc::{AstAlloc, AstVec};
 use bun_ast::{
-    ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
+    ClauseItem, ImportKind, ImportRecord, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
 
 use crate::hir::environment::OutputMode;
@@ -210,7 +208,7 @@ pub(crate) fn validate_restricted_imports(
                 "Import from module {}",
                 bun_core::BStr::new(import.path.text)
             ));
-            detail.loc = convert_loc(import.range.map(|r| r.loc));
+            detail.loc = crate::lowering::convert_loc(import.range.map(|r| r.loc));
             error.push_error_detail(detail);
         }
     }
@@ -220,18 +218,6 @@ pub(crate) fn validate_restricted_imports(
     } else {
         None
     }
-}
-
-fn convert_loc(loc: Option<Loc>) -> Option<SourceLocation> {
-    let pos = Position {
-        line: 0,
-        column: 0,
-        index: Some(loc?.get()),
-    };
-    Some(SourceLocation {
-        start: pos,
-        end: pos,
-    })
 }
 
 /// Insert import declarations into the program body.

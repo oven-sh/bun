@@ -13,9 +13,7 @@
 //! original in place; a final `finish()` call emits the runtime import and
 //! any outlined function decls as a separate `Part`.
 
-use crate::diagnostics::{
-    CompilerError, CompilerErrorOrDiagnostic, ErrorCategory, cold_diagnostic,
-};
+use crate::diagnostics::{CompilerError, ErrorCategory, cold_diagnostic};
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::OutputMode;
 use crate::hir::environment_config::EnvironmentConfig;
@@ -1009,22 +1007,19 @@ fn handle_error(
         // surface as Invariant/Todo for inputs upstream compiles cleanly. Those
         // are port bugs, not user-facing diagnostics; bail per-function so the
         // suite measures the user-visible error surface.
-        "all_errors" if opts.parse_test_pragmas => err.details.iter().any(|d| {
-            let cat = match d {
-                CompilerErrorOrDiagnostic::Diagnostic(d) => d.category,
-                CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category,
-            };
-            !matches!(cat, ErrorCategory::Invariant | ErrorCategory::Todo)
-        }),
+        "all_errors" if opts.parse_test_pragmas => err
+            .details
+            .iter()
+            .any(|d| !matches!(d.category(), ErrorCategory::Invariant | ErrorCategory::Todo)),
         "all_errors" => true,
         "critical_errors" => err.has_errors(),
         _ => false,
     };
 
-    let is_config_error = err.details.iter().any(|d| match d {
-        CompilerErrorOrDiagnostic::Diagnostic(d) => d.category == ErrorCategory::Config,
-        CompilerErrorOrDiagnostic::ErrorDetail(d) => d.category == ErrorCategory::Config,
-    });
+    let is_config_error = err
+        .details
+        .iter()
+        .any(|d| d.category() == ErrorCategory::Config);
 
     if should_panic || is_config_error {
         Some(CompileOutput::Error {

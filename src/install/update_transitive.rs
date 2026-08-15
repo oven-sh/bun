@@ -517,11 +517,8 @@ pub(crate) fn moved_targets_after_clean(
         let Some(entry) = cleaned.package_index.get(&old_name_hashes[old_id as usize]) else {
             continue;
         };
-        let candidates: &[PackageID] = match entry {
-            PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-            PackageIndexEntry::Ids(ids) => ids.as_slice(),
-        };
-        if let Some(&id) = candidates
+        if let Some(&id) = entry
+            .as_slice()
             .iter()
             .find(|&&c| new_res[c as usize].eql(&old_res[old_id as usize], new_buf, old_buf))
         {
@@ -757,14 +754,10 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             continue;
         };
         let (name, version) = (&key[..at], &key[at + 1..]);
-        let installed: &[PackageID] = match lockfile
+        let installed: &[PackageID] = lockfile
             .package_index
             .get(&Semver::string::Builder::string_hash(name))
-        {
-            Some(PackageIndexEntry::Id(id)) => core::slice::from_ref(id),
-            Some(PackageIndexEntry::Ids(ids)) => ids.as_slice(),
-            None => &[],
-        };
+            .map_or(&[], PackageIndexEntry::as_slice);
         if installed
             .iter()
             .any(|&id| pkg_res[id as usize].tag != ResolutionTag::Npm)

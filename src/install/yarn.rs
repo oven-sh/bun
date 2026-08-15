@@ -236,34 +236,19 @@ impl<'a> Entry<'a> {
         ParsedNpmAlias { version: b"*" }
     }
 
+    /// Registry tarball URLs look like `<registry>/<name>/-/<basename>-<version>.tgz`,
+    /// where `<name>` spans two path segments (`@scope/name`) for scoped packages.
     pub(crate) fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
-        if let Some(dash_idx) = strings::index_of(url, b"/-/") {
-            let mut slash_count: usize = 0;
-            let mut last_slash: usize = 0;
-            let mut second_last_slash: usize = 0;
-
-            let mut i = dash_idx;
-            while i > 0 {
-                if url[i - 1] == b'/' {
-                    slash_count += 1;
-                    if slash_count == 1 {
-                        last_slash = i - 1;
-                    } else if slash_count == 2 {
-                        second_last_slash = i - 1;
-                        break;
-                    }
-                }
-                i -= 1;
-            }
-
-            if last_slash < dash_idx && url[last_slash + 1] == b'@' {
-                return Some(&url[second_last_slash + 1..dash_idx]);
-            } else if last_slash < dash_idx {
-                return Some(&url[last_slash + 1..dash_idx]);
-            }
+        let path = &url[..strings::index_of(url, b"/-/")?];
+        let (prefix, name) = strings::rsplit_once_char(path, b'/')?;
+        if name.is_empty() {
+            return None;
         }
-
-        None
+        let scope_start = strings::last_index_of_char(prefix, b'/').map_or(0, |slash| slash + 1);
+        if prefix[scope_start..].starts_with(b"@") {
+            return Some(&path[scope_start..]);
+        }
+        Some(name)
     }
 }
 

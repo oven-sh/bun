@@ -1361,6 +1361,14 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
+    pub(crate) fn forced_jsx_development(&self) -> bool {
+        match self.force_node_env {
+            ForceNodeEnv::Development => true,
+            ForceNodeEnv::Production => false,
+            ForceNodeEnv::Unspecified => self.jsx.development,
+        }
+    }
+
     /// Per-worker deep clone — replaces the prior bitwise
     /// `ptr::copy_nonoverlapping` of the parent `Transpiler` (which aliased
     /// every `Box`/`Vec` in here between parent and worker; reassigning any of

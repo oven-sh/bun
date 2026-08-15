@@ -1132,6 +1132,16 @@ enum BatchSegment {
     Ext { ptr: *const u8, len: u32 },
 }
 
+/// Flags for one `H2FrameParser::send_data` call.
+#[derive(Clone, Copy)]
+struct SendDataOptions {
+    close: bool,
+    /// Report a HALF_CLOSED_LOCAL transition through the return value instead of onStreamEnd.
+    suppress_half_closed_local_dispatch: bool,
+    /// Hand an unqueued payload's write callback back to the caller instead of invoking it here.
+    defer_write_callback: bool,
+}
+
 struct DispatchGuard<'a>(&'a Cell<u32>);
 
 impl Drop for DispatchGuard<'_> {
@@ -7464,29 +7474,20 @@ impl H2FrameParser {
         ))
     }
 
-    /// Returns `(settled_state, callback_deferred)`.
-    ///
-    /// `settled_state` is the state code the close tail settled on (5 = HALF_CLOSED_LOCAL,
-    /// 7 = CLOSED, 0 = no close-tail transition ran). With
-    /// `suppress_half_closed_local_dispatch` the HALF_CLOSED_LOCAL onStreamEnd dispatch
-    /// is skipped — the synchronous caller (writeStream) hands the state to JS via its
-    /// return value instead of re-entering the VM mid-host-call.
-    ///
-    /// With `defer_write_callback`, when the payload is handed to the socket without being
-    /// queued (no flow-control / socket backpressure) the write callback is NOT invoked here:
-    /// `callback_deferred` is true and the JS caller completes it asynchronously instead, so a
-    /// node Writable's `_write` callback never settles synchronously inside `write()`. When the
-    /// payload is queued, the engine still owns the callback and invokes it once the queued
-    /// frames are flushed (backpressure cleared), exactly as before.
+    /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
+    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether `callback` was left to the caller.
     fn send_data(
         &self,
         stream: &mut Stream,
         payload: &[u8],
-        close: bool,
         callback: JSValue,
-        suppress_half_closed_local_dispatch: bool,
-        defer_write_callback: bool,
+        options: SendDataOptions,
     ) -> (u8, bool) {
+        let SendDataOptions {
+            close,
+            suppress_half_closed_local_dispatch,
+            defer_write_callback,
+        } = options;
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
@@ -7748,7 +7749,16 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        let _ = this.send_data(
+            stream,
+            b"",
+            JSValue::UNDEFINED,
+            SendDataOptions {
+                close: true,
+                suppress_half_closed_local_dispatch: false,
+                defer_write_callback: false,
+            },
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -8280,10 +8290,12 @@ impl H2FrameParser {
         let (settled_state, callback_deferred) = this.send_data(
             &mut stream,
             &payload,
-            close,
             callback_arg,
-            true,
-            defer_callback_arg.to_boolean(),
+            SendDataOptions {
+                close,
+                suppress_half_closed_local_dispatch: true,
+                defer_write_callback: defer_callback_arg.to_boolean(),
+            },
         );
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of

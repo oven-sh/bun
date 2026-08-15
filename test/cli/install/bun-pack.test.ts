@@ -1086,6 +1086,37 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
+  test("scoped names match on scope and name together", async () => {
+    // `bundled` exists unscoped, in @scope and in @other; only the first two are bundled.
+    // @scope/not-bundled shares its scope directory with a bundled dep.
+    const packages = ["bundled", "@scope/bundled", "@scope/not-bundled", "@other/bundled"];
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled-same-name-across-scopes",
+          version: "1.0.0",
+          dependencies: Object.fromEntries(packages.map(name => [name, "1.0.0"])),
+          bundledDependencies: ["@scope/bundled", "bundled"],
+        }),
+      ),
+      ...packages.map(name =>
+        write(join(packageDir, "node_modules", name, "package.json"), JSON.stringify({ name, version: "1.0.0" })),
+      ),
+    ]);
+
+    const { out } = await pack(packageDir, bunEnv);
+    expect(out).toContain("Total files: 3");
+    expect(out).toContain("Bundled deps: 2");
+
+    const tarball = readTarball(join(packageDir, "pack-bundled-same-name-across-scopes-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/node_modules/@scope/bundled/package.json" },
+      { "pathname": "package/node_modules/bundled/package.json" },
+    ]);
+  });
+
   test("ignore deps that aren't directories", async () => {
     await Promise.all([
       write(

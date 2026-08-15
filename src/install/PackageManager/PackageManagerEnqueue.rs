@@ -2503,8 +2503,7 @@ fn get_or_put_resolved_package(
                         if !install_peer {
                             return Ok(None);
                         }
-                        // Nothing published to resolve afresh: the entry that passed over its
-                        // leftover in `existing_peer_target` keeps it, with the warning, as before.
+                        // The leftover `existing_peer_target` passed over is all there is.
                         if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
                         {
                             return Ok(Some(bind_existing_peer(
@@ -2829,15 +2828,9 @@ fn locked_version_in_lockfile<'a>(
         .map(|locked| (locked, buf))
 }
 
-/// Phase two of peer resolution: the package a peer row binds to among those of its name already
-/// in the lockfile (`package_index` lists the highest first). The first one the range accepts
-/// wins; failing that the highest one is bound anyway when it is of the row's kind, flagged
-/// `false` so the caller warns "incorrect peer dependency", except when binding it
-/// `would_revive_leftover`, in which case the row resolves afresh (and is bound to it after all,
-/// by the caller, when nothing published matches). Loading bun.lock binds the same way
-/// (`resolve_peer_dep_version_based`), so the fallback has to stay the highest candidate or
-/// nothing: a row that resolved afresh gets saved next to a package its range accepts, which that
-/// loader's satisfies scan finds, whereas a lower candidate bound here would be rebound on load.
+/// The package of the row's name to bind a deferred peer row to, and whether it satisfies the row.
+/// Mirrors `resolve_peer_dep_version_based`, which rebinds the row on load: first satisfying
+/// candidate, else the highest one or nothing.
 fn existing_peer_target(
     this: &PackageManager,
     name_hash: PackageNameHash,
@@ -2858,8 +2851,7 @@ fn existing_peer_target(
     (!would_revive_leftover(lockfile, row, highest)).then_some((highest, false))
 }
 
-/// The package an unsatisfied peer row falls back to: the highest of its name, when it is of the
-/// row's kind.
+/// `package_index` lists the highest version first.
 fn highest_peer_candidate(
     lockfile: &Lockfile::Lockfile,
     name_hash: PackageNameHash,
@@ -2908,16 +2900,10 @@ fn bind_existing_peer(
     }
 }
 
-/// `row` is a root or workspace `peerDependencies` entry and `package_id`, loaded from bun.lock,
-/// is resolved to by peer rows only: it was installed for such an entry in the first place, and the
-/// entry's range has since been rewritten past it (`bun update -i`, `bun update <name>@<version>`,
-/// an edit followed by `bun install`), so binding the entry back to it would keep the version the
-/// user moved off and warn about it, where installing what the entry now asks for replaces it in
-/// that workspace's node_modules. A package's own peer rows are left out: they take whatever copy
-/// the tree has, a copy resolved for them alone is never placed, so the warning is the right answer
-/// there. Packages appended during this resolve never qualify, so a fresh install binds exactly as
-/// before, and rows of packages the clean pass is about to drop still count, which can only keep
-/// the old binding.
+/// `row` is a root or workspace `peerDependencies` entry whose range was rewritten past
+/// `package_id`, the copy bun.lock only holds for peer rows (typically this entry's own earlier
+/// install); the entry resolves afresh instead. A package's own peer rows never do: a copy resolved
+/// for them alone is not placed in the tree.
 fn would_revive_leftover(
     lockfile: &Lockfile::Lockfile,
     row: DependencyID,

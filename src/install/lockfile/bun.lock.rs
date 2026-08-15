@@ -3341,12 +3341,10 @@ fn deferred_peer_range<'a>(
 /// `Resolution::order` — and take the first whose resolution satisfies
 /// the range. When nothing satisfies, fall back to the highest-ordered
 /// candidate, and only when it is the same kind as the dependency (the
-/// "incorrect peer dependency" case; reproducing the fresh resolver's
-/// choice exactly is the point of this helper. The one case where its
-/// `existing_peer_target` declines that candidate, a root or workspace
-/// entry that `would_revive_leftover`, makes the edge resolve afresh to a
-/// package its range accepts, which is what gets saved and what the
-/// satisfies scan above finds). Returns `None` when no package with the name exists
+/// "incorrect peer dependency" case; `existing_peer_target` makes the same
+/// choice, and reproducing it exactly is the point of this helper; an edge
+/// it resolved afresh instead was saved with a satisfying package, found
+/// above). Returns `None` when no package with the name exists
 /// or the fallback is a different kind; the caller then falls back to
 /// the path walk. Edges `deferred_peer_range` rejects also return `None`.
 ///

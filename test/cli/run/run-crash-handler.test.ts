@@ -790,12 +790,13 @@ test.if(isWindows)(
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
-      await Promise.race([acked.promise, Bun.sleep(2000)]);
-
       expect(stderr).toContain(server.url.toString());
-      expect(sent).toBe(true);
       expect(exitCode).not.toBe(0);
+
+      // Await the ack like the auto-reporter tests above do: PowerShell's cold
+      // start alone takes longer than 2s on the slower Windows agents.
+      await acked.promise;
+      expect(sent).toBe(true);
     } finally {
       try {
         rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });

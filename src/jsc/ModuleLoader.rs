@@ -308,14 +308,7 @@ pub(crate) fn fetch_builtin_module(
     unsafe { (hooks.fetch_builtin_module)(jsc_vm, global.as_ptr(), specifier, referrer, out) }
 }
 
-/// `VirtualMachine.processFetchLog(global, specifier, log, &errorable, err)` —
-/// synthesizes a JS error from the parser/resolve `log` of transpiling
-/// `specifier` and writes it into `errorable` so the C++ side
-/// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp:473) rejects the import
-/// promise with a real Error instead of `undefined`.
-///
-/// No `LoaderHooks` indirection is needed here — `BuildMessage` /
-/// `ResolveMessage` live in this crate — so this forwards to the real impl in
+/// Public entry point for `bun_runtime`; see
 /// [`crate::virtual_machine::process_fetch_log`].
 pub fn process_fetch_log(
     global: &JSGlobalObject,

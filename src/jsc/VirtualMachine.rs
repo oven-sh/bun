@@ -2857,12 +2857,8 @@ impl VirtualMachine {
 /// (`Bun__onFulfillAsyncModule`, ModuleLoader.cpp) rejects the import promise
 /// with a real Error instead of `undefined`.
 ///
-/// `specifier` is the module whose transpile produced `log`, so it is the
-/// file containing every unresolved import in `log` and therefore the
-/// `ResolveMessage.referrer`, as with resolve errors raised from the resolve
-/// hook. The referrer the fetch itself was given is not that file: ESM
-/// fetches pass the `"undefined"` placeholder (`moduleLoaderFetch`) and
-/// `require()` passes the requiring module.
+/// `specifier` is the module that was being transpiled, i.e. the one containing
+/// every import in `log` that failed to resolve, hence the `ResolveMessage.referrer`.
 ///
 /// Free function; takes `&JSGlobalObject` directly rather
 /// than `&mut VirtualMachine` because the body never touches VM state.

@@ -156,30 +156,11 @@ impl AsyncModule {
         promise: JSValue,
         resolved_source: &mut ResolvedSource,
         err: Option<crate::CrateError>,
-        specifier_: BunString,
+        specifier: BunString,
         log: &mut bun_ast::Log,
     ) -> JsResult<()> {
         jsc::mark_binding();
-        let mut specifier = specifier_;
-        // BunString is `Copy` (no Drop), so deref the held
-        // refcount explicitly via scopeguard. The `TopExceptionScope` is
-        // omitted: `from_js_host_call_generic` already checks the VM for a
-        // pending exception after the FFI call (host_fn.rs).
-        //
-        // The guard captures a raw pointer to the local (not a by-value copy)
-        // so the deref observes the *post-FFI* value of the variable —
-        // `Bun__onFulfillAsyncModule` receives `&mut specifier` and is free to
-        // overwrite it.
-        // Safety: `specifier` is declared above this guard, so it outlives it
-        // (locals drop in reverse order); the `&mut` reborrow passed to FFI
-        // below is dead by the time the guard runs.
-        let sp: *mut BunString = &raw mut specifier;
-        let _specifier_guard = scopeguard::guard((), move |()| {
-            // SAFETY: `sp` points at `specifier` declared above this guard;
-            // locals drop in reverse order so it outlives it, and the `&mut`
-            // reborrow passed to FFI is dead by the time this runs.
-            unsafe { (*sp).deref() }
-        });
+        let mut specifier = OwnedString::new(specifier);
 
         let mut errorable: ErrorableResolvedSource;
         if let Some(e) = err {
@@ -213,7 +194,7 @@ impl AsyncModule {
                 );
                 crate::virtual_machine::process_fetch_log(
                     global_this,
-                    specifier,
+                    specifier.get(),
                     log,
                     &mut errorable,
                     e,

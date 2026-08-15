@@ -2343,8 +2343,7 @@ pub(crate) const fn unsupported_flag(name: &'static [u8]) -> *const [u8] {
     std::ptr::from_ref::<[u8]>(name)
 }
 
-/// `IllegalOption` payload for the byte `FlagParser::parse_short` is rejecting:
-/// that one byte (all getopt(3) names either), borrowed from argv.
+/// `IllegalOption` payload for `parse_short`: just the rejected byte, as getopt(3) reports it.
 #[inline]
 pub(crate) fn illegal_flag(smallflags: &[u8], i: usize) -> *const [u8] {
     &raw const smallflags[i..=i]
@@ -2354,8 +2353,7 @@ pub(crate) fn illegal_flag(smallflags: &[u8], i: usize) -> *const [u8] {
 pub trait FlagParser {
     /// Handle a `--long` flag. Return `None` to fall through to short parsing.
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
-    /// Handle one byte of a `-abc` cluster (`ch == smallflags[i]`). Return `None`
-    /// to keep iterating; reject an unknown byte with [`illegal_flag`].
+    /// Handle one byte of a `-abc` cluster: `None` keeps iterating, [`illegal_flag`] rejects it.
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
 }
 

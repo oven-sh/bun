@@ -1,11 +1,14 @@
-// The set of blocked signals survives execve, so a launcher that has a signal
-// blocked (JVM and Go wrappers, some supervisors, `env --block-signal`) starts
-// bun with it blocked, and a blocked signal is never delivered. Like node, bun
+// A blocked signal is never delivered, and the set of blocked signals survives
+// execve. So a launcher that has a signal blocked (JVM and Go wrappers, some
+// supervisors, `env --block-signal`) starts bun with it blocked: like node, bun
 // clears the mask at startup (src/bun_bin/lib.rs), and, like libuv, it execs
-// every child with an empty mask whatever its own looks like
-// (posix_spawn_bun in src/jsc/bindings/bun-spawn.cpp).
+// every child with an empty mask whatever its own looks like (posix_spawn_bun
+// in src/jsc/bindings/bun-spawn.cpp). The last test covers the one place bun
+// used to block a signal itself: forwarding one to a `bun run` script
+// (src/jsc/bindings/c-bindings.cpp).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isAndroid, isLinux, isPosix, libcPathForDlopen, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SIGTERM = 15;
@@ -186,4 +189,63 @@ test.concurrent.skipIf(!isPosix)("children do not inherit a signal bun itself ha
     ${CHILDREN_KILLED_FIXTURE}
   `;
   expect(await report([bunExe(), "-e", fixture])).toEqual(reported(CHILDREN_KILLED));
+});
+
+/** Contents of a /proc file, or "" once the process it belongs to is gone. */
+function procRead(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+// /proc/<pid>/task/<tid>/children needs CONFIG_PROC_CHILDREN.
+const canListChildren =
+  isLinux &&
+  (() => {
+    try {
+      readFileSync(`/proc/self/task/${process.pid}/children`);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+// `bun run` only learns the script's pid once the spawn returns; a signal that
+// arrives before that is forwarded afterwards, outside the signal handler. That
+// forwarding must not leave the signal blocked in bun: the re-raise that ends
+// `bun run` once the script has died from it would then fall through to
+// abort(), and bun would die from SIGABRT instead. The script shows up in
+// bun's children the moment it is created, while bun is still suspended in
+// vfork, so a signal sent right then is delivered before bun has the pid.
+// Whether or not an attempt wins that race, bun has to die from SIGTERM.
+test.skipIf(!canListChildren)("bun run forwards a signal that arrives before it knows the script's pid", async () => {
+  using project = tempDir("inherited-signal-mask-early", {
+    "package.json": JSON.stringify({ name: "inherited-signal-mask", scripts: { start: "exec sleep 30" } }),
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "start"],
+      cwd: String(project),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+      killSignal: "SIGKILL",
+    });
+    const children = `/proc/${proc.pid}/task/${proc.pid}/children`;
+    // Spinning, not awaiting: the window is the script's pre-exec setup, a
+    // fraction of a millisecond. The deadline only bounds a bun that never spawns.
+    const deadline = performance.now() + 3_000;
+    while (procRead(children).trim() === "" && performance.now() < deadline) {}
+    proc.kill("SIGTERM");
+
+    const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('script "start" was terminated by signal SIGTERM');
+    expect({ attempt, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+      attempt,
+      exitCode: null,
+      signalCode: "SIGTERM",
+    });
+  }
 });

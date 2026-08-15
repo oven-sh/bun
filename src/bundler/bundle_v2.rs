@@ -969,8 +969,7 @@ pub mod bv2_impl {
                     })
                 }
 
-                /// A relative (or bare) `specifier` imported by `source_file`. An importer or a
-                /// joined path that does not fit in a path buffer is not in the map.
+                /// A relative (or bare) `specifier` imported by `source_file`; an overlong path is not in the map.
                 fn lookup_import(
                     &self,
                     source_file: &[u8],

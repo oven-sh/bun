@@ -241,12 +241,9 @@ fn apply_to_target(
                     })?;
                 }
                 EditSite::Override(selector) => {
-                    let Some(mut rules) = override_rules(&root) else {
-                        continue;
-                    };
-                    if let Some(value) = override_rule_value(&mut rules, &edit.key, selector) {
+                    for_each_override_value(&root, &edit.key, selector, |value| {
                         rewrite_value(arena, value, edit);
-                    }
+                    });
                 }
             }
         }
@@ -292,49 +289,40 @@ pub(super) fn root_package_json(manager: &mut PackageManager) -> Expr {
     fetch_entry_root(manager, &target)
 }
 
-struct OverrideRules {
-    object: Expr,
-    /// npm's `"parent": { "child": ... }` form is only read from `overrides` (`OverrideMap::parse_from_resolutions` skips object values).
-    nested: bool,
-}
-
-/// Same precedence as `OverrideMap::parse_append`: `overrides` wins even when `resolutions` is also present.
-fn override_rules(root: &Expr) -> Option<OverrideRules> {
-    if let Some(object) = root.get(b"overrides") {
-        return Some(OverrideRules {
-            object,
-            nested: true,
-        });
-    }
-    root.get(b"resolutions").map(|object| OverrideRules {
-        object,
-        nested: false,
-    })
-}
-
-/// What `name`'s rule `selector` is currently set to in the root package.json, or `None` when its value is not a range that can be rewritten in place (a `$ref`, for example).
+/// The string the root package.json currently gives `name`'s rule `selector`; when several entries spell the same rule, the last one, which is the one `OverrideMap` keeps.
 pub(super) fn override_literal(
     root: &Expr,
     name: &[u8],
     selector: &OverrideSelector,
 ) -> Option<Box<[u8]>> {
-    let mut rules = override_rules(root)?;
-    let value = override_rule_value(&mut rules, name, selector)?;
-    let literal = value.as_ref()?.as_utf8_string_literal()?;
-    Some(Box::from(strings::trim(
-        literal,
-        &strings::WHITESPACE_CHARS,
-    )))
+    let mut literal: Option<Box<[u8]>> = None;
+    for_each_override_value(root, name, selector, |value| {
+        if let Some(text) = value.as_ref().and_then(Expr::as_utf8_string_literal) {
+            literal = Some(Box::from(strings::trim(text, &strings::WHITESPACE_CHARS)));
+        }
+    });
+    literal
 }
 
-/// The value slot of the entry declaring `selector` for `name`, whichever of the accepted key spellings (`a>b`, `a/b`, `**/b`, `{"a": {"b": ..}}`, `{"b": {".": ..}}`) it uses.
-fn override_rule_value<'a>(
-    rules: &'a mut OverrideRules,
+/// Visits, in file order, the value of every entry declaring `selector` for `name`, whichever of the accepted key spellings (`a>b`, `a/b`, `**/b`, `{"a": {"b": ..}}`, `{"b": {".": ..}}`) each uses.
+///
+/// Reads `overrides`, else `resolutions`, like `OverrideMap::parse_append`; npm's `"parent": { "child": .. }` form only counts in `overrides`, where the parser accepts it.
+fn for_each_override_value(
+    root: &Expr,
     name: &[u8],
     selector: &OverrideSelector,
-) -> Option<&'a mut Option<Expr>> {
-    let nested = rules.nested;
-    let object = rules.object.data.e_object_mut()?;
+    mut f: impl FnMut(&mut Option<Expr>),
+) {
+    let (mut rules, nested) = match root.get(b"overrides") {
+        Some(overrides) => (overrides, true),
+        None => match root.get(b"resolutions") {
+            Some(resolutions) => (resolutions, false),
+            None => return,
+        },
+    };
+    let Some(object) = rules.data.e_object_mut() else {
+        return;
+    };
     for prop in object.properties.slice_mut() {
         let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
             continue;
@@ -346,7 +334,7 @@ fn override_rule_value<'a>(
                 .is_some_and(|value| matches!(value.data, ExprData::EObject(_)));
         if !is_group {
             if parse_selector(key).is_ok_and(|rule| selector.matches(name, &rule)) {
-                return Some(&mut prop.value);
+                f(&mut prop.value);
             }
             continue;
         }
@@ -382,9 +370,8 @@ fn override_rule_value<'a>(
                 }
             };
             if selector.matches(name, &rule) {
-                return Some(&mut child.value);
+                f(&mut child.value);
             }
         }
     }
-    None
 }

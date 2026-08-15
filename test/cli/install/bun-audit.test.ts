@@ -2292,6 +2292,19 @@ describe("`bun audit fix`", () => {
       { "one-range-dep@1>no-deps": "1.0.1" },
     ],
     ["overrides", { "no-deps@<1.0.1": "1.0.0" }, "(overrides no-deps@<1.0.1)", { "no-deps@<1.0.1": "1.0.1" }],
+    // Two spellings of one rule: the last one is the rule bun applies, and every entry holding the version is rewritten.
+    [
+      "overrides",
+      { "**/no-deps": "1.0.0", "no-deps": "1.0.0" },
+      "(overrides)",
+      { "**/no-deps": "1.0.1", "no-deps": "1.0.1" },
+    ],
+    [
+      "overrides",
+      { "**/no-deps": "1.1.0", "no-deps": "1.0.0" },
+      "(overrides)",
+      { "**/no-deps": "1.1.0", "no-deps": "1.0.1" },
+    ],
   ])("rewrites the rule in place when %s is written as %j", async (field, rules, label, rewritten) => {
     await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
     using dir = await setup(server, { name: "foo", dependencies: { "one-range-dep": "1.0.0" }, [field]: rules });

@@ -268,11 +268,11 @@ impl Result {
     }
 }
 
-// Recover the parent `BunTest` from `&mut self`. Returns `NonNull` (not
+// Recover the parent `BunTest` from `&mut self`. Returns `*mut BunTest` (not
 // `&mut BunTest`) because `self` *is* `BunTest.execution`, so materializing a
 // `&mut BunTest` while `&mut self` is live would be aliased-`&mut` UB. Callers
 // must dereference at point-of-use into disjoint fields only.
-bun_core::impl_field_parent! { Execution => BunTest.execution; fn nonnull bun_test; }
+bun_core::impl_field_parent! { Execution => BunTest.execution; fn mut bun_test; }
 
 impl Execution {
     pub(crate) fn init() -> Execution {
@@ -329,7 +329,7 @@ impl Execution {
 
         let buntest = self.bun_test();
         // SAFETY: deref parent at point-of-use; `self` is not accessed while this `&mut BunTest` is live.
-        unsafe { (*buntest.as_ptr()).add_result(RefDataValue::Start) };
+        unsafe { (*buntest).add_result(RefDataValue::Start) };
         Ok(())
     }
 

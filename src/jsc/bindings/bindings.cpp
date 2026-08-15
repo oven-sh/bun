@@ -98,6 +98,7 @@
 #include "JavaScriptCore/IntlObject.h"
 #include "JavaScriptCore/ISO8601.h"
 #include "JavaScriptCore/JSCTimeZone.h"
+#include "JavaScriptCore/InstantCore.h"
 #include "JavaScriptCore/TemporalCoreTypes.h"
 #include "JavaScriptCore/TemporalDuration.h"
 #include "JavaScriptCore/TemporalEnums.h"
@@ -108,6 +109,7 @@
 #include "JavaScriptCore/TemporalPlainTime.h"
 #include "JavaScriptCore/TemporalPlainYearMonth.h"
 #include "JavaScriptCore/TemporalZonedDateTime.h"
+#include "JavaScriptCore/TemporalObject.h"
 #include "JavaScriptCore/TimeZoneICUBridge.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
@@ -3892,9 +3894,18 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     arg0->rejectAsHandled(vm, JSC::JSValue::decode(JSValue2));
 }
 
-JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1)
+JSC::JSPromise* JSC__JSPromise__rejectedPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue JSValue1)
 {
-    return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
+    auto value = JSC::JSValue::decode(JSValue1);
+    if (!value) [[unlikely]] {
+        // Building the rejection value threw — a stopped worker's pending TerminationException cuts
+        // error creation short. That exception is what the caller's frame reports; hand back an
+        // inert promise rather than reject with nothing.
+        auto& vm = JSC::getVM(globalObject);
+        ASSERT(vm.exceptionForInspection());
+        return JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    }
+    return JSC::JSPromise::rejectedPromise(globalObject, value);
 }
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSPromise__resolve(JSC::JSPromise* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2)
@@ -5165,26 +5176,37 @@ bool JSC__VM__hasTerminationRequest(JSC::VM* vm)
     return vm->hasTerminationRequest();
 }
 
+// The one crossing from the loop-level stop into the exception currency: a nested wait/drain inside a
+// host function learned of a stop and must hand a JsError to its caller, so it throws the VM's
+// TerminationException for real -- what VMTraps::handleTraps(NeedTermination) does. Always leaves it
+// pending. The exception object is materialized here (a main-thread VM stopped by SIGINT/forbidExecution
+// never had one), and the request bit set (a gate closed by teardown rather than terminate()).
+// A nested wait cannot run under a DeferTermination scope: JSC re-throws a deferred termination only at
+// that scope's end, so nothing could be pending here for the caller to unwind with.
+[[ZIG_EXPORT(check_slow)]]
+void JSC__JSGlobalObject__throwTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (vm.hasPendingTerminationException())
+        return;
+    ASSERT_WITH_MESSAGE(!vm.traps().isDeferringTermination(), "a nested wait learned of a stop inside a DeferTermination scope; nothing can be thrown here");
+    vm.ensureTerminationException();
+    if (!vm.hasTerminationRequest())
+        vm.setHasTerminationRequest();
+    scope.release();
+    vm.throwTerminationException();
+}
+
+[[ZIG_EXPORT(nothrow)]]
+bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::getVM(globalObject).hasPendingTerminationException();
+}
+
 void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
 {
     (*arg0).setExecutionForbidden();
-}
-
-// JS thread. Make the VM's stop concrete on this thread: after this a TerminationException is
-// pending (unless termination is currently deferred), whether or not the NeedTermination trap the
-// requester fired had been serviced yet. What RETURN_IF_EXCEPTION would have done at the next check.
-[[ZIG_EXPORT(nothrow)]]
-void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
-{
-    JSC::VM& vm = *arg0;
-    if (vm.hasPendingTerminationException())
-        return;
-    if (!vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
-        vm.notifyNeedTermination();
-    if (vm.hasTerminationRequest())
-        vm.throwTerminationException();
-    else
-        vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
 }
 
 // These may be called concurrently from another thread.
@@ -6149,6 +6171,159 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__gregorianDateTimeToMSInZone(JSC::
     return static_cast<double>(r->epochMilliseconds());
 }
 
+// Materializes a date/time literal as a Temporal object through the same
+// paths `Temporal.*.from(string)` takes. `kind` mirrors the Rust
+// `bun_ast::E::TomlDateTimeKind` discriminants.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] EncodedJSValue Bun__Temporal__fromDateTimeLiteral(JSC::JSGlobalObject* globalObject, const uint8_t* text, size_t len, uint8_t kind)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // The Temporal structures on the global object only exist when the
+    // option is on; reaching for them would crash.
+    if (!JSC::Options::useTemporal()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "Date/time values require Temporal, which is disabled in this process"_s);
+        return {};
+    }
+
+    WTF::String string { std::span(reinterpret_cast<const Latin1Character*>(text), len) };
+    JSC::JSValue item = JSC::jsString(vm, string);
+
+    JSC::JSObject* result = nullptr;
+    switch (kind) {
+    case 1:
+        result = JSC::TemporalInstant::toInstant(globalObject, item);
+        break;
+    case 2:
+        result = JSC::TemporalPlainDateTime::from(globalObject, item, JSC::jsUndefined());
+        break;
+    case 3:
+        result = JSC::TemporalPlainDate::from(globalObject, item, JSC::jsUndefined());
+        break;
+    case 4:
+        result = JSC::TemporalPlainTime::from(globalObject, item, JSC::jsUndefined());
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+    ASSERT(result);
+    return JSValue::encode(result);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::TemporalType Bun__JSValue__temporalType(JSC::EncodedJSValue encodedValue)
+{
+    return JSC::temporalType(JSC::JSValue::decode(encodedValue));
+}
+
+static Int128 ceilToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem + (ns > 0 ? unit : 0);
+}
+
+static Int128 floorToMultiple(Int128 ns, Int128 unit)
+{
+    Int128 rem = ns % unit;
+    return rem == 0 ? ns : ns - rem - (ns < 0 ? unit : 0);
+}
+
+// The `±HH:MM` offset to spell `exactTime` with so its local year has TOML's
+// four digits: `preferredNs` if that fits, else the closest whole-hour (then
+// whole-minute) offset that does; nullopt if none within ±23:59 does.
+static std::optional<int64_t> tomlOffsetForInstant(JSC::ISO8601::ExactTime exactTime, int64_t preferredNs)
+{
+    using JSC::ISO8601::ExactTime;
+    constexpr Int128 minLocal = Int128 { -62167219200 } * ExactTime::nsPerSecond; // 0000-01-01T00:00:00
+    constexpr Int128 maxLocal = Int128 { 253402300800 } * ExactTime::nsPerSecond; // +010000-01-01T00:00:00
+    constexpr Int128 maxOffset = ExactTime::nsPerHour * 23 + ExactTime::nsPerMinute * 59;
+
+    Int128 epoch = exactTime.epochNanoseconds();
+    // Whole-minute offsets o with minLocal <= epoch + o < maxLocal.
+    Int128 lo = std::max(ceilToMultiple(minLocal - epoch, ExactTime::nsPerMinute), -maxOffset);
+    Int128 hi = std::min(floorToMultiple(maxLocal - Int128 { 1 } - epoch, ExactTime::nsPerMinute), maxOffset);
+    if (lo > hi)
+        return std::nullopt;
+    Int128 preferred { preferredNs };
+    if (preferred < lo) {
+        Int128 hour = ceilToMultiple(lo, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour <= hi ? hour : lo);
+    }
+    if (preferred > hi) {
+        Int128 hour = floorToMultiple(hi, ExactTime::nsPerHour);
+        return static_cast<int64_t>(hour >= lo ? hour : hi);
+    }
+    return preferredNs;
+}
+
+// Formats a Temporal object as a TOML date/time literal into `buf` and
+// returns the length written, or -1 if its year is outside TOML's
+// 0000..9999. The `[u-ca=...]` and `[Time/Zone]` annotations, which TOML
+// cannot carry, are dropped.
+extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, JSC::TemporalType temporalType, uint8_t* buf, size_t bufLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSCell* cell = JSC::JSValue::decode(encodedValue).asCell();
+    constexpr JSC::PrecisionData autoPrecision { { JSC::Precision::Auto, 0 }, JSC::TemporalUnit::Nanosecond, 1 };
+
+    WTF::String string;
+    switch (temporalType) {
+    case JSC::TemporalType::Instant: {
+        auto exactTime = uncheckedDowncast<JSC::TemporalInstant>(cell)->exactTime();
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(exactTime, 0);
+        if (!offsetNs)
+            return -1;
+        if (!*offsetNs)
+            offsetNs = std::nullopt; // `Z`
+        string = JSC::TemporalCore::instantToString(exactTime, offsetNs, autoPrecision);
+        break;
+    }
+    case JSC::TemporalType::PlainDateTime: {
+        auto* dateTime = uncheckedDowncast<JSC::TemporalPlainDateTime>(cell);
+        string = JSC::ISO8601::temporalDateTimeToString(dateTime->plainDate(), dateTime->plainTime(), { JSC::Precision::Auto, 0 });
+        break;
+    }
+    case JSC::TemporalType::PlainDate:
+        string = JSC::ISO8601::temporalDateToString(uncheckedDowncast<JSC::TemporalPlainDate>(cell)->plainDate());
+        break;
+    case JSC::TemporalType::PlainTime:
+        string = JSC::ISO8601::temporalTimeToString(uncheckedDowncast<JSC::TemporalPlainTime>(cell)->plainTime(), { JSC::Precision::Auto, 0 });
+        break;
+    case JSC::TemporalType::ZonedDateTime: {
+        auto* zoned = uncheckedDowncast<JSC::TemporalZonedDateTime>(cell);
+        std::optional<int64_t> zoneOffsetNs = zoned->getOffsetNanoseconds(globalObject);
+        RETURN_IF_EXCEPTION(scope, 0);
+        ASSERT(zoneOffsetNs);
+        // TOML offsets are `HH:MM`; a historic sub-minute (LMT) offset is
+        // spelled as `Z` instead.
+        bool wholeMinutes = *zoneOffsetNs % 60000000000ll == 0;
+        std::optional<int64_t> offsetNs = tomlOffsetForInstant(zoned->exactTime(), wholeMinutes ? *zoneOffsetNs : 0);
+        if (!offsetNs)
+            return -1;
+        if (!wholeMinutes && !*offsetNs)
+            offsetNs = std::nullopt;
+        string = JSC::TemporalCore::instantToString(zoned->exactTime(), offsetNs, autoPrecision);
+        break;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // The expanded-year form of a PlainDate/PlainDateTime (`+010000-…`, `-000001-…`).
+    if (!isASCIIDigit(string[0]))
+        return -1;
+
+    unsigned length = string.length();
+    RELEASE_ASSERT(length <= bufLen);
+    for (unsigned i = 0; i < length; i++) {
+        ASSERT(isASCII(string[i]));
+        buf[i] = static_cast<uint8_t>(string[i]);
+    }
+    return static_cast<int32_t>(length);
+}
+
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -6315,7 +6490,7 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] void JSC__JSMap__set(JSC::JSMap* map, JSC::J
     map->set(arg1, JSC::JSValue::decode(JSValue2), JSC::JSValue::decode(JSValue3));
 }
 
-CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, JSC::JSGlobalObject* arg1)
+CPP_DECL [[ZIG_EXPORT(nothrow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map)
 {
     return map->size();
 }
@@ -6619,6 +6794,20 @@ CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 extern "C" double Bun__JSC__operationMathPow(double x, double y)
 {
     return operationMathPow(x, y);
+}
+
+// A stopped worker's TerminationException is kept pending after the JS entry it unwound has
+// returned, until teardown clears or re-arms it (Bun__GlobalObject__clearExceptionsForExit /
+// Zig__GlobalObject__forbidExecution). JSC resets its "termination in progress" flag when the
+// outermost VMEntryScope exits and expects the two to agree while the exception is pending
+// (VMTraps::deferTerminationSlow, VM::setException); its own clients never keep the exception past
+// that point without also ceasing to touch the VM. Called where an entry has just come back with an
+// exception: keep the flag for as long as we keep the exception.
+extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (vm.hasPendingTerminationException() && !vm.hasTerminationRequest()) [[unlikely]]
+        vm.setHasTerminationRequest();
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

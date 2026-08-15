@@ -349,10 +349,12 @@ fn reject_on_exception(
 ) -> JsResult<JSValue> {
     let err = match result {
         Ok(v) if !v.is_empty() => return Ok(v),
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        // A terminated worker gets no rejected promise: leave its termination pending and keep unwinding.
+        Ok(_) | Err(jsc::JsError::Thrown) if global_this.has_pending_termination_exception() => {
+            return Err(jsc::JsError::Thrown);
+        }
         Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
             Some(exc) => exc.to_error().unwrap_or(exc),
             None => {
                 // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
@@ -2082,7 +2084,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),
-        global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
         upgraded_connection,
@@ -2126,7 +2127,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

@@ -26,20 +26,15 @@ writer.flush();
 The `.write()` method accepts strings or binary data.
 
 ```ts
-w.write("hello");
-w.write(Buffer.from("there"));
-w.write(new Uint8Array([0, 255, 128]));
+writer.write("hello");
+writer.write(Buffer.from("there"));
+writer.write(new Uint8Array([0, 255, 128]));
 writer.flush();
 ```
 
 ---
 
-The `FileSink` also auto-flushes when its internal buffer is full. You can configure the buffer size with the `highWaterMark` option.
-
-```ts
-const file = Bun.file("/path/to/file.txt");
-const writer = file.writer({ highWaterMark: 1024 * 1024 }); // 1MB
-```
+The `FileSink` also auto-flushes when its internal buffer is full.
 
 ---
 

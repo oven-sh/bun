@@ -84,9 +84,14 @@ In your workspace packages, use the `catalog:` protocol to reference versions:
   "devDependencies": {
     "jest": "catalog:testing",
     "testing-library": "catalog:testing"
+  },
+  "peerDependencies": {
+    "react": "catalog:"
   }
 }
 ```
+
+`catalog:` references work in `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, and as the value of a root [`overrides`](/pm/overrides) rule. A catalog reference behaves exactly as if the catalog's range were written inline.
 
 ### 3. Run Bun Install
 
@@ -233,6 +238,16 @@ To update versions across all packages, change the version in the root package.j
 
 Then run `bun install` to update all packages.
 
+## Adding to the catalog with `bun add`
+
+`bun add --catalog` (or `--catalog=<name>`) adds the entry to the root catalog and writes `"catalog:"` to the current package. An existing catalog entry is reused unless you pass an explicit version. See [`bun add --catalog`](/pm/cli/add#--catalog).
+
+```bash terminal icon="terminal"
+bun add react --catalog
+```
+
+Even without the flag, `bun add react` (no version) writes `"catalog:"` when the default catalog already lists `react`. Pass a version to write a concrete range instead.
+
 ## Lockfile Integration
 
 Bun's lockfile tracks catalog versions, so installs are consistent across environments. The lockfile includes:
@@ -279,8 +294,9 @@ Bun's lockfile tracks catalog versions, so installs are consistent across enviro
 
 - Catalog references must match a dependency defined in either `catalog` or one of the named `catalogs`
 - Empty strings and whitespace in catalog names are ignored (treated as default catalog)
+- `catalog:default` is the same as `catalog:`. The default catalog can be defined as either `catalog` or `catalogs.default`, but a package listed in both is an error
 - Invalid dependency versions in catalogs fail to resolve during `bun install`
-- Catalogs are only available within workspaces; they cannot be used outside the monorepo
+- `catalog:` only works in the root and workspace `package.json` files. Inside a published package it fails to resolve — publish with `bun publish` or `bun pm pack`, which replace it with the real range (see [Publishing](#publishing))
 
 ## Publishing
 

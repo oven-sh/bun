@@ -441,6 +441,11 @@ impl Subprocess<'_> {
         if self.flags.get().contains(Flags::IS_SYNC) {
             return;
         }
+        // The wrapper is gone (finalize() closing stdio that a stopped worker
+        // left pending): there is nothing to keep alive or release.
+        if self.this_value.get().is_finalized() {
+            return;
+        }
 
         let has_pending = self.compute_has_pending_activity();
         if cfg!(debug_assertions) {

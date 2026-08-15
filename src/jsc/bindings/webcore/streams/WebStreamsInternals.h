@@ -36,7 +36,6 @@
 #include <wtf/text/StringImpl.h>
 
 namespace WebCore {
-class MessagePort;
 class AbortSignal;
 }
 
@@ -511,20 +510,6 @@ JSC::JSPromise* compressionStreamTransform(JSC::JSGlobalObject*, JSCompressionSt
 JSC::JSPromise* compressionStreamFlush(JSC::JSGlobalObject*, JSCompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStreamShared.cpp
 JSC::JSPromise* decompressionStreamTransform(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*, JSC::JSValue chunk); // userJS: yes — JSCompressionStreamShared.cpp
 JSC::JSPromise* decompressionStreamFlush(JSC::JSGlobalObject*, JSDecompressionStream*, JSTransformStreamDefaultController*); // userJS: yes — JSCompressionStreamShared.cpp
-
-// CrossRealmTransform.cpp — transferable streams are NOT implemented. These signatures are
-// FROZEN, but the .cpp may be a stub whose entry points assert / throw; the per-class
-// transfer / transfer-receiving steps have no declarations here.
-
-void crossRealmTransformSendError(JSC::JSGlobalObject*, WebCore::MessagePort&, JSC::JSValue error); // userJS: yes — CrossRealmTransform.cpp
-// Throws on serialization failure. `type` is the closed protocol set.
-void packAndPostMessage(JSC::JSGlobalObject*, WebCore::MessagePort&, CrossRealmMessageType, JSC::JSValue value); // userJS: yes — CrossRealmTransform.cpp
-// Returns true = normal completion. On false the error has already been forwarded via
-// crossRealmTransformSendError and the abrupt completion is left on the throw scope
-// (resolve it with takeAbruptCompletion above).
-bool packAndPostMessageHandlingError(JSC::JSGlobalObject*, WebCore::MessagePort&, CrossRealmMessageType, JSC::JSValue value); // userJS: yes — CrossRealmTransform.cpp
-void setUpCrossRealmTransformReadable(JSC::JSGlobalObject*, JSReadableStream*, WebCore::MessagePort&); // userJS: yes — CrossRealmTransform.cpp
-void setUpCrossRealmTransformWritable(JSC::JSGlobalObject*, JSWritableStream*, WebCore::MessagePort&); // userJS: yes — CrossRealmTransform.cpp
 
 // JSStreamPipeToOperation.cpp — the pipeTo state machine. readableStreamPipeTo
 // (ReadableStreamOperations.cpp, above) ONLY validates, allocates the JSStreamPipeToOperation

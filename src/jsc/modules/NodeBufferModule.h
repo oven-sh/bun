@@ -14,10 +14,7 @@ namespace Zig {
 using namespace WebCore;
 using namespace JSC;
 
-// Shared by buffer.isUtf8() and buffer.isAscii(). Node accepts a TypedArray (so not a
-// DataView), an ArrayBuffer or a SharedArrayBuffer and throws ERR_INVALID_ARG_TYPE for
-// anything else; only a detached ArrayBuffer is ERR_INVALID_STATE, a view whose buffer
-// was detached has a byteLength of 0 and validates like any other empty input.
+// Port of Node's buffer.isUtf8() / buffer.isAscii() argument handling:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L1415-L1429
 // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L1305-L1333
 template<typename Validate>
@@ -26,6 +23,8 @@ static JSC::EncodedJSValue validateBytesOf(JSC::JSGlobalObject* globalObject, JS
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     std::span<const uint8_t> bytes;
+    // isTypedArrayType() excludes DataView, which Node rejects. A view whose buffer was detached
+    // has a byteLength of 0 and validates as empty; Node only throws for the ArrayBuffer itself.
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(input); view && isTypedArrayType(view->type())) {
         bytes = view->span();
     } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(input)) {

@@ -566,9 +566,7 @@ impl Request {
             // Wire-form token (e.g. "M-SEARCH"), not the Rust Debug variant identifier.
             writer.write_str(self.method.as_str())?;
             writer.write_str("\"")?;
-            formatter
-                .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
-                .expect("unreachable");
+            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
@@ -585,9 +583,7 @@ impl Request {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>\""),
                 )
             )?;
-            formatter
-                .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
-                .expect("unreachable");
+            formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
 
             if params_object.is_cell() {
@@ -603,9 +599,7 @@ impl Request {
                         bun_jsc::JSType::Object,
                     )
                     .map_err(js_err)?;
-                formatter
-                    .print_comma::<_, ENABLE_ANSI_COLORS>(writer)
-                    .expect("unreachable");
+                formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
                 writer.write_str("\n")?;
             }
 

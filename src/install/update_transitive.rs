@@ -1215,10 +1215,10 @@ fn plan_edges(
                 (edge, owner)
             })
             .collect();
-        // Rows landing back on `current` are stayers the redirect can still carry; moved rows' landings are redirect targets of their own.
+        // Rows landing back on `current` are stayers the redirect can still carry; a moved row's landing is a redirect target only for the instance it resolved to.
         let mut direct_stayers: Vec<DependencyID> = Vec::new();
         let mut direct_landings: Vec<(Semver::Version, bool)> = Vec::new();
-        for &(dep_id, latest, keep) in &edges_on.direct[inst_i] {
+        for &(dep_id, latest, keep, res_slot) in &edges_on.direct[inst_i] {
             let Some((landing, in_manifest)) = direct_row_landing(
                 &manager.lockfile,
                 manifest,
@@ -1233,7 +1233,7 @@ fn plan_edges(
             let landing_buf = if in_manifest { manifest_buf } else { buf };
             if landing.order(inst.current, landing_buf, buf) == Ordering::Equal {
                 direct_stayers.push(dep_id);
-            } else {
+            } else if res_slot == inst_i as u32 {
                 direct_landings.push((landing, in_manifest));
             }
         }
@@ -1328,7 +1328,7 @@ fn plan_edges(
 /// Live rows per planned instance: `followers` move only via the post-resolve redirect; `direct` rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, keep_locked_if_ahead model)` per `should_update`.
 struct InstanceEdges {
     followers: Vec<Vec<DependencyID>>,
-    direct: Vec<Vec<(DependencyID, bool, KeepLocked)>>,
+    direct: Vec<Vec<(DependencyID, bool, KeepLocked, u32)>>,
 }
 
 fn edges_on_instances(
@@ -1348,7 +1348,8 @@ fn edges_on_instances(
         npm: bool,
     }
     let mut followers: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
-    let mut direct: Vec<Vec<(DependencyID, bool, KeepLocked)>> = vec![Vec::new(); instances.len()];
+    let mut direct: Vec<Vec<(DependencyID, bool, KeepLocked, u32)>> =
+        vec![Vec::new(); instances.len()];
     let mut direct_rows: Vec<DirectRow> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -1515,7 +1516,7 @@ fn edges_on_instances(
         } else {
             KeepLocked::No
         };
-        direct[row.inst as usize].push((row.dep_id, latest, keep));
+        direct[row.inst as usize].push((row.dep_id, latest, keep, row.res_slot));
     }
     InstanceEdges { followers, direct }
 }

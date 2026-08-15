@@ -246,7 +246,6 @@ run_build() {
     # 固定 Rust nightly 版本（从 rust-toolchain.toml 读取，避免漂移到新 nightly）
     # 注意: rustup 会忽略 rust-toolchain.toml 当 RUSTUP_TOOLCHAIN 环境变量被设置时
     if [ -z "${RUSTUP_TOOLCHAIN:-}" ]; then
-        local_toolchain_channel
         local_toolchain_channel=$(grep '^channel' "$DEV_SRC/rust-toolchain.toml" | sed 's/.*= *"//;s/"//' 2>/dev/null || echo "nightly")
         export RUSTUP_TOOLCHAIN="${local_toolchain_channel}"
         info "RUSTUP_TOOLCHAIN 固定为: $RUSTUP_TOOLCHAIN (来自 rust-toolchain.toml)"

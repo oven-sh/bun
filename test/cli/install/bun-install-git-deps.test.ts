@@ -435,15 +435,10 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(exitCode).toBe(0);
 });
 
-// A git or tarball package whose own package.json declares `file:` folder
-// dependencies (the shape registry packages publish too, see
-// registry/packages/file-dep). The paths are relative to the package, which is
-// extracted into the cache, so resolving them against the project dir turned
-// them into paths into the cache that were then rejected for escaping the
-// declaring package:
-//   error: Could not find package.json for "file:../<cache>/@T@.../sub" dependency "sub"
-//   error: sub@file:./sub failed to resolve
-// Registry packages keep the path as declared; git and tarball packages must too.
+// `file:` folder dependencies declared by a git or tarball package are relative
+// to that package, like a registry package's (registry/packages/file-dep). They
+// used to be resolved against the project dir, which pointed them into the cache
+// and failed the install with `sub@file:./sub failed to resolve`.
 const FILE_DEPS_NAME = "has-file-deps";
 
 // `file:` folder dependencies on a subfolder, on the package itself, and on a

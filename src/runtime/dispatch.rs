@@ -47,7 +47,10 @@ use bun_jsc::{JSGlobalObject, JsResult};
 /// (`UVFSRequest`); they complete on the JS thread and re-enter through the
 /// task queue under a per-op tag. Every other async fs op is a `bun_jsc::Job`.
 /// Row shape: `$tag $ty;` (`task_tag::*` const, `fs_async::*` alias).
-#[cfg(windows)]
+///
+/// Not Windows-gated: the tags exist on every platform, and every consumer
+/// (the `run_task` arm, the shutdown-release arm) generates its outer
+/// or-pattern from this one table so the guards cannot drift apart.
 macro_rules! for_each_fs_uv_op {
     ($m:ident) => {
         $m! {
@@ -57,33 +60,9 @@ macro_rules! for_each_fs_uv_op {
     };
 }
 /// Expand the fs-op table to an or-pattern over `task_tag::*` (pattern position).
-#[cfg(windows)]
 macro_rules! __fs_pat {
     ($($tag:ident $ty:ident;)*) => { $(task_tag::$tag)|* };
 }
-/// Expand the fs-op table to its row count (usize const expr).
-///
-/// Paired with a `const _: () = assert!` so a drift between this table and
-/// its consumers fails the build. The `run_task` site generates its outer
-/// guard from the same table, but `__bun_release_task_at_shutdown` hand-writes
-/// the outer or-pattern (the tags exist on every platform while this macro is
-/// Windows-gated) — if that list and this table desync, the inner wildcard
-/// there becomes reachable, which is release-build UB.
-#[cfg(windows)]
-macro_rules! __fs_count {
-    ($($tag:ident $ty:ident;)*) => { { [$(__fs_count!(@unit $tag)),*].len() } };
-    (@unit $tag:ident) => { () };
-}
-
-/// Compile-time guard: the `for_each_fs_uv_op!` table must stay at 7 rows,
-/// matching the hand-written `Open | Close | Read | Readv | Write | Writev |
-/// StatFS` or-pattern in `__bun_release_task_at_shutdown`. Update both when
-/// adding a row.
-#[cfg(windows)]
-const _: () = assert!(
-    for_each_fs_uv_op!(__fs_count) == 7,
-    "for_each_fs_uv_op! row count drifted — update the shutdown-release or-pattern too",
-);
 
 // ── per-variant payload types ────────────────────────────────────────────────
 // (high-tier owns them all; grouped by source module)
@@ -450,20 +429,13 @@ pub(crate) fn run_task(
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => cast!(fs_async::$ty).run_from_js_thread()?,)*
-                    // SAFETY: the outer arm guard and these arms expand from the
-                    // same `for_each_fs_uv_op!` table, so one of them matched;
-                    // the `__fs_count` assert pins the table. In debug/ASAN
-                    // builds panic instead of invoking UB so a regression
-                    // surfaces as a controlled crash before release.
+                    // SAFETY: outer guard and these arms expand from the same
+                    // table; debug builds panic instead of invoking UB.
                     _ => {
                         if cfg!(debug_assertions) {
-                            unreachable!(
-                                "fs-uv dispatch: tag {} passed outer or-pattern \
-                                 but missed inner match — table desync?",
-                                task.tag.0,
-                            );
+                            unreachable!("fs-uv dispatch: unmatched tag {}", task.tag.0);
                         }
-                        // SAFETY: see arm comment.
+                        // SAFETY: see above.
                         unsafe { core::hint::unreachable_unchecked() }
                     }
                 }};
@@ -1354,34 +1326,19 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             #[cfg(not(windows))]
             unreachable!("windows-only tag");
         }
-        task_tag::Open
-        | task_tag::Close
-        | task_tag::Read
-        | task_tag::Readv
-        | task_tag::Write
-        | task_tag::Writev
-        | task_tag::StatFS => {
+        for_each_fs_uv_op!(__fs_pat) => {
             #[cfg(windows)]
             {
                 macro_rules! __fs_release {
                     ($($tag:ident $ty:ident;)*) => { match task.tag {
                         $(task_tag::$tag => release!(fs_async::$ty),)*
-                        // SAFETY: the hand-written outer or-pattern lists the same
-                        // 7 tags as `for_each_fs_uv_op!` (the `__fs_count` assert
-                        // pins the table; the or-pattern is hand-written because
-                        // the tags exist on every platform while the table macro
-                        // is Windows-gated). In debug/ASAN builds panic instead
-                        // of invoking UB so a desync surfaces as a controlled
-                        // crash before release.
+                        // SAFETY: outer guard and these arms expand from the same
+                        // table; debug builds panic instead of invoking UB.
                         _ => {
                             if cfg!(debug_assertions) {
-                                unreachable!(
-                                    "fs-uv shutdown release: tag {} passed outer \
-                                     or-pattern but missed inner match — table desync?",
-                                    task.tag.0,
-                                );
+                                unreachable!("fs-uv shutdown release: unmatched tag {}", task.tag.0);
                             }
-                            // SAFETY: see arm comment.
+                            // SAFETY: see above.
                             unsafe { core::hint::unreachable_unchecked() }
                         }
                     }};

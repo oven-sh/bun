@@ -2,9 +2,7 @@
 // `src/runtime/dispatch.rs::run_task`. Most async fs ops are `bun_jsc::Job`s;
 // on Windows seven of them (Open/Close/Read/Write/Readv/Writev/StatFS) are
 // libuv requests that re-enter the task queue and dispatch through the
-// `for_each_fs_uv_op!` x-macro table (pinned at 7 rows by a compile-time
-// `assert!` on `for_each_fs_uv_op!(__fs_count)` in dispatch.rs — this file
-// is the runtime half of that pair).
+// `for_each_fs_uv_op!` x-macro table in dispatch.rs.
 //
 // Each test exercises one async fs op through its user-facing API so a
 // future dispatch regression (missing arm, wrong `fs_async::*` alias)

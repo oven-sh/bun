@@ -435,8 +435,7 @@ impl FlagParser for Opts {
             self.parents = true;
             return Some(ParseFlagResult::ContinueParsing);
         }
-        // Note: the `--vebose` typo is intentional (kept for compatibility).
-        if flag == b"--vebose" {
+        if flag == b"--verbose" {
             self.verbose = true;
             return Some(ParseFlagResult::ContinueParsing);
         }

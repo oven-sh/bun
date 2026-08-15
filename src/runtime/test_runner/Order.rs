@@ -240,6 +240,46 @@ impl Order {
             .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
+
+    /// Checks, once the whole file is scheduled, that every sequence a failing hook skips over
+    /// belongs to the scope that declared the hook. `AllOrderResult::set_failure_skip_to` keeps
+    /// this true by closing the concurrent group that ends the skipped range.
+    pub(crate) fn assert_skip_ranges_stay_in_scope(&self) {
+        if !bun_core::Environment::CI_ASSERT {
+            return;
+        }
+        for (index, group) in self.groups.iter().enumerate() {
+            if group.failure_skip_to <= index + 1 {
+                continue; // a test group, or a hook with nothing to skip
+            }
+            // Only hook groups skip past the next group, and `generate_all_order` gives each hook a
+            // group of its own.
+            debug_assert_eq!(group.sequence_end - group.sequence_start, 1);
+            let Some(hook) = self.sequences[group.sequence_start].first_entry else {
+                continue;
+            };
+            // SAFETY: entries and the describe tree their `base.parent` chains point into are owned
+            // by the collection, which outlives the `Order` built from it.
+            let owner = unsafe { hook.as_ref() }.base.parent;
+            for skipped in &self.groups[index + 1..group.failure_skip_to] {
+                for sequence in &self.sequences[skipped.sequence_start..skipped.sequence_end] {
+                    let Some(entry) = sequence.test_entry.or(sequence.first_entry) else {
+                        continue;
+                    };
+                    // SAFETY: see above.
+                    let mut scope = unsafe { entry.as_ref() }.base.parent;
+                    while let Some(current) = scope {
+                        if Some(current) == owner {
+                            break;
+                        }
+                        // SAFETY: see above.
+                        scope = unsafe { (*current).base.parent };
+                    }
+                    debug_assert!(scope.is_some(), "a failing hook would skip an entry outside of its scope");
+                }
+            }
+        }
+    }
 }
 
 pub(crate) struct AllOrderResult {

@@ -2,7 +2,8 @@
 #![warn(unused_must_use)]
 //! Re-exports of the install config types (`BunInstall`, `NpmRegistry`, …)
 //! whose canonical definitions live in `bun_options_types::schema::api`, plus
-//! the registry-URL parser shared by the bunfig and npmrc loaders.
+//! the `Parser` handle through which the bunfig and npmrc loaders parse
+//! registry URL strings (`NpmRegistry::from_url`).
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports — canonical definitions live in `bun_options_types::schema::api`.
@@ -19,8 +20,6 @@ pub use bun_options_types::schema::api::{
 /// `Parser` lives in a sibling module of `NpmRegistry`; the canonical path
 /// is `bun_api::npm_registry::Parser`.
 pub mod npm_registry {
-    use bun_url::URL;
-
     pub use super::NpmRegistry;
 
     // `Parser` stays generic over `L` (Log) / `S` (Source) so this leaf
@@ -34,28 +33,13 @@ pub mod npm_registry {
     }
 
     impl<'a, L, S> Parser<'a, L, S> {
+        /// The bunfig / .npmrc entry point of `NpmRegistry::from_url`;
+        /// `--registry` and the registry env vars call that directly.
         pub fn parse_registry_url_string_impl(
             &mut self,
             str: &[u8],
         ) -> Result<NpmRegistry, bun_alloc::AllocError> {
-            let url = URL::parse(str);
-            let mut registry = NpmRegistry::default();
-
-            // Token
-            if url.username.is_empty() && !url.password.is_empty() {
-                registry.token = Box::<[u8]>::from(url.password);
-                registry.url = url.href_without_auth();
-            } else if !url.username.is_empty() && !url.password.is_empty() {
-                registry.username = Box::<[u8]>::from(url.username);
-                registry.password = Box::<[u8]>::from(url.password);
-
-                registry.url = url.href_without_auth();
-            } else {
-                // Do not include a trailing slash. There might be parameters at the end.
-                registry.url = Box::<[u8]>::from(url.href);
-            }
-
-            Ok(registry)
+            Ok(NpmRegistry::from_url(str))
         }
     }
 }

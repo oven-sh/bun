@@ -143,6 +143,7 @@ const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
+const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const ksocket = Symbol("ksocket");
@@ -255,6 +256,18 @@ function detachSocket(self) {
 }
 function destroyNT(self, err) {
   self.destroy(err);
+}
+// 'close' listener armed on the connection a TLS socket is upgraded over: the
+// connection going away (its owner destroyed it, or the transport under a
+// wrapped duplex closed) takes the TLS socket with it, like node's wrap 'close'
+// listener. The connection's EOF alone does not; that is what an allowHalfOpen
+// TLS socket outlives.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
+function onUpgradedClose(self, connection) {
+  if (self[kupgraded] === connection) self.destroy();
+}
+function destroyWhenUpgradedCloses(self, connection) {
+  connection.once("close", (self[kOnUpgradedClose] = onUpgradedClose.bind(null, self, connection)));
 }
 let addAbortListener;
 function destroyWhenAborted(err) {
@@ -1886,8 +1899,13 @@ Socket.prototype[kAttach] = function (port, socket) {
   SocketHandlers.drain(socket);
 };
 
+// 'end' listener of an fd-upgraded TLS socket: retires the net.Socket whose fd
+// this socket took over.
 Socket.prototype[kCloseRawConnection] = function () {
   const connection = this[kupgraded];
+  // The 'close' this retirement emits is not the connection going away under
+  // this socket; one its owner already started (connection.destroyed) is.
+  if (!connection.destroyed) connection.removeListener("close", this[kOnUpgradedClose]);
   connection.connecting = false;
   connection._handle = null;
   connection.unref();
@@ -2023,6 +2041,7 @@ Socket.prototype.connect = function connect(...args) {
           connection.on("end", events[1]);
           connection.on("drain", events[2]);
           connection.on("close", events[3]);
+          destroyWhenUpgradedCloses(this, connection);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2042,6 +2061,7 @@ Socket.prototype.connect = function connect(...args) {
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
               this.once("end", this[kCloseRawConnection]);
+              destroyWhenUpgradedCloses(this, connection);
               raw.connecting = false;
               this._handle = tls;
             } else {
@@ -2074,6 +2094,7 @@ Socket.prototype.connect = function connect(...args) {
                 connection.on("end", events[1]);
                 connection.on("drain", events[2]);
                 connection.on("close", events[3]);
+                destroyWhenUpgradedCloses(this, connection);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2089,6 +2110,7 @@ Socket.prototype.connect = function connect(...args) {
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
                   this.once("end", this[kCloseRawConnection]);
+                  destroyWhenUpgradedCloses(this, connection);
                   raw.connecting = false;
                   this._handle = tls;
                 } else {
@@ -2384,6 +2406,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection.on("end", events[1]);
     connection.on("drain", events[2]);
     connection.on("close", events[3]);
+    destroyWhenUpgradedCloses(this, connection);
     this[kupgraded] = connection;
     this._handle = result;
     return;
@@ -2413,6 +2436,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       connection.on("end", events[1]);
       connection.on("drain", events[2]);
       connection.on("close", events[3]);
+      destroyWhenUpgradedCloses(this, connection);
       this._handle = result;
       this.emit(kUpgradeAttached);
       return;
@@ -2437,6 +2461,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     connection._handle = raw;
     raw[kAdoptedTLSRaw] = true;
     this.once("end", this[kCloseRawConnection]);
+    destroyWhenUpgradedCloses(this, connection);
     raw.connecting = false;
     this._handle = tlsHandle;
     this.emit(kUpgradeAttached);

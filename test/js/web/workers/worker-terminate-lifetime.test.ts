@@ -953,3 +953,50 @@ test(
   },
   timeout,
 );
+
+// A worker's Bun.serve() rendering a body whose microtask checkpoint meets the worker's termination
+// (a promise/stream body that spins in a microtask when terminate() lands): the render used to go on
+// and attach its continuation with the TerminationException pending (JSC assertNoException in the
+// promise `then`). The context's checkpoint now lands the termination and the render stands down.
+test(
+  "terminate() while the worker's Bun.serve() renders a promise/stream body stuck in a microtask",
+  async () => {
+    const workers = slow ? 6 : 12;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const s = Bun.serve({ port: 0, fetch(req) {" +
+          "  if (new URL(req.url).pathname === '/stream') return new Response(new ReadableStream({ async pull(c) { await 1; c.enqueue(new TextEncoder().encode('x')); await 1; for (;;) {} } }));" +
+          "  return (async () => { await 1; for (;;) {} })();" +
+          "}});" +
+          "parentPort.postMessage(s.url.href);";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            const url = await new Promise(r => w.once("message", r));
+            fetch(url + (i % 2 ? "stream" : "promise")).then(r => r.text()).catch(() => {});
+            await Bun.sleep(30);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

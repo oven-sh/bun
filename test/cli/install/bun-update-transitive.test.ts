@@ -868,6 +868,32 @@ test.concurrent("a removed root dependency's rows do not hold the remaining want
   expect(exitCode).toBe(0);
 });
 
+// The workspace analog: a member dropped from the glob keeps its Workspace tag until the clean,
+// but its rows are unreachable and do not hold the remaining `^1.0.0` want.
+test.concurrent("a removed workspace member's rows do not hold the remaining wants", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  using tmp = tempDir("update-removed-member-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { parent: "1.0.0" } }),
+    "packages/a/package.json": stringify({ name: "a", dependencies: { leaf: "~1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+
+  await write(join(dir, "package.json"), stringify({ name: "root", workspaces: [], dependencies: { parent: "1.0.0" } }));
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
 // The root's `^1.0.0` row sits on leaf@1.5.0; its lookup (1.5.0) is below leaf@2.0.0 but the row
 // never resolved there, so it must not hold parent's `^2.0.0` want from moving to 2.5.0.
 test.concurrent("a direct row on a lower instance does not hold wants on a higher instance", async () => {

@@ -1217,13 +1217,13 @@ fn plan_edges(
             .collect();
         let direct_stays = edges_on.direct[inst_i]
             .iter()
-            .any(|&(dep_id, latest, keep_locked)| {
+            .any(|&(dep_id, latest, keep)| {
                 direct_row_stays(
                     &manager.lockfile,
                     manifest,
                     dep_id,
                     latest,
-                    keep_locked,
+                    keep,
                     inst.current,
                     min_age,
                     excludes,
@@ -1311,10 +1311,10 @@ fn plan_edges(
     Ok((pins, report))
 }
 
-/// Live rows per planned instance: `followers` move only via the post-resolve redirect; `direct` rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, keep_locked_if_ahead applies here)` per `should_update`.
+/// Live rows per planned instance: `followers` move only via the post-resolve redirect; `direct` rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, keep_locked_if_ahead model)` per `should_update`.
 struct InstanceEdges {
     followers: Vec<Vec<DependencyID>>,
-    direct: Vec<Vec<(DependencyID, bool, bool)>>,
+    direct: Vec<Vec<(DependencyID, bool, KeepLocked)>>,
 }
 
 fn edges_on_instances(
@@ -1328,9 +1328,11 @@ fn edges_on_instances(
         /// Slot of the instance the row currently resolves to, `u32::MAX` when unresolved or unplanned.
         res_slot: u32,
         catalog: bool,
+        /// The effective version is an npm range (as opposed to a dist-tag).
+        npm: bool,
     }
     let mut followers: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
-    let mut direct: Vec<Vec<(DependencyID, bool, bool)>> = vec![Vec::new(); instances.len()];
+    let mut direct: Vec<Vec<(DependencyID, bool, KeepLocked)>> = vec![Vec::new(); instances.len()];
     let mut direct_rows: Vec<DirectRow> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -1347,14 +1349,11 @@ fn edges_on_instances(
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        // Removed or superseded subtrees are still in the buffers: only owners reachable from a root/workspace contribute followers.
+        // Removed or superseded subtrees (a dropped workspace member included) are still in the buffers: only owners reachable from the root contribute rows.
         let mut reachable = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
         let mut queue: Vec<usize> = Vec::new();
         for owner in 0..packages_len {
-            if matches!(
-                pkg_res[owner].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            ) {
+            if pkg_res[owner].tag == ResolutionTag::Root {
                 reachable.set(owner);
                 queue.push(owner);
             }
@@ -1389,7 +1388,7 @@ fn edges_on_instances(
                 pkg_res[owner].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
             );
-            if !is_direct && !reachable.is_set(owner) {
+            if !reachable.is_set(owner) {
                 continue;
             }
             for row in slice.begin() as usize..slice.end() as usize {
@@ -1437,6 +1436,7 @@ fn edges_on_instances(
                             inst: i as u32,
                             res_slot,
                             catalog: deps[row].version.tag == DependencyVersionTag::Catalog,
+                            npm: version.tag == DependencyVersionTag::Npm,
                         });
                     }
                 }
@@ -1484,11 +1484,50 @@ fn edges_on_instances(
         // Mirrors `latest_for_target` (catalog and overridden rows resolve by their range, never by `latest`); named rows reach plan_edges via the --latest-only path.
         let overridden = overridden_row(&manager.lockfile, row.dep_id);
         let latest = to_latest && (!bare || in_targets) && !row.catalog && !overridden;
-        // `keep_locked_if_ahead` only applies under --latest, and only against the row's own locked instance.
-        let keep_locked = to_latest && row.inst == row.res_slot && !row.catalog && !overridden;
-        direct[row.inst as usize].push((row.dep_id, latest, keep_locked));
+        // `keep_locked_if_ahead` finds a locked version only where its path can: the range's loaded lockfile instance for -r/--filter npm rows, the invoking workspace's own dist-tag row otherwise.
+        let keep = if !to_latest || row.catalog || overridden {
+            KeepLocked::No
+        } else if has_targets && in_targets && row.npm {
+            KeepLocked::Range
+        } else if !has_targets && !row.npm && row.inst == row.res_slot {
+            KeepLocked::Current
+        } else {
+            KeepLocked::No
+        };
+        direct[row.inst as usize].push((row.dep_id, latest, keep));
     }
     InstanceEdges { followers, direct }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum KeepLocked {
+    No,
+    /// The highest loaded instance the row's range accepts keeps the row when it is ahead.
+    Range,
+    /// The instance under evaluation is the row's own locked one; it keeps the row when ahead.
+    Current,
+}
+
+/// Mirrors `locked_version_in_lockfile`: the highest loaded npm instance the row's range accepts.
+fn locked_in_lockfile(lockfile: &Lockfile, dep_id: DependencyID) -> Option<Semver::Version> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+    let version = dedupe::effective_version(lockfile, dep_id, dep)?;
+    if version.tag != DependencyVersionTag::Npm {
+        return None;
+    }
+    let hash = Semver::string::Builder::string_hash(version.npm().name.slice(buf));
+    let candidates = lockfile.package_index.get(&hash)?.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let range = &version.npm().version;
+    candidates
+        .iter()
+        .copied()
+        .filter(|&id| id < lockfile.loaded_package_count)
+        .map(|id| &pkg_res[id as usize])
+        .filter(|res| res.tag == ResolutionTag::Npm)
+        .map(|res| res.npm().version)
+        .find(|&locked| range.satisfies(locked, buf, buf))
 }
 
 /// The pre-differ resolution of a root/workspace row, matched by owner, name hash and behavior like `moved_pairs`.
@@ -1545,7 +1584,7 @@ fn direct_row_stays(
     manifest: &PackageManifest,
     dep_id: DependencyID,
     latest: bool,
-    keep_locked: bool,
+    keep: KeepLocked,
     current: Semver::Version,
     min_age: Option<f64>,
     excludes: Option<&[&[u8]]>,
@@ -1570,14 +1609,19 @@ fn direct_row_stays(
             _ => return false,
         }
     };
-    // Under `keep_locked_if_ahead`, a lookup at or below the locked `current` lands the row back on it.
+    // `keep_locked_if_ahead`: a lookup below the row's locked version lands it back on that version.
     found.is_some_and(|found| {
-        let order = found.version.order(current, &manifest.string_buf, buf);
-        if keep_locked {
-            order != Ordering::Greater
-        } else {
-            order == Ordering::Equal
+        let locked = match keep {
+            KeepLocked::No => None,
+            KeepLocked::Current => Some(current),
+            KeepLocked::Range => locked_in_lockfile(lockfile, dep_id),
+        };
+        if let Some(locked) = locked {
+            if found.version.order(locked, &manifest.string_buf, buf) == Ordering::Less {
+                return locked.order(current, buf, buf) == Ordering::Equal;
+            }
         }
+        found.version.order(current, &manifest.string_buf, buf) == Ordering::Equal
     })
 }
 

@@ -963,6 +963,47 @@ describe("dangling symlinks in node_modules", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("are reported as a missing module when a package.json exports target points at one", async () => {
+    using dir = tempDir("resolver-dangling-exports-target", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/exports-pkg/package.json": JSON.stringify({
+        name: "exports-pkg",
+        version: "1.0.0",
+        exports: { ".": "./index.js", "./sub": "./sub.js" },
+      }),
+      "node_modules/exports-pkg/sub.js": `module.exports = "sub";`,
+      "index.js": `
+        try {
+          require("exports-pkg");
+        } catch (e) {
+          console.log(e.code);
+        }
+        console.log(require("exports-pkg/sub"));
+      `,
+    });
+    const root = String(dir);
+    symlinkSync("removed.js", join(root, "node_modules", "exports-pkg", "index.js"));
+
+    expect(codeOf(() => Bun.resolveSync("exports-pkg", root))).toEqual({
+      name: "ResolveMessage",
+      code: "ERR_MODULE_NOT_FOUND",
+    });
+    expect(Bun.resolveSync("exports-pkg/sub", root)).toBe(join(root, "node_modules", "exports-pkg", "sub.js"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("MODULE_NOT_FOUND\nsub\n");
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("do not shadow the same package in a parent node_modules", async () => {
     using dir = tempDir("resolver-dangling-node-modules-link-shadow", {
       "package.json": JSON.stringify({ name: "host" }),

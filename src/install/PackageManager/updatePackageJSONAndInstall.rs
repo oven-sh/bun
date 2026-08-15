@@ -287,9 +287,18 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
+    // Loads the lockfile, and migrating one rewrites the cached root package.json: do it before reading the entry.
+    let patch_commit: Option<PatchCommitResult> =
+        if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
+            let mut pathbuf = PathBuffer::uninit();
+            patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
+        } else {
+            None
+        };
+
     // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
     // borrowed from `manager.workspace_package_json_cache`, but we then need
-    // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
+    // `&mut *manager` for `PackageJSONEditor::edit` while still
     // holding the entry. Demote to `*mut MapEntry` and re-
     // borrow at point of use. The cache map is not mutated again until the
     // next `get_with_path` call below, so the pointer remains valid.
@@ -329,8 +338,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         };
     // SAFETY: see note above — pointer into `manager.workspace_package_json_cache`,
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
-    // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
-    // disjoint manager fields.
+    // is taken across this borrow; `PackageJSONEditor` touches only disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
@@ -428,23 +436,17 @@ fn update_package_json_and_install_with_manager_with_updates(
             }
         }
         _ => {
-            if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
-                let mut pathbuf = PathBuffer::uninit();
-                if let Some(stuff) =
-                    patch_package::do_patch_commit(manager, &mut pathbuf, log_level)?
-                {
-                    // we're inside a workspace package, we need to edit the
-                    // root json, not the `current_package_json`
-                    if stuff.not_in_workspace_root {
-                        not_in_workspace_root = Some(stuff);
-                    } else {
-                        PackageJSONEditor::edit_patched_dependencies(
-                            manager,
-                            &mut current_package_json_root,
-                            &stuff.patch_key,
-                            &stuff.patchfile_path,
-                        )?;
-                    }
+            if let Some(stuff) = patch_commit {
+                // Inside a workspace package the root package.json is edited below, not `current_package_json`.
+                if stuff.not_in_workspace_root {
+                    not_in_workspace_root = Some(stuff);
+                } else {
+                    PackageJSONEditor::edit_patched_dependencies(
+                        manager,
+                        &mut current_package_json_root,
+                        &stuff.patch_key,
+                        &stuff.patchfile_path,
+                    )?;
                 }
             }
         }

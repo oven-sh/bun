@@ -1133,16 +1133,13 @@ enum BatchSegment {
 }
 
 impl BatchSegment {
-    /// The bytes this segment puts on the wire; `batch` is the BATCH_BUFFER contents
-    /// that `Batch` offsets index into.
-    ///
     /// # Safety
-    /// Must run inside the send_data call that recorded the segment: `Ext` borrows
-    /// that call's payload.
+    /// The send_data call that recorded the segment must still be running (`Ext` borrows
+    /// its payload).
     unsafe fn bytes(self, batch: &[u8]) -> &[u8] {
         match self {
             BatchSegment::Batch { off, len } => &batch[off as usize..off as usize + len as usize],
-            // SAFETY: caller contract above; `ptr`/`len` were taken from a `&[u8]`.
+            // SAFETY: caller contract; `ptr`/`len` came from a `&[u8]`.
             BatchSegment::Ext { ptr, len } => unsafe {
                 core::slice::from_raw_parts(ptr, len as usize)
             },

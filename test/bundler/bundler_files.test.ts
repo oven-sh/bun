@@ -690,6 +690,39 @@ describe("bundler files option", () => {
       });
     });
 
+    // The error is reported against the path the key resolved to.
+    test.concurrent("a syntax error in an entrypoint keyed relative to the cwd is a build error", async () => {
+      using dir = tempDir("bundler-files-relative-entry-syntax-error", {
+        "build.ts": `
+          import { isAbsolute, relative } from "node:path";
+          const result = await Bun.build({
+            entrypoints: ["./entry.js"],
+            files: { "./entry.js": ")" },
+            throw: false,
+          });
+          console.log(JSON.stringify({
+            success: result.success,
+            logs: result.logs.map(String),
+            files: result.logs.map(log => {
+              const file = log.position.file;
+              return { absolute: isAbsolute(file), fromCwd: relative(process.cwd(), file) };
+            }),
+          }));
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({
+          success: false,
+          logs: ["BuildMessage: Unexpected )"],
+          files: [{ absolute: true, fromCwd: "entry.js" }],
+        }),
+      });
+    });
+
     test.concurrent.skipIf(!isWindows)("keys and entrypoints match whatever the case of the drive letter", async () => {
       using dir = tempDir("bundler-files-drive-letter", {
         "build.ts": `

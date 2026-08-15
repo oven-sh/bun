@@ -307,7 +307,6 @@ secp256k1
 segfault-handler
 shared-git-hooks
 sharp
-simple-git-hooks
 sleep
 slice2js
 snyk

@@ -1,0 +1,23 @@
+{
+  "_id": "simple-git-hooks",
+  "name": "simple-git-hooks",
+  "dist-tags": {
+    "latest": "2.13.1"
+  },
+  "versions": {
+    "2.13.1": {
+      "name": "simple-git-hooks",
+      "version": "2.13.1",
+      "scripts": {
+        "postinstall": "bun postinstall.js"
+      },
+      "_id": "simple-git-hooks@2.13.1",
+      "hasInstallScript": true,
+      "dist": {
+        "integrity": "sha512-rCecXLB1315jJYfNbDpX0EjIbxt3auBeAO87EYkxFBKVezHiBCNb/0IuSgsdl4caGVqDIAmWco64OQLOFt0FvQ==",
+        "shasum": "d378b269b6e69c659f4dca304aa1e9d386932da9",
+        "tarball": "http://localhost:4873/simple-git-hooks/-/simple-git-hooks-2.13.1.tgz"
+      }
+    }
+  }
+}

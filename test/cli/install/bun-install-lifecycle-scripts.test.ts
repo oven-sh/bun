@@ -418,6 +418,46 @@ test.concurrent("default trusted dependencies require the canonical registry tar
   expect(await exited).toBe(0);
 });
 
+// simple-git-hooks is intentionally not on the default trusted list. Its postinstall
+// (through 2.13.1, the latest release) finds the project root by walking up from its own
+// directory, which under the isolated linker lands inside node_modules/.bun/ and fails the
+// whole install. Upstream documents running it from a `prepare` script instead, which works
+// with either linker. The fixture's postinstall behaves the same way as the real one.
+for (const linker of ["hoisted", "isolated"] as const) {
+  test.concurrent(`simple-git-hooks is not trusted by default (${linker})`, async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        devDependencies: {
+          "simple-git-hooks": "2.13.1",
+        },
+      }),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", `--linker=${linker}`],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ simple-git-hooks@2.13.1");
+    expect(await exists(join(packageDir, "node_modules", "simple-git-hooks", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "simple-git-hooks", "postinstall-ran"))).toBeFalse();
+    expect(exitCode).toBe(0);
+  });
+}
+
 test.concurrent("binary lockfile trusted dependency entries require an exact name match", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

@@ -353,17 +353,22 @@ pub mod entry {
     }
 
     /// Longest resolution text (everything after `name@` in a store key) written
-    /// verbatim, in bytes. Versions and `github+owner+repo+<sha>` fit; folder
-    /// paths, tarball URLs and full git URLs are as long as the user's spec.
-    /// Unbounded, `<project>/node_modules/.bun/<key>/node_modules/<name>` passes
-    /// Windows' MAX_PATH (260), which bun's own file operations tolerate but
-    /// `CreateProcess` rejects as the cwd of the package's lifecycle scripts
-    /// (ENOENT), and the directory name itself passes NAME_MAX (255) once the
-    /// `+<peer hash>`, `-<entry hash>` and `.tmp-<hex>` suffixes are appended.
+    /// verbatim, in bytes. Folder paths, tarball URLs and git URLs are as long as
+    /// the user's spec, and the package directory
+    /// `node_modules/.bun/<key>[+<peer hash>]/node_modules/<name>` is the cwd of
+    /// the package's lifecycle scripts, which `CreateProcess` rejects (ENOENT)
+    /// beyond Windows' MAX_PATH (260) even though bun's own file operations
+    /// accept longer paths. The bound limits what the store adds to the project
+    /// path to `34 + 2 * name.len() + 80` bytes (+17 with peers); 80 leaves
+    /// versions and `github+owner+repo+<sha>` (60 to 75 bytes) verbatim. It also
+    /// keeps the directory name itself within NAME_MAX (255) together with the
+    /// `+<peer hash>`, `-<entry hash>` and `.tmp-<hex>` suffixes for names of up
+    /// to 119 bytes.
     const MAX_RESOLUTION_LEN: usize = 80;
-    /// A longer resolution is written as its first `CUT_RESOLUTION_LEN` bytes
-    /// plus `+<16 hex wyhash of the whole text>` (seed 0, so `Bun.hash(text)`
-    /// reproduces it), which is `MAX_RESOLUTION_LEN` bytes again.
+    /// A longer resolution is written as at most its first `CUT_RESOLUTION_LEN`
+    /// bytes (backed up to a character boundary) plus `+<16 hex wyhash of all
+    /// the bytes the formatter produced>` (seed 0, the `Bun.hash` variant), so
+    /// it is still at most `MAX_RESOLUTION_LEN` bytes.
     const CUT_RESOLUTION_LEN: usize = MAX_RESOLUTION_LEN - "+".len() - 16;
 
     /// `fmt::Write` sink for a resolution text: keeps its first

@@ -565,31 +565,37 @@ test.if(isWindows)(
       },
     });
 
-    using dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
-    await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
+    const dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
+    try {
+      await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
-      cwd: String(dir),
-      env: mergeWindowEnvs([
-        bunEnv,
-        {
-          BUN_CRASH_REPORT_URL: server.url.toString(),
-          BUN_ENABLE_CRASH_REPORTING: "1",
-          GITHUB_ACTIONS: undefined,
-          CI: undefined,
-        },
-      ]),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+        cwd: String(dir),
+        env: mergeWindowEnvs([
+          bunEnv,
+          {
+            BUN_CRASH_REPORT_URL: server.url.toString(),
+            BUN_ENABLE_CRASH_REPORTING: "1",
+            GITHUB_ACTIONS: undefined,
+            CI: undefined,
+          },
+        ]),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
-    await Promise.race([acked.promise, Bun.sleep(2000)]);
+      /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
+      await Promise.race([acked.promise, Bun.sleep(2000)]);
 
-    expect(stderr).toContain(server.url.toString());
-    expect(sent).toBe(true);
-    expect(exitCode).not.toBe(0);
+      expect(stderr).toContain(server.url.toString());
+      expect(sent).toBe(true);
+      expect(exitCode).not.toBe(0);
+    } finally {
+      try {
+        rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+      } catch {}
+    }
   },
 );
 

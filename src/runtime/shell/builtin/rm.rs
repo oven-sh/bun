@@ -55,6 +55,8 @@ impl ExecState {
 #[derive(Clone, Copy)]
 pub struct Opts {
     /// `-f`, `--force` — ignore nonexistent files and arguments, never prompt.
+    /// `-f` and the prompting flags cancel each other; the last one given
+    /// wins, as in GNU rm.
     pub(crate) force: bool,
     /// Configures how the user should be prompted on removal of files.
     pub(crate) prompt_behaviour: PromptBehaviour,
@@ -134,8 +136,13 @@ impl Rm {
                         panic!("Invalid");
                     }
                     let argc = Builtin::of(interp, cmd).args_slice().len();
-                    // No args / only flags → print usage and exit 1.
+                    // No operands (nothing, or only flags). POSIX: `-f` suppresses
+                    // both the diagnostic and the failure status in that case;
+                    // otherwise print usage and exit 1.
                     if (idx as usize) >= argc {
+                        if Self::state_mut(interp, cmd).opts.force {
+                            return Builtin::done(interp, cmd, 0);
+                        }
                         let usage = Kind::Rm.usage_string();
                         return Self::write_err_literal(interp, cmd, idx, usage);
                     }
@@ -512,10 +519,12 @@ impl Rm {
                 }
                 b"--interactive=once" => {
                     opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 };
+                    opts.force = false;
                     RmParseFlag::ContinueParsing
                 }
                 b"--interactive=always" => {
                     opts.prompt_behaviour = PromptBehaviour::Always;
+                    opts.force = false;
                     RmParseFlag::ContinueParsing
                 }
                 _ => RmParseFlag::IllegalOption,
@@ -530,8 +539,14 @@ impl Rm {
                 b'r' | b'R' => opts.recursive = true,
                 b'v' => opts.verbose = true,
                 b'd' => opts.remove_empty_dirs = true,
-                b'i' => opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 },
-                b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
+                b'i' => {
+                    opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 };
+                    opts.force = false;
+                }
+                b'I' => {
+                    opts.prompt_behaviour = PromptBehaviour::Always;
+                    opts.force = false;
+                }
                 _ => return RmParseFlag::IllegalOptionWithFlag,
             }
         }

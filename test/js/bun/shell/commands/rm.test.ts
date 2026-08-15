@@ -53,6 +53,40 @@ describe.concurrent("bunshell rm", () => {
     }
   });
 
+  // POSIX rm: -f shall "not write diagnostic messages or modify the exit
+  // status in the case of no file operands". GNU and BSD rm exit 0 silently,
+  // which is what `rm -f ${files}` with an empty list relies on. Without -f,
+  // no operands is still a usage error.
+  describe("no operands", () => {
+    const none: string[] = [];
+    const usage = "usage: rm [-f | -i] [-dIPRrvWx] file ...\n       unlink [--] file\n";
+
+    TestBuilder.command`rm -f`.stdout("").stderr("").exitCode(0).runAsTest("rm -f");
+    TestBuilder.command`rm -f`.quiet().stdout("").stderr("").exitCode(0).runAsTest("rm -f (quiet)");
+    TestBuilder.command`rm -f ${none}`.stdout("").stderr("").exitCode(0).runAsTest("rm -f with an empty list");
+    TestBuilder.command`rm -rf`.stdout("").stderr("").exitCode(0).runAsTest("rm -rf");
+    TestBuilder.command`rm -fv`.stdout("").stderr("").exitCode(0).runAsTest("rm -fv");
+    TestBuilder.command`rm -f --interactive=never`
+      .stdout("")
+      .stderr("")
+      .exitCode(0)
+      .runAsTest("rm -f --interactive=never");
+    TestBuilder.command`rm -i -f`.stdout("").stderr("").exitCode(0).runAsTest("-f given after -i");
+    TestBuilder.command`rm -f ${none} && echo cleaned`
+      .stdout("cleaned\n")
+      .stderr("")
+      .exitCode(0)
+      .runAsTest("rm -f succeeds in a && chain");
+
+    TestBuilder.command`rm`.stdout("").stderr(usage).exitCode(1).runAsTest("rm");
+    TestBuilder.command`rm -r`.stdout("").stderr(usage).exitCode(1).runAsTest("rm -r");
+    TestBuilder.command`rm -rv`.quiet().stdout("").stderr(usage).exitCode(1).runAsTest("rm -rv (quiet)");
+    // A prompting flag given after -f cancels it, as in GNU rm.
+    for (const flag of ["-i", "-I", "--interactive=once", "--interactive=always"]) {
+      TestBuilder.command`rm -f ${flag}`.stdout("").stderr(usage).exitCode(1).runAsTest(`${flag} given after -f`);
+    }
+  });
+
   test("recursive", async () => {
     const files = {
       "existent.txt": "",

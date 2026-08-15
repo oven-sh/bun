@@ -1,0 +1,6 @@
+{
+  "name": "app",
+  "dependencies": {
+    "lib": "file:../lib"
+  }
+}

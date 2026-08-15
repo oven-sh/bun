@@ -1,0 +1,33 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      camelcase:
+        specifier: denolib/camelcase#aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b
+        version: https://codeload.github.com/denolib/camelcase/tar.gz/aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b
+      is-negative:
+        specifier: github:kevva/is-negative#master
+        version: https://codeload.github.com/kevva/is-negative/tar.gz/1d7e288222b53a0cab90a331f1865220ec29560c
+
+packages:
+
+  camelcase@https://codeload.github.com/denolib/camelcase/tar.gz/aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b:
+    resolution: {tarball: https://codeload.github.com/denolib/camelcase/tar.gz/aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b}
+    version: 0.0.0
+
+  is-negative@https://codeload.github.com/kevva/is-negative/tar.gz/1d7e288222b53a0cab90a331f1865220ec29560c:
+    resolution: {gitHosted: true, tarball: https://codeload.github.com/kevva/is-negative/tar.gz/1d7e288222b53a0cab90a331f1865220ec29560c}
+    version: 2.1.0
+    engines: {node: '>=0.10.0'}
+
+snapshots:
+
+  camelcase@https://codeload.github.com/denolib/camelcase/tar.gz/aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b: {}
+
+  is-negative@https://codeload.github.com/kevva/is-negative/tar.gz/1d7e288222b53a0cab90a331f1865220ec29560c: {}

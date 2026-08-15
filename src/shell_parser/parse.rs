@@ -850,7 +850,7 @@ impl<'bump> Parser<'bump> {
         let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
 
         while if self.inside_subshell.is_none() {
-            !self.match_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
+            !self.match_any(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
         } else {
             !self.match_any(&[
                 TokenTag::Semicolon,
@@ -882,7 +882,7 @@ impl<'bump> Parser<'bump> {
 
     fn parse_binary(&mut self) -> ParseResult<ast::Expr<'bump>> {
         let mut left = self.parse_pipeline()?;
-        while self.match_any_comptime(&[TokenTag::DoubleAmpersand, TokenTag::DoublePipe]) {
+        while self.match_any(&[TokenTag::DoubleAmpersand, TokenTag::DoublePipe]) {
             let op: ast::BinaryOp = {
                 let previous = self.prev().tag();
                 match previous {
@@ -1790,17 +1790,6 @@ impl<'bump> Parser<'bump> {
         if self.peek().tag() == toktag {
             let _ = self.advance();
             return true;
-        }
-        false
-    }
-
-    fn match_any_comptime(&mut self, toktags: &[TokenTag]) -> bool {
-        let peeked = self.peek().tag();
-        for &tag in toktags {
-            if peeked == tag {
-                let _ = self.advance();
-                return true;
-            }
         }
         false
     }

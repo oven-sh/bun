@@ -123,11 +123,8 @@ struct AnsiRenderer<'a> {
     list_indent_cols: u32,
     /// Currently open span styles (bit flags).
     span_flags: u32,
-    /// Non-null when we're inside a link span; the href to emit in OSC 8.
-    /// Always allocator-owned when non-null (freed in leaveSpan).
-    link_href: Option<Box<[u8]>>,
-    /// Depth of enclosing link spans (brackets can nest in markdown parsers).
-    link_depth: u32,
+    /// The outermost open link span, if we're inside one.
+    link: Option<OpenLink>,
     /// Depth of enclosing image spans — text inside images becomes alt text
     /// rather than normal output.
     image_depth: u32,
@@ -171,6 +168,13 @@ struct AnsiRenderer<'a> {
     /// no content has been written since. Used to dedup back-to-back
     /// ensureBlankLine() calls (e.g. enter-quote followed by enter-para).
     blank_emitted: bool,
+}
+
+struct OpenLink {
+    /// Enclosing link spans including this one (brackets can nest in markdown parsers).
+    depth: u32,
+    /// The href to emit in OSC 8.
+    href: Box<[u8]>,
 }
 
 struct BlockContext {
@@ -273,8 +277,7 @@ impl<'a> AnsiRenderer<'a> {
             quote_depth: 0,
             list_indent_cols: 0,
             span_flags: 0,
-            link_href: None,
-            link_depth: 0,
+            link: None,
             image_depth: 0,
             image_alt: Vec::new(),
             image_src: None,
@@ -564,20 +567,21 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(code_span_open(self.theme.light), b"");
             }
             SpanType::A => {
-                self.link_depth += 1;
-                if self.link_depth == 1 {
+                if let Some(link) = &mut self.link {
+                    link.depth += 1;
+                } else {
                     // Resolve final href (prefixes for autolinks).
-                    self.link_href = Some(resolve_href(&detail));
-                    if self.theme.colors && self.theme.hyperlinks {
-                        if let Some(href) = &self.link_href {
-                            // OSC 8 hyperlink start
-                            // Clone the bytes so write_raw_no_color(&mut self)
-                            // doesn't alias `&self.link_href`.
-                            let href = href.clone();
-                            self.write_raw_no_color(b"\x1b]8;;");
-                            self.write_raw_no_color(&href);
-                            self.write_raw_no_color(b"\x1b\\");
-                        }
+                    let href = resolve_href(&detail);
+                    // Clone the bytes so write_raw_no_color(&mut self)
+                    // doesn't alias `&self.link`.
+                    let osc8_href =
+                        (self.theme.colors && self.theme.hyperlinks).then(|| href.clone());
+                    self.link = Some(OpenLink { depth: 1, href });
+                    if let Some(href) = osc8_href {
+                        // OSC 8 hyperlink start
+                        self.write_raw_no_color(b"\x1b]8;;");
+                        self.write_raw_no_color(&href);
+                        self.write_raw_no_color(b"\x1b\\");
                     }
                     self.write_styled(ansi_b::BLUE, b"");
                     self.write_styled(ansi_b::UNDERLINE, b"");
@@ -625,39 +629,34 @@ impl<'a> AnsiRenderer<'a> {
                 self.write_styled(b"\x1b[39m\x1b[49m", b"");
                 self.reapply_styles();
             }
-            SpanType::A => {
-                if self.link_depth == 1 {
-                    // Decrement BEFORE reapplyStyles so it doesn't re-emit
-                    // blue+underline for text after the link.
-                    self.link_depth = 0;
-                    let had_href = self.link_href.is_some();
+            // Taken BEFORE reapplyStyles so it doesn't re-emit
+            // blue+underline for text after the link.
+            SpanType::A => match self.link.take() {
+                Some(OpenLink { depth: 1, href }) => {
                     // Underline off, default fg; reapply outer styles so a
                     // link inside **bold** doesn't drop the bold.
                     self.write_styled(b"\x1b[24m\x1b[39m", b"");
                     self.reapply_styles();
                     if self.theme.colors && self.theme.hyperlinks {
-                        // Only emit the OSC 8 terminator if we emitted the
-                        // opening sequence (which required link_href).
-                        if had_href {
-                            self.write_raw_no_color(b"\x1b]8;;\x1b\\");
-                        }
-                    } else if let Some(href) = self.link_href.take() {
-                        if !href.is_empty() && self.image_depth == 0 {
-                            // Show URL in parens for non-hyperlink terminals.
-                            // image_depth==0 keeps " (url)" out of image alt
-                            // text when a link sits inside an image span.
-                            self.write_styled(ansi_b::DIM, b" (");
-                            self.write_styled(b"", &href);
-                            self.write_styled(ansi_b::DIM, b")");
-                            self.write_styled(b"\x1b[39m\x1b[22m", b"");
-                            self.reapply_styles();
-                        }
+                        // OSC 8 terminator
+                        self.write_raw_no_color(b"\x1b]8;;\x1b\\");
+                    } else if !href.is_empty() && self.image_depth == 0 {
+                        // Show URL in parens for non-hyperlink terminals.
+                        // image_depth==0 keeps " (url)" out of image alt
+                        // text when a link sits inside an image span.
+                        self.write_styled(ansi_b::DIM, b" (");
+                        self.write_styled(b"", &href);
+                        self.write_styled(ansi_b::DIM, b")");
+                        self.write_styled(b"\x1b[39m\x1b[22m", b"");
+                        self.reapply_styles();
                     }
-                    self.link_href = None;
-                } else if self.link_depth > 0 {
-                    self.link_depth -= 1;
                 }
-            }
+                Some(mut link) => {
+                    link.depth -= 1;
+                    self.link = Some(link);
+                }
+                None => {}
+            },
             SpanType::Img => {
                 if self.image_depth == 1 {
                     self.emit_image();
@@ -1043,7 +1042,7 @@ impl<'a> AnsiRenderer<'a> {
     /// indent stay clean, newline, re-emit indent, then reapply the
     /// active span styles so the continuation keeps its color.
     fn wrap_break(&mut self) {
-        let has_style = self.span_flags != 0 || self.link_depth > 0;
+        let has_style = self.span_flags != 0 || self.link.is_some();
         if self.theme.colors && has_style {
             self.out.write(b"\x1b[39m\x1b[49m");
         }
@@ -1136,7 +1135,7 @@ impl<'a> AnsiRenderer<'a> {
         if self.span_flags & SPAN_CODE != 0 {
             self.emit_inline(code_span_open(self.theme.light));
         }
-        if self.link_depth > 0 {
+        if self.link.is_some() {
             self.emit_inline(ansi_b::BLUE);
             self.emit_inline(ansi_b::UNDERLINE);
         }
@@ -1933,7 +1932,7 @@ impl<'a> AnsiRenderer<'a> {
         let link_ok = self.theme.colors
             && self.theme.hyperlinks
             && has_src
-            && self.link_depth == 0
+            && self.link.is_none()
             && !src.as_deref().unwrap().starts_with(b"data:");
         if link_ok {
             self.write_raw_no_color(b"\x1b]8;;");

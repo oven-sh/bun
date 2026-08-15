@@ -282,8 +282,7 @@ pub mod fs {
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
                     let mut buf = bun_paths::PathBuffer::default();
-                    let n = bun_sys::getcwd(&mut buf[..])?;
-                    DirnameStore::instance().append_slice(&buf[..n])?
+                    DirnameStore::instance().append_slice(bun_core::getcwd(&mut buf)?.as_bytes())?
                 }
             };
             // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the
@@ -885,6 +884,13 @@ pub mod fs {
     impl EntriesOption {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
+
+        pub(crate) fn as_entries(&self) -> Option<&DirEntry> {
+            match self {
+                EntriesOption::Entries(entries) => Some(&**entries),
+                EntriesOption::Err(_) => None,
+            }
+        }
 
         /// Probe the cached listing for `query` and return the lookup plus the
         /// listing fd, in one `entries_mutex` critical section. A

@@ -343,7 +343,44 @@ impl PackageManager {
                 }
 
                 if log_level != LogLevel::Silent {
-                    if failed_dep.name.is_empty()
+                    if !any_failed {
+                        Output::flush();
+                    }
+                    if failed_dep.version.tag == dependency::Tag::Catalog {
+                        let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
+                        let literal = failed_dep.version.literal.fmt(string_buf);
+                        let catalog_name = failed_dep.version.catalog().slice(string_buf);
+                        let is_default = catalog_name.is_empty() || catalog_name == b"default";
+                        let catalog_exists = is_default
+                            || lockfile
+                                .catalogs
+                                .groups
+                                .keys()
+                                .iter()
+                                .any(|k| k.slice(string_buf) == catalog_name);
+                        if !catalog_exists {
+                            Output::err_generic(
+                                "<b>{}@{}<r>: there is no catalog named \"{}\" in the root package.json",
+                                (name, literal, bstr::BStr::new(catalog_name)),
+                            );
+                        } else if is_default {
+                            Output::err_generic(
+                                "<b>{}@{}<r> is not in the catalog",
+                                (name, literal),
+                            );
+                            bun_core::pretty_errorln!("  bun add --catalog {}", name);
+                        } else {
+                            Output::err_generic(
+                                "<b>{}@{}<r> is not in catalog \"{}\"",
+                                (name, literal, bstr::BStr::new(catalog_name)),
+                            );
+                            bun_core::pretty_errorln!(
+                                "  bun add --catalog={} {}",
+                                bstr::BStr::new(catalog_name),
+                                name
+                            );
+                        }
+                    } else if failed_dep.name.is_empty()
                         || strings::eql_long(
                             failed_dep.name.slice(string_buf),
                             failed_dep.version.literal.slice(string_buf),

@@ -792,9 +792,12 @@ declare module "bun" {
     /**
      * Parse a TOML (v1.1.0) document into a JavaScript object.
      *
-     * Date/time values parse as strings of their source text. Integers
-     * outside `Number.MAX_SAFE_INTEGER` throw, since they cannot be
-     * represented losslessly as JavaScript numbers.
+     * Date/time values parse as Temporal objects: offset date-times as
+     * `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`,
+     * local dates as `Temporal.PlainDate`, and local times as
+     * `Temporal.PlainTime`. Integers outside `Number.MAX_SAFE_INTEGER`
+     * throw, since they cannot be represented losslessly as JavaScript
+     * numbers.
      *
      * @category Utilities
      *
@@ -810,8 +813,15 @@ declare module "bun" {
      * Serialize a JavaScript object to a TOML document.
      *
      * The top-level value must be an object (a TOML document is a table).
-     * `Date` values become TOML offset date-times. `null`, `BigInt`, and
-     * circular structures throw, since TOML cannot represent them;
+     * `Temporal.Instant`, `Temporal.PlainDateTime`, `Temporal.PlainDate`,
+     * and `Temporal.PlainTime` values become the corresponding TOML
+     * date/time literals, `Temporal.ZonedDateTime` becomes an offset
+     * date-time, and `Date` becomes an offset date-time in UTC; time-zone
+     * and calendar annotations are dropped, since TOML has no syntax for
+     * them. `null`, `BigInt`, circular structures, invalid `Date`s, date
+     * values outside years 0000–9999, and Temporal types with no TOML form
+     * (`Temporal.PlainYearMonth`, `Temporal.PlainMonthDay`,
+     * `Temporal.Duration`) throw, since TOML cannot represent them;
      * `undefined`, function, and symbol properties are skipped (inside
      * arrays they throw, since TOML arrays cannot have holes).
      *
@@ -837,69 +847,131 @@ declare module "bun" {
    * XML related APIs
    */
   namespace XML {
+    // ── compact shape ──────────────────────────────────────────────────────
+
     /**
-     * An element in the node tree returned by {@link parse} with `{ compact: false }`
-     * and accepted by {@link stringify}.
+     * An element in the compact shape {@link parse} returns by default: its
+     * character data (a string) when it has no attributes and no child
+     * elements, otherwise an {@link Element}.
      */
+    type Value = string | Element;
+
+    /**
+     * An element that has attributes or child elements, in the compact shape.
+     *
+     * - `"@name"` — one per attribute, holding its value.
+     * - `"#text"` — the element's own character data, exactly, when it has any:
+     *   its text runs concatenated, leaving out only whitespace-only runs that
+     *   sit between child elements (layout).
+     * - any other key — a child element name, holding that child's
+     *   {@link Value}, or an array of them when the name occurs more than once
+     *   in this element.
+     *
+     * Keys are in document order: attributes first, then child names and
+     * `"#text"` in order of first appearance. `@` and `#` cannot begin an XML
+     * name, so these keys never collide with element names.
+     */
+    interface Element {
+      [key: string]: Value | Value[];
+    }
+
+    /**
+     * A parsed document in the compact shape: exactly one key, the root
+     * element's name. This is also what importing an `.xml` file evaluates to.
+     */
+    interface Document {
+      [rootName: string]: Value;
+    }
+
+    // ── tree shape ─────────────────────────────────────────────────────────
+
+    /** An element in the tree {@link parse} returns with `{ compact: false }`. */
     interface Node {
       /** The element name as written, including any namespace prefix (`"soap:Envelope"`). */
       name: string;
       /**
-       * Attribute values by name, in document order, after attribute-value
-       * normalization and with defaults declared in the internal DTD subset applied.
-       * Namespace declarations (`xmlns`, `xmlns:*`) appear as ordinary attributes.
+       * Attribute values by name as written, in document order, after
+       * attribute-value normalization and with defaults declared in the
+       * internal DTD subset applied. Namespace declarations (`xmlns`,
+       * `xmlns:*`) are ordinary attributes.
        */
       attributes: Record<string, string>;
       /**
-       * Child elements and character data in document order. Text is passed through
-       * exactly (whitespace-only runs between elements included); CDATA sections,
-       * character references and internal entities are already expanded into the
-       * surrounding text, while a reference to an entity that only an (unread) external
-       * DTD could declare is kept as written (`"&name;"`). Comments and processing
-       * instructions are not represented.
+       * The element's content in document order: character data as strings
+       * (exact — CDATA sections, character references and internal entities
+       * expanded, whitespace untouched, adjacent text merged into one string),
+       * child elements, comments and processing instructions. An object here is
+       * an element if it has `name`, a comment if it has `comment`, and a
+       * processing instruction if it has `target`.
        */
-      children: Array<Node | string>;
+      children: Array<string | Node | Comment | ProcessingInstruction>;
     }
+
+    /** `<!--comment-->` among a {@link Node}'s children. */
+    interface Comment {
+      comment: string;
+    }
+
+    /** `<?target data?>` among a {@link Node}'s children. */
+    interface ProcessingInstruction {
+      target: string;
+      /** The text after the whitespace that follows the target; `""` when there is none. */
+      data: string;
+    }
+
+    // ── parse ──────────────────────────────────────────────────────────────
 
     interface ParseOptions {
       /**
        * Selects the shape of the result.
        *
-       * - `true` (default): a compact object — `{ [rootName]: value }`, where an
-       *   element with no attributes and no child elements becomes its text (trimmed
-       *   of surrounding whitespace, `""` when empty), and any other element becomes
-       *   an object with a `"@name"` key per attribute, one key per distinct child
-       *   element name (an array when that name repeats, in document order), and
-       *   `"#text"` for its trimmed character data if any. The relative order of
-       *   differently named siblings and of text between them is not kept.
-       * - `false`: the root element as a {@link Node} tree, which keeps everything
-       *   in document order.
+       * - `true` (default): the compact {@link Document} — elements keyed by
+       *   name, leaves as strings. The shape for data. It does not keep the
+       *   relative order of differently named siblings, where text sat relative
+       *   to child elements, comments, or processing instructions.
+       * - `false`: the root element as a {@link Node} tree, which keeps all of
+       *   those, in document order. The shape for documents.
+       *
+       * Neither shape represents the XML declaration, the document type
+       * declaration, or anything outside the root element.
        *
        * @default true
        */
-      compact?: boolean | undefined;
+      compact?: boolean;
     }
 
     /**
      * Parse an XML 1.0 document.
      *
-     * `Bun.XML` is a non-validating processor: the document (including its internal
-     * DTD subset) must be well-formed, internal entities are expanded, and attribute
-     * defaults declared in the internal subset are applied, but external DTDs and
-     * external entities are never loaded. Comments and processing instructions are
-     * skipped. All values are strings; nothing is coerced to numbers or booleans.
+     * `Bun.XML` is a conforming, non-validating XML processor. The document —
+     * including any internal DTD subset — must be well-formed or a
+     * `SyntaxError` is thrown; there is no lenient mode. Internal entities are
+     * expanded (within an expansion limit), attribute values are normalized,
+     * and attribute defaults declared in the internal subset are applied.
+     * External DTDs and external entities are never read. Nothing is coerced:
+     * every value is a string.
      *
-     * A string is parsed as already-decoded text. Bytes (`Buffer`, `TypedArray`,
-     * `DataView`, `ArrayBuffer`, `Blob`) are decoded per the XML rules: a byte-order
-     * mark or the `encoding` declared in `<?xml ...?>` selects UTF-8, UTF-16, or
-     * ISO-8859-1.
+     * `compact` selects a structure; it never alters character data. The text
+     * of an element is the same in both shapes — as written, whitespace
+     * included. The compact shape only does what having a single `"#text"`
+     * forces: an element's text runs are concatenated, and a whitespace-only
+     * run between child elements (the document's layout) is left out.
+     *
+     * A reference to an entity that only an unread external DTD could declare
+     * is not an error (XML 1.0 §4.1) and is kept in the text as written
+     * (`"&name;"` — indistinguishable afterwards from an escaped `&amp;name;`).
+     *
+     * A string is parsed as already-decoded text. Bytes (`Buffer`,
+     * `TypedArray`, `DataView`, `ArrayBuffer`, `Blob`) are decoded per the XML
+     * rules: a byte-order mark or the `encoding` declared in `<?xml ...?>`
+     * selects UTF-8, UTF-16, or ISO-8859-1; other encodings throw.
      *
      * @category Utilities
      *
      * @param input The XML document
-     * @throws {SyntaxError} If the document is not well-formed (which, in a document
-     * without an external DTD, includes referencing an undeclared entity), uses an
+     * @throws {SyntaxError} If the document is not well-formed, uses an
      * unsupported encoding, or exceeds the entity-expansion limits
+     * @throws {RangeError} If elements are nested too deeply
      *
      * @example
      * ```ts
@@ -914,18 +986,18 @@ declare module "bun" {
      * //   },
      * // }
      *
-     * XML.parse(`<p>Hello <b>world</b>!</p>`, { compact: false });
+     * XML.parse(`<p>Hello <b>world</b>!<!-- bye --></p>`, { compact: false });
      * // {
      * //   name: "p",
      * //   attributes: {},
-     * //   children: [ "Hello ", { name: "b", attributes: {}, children: ["world"] }, "!" ],
+     * //   children: [ "Hello ", { name: "b", attributes: {}, children: ["world"] }, "!", { comment: " bye " } ],
      * // }
      * ```
      */
     function parse(
       input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
       options?: ParseOptions & { compact?: true },
-    ): Record<string, unknown>;
+    ): Document;
     function parse(
       input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
       options: ParseOptions & { compact: false },
@@ -933,28 +1005,63 @@ declare module "bun" {
     function parse(
       input: string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike | Blob,
       options?: ParseOptions,
-    ): Record<string, unknown> | Node;
+    ): Document | Node;
+
+    // ── stringify ──────────────────────────────────────────────────────────
+
+    /** A value {@link stringify} writes as text: `String(v)`, or the ISO string of a `Date`. */
+    type Scalar = string | number | boolean | bigint | Date;
 
     /**
-     * Serialize a value to an XML document (without an XML declaration).
-     *
-     * Accepts either shape {@link parse} produces: a {@link Node} (anything with a
+     * A {@link Node} as {@link stringify} accepts it: `attributes` and
+     * `children` may be omitted, scalars may stand where text goes, and
+     * `null`/`undefined` entries are skipped.
+     */
+    interface NodeInput {
+      name: string;
+      attributes?: { [name: string]: Scalar | null | undefined } | null;
+      children?: Array<Scalar | NodeInput | Comment | ProcessingInstruction | null | undefined> | null;
+    }
+
+    /**
+     * Serialize one element to XML: a {@link NodeInput} tree (any object with a
      * string `name` and a `children` or `attributes` property), or a compact
-     * object with exactly one key naming the root element, using the same `"@name"` /
-     * `"#text"` / array conventions. Strings, numbers, booleans, bigints and `Date`s
-     * (as ISO strings) become text; `null` becomes an empty element; `undefined`,
-     * functions and symbols are skipped. The output is always well-formed: `& < >`
-     * (and, in attributes, quotes and whitespace other than space) are escaped, and
-     * names that are not XML names, characters XML cannot contain, and circular
-     * structures throw.
+     * object with exactly one key naming the root element whose value follows
+     * the {@link Element} conventions.
+     *
+     * The result is that element's markup only — no XML declaration and no
+     * document type declaration; prepend them as text when writing a file
+     * (`'<?xml version="1.0" encoding="UTF-8"?>\n' + XML.stringify(doc)`).
+     * Because of that, results can be concatenated inside an enclosing element.
+     *
+     * The output is well-formed or `stringify` throws. `& < >` are escaped
+     * everywhere; `"`, tabs and newlines in attribute values, and carriage
+     * returns anywhere, are written as character references so they survive
+     * being parsed again. It throws for element, attribute or processing
+     * instruction names that are not XML names; for characters XML cannot
+     * contain (U+0000, other C0 controls except tab/newline/carriage return,
+     * U+FFFE, U+FFFF, unpaired surrogates); for `--` inside a comment or `?>`
+     * inside processing-instruction data; for an array at the root or inside
+     * another array; and for circular structures.
+     *
+     * Strings, numbers, booleans and bigints become text via `String()`, a
+     * `Date` its ISO string; `null` becomes an empty element (or leaves an
+     * attribute out); `undefined`, functions and symbols are skipped, as are
+     * symbol-keyed, non-enumerable and inherited properties. In the compact
+     * shape an array is one element per item and any other object is a child
+     * element.
+     *
+     * `XML.parse(XML.stringify(value))` deep-equals `value` for anything
+     * `XML.parse` returned, in either shape.
      *
      * @category Utilities
      *
-     * @param value The {@link Node} or compact object to serialize
-     * @param replacer Not supported; pass `undefined` or `null`
-     * @param space Indentation for element-only content, as in `JSON.stringify`: a
-     * number of spaces (at most 10) or a string (its first 10 characters). Elements
-     * that contain text are always written inline so character data is unchanged.
+     * @param value The element to serialize
+     * @param replacer Reserved; must be `undefined` or `null`
+     * @param space Indentation for element-only content, as in `JSON.stringify`:
+     * a number of spaces (at most 10) or a string (its first 10 characters).
+     * An element with any text child is written on one line so character data
+     * is unchanged.
      * @returns The XML, or `undefined` if `value` is `undefined`, a function, or a symbol
      *
      * @example
@@ -968,6 +1075,7 @@ declare module "bun" {
      * // '<p class="x">Hi <b>!</b></p>'
      * ```
      */
+    function stringify(value: NodeInput | Document, replacer?: undefined | null, space?: string | number): string;
     function stringify(value: unknown, replacer?: undefined | null, space?: string | number): string | undefined;
   }
 

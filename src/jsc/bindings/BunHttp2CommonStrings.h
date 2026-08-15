@@ -80,8 +80,6 @@ using namespace JSC;
 class Http2CommonStrings {
 
 public:
-    typedef JSC::JSString* (*commonStringInitializer)(Http2CommonStrings*, JSC::JSGlobalObject* globalObject);
-
     HTTP2_COMMON_STRINGS_EACH_NAME(HTTP2_COMMON_STRINGS_ACCESSOR_DEFINITION)
 
     void initialize();

@@ -115,7 +115,7 @@ test("test 2", () => {
 
 ### Promise Rejections
 
-Unhandled promise rejections are also caught:
+The test runner also catches unhandled promise rejections:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test } from "bun:test";
@@ -291,7 +291,7 @@ The test runner runs all tests in a single process by default. This provides:
 
 - **Faster startup** - No need to spawn multiple processes
 - **Shared memory** - Efficient resource usage
-- **Simple debugging** - All tests in one process
+- **Simpler debugging** - All tests in one process
 
 However, this means:
 

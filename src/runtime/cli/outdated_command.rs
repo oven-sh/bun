@@ -110,11 +110,14 @@ impl OutdatedCommand {
             LoadResult::NotFound => {
                 if not_silent {
                     Output::err_generic("missing lockfile, nothing outdated", ());
+                    bun_core::note!("run 'bun install' first");
                 }
                 Global::crash();
             }
             LoadResult::Err(cause) => {
-                if not_silent {
+                if not_silent
+                    && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
+                {
                     match cause.step {
                         LoadStep::OpenFile => Output::err_generic(
                             "failed to open lockfile: {s}",

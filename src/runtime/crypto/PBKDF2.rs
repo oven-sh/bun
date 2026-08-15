@@ -14,7 +14,7 @@ pub(crate) struct PBKDF2 {
     pub password: StringOrBuffer,
     pub salt: StringOrBuffer,
     pub iteration_count: u32,
-    pub length: i32,
+    pub length: usize,
     algorithm: Algorithm,
 }
 
@@ -27,7 +27,7 @@ impl PBKDF2 {
         let length = self.length;
 
         output.fill(0);
-        debug_assert!(self.length <= i32::try_from(output.len()).expect("int cast"));
+        debug_assert!(self.length <= output.len());
         // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
         if length == 0 {
             return false;
@@ -47,7 +47,7 @@ impl PBKDF2 {
                 salt.len(),
                 iteration_count as c_uint,
                 algorithm.md().unwrap(),
-                usize::try_from(length).expect("int cast"),
+                length,
                 output.as_mut_ptr(),
             )
         };
@@ -101,7 +101,8 @@ impl PBKDF2 {
             ));
         }
 
-        let keylen: i32 = keylen_num as i32;
+        // 0..=i32::MAX was checked above.
+        let keylen = keylen_num as usize;
 
         if !arg2.is_number() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -271,7 +272,7 @@ impl JobContext for Pbkdf2Job {
     type Js = JSPromiseStrong;
 
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        let len = usize::try_from(this.pbkdf2.length).expect("int cast");
+        let len = this.pbkdf2.length;
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
@@ -299,7 +300,7 @@ impl JobContext for Pbkdf2Job {
         }
 
         let output_slice = core::mem::take(&mut this.output);
-        debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).expect("int cast"));
+        debug_assert!(output_slice.len() == this.pbkdf2.length);
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
         promise.settle(global_this, buffer_value)?;

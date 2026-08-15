@@ -1,7 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
-import { rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -565,38 +565,116 @@ test.if(isWindows)(
       },
     });
 
-    // Not `using`: the crash reporter's PowerShell child inherits this cwd
-    // and can outlive the crashed process, so a scoped delete races it.
-    const dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
-    try {
-      await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
+    using dir = tempDir("crash-report-system-powershell", { "placeholder.js": "" });
+    await Bun.write(path.join(String(dir), "powershell.exe"), Bun.file(bunExe()));
 
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+      cwd: String(dir),
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: server.url.toString(),
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
+    await Promise.race([acked.promise, Bun.sleep(2000)]);
+
+    expect(stderr).toContain(server.url.toString());
+    expect(sent).toBe(true);
+    expect(exitCode).not.toBe(0);
+  },
+);
+
+// The upload child (PowerShell on Windows, curl elsewhere) is fire-and-forget
+// and outlives the crashed process, so it must not run in the crashed
+// process's cwd: Windows refuses to remove a directory that is any process's
+// cwd, so anything that deletes the crashed process's cwd as soon as it exits
+// (test harnesses, tooling with scratch directories) would get EBUSY until the
+// upload finished.
+describe("crash report upload does not run in the crashed process's cwd", () => {
+  // Crashes a child in `cwd` and calls `inspect` once the child has exited and
+  // the upload child has connected. Its /ack request is held open until
+  // `inspect` returns, so the upload child is fully started (cwd handle open)
+  // and still alive while `inspect` runs.
+  async function crashInCwdThenInspectWhileUploading(cwd: string, inspect: () => void) {
+    const acked = Promise.withResolvers<string>();
+    const release = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        acked.resolve(request.url);
+        await release.promise;
+        return new Response("OK");
+      },
+    });
+
+    try {
       await using proc = Bun.spawn({
         cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
-        cwd: String(dir),
+        cwd,
         env: mergeWindowEnvs([
           bunEnv,
           {
             BUN_CRASH_REPORT_URL: server.url.toString(),
             BUN_ENABLE_CRASH_REPORTING: "1",
-            GITHUB_ACTIONS: undefined,
-            CI: undefined,
           },
         ]),
-        stdio: ["ignore", "pipe", "pipe"],
+        // On POSIX the upload child inherits stderr, so piping it would tie
+        // the pipe's EOF to the ack being released below.
+        stdio: ["ignore", "ignore", "ignore"],
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-      /// Wait two seconds for a slow http request, or continue immediately once the request is heard.
-      await Promise.race([acked.promise, Bun.sleep(2000)]);
-
-      expect(stderr).toContain(server.url.toString());
-      expect(sent).toBe(true);
+      const [exitCode, ackUrl] = await Promise.all([proc.exited, acked.promise]);
+      expect(ackUrl).toEndWith("/ack");
       expect(exitCode).not.toBe(0);
+
+      inspect();
     } finally {
-      try {
-        rmSync(String(dir), { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-      } catch {}
+      release.resolve();
     }
-  },
-);
+  }
+
+  // Only Windows refuses to remove a directory that is a process's cwd.
+  test.if(isWindows)("Windows: the cwd can be removed while the upload is still running", async () => {
+    using dir = tempDir("crash-report-cwd", {});
+    const cwd = path.join(String(dir), "cwd");
+    mkdirSync(cwd);
+
+    await crashInCwdThenInspectWhileUploading(cwd, () => {
+      rmSync(cwd, { recursive: true });
+      expect(existsSync(cwd)).toBe(false);
+    });
+  });
+
+  // POSIX lets the directory be removed either way, so look at the upload
+  // child itself; /proc/<pid>/cwd is Linux-only.
+  test.if(isLinux)("Linux: no process has the crashed process's cwd while the upload is still running", async () => {
+    using dir = tempDir("crash-report-cwd", {});
+    const cwd = realpathSync(String(dir));
+
+    await crashInCwdThenInspectWhileUploading(cwd, () => {
+      // The crashed process has already been reaped, so the only process that
+      // could still have this cwd is the upload child it spawned.
+      const holders = readdirSync("/proc")
+        .filter(entry => /^\d+$/.test(entry))
+        .flatMap(pid => {
+          try {
+            if (readlinkSync(`/proc/${pid}/cwd`) !== cwd) return [];
+            return [readFileSync(`/proc/${pid}/comm`, "utf8").trim()];
+          } catch {
+            // The process exited between readdir and readlink, or belongs to
+            // another user; neither can be the upload child we spawned.
+            return [];
+          }
+        });
+      expect(holders).toEqual([]);
+    });
+  });
+});

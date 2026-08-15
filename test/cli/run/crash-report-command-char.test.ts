@@ -15,9 +15,6 @@ describe.concurrent("crash report command character", () => {
     using server = Bun.serve({ port: 0, fetch: () => new Response("OK") });
     const base = new URL(server.url).origin;
 
-    // No cwd override: on Windows the crash reporter spawns a detached child
-    // that inherits the crashing process's cwd, which would keep a tempDir
-    // cwd alive past the test and make its cleanup fail with EBUSY.
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       env: mergeWindowEnvs([

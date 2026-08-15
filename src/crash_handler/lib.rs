@@ -2781,6 +2781,11 @@ mod draft {
     /// These URLs contain no source code or personally-identifiable
     /// information (PII). The stackframes point to Bun's open-source native code
     /// (not user code), and are safe to share publicly and with the Bun team.
+    ///
+    /// The upload child outlives the crashing process, so it is given its own cwd
+    /// instead of inheriting ours: Windows refuses to delete a directory that is
+    /// some process's cwd, so whoever removes the crashed process's cwd after
+    /// seeing it exit would get EBUSY until the upload finishes.
     fn report(url: &[u8]) {
         if !is_reporting_enabled() {
             return;
@@ -2866,7 +2871,11 @@ mod draft {
             let end = cmd_line.len() - 1;
             let cmd_line_slice = &mut cmd_line.slice()[0..end];
             // Rust has no [:0] sentinel slices — pass the raw pointer instead.
-            // SAFETY: all pointer args are either null or point to stack-local buffers/structs valid for the duration of the call; cmd_line is NUL-terminated above
+            // SAFETY: all pointer args are either null or point to stack-local
+            // buffers/structs valid for the duration of the call; cmd_line is
+            // NUL-terminated above, and `sysdir` is NUL-terminated because it was
+            // zero-initialized and `GetSystemDirectoryW` wrote fewer than
+            // `sysdir.len()` units into it (checked above).
             let spawn_result = unsafe {
                 windows::kernel32::CreateProcessW(
                     core::ptr::null(),
@@ -2876,7 +2885,7 @@ mod draft {
                     1, // true
                     0,
                     core::ptr::null_mut(),
-                    core::ptr::null(),
+                    sysdir.as_ptr(), // lpCurrentDirectory
                     &mut startup_info,
                     &mut process,
                 )
@@ -2938,6 +2947,12 @@ mod draft {
                         unsafe {
                             libc::close(i);
                         }
+                    }
+                    // `curl` came from `which()` with an absolute cwd, so it is an
+                    // absolute path and does not depend on the cwd we leave here.
+                    // SAFETY: chdir is async-signal-safe; the path is a static C string.
+                    unsafe {
+                        libc::chdir(c"/".as_ptr());
                     }
                     // SAFETY: argv is NUL-terminated array of NUL-terminated strings; environ is the
                     // process environment block

@@ -804,6 +804,51 @@ test("publishes the workspace versions and catalog ranges currently in package.j
   });
 });
 
+test("publishes a workspace package next to a bun.lock that does not parse", async () => {
+  let captured: any = null;
+  using mock = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      if (req.method === "PUT") captured = await req.json();
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  const packageDir = tmpdirSync();
+  const utilsDir = join(packageDir, "packages", "utils");
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: { registry: { url: `http://localhost:${mock.port}`, token: "unused" } },
+      }),
+    ),
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "mono", private: true, workspaces: ["packages/*"] }),
+    ),
+    write(join(packageDir, "bun.lock"), "<<<<<<< HEAD\n"),
+    write(
+      join(packageDir, "packages", "core", "package.json"),
+      JSON.stringify({ name: "@acme/core", version: "1.3.0" }),
+    ),
+    write(
+      join(utilsDir, "package.json"),
+      JSON.stringify({ name: "@acme/utils", version: "0.4.1", dependencies: { "@acme/core": "workspace:^" } }),
+    ),
+  ]);
+
+  const { err, exitCode } = await publish(env, utilsDir);
+  expect(err).toBe("");
+  expect(exitCode).toBe(0);
+
+  expect(captured.versions["0.4.1"]).toMatchObject({
+    name: "@acme/utils",
+    version: "0.4.1",
+    dependencies: { "@acme/core": "^1.3.0" },
+  });
+});
+
 describe("--dry-run", async () => {
   test("does not publish", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

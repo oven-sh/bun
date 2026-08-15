@@ -849,6 +849,69 @@ describe("workspaces", () => {
     const tarball = readTarball(join(packageDir, "pkgs", "app", "app-1.0.0.tgz"));
     expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "2.0.0" });
   });
+
+  // pack does not read the lockfile, so a lockfile that would not parse (mid-rebase, truncated) does
+  // not get in the way, whether or not the package has specs to resolve.
+  const unreadableLockfiles = [
+    { label: "an empty bun.lock", file: "bun.lock", contents: "" },
+    {
+      label: "a bun.lock with git conflict markers",
+      file: "bun.lock",
+      contents: `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+<<<<<<< HEAD
+      "dependencies": {},
+=======
+      "devDependencies": {},
+>>>>>>> feature
+    },
+  },
+  "packages": {},
+}
+`,
+    },
+    { label: "a corrupt bun.lockb", file: "bun.lockb", contents: "not a lockfile" },
+  ];
+
+  for (const { label, file: lockfile, contents } of unreadableLockfiles) {
+    test(`packs a package without workspace specs next to ${label}`, async () => {
+      await Promise.all([
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-bad-lockfile", version: "1.0.0" })),
+        write(join(packageDir, "index.js"), "module.exports = 1"),
+        write(join(packageDir, lockfile), contents),
+      ]);
+
+      const { err } = await pack(packageDir, bunEnv);
+      expect(err).toBe("");
+
+      const tarball = readTarball(join(packageDir, "pack-bad-lockfile-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([
+        { "pathname": "package/package.json" },
+        { "pathname": "package/index.js" },
+      ]);
+    });
+
+    test(`resolves workspace:* next to ${label}`, async () => {
+      await Promise.all([
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces: ["pkgs/*"] })),
+        write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.1.1" })),
+        write(
+          join(packageDir, "pkgs", "app", "package.json"),
+          JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "pkg1": "workspace:*" } }),
+        ),
+        write(join(packageDir, lockfile), contents),
+      ]);
+
+      const { err } = await pack(join(packageDir, "pkgs", "app"), bunEnv);
+      expect(err).toBe("");
+
+      const tarball = readTarball(join(packageDir, "pkgs", "app", "app-1.0.0.tgz"));
+      expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "1.1.1" });
+    });
+  }
 });
 
 test("lifecycle scripts execution order", async () => {

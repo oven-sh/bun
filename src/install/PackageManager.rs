@@ -538,8 +538,7 @@ impl Subcommand {
         !matches!(self, Self::Link)
     }
 
-    /// `init` opens package.json read-write for these so a read-only file fails before any work is
-    /// done; `bun install <pkg>`/`bun link <pkg>` are `bun add`. `pm trust` etc. open it themselves.
+    /// `init` opens package.json read-write for these so a read-only file fails before any work.
     pub(crate) fn writes_package_json(self, has_package_args: bool) -> bool {
         match self {
             Self::Add | Self::Remove | Self::Update | Self::Patch | Self::PatchCommit => true,

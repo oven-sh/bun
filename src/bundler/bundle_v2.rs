@@ -2122,7 +2122,10 @@ pub mod bv2_impl {
             while let Some(resolve) = self.graph.outstanding_resolves.pop() {
                 // SAFETY: linked ⇒ arena-live for this pass and held by no one else now.
                 let resolve = unsafe { &mut *resolve };
-                if resolve.answered.swap(true, core::sync::atomic::Ordering::AcqRel) {
+                if resolve
+                    .answered
+                    .swap(true, core::sync::atomic::Ordering::AcqRel)
+                {
                     // The plugin's answer is already in flight to our queue; it stays counted in
                     // `pending_items` and is consumed when it arrives.
                     continue;
@@ -2135,7 +2138,10 @@ pub mod bv2_impl {
             while let Some(load) = self.graph.outstanding_loads.pop() {
                 // SAFETY: as above.
                 let load = unsafe { &mut *load };
-                if load.answered.swap(true, core::sync::atomic::Ordering::AcqRel) {
+                if load
+                    .answered
+                    .swap(true, core::sync::atomic::Ordering::AcqRel)
+                {
                     continue;
                 }
                 if load.deferred {

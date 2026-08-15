@@ -401,56 +401,45 @@ impl ThreadPool {
 
     #[cold]
     fn get_worker_slow(&self, id: ThreadId) -> &'static mut Worker {
-        let worker: *mut Worker;
-        {
+        let worker: *mut Worker = {
             let mut map = self.workers_assignments.lock();
             match map.entry(id) {
-                MapEntry::Occupied(o) => {
-                    let w = *o.into_mut();
-                    drop(map);
-                    TLS_WORKER.set((self.generation, w));
-                    // SAFETY: map only stores live heap-allocated Workers (inserted below).
-                    return unsafe { &mut *w };
-                }
-                MapEntry::Vacant(v) => {
-                    // Allocate raw uninitialized storage; fully written via
-                    // `worker.write(...)` below before any read. Keep it as
-                    // `*mut MaybeUninit<Worker>` → `.cast()` instead of
-                    // `assume_init()` so we never materialize a `Box<Worker>`
-                    // whose payload violates `Worker`'s validity invariants
-                    // (niche-optimized `Option<_>` discriminants, the non-null
-                    // fn-pointer in `deinit_task.callback`, `bool` fields).
-                    worker = bun_core::heap::into_raw(Box::<Worker>::new_uninit()).cast::<Worker>();
-                    v.insert(worker);
-                }
+                MapEntry::Occupied(o) => *o.get(),
+                // Built before it is inserted: `deinit_without_freeing_arena`
+                // walks this map from the bundler thread and `deinit_soon`
+                // reads `thread` off every entry, so the map must never hold a
+                // Worker that is not fully written yet. Building it under the
+                // lock happens once per thread per pool.
+                MapEntry::Vacant(v) => *v.insert(self.create_worker()),
             }
-        }
+        };
+        TLS_WORKER.set((self.generation, worker));
+        // SAFETY: the map only holds Workers boxed by `create_worker`, live
+        // until `Worker::deinit`.
+        unsafe { &mut *worker }
+    }
 
-        // SAFETY: `worker` is freshly heap-allocated and exclusive on this
-        // thread until published via the map (already inserted above, but no
-        // other thread looks it up under a different `id`).
-        unsafe {
-            worker.write(Worker {
-                // Placeholder — overwritten by `init()` immediately below.
-                ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
-                heap: None,
-                arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
-                thread: NonNull::new(ThreadPoolLib::Thread::current())
-                    .map(bun_ptr::ParentRef::from),
-                data: None,
-                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
-                has_created: false,
-                deinit_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
-                    callback: Worker::deinit_callback,
-                },
-                temporary_arena: None,
-                stmt_list: None,
-            });
-            (*worker).init(&*self.v2);
-            TLS_WORKER.set((self.generation, worker));
-            &mut *worker
-        }
+    fn create_worker(&self) -> *mut Worker {
+        let mut worker = Box::new(Worker {
+            // Overwritten by `init()` below.
+            ctx: bun_ptr::BackRef::from(NonNull::<BundleV2<'static>>::dangling()),
+            heap: None,
+            arena: bun_ptr::BackRef::from(NonNull::<ThreadLocalArena>::dangling()),
+            thread: NonNull::new(ThreadPoolLib::Thread::current()).map(bun_ptr::ParentRef::from),
+            data: None,
+            ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+            has_created: false,
+            deinit_task: ThreadPoolLib::Task {
+                node: ThreadPoolLib::Node::default(),
+                callback: Worker::deinit_callback,
+            },
+            temporary_arena: None,
+            stmt_list: None,
+        });
+        // SAFETY: `v2` is the BACKREF set in `init_with_pool`; the bundle
+        // outlives its pool and every worker.
+        worker.init(unsafe { &*self.v2 });
+        bun_core::heap::into_raw(worker)
     }
 }
 
@@ -594,7 +583,8 @@ impl Worker {
     /// Takes ownership of the heap allocation and frees it.
     ///
     /// # Safety
-    /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
+    /// `this` must have come from `ThreadPool::create_worker` (via
+    /// [`ThreadPool::get_worker`]).
     pub(crate) unsafe fn deinit(this: *mut Worker) {
         // SAFETY: caller contract — reclaim the Box; dropping it at scope end
         // runs the remaining field drop glue (`Option` fields are `None`,

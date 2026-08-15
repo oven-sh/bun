@@ -466,6 +466,37 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// Entry points are handed to the worker pool as they resolve, so when a later
+// entry point fails to resolve, the build is torn down while pool threads are
+// still registering their per-thread Worker. Teardown used to find a Worker
+// that had been inserted into the pool's map before it was written and
+// dereference its garbage `thread` pointer (SEGV in Worker::deinit_soon). The
+// window is a few microseconds wide, so one run hits it only most of the time;
+// every one of these runs must report the error and nothing else.
+test("teardown while a pool thread is still setting up its worker reports the entry point error", async () => {
+  using dir = tempDir("build-teardown-during-worker-setup", {
+    "a.js": "console.log('a');",
+    "b.js": "console.log('b');",
+  });
+  const expected = {
+    stdout: "",
+    stderr: 'error: ModuleNotFound resolving "./nodir/x.js" (entry point)\n',
+    exitCode: 1,
+  };
+
+  for (let run = 0; run < 6; run++) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "./a.js", "./b.js", "./nodir/x.js", "--outdir", "dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ run, stdout, stderr, exitCode }).toEqual({ run, ...expected });
+  }
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

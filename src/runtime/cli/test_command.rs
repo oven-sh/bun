@@ -1740,54 +1740,19 @@ impl CommandLineReporter {
         let base_fraction = opts.fractions;
         let mut failing = false;
 
+        // Printing the table is best-effort; the lcov file and `opts.fractions.failing` are not.
         if reporters_text {
-            if console.write_all(pretty_lit!("<r><d>")).is_err() {
-                return Ok(());
-            }
-            if console
-                .splat_byte_all(b'-', max_filepath_length + 2)
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console.write_all(b"File").is_err() {
-                return Ok(());
-            }
-            if console
-                .splat_byte_all(b' ', max_filepath_length - b"File".len() + 1)
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!(
-                    " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
-                ))
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console.write_all(pretty_lit!("<d>")).is_err() {
-                return Ok(());
-            }
-            if console
-                .splat_byte_all(b'-', max_filepath_length + 2)
-                .is_err()
-            {
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
-                .is_err()
-            {
-                return Ok(());
-            }
+            let _ = console.write_all(pretty_lit!("<r><d>"));
+            let _ = console.splat_byte_all(b'-', max_filepath_length + 2);
+            let _ = console.write_all(pretty_lit!("|---------|---------|-------------------<r>\n"));
+            let _ = console.write_all(b"File");
+            let _ = console.splat_byte_all(b' ', max_filepath_length - b"File".len() + 1);
+            let _ = console.write_all(pretty_lit!(
+                " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
+            ));
+            let _ = console.write_all(pretty_lit!("<d>"));
+            let _ = console.splat_byte_all(b'-', max_filepath_length + 2);
+            let _ = console.write_all(pretty_lit!("|---------|---------|-------------------<r>\n"));
         }
 
         let mut console_buffer: Vec<u8> = Vec::new();
@@ -1965,7 +1930,7 @@ impl CommandLineReporter {
                     }
                 };
 
-                coverage::Text::write_format_with_values(
+                let _ = coverage::Text::write_format_with_values(
                     b"All files",
                     max_filepath_length,
                     avg,
@@ -1974,29 +1939,15 @@ impl CommandLineReporter {
                     &mut console,
                     false,
                     enable_ansi_colors,
-                )?;
+                );
 
-                console.write_all(pretty_lit!("<r><d> |<r>\n"))?;
+                let _ = console.write_all(pretty_lit!("<r><d> |<r>\n"));
             }
 
-            console.write_all(&console_buffer)?;
-            console.write_all(pretty_lit!("<r><d>"))?;
-            // Disarm the lcov cleanup guard before the early `Ok(())`; the
-            // temp file is left for the OS.
-            if console
-                .splat_byte_all(b'-', max_filepath_length + 2)
-                .is_err()
-            {
-                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
-                return Ok(());
-            }
-            if console
-                .write_all(pretty_lit!("|---------|---------|-------------------<r>\n"))
-                .is_err()
-            {
-                let _ = scopeguard::ScopeGuard::into_inner(lcov_guard);
-                return Ok(());
-            }
+            let _ = console.write_all(&console_buffer);
+            let _ = console.write_all(pretty_lit!("<r><d>"));
+            let _ = console.splat_byte_all(b'-', max_filepath_length + 2);
+            let _ = console.write_all(pretty_lit!("|---------|---------|-------------------<r>\n"));
 
             opts.fractions.failing = failing;
             Output::flush();

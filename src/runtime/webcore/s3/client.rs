@@ -58,16 +58,14 @@ use bun_jsc::CallFrame;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
-type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
-
 pub(crate) fn stat(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>,
+    callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> JsTerminatedResult<()> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -86,11 +84,11 @@ pub(crate) fn stat(
 pub(crate) fn download(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DownloadResult, *mut c_void) -> JsTerminatedResult<()>,
+    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> JsTerminatedResult<()> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -111,11 +109,11 @@ pub(crate) fn download_slice(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    callback: fn(S3DownloadResult, *mut c_void) -> JsTerminatedResult<()>,
+    callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> JsTerminatedResult<()> {
+) -> JsResult<()> {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
             let mut end = offset + size_;
@@ -153,11 +151,11 @@ pub(crate) fn download_slice(
 pub(crate) fn delete(
     this: &S3Credentials,
     path: &[u8],
-    callback: fn(S3DeleteResult, *mut c_void) -> JsTerminatedResult<()>,
+    callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
     request_payer: bool,
-) -> JsTerminatedResult<()> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -180,10 +178,10 @@ pub(crate) fn list_objects(
     // search-params string — borrow so the caller (Store::S3::
     // list_objects) can retain ownership in its async Wrapper for `Drop`.
     list_options: &S3ListObjectsOptions,
-    callback: fn(S3ListObjectsResult, *mut c_void) -> JsTerminatedResult<()>,
+    callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
     proxy_url: Option<&[u8]>,
-) -> JsTerminatedResult<()> {
+) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -391,9 +389,9 @@ pub(crate) fn upload(
     proxy_url: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
-    callback: fn(S3UploadResult, *mut c_void) -> JsTerminatedResult<()>,
+    callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-) -> JsTerminatedResult<()> {
+) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         s3_simple_request::Options {
@@ -431,7 +429,7 @@ pub(crate) fn writable_stream(
     request_payer: bool,
 ) -> JsResult<JSValue> {
     // Local callback wrapper
-    fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsTerminatedResult<()> {
+    fn wrapper_callback(result: S3UploadResult, sink: &mut NetworkSink) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
         // re-borrow does not hold `&sink` across the `&mut sink` calls below.
         let global = sink
@@ -474,12 +472,12 @@ pub(crate) fn writable_stream(
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload.
-    fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
+    fn wrapper_callback_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below.
         wrapper_callback(result, unsafe { bun_ptr::callback_ctx::<NetworkSink>(ctx) })
     }
     fn on_writable_thunk(task: &MultiPartUpload, ctx: *mut c_void, flushed: u64) {
-        let _ = NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
+        NetworkSink::on_writable(task, ctx.cast::<NetworkSink>(), flushed);
     }
 
     let proxy_url = proxy.unwrap_or(b"");
@@ -627,7 +625,7 @@ impl S3UploadStreamWrapper {
         }
         if let Some(sink) = self_.sink_mut() {
             // Fires `source.ready()` so the upstream pump resumes.
-            let _ = NetworkSink::on_writable(task, sink, flushed);
+            NetworkSink::on_writable(task, sink, flushed);
         }
     }
 
@@ -665,7 +663,7 @@ impl S3UploadStreamWrapper {
         });
     }
 
-    fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
+    fn resolve(result: S3UploadResult, self_: &mut Self) -> JsResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
         // scope-exit deref via guard (keeps borrowck happy)
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
@@ -674,22 +672,25 @@ impl S3UploadStreamWrapper {
             unsafe { Self::deref_(s) }
         });
         let global = self_.global;
+        // The native teardown (source close, pump-ref release, completion callback)
+        // runs on every path; the promise slots are settled until one settle leaves an
+        // exception pending, which is what this returns (nothing settles over it).
+        let mut settled: JsResult<()> = Ok(());
         match &result {
             S3UploadResult::Success => {
                 if let Some(sink) = self_.sink_mut() {
                     sink.pending.run();
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(&global, JSValue::js_number(0.0))?;
+                    if settled.is_ok() && sink.flush_promise.has_value() {
+                        settled = sink.flush_promise.resolve(&global, JSValue::js_number(0.0));
                     }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.resolve(&global, JSValue::js_number(0.0))?;
+                    if settled.is_ok() && sink.end_promise.has_value() {
+                        settled = sink.end_promise.resolve(&global, JSValue::js_number(0.0));
                     }
                 }
                 if self_.end_promise.has_value() {
-                    self_
-                        .end_promise
-                        .resolve(&global, JSValue::js_number(0.0))?;
+                    if settled.is_ok() {
+                        settled = self_.end_promise.resolve(&global, JSValue::js_number(0.0));
+                    }
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -722,11 +723,11 @@ impl S3UploadStreamWrapper {
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
                     sink.pending.run();
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(&global, Ok(js_err))?;
+                    if settled.is_ok() && sink.flush_promise.has_value() {
+                        settled = sink.flush_promise.reject(&global, Ok(js_err));
                     }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.reject(&global, Ok(js_err))?;
+                    if settled.is_ok() && sink.end_promise.has_value() {
+                        settled = sink.end_promise.reject(&global, Ok(js_err));
                     }
                     sink.source.close(None);
                 }
@@ -738,7 +739,9 @@ impl S3UploadStreamWrapper {
                     unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
                 }
                 if self_.end_promise.has_value() {
-                    self_.end_promise.reject(&global, Ok(js_err))?;
+                    if settled.is_ok() {
+                        settled = self_.end_promise.reject(&global, Ok(js_err));
+                    }
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
@@ -747,7 +750,7 @@ impl S3UploadStreamWrapper {
         if let Some(callback) = self_.callback {
             callback(result, self_.callback_context);
         }
-        Ok(())
+        settled
     }
 }
 
@@ -916,7 +919,7 @@ pub(crate) fn upload_stream(
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
     // MultiPartUpload.
-    fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsTerminatedResult<()> {
+    fn resolve_thunk(result: S3UploadResult, ctx: *mut c_void) -> JsResult<()> {
         // SAFETY: ctx was set to `*mut S3UploadStreamWrapper` below.
         S3UploadStreamWrapper::resolve(result, unsafe {
             bun_ptr::callback_ctx::<S3UploadStreamWrapper>(ctx)
@@ -1342,7 +1345,7 @@ impl S3DownloadStreamWrapper {
         has_more: bool,
         request_err: Option<Error::S3Error>,
         self_: &mut Self,
-    ) -> JsTerminatedResult<()> {
+    ) {
         // scope-exit cleanup via guard (keeps borrowck happy)
         let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
             if !has_more {
@@ -1364,25 +1367,24 @@ impl S3DownloadStreamWrapper {
                                 &self_.global,
                             ),
                         ),
-                    ))?;
-                    return Ok(());
+                    ));
+                    return;
                 }
                 if has_more {
                     bytes.on_data(crate::webcore::streams::StreamResult::Temporary(
                         // chunk.list is borrowed for the duration of on_data.
                         bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                    ))?;
-                    return Ok(());
+                    ));
+                    return;
                 }
 
                 bytes.on_data(crate::webcore::streams::StreamResult::TemporaryAndDone(
                     // chunk.list is borrowed for the duration of on_data.
                     bun_ptr::RawSlice::new(chunk.list.as_slice()),
-                ))?;
-                return Ok(());
+                ));
+                return;
             }
         }
-        Ok(())
     }
 
     pub(crate) fn on_stream_cancelled(&mut self) {
@@ -1421,8 +1423,7 @@ impl S3DownloadStreamWrapper {
     ) {
         // SAFETY: opaque_self points to a S3DownloadStreamWrapper allocated in readable_stream
         let self_: &mut Self = unsafe { bun_ptr::callback_ctx::<Self>(opaque_self) };
-        // Only `JsTerminated` escapes, and the loop observes that on the next tick.
-        let _ = Self::callback(chunk, has_more, err, self_);
+        Self::callback(chunk, has_more, err, self_);
     }
 }
 

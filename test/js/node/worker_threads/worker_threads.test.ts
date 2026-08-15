@@ -2307,6 +2307,51 @@ test("closing the only ref'd port from setImmediate lets the process exit", asyn
   expect(exitCode).toBe(0);
 });
 
+// A worker's own stop requests (process.exit(), an uncaught error) have to wake
+// its loop the way the parent's terminate() does: made from an immediate they
+// land after the turn's tick and before its poll, and the run loop only looks
+// for them again once the poll returns. With a parentPort listener keeping the
+// loop alive, nothing else ends that poll: the exit used to wait for the idle GC
+// timer (about a second), and without it (disabled here) never happened.
+describe("a worker that stops itself from an immediate exits right away", () => {
+  test.concurrent.each([
+    ["process.exit()", "process.exit(7);", { errors: [], code: 7 }],
+    [
+      "process.exit() from a nextTick the immediate queued",
+      "process.nextTick(() => process.exit(7));",
+      { errors: [], code: 7 },
+    ],
+    ["an uncaught exception", 'throw new Error("boom");', { errors: ["boom"], code: 1 }],
+  ])("%s", async (_label, stop, expected) => {
+    const workerSrc = `const { parentPort } = require("node:worker_threads");
+      parentPort.on("message", () => {});
+      // Scheduled a little after startup so the worker's startup GC timers have
+      // fired by then and nothing is left that would end the poll on its own.
+      setTimeout(() => setImmediate(() => { parentPort.postMessage("stopping"); ${stop} }), 300);`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true });
+         const seen = { messages: [], errors: [] };
+         w.on("message", m => seen.messages.push(m));
+         w.on("error", e => seen.errors.push(e.message));
+         w.on("exit", code => console.log(JSON.stringify({ ...seen, code })));`,
+      ],
+      env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ messages: ["stopping"], ...expected }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // Node's setupPortReferencing: the parent side of parentPort keeps the parent
 // alive while the Worker has 'message' listeners, independently of unref().
 test("an unref'ed worker with a 'message' listener still delivers to the parent", async () => {

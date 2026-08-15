@@ -1090,7 +1090,7 @@ pub fn save_lockfile(
     lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
     log_level: LogLevel,
-) -> Result<(), AllocError> {
+) -> Result<bool, AllocError> {
     if this.lockfile.is_empty() {
         if !this.options.dry_run {
             'delete: {
@@ -1113,7 +1113,7 @@ pub fn save_lockfile(
                         // we don't care
                         if err.get_errno() == sys::E::ENOENT {
                             if had_any_diffs {
-                                return Ok(());
+                                return Ok(false);
                             }
                             break 'delete;
                         }
@@ -1121,7 +1121,7 @@ pub fn save_lockfile(
                         if log_level != LogLevel::Silent {
                             Output::err(err, "failed to delete empty lockfile", ());
                         }
-                        return Ok(());
+                        return Ok(false);
                     }
                 }
             }
@@ -1139,7 +1139,7 @@ pub fn save_lockfile(
             }
         }
 
-        return Ok(());
+        return Ok(false);
     }
 
     // `Progress::start`
@@ -1157,7 +1157,7 @@ pub fn save_lockfile(
         this.progress.refresh();
     }
 
-    this.lockfile.save_to_disk(load_result, &this.options);
+    let wrote = this.lockfile.save_to_disk(load_result, &this.options);
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
@@ -1196,12 +1196,12 @@ pub fn save_lockfile(
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();
-    } else if log_level != LogLevel::Silent {
+    } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();
     }
 
-    Ok(())
+    Ok(wrote)
 }
 
 pub fn update_lockfile_if_needed(

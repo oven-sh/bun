@@ -203,33 +203,11 @@ pub mod expect {
 
     use bun_jsc::{JSGlobalObject, JSValue, JsResult};
     use bun_jsc::console_object::Formatter;
-    use bun_jsc::console_object::formatter::ZigFormatter;
 
-    /// `value.to_fmt(&mut formatter)` → `Display` adapter. Returns the
-    /// `ZigFormatter` wrapper.
     pub trait JSValueTestExt {
-        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b>;
-        fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
-        fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
-        fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool>;
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
-        // ── forwarders to `bun_jsc::JSValue` inherents (kept on the trait so
-        //    matcher drafts importing `JSValueTestExt` resolve them in scope) ──
-        fn values(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-        fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-        fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool>;
-        fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool>;
-        fn is_uint32_as_any_int(self) -> bool;
-        fn is_big_int32(self) -> bool;
-        fn is_constructor(self) -> bool;
-        fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool>;
-        fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64>;
-        fn get_if_property_exists_from_path(self, global: &JSGlobalObject, path: JSValue) -> JsResult<JSValue>;
-        fn string_includes(self, global: &JSGlobalObject, needle: JSValue) -> JsResult<bool>;
-        fn to_match(self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool>;
-        fn to_u32(self) -> u32;
         fn bind(
             self,
             global: &JSGlobalObject,
@@ -240,22 +218,6 @@ pub mod expect {
         ) -> JsResult<JSValue>;
     }
     impl JSValueTestExt for JSValue {
-        #[inline]
-        fn to_fmt<'a, 'b>(self, f: &'a mut Formatter<'b>) -> ZigFormatter<'a, 'b> {
-            ZigFormatter::new(f, self)
-        }
-        #[inline]
-        fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
-            JSValue::jest_deep_equals(self, other, global)
-        }
-        #[inline]
-        fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
-            JSValue::jest_strict_deep_equals(self, other, global)
-        }
-        #[inline]
-        fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool> {
-            JSValue::jest_deep_match(self, other, global, replace_props)
-        }
         #[inline]
         fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
@@ -298,61 +260,6 @@ pub mod expect {
                 R::LessThan => BigIntCompare::LessThan,
                 R::InvalidComparison => BigIntCompare::Undefined,
             }
-        }
-        #[inline]
-        fn values(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            JSValue::values(self, global)
-        }
-        #[inline]
-        fn keys(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            JSValue::keys(self, global)
-        }
-        #[inline]
-        fn is_instance_of(self, global: &JSGlobalObject, constructor: JSValue) -> JsResult<bool> {
-            JSValue::is_instance_of(self, global, constructor)
-        }
-        #[inline]
-        fn has_own_property_value(self, global: &JSGlobalObject, key: JSValue) -> JsResult<bool> {
-            JSValue::has_own_property_value(self, global, key)
-        }
-        #[inline]
-        fn is_uint32_as_any_int(self) -> bool {
-            JSValue::is_uint32_as_any_int(self)
-        }
-        #[inline]
-        fn is_big_int32(self) -> bool {
-            // Inherent FFI predicate (`JSC__JSValue__isBigInt32`) — JSC packs
-            // small BigInts as immediates; toBeOdd/toBeEven branch on this
-            // before the heap-BigInt arm.
-            JSValue::is_big_int32(self)
-        }
-        #[inline]
-        fn is_constructor(self) -> bool {
-            JSValue::is_constructor(self)
-        }
-        #[inline]
-        fn is_object_empty(self, global: &JSGlobalObject) -> JsResult<bool> {
-            JSValue::is_object_empty(self, global)
-        }
-        #[inline]
-        fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64> {
-            JSValue::get_length_if_property_exists_internal(self, global)
-        }
-        #[inline]
-        fn get_if_property_exists_from_path(self, global: &JSGlobalObject, path: JSValue) -> JsResult<JSValue> {
-            JSValue::get_if_property_exists_from_path(self, global, path)
-        }
-        #[inline]
-        fn string_includes(self, global: &JSGlobalObject, needle: JSValue) -> JsResult<bool> {
-            JSValue::string_includes(self, global, needle)
-        }
-        #[inline]
-        fn to_match(self, global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-            JSValue::to_match(self, global, value)
-        }
-        #[inline]
-        fn to_u32(self) -> u32 {
-            JSValue::to_u32(self)
         }
         #[inline]
         fn bind(

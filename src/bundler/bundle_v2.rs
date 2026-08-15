@@ -6911,7 +6911,7 @@ pub mod bv2_impl {
                     // We replace this runtime API call's ref later via .link on the Symbol.
                     b"__jsonParse",
                 )?
-                .unwrap(),
+                .ok_or(Error::ParserError)?,
             );
 
             let fake_input_file = crate::Graph::InputFile {

@@ -10,7 +10,7 @@ use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
-use bun_install::{Dependency, Lockfile, PackageManager};
+use bun_install::{Lockfile, PackageManager};
 use bun_parsers::json as JSON;
 // Note: `WorkspacePackageJSONCache` returns the T2 value-subset
 // `bun_ast::Expr` (see `bun_install::bun_json`), not the full T4
@@ -3415,45 +3415,10 @@ fn edit_root_package_json(
                             }
                         };
 
-                        let catalog_name = Semver::String::init(catalog_name_str, catalog_name_str);
                         let map_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
-
-                        // Note: `CatalogMap::get_group` takes `&mut self`
-                        // (returns `&mut Map`) but `pack` only needs read
-                        // access via `&Lockfile`; inline an immutable lookup.
-                        let catalog = if catalog_name.is_empty() {
-                            Some(&lockfile.catalogs.default)
-                        } else {
-                            let ctx = Semver::string::ArrayHashContext {
-                                arg_buf: catalog_name_str,
-                                existing_buf: map_buf,
-                            };
-                            let h = ctx.hash(catalog_name);
-                            lockfile
-                                .catalogs
-                                .groups
-                                .get_index_adapted_raw(h, |k, i| ctx.eql(catalog_name, *k, i))
-                                .map(|i| &lockfile.catalogs.groups.values()[i])
-                        };
-                        let Some(catalog) = catalog else {
-                            Output::err_generic(
-                                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog).",
-                                (
-                                    bstr::BStr::new(dep_name_str),
-                                    bstr::BStr::new(dependency_group),
-                                ),
-                            );
-                            Global::crash();
-                        };
-
-                        let dep_name = Semver::String::init(dep_name_str, dep_name_str);
-                        let dep_ctx = Semver::string::ArrayHashContext {
-                            arg_buf: dep_name_str,
-                            existing_buf: map_buf,
-                        };
-                        let dep_h = dep_ctx.hash(dep_name);
-                        let Some(dep_idx) = catalog
-                            .get_index_adapted_raw(dep_h, |k, i| dep_ctx.eql(dep_name, *k, i))
+                        let catalog_name =
+                            strings::trim(catalog_name_str, &strings::WHITESPACE_CHARS);
+                        let Some(dep) = lockfile.catalogs.find(map_buf, catalog_name, dep_name_str)
                         else {
                             Output::err_generic(
                                 "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
@@ -3464,7 +3429,6 @@ fn edit_root_package_json(
                             );
                             Global::crash();
                         };
-                        let dep: &Dependency = &catalog.values()[dep_idx];
 
                         let literal =
                             pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));

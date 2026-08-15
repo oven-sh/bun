@@ -91,6 +91,7 @@ node_modules/
 2. **Symlinks** — Top-level `node_modules` contains symlinks pointing to the central store
 3. **Peer resolution** — Complex peer dependencies create specialized directory names
 4. **Deduplication** — Packages with identical package IDs and peer dependency sets are shared
+5. **Re-linking** — On later installs, existing store entries are reused and their symlinks are re-pointed if a dependency was re-resolved. Store entries that are no longer referenced stay until you run [`bun prune`](/pm/cli/prune)
 
 ### Workspace handling
 

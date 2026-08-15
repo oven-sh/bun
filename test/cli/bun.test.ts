@@ -151,6 +151,15 @@ describe("bun", () => {
       ["test", "--rerun-each", "Re-run each test file <NUMBER> times"],
       ["test", "--bail", "Exit the test suite after <NUMBER> failures"],
       ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
+      ["add", "-F, --filter", "Add the package(s) to the matching workspaces instead of the current package"],
+      ["add", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
+      ["remove", "-F, --filter", "Remove the package(s) from the matching workspaces instead of the current package"],
+      ["install", "-F, --filter", "Install packages for the matching workspaces"],
+      ["install", "--catalog", 'depend on it as "catalog:" (use --catalog=NAME for a named catalog)'],
+      ["audit", "--ignore", "Ignore advisories by GHSA or numeric advisory ID (repeatable)"],
+      ["audit", "-L, --latest", "Also apply fixes your declared ranges exclude, rewriting package.json"],
+      ["update", "-p, --production", "Only update dependencies and optionalDependencies (alias: --prod)"],
+      ["install", "-p, --production", "Don't install devDependencies"],
     ];
     test.concurrent.each(flags)("bun %s --help keeps placeholder in %s description", async (cmd, flag, expected) => {
       await using proc = Bun.spawn({ cmd: [bunExe(), cmd, "--help"], env, stderr: "pipe" });
@@ -172,6 +181,54 @@ describe("bun", () => {
       expect(out).toContain("\x1b[34m<package>\x1b[0m");
       // raw tag markup must not leak through
       expect(out).not.toContain("<blue>");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe("--help lists package manager commands and examples", () => {
+    const env = { ...bunEnv, NO_COLOR: "1" };
+    const lines: [string, string[], RegExp[]][] = [
+      [
+        "bun --help",
+        [],
+        [
+          /^ {2}dedupe +Remove duplicate versions from the lockfile$/m,
+          /^ {2}prune +Remove packages that are not in the lockfile from node_modules$/m,
+        ],
+      ],
+      [
+        "bun pm --help",
+        ["pm"],
+        [
+          /^ {2}bun pm ls +list the dependency tree according to the current lockfile$/m,
+          /^ {2}bun pm licenses +list installed packages grouped by license$/m,
+        ],
+      ],
+      [
+        "bun add --help",
+        ["add"],
+        [
+          /^ {2}Add a dependency to a specific workspace in a monorepo\n {2}bun add zod --filter api$/m,
+          /^ {2}Add to the workspace catalog instead of pinning a version\n {2}bun add --catalog react\n {2}bun add --catalog=testing vitest$/m,
+        ],
+      ],
+      [
+        "bun audit --help",
+        ["audit"],
+        [
+          /^ {2}bun audit fix upgrades vulnerable packages to the lowest safe version that still satisfies every dependent's range\.$/m,
+          /^ {2}Upgrade vulnerable packages in bun\.lock and node_modules; package\.json is only changed when an exact pin has to be bumped\.\n {2}bun audit fix$/m,
+          /^ {2}Show what bun audit fix would change without changing anything\.\n {2}bun audit fix --dry-run$/m,
+          /^ {2}Also apply fixes that your package\.json ranges exclude, rewriting those ranges\.\n {2}bun audit fix --latest$/m,
+        ],
+      ],
+    ];
+    test.concurrent.each(lines)("%s", async (_, args, expected) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args, "--help"], env, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = (stdout + stderr).replaceAll("\r\n", "\n");
+      for (const re of expected) expect(out).toMatch(re);
+      expect(out).not.toContain("bun list ");
       expect(exitCode).toBe(0);
     });
   });

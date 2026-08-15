@@ -621,14 +621,11 @@ impl ValkeyClient {
         val.and(closed)
     }
 
-    /// `Failure` closes the socket outright, so the close callback has run by
-    /// the time this returns; on TCP that is an RST rather than a FIN, which
-    /// is fine once everything on the connection has been rejected, and it is
-    /// what `fail()` needs. `FastShutdown` is a FIN, and on TLS usockets still
-    /// holds the socket (and the callback) while ciphertext is waiting for
-    /// room in the kernel buffer, finishing the close once it drains or the
-    /// peer turns out to be gone; that is the right close for a client that
-    /// is merely done with the connection.
+    /// `fail()` passes `Failure`, the one code whose close callback has run by
+    /// the time this returns (see `CloseCode`); everything after a failure
+    /// relies on that, and an RST instead of a FIN costs nothing once the
+    /// connection's commands have been rejected. `disconnect()` and the
+    /// finalizer pass `FastShutdown`, the graceful close.
     ///
     /// For a half-open socket this runs `on_close` itself (see below) and returns what its
     /// `onclose` listener left pending; the caller propagates that like any other callback

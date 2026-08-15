@@ -725,6 +725,48 @@ test(
   timeout,
 );
 
+// Spawns workers that each start `connectExpr` in one immediate and call
+// process.exit(0) in the next, so whatever that connect attempt left behind is
+// still pending when the worker's VM tears down.
+async function exitRightAfterConnecting(connectExpr: string) {
+  const workers = slow ? 8 : 24;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { Worker } = require("node:worker_threads");
+      const src =
+        "const { parentPort } = require('node:worker_threads');" +
+        "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
+        ${JSON.stringify(`setImmediate(() => ${connectExpr}.catch(() => {}));`)} +
+        "parentPort.postMessage('up');" +
+        "setImmediate(() => process.exit(0));";
+      let started = 0, exited = 0;
+      function again() {
+        if (started >= ${workers}) {
+          if (exited === ${workers}) console.log("PASS");
+          return;
+        }
+        started++;
+        const w = new Worker(src, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.on("exit", () => { exited++; again(); });
+      }
+      again(); again();
+    `,
+    ],
+    env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("PASS\n");
+  expect(exitCode).toBe(0);
+}
+
 // For a debug build: host code that runs after the worker's own process.exit()
 // unwound script — here a redis connect started in the same immediate tick as
 // the exit, whose ECONNREFUSED then lands in that loop tick — builds JS error
@@ -735,44 +777,24 @@ test(
 // for as long as it keeps the exception.
 test.skipIf(!isDebug)(
   "process.exit() with native error completions landing in the same tick does not trip DeferTermination",
-  async () => {
-    const workers = slow ? 8 : 24;
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const { Worker } = require("node:worker_threads");
-        const src =
-          "const { parentPort } = require('node:worker_threads');" +
-          "Bun.file(process.execPath).slice(0, 100).json().catch(() => {});" +
-          "setImmediate(() => new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect().catch(() => {}));" +
-          "parentPort.postMessage('up');" +
-          "setImmediate(() => process.exit(0));";
-        let started = 0, exited = 0;
-        function again() {
-          if (started >= ${workers}) {
-            if (exited === ${workers}) console.log("PASS");
-            return;
-          }
-          started++;
-          const w = new Worker(src, { eval: true });
-          w.on("error", (e) => { console.error(e); process.exit(1); });
-          w.on("exit", () => { exited++; again(); });
-        }
-        again(); again();
-      `,
-      ],
-      env: { ...bunEnv, UV_THREADPOOL_SIZE: "4" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('redis://127.0.0.1:9', { connectionTimeout: 100, autoReconnect: false }).connect()",
+    ),
+  timeout,
+);
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("PASS\n");
-    expect(exitCode).toBe(0);
-  },
+// A TLS context that cannot be built fails the dial before there is a socket;
+// the redis client then settles that from a task it queues on the event loop,
+// holding a ref to itself and the loop. The exit in the next immediate tears
+// the VM down with that task still queued, so it has to be released without
+// running (a debug build asserts on the refcount if either ref is mishandled).
+test.skipIf(!isDebug)(
+  "process.exit() with a redis client's deferred close still queued releases it cleanly",
+  () =>
+    exitRightAfterConnecting(
+      "new Bun.RedisClient('rediss://127.0.0.1:9', { tls: { key: 'x', cert: 'x' }, autoReconnect: false }).connect()",
+    ),
   timeout,
 );
 

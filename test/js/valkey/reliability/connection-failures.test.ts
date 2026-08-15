@@ -1,5 +1,6 @@
 import { RedisClient } from "bun";
 import { describe, expect, mock, test } from "bun:test";
+import { once } from "events";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
@@ -447,29 +448,36 @@ describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
 
 describe("Valkey: Recovering After fail()", () => {
   // Answers the chunk carrying HELLO with `+OK` and the one carrying PING with
-  // `+PONG` unless `replies` says otherwise for that connection.
+  // `+PONG` unless `replies` says otherwise for that connection (a hook that
+  // returns null answers nothing). Other commands are never answered.
   function helloServer(
-    replies: Partial<Record<"HELLO" | "PING", (connection: number) => string>> = {},
-    { secure = false } = {},
+    replies: Partial<Record<"HELLO" | "PING", (connection: number, socket: net.Socket) => string | null>> = {},
+    { secure = false, allowHalfOpen = false } = {},
   ) {
-    let connections = 0;
+    const sockets: net.Socket[] = [];
     const onConnection = (socket: net.Socket) => {
-      connections += 1;
-      const connection = connections;
+      sockets.push(socket);
+      const connection = sockets.length;
       socket.on("data", chunk => {
         const text = chunk.toString("latin1");
-        if (text.includes("HELLO")) socket.write(replies.HELLO?.(connection) ?? "+OK\r\n");
-        if (text.includes("PING")) socket.write(replies.PING?.(connection) ?? "+PONG\r\n");
+        for (const command of ["HELLO", "PING"] as const) {
+          if (!text.includes(command)) continue;
+          const reply = replies[command]
+            ? replies[command](connection, socket)
+            : `+${command === "HELLO" ? "OK" : "PONG"}\r\n`;
+          if (reply !== null) socket.write(reply);
+        }
       });
       socket.on("error", () => {});
     };
     const server: net.Server = secure
-      ? tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, onConnection)
-      : net.createServer(onConnection);
+      ? tls.createServer({ key: tlsCert.key, cert: tlsCert.cert, allowHalfOpen }, onConnection)
+      : net.createServer({ allowHalfOpen }, onConnection);
     return {
       server,
+      sockets,
       get connections() {
-        return connections;
+        return sockets.length;
       },
       listen: () =>
         new Promise<number>(resolve =>
@@ -478,6 +486,12 @@ describe("Valkey: Recovering After fail()", () => {
       listenUnix: (socketPath: string) => new Promise<void>(resolve => server.listen(socketPath, resolve)),
       close: () => new Promise(resolve => server.close(resolve)),
     };
+  }
+
+  // The RST a failed client sends makes the stub's socket emit an error before
+  // it closes, which events.once() would turn into a rejection.
+  function closedOnServer(socket: net.Socket): Promise<void> {
+    return socket.destroyed ? Promise.resolve() : new Promise(resolve => socket.once("close", () => resolve()));
   }
 
   // Calls connect() from the first onclose and reports how that attempt ended.
@@ -531,6 +545,151 @@ describe("Valkey: Recovering After fail()", () => {
     },
   );
 
+  test.each([
+    ["redis", false],
+    ["rediss", true],
+  ])("an idle timeout over %s:// closes the connection and rejects what was in flight", async (scheme, secure) => {
+    const fake = helloServer({}, { secure });
+    const port = await fake.listen();
+    const closed = Promise.withResolvers<{ err: Error & { code: string }; connectedInsideOnclose: boolean }>();
+    // Today the timer armed by connect() carries connectionTimeout and turns
+    // into the idle timeout once the handshake is done; whichever way it gets
+    // armed, what is pinned here is what happens when it fires on an idle
+    // connection. 500ms leaves a debug build ample room to finish connecting.
+    const client = new RedisClient(`${scheme}://127.0.0.1:${port}`, {
+      idleTimeout: 50,
+      connectionTimeout: 500,
+      ...(secure ? { tls: { ca: tlsCert.cert } } : {}),
+    });
+    try {
+      client.onclose = err =>
+        closed.resolve({ err: err as Error & { code: string }, connectedInsideOnclose: client.connected });
+      await client.connect();
+      // GET is never answered by the stub, so it is still in flight when the timeout fires.
+      const inFlight = client.get("key").then(
+        () => "resolved",
+        (err: Error & { code: string }) => err.code,
+      );
+      const { err, connectedInsideOnclose } = await closed.promise;
+      expect({
+        onclose: err.code,
+        connectedInsideOnclose,
+        connectedAfter: client.connected,
+        inFlight: await inFlight,
+        connections: fake.connections,
+      }).toEqual({
+        onclose: "ERR_REDIS_CONNECTION_CLOSED",
+        connectedInsideOnclose: false,
+        connectedAfter: false,
+        inFlight: "ERR_REDIS_IDLE_TIMEOUT",
+        connections: 1,
+      });
+      await closedOnServer(fake.sockets[0]);
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("connected reads false inside onclose when the server drops an established connection", async () => {
+    // Connection 1 is dropped by the server right after it answers PING.
+    const fake = helloServer({
+      PING: (connection, socket) => {
+        if (connection !== 1) return "+PONG\r\n";
+        socket.end("+PONG\r\n");
+        return null;
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      const closed = Promise.withResolvers<boolean>();
+      client.onclose = () => closed.resolve(client.connected);
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(await closed.promise).toBe(false);
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("close() over rediss:// does not wait for the peer to answer close_notify", async () => {
+    // allowHalfOpen: the server never closes its side in response, which is
+    // what a graceful TLS close would be waiting for.
+    const fake = helloServer({}, { secure: true, allowHalfOpen: true });
+    const port = await fake.listen();
+    const client = new RedisClient(`rediss://127.0.0.1:${port}`, { tls: { ca: tlsCert.cert }, autoReconnect: false });
+    try {
+      let closes = 0;
+      client.onclose = () => closes++;
+      await client.connect();
+      const ended = once(fake.sockets[0], "end");
+      client.close();
+      expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });
+      await ended;
+    } finally {
+      client.close();
+      fake.sockets[0]?.destroy();
+      fake.server.close();
+    }
+  });
+
+  test("a failure while the peer has stopped reading still closes the TLS socket at once", async () => {
+    // Pins the close code fail() uses: with a fast shutdown, usockets keeps a
+    // TLS socket whose last batch flush could not be handed to the kernel
+    // (packages/bun-usockets/src/crypto/openssl.c, us_internal_ssl_close) until
+    // the peer reads again, which this peer never does.
+    const fake = helloServer(
+      {
+        HELLO: (connection, socket) => {
+          if (connection === 1) socket.pause();
+          return "+OK\r\n";
+        },
+        PING: () => "+PONG\r\n",
+      },
+      { secure: true },
+    );
+    const port = await fake.listen();
+    const closed = Promise.withResolvers<void>();
+    const client = new RedisClient(`rediss://127.0.0.1:${port}`, { tls: { ca: tlsCert.cert }, autoReconnect: false });
+    try {
+      client.onclose = () => closed.resolve();
+      await client.connect();
+      const value = Buffer.alloc(256 * 1024, "x").toString();
+      const pending: Promise<unknown>[] = [];
+      // Each SET is flushed as soon as it is queued; once two flushes in a row
+      // hand nothing at all to the socket, the kernel buffers on both ends are
+      // full and the socket is stuck behind its undelivered ciphertext.
+      for (let stuckFlushes = 0; stuckFlushes < 2; ) {
+        const before = client.bufferedAmount;
+        pending.push(client.set("key", value).catch(() => {}));
+        await new Promise(resolve => setImmediate(resolve));
+        const added = client.bufferedAmount - before;
+        stuckFlushes = added >= value.length ? stuckFlushes + 1 : 0;
+      }
+      const lastSet = client.set("key", "last");
+      fake.sockets[0].write("\x01\r\n");
+      await expect(lastSet).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
+      expect(client.connected).toBe(false);
+      await closed.promise;
+      await Promise.all(pending);
+      await client.connect();
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.sockets[0]?.destroy();
+      fake.server.close();
+    }
+  });
+
   test("a connect() issued from onclose after a refused connection rejects instead of hanging", async () => {
     // Nothing listens on the port a just-closed listener used.
     const fake = helloServer();
@@ -558,9 +717,13 @@ describe("Valkey: Recovering After fail()", () => {
         // The refusal comes back within a few milliseconds and the retry is
         // scheduled 50ms after it, so a 30ms timeout armed for the first attempt
         // would fire while no socket exists; the retry must still run and give up.
+        // The queued PING is rejected by whichever failure ends the client, so
+        // its message tells the two apart.
         const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 30, maxRetries: 1 });
         client.onclose = err => console.log("onclose", err.code);
-        await client.connect().catch(err => console.log("connect rejected", err.code));
+        const connected = client.connect().catch(err => console.log("connect rejected", err.code));
+        client.ping().catch(err => console.log("ping rejected:", err.message));
+        await connected;
         `,
       ],
       env: bunEnv,
@@ -569,11 +732,107 @@ describe("Valkey: Recovering After fail()", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "onclose ERR_REDIS_CONNECTION_CLOSED\nconnect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stdout: [
+        "onclose ERR_REDIS_CONNECTION_CLOSED",
+        "ping rejected: Max reconnection attempts reached",
+        "connect rejected ERR_REDIS_CONNECTION_CLOSED",
+        "",
+      ].join("\n"),
       stderr: "",
       exitCode: 0,
     });
   });
+
+  // The close for a dial that failed before a socket existed runs from the
+  // event loop; until then the client must look like it is dialling, so that
+  // whatever JS runs first neither dials on top of it nor is ignored.
+  test.skipIf(isWindows)(
+    "a close() issued right after a dial failed outright is honoured by the deferred close",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const first = helloServer();
+      const second = helloServer();
+      await first.listenUnix(socketPath);
+      const client = new RedisClient(`redis+unix://${socketPath}`);
+      try {
+        await client.connect();
+        client.close();
+        await first.close();
+        let closes = 0;
+        client.onclose = () => closes++;
+        const outcome = client.connect().then(
+          () => "connected",
+          (err: Error & { code: string }) => err.code,
+        );
+        client.close();
+        await second.listenUnix(socketPath);
+        expect({ outcome: await outcome, closes, connected: client.connected, redialled: second.connections }).toEqual({
+          outcome: "ERR_REDIS_CONNECTION_CLOSED",
+          closes: 1,
+          connected: false,
+          redialled: 0,
+        });
+      } finally {
+        client.close();
+        await second.close();
+      }
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "a connect() that runs in the same tick as a retry that failed outright does not dial on top of it",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      // Connection 1 is dropped by the server after PING, which schedules a retry
+      // 50ms later; the listener is gone by then, so that retry fails outright.
+      const first = helloServer({
+        PING: (_connection, socket) => {
+          socket.end("+PONG\r\n");
+          return null;
+        },
+      });
+      // The listener that comes back holds its HELLO reply, so a second dial on
+      // top of the first one would show up as a second connection here.
+      const second = helloServer({ HELLO: () => null });
+      await first.listenUnix(socketPath);
+      const client = new RedisClient(`redis+unix://${socketPath}`);
+      let fromTimer: Promise<unknown> | undefined;
+      try {
+        await client.connect();
+        expect(await client.ping()).toBe("PONG");
+        await first.close();
+        while (client.connected) await Bun.sleep(1);
+        // The retry is armed now, due before a timer armed here with the same
+        // delay. Blocking past both makes the loop fire them in one pass: the
+        // retry fails outright, then this callback runs in the window before
+        // the deferred close, brings the listener back and calls connect().
+        const ran = Promise.withResolvers<void>();
+        setTimeout(() => {
+          void second.listenUnix(socketPath);
+          fromTimer = client.connect();
+          ran.resolve();
+        }, 50);
+        Bun.sleepSync(120);
+        await ran.promise;
+        while (second.connections === 0) await Bun.sleep(1);
+        // A second dial would arrive within the next retry delay (50ms); this
+        // is the bound on asserting that it never comes.
+        await Bun.sleep(250);
+        expect(second.connections).toBe(1);
+        second.sockets[0].write("+OK\r\n");
+        await fromTimer;
+        expect({ connected: client.connected, connections: second.connections }).toEqual({
+          connected: true,
+          connections: 1,
+        });
+      } finally {
+        client.close();
+        await second.close();
+      }
+    },
+  );
 
   test.skipIf(isWindows)("a reconnect whose dial fails outright is retried like a refused one", async () => {
     using dir = tempDir("valkey-unix", {});

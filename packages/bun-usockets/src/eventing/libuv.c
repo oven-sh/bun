@@ -179,14 +179,29 @@ static void check_cb(uv_check_t *p) {
 /* Not used for polls, since polls need two frees */
 static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
 
+/* A stopped poll is torn down from two sides: libuv runs this close callback
+ * once the uv_poll_t has left the loop, and uSockets calls us_poll_free when it
+ * drains loop->data.closed_head. uv_poll_t->data records which side ran first:
+ * us_poll_stop sets it to NULL, us_poll_free stores the us_poll_t, this
+ * callback stores the marker below; whichever side runs second frees both
+ * blocks.
+ *
+ * us_poll_free usually comes first: a socket closed from a poll callback is
+ * drained by check_cb before the same uv_run iteration processes endgames. The
+ * close callback comes first when the socket was closed inside a nested tick
+ * (a callback re-entering the event loop, e.g. expect().resolves): that run
+ * still processes endgames, but closed_head is only drained by the outermost
+ * tick (tick_depth, see us_loop_run). */
+#define US_POLL_UV_CLOSED(h) ((void *)(h))
+
 /* This one is different for polls, since we need two frees here */
 static void close_cb_free_poll(uv_handle_t *h) {
-  /* It is only in case we called us_poll_stop then quickly us_poll_free that we
-   * enter this. Most of the time, actual freeing is done by us_poll_free. */
   if (h->data) {
     us_free(h->data);
     us_free(h);
+    return;
   }
+  h->data = US_POLL_UV_CLOSED(h);
 }
 
 static void timer_cb(uv_timer_t *t) {
@@ -213,13 +228,10 @@ void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
     us_free(p);
     return;
   }
-  /* The idea here is like so; in us_poll_stop we call uv_close after setting
-   * data of uv-poll to 0. This means that in close_cb_free we call free on 0
-   * with does nothing, since us_poll_stop should not really free the poll.
-   * HOWEVER, if we then call us_poll_free while still closing the uv-poll, we
-   * simply change back the data to point to our structure so that we actually
-   * do free it like we should. */
-  if (uv_is_closing((uv_handle_t *)p->uv_p)) {
+  /* See close_cb_free_poll. uv_is_closing is true both while the close is
+   * pending and after it completed; data tells the two apart. */
+  if (uv_is_closing((uv_handle_t *)p->uv_p) &&
+      p->uv_p->data != US_POLL_UV_CLOSED(p->uv_p)) {
     p->uv_p->data = p;
   } else {
     us_free(p->uv_p);
@@ -299,10 +311,8 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
   if(!p->uv_p) return;
   uv_poll_stop(p->uv_p);
 
-  /* We normally only want to close the poll here, not free it. But if we stop
-   * it, then quickly "free" it with us_poll_free, we postpone the actual
-   * freeing to close_cb_free_poll whenever it triggers. That's why we set data
-   * to null here, so that us_poll_free can reset it if needed */
+  /* Only close the poll here; the memory is released by whichever of
+   * close_cb_free_poll / us_poll_free runs second (see close_cb_free_poll). */
   p->uv_p->data = 0;
   uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
 }
@@ -329,10 +339,13 @@ void us_loop_pump(struct us_loop_t *loop) {
    * for unref'd handles (subprocess exit packets, socket events) and due
    * timers are never processed. Bun's outer drive loops (wait_for_promise,
    * bun:test) supply their own keep-going predicate, so force exactly one
-   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
+   * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0.
+   * tick_depth: see us_loop_run. */
+  loop->data.tick_depth++;
   loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
+  loop->data.tick_depth--;
 }
 
 struct us_loop_t *us_create_loop(void *hint,
@@ -410,7 +423,16 @@ void us_loop_run(struct us_loop_t *loop) {
     Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
   }
 
+  /* Same bookkeeping as us_loop_run / us_loop_run_bun_tick in epoll_kqueue.c:
+   * a callback dispatched by this uv_run may re-enter here (wait_for_promise,
+   * expect().resolves), and check_cb -> us_internal_loop_post must not free
+   * closed_head inside that nested run while this frame's dispatch still holds
+   * a pointer to one of those sockets (loop.c reads s->flags after on_data
+   * returns). tick_depth > 1 defers the drain to this outermost tick's
+   * check_cb. */
+  loop->data.tick_depth++;
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+  loop->data.tick_depth--;
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

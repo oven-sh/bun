@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -901,6 +903,79 @@ test("--parallel writes new snapshots from every worker", async () => {
   expect(stderr2).toContain("4 pass");
   expect(stderr2).toContain("0 fail");
   expect(code2).toBe(0);
+});
+
+// Workers write the snapshots of the files they ran when they exit, after
+// every test has already been reported as passing. If that write fails, the
+// only thing left to get wrong is the exit code: the serial runner exits 1 in
+// each of these situations, so --parallel must too. The second file exists so
+// the run actually uses the worker pool (one file falls back to serial).
+const passingFile = `import {test,expect} from "bun:test"; test("b",()=>expect(1).toBe(1));`;
+
+async function runParallel(dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", CI: "false" },
+    cwd: dir,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  return { stderr, exitCode };
+}
+
+test("--parallel exits 1 when a worker cannot update an inline snapshot", async () => {
+  using dir = tempDir("parallel-inline-snapshot-conflict", {
+    // Two different values recorded for one call site cannot both be written;
+    // the worker reports it when it goes to update the file.
+    "a.test.js": `import {test,expect} from "bun:test";
+      test("inline", () => { for (const v of ["one", "two"]) expect(v).toMatchInlineSnapshot(); });`,
+    "b.test.js": passingFile,
+  });
+  const { stderr, exitCode } = await runParallel(String(dir));
+  expect(stderr).toContain(
+    "Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value",
+  );
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(1);
+});
+
+test("--parallel exits 1 when a worker errors while writing inline snapshots", async () => {
+  using dir = tempDir("parallel-inline-snapshot-error", {
+    // The test rewrites its own call site into unparseable source after the
+    // snapshot was recorded, so the write at worker exit fails outright
+    // instead of skipping the file with a diagnostic like the test above.
+    "a.test.js": `import {test,expect} from "bun:test"; import {readFileSync,writeFileSync} from "fs";
+      test("inline", () => {
+        expect("value").toMatchInlineSnapshot();
+        writeFileSync(import.meta.path, readFileSync(import.meta.path, "utf8").replace(/toMatchInlineSnapshot\\(\\)/, 'toMatchInlineSnapshot("'));
+      });`,
+    "b.test.js": passingFile,
+  });
+  const { stderr, exitCode } = await runParallel(String(dir));
+  expect(stderr).toContain("Failed to write inline snapshots");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(1);
+});
+
+test.skipIf(!isLinux)("--parallel exits 1 when a worker cannot write a .snap file", async () => {
+  using dir = tempDir("parallel-snap-file-unwritable", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("snap",()=>expect("value").toMatchSnapshot());`,
+    "b.test.js": passingFile,
+    "__snapshots__": {},
+  });
+  // Opening the file succeeds, so the test itself passes; every write to
+  // /dev/full fails with ENOSPC, and the worker only writes when it exits.
+  // Works as root too, unlike a read-only file.
+  symlinkSync("/dev/full", join(String(dir), "__snapshots__", "a.test.js.snap"));
+  const { stderr, exitCode } = await runParallel(String(dir));
+  expect(stderr).toContain("Failed to write snapshot file");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(1);
 });
 
 test("--parallel: a test producing a >64MB result line is truncated, not treated as a crash", async () => {

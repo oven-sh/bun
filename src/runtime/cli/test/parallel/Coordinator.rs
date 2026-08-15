@@ -527,6 +527,9 @@ impl<'a> Coordinator<'a> {
                     self.coverage_chunks.push(Box::<[u8]>::from(chunk));
                 }
             }
+            frame::Kind::SnapshotWriteFailed => {
+                self.reporter.worker_snapshot_write_failed = true;
+            }
             frame::Kind::Run | frame::Kind::Shutdown => {}
         }
     }

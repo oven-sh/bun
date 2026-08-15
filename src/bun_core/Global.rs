@@ -736,8 +736,7 @@ pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     raise_ignoring_panic_handler_raw(sig as c_int)
 }
 
-/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state; as PID 1 of a
-/// pid namespace, where that cannot kill us, exit with `128 + sig`. Callers may
+/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Callers may
 /// forward any signal byte (incl. Linux RT signals 32..=64) that has no
 /// `crate::SignalCode` discriminant.
 pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
@@ -814,9 +813,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
 
     #[cfg(not(windows))]
     {
-        // Only PID 1 of a pid namespace gets here: the kernel discards the signals
-        // it raises at itself, abort()'s SIGABRT included, and abort() would end
-        // in a trap (SIGSEGV/SIGTRAP). Report the signal the way a shell does.
+        // Only PID 1 of a pid namespace gets here (init cannot signal itself); abort() would trap.
         exit((128 + sig) as u32)
     }
     #[cfg(windows)]

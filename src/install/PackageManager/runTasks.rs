@@ -1875,15 +1875,13 @@ pub fn has_created_network_task(
     gpe.found_existing
 }
 
-/// `has_created_network_task` for manifest requests. A package that is a
-/// regular dependency of one package and an optional dependency of another is
-/// requested both ways, whichever of the two dependencies comes first: the
-/// abbreviated document does not cover the dependency that needs the extended
-/// one (see `PackageManager::needs_extended_manifest`), and the abbreviated
-/// request is what the extended one falls back to if it fails
-/// (`fall_back_to_abbreviated_manifest`), which must not depend on the order
-/// the dependencies were reached in. Both responses drain the same `task_queue`
-/// entry and `PackageManifestMap::insert` keeps the extended one.
+/// `has_created_network_task` for manifest requests, which are deduplicated per
+/// document: a package that is a regular dependency of one package and an
+/// optional dependency of another is requested both ways, whichever of the two
+/// dependencies comes first, since the abbreviated document does not cover the
+/// dependency that needs the extended one (see
+/// `PackageManager::needs_extended_manifest`). Both responses drain the same
+/// `task_queue` entry and `PackageManifestMap::insert` keeps the extended one.
 pub fn has_created_manifest_task(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -1895,12 +1893,29 @@ pub fn has_created_manifest_task(
         .network_dedupe_map
         .get_mut(&task_id)
         .expect("inserted by has_created_network_task");
-    let requested = if needs_extended_manifest {
-        &mut entry.is_extended_manifest
-    } else {
-        &mut entry.has_abbreviated_manifest_request
+    core::mem::replace(entry.manifest_requested(needs_extended_manifest), true)
+}
+
+/// The caller of `has_created_manifest_task` resolved from the manifest cache
+/// instead of sending the request it was cleared to send. Forget that request;
+/// the entry stays as long as it records anything else (a request of the other
+/// kind that is in flight, or a failed extended request), otherwise a later
+/// dependency would request that document again or wait for it.
+pub fn manifest_request_not_sent(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    needs_extended_manifest: bool,
+) {
+    let Some(entry) = this.network_dedupe_map.get_mut(&task_id) else {
+        return;
     };
-    core::mem::replace(requested, true)
+    *entry.manifest_requested(needs_extended_manifest) = false;
+    if !entry.is_extended_manifest
+        && !entry.has_abbreviated_manifest_request
+        && !entry.extended_manifest_failed
+    {
+        let _ = this.network_dedupe_map.remove(&task_id);
+    }
 }
 
 /// `Options::needs_extended_manifest`, unless the extended request for this
@@ -1924,29 +1939,26 @@ pub fn needs_extended_manifest(
 }
 
 /// Called when the request for the extended document of a manifest has failed
-/// for good. From then on every dependency on the package resolves from the
-/// abbreviated document: the one already requested when the package is also a
-/// regular dependency of something, or else the one that a regular dependency
-/// reached later requests, which resolves the optional dependencies still
-/// waiting as well. The only thing lost is the `libc` filtering of this one
-/// package, which is what every install did before libc was read. Returns
-/// whether the abbreviated document has been requested, in which case the
-/// caller reports the failure as a warning; otherwise nothing else may be coming
-/// and it is reported like any other manifest failure.
-///
-/// Not an option when the extended document is what versions are picked from
-/// (`minimumReleaseAge`): the abbreviated one has no publish times.
+/// for good. From then on the package behaves as it did before libc was read:
+/// every dependency on it resolves from the abbreviated document, losing only
+/// the `libc` filtering of this one package. The caller re-enqueues the
+/// dependencies that were waiting for the extended document; each of them then
+/// resolves from the abbreviated document if it is cached or was requested as
+/// well, and otherwise the first of them requests it (`has_created_manifest_task`
+/// dedupes that request), whose failure is then reported like that of any other
+/// manifest. Returns false when there is nothing to fall back to because the
+/// extended document is what versions are picked from (`minimumReleaseAge`):
+/// the abbreviated one has no publish times.
 pub fn fall_back_to_abbreviated_manifest(this: &mut PackageManager, task_id: Task::Id) -> bool {
     if this.options.needs_extended_manifest_to_pick_versions() {
         return false;
     }
-    match this.network_dedupe_map.get_mut(&task_id) {
-        Some(entry) => {
-            entry.extended_manifest_failed = true;
-            entry.has_abbreviated_manifest_request
-        }
-        None => false,
-    }
+    let entry = this
+        .network_dedupe_map
+        .get_or_put(task_id)
+        .expect("unreachable");
+    entry.value_ptr.extended_manifest_failed = true;
+    true
 }
 
 pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> bool {
@@ -2180,6 +2192,14 @@ impl PackageManager {
         needs_extended_manifest: bool,
     ) -> bool {
         has_created_manifest_task(self, task_id, is_required, needs_extended_manifest)
+    }
+    #[inline]
+    pub(crate) fn manifest_request_not_sent(
+        &mut self,
+        task_id: Task::Id,
+        needs_extended_manifest: bool,
+    ) {
+        manifest_request_not_sent(self, task_id, needs_extended_manifest)
     }
     #[inline]
     pub(crate) fn needs_extended_manifest(&self, dependency: Behavior, task_id: Task::Id) -> bool {

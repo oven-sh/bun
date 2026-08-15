@@ -1238,8 +1238,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     .flatten()
                                                 {
                                                     resolve_result_ = Ok(Some(new_resolve_result));
-                                                    let _ =
-                                                        this.network_dedupe_map.remove(&task_id);
+                                                    this.manifest_request_not_sent(
+                                                        task_id,
+                                                        needs_extended_manifest,
+                                                    );
                                                     continue 'retry_with_new_resolve_result;
                                                 }
                                             }
@@ -1256,7 +1258,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 || this.options.offline
                                                     != crate::package_manager_real::options::OfflineMode::Online)
                                         {
-                                            let _ = this.network_dedupe_map.remove(&task_id);
+                                            this.manifest_request_not_sent(
+                                                task_id,
+                                                needs_extended_manifest,
+                                            );
                                             continue 'retry_from_manifests_ptr;
                                         }
                                     }

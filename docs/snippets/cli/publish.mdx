@@ -13,7 +13,7 @@ bun publish dist
 bun publish --access public
 ```
 
-`--access` can also be set in the `publishConfig` field of your `package.json`.
+You can also set `--access` in the `publishConfig` field of your `package.json`.
 
 ```json package.json icon="file-json"
 {
@@ -32,7 +32,7 @@ Set the tag of the package version being published. By default, the tag is `late
 bun publish --tag alpha
 ```
 
-`--tag` can also be set in the `publishConfig` field of your `package.json`.
+You can also set `--tag` in the `publishConfig` field of your `package.json`.
 
 ```json package.json icon="file-json"
 {
@@ -51,6 +51,10 @@ Simulate the publish process without publishing the package, to verify its conte
 bun publish --dry-run
 ```
 
+</ParamField>
+
+<ParamField path="--tolerate-republish" type="boolean">
+  `bun publish` exits with code 0 instead of 1 when the version being published already exists in the registry.
 </ParamField>
 
 <ParamField path="--gzip-level" type="string" default="9">
@@ -92,7 +96,7 @@ bun publish --otp 123456
 #### Custom Registry
 
 <ParamField path="--registry" type="string">
-  Specify registry URL, overriding .npmrc and bunfig.toml
+  Specify registry URL, overriding .npmrc, bunfig.toml and environment variables
 </ParamField>
 
 ```bash
@@ -120,7 +124,7 @@ bun publish --cafile ./ca-cert.pem
 
 </CodeGroup>
 
-### Publishing Options
+### General Options
 
 #### Dependency Management
 
@@ -168,7 +172,8 @@ bun publish --cafile ./ca-cert.pem
 #### Performance
 
 <ParamField path="--backend" type="string">
-  Platform optimizations: `clonefile` (default), `hardlink`, `symlink`, or `copyfile`
+  Platform optimizations: `clonefile` (default on macOS), `hardlink` (default on Linux and Windows), `symlink`, or
+  `copyfile`
 </ParamField>
 
 <ParamField path="--network-concurrency" type="number" default="48">

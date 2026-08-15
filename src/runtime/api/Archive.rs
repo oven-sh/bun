@@ -660,11 +660,7 @@ pub enum PromiseResult {
 }
 
 impl PromiseResult {
-    fn fulfill(
-        self,
-        global: &JSGlobalObject,
-        promise: &mut JSPromise,
-    ) -> Result<(), bun_jsc::JsTerminated> {
+    fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> JsResult<()> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),
@@ -687,11 +683,7 @@ pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     type OffThread = C;
     type Js = JSPromiseStrong;
-    fn run(
-        ctx: &mut C,
-        _vm: &bun_jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(ctx: &mut C, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         ctx.run();
         Some(done)
     }
@@ -702,10 +694,10 @@ impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
             Ok(r) => r,
             Err(e) => {
                 // JSError means exception is already pending
-                return Ok(promise.reject(global, Err(e))?);
+                return promise.reject(global, Err(e));
             }
         };
-        Ok(result.fulfill(global, promise)?)
+        result.fulfill(global, promise)
     }
 }
 

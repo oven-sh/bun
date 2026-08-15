@@ -891,9 +891,18 @@ impl FileSink {
             return sys::Result::Ok(JSValue::UNDEFINED);
         }
 
+        let had_buffered_data = self.writer.get().has_pending_data();
         // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS re-entry while
         // the `&mut IOWriter` is held.
         let rc = self.writer.with_mut(|w| w.flush());
+        // `on_write` keeps the event loop alive while bytes sit in the buffer
+        // and `on_auto_flush` releases that once it drains them. A flush from
+        // JS that drained them has to release it too, or the loop still counts
+        // as alive until the next deferred-task drain (a write()+flush() from a
+        // 'beforeExit' listener then re-emits 'beforeExit').
+        if had_buffered_data && !self.writer.get().has_pending_data() {
+            self.update_ref(false);
+        }
         let flushed = match rc {
             WriteResult::Done(written)
             | WriteResult::Pending(written)

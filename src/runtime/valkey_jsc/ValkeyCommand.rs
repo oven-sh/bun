@@ -214,7 +214,7 @@ impl Promise {
         &mut self,
         global_object: &JSGlobalObject,
         value: &mut protocol::RESPValue,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> JsResult<()> {
         let options = ToJSOptions {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),
         };
@@ -234,7 +234,7 @@ impl Promise {
         &mut self,
         global_object: &JSGlobalObject,
         jsvalue: JsResult<JSValue>,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> JsResult<()> {
         self.promise.reject(global_object, jsvalue)?;
         Ok(())
     }
@@ -257,7 +257,7 @@ impl PromisePair {
         &mut self,
         global_object: &JSGlobalObject,
         jsvalue: JSValue,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> JsResult<()> {
         self.promise.reject(global_object, Ok(jsvalue))?;
         Ok(())
     }

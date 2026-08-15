@@ -113,7 +113,7 @@ impl HotReloaderCtx for VirtualMachine {
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
         // `VirtualMachine.bun_watcher` is the
         // `*mut ImportWatcher` (see the field comment in
-        // VirtualMachine.rs), and `getContext` only runs after
+        // VirtualMachine.rs), and `get_context` only runs after
         // `enable_hot_module_reloading` has populated it, so the `.None` arm
         // is unreachable.
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by

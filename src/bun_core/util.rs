@@ -4165,6 +4165,9 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
+            if crate::ffi::errno() == libc::ENOENT {
+                return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
+            }
             return Err(crate::CrateError::Unexpected);
         }
         Ok(libc::strlen(p))

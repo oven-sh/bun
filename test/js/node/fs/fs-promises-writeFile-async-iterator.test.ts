@@ -219,12 +219,10 @@ const dir = process.argv[2];
 const file = name => dir + "/" + name + ".txt";
 const fsyncs = () => (fs.existsSync(process.env.FSYNC_LOG) ? fs.statSync(process.env.FSYNC_LOG).size : 0);
 const report = {};
+const describeError = err => (err.syscall ? err.code + " from " + err.syscall : err.code ?? err.message);
 async function section(name, run) {
   const before = fsyncs();
-  const result = await run().then(
-    value => value ?? "resolved",
-    err => err.syscall ? err.code + " from " + err.syscall : err.code ?? err.message,
-  );
+  const result = await run().then(value => value ?? "resolved", describeError);
   report[name] = { fsyncs: fsyncs() - before, result };
 }
 const contents = name => fs.readFileSync(file(name), "utf8");
@@ -309,24 +307,28 @@ console.log(JSON.stringify(report));
       });
     });
 
-    test.concurrent("failure rejects the promise after the file has been closed", async () => {
+    test.concurrent("failure rejects the promise; the descriptor is closed on every error path", async () => {
       await using dir = tempDir("writeFile-iterable-fsync-fail", {
         "shim.c": shimSource,
         "fixture.mjs": `${fixturePrelude}
 // Warm up the code path so lazily created internal descriptors don't show up
-// in the leak check below.
+// in the leak checks below.
 await fsp.writeFile(file("warmup"), ["1"], { flush: false });
 const openFds = () => fs.readdirSync("/proc/self/fd").length;
 const fdsBefore = openFds();
-await section("string path", () => fsp.writeFile(file("a"), ["1", "2"], { flush: true }));
-report["string path"].contents = contents("a");
-report["string path"].leakedFds = openFds() - fdsBefore;
-await section("flush: false", () => fsp.writeFile(file("b"), ["1", "2"], { flush: false }));
+const leakCheck = name => {
+  report[name].leakedFds = openFds() - fdsBefore;
+};
+await section("fsync fails", () => fsp.writeFile(file("a"), ["1", "2"], { flush: true }));
+report["fsync fails"].contents = contents("a");
+leakCheck("fsync fails");
+await section("flush: false never reaches fsync", () => fsp.writeFile(file("b"), ["1", "2"], { flush: false }));
 await section("iterable throws", () => fsp.writeFile(file("c"), failing(), { flush: true }));
+leakCheck("iterable throws");
 await section("FileHandle", async () => {
   const fh = await fsp.open(file("d"), "w");
   try {
-    const result = await fsp.writeFile(fh, ["1", "2"], { flush: true }).then(() => "resolved", err => err.code + " from " + err.syscall);
+    const result = await fsp.writeFile(fh, ["1", "2"], { flush: true }).then(() => "resolved", describeError);
     // writeFile must not close a descriptor it did not open.
     return result + ", handle still has " + (await fh.stat()).size + " bytes";
   } finally {
@@ -338,9 +340,9 @@ console.log(JSON.stringify(report));
       });
 
       expect(await runFixture(String(dir), { FSYNC_FAIL: "1" })).toEqual({
-        "string path": { fsyncs: 1, result: "EIO from fsync", contents: "12", leakedFds: 0 },
-        "flush: false": { fsyncs: 0, result: "resolved" },
-        "iterable throws": { fsyncs: 0, result: "boom" },
+        "fsync fails": { fsyncs: 1, result: "EIO from fsync", contents: "12", leakedFds: 0 },
+        "flush: false never reaches fsync": { fsyncs: 0, result: "resolved" },
+        "iterable throws": { fsyncs: 0, result: "boom", leakedFds: 0 },
         "FileHandle": { fsyncs: 1, result: "EIO from fsync, handle still has 2 bytes" },
       });
     });

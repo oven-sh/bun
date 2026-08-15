@@ -112,7 +112,7 @@ Ref<SourceProvider> SourceProvider::create(
             const auto destructorNoOp = [](const void* ptr) {
                 // no-op, for borrowed bytecode (--compile embedded section, node compile cache).
             };
-            // Not needsDeref: that flag tracks source_code ownership and is already cleared by this point, which used to leak every owned sidecar buffer.
+            // bytecode_cache_is_owned, not needsDeref: needsDeref tracks source_code and is already cleared by this point.
             const auto destructor = resolvedSource.bytecode_cache_is_owned ? destructorPtr : destructorNoOp;
 
             auto origin = getSourceOrigin();

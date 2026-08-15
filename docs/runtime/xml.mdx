@@ -177,21 +177,6 @@ The second parameter is reserved; pass `null` or `undefined`.
 
 For a value that `XML.parse` produced, in either shape, `XML.parse(XML.stringify(value))` gives back an equal value.
 
-### Coming from another library
-
-`Bun.XML` is a value transform like `JSON.parse` rather than an event (SAX-style) or DOM API, and it is not a drop-in replacement for an existing npm package. Its compact shape follows the `@attr` / `#text` convention that xmltodict, Json.NET and others share, so moving over is mostly a matter of key names:
-
-|                                 | `Bun.XML.parse`                                            | fast-xml-parser                                             | xml2js                                   |
-| ------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
-| attributes                      | `"@id"`                                                    | dropped by default; `"@_id"` with `ignoreAttributes: false` | grouped under `$`                        |
-| text beside attributes/children | `"#text"`                                                  | `"#text"`                                                   | `_`                                      |
-| repeated child                  | array; a single child is not ([One or many](#one-or-many)) | same (`isArray` opts in)                                    | everything is an array (`explicitArray`) |
-| values                          | strings, as written                                        | `"007"` → `7`, `"true"` → `true`, trimmed, by default       | strings                                  |
-| namespaces                      | names as written (`"itunes:title"`), `xmlns` as attributes | same by default                                             | same by default                          |
-| attribute order                 | document order                                             | document order                                              | document order                           |
-| comments / PIs                  | only in the tree shape                                     | opt-in keys                                                 | dropped                                  |
-| not well-formed input           | `SyntaxError`                                              | usually accepted                                            | error                                    |
-
 ---
 
 ## Module Import

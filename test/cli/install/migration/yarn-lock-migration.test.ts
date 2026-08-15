@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
 import { join } from "path";
 
 describe("yarn.lock migration basic", () => {
@@ -1153,8 +1153,19 @@ lodash@^4.17.21:
     const bunLockContent = fs.readFileSync(join(tmpDir, "bun.lock"), "utf8");
     expect(bunLockContent).toMatchSnapshot("workspace-yarn-migration");
 
-    // TODO: Workspace dependencies are not yet supported in yarn migration
-    // expect(bunLockContent).toContain("workspace:");
+    const lock = Bun.JSONC.parse(bunLockContent) as {
+      workspaces: Record<string, unknown>;
+      packages: Record<string, unknown[]>;
+    };
+    expect(Object.keys(lock.workspaces)).toEqual(["", "packages/a", "packages/b"]);
+    expect(Object.fromEntries(Object.entries(lock.packages).map(([key, info]) => [key, info[0]]))).toEqual({
+      "@workspace/a": "@workspace/a@workspace:packages/a",
+      "@workspace/b": "@workspace/b@workspace:packages/b",
+      "is-number": "is-number@7.0.0",
+      "is-odd": "is-odd@3.0.1",
+      "is-odd/is-number": "is-number@6.0.0",
+      "lodash": "lodash@4.17.21",
+    });
   });
 
   test("yarn.lock with scoped packages and parent/child relationships", async () => {
@@ -1508,30 +1519,41 @@ describe("bun pm migrate for existing yarn.lock", () => {
     "yarn-stuff",
     "yarn-stuff/abbrev-link-target",
   ];
-  test.each(folders)("%s", async folder => {
-    const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
-    const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
+  test.each(folders)(
+    "%s",
+    async folder => {
+      const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
+      const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
-    await using tmpDir = tempDir("yarn-lock-migration-", {
-      "package.json": packageJsonContent,
-      "yarn.lock": yarnLockContent,
-    });
+      await using tmpDir = tempDir("yarn-lock-migration-", {
+        "package.json": packageJsonContent,
+        "yarn.lock": yarnLockContent,
+      });
 
-    const migrateResult = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tmpDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+      await using migrateResult = Bun.spawn({
+        cmd: [bunExe(), "pm", "migrate", "-f"],
+        cwd: tmpDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(migrateResult.exited).resolves.toBe(0);
-    expect(Bun.file(join(tmpDir, "bun.lock")).exists()).resolves.toBe(true);
+      const [stdout, stderr, exitCode] = await Promise.all([
+        migrateResult.stdout.text(),
+        migrateResult.stderr.text(),
+        migrateResult.exited,
+      ]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(exitCode).toBe(0);
 
-    const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
-    expect(bunLockContent).toMatchSnapshot(folder);
-  });
+      const bunLockContent = await Bun.file(join(tmpDir, "bun.lock")).text();
+      expect(bunLockContent).toMatchSnapshot(folder);
+    },
+    // yarn-cli-repo is yarn's own 8k-line lockfile; a debug build takes several seconds to migrate it.
+    isDebug ? 60_000 : undefined,
+  );
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
     await using tmpDir = tempDir("yarn-migration-os-cpu", {
@@ -1638,5 +1660,292 @@ fsevents@^2.3.2:
     expect(bunLockContent).toContain("fsevents");
     expect(bunLockContent).toContain("@esbuild/linux-arm64");
     expect(bunLockContent).toContain("@esbuild/darwin-arm64");
+  });
+});
+
+// yarn.lock has no entries for the root or the workspaces themselves: each dependency they declare is
+// looked up by the exact `name@range` key, the same way yarn resolves it.
+const yarnLockEntries = {
+  "is-number-6": (specs: string) => `${specs}:
+  version "6.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-6.0.0.tgz#e6d15ad31fc262887d1846d1c6c84c9b3b0b5982"
+  integrity sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg==
+`,
+  "is-number-7": (specs: string) => `${specs}:
+  version "7.0.0"
+  resolved "https://registry.yarnpkg.com/is-number/-/is-number-7.0.0.tgz#7535345b896734d5f80c4d06c50955527a14f12b"
+  integrity sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==
+`,
+  "lodash": (specs: string) => `${specs}:
+  version "4.17.21"
+  resolved "https://registry.yarnpkg.com/lodash/-/lodash-4.17.21.tgz#679591c564c3bffaae8454cf0b3df370c3d6911c"
+  integrity sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==
+`,
+};
+
+function yarnLock(...entries: string[]) {
+  return `# yarn lockfile v1\n\n\n${entries.join("\n")}`;
+}
+
+type MigratedLock = {
+  workspaces: Record<string, Record<string, unknown>>;
+  packages: Record<string, unknown[]>;
+};
+
+async function migrate(dir: string): Promise<MigratedLock & { stderr: string }> {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "migrate", "-f"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("migrated lockfile from yarn.lock");
+  expect(exitCode).toBe(0);
+  const lock = Bun.JSONC.parse(await Bun.file(join(dir, "bun.lock")).text()) as MigratedLock;
+  return { ...lock, stderr };
+}
+
+function resolvedPackages(lock: MigratedLock) {
+  return Object.fromEntries(Object.entries(lock.packages).map(([key, info]) => [key, info[0]]));
+}
+
+describe.concurrent("yarn.lock migration of workspace dependencies", () => {
+  test("workspace dependencies are taken from yarn.lock when the root has no dependencies of its own", async () => {
+    using dir = tempDir("yarn-migration-workspaces-root-without-deps", {
+      "package.json": JSON.stringify({ name: "mono", private: true, workspaces: ["packages/*"] }),
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } }),
+      "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+      // One entry keyed by several ranges, as yarn writes it when the ranges resolve to the same version.
+      "yarn.lock": yarnLock(yarnLockEntries["is-number-7"]("is-number@>=6, is-number@^7.0.0")),
+    });
+
+    const lock = await migrate(String(dir));
+
+    expect(lock.workspaces).toEqual({
+      "": { name: "mono" },
+      "packages/a": { name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } },
+      "packages/b": { name: "b", version: "1.0.0" },
+    });
+    expect(resolvedPackages(lock)).toEqual({
+      "a": "a@workspace:packages/a",
+      "b": "b@workspace:packages/b",
+      "is-number": "is-number@7.0.0",
+    });
+  });
+
+  test("a range binds to its own yarn.lock entry, not to another entry of the same name that satisfies it", async () => {
+    using dir = tempDir("yarn-migration-workspaces-same-name", {
+      "package.json": JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        devDependencies: { lodash: "^4.17.21" },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } }),
+      "packages/b/package.json": JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+        dependencies: { "is-number": "6.0.0" },
+      }),
+      "yarn.lock": yarnLock(
+        yarnLockEntries["is-number-6"]("is-number@6.0.0"),
+        yarnLockEntries["is-number-7"]("is-number@>=6"),
+        yarnLockEntries["lodash"]("lodash@^4.17.21"),
+      ),
+    });
+
+    const lock = await migrate(String(dir));
+
+    expect(lock.workspaces).toEqual({
+      "": { name: "mono", devDependencies: { lodash: "^4.17.21" } },
+      "packages/a": { name: "a", version: "1.0.0", dependencies: { "is-number": ">=6" } },
+      "packages/b": { name: "b", version: "1.0.0", dependencies: { "is-number": "6.0.0" } },
+    });
+    expect(resolvedPackages(lock)).toEqual({
+      "a": "a@workspace:packages/a",
+      "b": "b@workspace:packages/b",
+      "b/is-number": "is-number@6.0.0",
+      "is-number": "is-number@7.0.0",
+      "lodash": "lodash@4.17.21",
+    });
+  });
+
+  test("workspace links, peers, and dependencies missing from yarn.lock", async () => {
+    using dir = tempDir("yarn-migration-workspaces-links", {
+      "package.json": JSON.stringify({
+        name: "mono",
+        private: true,
+        workspaces: ["packages/*"],
+        // Not in yarn.lock (added to package.json after the last `yarn install`).
+        dependencies: { "is-odd": "^3.0.1" },
+        devDependencies: { lodash: "^4.17.21" },
+      }),
+      "packages/a/package.json": JSON.stringify({
+        name: "@mono/a",
+        version: "1.0.0",
+        dependencies: {
+          // Satisfied by the workspace's version, so yarn links it and yarn.lock has no entry for it.
+          "@mono/b": "^1.0.0",
+          "@mono/c": "workspace:*",
+          "is-number": "^7.0.0",
+          "left-pad": "^1.3.0",
+        },
+        peerDependencies: {
+          "is-number": ">=6",
+          "lodash": "*",
+          "react": ">=16",
+          "typescript": ">=4",
+        },
+        peerDependenciesMeta: { typescript: { optional: true } },
+      }),
+      "packages/b/package.json": JSON.stringify({
+        name: "@mono/b",
+        version: "1.2.0",
+        dependencies: { "is-number": "6.0.0" },
+      }),
+      "packages/c/package.json": JSON.stringify({
+        name: "@mono/c",
+        version: "0.0.1",
+        // Neither peer is satisfied by the first `is-number` / `lodash` yarn.lock has.
+        peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
+      }),
+      "yarn.lock": yarnLock(
+        yarnLockEntries["is-number-6"]("is-number@6.0.0"),
+        yarnLockEntries["is-number-7"]("is-number@^7.0.0"),
+        yarnLockEntries["lodash"]("lodash@^4.17.21"),
+      ),
+    });
+
+    const lock = await migrate(String(dir));
+
+    expect(lock.workspaces).toEqual({
+      // `is-odd` has no yarn.lock entry, so it is left for `bun install` to resolve.
+      "": { name: "mono", devDependencies: { lodash: "^4.17.21" } },
+      "packages/a": {
+        name: "@mono/a",
+        version: "1.0.0",
+        // `left-pad` has no yarn.lock entry either.
+        dependencies: { "@mono/b": "^1.0.0", "@mono/c": "workspace:*", "is-number": "^7.0.0" },
+        // Peers bind to the packages yarn.lock has for their names; `react` has none.
+        peerDependencies: { "is-number": ">=6", lodash: "*", typescript: ">=4" },
+        optionalPeers: ["typescript"],
+      },
+      "packages/b": { name: "@mono/b", version: "1.2.0", dependencies: { "is-number": "6.0.0" } },
+      "packages/c": {
+        name: "@mono/c",
+        version: "0.0.1",
+        // `is-number` binds to the 6.0.0 entry; `lodash` falls back to the only lodash there is, as a
+        // fresh install would ("incorrect peer dependency").
+        peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
+      },
+    });
+    expect(resolvedPackages(lock)).toEqual({
+      "@mono/a": "@mono/a@workspace:packages/a",
+      "@mono/b": "@mono/b@workspace:packages/b",
+      "@mono/b/is-number": "is-number@6.0.0",
+      "@mono/c": "@mono/c@workspace:packages/c",
+      "@mono/c/is-number": "is-number@6.0.0",
+      "is-number": "is-number@7.0.0",
+      "lodash": "lodash@4.17.21",
+    });
+  });
+});
+
+describe("bun install migrating a yarn.lock with workspaces", () => {
+  const verdaccio = new VerdaccioRegistry();
+
+  beforeAll(async () => {
+    await verdaccio.start();
+  });
+
+  afterAll(() => {
+    verdaccio.stop();
+  });
+
+  function registryEntry(name: string, specs: string, version: string) {
+    const manifest = JSON.parse(fs.readFileSync(join(verdaccio.packagesPath, name, "package.json"), "utf8"));
+    const { integrity, shasum } = manifest.versions[version].dist;
+    return `${specs}:
+  version "${version}"
+  resolved "${verdaccio.registryUrl()}${name}/-/${name}-${version}.tgz#${shasum}"
+  integrity ${integrity}
+`;
+  }
+
+  async function install(cwd: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return { stdout, stderr };
+  }
+
+  test("installs the versions yarn.lock resolved each workspace's dependencies to", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "mono",
+          private: true,
+          workspaces: ["packages/*"],
+          // Not in yarn.lock: resolved from the registry, without disturbing the locked versions.
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          version: "1.0.0",
+          dependencies: { "no-deps": "^1.0.0" },
+        }),
+        "packages/b/package.json": JSON.stringify({
+          name: "b",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.1" },
+        }),
+        // The registry has no-deps 1.0.0, 1.0.1, 1.1.0 and 2.0.0; yarn resolved `^1.0.0` to 1.0.0.
+        // The `1.0.1` entry comes first, like yarn sorts it, and also satisfies `^1.0.0`.
+        "yarn.lock": yarnLock(
+          registryEntry("no-deps", "no-deps@1.0.1", "1.0.1"),
+          registryEntry("no-deps", "no-deps@^1.0.0", "1.0.0"),
+        ),
+      },
+    });
+
+    const first = await install(packageDir);
+    expect(first.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(first.stderr).toContain("Saved lockfile");
+
+    const installed = nodeModulesPackages(packageDir);
+    expect(installed).toMatchInlineSnapshot(`
+      "node_modules/a-dep/a-dep@1.0.1
+      node_modules/no-deps/no-deps@1.0.0
+      packages/a/a@1.0.0
+      packages/b/b@1.0.0
+      packages/b/node_modules/no-deps/no-deps@1.0.1"
+    `);
+
+    const lockText = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(resolvedPackages(Bun.JSONC.parse(lockText) as MigratedLock)).toEqual({
+      "a": "a@workspace:packages/a",
+      "a-dep": "a-dep@1.0.1",
+      "b": "b@workspace:packages/b",
+      "b/no-deps": "no-deps@1.0.1",
+      "no-deps": "no-deps@1.0.0",
+    });
+
+    // The migrated lockfile describes the package.json files exactly, so the next install has nothing to change.
+    const second = await install(packageDir);
+    expect(second.stderr).not.toContain("Saved lockfile");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(lockText);
+    expect(nodeModulesPackages(packageDir)).toBe(installed);
   });
 });

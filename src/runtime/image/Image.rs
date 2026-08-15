@@ -142,19 +142,16 @@ unsafe extern "C" {
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, strum::EnumString)]
 pub enum Fit {
-    /// Stretch to exactly w×h (default). No aspect-ratio preservation.
+    /// Stretch to exactly w×h (default).
     Fill,
-    /// Preserve aspect ratio; scale so the result fits *inside* w×h.
-    /// Output ≤ w×h on both sides.
+    /// Preserve aspect ratio; result fits inside w×h.
     Inside,
-    /// Preserve aspect ratio; scale so the result *contains* w×h.
-    /// Output ≥ w×h on both sides. No crop — caller sees the larger image.
+    /// Preserve aspect ratio; result contains w×h (no crop).
     Outside,
-    /// Preserve aspect ratio; scale like `Outside` and center-crop to exactly
-    /// w×h. Like CSS `object-fit: cover`.
+    /// `Outside` scale, then center-crop to w×h (CSS `object-fit: cover`).
     Cover,
-    /// Preserve aspect ratio; scale like `Inside` and letterbox with
-    /// `background` to exactly w×h. Like CSS `object-fit: contain`.
+    /// `Inside` scale, then letterbox with `background` to w×h
+    /// (CSS `object-fit: contain`).
     Contain,
 }
 // `pub const Map = bun.ComptimeEnumMap(Fit);` → covered by `strum::EnumString`.
@@ -178,11 +175,8 @@ impl jsc::FromJsEnum for Fit {
     }
 }
 
-/// RGBA background used by `fit: "contain"` to fill the letterbox. Defaults
-/// to transparent black — renders as black in JPEG (alpha dropped) and as a
-/// transparent letterbox in PNG/WebP, so callers can composite without an
-/// extra `removeAlpha`. Sharp's default is opaque black; using transparent
-/// here keeps the alpha channel of PNG/WebP output usable.
+/// `fit: "contain"` letterbox fill. `Default` (transparent black) is the
+/// omitted-background case; `parse_background` defaults alpha to opaque.
 #[derive(Clone, Copy, Default)]
 pub struct Background {
     pub(crate) r: u8,
@@ -279,11 +273,8 @@ macro_rules! coerce_int {
     }};
 }
 
-/// Parse Sharp-shaped `{r, g, b, alpha}`. RGB channels are 0-255 and default
-/// to 0; `alpha` is 0-1 (Sharp convention) and defaults to opaque — passing
-/// a background object at all means the caller wants a visible fill, the
-/// same as Sharp's `Color({r, g, b})`. The fully transparent letterbox is
-/// the *omitted*-background default.
+/// Sharp-shaped `{r, g, b, alpha}`: RGB 0-255 defaulting to 0, `alpha` 0-1
+/// defaulting to opaque like Sharp's `Color({r, g, b})`.
 fn parse_background(global: &JSGlobalObject, bg: JSValue) -> JsResult<Background> {
     let mut out = Background {
         a: 255,
@@ -306,8 +297,7 @@ fn parse_background(global: &JSGlobalObject, bg: JSValue) -> JsResult<Background
     }
     if let Some(v) = bg.get(global, "alpha")? {
         if v.is_number() {
-            // Round like Sharp (`Math.round(alpha * 255)`) — a plain
-            // narrowing cast truncates, putting 0.5 at 127 instead of 128.
+            // Round like Sharp; a narrowing cast would truncate 0.5 to 127.
             out.a = coerce_int!(u8, (v.as_number() * 255.0).round(), 0.0, 255.0);
         }
     }
@@ -2037,17 +2027,10 @@ impl PipelineTask {
         }
         if let Some(r) = p.resize {
             let t = resolve_resize(r, d.width, d.height)?;
-            // Guard both the resize canvas AND the H-then-V intermediate
-            // (always resize_w × src_h — image_resize.cpp pass order is
-            // fixed). A 1×N source → resize(W,1) has tiny input AND output
-            // canvases yet a W×N intermediate; with W=262143, N=16383
-            // that's a 17 GiB alloc from a ~200-byte PNG. The src_w×dst_h
-            // cross-product is bounded by max(input, output) so doesn't
-            // need its own check. The third clause guards the `contain`
-            // pad canvas (out_w × out_h): each side is capped at
-            // `do_resize`'s 0x3FFFF, but the product of two capped sides
-            // is still ~256× the default max_pixels, so it needs its own
-            // check.
+            // Guard the resize canvas, the H-then-V resize_w × src_h
+            // intermediate (a 1×N source can make it huge while input and
+            // output stay tiny), and the `contain` pad canvas (two
+            // 0x3FFFF-capped sides still multiply past max_pixels).
             if (t.resize_w as u64) * (t.resize_h as u64) > self.max_pixels
                 || (t.resize_w as u64) * (d.height as u64) > self.max_pixels
                 || (t.out_w as u64) * (t.out_h as u64) > self.max_pixels
@@ -2061,9 +2044,7 @@ impl PipelineTask {
                 d.width = t.resize_w;
                 d.height = t.resize_h;
             }
-            // `cover`/`contain` finish by cropping or padding the resized
-            // image to exactly the target box. No-op for the other fit
-            // modes where resize_w×resize_h already equals out_w×out_h.
+            // `cover` crops / `contain` pads the resized image to the box.
             if t.out_w != d.width || t.out_h != d.height {
                 let next = match r.fit {
                     Fit::Cover => codecs::crop(
@@ -2084,10 +2065,7 @@ impl PipelineTask {
                             r.background.a,
                         ],
                     )?,
-                    // Should never happen — resolve_resize keeps resize ==
-                    // out for every other fit. Guard so a future fit mode
-                    // with a mismatched helper doesn't silently fall
-                    // through a no-op branch.
+                    // resolve_resize keeps resize == out for every other fit.
                     _ => unreachable!("resolve_resize: resize != out for non-cover/contain fit"),
                 };
                 d.rgba = next;
@@ -2142,12 +2120,8 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
     })
 }
 
-/// `resize_w×resize_h` are the dims codecs::resize produces; `out_w×out_h`
-/// are the final pipeline dims. For fill/inside/outside they match; for
-/// cover the resize overshoots the box and is then cropped by `off_*`
-/// pixels from the top-left; for contain the resize undershoots and is
-/// padded, with `off_*` being the top-left of the resized image inside
-/// the output box.
+/// `resize_*` feeds codecs::resize; `out_*` is the final canvas. They match
+/// except for cover (crop at `off_*`) and contain (pad at `off_*`).
 struct ResolvedResize {
     resize_w: u32,
     resize_h: u32,
@@ -2170,18 +2144,10 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> Result<ResolvedResize, codecs:
     } else {
         u32::try_from((0x3FFFFu64).min(1u64.max((r.w as u64) * (sh as u64) / (sw as u64)))).unwrap()
     };
-    // Preserve the user-specified target box — `cover`/`contain` need it
-    // after the resize step has reshaped `w`/`h` to the aspect-preserving
-    // scale. `inside`/`outside`/`fill` ignore out_* since resize_* matches.
+    // `cover`/`contain` need the original box after `w`/`h` are reshaped
+    // to the aspect-preserving scale.
     let box_w = w;
     let box_h = h;
-    // `inside`/`outside`/`cover`/`contain` all preserve aspect ratio; the
-    // only difference is which extreme of the per-side scale we pick and
-    // what we do with any mismatch afterwards:
-    //   inside  → min scale, no finishing step (result fits *in* the box)
-    //   outside → max scale, no finishing step (result *contains* the box)
-    //   cover   → max scale, center-crop to the box (CSS object-fit cover)
-    //   contain → min scale, pad to the box with `background` (CSS contain)
     if r.fit != Fit::Fill {
         let sx = (w as f64) / (sw as f64);
         let sy = (h as f64) / (sh as f64);
@@ -2190,17 +2156,9 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> Result<ResolvedResize, codecs:
             Fit::Outside | Fit::Cover => sx.max(sy),
             Fit::Fill => unreachable!(),
         };
-        // `outside`/`cover` pick the max scale, so a tall-thin source can
-        // push the off-axis side arbitrarily high (1×10M source into a
-        // 500×500 box → 5e9). The dims stay exact in f64 (bounded by
-        // i32::MAX × 0x3FFFF < 2^53) so decide in float space:
-        //  - withoutEnlargement short-circuits to the source dims, same
-        //    as it always did for an over-box scale;
-        //  - a side past i32::MAX can never be represented downstream
-        //    (the resize kernel takes i32 dims), so reject it loudly —
-        //    clamping instead would silently change the aspect ratio;
-        //  - anything else narrows exactly and the caller's maxPixels
-        //    product guards decide whether the canvas is affordable.
+        // Max-scale fits can push the off-axis side past i32::MAX (the
+        // resize kernel's dim type); decide in f64 and reject instead of
+        // clamping, which would silently distort the aspect ratio.
         let wf = ((sw as f64) * s).round().max(1.0);
         let hf = ((sh as f64) * s).round().max(1.0);
         if r.without_enlargement && (wf > sw as f64 || hf > sh as f64) {
@@ -2226,11 +2184,8 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> Result<ResolvedResize, codecs:
             off_y: 0,
         },
         Fit::Cover => {
-            // Crop centered; the resize overshoots by `w - box_w` /
-            // `h - box_h` along each axis (non-negative for `outside`
-            // scale). `without_enlargement` can leave the resized image
-            // smaller than the box — clamp the output to what we have
-            // so `crop` never asks for rows/cols that don't exist.
+            // Center-crop; clamp to the resized dims so a
+            // `without_enlargement` reset never over-crops.
             let out_w = box_w.min(w);
             let out_h = box_h.min(h);
             ResolvedResize {
@@ -2243,11 +2198,8 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> Result<ResolvedResize, codecs:
             }
         }
         Fit::Contain => {
-            // Letterbox centered inside the user-specified box; the
-            // resize undershoots so `box - w` / `box - h` are
-            // non-negative (for `inside` scale) and the offset is half
-            // the slack. With `without_enlargement` a smaller source can
-            // still be padded up to the box.
+            // Letterbox centered; a `without_enlargement`-reset source is
+            // still padded up to the box.
             let out_w = box_w.max(w);
             let out_h = box_h.max(h);
             ResolvedResize {

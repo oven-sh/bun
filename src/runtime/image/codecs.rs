@@ -776,10 +776,8 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     Ok(out)
 }
 
-/// Extract a `cw × ch` rectangle starting at `(x, y)` from `src`. The caller
-/// is expected to have range-checked `x + cw <= sw` and `y + ch <= sh` —
-/// `resolve_resize` does this for `fit:'cover'`. Plain per-row memcpy; no
-/// kernel needed since there's no resampling.
+/// Extract a `cw × ch` rectangle at `(x, y)`. Caller range-checks
+/// `x + cw <= sw` and `y + ch <= sh`.
 pub(crate) fn crop(
     src: &[u8],
     sw: u32,
@@ -805,9 +803,8 @@ pub(crate) fn crop(
     Ok(out)
 }
 
-/// Place the `sw × sh` image at `(ox, oy)` inside a fresh `dw × dh` canvas
-/// painted with `bg`. Used by `fit:'contain'` to letterbox. The caller is
-/// expected to have range-checked `ox + sw <= dw` and `oy + sh <= dh`.
+/// Blit the `sw × sh` image at `(ox, oy)` onto a fresh `dw × dh` canvas
+/// painted with `bg`. Caller range-checks `ox + sw <= dw` and `oy + sh <= dh`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pad(
     src: &[u8],
@@ -822,12 +819,7 @@ pub(crate) fn pad(
     debug_assert!((ox as u64) + (sw as u64) <= (dw as u64));
     debug_assert!((oy as u64) + (sh as u64) <= (dh as u64));
     let mut out: Vec<u8> = vec![0u8; (dw as usize) * (dh as usize) * 4];
-    // Fill every pixel with the background first, then blit the image over
-    // the center. Simpler than writing only the border strips and avoids a
-    // branch per row (one tight pattern fill, then one memcpy per image
-    // row). A solid-colour fill at RGBA8 auto-vectorises on the platforms
-    // we ship. The default transparent-black background matches the
-    // zero-initialized allocation, so skip the pass entirely then.
+    // The zero-initialized allocation already is transparent black.
     if bg != [0u8; 4] {
         for px in out.chunks_exact_mut(4) {
             px.copy_from_slice(&bg);

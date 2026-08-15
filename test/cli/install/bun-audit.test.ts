@@ -217,7 +217,8 @@ function installEnv(dir: string) {
 // straight from verdaccio, and then copied like a checked-in fixture: `installedProject` returns a directory holding
 // the package.json, bun.lock and node_modules that `steps` (package.json texts installed in order) end up with.
 // bun.lock names verdaccio in every tarball URL, which `copyProject` re-points at the registry a test is using; the
-// bunfig and the install cache are removed so a copy only ever talks to that registry.
+// bunfig and the install cache are removed so a copy only ever talks to that registry, which also means a copy starts
+// with an empty cache (see `setupWithCachedManifests` for the tests that need a warm one).
 const installedProjects = new Map<string, Promise<string>>();
 
 function installedProject(steps: string[]) {
@@ -392,6 +393,21 @@ async function setupVulnerableADep(server: Registry) {
   return dir;
 }
 
+// The same kind of project, installed through `server` instead of copied, so that the install cache holds the manifest
+// of every dependency. `bun audit fix` turns the manifest cache off and fetches manifests again, which a test that then
+// breaks the registry can only prove while the cache holds a manifest that would have answered.
+async function setupWithCachedManifests(
+  server: Registry,
+  dependencies: Record<string, string>,
+  widened: Record<string, string>,
+) {
+  const dir = await installThrough(server, JSON.stringify({ name: "foo", dependencies }));
+  await reinstall(dir, { name: "foo", dependencies: widened });
+  const manifests = Array.from(new Bun.Glob("*.npm").scanSync(join(dir, ".bun-cache")));
+  expect(manifests).toHaveLength(Object.keys(dependencies).length);
+  return dir;
+}
+
 describe("setup()", () => {
   // Everything in the project by relative path, minus the two things that are per directory: the bunfig (it names
   // the directory's own cache) and the cache itself.
@@ -427,7 +443,11 @@ describe("setup()", () => {
 });
 
 describe("`bun audit`", () => {
+  // The vulnerable package in the vuln-with-only-dev-dependencies and mix-of-safe-and-vulnerable-dependencies fixtures
+  // is ms@0.7.0, which the registry answers with one moderate and one high advisory. `--json` prints that response as
+  // it arrived, so --audit-level and --ignore only show up in the exit code; MS_REPORT is how it renders without --json.
   const MS_REQUEST: BulkRequest = { ms: ["0.7.0"] };
+  const MS_ADVISORIES = resolveBulkAdvisoryFixture(MS_REQUEST);
   const MS_REPORT =
     AUDIT_HEADER +
     "ms@0.7.0\n" +
@@ -642,7 +662,6 @@ describe("`bun audit`", () => {
     },
   });
 
-  // --json prints the registry's response as it arrived, so the expected document is the recorded fixture response.
   doAuditTest("should print valid JSON and exit 1 when --json is passed and there are vulnerabilities", {
     exitCode: 1,
     files: fixture("express@3"),
@@ -679,7 +698,7 @@ describe("`bun audit`", () => {
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--json", "--audit-level", "critical"],
     fn: ({ stdout, stderr, requests }) => {
-      expect(JSON.parse(stdout)).toEqual(resolveBulkAdvisoryFixture(MS_REQUEST));
+      expect(JSON.parse(stdout)).toEqual(MS_ADVISORIES);
       expect(stderr).toBe("");
       expect(requests).toEqual([MS_REQUEST]);
     },
@@ -690,7 +709,7 @@ describe("`bun audit`", () => {
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--json", "--ignore", "GHSA-w9mr-4mfr-499f", "--ignore", "GHSA-3fx5-fwvr-xrjg"],
     fn: ({ stdout, stderr, requests }) => {
-      expect(JSON.parse(stdout)).toEqual(resolveBulkAdvisoryFixture(MS_REQUEST));
+      expect(JSON.parse(stdout)).toEqual(MS_ADVISORIES);
       expect(stderr).toBe("");
       expect(requests).toEqual([MS_REQUEST]);
     },
@@ -701,7 +720,7 @@ describe("`bun audit`", () => {
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--json", "--audit-level", "high", "--ignore", "GHSA-w9mr-4mfr-499f"],
     fn: ({ stdout, stderr, requests }) => {
-      expect(JSON.parse(stdout)).toEqual(resolveBulkAdvisoryFixture(MS_REQUEST));
+      expect(JSON.parse(stdout)).toEqual(MS_ADVISORIES);
       expect(stderr).toBe("");
       expect(requests).toEqual([MS_REQUEST]);
     },
@@ -2818,8 +2837,9 @@ describe("`bun audit fix`", () => {
   test.concurrent("a manifest that fails to download is reported, not fixed", async () => {
     const denyManifests = new Set<string>();
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { denyManifests });
-    using dir = await setupVulnerableADep(server);
+    using dir = await setupWithCachedManifests(server, { "a-dep": "1.0.2" }, { "a-dep": "^1.0.2" });
     const lockBefore = await lock(dir);
+    expect(lockBefore).toContain('"a-dep@1.0.2"');
     denyManifests.add("a-dep");
 
     const { stdout, stderr, exitCode } = await auditFix(dir);
@@ -2839,8 +2859,11 @@ describe("`bun audit fix`", () => {
   test.concurrent("a manifest that fails to download does not stop the other fixes", async () => {
     const denyManifests = new Set<string>();
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")], "no-deps": [adv("<1.0.1", 2)] }, { denyManifests });
-    using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2", "no-deps": "1.0.0" } });
-    await reinstall(dir, { name: "foo", dependencies: { "a-dep": "^1.0.2", "no-deps": "^1.0.0" } });
+    using dir = await setupWithCachedManifests(
+      server,
+      { "a-dep": "1.0.2", "no-deps": "1.0.0" },
+      { "a-dep": "^1.0.2", "no-deps": "^1.0.0" },
+    );
     denyManifests.add("a-dep");
 
     const { stdout, stderr, exitCode } = await auditFix(dir);
@@ -3998,7 +4021,7 @@ describe("`bun audit fix`", () => {
   test.concurrent("--json carries a version whose manifest could not be fetched", async () => {
     const denyManifests = new Set<string>();
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] }, { denyManifests });
-    using dir = await setupVulnerableADep(server);
+    using dir = await setupWithCachedManifests(server, { "a-dep": "1.0.2" }, { "a-dep": "^1.0.2" });
     const lockBefore = await lock(dir);
     denyManifests.add("a-dep");
 

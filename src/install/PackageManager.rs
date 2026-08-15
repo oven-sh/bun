@@ -447,8 +447,7 @@ pub struct PackageManager {
     // package.json cache entries that differ from disk; written by package_json_write_back::flush.
     pub(crate) edited_package_jsons: Vec<package_json_write_back::EditedPackageJson>,
 
-    // package_json_write_back::flush rewrote a package.json whose bytes differed
-    // from disk; the install summary reports the sync instead of "(no changes)".
+    // Set by package_json_write_back::flush when it rewrites a file; read by the install summary.
     pub(crate) wrote_package_json: bool,
 
     // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs

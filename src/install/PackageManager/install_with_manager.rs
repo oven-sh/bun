@@ -1191,9 +1191,7 @@ fn print_install_summary(
         {
             // Hot no-op path (install/fastify bench): kept inline.
             let count = this.lockfile.packages.len() as PackageID;
-            // Installs were already correct, but `bun update` rewrote
-            // package.json to match the resolved versions; "(no changes)"
-            // would misreport that.
+            // "(no changes)" would misreport an update that rewrote package.json.
             let note = if this.subcommand == Subcommand::Update && this.wrote_package_json {
                 "up to date, package.json synced"
             } else {

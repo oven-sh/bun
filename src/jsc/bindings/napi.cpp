@@ -2401,6 +2401,18 @@ private:
     bool m_finalized { false };
 };
 
+// Node CHECKs this in node::Buffer::New, which both external buffer
+// constructors go through, so the process aborts there too. Wrapping a null
+// pointer with a non-zero length would produce a JSC::ArrayBuffer whose data()
+// is null (which JSC reads as "detached") but whose byteLength() is not 0.
+// Every detached buffer JSC itself produces has byteLength 0, so code that
+// takes span() without re-checking (crypto.subtle.digest, for one) would read
+// `length` bytes from address 0.
+static void checkExternalBufferData(const char* function, const void* data, size_t length)
+{
+    NAPI_RELEASE_ASSERT(data != nullptr || length == 0, "%s: data is NULL but length is %zu", function, length);
+}
+
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     void* data,
     napi_finalize finalize_cb,
@@ -2409,12 +2421,13 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    checkExternalBufferData("napi_create_external_buffer", data, length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
-    if (data == nullptr || length == 0) {
+    if (length == 0) {
 
         // TODO: is there a way to create a detached uint8 array?
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);
@@ -2454,6 +2467,7 @@ extern "C" napi_status napi_create_external_arraybuffer(napi_env env, void* exte
 {
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
+    checkExternalBufferData("napi_create_external_arraybuffer", external_data, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);

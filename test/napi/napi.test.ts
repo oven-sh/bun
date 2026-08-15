@@ -386,6 +386,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
     });
+
+    it("aborts like Node when data is NULL but length is not 0", async () => {
+      await checkBothFail("test_external_buffer_null_data_nonzero_length", []);
+    });
   });
 
   describe("napi_create_external_arraybuffer", () => {
@@ -404,6 +408,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("status=10");
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
+    });
+
+    it("aborts like Node when external_data is NULL but byte_length is not 0", async () => {
+      await checkBothFail("test_external_arraybuffer_null_data_nonzero_length", []);
+    });
+
+    it("NULL data: the checks Node runs first still return a status, and length 0 is still accepted", async () => {
+      const result = await checkSameOutput("test_external_buffer_null_data_status_paths", []);
+      expect(result).toMatchInlineSnapshot(`
+        "napi_create_external_buffer(NULL, 64) with pending exception: status=10
+        napi_create_external_arraybuffer(NULL, 64) with pending exception: status=10
+        napi_create_external_buffer(NULL, 64) with result=NULL: status=1
+        napi_create_external_arraybuffer(NULL, 0): status=0 detached=1 data_is_input=1 byte_length=0
+        napi_create_external_arraybuffer(ptr, 0): status=0 detached=0 data_is_input=1 byte_length=0"
+      `);
     });
   });
 
@@ -1553,6 +1572,10 @@ async function checkBothFail(test: string, args: any[] | string, envArgs: Record
           join(__dirname, "napi-app/main.js"),
           test,
           typeof args == "string" ? args : JSON.stringify(args),
+          // A plain script argument to main.js and to node. Bun's debug crash
+          // handler looks for it anywhere in argv and skips its llvm-symbolizer
+          // pass (~5s per crash); this helper only looks at how the process died.
+          "--debug-crash-handler-use-trace-string",
         ],
         env,
         stdout: Bun.version_with_sha.includes("debug") ? "inherit" : "pipe",

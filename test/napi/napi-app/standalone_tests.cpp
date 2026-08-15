@@ -2794,6 +2794,89 @@ static napi_value test_external_buffer_with_pending_exception(
   return ok(env);
 }
 
+// A NULL data pointer with a non-zero length is a CHECK failure in Node
+// (node::Buffer::New), so both of these are expected to abort the process
+// (run via checkBothFail). Bun used to return napi_ok: the buffer variant
+// handed back an empty Buffer, and the arraybuffer variant an ArrayBuffer with
+// a NULL data pointer and byteLength 64, which crashed whatever read it later.
+static napi_value
+test_external_buffer_null_data_nonzero_length(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value buffer = nullptr;
+  napi_status status =
+      napi_create_external_buffer(env, 64, nullptr, nullptr, nullptr, &buffer);
+  printf("FAIL: napi_create_external_buffer(NULL, 64) returned status=%d\n",
+         (int)status);
+  return ok(env);
+}
+
+static napi_value test_external_arraybuffer_null_data_nonzero_length(
+    const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value arraybuffer = nullptr;
+  napi_status status = napi_create_external_arraybuffer(
+      env, nullptr, 64, nullptr, nullptr, &arraybuffer);
+  printf("FAIL: napi_create_external_arraybuffer(NULL, 64) returned "
+         "status=%d\n",
+         (int)status);
+  return ok(env);
+}
+
+// The NULL-data check must not preempt the argument validation that runs
+// before it in Node, and a NULL pointer is still fine when the length is 0.
+static napi_value
+test_external_buffer_null_data_status_paths(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value value = nullptr;
+  napi_value exc;
+  napi_status status;
+
+  NODE_API_CALL(env, napi_throw_error(env, nullptr, "stashed before create"));
+  status =
+      napi_create_external_buffer(env, 64, nullptr, nullptr, nullptr, &value);
+  napi_get_and_clear_last_exception(env, &exc);
+  printf("napi_create_external_buffer(NULL, 64) with pending exception: "
+         "status=%d\n",
+         (int)status);
+
+  NODE_API_CALL(env, napi_throw_error(env, nullptr, "stashed before create"));
+  status = napi_create_external_arraybuffer(env, nullptr, 64, nullptr, nullptr,
+                                            &value);
+  napi_get_and_clear_last_exception(env, &exc);
+  printf("napi_create_external_arraybuffer(NULL, 64) with pending exception: "
+         "status=%d\n",
+         (int)status);
+
+  status =
+      napi_create_external_buffer(env, 64, nullptr, nullptr, nullptr, nullptr);
+  printf("napi_create_external_buffer(NULL, 64) with result=NULL: status=%d\n",
+         (int)status);
+
+  static char dummy;
+  struct {
+    const char *label;
+    void *data;
+  } zero_length_cases[] = {{"NULL", nullptr}, {"ptr", &dummy}};
+  for (const auto &c : zero_length_cases) {
+    status = napi_create_external_arraybuffer(env, c.data, 0, nullptr, nullptr,
+                                              &value);
+    bool detached = false;
+    void *data = reinterpret_cast<void *>(0xDEADBEEF);
+    size_t byte_length = 99;
+    if (status == napi_ok) {
+      NODE_API_CALL(env, napi_is_detached_arraybuffer(env, value, &detached));
+      NODE_API_CALL(env,
+                    napi_get_arraybuffer_info(env, value, &data, &byte_length));
+    }
+    printf("napi_create_external_arraybuffer(%s, 0): status=%d detached=%d "
+           "data_is_input=%d byte_length=%zu\n",
+           c.label, (int)status, (int)detached, (int)(data == c.data),
+           byte_length);
+  }
+
+  return ok(env);
+}
+
 // With an exception pending (via napi_throw_error), every napi call that
 // Node.js gates with NAPI_PREAMBLE must return napi_pending_exception and
 // perform NO side effects. Before the fix, NAPI_PREAMBLE only consulted the
@@ -4435,6 +4518,11 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
                     test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
+  REGISTER_FUNCTION(env, exports,
+                    test_external_buffer_null_data_nonzero_length);
+  REGISTER_FUNCTION(env, exports,
+                    test_external_arraybuffer_null_data_nonzero_length);
+  REGISTER_FUNCTION(env, exports, test_external_buffer_null_data_status_paths);
   REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, make_ungated_calls_spinner);
   REGISTER_FUNCTION(env, exports, test_ungated_calls_with_engine_exception);

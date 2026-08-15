@@ -157,6 +157,13 @@ test("snapshot records the matchers that were checked", () => {
 
   // A received value that is itself a matcher still prints as that matcher.
   expect(expect.any(String)).toMatchSnapshot({});
+
+  // A shared object referenced again from inside an object the matchers did
+  // not walk keeps its real values there (as in Jest; the in-place mutation
+  // used to show the matcher at both places).
+  const user = { id: 7 };
+  expect({ current: user, log: [{ user }] }).toMatchSnapshot({ current: { id: expect.any(Number) } });
+  expect(user.id).toBe(7);
 });
 
 // The matcher is recorded on the object the getter returns, which the snapshot

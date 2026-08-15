@@ -218,6 +218,45 @@ From a workspace root, Bun lists every workspace's dependencies. From inside a w
 
 Requires both `bun.lock` and `node_modules`. Bun skips packages that are in the lockfile but missing from `node_modules` (e.g. after `bun install --production`) and prints a warning.
 
+## diff
+
+Show what changed between two versions of a package: a summary of the files and lines touched, the `package.json` changes worth a second look (new install scripts, dependencies, entry points, binaries), then a unified diff of every file. Each side can be a registry spec, a local folder, or a `.tgz`.
+
+```bash terminal icon="terminal"
+bun pm diff react                     # the version in bun.lock → latest
+bun pm diff react@18.2.0 19.0.0       # two published versions
+bun pm diff react@18.2.0..19.0.0      # same thing
+bun pm diff ./vendored-pkg pkg@2.1.0  # a folder against a published version
+bun pm diff                           # in a package folder: what is published → this folder
+```
+
+```txt
+is-number@6.0.0 → is-number@7.0.0
+4 files changed, 0 added, 0 removed  (+73 -44 lines)
+
+  ! engines changed: { "node": ">=0.10.0" } → { "node": ">=0.12.0" }
+
+diff --bun a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -9,10 +9,10 @@
+ module.exports = function(num) {
+   if (typeof num === 'number') {
+-    return num - num === 0;
++    return num - num === 0;
+   }
+...
+```
+
+| Flag                  | Description                                                              |
+| --------------------- | ------------------------------------------------------------------------ |
+| `--stat`              | One line per file with a change count and bar instead of the hunks       |
+| `--name-only`         | Only list the files that differ, marked `A`dded / `M`odified / `D`eleted |
+| `-U <n>`, `--unified` | Lines of context around each change (default 3)                          |
+| `--diff <spec>`       | npm-compatible way to name a side; may be given twice                    |
+
+With one name and no version, the left side is the version this project's `bun.lock` resolved and the right side is `latest`, so `bun pm diff <pkg>` answers "what would updating this pull in?". Registry, scope and auth settings come from `bunfig.toml` / `.npmrc` as for `bun install`; outside a project only registry specs and absolute or `./` paths are accepted.
+
 ## whoami
 
 Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:

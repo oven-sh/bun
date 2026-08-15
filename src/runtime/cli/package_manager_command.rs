@@ -15,9 +15,10 @@ use bun_install::package_manager_real::{
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_sys::{self, Dir, Fd, File};
+use bun_sys::{self, Dir, Fd, FdExt as _, File};
 
 use crate::cli::Command;
+use crate::cli::pm_diff_command as PmDiffCommand;
 use crate::cli::pm_licenses_command::{LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
@@ -188,6 +189,11 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
+  <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
+  <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
+  <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
+  <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks\n\
+  <d>└<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
   <d>├<r> <cyan>--json<r>                    output as JSON\n\
   <d>├<r> <cyan>--prod<r>                    omit devDependencies\n\
@@ -241,7 +247,42 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             dev_only: cli.dev_only,
             long: cli.long,
         };
-        let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
+        let diff_flags = PmDiffCommand::DiffFlags {
+            name_only: cli.diff_name_only,
+            stat: cli.diff_stat,
+            context: cli.diff_context.unwrap_or(3),
+        };
+        let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
+        let is_diff = args
+            .get(1)
+            .is_some_and(|a| strings::eql_comptime(a, b"diff"));
+        // `bun pm diff a b` needs registry config, not a project: outside one, run from a scratch folder.
+        let mut diff_original_cwd: Option<Vec<u8>> = None;
+        let mut init = PackageManager::init(&mut *ctx, cli, Subcommand::Pm);
+        if is_diff && matches!(&init, Err(e) if *e == bun_install::Error::MissingPackageJSON) {
+            let mut cwd_buf = PathBuffer::uninit();
+            if let Ok(len) = bun_sys::getcwd(&mut cwd_buf[..]) {
+                diff_original_cwd = Some(cwd_buf[..len].to_vec());
+                let mut scratch = Fs::RealFS::platform_temp_dir().to_vec();
+                scratch.extend_from_slice(b"/bun-pm-diff");
+                let _ = Fd::cwd().make_path_u8(&scratch);
+                if let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), &scratch) {
+                    let _ = bun_sys::File::create(dir, b"package.json", true)
+                        .and_then(|f| f.write_all(b"{}"));
+                    if bun_sys::fchdir(dir).is_ok() {
+                        // The resolver singleton captured the original cwd on the first attempt.
+                        let scratch: &'static [u8] = Vec::leak(scratch);
+                        Fs::FileSystem::instance().set_top_level_dir(scratch);
+                        init = PackageManager::init(
+                            &mut *ctx,
+                            CommandLineArguments::parse(Subcommand::Pm)?,
+                            Subcommand::Pm,
+                        );
+                    }
+                }
+            }
+        }
+        let (pm, cwd) = match init {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
@@ -745,6 +786,16 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"why") {
             let positionals: &[&[u8]] = pm.options.positionals;
             PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
+            Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"diff") {
+            let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
+            PmDiffCommand::exec(
+                pm,
+                &positionals,
+                &diff_args,
+                diff_flags,
+                diff_original_cwd.as_deref(),
+            )?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             let positionals: &[&[u8]] = pm.options.positionals;

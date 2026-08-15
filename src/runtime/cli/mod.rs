@@ -356,6 +356,8 @@ pub mod pack_command;
 pub(crate) mod patch_command;
 #[path = "patch_commit_command.rs"]
 pub(crate) mod patch_commit_command;
+#[path = "pm_diff_command.rs"]
+pub mod pm_diff_command;
 #[path = "pm_licenses_command.rs"]
 pub(crate) mod pm_licenses_command;
 #[path = "pm_pkg_command.rs"]

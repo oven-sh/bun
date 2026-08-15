@@ -1507,6 +1507,16 @@ pub struct FindResult<'a> {
     pub(crate) package: &'a PackageVersion,
 }
 
+impl FindResult<'_> {
+    /// The tarball URL the registry advertised for this version (empty when the manifest omitted it).
+    pub fn tarball_url(&self, manifest: &PackageManifest) -> Vec<u8> {
+        self.package
+            .tarball_url
+            .slice(&manifest.string_buf)
+            .to_vec()
+    }
+}
+
 impl PackageManifest {
     pub(crate) fn find_by_version(&self, version: Semver::Version) -> Option<FindResult<'_>> {
         let list = if !version.tag.has_pre() {

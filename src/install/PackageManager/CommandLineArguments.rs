@@ -196,6 +196,18 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
         clap::param!("--trusted"),
         clap::param!("--json                              Output in JSON format"),
         clap::param!(
+            "--diff <STR>...                        A package spec or path to compare (bun pm diff; may be given twice)"
+        ),
+        clap::param!(
+            "--name-only                            Only list the files that differ (bun pm diff)"
+        ),
+        clap::param!(
+            "--stat                                 Show a per-file change summary instead of hunks (bun pm diff)"
+        ),
+        clap::param!(
+            "-U, --unified <STR>                    Lines of context around each change (bun pm diff, default 3)"
+        ),
+        clap::param!(
             "-F, --filter <STR>...                  List only the matching workspaces' dependencies (bun pm licenses)"
         ),
         clap::param!(
@@ -550,6 +562,12 @@ pub struct CommandLineArguments {
     pub dev_only: bool,
     pub long: bool,
 
+    // `bun pm diff` options
+    pub diff_args: Vec<&'static [u8]>,
+    pub diff_name_only: bool,
+    pub diff_stat: bool,
+    pub diff_context: Option<usize>,
+
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
@@ -636,6 +654,10 @@ impl Default for CommandLineArguments {
 
             dev_only: false,
             long: false,
+            diff_args: Vec::new(),
+            diff_name_only: false,
+            diff_stat: false,
+            diff_context: None,
 
             audit_level: None,
             audit_ignore_list: &[],
@@ -1726,6 +1748,12 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
             cli.dev_only = args.flag(b"--dev");
             cli.long = args.flag(b"--long");
+            cli.diff_args = args.options(b"--diff").to_vec();
+            cli.diff_name_only = args.flag(b"--name-only");
+            cli.diff_stat = args.flag(b"--stat");
+            if let Some(n) = args.option(b"--unified") {
+                cli.diff_context = strings::parse_int::<usize>(n, 10).ok();
+            }
         }
 
         // `bun pm why` and `bun why` options

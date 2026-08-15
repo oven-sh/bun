@@ -179,6 +179,15 @@ fn is_stable_type(ty: &Type) -> bool {
     }
 }
 
+fn effect_report_mode(mode: ExhaustiveEffectDepsMode) -> &'static str {
+    match mode {
+        ExhaustiveEffectDepsMode::All => "all",
+        ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
+        ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
+        ExhaustiveEffectDepsMode::Off => unreachable!(),
+    }
+}
+
 fn is_effect_hook(ty: &Type) -> bool {
     matches!(ty, Type::Function { shape_id: Some(id), .. }
         if matches!(*id,
@@ -891,12 +900,8 @@ fn collect_dependencies(
                                         }),
                                     ) = (fn_deps, manual_deps)
                                     {
-                                        let effect_report_mode = match &cb.validate_effect {
-                                            ExhaustiveEffectDepsMode::All => "all",
-                                            ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
-                                            ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
-                                            ExhaustiveEffectDepsMode::Off => unreachable!(),
-                                        };
+                                        let effect_report_mode =
+                                            effect_report_mode(cb.validate_effect);
                                         // Convert manual deps to ManualMemoDependency format
                                         let manual_memo_deps: Vec<ManualMemoDependency> =
                                             manual_dep_list
@@ -1008,12 +1013,8 @@ fn collect_dependencies(
                                         }),
                                     ) = (fn_deps, manual_deps)
                                     {
-                                        let effect_report_mode = match &cb.validate_effect {
-                                            ExhaustiveEffectDepsMode::All => "all",
-                                            ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
-                                            ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
-                                            ExhaustiveEffectDepsMode::Off => unreachable!(),
-                                        };
+                                        let effect_report_mode =
+                                            effect_report_mode(cb.validate_effect);
                                         let manual_memo_deps: Vec<ManualMemoDependency> =
                                             manual_dep_list
                                                 .iter()

@@ -1110,7 +1110,6 @@ describe("decorated static field initializers", () => {
   function dec(_target: any, _key?: any) {}
 
   test("evaluate `this` as the class", () => {
-    const key = Symbol("key");
     class Base {
       static tag = "base-tag";
     }
@@ -1119,7 +1118,8 @@ describe("decorated static field initializers", () => {
       @dec static self = this;
       @dec static inheritedTag = this.tag;
       @dec static ownViaThis = this.own;
-      @dec static [key] = this;
+      @dec static ["literal key"] = this;
+      @dec static 123 = this;
       @dec static arrow = () => this;
       @dec static fn = function (this: unknown) {
         return this;
@@ -1131,16 +1131,72 @@ describe("decorated static field initializers", () => {
       self: A.self === A,
       inheritedTag: A.inheritedTag,
       ownViaThis: A.ownViaThis,
-      computedKey: A[key] === A,
+      literalKey: A["literal key"] === A,
+      numericKey: A[123] === A,
       arrow: A.arrow() === A,
       fn: A.fn.call(receiver) === receiver,
     }).toEqual({
       self: true,
       inheritedTag: "base-tag",
       ownViaThis: "own",
-      computedKey: true,
+      literalKey: true,
+      numericKey: true,
       arrow: true,
       fn: true,
+    });
+  });
+
+  test("run before the class decorator, against the class it decorates", () => {
+    const events: string[] = [];
+    let decorated: any;
+    function replace(target: any) {
+      events.push(`class:${target.name}`);
+      return class Replacement extends target {};
+    }
+    function member(target: any, key: string) {
+      decorated = target;
+      events.push(`member:${key}=${target[key] === target ? "class" : String(target[key])}`);
+    }
+
+    @replace
+    class A {
+      @member static self = this;
+      @member static n = events.push("init:n");
+    }
+
+    expect({
+      events,
+      binding: A.name,
+      decoratedIsOriginal: decorated === Object.getPrototypeOf(A),
+      selfIsOriginal: A.self === Object.getPrototypeOf(A),
+      n: A.n,
+    }).toEqual({
+      events: ["init:n", "member:self=class", "member:n=1", "class:A"],
+      binding: "Replacement",
+      decoratedIsOriginal: true,
+      selfIsOriginal: true,
+      n: 1,
+    });
+  });
+
+  test("keep a non-literal computed key in the enclosing scope", () => {
+    const decoratedKeys: string[] = [];
+    function record(_target: any, key: string) {
+      decoratedKeys.push(key);
+    }
+    function define(this: { name: string }, _first: string) {
+      class A {
+        @record static [this.name] = "from this";
+        @record static [arguments[0]] = "from arguments";
+      }
+      return A;
+    }
+
+    const A = define.call({ name: "thisKey" }, "argumentsKey");
+    expect({ decoratedKeys, thisKey: A.thisKey, argumentsKey: A.argumentsKey }).toEqual({
+      decoratedKeys: ["thisKey", "argumentsKey"],
+      thisKey: "from this",
+      argumentsKey: "from arguments",
     });
   });
 
@@ -1201,7 +1257,7 @@ describe("decorated static field initializers", () => {
           @dec static arrow = (() => super.receiver())() === this;
           @dec static computedMember = super["receiver"]() === this;
           @dec static assigned = (super.x = 42);
-          @dec static ["computed" + "Key"] = super.tagged;
+          @dec static ["computedKey"] = super.tagged;
         }
         console.log(
           JSON.stringify({
@@ -1255,31 +1311,46 @@ describe("decorated static field initializers", () => {
       class A extends Base {
         @dec static a = super.f();
         static b = 1;
-        @dec static [k] = this.b;
-        @dec static c: number;
-        @dec d = this.e;
+        @dec static ["c"] = this.b;
+        @dec static [k] = 2;
+        @dec static d: number;
+        @dec e = this.f;
       }
     `);
 
-    const classStart = out.indexOf("class A");
-    const classEnd = out.indexOf("\n}\n", classStart) + "\n}\n".length;
-    expect(out.slice(classStart, classEnd)).toMatchInlineSnapshot(`
+    // Everything after the import of the runtime helper.
+    const body = out.slice(out.indexOf("class A")).replace(/__legacyDecorateClassTS_\w+/g, "__legacyDecorateClassTS");
+    expect(body).toMatchInlineSnapshot(`
       "class A extends Base {
         constructor() {
           super(...arguments);
-          this.d = this.e;
+          this.e = this.f;
         }
         static {
           this.a = super.f();
         }
         static b = 1;
         static {
-          this[k] = this.b;
+          this["c"] = this.b;
         }
       }
+      A[k] = 2;
+      __legacyDecorateClassTS([
+        dec
+      ], A.prototype, "e", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, "a", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, "c", undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, k, undefined);
+      __legacyDecorateClassTS([
+        dec
+      ], A, "d", undefined);
       "
     `);
-    // Only the decorator calls are left after the class statement.
-    expect(out.slice(classEnd)).toStartWith("__legacyDecorateClassTS");
   });
 });

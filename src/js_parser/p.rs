@@ -6499,6 +6499,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut static_decorators = BumpVec::<Stmt>::new_in(self.arena);
                 let mut instance_decorators = BumpVec::<Stmt>::new_in(self.arena);
                 let mut instance_members = BumpVec::<Stmt>::new_in(self.arena);
+                let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
 
                 for prop in s_class.class.properties.slice_mut().iter_mut() {
@@ -6642,15 +6643,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         };
 
                         let key = prop.key.expect("infallible: prop has key");
-                        let this = self.new_expr(E::This {}, key.loc);
-                        let target = match &key.data {
+                        let is_static = prop.flags.contains(Flags::Property::IsStatic);
+                        // A non-literal computed key must still evaluate in the enclosing scope.
+                        let use_static_block = is_static
+                            && (!prop.flags.contains(Flags::Property::IsComputed)
+                                || key.unwrap_inlined().is_primitive_literal());
+
+                        let mut target: Expr;
+                        if is_static && !use_static_block {
+                            let class_name = s_class.class.class_name.unwrap();
+                            let class_ref = class_name.ref_;
+                            self.record_usage(class_ref);
+                            target = self.new_expr(E::Identifier::init(class_ref), class_name.loc);
+                        } else {
+                            target = self.new_expr(E::This {}, key.loc);
+                        }
+
+                        target = match &key.data {
                             js_ast::ExprData::EString(s)
                                 if s.is_utf8()
                                     && !prop.flags.contains(Flags::Property::IsComputed) =>
                             {
                                 self.new_expr(
                                     E::Dot {
-                                        target: this,
+                                        target,
                                         name: s.data,
                                         name_loc: key.loc,
                                         ..Default::default()
@@ -6660,7 +6676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                             _ => self.new_expr(
                                 E::Index {
-                                    target: this,
+                                    target,
                                     index: key,
                                     optional_chain: None,
                                 },
@@ -6668,10 +6684,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ),
                         };
 
-                        // Static block: keeps the initializer's `this`/`super` bound to the class.
-                        if prop.flags.contains(Flags::Property::IsStatic) {
+                        if use_static_block {
                             let assign = Expr::assign(target, initializer);
                             class_properties.push(self.make_static_block(assign, key.loc));
+                        } else if is_static {
+                            static_members.push(Stmt::assign(target, initializer));
                         } else {
                             instance_members.push(Stmt::assign(target, initializer));
                         }
@@ -6795,12 +6812,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let mut stmts_count: usize =
-                    1 + instance_decorators.len() + static_decorators.len();
+                    1 + static_members.len() + instance_decorators.len() + static_decorators.len();
                 if s_class.class.ts_decorators.len_u32() > 0 {
                     stmts_count += 1;
                 }
                 let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.arena);
                 stmts.push(stmt);
+                stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
                 stmts.extend_from_slice(&static_decorators);
                 if s_class.class.ts_decorators.len_u32() > 0 {

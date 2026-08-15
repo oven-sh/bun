@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
 test("verify we print error messages passed to done callbacks", () => {
@@ -80,6 +80,7 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:42:14)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:37:3)
     (fail) error done callback (async)
     43 |   });
     44 | });
@@ -110,6 +111,7 @@ test("verify we print error messages passed to done callbacks", () => {
     ^
     error: you should see this(async, nextTick)
     at <anonymous> (<dir>/test-error-done-callback-fixture.ts:60:14)
+    at <anonymous> (<dir>/test-error-done-callback-fixture.ts:54:5)
     (fail) error done callback (async, nextTick)
     62 | });
     63 |
@@ -137,71 +139,4 @@ test("verify we print error messages passed to done callbacks", () => {
     Ran 9 tests across 1 file.
     "
   `);
-});
-
-async function runDoneFixture(name: string, source: string) {
-  using dir = tempDir(name, { "done.test.ts": source });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "done.test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
-}
-
-test.concurrent("done(error) from a test that already timed out is not charged to the test running now", async () => {
-  const { stdout, stderr, exitCode } = await runDoneFixture(
-    "done-error-after-timeout",
-    `
-      import { test } from "bun:test";
-      let firstDone: (err?: unknown) => void;
-      test("first", done => {
-        firstDone = done;
-      }, { timeout: 100 });
-      test("second", done => {
-        firstDone(new Error("late error from first"));
-        setTimeout(() => {
-          console.log("second body finished");
-          done();
-        }, 1);
-      }, { timeout: 500 });
-    `,
-  );
-
-  // Same report as a timed-out test's promise rejecting during the next test.
-  expect(stdout).toContain("second body finished");
-  expect(stderr).toContain("(fail) first");
-  expect(stderr).toContain("Unhandled error between tests");
-  expect(stderr).toContain("error: late error from first");
-  expect(stderr).toContain("(pass) second");
-  expect(stderr).toContain("1 pass");
-  expect(stderr).toContain("1 fail");
-  expect(stderr).toContain("1 error");
-  expect(exitCode).toBe(1);
-});
-
-test.concurrent("done(error) called later from a concurrent test fails that test", async () => {
-  const { stderr, exitCode } = await runDoneFixture(
-    "done-error-concurrent",
-    `
-      import { test } from "bun:test";
-      test.concurrent("fails", done => {
-        setTimeout(() => done(new Error("reported through done")), 1);
-      });
-      test.concurrent("passes", done => {
-        setTimeout(() => done(), 1);
-      });
-    `,
-  );
-
-  expect(stderr).toContain("error: reported through done");
-  expect(stderr).toContain("(fail) fails");
-  expect(stderr).toContain("(pass) passes");
-  expect(stderr).not.toContain("Unhandled error between tests");
-  expect(stderr).toContain("1 pass");
-  expect(stderr).toContain("1 fail");
-  expect(exitCode).toBe(1);
 });

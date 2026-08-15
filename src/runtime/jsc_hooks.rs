@@ -4587,16 +4587,15 @@ unsafe fn transpile_file(
                 }
             }
 
-            // SAFETY: per fn contract — `jsc_vm` / `specifier_ptr` / `referrer`
-            // are valid for the call. `lr.path` borrows `_specifier`, which the
-            // store immediately heap-duplicates inside `transpile()`.
+            // SAFETY: per fn contract — `jsc_vm` / `specifier_ptr` are valid
+            // for the call. `lr.path` borrows `_specifier`, which the store
+            // immediately heap-duplicates inside `transpile()`.
             return unsafe {
                 (*jsc_vm).transpiler_store.transpile(
                     jsc_vm,
                     global_ref,
                     (*specifier_ptr).dupe_ref(),
                     &lr.path,
-                    (*referrer).dupe_ref(),
                     concurrent_loader,
                     lr.package_json,
                 )

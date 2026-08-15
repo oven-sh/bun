@@ -190,16 +190,12 @@ impl ReadableStream {
         self.value
     }
 
-    pub fn reload_tag(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        if let Some(stream) = ReadableStream::from_js(self.value, global_this)? {
-            *self = stream;
-        } else {
-            *self = ReadableStream {
-                ptr: Source::Invalid,
-                value: JSValue::ZERO,
-            };
-        }
-        Ok(())
+    /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_held`.
+    pub fn reload_tag(&mut self) {
+        *self = ReadableStream::from_held(self.value).unwrap_or(ReadableStream {
+            ptr: Source::Invalid,
+            value: JSValue::ZERO,
+        });
     }
 
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
@@ -207,8 +203,7 @@ impl ReadableStream {
             return None;
         }
 
-        // TODO: properly propagate exception upwards
-        let _ = self.reload_tag(global_this);
+        self.reload_tag();
 
         match self.ptr {
             Source::Blob(blobby) => {

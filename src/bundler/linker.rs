@@ -524,13 +524,9 @@ impl Linker {
         Ok(())
     }
 
-    /// `import_record` is a `node:` specifier that is not in the builtin table.
-    /// Returns whether an error was logged.
-    ///
-    /// The message is the one the runtime resolve hook produces for the same
-    /// specifier (`ResolveMessage::fmt`, Node's `ERR_UNKNOWN_BUILTIN_MODULE`
-    /// text); files transpiled off the JS thread skip this linker and get
-    /// theirs from the hook, so the two have to agree.
+    /// `import_record` is a `node:` specifier that is not a builtin. Same text as
+    /// `ResolveMessage::fmt`: files transpiled off the JS thread skip this linker
+    /// and get their error from the runtime resolve hook instead.
     ///
     /// Takes the disjoint pieces explicitly rather than `&mut self` plus
     /// overlapping sub-borrows of `result`.

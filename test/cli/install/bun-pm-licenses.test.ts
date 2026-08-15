@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isLinux, libcFamily, normalizeBunSnapshot, tempDir } from "harness";
 import { isAbsolute, join, sep } from "path";
 import { pathToFileURL } from "url";
 
@@ -690,7 +690,7 @@ describe("bun pm licenses", () => {
     expect(names(await licensesJson(dir))).toStrictEqual(["a-dep", "no-deps", "one-dep"]);
   });
 
-  test.concurrent("os/cpu-skipped optional dependencies are omitted, their parent is listed", async () => {
+  test.concurrent("os/cpu/libc-skipped optional dependencies are omitted, their parent is listed", async () => {
     const dir = await setup("hoisted", { "package.json": pkg({ dependencies: { "optional-native": "1.0.0" } }) });
     const installedNatives = [
       "native-bar-x64",
@@ -701,7 +701,11 @@ describe("bun pm licenses", () => {
     ]
       .filter(name => existsSync(join(dir, "node_modules", name, "package.json")))
       .map(name => u(name, "1.0.0"));
-    expect(installedNatives.map(entry => entry.name)).not.toContain("native-foo-x64");
+    // native-foo-* and native-bar-* declare operating systems that do not exist. Of the two libc
+    // variants, Linux installs the one this build of bun is for; other systems do not filter by libc.
+    expect(installedNatives.map(entry => entry.name)).toStrictEqual(
+      isLinux ? [`native-libc-${libcFamily}`] : ["native-libc-glibc", "native-libc-musl"],
+    );
 
     expect(await licensesJson(dir)).toStrictEqual({
       Unknown: [...installedNatives, u("optional-native", "1.0.0")],

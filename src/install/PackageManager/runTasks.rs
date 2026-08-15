@@ -27,7 +27,6 @@ use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
-use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::Package;
 use bun_install::package_manager_task as Task;
@@ -517,6 +516,46 @@ fn run_tasks_erased(
                     }
                 }
 
+                let request_failed = task
+                    .response
+                    .metadata
+                    .as_ref()
+                    .is_none_or(|metadata| metadata.response.status_code > 399);
+                if request_failed
+                    && is_extended_manifest
+                    && manager.fall_back_to_abbreviated_manifest(task.task_id)
+                {
+                    let reason = match task.response.metadata.as_ref() {
+                        Some(metadata) => format!("HTTP {}", metadata.response.status_code),
+                        None => task
+                            .response
+                            .fail
+                            .map(crate::Error::from)
+                            .unwrap_or(crate::Error::HTTPError)
+                            .name()
+                            .to_string(),
+                    };
+                    bun_ast::add_warning_pretty!(
+                        manager.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "{} downloading the full package metadata for <b>{}<r>, using the abbreviated metadata: its <b>libc<r> field will not be checked",
+                        reason,
+                        bstr::BStr::new(name),
+                    );
+
+                    if !cb.manifests_only {
+                        process_manifest_task_queue(
+                            cb,
+                            manager,
+                            task.task_id,
+                            extract_ctx,
+                            install_peer,
+                        )?;
+                    }
+                    continue;
+                }
+
                 let Some(metadata) = task.response.metadata.as_ref() else {
                     // Handle non-retry-able errors.
                     let err = task
@@ -651,15 +690,11 @@ fn run_tasks_erased(
 
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
-                        // reshaped for borrowck —
-                        // `bun_collections::HashMap` lacks `get_or_put` for
-                        // non-`Default` values, so insert by-value (overwriting
-                        // any prior entry) and reborrow.
+                        // Insert by-value and reborrow below; `insert` may keep
+                        // an extended manifest that arrived in the meantime, in
+                        // which case that is the one written back to disk.
                         let name_hash = manifest.pkg.name.hash;
-                        manager
-                            .manifests
-                            .hash_map
-                            .insert(name_hash, ManifestEntry::Manifest(manifest));
+                        manager.manifests.insert(name_hash, manifest)?;
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
                             // reshaped for borrowck — compute the
@@ -688,17 +723,10 @@ fn run_tasks_erased(
                             continue;
                         }
 
-                        let dependency_list_entry = manager
-                            .task_queue
-                            .get_mut(&task.task_id)
-                            .expect("infallible: task queued");
-
-                        let dependency_list = core::mem::take(dependency_list_entry);
-
-                        process_dependency_list_for_ctx(
+                        process_manifest_task_queue(
                             cb,
                             manager,
-                            dependency_list,
+                            task.task_id,
                             extract_ctx,
                             install_peer,
                         )?;
@@ -1118,19 +1146,7 @@ fn run_tasks_erased(
                     continue;
                 }
 
-                let dependency_list_entry = manager
-                    .task_queue
-                    .get_mut(&task.id)
-                    .expect("infallible: task queued");
-                let dependency_list = core::mem::take(dependency_list_entry);
-
-                process_dependency_list_for_ctx(
-                    cb,
-                    manager,
-                    dependency_list,
-                    extract_ctx,
-                    install_peer,
-                )?;
+                process_manifest_task_queue(cb, manager, task.id, extract_ctx, install_peer)?;
 
                 if let Some(name) = progress_name {
                     manager.set_node_name::<true>(
@@ -1859,6 +1875,70 @@ pub fn has_created_network_task(
     gpe.found_existing
 }
 
+/// `has_created_network_task` for manifest requests. A request for the
+/// abbreviated document does not cover a dependency that needs the extended
+/// one (see `PackageManager::needs_extended_manifest`), so in that case the
+/// caller gets to issue a second request under the same task id; both
+/// responses drain the same `task_queue` entry and `PackageManifestMap::insert`
+/// keeps the extended one.
+pub fn has_created_manifest_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    is_required: bool,
+    needs_extended_manifest: bool,
+) -> bool {
+    let found_existing = has_created_network_task(this, task_id, is_required);
+    let entry = this
+        .network_dedupe_map
+        .get_mut(&task_id)
+        .expect("inserted by has_created_network_task");
+    if !found_existing {
+        entry.is_extended_manifest = needs_extended_manifest;
+        entry.has_abbreviated_manifest_request = !needs_extended_manifest;
+        return false;
+    }
+    if needs_extended_manifest && !entry.is_extended_manifest {
+        entry.is_extended_manifest = true;
+        return false;
+    }
+    true
+}
+
+/// `Options::needs_extended_manifest`, unless the extended request for this
+/// package has failed and the abbreviated one stands in for it
+/// (`fall_back_to_abbreviated_manifest`). Every lookup on the resolve path goes
+/// through this so that dependencies enqueued after the failure resolve from the
+/// abbreviated document too instead of waiting for a response that is not coming.
+pub fn needs_extended_manifest(
+    this: &PackageManager,
+    dependency: Behavior,
+    task_id: Task::Id,
+) -> bool {
+    this.options.needs_extended_manifest(dependency)
+        && !this
+            .network_dedupe_map
+            .get(&task_id)
+            .is_some_and(|entry| entry.extended_manifest_failed)
+}
+
+/// Called when the request for the extended document of a manifest has failed
+/// for good. Returns whether the abbreviated document was requested as well (the
+/// package is also a regular dependency of something), in which case the failure
+/// is recorded so everything resolves from the abbreviated document and the
+/// caller treats the failure as a warning: the only thing lost is the `libc`
+/// filtering of this one package, which is what every install did before libc
+/// was read. With a single, extended request there is nothing to fall back to
+/// and the failure is handled like any other manifest failure.
+pub fn fall_back_to_abbreviated_manifest(this: &mut PackageManager, task_id: Task::Id) -> bool {
+    match this.network_dedupe_map.get_mut(&task_id) {
+        Some(entry) if entry.has_abbreviated_manifest_request => {
+            entry.extended_manifest_failed = true;
+            true
+        }
+        _ => false,
+    }
+}
+
 pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> bool {
     match this.network_dedupe_map.get(&task_id) {
         Some(v) => v.is_required,
@@ -2070,6 +2150,23 @@ impl PackageManager {
         has_created_network_task(self, task_id, is_required)
     }
     #[inline]
+    pub(crate) fn has_created_manifest_task(
+        &mut self,
+        task_id: Task::Id,
+        is_required: bool,
+        needs_extended_manifest: bool,
+    ) -> bool {
+        has_created_manifest_task(self, task_id, is_required, needs_extended_manifest)
+    }
+    #[inline]
+    pub(crate) fn needs_extended_manifest(&self, dependency: Behavior, task_id: Task::Id) -> bool {
+        needs_extended_manifest(self, dependency, task_id)
+    }
+    #[inline]
+    pub(crate) fn fall_back_to_abbreviated_manifest(&mut self, task_id: Task::Id) -> bool {
+        fall_back_to_abbreviated_manifest(self, task_id)
+    }
+    #[inline]
     pub(crate) fn is_network_task_required(&self, task_id: Task::Id) -> bool {
         is_network_task_required(self, task_id)
     }
@@ -2089,6 +2186,24 @@ impl PackageManager {
     pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
         alloc_github_url(self, repository)
     }
+}
+
+/// Resolves the dependencies waiting for the manifest with this task id. A
+/// dependency that still cannot be resolved (it needs the extended document and
+/// the response was the abbreviated one) queues itself up again.
+fn process_manifest_task_queue(
+    cb: &ErasedCallbacks,
+    manager: &mut PackageManager,
+    task_id: Task::Id,
+    extract_ctx: *mut (),
+    install_peer: bool,
+) -> crate::Result<()> {
+    let dependency_list_entry = manager
+        .task_queue
+        .get_mut(&task_id)
+        .expect("infallible: task queued");
+    let dependency_list = core::mem::take(dependency_list_entry);
+    process_dependency_list_for_ctx(cb, manager, dependency_list, extract_ctx, install_peer)
 }
 
 /// Adapter wrapping the existing `PackageManager::process_dependency_list` so

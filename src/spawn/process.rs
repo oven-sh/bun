@@ -2854,11 +2854,6 @@ mod spawn_process_body {
 
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters on drop.
-        ///
-        /// Must not touch SIGSEGV/SIGBUS/SIGILL/SIGFPE: JSC layers its VMTraps
-        /// handler over ours at init and chains real faults back to us, so
-        /// reinstalling the crash handler here breaks JIT interruption. See
-        /// test/js/bun/spawn/sync-spawn-preserves-jsc-signal-handlers.test.ts.
         #[cfg(unix)]
         struct SignalForwarding;
         #[cfg(unix)]

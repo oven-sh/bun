@@ -221,9 +221,7 @@ pub(crate) mod js_bindings {
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
     }
 
-    /// Current `sa_sigaction` of each CPU-fault signal, as hex strings (a u64
-    /// address does not round-trip through a JS number). Test-only; see
-    /// test/js/bun/spawn/sync-spawn-preserves-jsc-signal-handlers.test.ts.
+    /// Current `sa_sigaction` of each CPU-fault signal, as hex strings.
     #[bun_jsc::host_fn]
     fn js_get_fault_signal_handlers(
         global: &JSGlobalObject,

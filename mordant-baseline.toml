@@ -12,13 +12,11 @@
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_css]
-"arg_named_like_other_param:src/css/rules/mod.rs" = 1
 "bare_bool_args:src/css/selectors/builder.rs" = 1
 "tuple_wants_struct:src/css/css_parser.rs" = 1
 "tuple_wants_struct:src/css/values/color.rs" = 5
 
 [bun_install]
-"always_unwrapped_option:src/install/PackageInstall.rs" = 1
 "arg_named_like_other_param:src/install/PackageManager/PackageJSONEditor.rs" = 3
 "arg_named_like_other_param:src/install/resolution.rs" = 1
 "bare_bool_args:src/install/isolated_install.rs" = 1
@@ -38,7 +36,6 @@
 [bun_jsc]
 "bare_bool_args:src/jsc/ZigStackFrame.rs" = 1
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
-"narrowed_two_ways:src/jsc/RuntimeTranspilerCache.rs" = 1
 "reimplemented_helper:src/jsc/webcore_types.rs" = 1
 "same_match_twice:src/jsc/VirtualMachine.rs" = 1
 
@@ -69,26 +66,22 @@
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/cli/filter_run.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
-"narrowed_two_ways:src/runtime/node/node_crypto_binding.rs" = 1
 "parallel_vecs:src/runtime/api/html_rewriter.rs" = 1
 "parallel_vecs:src/runtime/bake/dev_server/incremental_graph.rs" = 1
 "reimplemented_helper:src/runtime/api/bun/Terminal.rs" = 1
-"reimplemented_helper:src/runtime/ffi/abi_type.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
-"same_match_twice:src/runtime/api/YAMLObject.rs" = 1
 "same_match_twice:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "same_match_twice:src/runtime/bake/dev_server/mod.rs" = 1
+"same_match_twice:src/runtime/api/csrf_jsc.rs" = 1
 "same_match_twice:src/runtime/bake/production.rs" = 2
 "same_match_twice:src/runtime/cli/pack_command.rs" = 1
 "same_match_twice:src/runtime/cli/publish_command.rs" = 1
 "same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2
-"same_match_twice:src/runtime/ipc.rs" = 2
 "same_match_twice:src/runtime/server/RequestContext.rs" = 4
 "same_match_twice:src/runtime/server/server_body.rs" = 1
 "same_match_twice:src/runtime/shell/builtin/cat.rs" = 1
 "same_match_twice:src/runtime/webcore/Blob.rs" = 2
 "same_match_twice:src/runtime/webcore/Body.rs" = 2
-"tuple_wants_struct:src/runtime/server/ServerWebSocket.rs" = 1
 "tuple_wants_struct:src/runtime/shell/builtin/which.rs" = 1
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
@@ -101,7 +94,6 @@
 
 [bun_sql_jsc]
 "bare_bool_args:src/sql_jsc/shared/datetime_text.rs" = 1
-"same_match_twice:src/sql_jsc/mysql/protocol/ResultSet.rs" = 1
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4

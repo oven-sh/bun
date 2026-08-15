@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "MimallocWTFMalloc.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
@@ -60,6 +61,12 @@ public:
         if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
             res->result.value.needsDeref = false;
             res->result.value.source_code.impl.wtf->deref();
+        }
+        // Owned sidecar bytecode no consumer adopted (SourceProvider::create clears the flag when it adopts).
+        if (res->success && res->result.value.bytecode_cache_is_owned && res->result.value.bytecode_cache != nullptr) {
+            res->result.value.bytecode_cache_is_owned = false;
+            Bun::defaultAllocatorFree(res->result.value.bytecode_cache);
+            res->result.value.bytecode_cache = nullptr;
         }
     }
 

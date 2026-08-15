@@ -234,7 +234,7 @@ pub(crate) mod js_bindings {
     /// something in that scope reinstalled a fault handler with `oldact=NULL`
     /// and VMTraps will route its next HLT to the wrong place.
     #[bun_jsc::host_fn]
-    pub fn js_get_fault_signal_handlers(
+    fn js_get_fault_signal_handlers(
         global: &JSGlobalObject,
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {

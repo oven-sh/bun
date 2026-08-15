@@ -5922,19 +5922,42 @@ describe("synchronous I/O string flags", () => {
 describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", () => {
   it("does not balloon the read buffer", async () => {
     using dir = tempDir("fs-readfile-fifo", {});
+    const fifo = join(String(dir), "thefifo");
+    mkfifo(fifo);
+
     await using proc = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), String(dir)],
+      cmd: [bunExe(), join(import.meta.dir, "fs-readfile-fifo-fixture.js"), fifo],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
-    // Pre-fix this never returns (RawVec doubling balloons RSS to multiple GB);
-    // the per-test timeout would fire. Fixed: completes promptly with the full
-    // 400 KB of content intact.
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // readFileSync reads 256 KB before it calls fstat; only the bytes after that
+    // go through the grow path under test, and one read() from a pipe returns at
+    // most one pipe buffer, which is 64 KB on Linux and smaller on macOS. 1 MB
+    // past the pre-stat buffer is therefore at least 16 grow steps however the
+    // kernel chunks the data, and before the fix every step doubled the buffer.
+    const SIZE = 256 * 1024 + 1024 * 1024;
+
+    // Fed from this process, on the fs thread pool, rather than by a second bun
+    // process: on a debug build each extra bun startup costs most of a second
+    // of this test's budget. writeFile's open() parks on the pool until the
+    // fixture opens the read end, and its close() is the fixture's EOF.
+    const writer = promises.writeFile(fifo, Buffer.alloc(SIZE, "a")).catch(err => err);
+
+    // Pre-fix the fixture either never returns (RawVec doubling balloons RSS to
+    // multiple GB) or dies with ENOMEM, which also fails the writer with EPIPE;
+    // the fixture's output is asserted first so that is what a failure reports.
+    const [stdout, stderr, exitCode, writeError] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+      writer,
+    ]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("len=409600 allA=true");
+    expect(stdout).toBe(`len=${SIZE} allA=true`);
     expect(exitCode).toBe(0);
+    expect(writeError).toBeUndefined();
   });
 });
 

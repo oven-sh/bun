@@ -514,8 +514,12 @@ impl File {
                 }
                 Encoding::Utf16 => {
                     let bytes = self.contents.as_bytes();
-                    debug_assert!(bytes.len() % 2 == 0);
-                    debug_assert!(bytes.as_ptr().addr() % 2 == 0);
+                    debug_assert!(bytes.len().is_multiple_of(2));
+                    debug_assert!(bytes.as_ptr().addr().is_multiple_of(2));
+                    #[expect(
+                        clippy::cast_ptr_alignment,
+                        reason = "2-byte alignment is externally guaranteed; see the SAFETY comment and the debug_asserts above"
+                    )]
                     // SAFETY: `to_bytes` serializes `Utf16` contents as u16
                     // code units at a 2-byte-aligned offset, and the section
                     // base is even on every platform (the bytecode subrange in

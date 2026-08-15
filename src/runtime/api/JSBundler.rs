@@ -1105,8 +1105,7 @@ pub mod js_bundler {
                     },
                 )?;
 
-                // `loader_iter.len` counts property slots, some of which `next()` skips
-                // (empty names, skipped getters), so it is only a capacity hint.
+                // `len` counts slots that `next()` may skip, so it is only a capacity hint.
                 let mut loader_names: Vec<Box<[u8]>> = Vec::new();
                 // errdefer: Vec<Box<[u8]>> drops automatically
                 let mut loader_values: Vec<api::Loader> = Vec::new();

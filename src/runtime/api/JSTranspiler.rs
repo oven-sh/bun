@@ -188,8 +188,7 @@ impl Config {
                     JSPropertyIterator::init(global, define_obj_ref, PROP_ITER_OPTS)?;
                 // `defer define_iter.deinit()` → Drop
 
-                // `define_iter.len` counts property slots, some of which `next()` skips
-                // (empty names, skipped getters), so it is only a capacity hint.
+                // `len` counts slots that `next()` may skip, so it is only a capacity hint.
                 let mut names: Vec<Box<[u8]>> = Vec::new();
                 let mut values: Vec<Box<[u8]>> = Vec::new();
                 names.reserve_exact(define_iter.len);

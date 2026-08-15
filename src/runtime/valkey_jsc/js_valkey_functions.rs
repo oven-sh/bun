@@ -355,12 +355,11 @@ macro_rules! cmd_key_value_value2 {
     };
 }
 
-/// What a `cmd_strings_varargs!` command does with an explicit `undefined` argument.
+/// How `cmd_strings_varargs!` treats an explicit `undefined` argument.
 enum UndefinedArg {
-    /// Dropped, so `flushdb(undefined)` sends the same thing as `flushdb()`. `null` still throws.
+    /// `flushdb(undefined)` sends the same thing as `flushdb()`.
     Omitted,
-    /// Rejected like any other non-string. PSUBSCRIBE/PUNSUBSCRIBE use this because dropping
-    /// the pattern would turn `punsubscribe(pattern)` into a PUNSUBSCRIBE of every pattern.
+    /// Throws; a bare PUNSUBSCRIBE would drop every pattern.
     Rejected,
 }
 

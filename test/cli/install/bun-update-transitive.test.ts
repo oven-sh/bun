@@ -976,6 +976,37 @@ test.concurrent("only the first moved direct row's landing carries an instance's
   expect(check.exitCode).toBe(0);
 });
 
+// pkg1's `1.0.0 || 2.0.0` row binds to the workspace member leaf@2.0.0, never the npm leaf@1.0.0 it
+// name-matches, so it must not hold parent-b's `~1.0.0` want from vacating that instance to 1.0.5.
+test.concurrent("a row a workspace member captures does not hold its package's npm instances", async () => {
+  const manifests: Manifests = {
+    "parent-b": { "1.0.0": { dependencies: { leaf: "~1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.0.5": {} },
+  };
+  using server = await serveRegistry(manifests);
+  const revealed = manifests.leaf["1.0.5"];
+  delete manifests.leaf["1.0.5"];
+  using tmp = tempDir("update-workspace-capture-", {
+    "package.json": stringify({
+      name: "root",
+      workspaces: ["packages/*"],
+      dependencies: { "parent-b": "1.0.0" },
+    }),
+    "packages/leaf/package.json": stringify({ name: "leaf", version: "2.0.0" }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "1.0.0 || 2.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "workspace:packages/leaf"]);
+  manifests.leaf["1.0.5"] = revealed;
+
+  const { stderr, exitCode } = await run(dir, "update", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.5", "workspace:packages/leaf"]);
+  expect(exitCode).toBe(0);
+});
+
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
 test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
   const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });

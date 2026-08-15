@@ -7,7 +7,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{LoadResult, LoadStep, Lockfile, Package, PackageIndexEntry};
+use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
@@ -614,15 +614,6 @@ fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
     )
 }
 
-fn load_step_verb(step: LoadStep) -> &'static str {
-    match step {
-        LoadStep::OpenFile => "open",
-        LoadStep::ReadFile => "read",
-        LoadStep::ParseFile => "parse",
-        LoadStep::Migrating => "migrate",
-    }
-}
-
 pub fn dedupe_before_install(
     manager: &mut PackageManager,
     load_result: &LoadResult<'_>,
@@ -644,7 +635,7 @@ pub fn dedupe_before_install(
             if !quiet {
                 Output::err_generic(
                     "failed to {s} lockfile: {s}",
-                    (load_step_verb(cause.step), cause.value.name()),
+                    (cause.step.verb(), cause.value.name()),
                 );
                 print_log_errors(manager.log_mut());
             }

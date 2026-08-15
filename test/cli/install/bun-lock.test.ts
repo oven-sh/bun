@@ -9,6 +9,7 @@ import {
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
+  tempDir,
   toBeValidBin,
   VerdaccioRegistry,
 } from "harness";
@@ -523,6 +524,123 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
   );
 });
 
+describe("writes trustedDependencies and patchedDependencies in the order earlier versions wrote them", () => {
+  // Neither section is sorted: each is written in the iteration order of the
+  // map that collects it, so that order is part of the format. The expected
+  // blocks below are what bun 1.3.14 writes for these package.json files.
+  // Writing a different order would reorder both sections in every existing
+  // bun.lock on the next `bun add`/`bun remove`, and the older version would
+  // flip them back. The second shape uses a larger trusted map (13 entries
+  // instead of 7) and fills the patched map up to its growth threshold (6 of
+  // 8 slots), so a change to how the maps size themselves shows up here too.
+  const shapes = [
+    {
+      trusted: ["esbuild", "sharp", "@prisma/client", "prisma", "bcrypt", "core-js", "@prisma/engines"],
+      patched: ["esbuild", "sharp", "prisma", "bcrypt", "core-js"],
+      expected: `  "trustedDependencies": [
+    "bcrypt",
+    "esbuild",
+    "sharp",
+    "@prisma/engines",
+    "@prisma/client",
+    "core-js",
+    "prisma",
+  ],
+  "patchedDependencies": {
+    "prisma@1.0.0": "patches/prisma.patch",
+    "bcrypt@1.0.0": "patches/bcrypt.patch",
+    "core-js@1.0.0": "patches/core-js.patch",
+    "esbuild@1.0.0": "patches/esbuild.patch",
+    "sharp@1.0.0": "patches/sharp.patch",
+  },
+`,
+    },
+    {
+      trusted: [
+        "esbuild",
+        "sharp",
+        "@prisma/client",
+        "prisma",
+        "bcrypt",
+        "core-js",
+        "@prisma/engines",
+        "puppeteer",
+        "playwright",
+        "electron",
+        "better-sqlite3",
+        "fsevents",
+        "@swc/core",
+      ],
+      patched: ["esbuild", "sharp", "prisma", "bcrypt", "core-js", "puppeteer"],
+      expected: `  "trustedDependencies": [
+    "bcrypt",
+    "@swc/core",
+    "core-js",
+    "playwright",
+    "esbuild",
+    "sharp",
+    "@prisma/engines",
+    "fsevents",
+    "@prisma/client",
+    "electron",
+    "better-sqlite3",
+    "prisma",
+    "puppeteer",
+  ],
+  "patchedDependencies": {
+    "prisma@1.0.0": "patches/prisma.patch",
+    "bcrypt@1.0.0": "patches/bcrypt.patch",
+    "core-js@1.0.0": "patches/core-js.patch",
+    "esbuild@1.0.0": "patches/esbuild.patch",
+    "puppeteer@1.0.0": "patches/puppeteer.patch",
+    "sharp@1.0.0": "patches/sharp.patch",
+  },
+`,
+    },
+  ];
+
+  const trustedAndPatchedSections = (lockfile: string) =>
+    lockfile.slice(lockfile.indexOf('  "trustedDependencies"'), lockfile.indexOf('  "packages"'));
+
+  it.each(shapes)("$trusted.length trusted, $patched.length patched", async ({ trusted, patched, expected }) => {
+    const scopes = new Set(trusted.filter(name => name.startsWith("@")).map(name => name.split("/")[0]));
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({
+        name: "trusted-and-patched-order",
+        version: "1.0.0",
+        workspaces: ["packages/*", ...Array.from(scopes, scope => `packages/${scope}/*`)],
+        trustedDependencies: trusted,
+        patchedDependencies: Object.fromEntries(patched.map(name => [`${name}@1.0.0`, `patches/${name}.patch`])),
+      }),
+    };
+    for (const name of trusted) {
+      files[`packages/${name}/package.json`] = JSON.stringify({ name, version: "1.0.0" });
+    }
+    for (const name of patched) {
+      files[`patches/${name}.patch`] = `diff --git a/index.js b/index.js
+new file mode 100644
+index 0000000..e69de29
+`;
+    }
+
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+
+    await runBunInstall(env, packageDir);
+    expect(trustedAndPatchedSections(await file(join(packageDir, "bun.lock")).text())).toBe(expected);
+
+    // Re-saving the lockfile because something else changed must leave both
+    // sections untouched.
+    await write(
+      join(packageDir, "packages", "left-pad", "package.json"),
+      JSON.stringify({ name: "left-pad", version: "1.0.0" }),
+    );
+    await runBunInstall(env, packageDir);
+    const resaved = await file(join(packageDir, "bun.lock")).text();
+    expect(resaved).toContain('"left-pad": ["left-pad@workspace:packages/left-pad"]');
+    expect(trustedAndPatchedSections(resaved)).toBe(expected);
+  });
+});
+
 it("should sort overrides before comparing", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 
@@ -1033,6 +1151,77 @@ describe.concurrent("hand-edited bun.lock overrides", () => {
     `);
     expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
     expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("hand-edited bun.lock that lists workspaces but has no packages object", () => {
+  const lockfileWithoutPackages = (lockfileVersion: number) =>
+    JSON.stringify(
+      {
+        lockfileVersion,
+        workspaces: {
+          "": { name: "no-packages-object" },
+          "packages/member": { name: "member", version: "1.0.0" },
+        },
+      },
+      null,
+      2,
+    );
+
+  const projectFiles = (lockfileVersion: number) => ({
+    "package.json": JSON.stringify({ name: "no-packages-object", workspaces: ["packages/*"] }),
+    "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+    "bun.lock": lockfileWithoutPackages(lockfileVersion),
+  });
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(out, cwd), err: normalizeBunSnapshot(err, cwd), exitCode };
+  }
+
+  it("bun install links the workspace and writes the packages object back", async () => {
+    using dir = tempDir("bun-lock-no-packages-object", projectFiles(1));
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toMatchInlineSnapshot(`"Saved lockfile"`);
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(String(dir), "node_modules", "member", "package.json")).json()).toEqual({
+      name: "member",
+      version: "1.0.0",
+    });
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(
+      `"packages": {\n    "member": ["member@workspace:packages/member"],\n  }`,
+    );
+  });
+
+  it("bun install --frozen-lockfile treats it like an empty packages object", async () => {
+    using dir = tempDir("bun-lock-no-packages-object-frozen", projectFiles(2));
+    const { out, err, exitCode } = await install(String(dir), "--frozen-lockfile");
+    expect(err).toMatchInlineSnapshot(`""`);
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(String(dir), "node_modules", "member", "package.json")).json()).toEqual({
+      name: "member",
+      version: "1.0.0",
+    });
+    expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfileWithoutPackages(2));
   });
 });
 

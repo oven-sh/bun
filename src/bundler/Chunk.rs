@@ -1203,7 +1203,7 @@ impl fmt::Display for UniqueKey {
     }
 }
 
-/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, is_html: bool }
+/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, _: u1 }
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct EntryPoint(u64);
@@ -1213,19 +1213,19 @@ pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
+    const IS_ENTRY_POINT_BIT: u64 = 1 << 62;
 
-    pub(crate) fn new(
-        source_index: u32,
-        entry_point_id: u32,
-        is_entry_point: bool,
-        is_html: bool,
-    ) -> Self {
+    /// The chunk that entry point `entry_point_id` itself produces.
+    pub(crate) fn entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
+        EntryPoint(Self::non_entry_point(source_index, entry_point_id).0 | Self::IS_ENTRY_POINT_BIT)
+    }
+
+    /// A chunk generated on behalf of `entry_point_id` (code-split, dev-server
+    /// CSS/HTML) that is not itself an entry point.
+    pub(crate) fn non_entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
         EntryPoint(
-            (source_index as u64)
-                | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32)
-                | ((is_entry_point as u64) << 62)
-                | ((is_html as u64) << 63),
+            (source_index as u64) | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32),
         )
     }
 
@@ -1241,7 +1241,7 @@ impl EntryPoint {
 
     #[inline]
     pub(crate) fn is_entry_point(self) -> bool {
-        (self.0 >> 62) & 1 != 0
+        self.0 & Self::IS_ENTRY_POINT_BIT != 0
     }
 
     #[inline]

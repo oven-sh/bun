@@ -322,7 +322,7 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let tag: &'static [u8] = match this {
-            CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Evp(inner) => inner.get().algorithm().tag_cstr().to_bytes(),
             CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),

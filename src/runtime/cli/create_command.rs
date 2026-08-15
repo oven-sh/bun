@@ -109,8 +109,8 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
                 return print_task_error(
                     task,
                     format_args!(
-                        "executable not found in $PATH: \"{}\"",
-                        bstr::BStr::new(argv[0])
+                        "executable not found in $PATH: {}",
+                        bun_core::fmt::quote(argv[0])
                     ),
                 );
             }
@@ -148,8 +148,8 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
 
 fn print_task_error(task: &[u8], reason: impl core::fmt::Display) {
     pretty_errorln!(
-        "<r><red>error<r><d>:<r> Failed to run \"<b>{}<r>\": {}",
-        bstr::BStr::new(task),
+        "<r><red>error<r><d>:<r> Failed to run <b>{}<r>: {}",
+        bun_core::fmt::quote(task),
         reason,
     );
 }

@@ -637,13 +637,7 @@ ${
 
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
     if (scope.exception()) [[unlikely]] {
-      if (ptr) [[unlikely]] {
-        // A constructor can hand back its allocation with the VM's termination pending (a stopped
-        // worker's trap, raised past the constructor's last check): reclaim it. Anything else pending
-        // alongside an allocation is a missing exception check in the constructor.
-        ASSERT_WITH_MESSAGE(vm.hasPendingTerminationException(), "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
-        ${obj.finalize ? `${classSymbolName(typeName, "finalize")}(ptr);` : ""}
-      }
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
       return JSValue::encode(JSC::jsUndefined());
     }
 
@@ -695,13 +689,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame);
 
     if (scope.exception()) [[unlikely]] {
-      if (ptr) [[unlikely]] {
-        // A constructor can hand back its allocation with the VM's termination pending (a stopped
-        // worker's trap, raised past the constructor's last check): reclaim it. Anything else pending
-        // alongside an allocation is a missing exception check in the constructor.
-        ASSERT_WITH_MESSAGE(vm.hasPendingTerminationException(), "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
-        ${obj.finalize ? `${classSymbolName(typeName, "finalize")}(ptr);` : ""}
-      }
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
       return JSValue::encode(JSC::jsUndefined());
     }
 
@@ -713,13 +701,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObj
 
     void* ptr = ${classSymbolName(typeName, "construct")}(globalObject, callFrame, JSValue::encode(instance));
     if (scope.exception()) [[unlikely]] {
-      if (ptr) [[unlikely]] {
-        // A constructor can hand back its allocation with the VM's termination pending (a stopped
-        // worker's trap, raised past the constructor's last check): reclaim it. Anything else pending
-        // alongside an allocation is a missing exception check in the constructor.
-        ASSERT_WITH_MESSAGE(vm.hasPendingTerminationException(), "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
-        ${obj.finalize ? `${classSymbolName(typeName, "finalize")}(ptr);` : ""}
-      }
+      ASSERT_WITH_MESSAGE(!ptr, "Memory leak detected: new ${typeName}() allocated memory without checking for exceptions.");
       return JSValue::encode(JSC::jsUndefined());
     }
 

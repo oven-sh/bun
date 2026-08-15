@@ -1881,9 +1881,9 @@ pub mod js_bundler {
         let plugin = unsafe { &mut *plugin };
         match which.as_int32() {
             0 => {
+                let resolve = ctx.cast::<Resolve>();
                 // SAFETY: C++ caller passes the live `*mut Resolve` it received from
                 // `Resolve::dispatch` as `ctx` when `which == 0`; claim before `&mut` (see `onResolveAsync`).
-                let resolve = ctx.cast::<Resolve>();
                 if unsafe { &(*resolve).answered }.swap(true, core::sync::atomic::Ordering::AcqRel)
                 {
                     return;
@@ -1895,8 +1895,8 @@ pub mod js_bundler {
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
-                // SAFETY: as for `which == 0`, with the live `*mut Load` from `Load::dispatch`.
                 let load = ctx.cast::<Load>();
+                // SAFETY: as for `which == 0`, with the live `*mut Load` from `Load::dispatch`.
                 if unsafe { &(*load).answered }.swap(true, core::sync::atomic::Ordering::AcqRel) {
                     return;
                 }

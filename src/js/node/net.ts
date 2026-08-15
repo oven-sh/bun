@@ -50,7 +50,7 @@ const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
 
-const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
+const { UV_ECANCELED, UV_EISCONN, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
 
 const getDefaultAutoSelectFamily = $rust("node_net_binding.rs", "getDefaultAutoSelectFamily");
@@ -1952,6 +1952,18 @@ Socket.prototype.connect = function connect(...args) {
     const bunTLS = this[bunTlsSymbol];
     var tls: any | undefined = undefined;
     if (typeof bunTLS === "function") {
+      // Only a connection this socket dialed itself can be re-dialed (the
+      // handle-reuse path below, shared with net.Socket). A TLS session that
+      // runs over a transport the caller handed in (tls.connect({ socket }),
+      // new TLSSocket(stream)) has nothing of its own to reconnect, so report
+      // it the way node reports connect() on a connected socket.
+      if (!socket && this[kupgraded] && this._handle && !this.destroyed) {
+        const ex = path
+          ? new ExceptionWithHostPort(UV_EISCONN, "connect", path)
+          : new ExceptionWithHostPort(UV_EISCONN, "connect", host || "localhost", port);
+        process.nextTick(destroyNT, this, ex);
+        return this;
+      }
       tls = bunTLS.$call(this, port, host, true);
       // Client always request Cert
       this._requestCert = true;

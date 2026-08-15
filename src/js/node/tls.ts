@@ -1117,8 +1117,12 @@ TLSSocket.prototype[buntls] = function (port, host) {
   if (servername === undefined) {
     servername = host && !net.isIP(host) ? host : "";
   }
+  // `new TLSSocket(stream)` parks the stream in _handle until connect() wraps
+  // it. Once connected, _handle is the native handle of the current
+  // connection: connect() re-dials that one, it is not a stream to wrap.
+  const handle = this._handle;
   return {
-    socket: this._handle,
+    socket: handle instanceof Duplex ? handle : undefined,
     ALPNProtocols: this.ALPNProtocols,
     checkServerIdentity: this[kcheckServerIdentity],
     session: this[ksession],

@@ -4726,6 +4726,7 @@ it("write() completes its callback on a later turn, not inside write()", async (
   // later, like node, where a write only completes once the session has flushed it. Were the
   // callback invoked inside the native call, writableLength would already be 0 here.
   const server = http2.createServer();
+  let client;
   try {
     const lengths = Promise.withResolvers();
     server.on("stream", async stream => {
@@ -4742,20 +4743,19 @@ it("write() completes its callback on a later turn, not inside write()", async (
       }
     });
     const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
-    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client = http2.connect(`http://127.0.0.1:${port}`);
     client.on("error", lengths.reject);
     const req = client.request({ ":path": "/" });
-    req.on("error", lengths.reject);
-    const body = new Promise(resolve => {
+    const body = new Promise((resolve, reject) => {
       const chunks = [];
+      req.on("error", reject);
       req.on("data", chunk => chunks.push(chunk));
       req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     });
     req.end();
-    expect(await lengths.promise).toEqual({ afterWrite: 5, afterCallback: 0 });
-    expect(await body).toBe("hello");
-    client.close();
+    expect(await Promise.all([lengths.promise, body])).toEqual([{ afterWrite: 5, afterCallback: 0 }, "hello"]);
   } finally {
+    client?.close();
     server.close();
   }
 });
@@ -4765,6 +4765,7 @@ it("sendTrailers({}) ends the stream without a trailer block", async () => {
   // HEADERS frame: the peer sees the body end and no 'trailers' event, and the stream closes
   // cleanly on both sides.
   const server = http2.createServer();
+  let client;
   try {
     const serverClose = Promise.withResolvers();
     server.on("stream", stream => {
@@ -4775,23 +4776,22 @@ it("sendTrailers({}) ends the stream without a trailer block", async () => {
       stream.end("OK");
     });
     const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
-    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client = http2.connect(`http://127.0.0.1:${port}`);
     client.on("error", serverClose.reject);
     const req = client.request({ ":path": "/" });
-    req.on("error", serverClose.reject);
     const trailerEvents = [];
     req.on("trailers", headers => trailerEvents.push(headers));
-    const body = new Promise(resolve => {
+    const body = new Promise((resolve, reject) => {
       const chunks = [];
+      req.on("error", reject);
       req.on("data", chunk => chunks.push(chunk));
       req.on("end", () => resolve(Buffer.concat(chunks).toString()));
     });
     req.end();
-    expect(await body).toBe("OK");
-    expect(await serverClose.promise).toBe(0);
+    expect(await Promise.all([body, serverClose.promise])).toEqual(["OK", 0]);
     expect(trailerEvents).toEqual([]);
-    client.close();
   } finally {
+    client?.close();
     server.close();
   }
 });

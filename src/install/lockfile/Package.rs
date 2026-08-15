@@ -111,9 +111,7 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
-/// `folder` as declared by the package.json in `pkg_dir`, made relative to the
-/// top-level dir: the form `Version.value.folder` has in root, workspace and
-/// `file:` packages. `None` if it does not fit in `buf`.
+/// The form `Version.value.folder` has in root, workspace and `file:` packages (`None`: too long for `buf`).
 pub(crate) fn folder_relative_to_top_level_dir<'a>(
     pkg_dir: &[u8],
     folder: &[u8],

@@ -67,6 +67,22 @@ Set `trustedDependencies: []` when you want to opt out of the default allow list
 
 ---
 
+## `prepare` scripts of git dependencies
+
+A package installed from a git repository (a `git:`, `git+https:`, or `github:` dependency) has no published build output. Many of these packages build their entry point in a `prepare` script, using build tools from their `devDependencies`.
+
+Bun does not run that script until you add the package to `trustedDependencies`. Until then, `bun install` reports the blocked script and the package has no build output. `bun pm untrusted` lists the script.
+
+For a trusted git dependency with a `preprepare`, `prepare`, or `postprepare` script, Bun:
+
+1. Runs `bun install --ignore-scripts` inside the installed package. This installs the package's `dependencies` and `devDependencies` into the package's own `node_modules` folder, using your project's registry and cache directory.
+2. Runs the package's `preprepare`, `prepare`, and `postprepare` scripts.
+3. Removes the `node_modules` folder from step 1. The package uses the dependencies your project installed at runtime.
+
+Because of `--ignore-scripts` in step 1, the lifecycle scripts of the package's own dependencies do not run.
+
+---
+
 ## `--ignore-scripts`
 
 To disable lifecycle scripts for all packages, use the `--ignore-scripts` flag.

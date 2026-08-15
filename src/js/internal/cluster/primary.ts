@@ -339,10 +339,13 @@ function send(worker, message, handle?, cb?) {
 }
 
 // Extend generic Worker with methods specific to the primary process.
+
+// Like Node, leave the channel up: the worker closes its servers, then
+// disconnects from its side (child.ts _disconnect). Tearing it down here
+// skips that shutdown and can drop an in-flight "online" message.
 Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect();
   removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;

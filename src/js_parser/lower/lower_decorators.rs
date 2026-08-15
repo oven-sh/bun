@@ -130,10 +130,11 @@ fn defines_static_name_method(props: &[Property]) -> bool {
             && (prop.flags.contains(Flags::Property::IsMethod)
                 // A decorated accessor is installed from the suffix instead.
                 || (prop.kind == PropertyKind::AutoAccessor && prop.ts_decorators.len_u32() == 0))
-            && match &prop.key {
-                Some(key) => {
-                    matches!(&key.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"name"))
-                }
+            && match prop.key {
+                Some(key) => matches!(
+                    key.unwrap_inlined().data,
+                    js_ast::ExprData::EString(s) if s.eql_comptime(b"name")
+                ),
                 None => false,
             }
     })

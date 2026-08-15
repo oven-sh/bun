@@ -1141,6 +1141,31 @@ describe("ES Decorators", () => {
       expect(stdout).toBe('["Foo","from accessor"]\n');
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("a static `name` method keyed by an inlined TypeScript enum member wins too", async () => {
+      using dir = tempDir("es-dec-enum-name-key", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          enum Key { Name = "name" }
+          function dec() {}
+          const Foo = class {
+            static [Key.Name]() { return "method"; }
+            @dec m() {}
+          };
+          console.log(typeof Foo.name);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("function\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("private member calls in lowered classes", () => {

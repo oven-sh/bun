@@ -10,8 +10,6 @@
 
 use std::sync::Arc;
 
-use bun_collections::VecExt;
-
 use crate::ParsedSourceMap;
 
 /// Parsed inner sourcemap + per-source content bytes, owned.
@@ -65,50 +63,52 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // alloc, so reset the AST store on entry and exit.
     let _store_scope = DataStoreScope::new();
 
-    let json = bun_parsers::json::parse_json_into_arena(&json_src, &mut log, &arena)
+    let root = bun_parsers::json::parse_json_into_arena(&json_src, &mut log, &arena)
         .map_err(|_| InvalidSourceMap)?;
+    // The tape-based JSON parser represents containers as `EObjectJSON` /
+    // `EArrayJSON` rows; read through the tape accessors rather than
+    // materializing `Expr`s per element.
+    let obj: &bun_ast::E::ObjectJSON = match &root.data {
+        bun_ast::ExprData::EObjectJSON(o) => o.get(),
+        _ => return Err(InvalidSourceMap),
+    };
+    use bun_ast::E::JsonValue;
 
-    if let Some(version) = json.get(b"version") {
-        match version.data.as_e_number() {
-            Some(n) if n.value() == 3.0 => {}
+    if let Some(version) = obj.get(b"version") {
+        match version {
+            JsonValue::Number(n) if n.value() == 3.0 => {}
             _ => return Err(InvalidSourceMap),
         }
     }
 
-    let mappings_str = json.get(b"mappings").ok_or(InvalidSourceMap)?;
-    let mut mappings_e_string = mappings_str.data.as_e_string().ok_or(InvalidSourceMap)?;
-    let mappings_slice: &[u8] = mappings_e_string.slice(&arena);
+    let mappings_slice: &[u8] = obj
+        .get(b"mappings")
+        .and_then(|v| v.as_str())
+        .ok_or(InvalidSourceMap)?;
 
-    let sources_paths = json
+    let sources_paths = obj
         .get(b"sources")
-        .ok_or(InvalidSourceMap)?
-        .data
-        .as_e_array()
+        .and_then(|v| v.as_array())
         .ok_or(InvalidSourceMap)?;
 
     // `sourcesContent` is optional; when absent or null every slot is empty.
-    let sources_content_opt = match json.get(b"sourcesContent") {
+    let sources_content_opt = match obj.get(b"sourcesContent") {
         None => None,
-        Some(v) => match v.data.as_e_array() {
+        Some(v) => match v.as_array() {
             Some(arr) => Some(arr),
-            None => {
-                // `null` is tolerated; other non-array values are malformed.
-                if matches!(v.data, bun_ast::ExprData::ENull(_)) {
-                    None
-                } else {
-                    return Err(InvalidSourceMap);
-                }
-            }
+            // `null` is tolerated; other non-array values are malformed.
+            None if matches!(v, JsonValue::Null) => None,
+            None => return Err(InvalidSourceMap),
         },
     };
 
     if let Some(arr) = sources_content_opt {
-        if arr.items.len_u32() != sources_paths.items.len_u32() {
+        if arr.items().len() != sources_paths.items().len() {
             return Err(InvalidSourceMap);
         }
     }
 
-    let source_count = sources_paths.items.len_u32() as usize;
+    let source_count = sources_paths.items().len();
 
     // Copy source paths out of the arena into owned storage. A `sources[i]`
     // longer than `MAX_PATH_BYTES` is rejected (the whole map falls back):
@@ -116,10 +116,8 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // fixed-size path buffers in `bun_paths`, which would otherwise panic
     // on an oversized entry from an adversarial inline map.
     let mut source_paths_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
-    for item in sources_paths.items.slice() {
-        let estr = item.data.as_e_string().ok_or(InvalidSourceMap)?;
-        // handle_oom — fatal if OOM
-        let s = estr.string(&arena).expect("OOM");
+    for item in sources_paths.items() {
+        let s = item.as_str().ok_or(InvalidSourceMap)?;
         if s.len() > bun_paths::MAX_PATH_BYTES {
             return Err(InvalidSourceMap);
         }
@@ -129,16 +127,10 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // Copy source contents. Non-strings (null, etc.) and empty slots map to `b""`.
     let mut sources_content_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
     if let Some(arr) = sources_content_opt {
-        for item in arr.items.slice() {
-            let slot: Box<[u8]> = if let Some(estr) = item.data.as_e_string() {
-                let s = estr.string(&arena).expect("OOM");
-                if s.is_empty() {
-                    Box::<[u8]>::from(&b""[..])
-                } else {
-                    Box::<[u8]>::from(s)
-                }
-            } else {
-                Box::<[u8]>::from(&b""[..])
+        for item in arr.items() {
+            let slot: Box<[u8]> = match item.as_str() {
+                Some(s) => Box::<[u8]>::from(s),
+                None => Box::<[u8]>::from(&b""[..]),
             };
             sources_content_slice.push(slot);
         }

@@ -869,23 +869,12 @@ pub mod bv2_impl {
                 }
             }
 
-            /// Mirrors `JSBundler.FileMap` — virtual in-memory files for the build.
-            /// The bundler only ever reads `.slice()`, so the moved-down map
-            /// stores raw bytes.
-            /// `bun_runtime`'s `from_js` parses JS values via `BlobOrStringOrBuffer`
-            /// in async (owning-copy) mode and inserts the extracted bytes via
-            /// [`FileMap::put`].
-            ///
-            /// Keys are stored in the form [`FileMap::canonical`] produces, and
-            /// every lookup canonicalizes its input the same way, so a key and a
-            /// path can only ever be compared in one spelling.
+            /// Mirrors `JSBundler.FileMap`: in-memory build files, keyed as [`FileMap::canonical`] spells them.
             #[derive(Default)]
             pub struct FileMap {
                 pub map: bun_collections::StringHashMap<Box<[u8]>>,
             }
             impl FileMap {
-                /// Fails with [`bun_paths::Error::MaxPathExceeded`] when the
-                /// resolved `path` does not fit in a path buffer.
                 pub fn put(&mut self, path: &[u8], contents: Box<[u8]>) -> bun_paths::Result<()> {
                     let mut buf = bun_paths::path_buffer_pool::get();
                     let key = Self::canonical(path, &mut **buf)
@@ -894,13 +883,7 @@ pub mod bv2_impl {
                     Ok(())
                 }
 
-                /// The one spelling of a path that keys are stored under: `/`
-                /// separators (plus an uppercase drive letter on Windows), and a
-                /// non-absolute path resolved against the cwd, which is also what
-                /// a non-absolute entry point is resolved against. An absolute
-                /// path keeps its text, so it is also the `Path.text` an
-                /// in-memory source ends up with. `None` if the result does not
-                /// fit in `buf`.
+                /// Canonical key: `/` separators; a non-absolute path is resolved against the cwd.
                 fn canonical<'b>(path: &[u8], buf: &'b mut [u8]) -> Option<&'b [u8]> {
                     let mut scratch = bun_paths::path_buffer_pool::get();
                     let posix = scratch.get_mut(..path.len())?;
@@ -933,9 +916,7 @@ pub mod bv2_impl {
                         .map(|(key, contents)| (key.as_ref(), contents.as_ref()))
                 }
 
-                /// `path` is an entry point or a source path, i.e. a path that
-                /// stands on its own (relative to the cwd), not an import
-                /// specifier.
+                /// `path` stands on its own (entry point or source path), not an import specifier.
                 fn lookup(&self, path: &[u8]) -> Option<(&[u8], &[u8])> {
                     if self.map.is_empty() {
                         return None;
@@ -953,17 +934,7 @@ pub mod bv2_impl {
                     self.lookup(path).is_some()
                 }
 
-                /// Returns a `resolver::Result` for a file in the map, or `None` if
-                /// not found. `specifier` is looked up as a path of its own when it
-                /// is absolute or an entry point (`source_file` is empty), and
-                /// otherwise joined against `dirname(source_file)` like the
-                /// resolver would.
-                ///
-                /// `arena` is the build's bump arena (`BundleV2::arena()`);
-                /// the matched key is copied into it so the returned
-                /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
-                /// (lives for the entire build pass) instead of the map's key
-                /// storage.
+                /// Resolver hook: a specifier that matches an in-memory file resolves to its map key.
                 pub(crate) fn resolve(
                     &self,
                     arena: &bun_alloc::Arena,
@@ -1004,8 +975,7 @@ pub mod bv2_impl {
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<(&[u8], &[u8])> {
-                    // `source_file` may itself be relative (e.g. on Windows
-                    // when the bundler stores paths relative to cwd).
+                    // `source_file` may itself be relative (Windows stores bundler paths cwd-relative).
                     let mut abs_source_buf = bun_paths::path_buffer_pool::get();
                     let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
                         source_file
@@ -1014,8 +984,7 @@ pub mod bv2_impl {
                             .abs_buf(&[source_file], &mut *abs_source_buf)
                     };
 
-                    // Normalize `source_file` to forward slashes (Windows paths
-                    // from the real filesystem may use backslashes).
+                    // Filesystem paths may use backslashes on Windows.
                     let mut source_file_buf = bun_paths::path_buffer_pool::get();
                     let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
                         abs_source_file,
@@ -1025,8 +994,7 @@ pub mod bv2_impl {
                     let source_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(
                         normalized_source_file,
                     );
-                    // If `dirname` returns empty but the path has a drive
-                    // letter, use the drive root.
+                    // Empty `dirname`: fall back to the drive root, "/", or the cwd.
                     let effective_source_dir: &[u8] = if source_dir.is_empty() {
                         if normalized_source_file.len() >= 3
                             && normalized_source_file[1] == b':'
@@ -1043,8 +1011,7 @@ pub mod bv2_impl {
                     } else {
                         source_dir
                     };
-                    // `.loose` preserves Windows drive letters. A specifier too
-                    // long to join is not in the map; the resolver reports it.
+                    // `.loose` preserves drive letters; an overlong join means no match.
                     let mut buf = bun_paths::path_buffer_pool::get();
                     let joined =
                         bun_paths::resolve_path::join_abs_string_buf_checked::<

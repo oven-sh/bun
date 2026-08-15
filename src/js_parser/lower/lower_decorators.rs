@@ -1067,6 +1067,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn lower_standard_decorators_stmt(
         &mut self,
         stmt: Stmt,
+        name_from_context: Option<&'a [u8]>,
         out: &mut BumpVec<'a, Stmt>,
     ) {
         // Every call site is the visitStmt `s_class` branch. `Stmt` and the
@@ -1078,7 +1079,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_ast::StmtData::SClass(c) => c,
             _ => unreachable!(),
         };
-        self.lower_impl(&mut s_class.class, stmt.loc, None, false, Some(stmt), out);
+        self.lower_impl(
+            &mut s_class.class,
+            stmt.loc,
+            name_from_context,
+            false,
+            Some(stmt),
+            out,
+        );
     }
 
     pub(crate) fn lower_standard_decorators_expr(
@@ -1147,9 +1155,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_ref = class.class_name.as_ref().unwrap().ref_;
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
+        // A statement only carries `name_from_context` ("default") when it is an
+        // anonymous `export default class {}` that the visitor named after the
+        // module's default-export symbol.
+        let class_is_anonymous =
+            expr_class_is_anonymous || (!is_expr && name_from_context.is_some());
         // Decided before Phase 2 replaces decorated computed keys with temporaries.
         let restore_inferred_name =
-            expr_class_is_anonymous && !defines_static_name_method(class.properties.slice());
+            class_is_anonymous && !defines_static_name_method(class.properties.slice());
 
         let mut inner_class_ref: Ref = class_name_ref;
         if !is_expr {
@@ -2025,7 +2038,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.record_usage(class_name_ref);
             let class_name_str: E::Str = if let Some(name) = original_class_name_for_decorator {
                 name.into()
-            } else if is_expr && expr_class_is_anonymous {
+            } else if class_is_anonymous {
                 name_from_context.unwrap_or(b"").into()
             } else {
                 // `original_name` is an arena-owned `StoreStr`.

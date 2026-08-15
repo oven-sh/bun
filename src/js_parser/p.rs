@@ -6470,7 +6470,12 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
+    /// `name_from_context` is `Some("default")` for an anonymous `export default class`.
+    pub(crate) fn lower_class(
+        &mut self,
+        stmtorexpr: js_ast::StmtOrExpr,
+        name_from_context: Option<&'a [u8]>,
+    ) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
             js_ast::StmtOrExpr::Stmt(stmt) => {
@@ -6485,7 +6490,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // `lower_standard_decorators_stmt` takes an out-param Vec; wrap to
                     // keep this function's slice contract.
                     let mut out = BumpVec::<Stmt>::new_in(self.arena);
-                    self.lower_standard_decorators_stmt(stmt, &mut out);
+                    self.lower_standard_decorators_stmt(stmt, name_from_context, &mut out);
                     return out.into_bump_slice_mut();
                 }
 

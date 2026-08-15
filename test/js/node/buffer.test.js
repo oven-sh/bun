@@ -4746,3 +4746,89 @@ it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
     expect(exitCode).toBe(0);
   },
 );
+
+describe.each([
+  ["isUtf8", isUtf8],
+  ["isAscii", isAscii],
+])("buffer.%s() input handling", (name, validate) => {
+  // "ab" followed by "é" in UTF-8: valid UTF-8, not ASCII. 8 bytes so every TypedArray kind can view it.
+  const bytes = [0x61, 0x62, 0x20, 0x20, 0x20, 0x20, 0xc3, 0xa9];
+  const expected = name === "isUtf8";
+  const invalidInput = received =>
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "input" argument must be an instance of ArrayBuffer, Buffer, or TypedArray. Received ${received}`,
+    });
+
+  // Node types the parameter as TypedArray | ArrayBuffer | Buffer. A DataView is an ArrayBufferView
+  // in JSC as well, but it is not a TypedArray, so it is rejected like any other object.
+  it.each([
+    ["the whole buffer", ab => new DataView(ab)],
+    ["a sub-range", ab => new DataView(ab, 2, 4)],
+    ["zero bytes", () => new DataView(new ArrayBuffer(0))],
+  ])("rejects a DataView over %s", (_, makeView) => {
+    expect(() => validate(makeView(new Uint8Array(bytes).buffer))).toThrow(invalidInput("an instance of DataView"));
+  });
+
+  it.each([
+    ["undefined", undefined, "undefined"],
+    ["null", null, "null"],
+    ["a string", "abc", "type string ('abc')"],
+    ["a number", 1, "type number (1)"],
+    ["a plain object", {}, "an instance of Object"],
+    ["an array of bytes", [0x61], "an instance of Array"],
+  ])("rejects %s with Node's message", (_, input, received) => {
+    expect(() => validate(input)).toThrow(invalidInput(received));
+  });
+
+  it("throws ERR_INVALID_STATE for a detached ArrayBuffer", () => {
+    const ab = new Uint8Array(bytes).buffer;
+    structuredClone(ab, { transfer: [ab] });
+    expect(() => validate(ab)).toThrow(
+      expect.objectContaining({
+        name: "Error",
+        code: "ERR_INVALID_STATE",
+        message: "Cannot validate on a detached buffer",
+      }),
+    );
+  });
+
+  // Node only checks the ArrayBuffer form for detachment; a detached view reports byteLength 0
+  // and validates like any other empty input.
+  it("validates a view whose buffer was detached as empty input", () => {
+    const view = new Uint8Array([0xff, 0xfe]);
+    structuredClone(view.buffer, { transfer: [view.buffer] });
+    expect(view.byteLength).toBe(0);
+    expect(validate(view)).toBe(true);
+  });
+
+  it("accepts every TypedArray kind, Buffer, ArrayBuffer and SharedArrayBuffer", () => {
+    const ab = new Uint8Array(bytes).buffer;
+    const sab = new SharedArrayBuffer(bytes.length);
+    new Uint8Array(sab).set(bytes);
+    const inputs = [
+      new Int8Array(ab),
+      new Uint8Array(ab),
+      new Uint8ClampedArray(ab),
+      new Int16Array(ab),
+      new Uint16Array(ab),
+      new Int32Array(ab),
+      new Uint32Array(ab),
+      new Float16Array(ab),
+      new Float32Array(ab),
+      new Float64Array(ab),
+      new BigInt64Array(ab),
+      new BigUint64Array(ab),
+      Buffer.from(ab),
+      ab,
+      sab,
+      new Uint8Array(sab),
+    ];
+    expect(inputs.map(input => validate(input))).toEqual(inputs.map(() => expected));
+    // The view decides which bytes are looked at: the non-ASCII tail is outside this one.
+    expect(validate(new Uint8Array(ab, 0, 6))).toBe(true);
+    expect(validate(new Uint8Array(0))).toBe(true);
+    expect(validate(new ArrayBuffer(0))).toBe(true);
+  });
+});

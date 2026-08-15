@@ -14,58 +14,44 @@ namespace Zig {
 using namespace WebCore;
 using namespace JSC;
 
+// Shared by buffer.isUtf8() and buffer.isAscii(). Node accepts a TypedArray (so not a
+// DataView), an ArrayBuffer or a SharedArrayBuffer and throws ERR_INVALID_ARG_TYPE for
+// anything else; only a detached ArrayBuffer is ERR_INVALID_STATE, a view whose buffer
+// was detached has a byteLength of 0 and validates like any other empty input.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L1415-L1429
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc#L1305-L1333
+template<typename Validate>
+static JSC::EncodedJSValue validateBytesOf(JSC::JSGlobalObject* globalObject, JSC::JSValue input, Validate validate)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    std::span<const uint8_t> bytes;
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(input); view && isTypedArrayType(view->type())) {
+        bytes = view->span();
+    } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(input)) {
+        if (arrayBuffer->impl()->isDetached()) [[unlikely]] {
+            // Thrown from C++ in Node too, so without the "Invalid state: " prefix Bun::ERR::INVALID_STATE adds.
+            return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE, "Cannot validate on a detached buffer"_s);
+        }
+        bytes = arrayBuffer->impl()->span();
+    } else {
+        return Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, "input"_s, "ArrayBuffer, Buffer, or TypedArray"_s, input);
+    }
+
+    if (bytes.empty())
+        return JSValue::encode(jsBoolean(true));
+
+    return JSValue::encode(jsBoolean(validate(reinterpret_cast<const char*>(bytes.data()), bytes.size())));
+}
+
 // TODO: Add DOMJIT fast path
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::CallFrame* callframe))
 {
-    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-
-    auto buffer = callframe->argument(0);
-    auto* bufferView = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
-    const char* ptr = nullptr;
-    size_t byteLength = 0;
-    if (bufferView) {
-        if (bufferView->isDetached()) [[unlikely]] {
-            throwTypeError(lexicalGlobalObject, throwScope,
-                "ArrayBufferView is detached"_s);
-            return {};
-        }
-
-        byteLength = bufferView->byteLength();
-
-        if (byteLength == 0) {
-            return JSValue::encode(jsBoolean(true));
-        }
-
-        ptr = reinterpret_cast<const char*>(bufferView->vector());
-    } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(buffer)) {
-        auto* impl = arrayBuffer->impl();
-
-        if (!impl) {
-            return JSValue::encode(jsBoolean(true));
-        }
-
-        if (impl->isDetached()) [[unlikely]] {
-            return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
-                "Cannot validate on a detached buffer"_s);
-        }
-
-        byteLength = impl->byteLength();
-
-        if (byteLength == 0) {
-            return JSValue::encode(jsBoolean(true));
-        }
-
-        ptr = reinterpret_cast<const char*>(impl->data());
-    } else {
-        Bun::throwError(lexicalGlobalObject, throwScope,
-            Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
-            "First argument must be an ArrayBufferView"_s);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsBoolean(simdutf::validate_utf8(ptr, byteLength))));
+    return validateBytesOf(lexicalGlobalObject, callframe->argument(0), [](const char* data, size_t length) {
+        return simdutf::validate_utf8(data, length);
+    });
 }
 
 // TODO: Add DOMJIT fast path
@@ -73,54 +59,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::CallFrame* callframe))
 {
-    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
-
-    auto buffer = callframe->argument(0);
-    auto* bufferView = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
-    const char* ptr = nullptr;
-    size_t byteLength = 0;
-    if (bufferView) {
-
-        if (bufferView->isDetached()) [[unlikely]] {
-            return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
-                "Cannot validate on a detached buffer"_s);
-        }
-
-        byteLength = bufferView->byteLength();
-
-        if (byteLength == 0) {
-            return JSValue::encode(jsBoolean(true));
-        }
-
-        ptr = reinterpret_cast<const char*>(bufferView->vector());
-    } else if (auto* arrayBuffer = dynamicDowncast<JSC::JSArrayBuffer>(buffer)) {
-        auto* impl = arrayBuffer->impl();
-        if (impl->isDetached()) [[unlikely]] {
-            return Bun::ERR::INVALID_STATE(throwScope, lexicalGlobalObject,
-                "Cannot validate on a detached buffer"_s);
-        }
-
-        if (!impl) {
-            return JSValue::encode(jsBoolean(true));
-        }
-
-        byteLength = impl->byteLength();
-
-        if (byteLength == 0) {
-            return JSValue::encode(jsBoolean(true));
-        }
-
-        ptr = reinterpret_cast<const char*>(impl->data());
-    } else {
-        Bun::throwError(lexicalGlobalObject, throwScope,
-            Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
-            "First argument must be an ArrayBufferView"_s);
-        return {};
-    }
-
-    RELEASE_AND_RETURN(
-        throwScope,
-        JSValue::encode(jsBoolean(simdutf::validate_ascii(ptr, byteLength))));
+    return validateBytesOf(lexicalGlobalObject, callframe->argument(0), [](const char* data, size_t length) {
+        return simdutf::validate_ascii(data, length);
+    });
 }
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionResolveObjectURL);

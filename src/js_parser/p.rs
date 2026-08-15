@@ -801,22 +801,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<&'b [u8], crate::Error> {
-        if let Some(mut tmpl) = arg.data.e_template() {
+        if let Some(tmpl) = arg.data.e_template() {
             if tmpl.tag.is_some() {
                 return Ok(b""); // tagged template — opaque
             }
-            match &mut tmpl.head {
+            match &tmpl.head {
                 js_ast::e::TemplateContents::Cooked(head) => {
-                    head.resolve_rope_if_needed(self.arena);
                     buf.extend_from_slice(head.string(self.arena)?);
                 }
                 js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // shouldn't happen post-visit but be safe
             }
-            for part in tmpl.parts_mut().iter_mut() {
+            for part in tmpl.parts().iter() {
                 buf.push(0); // \x00 placeholder per interpolation
-                match &mut part.tail {
+                match &part.tail {
                     js_ast::e::TemplateContents::Cooked(tail) => {
-                        tail.resolve_rope_if_needed(self.arena);
                         buf.extend_from_slice(tail.string(self.arena)?);
                     }
                     js_ast::e::TemplateContents::Raw(_) => return Ok(b""), // raw tail — treat as opaque
@@ -1082,9 +1080,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return self.new_expr(E::Null {}, arg.loc);
         }
 
-        let mut str_ = arg.data.e_string().expect("infallible: variant checked");
-        let import_record_index =
-            self.add_import_record(ImportKind::RequireResolve, arg.loc, str_.slice(self.arena));
+        let import_record_index = self.add_import_record(
+            ImportKind::RequireResolve,
+            arg.loc,
+            arg.data
+                .e_string()
+                .expect("infallible: variant checked")
+                .string(self.arena)
+                .expect("unreachable"),
+        );
         self.import_records.items_mut()[import_record_index as usize]
             .flags
             .set(

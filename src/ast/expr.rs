@@ -678,13 +678,12 @@ impl ArrayIterator {
 // raw-ptr returns). Those drafts were dropped; only the methods without a live
 // counterpart remain.
 impl Expr {
-    /// Flattens ropes, so unlike `as_utf8_string_literal` it is safe on visited strings.
     #[inline]
     pub fn as_string_literal<'b>(&self, bump: &'b Bump) -> Option<&'b [u8]> {
-        let Data::EString(mut s) = self.data else {
+        let Data::EString(s) = &self.data else {
             return None;
         };
-        Some(s.slice(bump))
+        s.string(bump).ok()
     }
 
     /// `as_string_hash` for JSON-parsed trees (always UTF-8, no rope) where no

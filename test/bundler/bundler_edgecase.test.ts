@@ -2913,23 +2913,35 @@ describe("bundler", () => {
     },
     run: { stdout: "true 1" },
   });
-  // require() arguments are constant-folded even without minifySyntax, so the
-  // index here is a rope ("fo" -> "o"). Rewriting ns[...] to an import binding
-  // has to use the whole name: it used to bind the `fo` export instead of `foo`.
-  itBundled("edgecase/FoldedStringIndexOnNamespaceImport", {
+  // Enum initializers are always constant-folded, so K.X inlines as a rope
+  // ("fo" -> "o"). Without minifySyntax the index visitor used to rewrite the
+  // access with only the first segment: `fo` instead of `foo`.
+  itBundled("edgecase/FoldedEnumStringIndexOnNamespaceImport", {
     files: {
-      "/entry.js": /* js */ `
-        import * as ns from "./ns.js";
-        console.log(require(ns["fo" + "o"] === "yes" ? "./yes.js" : "./no.js"));
+      "/entry.ts": /* ts */ `
+        import * as ns from "./ns.ts";
+        enum K { X = "fo" + "o" }
+        console.log(ns[K.X]);
       `,
-      "/ns.js": /* js */ `
+      "/ns.ts": /* ts */ `
         export const foo = "yes";
         export const fo = "no";
       `,
-      "/yes.js": `module.exports = "took yes";`,
-      "/no.js": `module.exports = "took no";`,
     },
-    run: { stdout: "took yes" },
+    run: { stdout: "yes" },
+  });
+  itBundled("edgecase/FoldedEnumStringIndexAsCommonJSExportName", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as k from "./k.ts";
+        console.log(JSON.stringify(Object.keys(k).sort()), k.foo);
+      `,
+      "/k.ts": /* ts */ `
+        enum K { X = "fo" + "o" }
+        exports[K.X] = "value";
+      `,
+    },
+    run: { stdout: '["foo"] value' },
   });
   // The bundler rewrites bare `require`/`require.main`/`require.resolve` to an
   // ERequireCallTarget / ERequireMain / ERequireResolveCallTarget that prints

@@ -3061,6 +3061,20 @@ console.log(resolve.length)
           { kind: "dynamic-import", path: "./bar" },
         ]);
       });
+
+      it("a folded string index into an enum selects the member named by the whole string", () => {
+        // Arguments of require()/require.resolve()/import() are folded even without minification,
+        // so E["fo" + "o"] is looked up with a rope; it used to select E.fo.
+        const out = transpiler.transformSync(`
+          enum E { fo = "./fo", foo = "./foo" }
+          export const a = require(E["fo" + "o"]);
+          export const b = require.resolve(E["fo" + "o"]);
+          export const c = import(E["fo" + "o"]);
+        `);
+        expect(out).toContain(`export const a = require("./foo" /* foo */)`);
+        expect(out).toContain(`export const b = require.resolve("./foo" /* foo */)`);
+        expect(out).toContain(`export const c = import("./foo" /* foo */)`);
+      });
     });
 
     it("define", () => {

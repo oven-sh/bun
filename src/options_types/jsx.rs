@@ -88,7 +88,7 @@ impl From<Box<[Box<[u8]>]>> for MemberList {
 
 impl MemberList {
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             MemberList::Static(s) => s.len(),
             MemberList::Owned(o) => o.len(),
@@ -96,12 +96,7 @@ impl MemberList {
     }
 
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
-    pub fn get(&self, i: usize) -> Option<&[u8]> {
+    pub(crate) fn get(&self, i: usize) -> Option<&[u8]> {
         match self {
             MemberList::Static(s) => s.get(i).copied(),
             MemberList::Owned(o) => o.get(i).map(|b| &**b),
@@ -273,7 +268,7 @@ impl Pragma {
 
         let mut needs_alloc = false;
         let mut current_i: usize = 0;
-        for str in new.split(|b| *b == b'.') {
+        for str in strings::split(new, b".") {
             if str.is_empty() {
                 continue;
             }
@@ -291,7 +286,7 @@ impl Pragma {
         }
 
         let mut out: Vec<Box<[u8]>> = Vec::with_capacity(count);
-        for str in new.split(|b| *b == b'.') {
+        for str in strings::split(new, b".") {
             if str.is_empty() {
                 continue;
             }

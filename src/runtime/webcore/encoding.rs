@@ -105,7 +105,7 @@ pub(crate) use dispatch_encoding;
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__writeLatin1(
+unsafe extern "C" fn Bun__encoding__writeLatin1(
     input: *const u8,
     len: usize,
     to: *mut u8,
@@ -113,12 +113,16 @@ pub(crate) unsafe extern "C" fn Bun__encoding__writeLatin1(
     encoding: u8,
 ) -> usize {
     // SAFETY: forwarded from this fn's contract.
-    let r = unsafe {
-        dispatch_encoding!(encoding_from_u8(encoding), {
-            Encoding::Ucs2 => write_u8::<{ enc::UTF16LE }, false>(input, len, to, to_len),
-            Encoding::Buffer => unreachable!(),
-        }, |E| write_u8::<E, false>(input, len, to, to_len))
+    let (input, to) = unsafe {
+        (
+            bun_core::ffi::slice(input, len),
+            bun_core::ffi::slice_mut(to, to_len),
+        )
     };
+    let r = dispatch_encoding!(encoding_from_u8(encoding), {
+        Encoding::Ucs2 => write_u8::<{ enc::UTF16LE }, false>(input, to),
+        Encoding::Buffer => unreachable!(),
+    }, |E| write_u8::<E, false>(input, to));
     r.unwrap_or(0)
 }
 
@@ -126,7 +130,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__writeLatin1(
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__writeUTF16(
+unsafe extern "C" fn Bun__encoding__writeUTF16(
     input: *const u16,
     len: usize,
     to: *mut u8,
@@ -147,21 +151,16 @@ pub(crate) unsafe extern "C" fn Bun__encoding__writeUTF16(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(
-    input: *const u8,
-    len: usize,
-) -> usize {
+unsafe extern "C" fn Bun__encoding__byteLengthLatin1AsUTF8(input: *const u8, len: usize) -> usize {
     // SAFETY: forwarded from this fn's contract.
-    unsafe { byte_length_u8::<{ enc::UTF8 }>(input, len) }
+    let input = unsafe { bun_core::ffi::slice(input, len) };
+    byte_length_u8::<{ enc::UTF8 }>(input)
 }
 
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
-    input: *const u16,
-    len: usize,
-) -> usize {
+unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(input: *const u16, len: usize) -> usize {
     // SAFETY: forwarded from this fn's contract.
     let input = unsafe { bun_core::ffi::slice(input, len) };
     strings::element_length_utf16_into_utf8(input)
@@ -170,54 +169,52 @@ pub(crate) unsafe extern "C" fn Bun__encoding__byteLengthUTF16AsUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__constructFromLatin1(
+unsafe extern "C" fn Bun__encoding__constructFromLatin1(
     global_object: &JSGlobalObject,
     input: *const u8,
     len: usize,
     encoding: u8,
 ) -> JSValue {
+    // SAFETY: forwarded from this fn's contract.
+    let input = unsafe { bun_core::ffi::slice(input, len) };
     // Ownership of the allocation transfers to JSC: `create_buffer` registers the
     // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
     // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
     // would be a use-after-free + double-free).
-    // SAFETY: forwarded from this fn's contract.
-    let mut slice = core::mem::ManuallyDrop::new(unsafe {
-        dispatch_encoding!(encoding_from_u8(encoding), {
-            Encoding::Ucs2 => construct_from_u8::<{ enc::UTF16LE }>(input, len),
-            Encoding::Latin1 | Encoding::Buffer => unreachable!(),
-        }, |E| construct_from_u8::<E>(input, len))
-    });
-    JSValue::create_buffer(global_object, &mut slice[..])
+    let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
+        Encoding::Ucs2 => construct_from_u8::<{ enc::UTF16LE }>(input),
+        Encoding::Latin1 | Encoding::Buffer => unreachable!(),
+    }, |E| construct_from_u8::<E>(input)));
+    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
 }
 
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__constructFromUTF16(
+unsafe extern "C" fn Bun__encoding__constructFromUTF16(
     global_object: &JSGlobalObject,
     input: *const u16,
     len: usize,
     encoding: u8,
 ) -> JSValue {
+    // SAFETY: forwarded from this fn's contract.
+    let input = unsafe { bun_core::ffi::slice(input, len) };
     // Ownership of the allocation transfers to JSC: `create_buffer` registers the
     // pointer with `MarkedArrayBuffer_deallocator`, which frees it on GC. Wrapping
     // in `ManuallyDrop` prevents Rust from also freeing it at scope exit (which
     // would be a use-after-free + double-free).
-    // SAFETY: forwarded from this fn's contract.
-    let mut slice = core::mem::ManuallyDrop::new(unsafe {
-        dispatch_encoding!(encoding_from_u8(encoding), {
-            Encoding::Ucs2 => construct_from_u16::<{ enc::UTF16LE }>(input, len),
-            Encoding::Buffer => unreachable!(),
-        }, |E| construct_from_u16::<E>(input, len))
-    });
-    JSValue::create_buffer(global_object, &mut slice[..])
+    let mut slice = core::mem::ManuallyDrop::new(dispatch_encoding!(encoding_from_u8(encoding), {
+        Encoding::Ucs2 => construct_from_u16::<{ enc::UTF16LE }>(input),
+        Encoding::Buffer => unreachable!(),
+    }, |E| construct_from_u16::<E>(input)));
+    bun_jsc::HostReturn::or_pending_exception(JSValue::create_buffer(global_object, &mut slice[..]))
 }
 
 // for SQL statement
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__toStringUTF8(
+unsafe extern "C" fn Bun__encoding__toStringUTF8(
     input: *const u8,
     len: usize,
     global_object: &JSGlobalObject,
@@ -233,7 +230,7 @@ pub(crate) unsafe extern "C" fn Bun__encoding__toStringUTF8(
 /// # Safety
 /// Caller (C++) must guarantee `input[..len]` is valid for reading.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__encoding__toString(
+unsafe extern "C" fn Bun__encoding__toString(
     input: *const u8,
     len: usize,
     global_object: &JSGlobalObject,
@@ -349,7 +346,7 @@ pub(crate) fn to_bun_string_from_owned_slice(input: Vec<u8>, encoding: Encoding)
     }
 }
 
-pub(crate) fn to_string_comptime<const ENCODING: u8>(
+fn to_string_comptime<const ENCODING: u8>(
     input: &[u8],
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -361,7 +358,7 @@ pub(crate) fn to_bun_string(input: &[u8], encoding: impl Into<Encoding>) -> BunS
     dispatch_encoding!(encoding.into(), |E| to_bun_string_comptime::<E>(input))
 }
 
-pub(crate) fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
+fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
     if input.is_empty() {
         return BunString::empty();
     }
@@ -487,42 +484,28 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
 /// `ALLOW_PARTIAL_WRITE` selects Node's `Buffer#fill` semantics: the encoding
 /// is truncated at the byte level, so a code unit / code point that only partly
 /// fits still gets its leading bytes. Without it (`buf.write`), stop at whole units.
-///
-/// # Safety
-/// `input` must be valid for reading `len` bytes and `to_ptr` must be valid for
-/// writing `to_len` bytes; the two ranges must not overlap.
-pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
-    input: *const u8,
-    len: usize,
-    to_ptr: *mut u8,
-    to_len: usize,
+pub(crate) fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
+    input: &[u8],
+    to: &mut [u8],
 ) -> Result<usize, crate::Error> {
-    if len == 0 || to_len == 0 {
+    if input.is_empty() || to.is_empty() {
         return Ok(0);
     }
 
     // TODO: increase temporary buffer size for larger amounts of data
 
-    // SAFETY: caller guarantees `input[..len]` and `to_ptr[..to_len]` are valid; len/to_len > 0.
-    let (input_slice, to_slice) = unsafe {
-        (
-            bun_core::ffi::slice(input, len),
-            slice::from_raw_parts_mut(to_ptr, to_len),
-        )
-    };
-
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer | Encoding::Latin1 => {
-            let written = len.min(to_len);
-            to_slice[..written].copy_from_slice(&input_slice[..written]);
+            let written = input.len().min(to.len());
+            to[..written].copy_from_slice(&input[..written]);
 
             Ok(written)
         }
         Encoding::Ascii => {
-            let written = len.min(to_len);
+            let written = input.len().min(to.len());
 
-            let to = &mut to_slice[..written];
-            let remain = &input_slice[..written];
+            let to = &mut to[..written];
+            let remain = &input[..written];
 
             if bun_simdutf::validate::ascii(remain) {
                 to.copy_from_slice(remain);
@@ -533,29 +516,28 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
             Ok(written)
         }
         Encoding::Utf8 => {
-            let r = strings::copy_latin1_into_utf8(to_slice, input_slice);
+            let r = strings::copy_latin1_into_utf8(to, input);
             let mut written = r.written as usize;
             // `copy_latin1_into_utf8` stops at whole code points. Under
             // byte-level truncation, a Latin-1 char >= 0x80 whose 2-byte
             // sequence straddles the end still gets its lead byte.
-            if ALLOW_PARTIAL_WRITE && written < to_len && (r.read as usize) < len {
-                debug_assert!(input_slice[r.read as usize] >= 0x80);
-                to_slice[written] = 0xC0 | (input_slice[r.read as usize] >> 6);
+            if ALLOW_PARTIAL_WRITE && written < to.len() && (r.read as usize) < input.len() {
+                debug_assert!(input[r.read as usize] >= 0x80);
+                to[written] = 0xC0 | (input[r.read as usize] >> 6);
                 written += 1;
             }
             Ok(written)
         }
         // encode latin1 into UTF16
         Encoding::Ucs2 | Encoding::Utf16le => {
-            let buf = input_slice;
-            let out_units = to_len / 2;
-            // `to_slice` already covers `to_ptr[..to_len]`; for the aligned fast
-            // path, `bytemuck` gives a safe `&mut [u8] → &mut [u16]` view (it
-            // re-checks alignment + even length, both proven here).
+            let buf = input;
+            let out_units = to.len() / 2;
+            // For the aligned fast path, `bytemuck` gives a safe `&mut [u8] → &mut [u16]`
+            // view (it re-checks alignment + even length, both proven here).
             let mut written = if out_units == 0 {
                 0
-            } else if (to_slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<u16>()) {
-                let output: &mut [u16] = bytemuck::cast_slice_mut(&mut to_slice[..out_units * 2]);
+            } else if (to.as_ptr() as usize).is_multiple_of(core::mem::align_of::<u16>()) {
+                let output: &mut [u16] = bytemuck::cast_slice_mut(&mut to[..out_units * 2]);
                 strings::copy_latin1_into_utf16(output, buf).written as usize * 2
             } else {
                 // Rust `&mut [u16]` requires natural alignment, so inline the
@@ -563,55 +545,44 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: boo
                 // (each Latin-1 byte → one u16).
                 let n = buf.len().min(out_units);
                 for i in 0..n {
-                    to_slice[i * 2..i * 2 + 2].copy_from_slice(&(buf[i] as u16).to_ne_bytes());
+                    to[i * 2..i * 2 + 2].copy_from_slice(&(buf[i] as u16).to_ne_bytes());
                 }
                 n * 2
             };
             // Under byte-level truncation the trailing byte of an odd-length
             // destination (shorter than the encoded string) is the low byte
             // of the next code unit.
-            if ALLOW_PARTIAL_WRITE && written < to_len && written < buf.len() * 2 {
-                to_slice[written] = buf[written / 2];
+            if ALLOW_PARTIAL_WRITE && written < to.len() && written < buf.len() * 2 {
+                to[written] = buf[written / 2];
                 written += 1;
             }
             Ok(written)
         }
 
-        Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice)),
+        Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to, input)),
 
         Encoding::Base64 | Encoding::Base64url => {
             let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
-            Ok(bun_base64::decode_lenient(
-                to_slice,
-                input_slice,
-                is_urlsafe,
-            ))
+            Ok(bun_base64::decode_lenient(to, input, is_urlsafe))
         }
     }
 }
 
-/// # Safety
-/// `input` must be valid for reading `len` bytes.
-pub(crate) unsafe fn byte_length_u8<const ENCODING: u8>(input: *const u8, len: usize) -> usize {
-    if len == 0 {
+fn byte_length_u8<const ENCODING: u8>(input: &[u8]) -> usize {
+    if input.is_empty() {
         return 0;
     }
 
-    // SAFETY: forwarded from this fn's contract.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-
     match encoding_from_u8(ENCODING) {
-        Encoding::Utf8 => strings::element_length_latin1_into_utf8(input_slice),
+        Encoding::Utf8 => strings::element_length_latin1_into_utf8(input),
 
-        Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => len,
+        Encoding::Latin1 | Encoding::Ascii | Encoding::Buffer => input.len(),
 
-        Encoding::Ucs2 | Encoding::Utf16le => {
-            strings::element_length_utf8_into_utf16(input_slice) * 2
-        }
+        Encoding::Ucs2 | Encoding::Utf16le => strings::element_length_utf8_into_utf16(input) * 2,
 
-        Encoding::Hex => len / 2,
+        Encoding::Hex => input.len() / 2,
 
-        Encoding::Base64 | Encoding::Base64url => bun_base64::decode_len(input_slice),
+        Encoding::Base64 | Encoding::Base64url => bun_base64::decode_len(input),
         // else => return &[_]u8{};
     }
 }
@@ -706,52 +677,37 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
             // U+1234 like '4'), the same narrowing Node's lenient fallback
             // decoder applies.
-            // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
-            // needed here since the output goes through `write_u8` with raw `to`.
+            // SAFETY: caller guarantees `input[..len]` is valid.
             let input_slice = unsafe { bun_core::ffi::slice(input, len) };
             let mut narrowed = vec![0u8; len];
             strings::copy_u16_into_u8(&mut narrowed, input_slice);
-            // SAFETY: `narrowed` is a valid local Vec; `to[..to_len]` validity is
-            // forwarded from this fn's contract and is disjoint from `narrowed`.
-            unsafe {
-                write_u8::<ENCODING, ALLOW_PARTIAL_WRITE>(
-                    narrowed.as_ptr(),
-                    narrowed.len(),
-                    to,
-                    to_len,
-                )
-            }
+            // SAFETY: caller guarantees `to[..to_len]` is valid for writing; `input_slice`
+            // is dead by now, so no other view of caller memory is live.
+            let to = unsafe { bun_core::ffi::slice_mut(to, to_len) };
+            write_u8::<ENCODING, ALLOW_PARTIAL_WRITE>(&narrowed, to)
         } // else => return &[_]u8{};
     }
 }
 
-/// # Safety
-/// `input` must be valid for reading `len` bytes.
-pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
-    input: *const u8,
-    len: usize,
-) -> Vec<u8> {
-    if len == 0 {
+fn construct_from_u8<const ENCODING: u8>(input: &[u8]) -> Vec<u8> {
+    if input.is_empty() {
         return Vec::new();
     }
 
-    // SAFETY: forwarded from this fn's contract.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer => {
-            let mut to = vec![0u8; len];
-            to.copy_from_slice(input_slice);
+            let mut to = vec![0u8; input.len()];
+            to.copy_from_slice(input);
             to
         }
         Encoding::Latin1 | Encoding::Ascii => {
-            let mut to = vec![0u8; len];
-            to.copy_from_slice(input_slice);
+            let mut to = vec![0u8; input.len()];
+            to.copy_from_slice(input);
             to
         }
         Encoding::Utf8 => {
             // need to encode
-            strings::allocate_latin1_into_utf8(input_slice).unwrap_or_default()
+            strings::allocate_latin1_into_utf8(input).unwrap_or_default()
         }
         // encode latin1 into UTF16
         // return as bytes
@@ -760,20 +716,20 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
             // (`copy_latin1_into_utf16` is exactly that loop). Write the bytes
             // directly into a `Vec<u8>` so we never depend on an allocator-
             // layout-dependent `Vec<u16> → Vec<u8>` header reinterpret.
-            let mut to = vec![0u8; len * 2];
-            for (out, &b) in to.as_chunks_mut::<2>().0.iter_mut().zip(input_slice) {
+            let mut to = vec![0u8; input.len() * 2];
+            for (out, &b) in to.as_chunks_mut::<2>().0.iter_mut().zip(input) {
                 *out = u16::from(b).to_ne_bytes();
             }
             to
         }
 
         Encoding::Hex => {
-            if len < 2 {
+            if input.len() < 2 {
                 return Vec::new();
             }
 
-            let mut to = vec![0u8; len / 2];
-            let wrote = strings::decode_hex_to_bytes_truncate(&mut to, input_slice);
+            let mut to = vec![0u8; input.len() / 2];
+            let wrote = strings::decode_hex_to_bytes_truncate(&mut to, input);
             if wrote == 0 {
                 // No valid hex pairs were decoded (e.g. Buffer.from("zz", "hex")). The
                 // allocation is unreachable once we return a zero-length slice, so free
@@ -786,7 +742,7 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
 
         Encoding::Base64 | Encoding::Base64url => {
             const TRIM_CHARS: &[u8] = b"\r\n\t \x0B"; // \x0B = vertical tab
-            let slice = strings::trim(input_slice, TRIM_CHARS);
+            let slice = strings::trim(input, TRIM_CHARS);
             if slice.is_empty() {
                 return Vec::new();
             }
@@ -813,41 +769,33 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
     }
 }
 
-/// # Safety
-/// `input` must be valid for reading `len` `u16`s.
-pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
-    input: *const u16,
-    len: usize,
-) -> Vec<u8> {
-    if len == 0 {
+fn construct_from_u16<const ENCODING: u8>(input: &[u16]) -> Vec<u8> {
+    if input.is_empty() {
         return Vec::new();
     }
 
-    // SAFETY: forwarded from this fn's contract.
-    let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-
     match encoding_from_u8(ENCODING) {
-        Encoding::Utf8 => strings::to_utf8_alloc_with_type(input_slice),
+        Encoding::Utf8 => strings::to_utf8_alloc_with_type(input),
         Encoding::Latin1 | Encoding::Buffer | Encoding::Ascii => {
-            let mut to = vec![0u8; len];
-            strings::copy_u16_into_u8(&mut to, input_slice);
+            let mut to = vec![0u8; input.len()];
+            strings::copy_u16_into_u8(&mut to, input);
             to
         }
         // string is already encoded, just need to copy the data
         Encoding::Ucs2 | Encoding::Utf16le => {
-            // `input_slice: &[u16]` is the source bytes verbatim — copy them
+            // `input: &[u16]` is the source bytes verbatim; copy them
             // out into a fresh u8 Vec (a `Vec<u16>` header reinterpret would be
             // allocator-layout-dependent).
-            bytemuck::cast_slice::<u16, u8>(input_slice).to_vec()
+            bytemuck::cast_slice::<u16, u8>(input).to_vec()
         }
 
         Encoding::Hex => {
-            if len < 2 {
+            if input.len() < 2 {
                 return Vec::new();
             }
 
-            let mut to = vec![0u8; len / 2];
-            let wrote = strings::decode_hex_to_bytes_truncate(&mut to, input_slice);
+            let mut to = vec![0u8; input.len() / 2];
+            let wrote = strings::decode_hex_to_bytes_truncate(&mut to, input);
             if wrote == 0 {
                 return Vec::new();
             }
@@ -860,10 +808,9 @@ pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
             // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
             // U+1234 like '4'), the same narrowing Node's lenient fallback
             // decoder applies.
-            let mut narrowed = vec![0u8; len];
-            strings::copy_u16_into_u8(&mut narrowed, input_slice);
-            // SAFETY: `narrowed` is a valid local Vec.
-            unsafe { construct_from_u8::<ENCODING>(narrowed.as_ptr(), narrowed.len()) }
+            let mut narrowed = vec![0u8; input.len()];
+            strings::copy_u16_into_u8(&mut narrowed, input);
+            construct_from_u8::<ENCODING>(&narrowed)
         }
     }
 }
@@ -881,16 +828,12 @@ pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
 
 /// Runtime-dispatch wrapper over [`construct_from_u8`].
 fn construct_from_u8_dyn(input: &[u8], encoding: Encoding) -> Vec<u8> {
-    let (p, n) = (input.as_ptr(), input.len());
-    // SAFETY: pointer/length come from a valid borrowed slice.
-    dispatch_encoding!(encoding, |E| unsafe { construct_from_u8::<E>(p, n) })
+    dispatch_encoding!(encoding, |E| construct_from_u8::<E>(input))
 }
 
 /// Runtime-dispatch wrapper over [`construct_from_u16`].
 fn construct_from_u16_dyn(input: &[u16], encoding: Encoding) -> Vec<u8> {
-    let (p, n) = (input.as_ptr(), input.len());
-    // SAFETY: pointer/length come from a valid borrowed slice.
-    dispatch_encoding!(encoding, |E| unsafe { construct_from_u16::<E>(p, n) })
+    dispatch_encoding!(encoding, |E| construct_from_u16::<E>(input))
 }
 
 /// Extension trait — see module note above for why this lives in

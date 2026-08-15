@@ -64,7 +64,7 @@ dv.setUint16(1, 513);
 console.log(dv.getUint16(1)); // => 513
 ```
 
-The first three bytes of the underlying `ArrayBuffer` now have values. Even though the second and third bytes were written with `setUint16()`, you can still read each component byte with `getUint8()`.
+The first three bytes of the underlying `ArrayBuffer` now have values. Even though you wrote the second and third bytes with `setUint16()`, you can still read each component byte with `getUint8()`.
 
 ```ts
 console.log(dv.getUint8(1)); // => 2
@@ -134,7 +134,7 @@ The typed array classes, and how each interprets the bytes in an `ArrayBuffer`:
 | [`BigUint64Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigUint64Array)       | Every eight (8) bytes are interpreted as an unsigned `BigInt`. Range 0 to 18446744073709551615 (though `BigInt` is capable of representing larger numbers).                |
 | [`Uint8ClampedArray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Uint8ClampedArray) | Same as `Uint8Array`, but automatically "clamps" to the range 0-255 when assigning a value to an element.                                                                  |
 
-The following table shows how the same bytes in an `ArrayBuffer` are interpreted by different typed array classes.
+The following table shows how different typed array classes interpret the same bytes in an `ArrayBuffer`.
 
 |                  | Byte 0              | Byte 1     | Byte 2              | Byte 3     | Byte 4               | Byte 5     | Byte 6               | Byte 7     |
 | ---------------- | ------------------- | ---------- | ------------------- | ---------- | -------------------- | ---------- | -------------------- | ---------- |
@@ -194,7 +194,7 @@ const arr2 = new Uint8Array(5);
 // => Uint8Array(5) [0, 0, 0, 0, 0]
 ```
 
-Typed arrays can also be instantiated directly from an array of numbers, or another typed array:
+You can also instantiate typed arrays directly from an array of numbers, or another typed array:
 
 ```ts
 // from an array of numbers
@@ -238,7 +238,7 @@ new Uint8Array([255, 254, 253, 252, 251]).toHex(); // "fffefdfcfb"
 Uint8Array.fromHex("fffefdfcfb"); // Uint8Array(5) [255, 254, 253, 252, 251]
 ```
 
-It is the return value of [`TextEncoder#encode`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder), and the input type of [`TextDecoder#decode`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder), two utility classes that translate between strings and various binary encodings, most notably `"utf-8"`.
+It is the return value of [`TextEncoder#encode`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder) and the input type of [`TextDecoder#decode`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder). These two utility classes translate between strings and various binary encodings, most notably `"utf-8"`.
 
 ```ts
 const encoder = new TextEncoder();
@@ -283,7 +283,7 @@ blob.type; // => text/html
 blob.size; // => 18
 ```
 
-These parts can be `string`, `ArrayBuffer`, `TypedArray`, `DataView`, or other `Blob` instances. The parts are concatenated in the order they're given.
+These parts can be `string`, `ArrayBuffer`, `TypedArray`, `DataView`, or other `Blob` instances. The constructor concatenates the parts in the order you give them.
 
 ```ts
 const blob = new Blob([
@@ -830,7 +830,7 @@ new Response(stream).blob();
 
 #### To `ReadableStream`
 
-To split a `ReadableStream` into two streams that can be consumed independently:
+To split a `ReadableStream` into two streams that you can consume independently:
 
 ```ts
 const [a, b] = stream.tee();

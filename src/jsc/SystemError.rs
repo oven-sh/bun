@@ -64,14 +64,15 @@ impl From<bun_sys::SystemError> for SystemError {
     }
 }
 
-/// `core::result::Result` alias in Phase F so callers get `?` for free.
-pub type Maybe<R> = core::result::Result<R, SystemError>;
-
 // SAFETY (safe fn): `SystemError` is `#[repr(C)]` and read-only on the C++ side;
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed handle, so `&JSGlobalObject`
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
 unsafe extern "C" {
     safe fn SystemError__toErrorInstance(this: &SystemError, global: &JSGlobalObject) -> JSValue;
+    safe fn SystemError__toTypeErrorInstance(
+        this: &SystemError,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     safe fn SystemError__toErrorInstanceWithInfoObject(
         this: &SystemError,
         global: &JSGlobalObject,
@@ -79,16 +80,16 @@ unsafe extern "C" {
 }
 
 impl SystemError {
-    #[inline]
-    pub fn get_errno(&self) -> bun_sys::E {
-        bun_sys::e_from_negated(self.errno)
-    }
-
     /// Converts to a JS `Error`, consuming `self`. C++ only borrows the string
     /// fields; `Drop` releases them when `self` goes out of scope. `.clone()`
     /// first when two `Error`s are genuinely wanted.
     pub fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         SystemError__toErrorInstance(&self, global)
+    }
+
+    /// `to_error_instance` but as a JS `TypeError` (keeps `.code`/`.path`/...).
+    pub fn to_type_error_instance(self, global: &JSGlobalObject) -> JSValue {
+        SystemError__toTypeErrorInstance(&self, global)
     }
 
     /// Like `to_error_instance` but populates the error's stack trace with async
@@ -139,7 +140,7 @@ impl SystemError {
 pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
-) -> crate::JsResult<JSValue> {
+) -> JSValue {
     let code: &[u8] = err.code_bytes();
     let reason: &[u8] = err.reason_bytes();
 
@@ -149,7 +150,7 @@ pub fn verify_error_to_js(
         ..Default::default()
     };
 
-    Ok(fallback.to_error_instance(global))
+    fallback.to_error_instance(global)
 }
 
 impl fmt::Display for SystemError {

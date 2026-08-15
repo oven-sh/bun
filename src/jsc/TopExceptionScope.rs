@@ -41,7 +41,7 @@ impl SourceLocation {
     /// `BUN_JSC_dumpSimulatedThrows` diagnostics.
     #[track_caller]
     #[inline]
-    pub fn from_caller() -> Self {
+    pub(crate) fn from_caller() -> Self {
         let loc = core::panic::Location::caller();
         Self {
             fn_name: c"<rust>".as_ptr(),
@@ -166,7 +166,7 @@ impl Drop for TopExceptionScopeGuard<'_> {
     fn drop(&mut self) {
         // SAFETY: the guard is only ever constructed by `init_guard`, which fully
         // initialized the scope; the borrow ensures it has not been destroyed.
-        unsafe { TopExceptionScope::destroy(self.0) };
+        unsafe { self.0.destroy() };
     }
 }
 
@@ -192,7 +192,7 @@ impl TopExceptionScope {
     ///
     /// Prefer [`top_scope!`](crate::top_scope) (RAII) over calling this directly.
     #[track_caller]
-    pub fn init<'a>(
+    pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> &'a mut Self {
@@ -202,7 +202,7 @@ impl TopExceptionScope {
     /// Like [`init`](Self::init) but with an explicit [`SourceLocation`] — used by the
     /// [`top_scope!`](crate::top_scope) macro to forward `file!()`/`line!()` literals.
     #[inline]
-    pub fn init_at<'a>(
+    pub(crate) fn init_at<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
         src: SourceLocation,
@@ -228,7 +228,7 @@ impl TopExceptionScope {
         TopExceptionScopeGuard(Self::init_at(storage, global, src))
     }
 
-    pub fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
+    pub(crate) fn init_in_place(&mut self, global: &JSGlobalObject, src: SourceLocation) {
         // SAFETY: `bytes` is SIZE bytes, ALIGNMENT-aligned (via #[repr(align(8))]); the C++
         // side asserts size/alignment match.
         unsafe {
@@ -261,7 +261,7 @@ impl TopExceptionScope {
         unreachable!("assertionFailure called without a pending exception");
     }
 
-    pub fn has_exception(&mut self) -> bool {
+    pub(crate) fn has_exception(&mut self) -> bool {
         self.exception().is_some()
     }
 
@@ -279,7 +279,7 @@ impl TopExceptionScope {
     }
 
     /// Get the thrown exception if it exists, or if an unhandled trap causes an exception to be thrown
-    pub fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
+    pub(crate) fn exception_including_traps(&mut self) -> Option<NonNull<Exception>> {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__exceptionIncludingTraps(&mut self.bytes))
@@ -295,50 +295,44 @@ impl TopExceptionScope {
     }
 
     /// Asserts there has not been any exception thrown.
-    pub fn assert_no_exception(&mut self) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        {
-            if let Some(e) = self.exception() {
-                // TerminationException can be raised at any safepoint (worker
-                // terminate(), worker process.exit()) regardless of what the host
-                // function returned, so it's never a return-value/exception
-                // mismatch — let the caller's safepoint observe it.
-                if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
-                    return;
-                }
-                self.assertion_failure(e);
+    #[cfg(any(debug_assertions, bun_asan))]
+    pub(crate) fn assert_no_exception(&mut self) {
+        if let Some(e) = self.exception() {
+            // TerminationException can be raised at any safepoint (worker
+            // terminate(), worker process.exit()) regardless of what the host
+            // function returned, so it's never a return-value/exception
+            // mismatch — let the caller's safepoint observe it.
+            if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
+                return;
             }
+            self.assertion_failure(e);
         }
     }
 
     /// Asserts that there is or is not an exception according to the value of `should_have_exception`.
     /// Prefer over `assert(scope.has_exception() == ...)` because if there is an unexpected exception,
     /// this function prints a trace of where it was thrown.
-    pub fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
-        #[cfg(any(debug_assertions, bun_asan))]
-        {
-            if should_have_exception {
-                // Must call `has_exception()` unconditionally inside this cfg block
-                // (not via `debug_assert!`): release+ASAN builds enter here via
-                // `bun_asan` with `debug_assertions` off, and the C++ scope's
-                // destructor will fail `verifyExceptionCheckNeedIsSatisfied` unless
-                // the underlying `VM::exception()` was actually invoked.
-                assert!(self.has_exception(), "Expected an exception to be thrown");
-            } else {
-                self.assert_no_exception();
-            }
+    #[cfg(any(debug_assertions, bun_asan))]
+    pub(crate) fn assert_exception_presence_matches(&mut self, should_have_exception: bool) {
+        if should_have_exception {
+            // Must call `has_exception()` unconditionally (not via
+            // `debug_assert!`): release+ASAN builds enter here via `bun_asan`
+            // with `debug_assertions` off, and the C++ scope's destructor will
+            // fail `verifyExceptionCheckNeedIsSatisfied` unless the underlying
+            // `VM::exception()` was actually invoked.
+            assert!(self.has_exception(), "Expected an exception to be thrown");
+        } else {
+            self.assert_no_exception();
         }
-        #[cfg(not(any(debug_assertions, bun_asan)))]
-        let _ = should_have_exception;
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSTerminated (so you can `?`)
-    /// If non-termination exception, assertion failure.
-    pub fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
+    /// If the termination exception is pending, `Err(Thrown)`: it is an exception, so unwind (`?`).
+    /// If a non-termination exception, assertion failure.
+    pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         if let Some(e) = self.exception() {
             if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
-                return Err(JsError::Terminated);
+                return Err(JsError::Thrown);
             }
             #[cfg(any(debug_assertions, bun_asan))]
             self.assertion_failure(e);
@@ -349,16 +343,13 @@ impl TopExceptionScope {
     }
 
     /// # Safety
-    /// `this` must point to a scope previously initialized via `init()` and not yet destroyed.
+    /// The scope must have been initialized via `init()` and not yet destroyed.
     /// Prefer dropping a [`TopExceptionScopeGuard`] instead.
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract.
-        let this = unsafe { &mut *this };
+    pub(crate) unsafe fn destroy(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
-        debug_assert!(core::ptr::eq(this.location, &raw const this.bytes[0]));
+        debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         // SAFETY: bytes was initialized by init().
-        unsafe { TopExceptionScope__destruct(&raw mut this.bytes) };
-        // this.bytes = undefined; — no-op in Rust
+        unsafe { TopExceptionScope__destruct(&raw mut self.bytes) };
     }
 }
 
@@ -468,7 +459,7 @@ impl ExceptionValidationScope {
 
     /// See [`TopExceptionScope::init`] for the storage-passing rationale.
     #[track_caller]
-    pub fn init<'a>(
+    pub(crate) fn init<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> &'a mut Self {
@@ -476,7 +467,7 @@ impl ExceptionValidationScope {
     }
 
     #[inline]
-    pub fn init_at<'a>(
+    pub(crate) fn init_at<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
         src: SourceLocation,
@@ -511,7 +502,7 @@ impl ExceptionValidationScope {
     /// RAII constructor — see [`TopExceptionScope::init_guard`].
     #[track_caller]
     #[inline]
-    pub fn init_guard<'a>(
+    pub(crate) fn init_guard<'a>(
         storage: &'a mut core::mem::MaybeUninit<Self>,
         global: &JSGlobalObject,
     ) -> ExceptionValidationScopeGuard<'a> {
@@ -529,7 +520,7 @@ impl ExceptionValidationScope {
     }
 
     /// Asserts there has not been any exception thrown.
-    pub fn assert_no_exception(&mut self) {
+    pub(crate) fn assert_no_exception(&mut self) {
         #[cfg(any(debug_assertions, bun_asan))]
         self.scope.assert_no_exception();
     }
@@ -546,9 +537,9 @@ impl ExceptionValidationScope {
     }
 
     /// If no exception, returns.
-    /// If termination exception, returns JSTerminated (so you can `?`)
-    /// If non-termination exception, assertion failure.
-    pub fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
+    /// If the termination exception is pending, `Err(Thrown)` (so you can `?`).
+    /// If a non-termination exception, assertion failure.
+    pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         #[cfg(any(debug_assertions, bun_asan))]
         return self.scope.assert_no_exception_except_termination();
         #[cfg(not(any(debug_assertions, bun_asan)))]
@@ -556,7 +547,7 @@ impl ExceptionValidationScope {
     }
 
     /// Inconveniently named on purpose; this is only needed for some weird edge cases
-    pub fn has_exception_or_false_when_assertions_are_disabled(&mut self) -> bool {
+    pub(crate) fn has_exception_or_false_when_assertions_are_disabled(&mut self) -> bool {
         #[cfg(any(debug_assertions, bun_asan))]
         return self.scope.has_exception();
         #[cfg(not(any(debug_assertions, bun_asan)))]
@@ -566,12 +557,12 @@ impl ExceptionValidationScope {
     /// # Safety
     /// `this` must point to a scope previously initialized via `init()` and not yet destroyed.
     /// Prefer dropping an [`ExceptionValidationScopeGuard`] instead.
-    pub unsafe fn destroy(this: *mut Self) {
+    pub(crate) unsafe fn destroy(this: *mut Self) {
         #[cfg(any(debug_assertions, bun_asan))]
         // SAFETY: caller contract — `this` points to a scope initialized via `init()` and not
         // yet destroyed; under this cfg the wrapper's sole field is the inner scope.
         unsafe {
-            TopExceptionScope::destroy(&raw mut (*this).scope)
+            (*this).scope.destroy()
         };
         #[cfg(not(any(debug_assertions, bun_asan)))]
         let _ = this;
@@ -593,6 +584,22 @@ impl ExceptionValidationScope {
 // so the validation scope's diagnostics point at the user's call site, and the
 // scope is RAII (dropped on every return path including `?`).
 
+unsafe extern "C" {
+    // safe fn: `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*`; C++ only reads
+    // and writes its VM's termination flag.
+    safe fn Bun__VM__keepTerminationRequestWithPendingException(global: &JSGlobalObject);
+}
+
+/// An FFI call into JSC came back with an exception pending. If it is a worker's
+/// TerminationException that we are about to leave pending past the entry it unwound (see the C++
+/// side), keep JSC's termination-request flag in step with it. Cold path only.
+#[cold]
+#[inline(never)]
+pub fn thrown(global: &JSGlobalObject) -> JsError {
+    Bun__VM__keepTerminationRequestWithPendingException(global);
+    JsError::Thrown
+}
+
 /// `[[ZIG_EXPORT(zero_is_throw)]]`: callee returns `JSValue::ZERO` ⟺ it threw.
 ///
 /// `src` is the diagnostic location for `BUN_JSC_dumpSimulatedThrows`; pass [`src!`](crate::src)
@@ -609,7 +616,7 @@ pub fn call_zero_is_throw_at(
     let v = f();
     scope.assert_exception_presence_matches(v == JSValue::ZERO);
     if v == JSValue::ZERO {
-        Err(JsError::Thrown)
+        Err(thrown(global))
     } else {
         Ok(v)
     }
@@ -638,7 +645,7 @@ pub fn call_false_is_throw_at(
     let mut scope = ExceptionValidationScope::init_guard_at(&mut storage, global, src);
     let v = f();
     scope.assert_exception_presence_matches(!v);
-    if v { Ok(()) } else { Err(JsError::Thrown) }
+    if v { Ok(()) } else { Err(thrown(global)) }
 }
 
 /// `[[ZIG_EXPORT(false_is_throw)]]` — `#[track_caller]` convenience wrapper.
@@ -659,7 +666,7 @@ pub fn call_null_is_throw_at<T>(
     let mut scope = ExceptionValidationScope::init_guard_at(&mut storage, global, src);
     let v = f();
     scope.assert_exception_presence_matches(v.is_null());
-    NonNull::new(v).ok_or(JsError::Thrown)
+    NonNull::new(v).ok_or_else(|| thrown(global))
 }
 
 /// `[[ZIG_EXPORT(null_is_throw)]]` — `#[track_caller]` convenience wrapper.
@@ -690,7 +697,9 @@ pub fn call_check_slow_at<R>(
         let mut storage = core::mem::MaybeUninit::uninit();
         let mut scope = TopExceptionScope::init_guard_at(&mut storage, global, src);
         let r = f();
-        scope.return_if_exception()?;
+        if scope.return_if_exception().is_err() {
+            return Err(thrown(global));
+        }
         Ok(r)
     }
     #[cfg(not(any(debug_assertions, bun_asan)))]
@@ -701,7 +710,7 @@ pub fn call_check_slow_at<R>(
         // wrapper (reads `vm.m_exception` with trap check; same body as
         // `RETURN_IF_EXCEPTION` in C++).
         if crate::cpp::Bun__RETURN_IF_EXCEPTION(global) {
-            Err(JsError::Thrown)
+            Err(thrown(global))
         } else {
             Ok(r)
         }

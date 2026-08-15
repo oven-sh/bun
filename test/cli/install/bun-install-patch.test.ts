@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDir } from "harness";
 import { join } from "path";
 
 const normalizeBunSnapshot = (str: string) => {
@@ -121,7 +121,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -149,7 +149,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   });
 
   test("should patch a non-hoisted dependency", async () => {
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -179,7 +179,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -208,7 +208,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   test("should patch a transitive dependency", async () => {
     const version = "0.1.2";
     const patchFilename = filepathEscape(`is-odd@${version}.patch`);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -237,7 +237,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchfileName = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -280,7 +280,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
   });
 
   it("should patch a transitive dependency after it was already installed", async () => {
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -326,7 +326,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -360,7 +360,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
       const patchFilename = filepathEscape(`is-even@${version}.patch`);
       const patchVersion = patchVersion_ ?? version;
       test(version, async () => {
-        const filedir = tempDirWithFiles("patch1", {
+        await using filedir = tempDir("patch1", {
           "package.json": JSON.stringify({
             "name": "bun-patch-test",
             "module": "index.ts",
@@ -408,7 +408,7 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
 
   it("should update a transitive dependency when the patchfile changes", async () => {
     $.throws(true);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -462,7 +462,7 @@ index aa7c7012cda790676032d1b01d78c0b69ec06360..6048e7cb462b3f9f6ac4dc21aacf9a09
 `;
 
     $.throws(true);
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -501,7 +501,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
   };
 `;
 
-    const filedir = tempDirWithFiles("patch1", {
+    await using filedir = tempDir("patch1", {
       "package.json": JSON.stringify({
         "name": "bun-patch-test",
         "module": "index.ts",
@@ -574,7 +574,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     const patchEnv = bunEnv;
 
     test("should create patch for package and commit it", async () => {
-      const filedir = tempDirWithFiles("patch-isolated", {
+      await using filedir = tempDir("patch-isolated", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-test",
           "module": "index.ts",
@@ -635,7 +635,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should patch transitive dependency with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-transitive", {
+      await using filedir = tempDir("patch-isolated-transitive", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-transitive-test",
           "module": "index.ts",
@@ -690,7 +690,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should handle scoped packages with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-scoped", {
+      await using filedir = tempDir("patch-isolated-scoped", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-scoped-test",
           "module": "index.ts",
@@ -748,7 +748,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should work with workspaces and isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-workspace", {
+      await using filedir = tempDir("patch-isolated-workspace", {
         "package.json": JSON.stringify({
           "name": "workspace-root",
           "workspaces": ["packages/*"],
@@ -811,7 +811,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should preserve patch after reinstall with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-reinstall", {
+      await using filedir = tempDir("patch-isolated-reinstall", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-reinstall-test",
           "module": "index.ts",
@@ -856,7 +856,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
     });
 
     test("should handle multiple patches with isolated linker", async () => {
-      const filedir = tempDirWithFiles("patch-isolated-multiple", {
+      await using filedir = tempDir("patch-isolated-multiple", {
         "package.json": JSON.stringify({
           "name": "bun-patch-isolated-multiple-test",
           "module": "index.ts",
@@ -955,7 +955,7 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
 `;
 
   test("install with an empty cache downloads the package unpatched", async () => {
-    const filedir = tempDirWithFiles("patch-remove", {
+    await using filedir = tempDir("patch-remove", {
       "package.json": JSON.stringify({
         name: "remove-patch-test",
         dependencies: {
@@ -1021,5 +1021,101 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
     });
     expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
     expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
+  });
+});
+
+describe("patchedDependencies contents_hash", () => {
+  // A patch that creates node_modules/is-odd/m.js; `hunk` is the @@ line.
+  const patchHeader = (hunk: string) =>
+    "diff --git a/m.js b/m.js\n" +
+    "new file mode 100644\n" +
+    "index 0000000..1111111\n" +
+    "--- /dev/null\n" +
+    "+++ b/m.js\n" +
+    `${hunk}\n`;
+
+  const mkProject = (name: string, patch: string) =>
+    tempDir(`patch-hash-${name}`, {
+      "package.json": JSON.stringify({
+        name,
+        patchedDependencies: { "is-odd@3.0.1": "patches/p.patch" },
+        dependencies: { "is-odd": "3.0.1" },
+      }),
+      patches: { "p.patch": patch },
+    });
+
+  const install = async (cwd: string, cacheDir: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  };
+
+  const installedMjs = (dir: string) => Bun.file(join(dir, "node_modules", "is-odd", "m.js")).text();
+
+  test("two distinct patches that collided under the old wyhash contents_hash do not share a cache entry", async () => {
+    // https://github.com/oven-sh/bun/issues/32741
+    // Under Wyhash11(seed=0) both patches hash to 0x429d7ca64c60f3d1, so
+    // before this change projB reused projA's cached patched package (and
+    // observed AAAAAAAA) instead of applying its own patch.
+    const header = patchHeader("@@ -0,0 +1 @@");
+    const patchA = header + `+module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPAAAAAAAAgMsUw5DUklmnopqrstuvwxyz";\n`;
+    const patchB = header + `+module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPBBBBBBBBgMsUw5DUklmnopqrstuvwxyz";\n`;
+    // Regenerating this pair at runtime would require the internal Wyhash11
+    // (not exposed to JS), so the colliding pair is fixed. Both patches are
+    // the same length and differ only in the 8-byte payload.
+    expect(patchA.length).toBe(patchB.length);
+    expect(patchA).not.toBe(patchB);
+
+    using sharedCache = tempDir("patch-hash-cache", {});
+    using projA = mkProject("proj-a", patchA);
+    using projB = mkProject("proj-b", patchB);
+    const cache = String(sharedCache);
+
+    await install(String(projA), cache);
+    expect(await installedMjs(String(projA))).toContain("AAAAAAAA");
+
+    await install(String(projB), cache);
+    const mB = await installedMjs(String(projB));
+    expect(mB).toContain("BBBBBBBB");
+    expect(mB).not.toContain("AAAAAAAA");
+
+    // A non-colliding control patch (different size, different content) has
+    // always gone to its own cache entry.
+    using projC = mkProject("proj-ctl", header + `+module.exports="control payload";\n`);
+    await install(String(projC), cache);
+    expect(await installedMjs(String(projC))).toContain("control payload");
+  });
+
+  test("patches that differ only after the first 64 KiB get distinct cache entries", async () => {
+    // The content hash used to be computed by repeatedly reading from file
+    // offset 0, so any two patches with an identical leading chunk hashed the
+    // same no matter what followed. Both patches here share a >64 KiB prefix
+    // (a long comment line) and differ only in the final exported payload.
+    const padding = "+// " + Buffer.alloc(80 * 1024, "p").toString() + "\n";
+    const header = patchHeader("@@ -0,0 +1,2 @@");
+    const patchA = header + padding + `+module.exports="TAIL_AAAA";\n`;
+    const patchB = header + padding + `+module.exports="TAIL_BBBB";\n`;
+    expect(patchA.length).toBe(patchB.length);
+    expect(patchA).not.toBe(patchB);
+
+    using sharedCache = tempDir("patch-tail-cache", {});
+    using projA = mkProject("proj-a", patchA);
+    using projB = mkProject("proj-b", patchB);
+    const cache = String(sharedCache);
+
+    await install(String(projA), cache);
+    expect(await installedMjs(String(projA))).toContain("TAIL_AAAA");
+
+    await install(String(projB), cache);
+    const mB = await installedMjs(String(projB));
+    // Compare just the tail so a failure doesn't dump the 80 KiB padding.
+    expect({ hasB: mB.includes("TAIL_BBBB"), hasA: mB.includes("TAIL_AAAA") }).toEqual({ hasB: true, hasA: false });
   });
 });

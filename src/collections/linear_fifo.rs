@@ -211,7 +211,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    pub fn realign(&mut self) {
+    pub(crate) fn realign(&mut self) {
         let buf_len = self.buf_len();
         if buf_len - self.head >= self.count {
             // this copy overlaps
@@ -241,7 +241,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 let n = self.head.min(tmp_len);
                 let m = buf_len - n;
                 let buf = self.buf.as_mut_slice().as_mut_ptr();
-                // SAFETY: `tmp` is disjoint from `buf`. The tmp↔buf copies move
+                // SAFETY: `tmp_bytes` is disjoint from `buf`. The tmp↔buf copies move
                 // `n * size_of::<T>()` raw bytes (no `T` typed access through
                 // the 1-aligned scratch). The buf→buf shift overlaps, so use
                 // `ptr::copy` (memmove); it operates on properly-aligned `*T`.
@@ -394,7 +394,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Read data from the fifo into `dst`, returns number of items copied.
-    pub fn read(&mut self, dst: &mut [T]) -> usize
+    pub(crate) fn read(&mut self, dst: &mut [T]) -> usize
     where
         T: Copy,
     {
@@ -424,7 +424,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns the first section of writable buffer.
     /// Note that this may be of length 0.
-    pub fn writable_slice(&mut self, offset: usize) -> &mut [T] {
+    pub(crate) fn writable_slice(&mut self, offset: usize) -> &mut [T] {
         let buf_len = self.buf_len();
         if offset > buf_len {
             return &mut [];
@@ -466,7 +466,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Appends the data in `src` to the fifo.
     /// You must have ensured there is enough space.
-    pub fn write_assume_capacity(&mut self, src: &[T])
+    pub(crate) fn write_assume_capacity(&mut self, src: &[T])
     where
         T: Copy,
     {

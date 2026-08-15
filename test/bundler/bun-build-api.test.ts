@@ -1,7 +1,17 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tempDirWithFiles, tempDirWithFilesAnon } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isASAN,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tempDirWithFilesAnon,
+} from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
@@ -58,7 +68,7 @@ describe("Bun.build", () => {
     expect(build.outputs).toHaveLength(2);
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
-    expect([build.outputs[0].path]).toRun("world\n");
+    expect(await bunRun(build.outputs[0].path)).toSpawn("world");
   });
 
   test("passing undefined doesnt segfault", () => {
@@ -537,6 +547,42 @@ describe("Bun.build", () => {
     expect(x.logs[0].message).toMatch(/ModuleNotFound/);
     expect(x.logs[0].name).toBe("BuildMessage");
     expect(x.logs[0].position).toEqual(null);
+  });
+
+  test.concurrent("fails instead of truncating when a module is too deeply nested to print", async () => {
+    // A TOML dotted header builds an object nested arbitrarily deep without
+    // recursing in the parser, so the printer's recursion guard is the first
+    // thing to hit it. The printed part used to be silently dropped, leaving
+    // a corrupt bundle and success: true.
+    using dir = tempDir("build-api-deep-toml", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "deep.toml")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.outputs).toHaveLength(0);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
+    expect(x.logs[0].name).toBe("BuildMessage");
+  });
+
+  test.concurrent("reports a module that fails to print once across entrypoints", async () => {
+    // Without code splitting the failing file is printed once per entry
+    // chunk; the error is still per-file, like parse errors.
+    using dir = tempDir("build-api-deep-toml-multi", {
+      "deep.toml": "[" + Buffer.alloc(200_000, "a.").toString() + "a]\nd = 1\n",
+      "a.js": `import d from "./deep.toml"; console.log(d);`,
+      "b.js": `import d from "./deep.toml"; console.log(Object.keys(d));`,
+    });
+    const x = await buildNoThrow({
+      entrypoints: [join(String(dir), "a.js"), join(String(dir), "b.js")],
+      outdir: join(String(dir), "out"),
+    });
+    expect(x.success).toBe(false);
+    expect(x.logs).toHaveLength(1);
+    expect(x.logs[0].message).toContain("Maximum call stack size exceeded while generating code for this file");
   });
 
   test.concurrent("warnings do not fail a build", async () => {
@@ -1334,6 +1380,7 @@ test.skipIf(!isDebug && !isASAN)(
     const dir = tempDirWithFiles("bun-build-inline-sourcemap-leak", {
       "entry.ts": "export const a = 1;\n/* " + Buffer.alloc(30 * 1024 * 1024, "x").toString() + " */\n",
       "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           const res = await Bun.build({ entrypoints: [entry], sourcemap: "inline" });
@@ -1344,10 +1391,10 @@ test.skipIf(!isDebug && !isASAN)(
         }
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 8; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
     });
@@ -1412,6 +1459,7 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   const dir = tempDirWithFiles("bun-build-number-renamer-leak", {
     "entry.js": entry,
     "run.ts": `
+        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
         const entry = process.argv[2];
         async function build() {
           // No identifier minification → NumberRenamer path (not MinifyRenamer).
@@ -1425,10 +1473,10 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
         // steady-state so the measured window only reflects per-build retention.
         for (let i = 0; i < 2; i++) await build();
         await settle();
-        const before = process.memoryUsage.rss();
+        const before = rss();
         for (let i = 0; i < 20; i++) await build();
         await settle();
-        const after = process.memoryUsage.rss();
+        const after = rss();
         console.log(JSON.stringify({ before, after, growth: after - before }));
       `,
   });
@@ -1513,3 +1561,88 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+test("sourcemap sourcesContent is valid JSON when source contains C0 control chars", async () => {
+  // RFC 8259 only allows \" \\ \/ \b \f \n \r \t and six-char \u escapes; \v
+  // and \xNN are JavaScript-only. A VT (0x0B) or BEL (0x07) in the input used
+  // to leak through as \v / \x07 and break JSON.parse on the .map file.
+  const controls = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
+  const source = `/* ctrl: [${controls}] */\nexport const x = 1;\n`;
+  using dir = tempDir("sourcemap-json-ctrl", { "in.js": source });
+
+  const res = await Bun.build({
+    entrypoints: [join(String(dir), "in.js")],
+    sourcemap: "external",
+    outdir: String(dir),
+  });
+  expect(res.success).toBe(true);
+
+  const map = res.outputs.find(o => o.kind === "sourcemap")!;
+  const text = await map.text();
+  expect(text).not.toMatch(/\\v|\\x[0-9A-Fa-f]{2}/);
+  const parsed = JSON.parse(text);
+  expect(parsed.sourcesContent[0]).toBe(source);
+});
+
+// Bun.build's link step waited for the shared thread pool to go *idle* rather than for its
+// own tasks, so any unrelated pool work extended the build by its full duration — a
+// node:fs read parked on a FIFO nobody writes made every later build hang forever.
+test.skipIf(isWindows)(
+  "Bun.build does not wait for unrelated thread-pool work",
+  async () => {
+    using dir = tempDir("build-pool-wait", {
+      "a.ts": `import { b } from "./b"; import "./s.css"; console.log(b);`,
+      "b.ts": `export const b = 1;`,
+      "s.css": `body { color: red }`,
+      "run.js": `
+      const { join } = require("path");
+      const dir = process.argv[2];
+      const fs = require("fs");
+      const fifo = join(dir, "fifo");
+      require("child_process").execFileSync("mkfifo", [fifo]);
+      await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      let readDone = false, readErr;
+      // a pool thread blocks opening/reading the FIFO
+      const readFinished = new Promise((resolve) => fs.readFile(fifo, (err) => { readErr = err; readDone = true; resolve(); }));
+      // A non-blocking write-open of a FIFO only succeeds once a reader has it open, so this both
+      // waits for the pool thread to be in there and, by staying open without writing, keeps it
+      // parked in read() until we close it below.
+      let writer;
+      for (const deadline = Date.now() + 10_000; ; ) {
+        try { writer = fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK); break; } catch (e) {
+          if (e.code !== "ENXIO" || Date.now() > deadline) throw e;
+          await Bun.sleep(5);
+        }
+      }
+      // Release the pool thread after 5 s regardless, so a regression shows up as readDone
+      // being true below rather than as the whole test hanging until its timeout.
+      let closed = false;
+      const closeWriter = () => { if (!closed) { closed = true; fs.closeSync(writer); } };
+      setTimeout(closeWriter, 5000).unref();
+      const t = performance.now();
+      const result = await Bun.build({ entrypoints: [join(dir, "a.ts")], outdir: join(dir, "out") });
+      const elapsed = performance.now() - t;
+      // readDone must still be false: the build finished before the release of the FIFO reader,
+      // i.e. it did not wait for that unrelated pool task. elapsed is diagnostic only.
+      console.error("second build took " + Math.round(elapsed) + " ms");
+      console.log(result.success, result.outputs.length > 0, readDone);
+      closeWriter(); // EOF for the reader: let the pool thread go before exiting
+      await readFinished;
+      console.log(readDone, readErr ? readErr.code : "ok");
+      process.exit(0);
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run.js", String(dir)],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toStartWith("second build took ");
+    expect(stdout).toBe("true true false\ntrue ok\n");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

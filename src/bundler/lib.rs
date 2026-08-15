@@ -46,9 +46,8 @@ pub use options_impl::PathTemplate;
 pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
 pub use bundle_v2::{
-    CompileResult, CompileResultForSourceMap, ContentHasher, DeclInfo, DeclInfoKind, EventLoop,
-    ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
-    target_from_hashbang,
+    CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
+    StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
 };
 pub use chunk::{
     CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
@@ -90,7 +89,7 @@ pub mod output_file;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
 
-pub mod AstBuilder;
+pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
 pub use bundled_ast::BundledAst;
@@ -125,7 +124,7 @@ pub mod linker_context {
     pub mod compute_cross_chunk_dependencies;
 
     #[path = "convertStmtsForChunk.rs"]
-    pub mod convert_stmts_for_chunk;
+    pub(crate) mod convert_stmts_for_chunk;
 
     #[path = "convertStmtsForChunkForDevServer.rs"]
     pub mod convert_stmts_for_chunk_for_dev_server;
@@ -137,7 +136,7 @@ pub mod linker_context {
     pub mod find_all_imported_parts_in_js_order;
 
     #[path = "findImportedCSSFilesInJSOrder.rs"]
-    pub mod find_imported_css_files_in_js_order;
+    pub(crate) mod find_imported_css_files_in_js_order;
 
     #[path = "findImportedFilesInCSSOrder.rs"]
     pub mod find_imported_files_in_css_order;
@@ -152,19 +151,19 @@ pub mod linker_context {
     pub mod generate_code_for_lazy_export;
 
     #[path = "generateCompileResultForCssChunk.rs"]
-    pub mod generate_compile_result_for_css_chunk;
+    pub(crate) mod generate_compile_result_for_css_chunk;
 
     #[path = "generateCompileResultForHtmlChunk.rs"]
     pub mod generate_compile_result_for_html_chunk;
 
     #[path = "generateCompileResultForJSChunk.rs"]
-    pub mod generate_compile_result_for_js_chunk;
+    pub(crate) mod generate_compile_result_for_js_chunk;
 
     #[path = "postProcessCSSChunk.rs"]
-    pub mod post_process_css_chunk;
+    pub(crate) mod post_process_css_chunk;
 
     #[path = "postProcessHTMLChunk.rs"]
-    pub mod post_process_html_chunk;
+    pub(crate) mod post_process_html_chunk;
 
     #[path = "postProcessJSChunk.rs"]
     pub mod post_process_js_chunk;
@@ -173,7 +172,7 @@ pub mod linker_context {
     pub mod prepare_css_asts_for_chunk;
 
     #[path = "renameSymbolsInChunk.rs"]
-    pub mod rename_symbols_in_chunk;
+    pub(crate) mod rename_symbols_in_chunk;
 
     #[path = "writeOutputFilesToDisk.rs"]
     pub mod write_output_files_to_disk;
@@ -192,9 +191,6 @@ pub mod linker_context {
     pub use crate::linker_context_mod::{
         ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
     };
-
-    pub use output_file_list_builder::OutputFileList as OutputFileListBuilder;
-    pub use static_route_visitor::StaticRouteVisitor;
 }
 
 // ---------------------------------------------------------------------------
@@ -244,8 +240,8 @@ pub mod options {
     pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
     /// `OutputFile.init` argument struct.
-    pub use super::output_file::Options as OutputFileInit;
-    pub use super::output_file::OptionsData as OutputFileData;
+    pub(crate) use super::output_file::Options as OutputFileInit;
+    pub(crate) use super::output_file::OptionsData as OutputFileData;
     pub use super::output_file::Value as OutputFileValue;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
@@ -296,14 +292,6 @@ pub mod options {
     pub use crate::bake_types::Side;
 
     pub use crate::bake_types::Framework;
-
-    // `Env`, `EnvEntry`, `RouteConfig`, `jsx`/`JSX` are intentionally NOT
-    // redefined here — the `pub use super::options_impl::*` glob above exposes
-    // the single canonical defs (options.rs:1141/2493/2501/2722). The previous
-    // inline shadows produced 4+ incompatible `jsx::Pragma`/`Runtime` types and
-    // a `&'static [&'static [u8]]` `factory`/`fragment` that could not hold the
-    // heap allocation from `member_list_to_components_if_different`
-    // without `Box::leak`.
 }
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`

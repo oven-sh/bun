@@ -31,10 +31,10 @@ mod c {
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
     pub struct phr_chunked_decoder {
-        pub bytes_left_in_chunk: usize,
+        pub(crate) bytes_left_in_chunk: usize,
         /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
         pub consume_trailer: core::ffi::c_char,
-        pub _hex_count: core::ffi::c_char,
+        pub(crate) _hex_count: core::ffi::c_char,
         pub _state: core::ffi::c_char,
     }
     unsafe extern "C" {
@@ -126,16 +126,16 @@ impl Header {
         unsafe { bun_core::ffi::slice(self.value_ptr, self.value_len) }
     }
 
-    pub fn is_multiline(&self) -> bool {
+    pub(crate) fn is_multiline(&self) -> bool {
         self.name_len == 0
     }
 
-    pub fn count(&self, builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.name());
         builder.count(self.value());
     }
 
-    pub fn clone(&self, builder: &mut StringBuilder) -> Header {
+    pub(crate) fn clone(&self, builder: &mut StringBuilder) -> Header {
         // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
         // the lifetime of the cloned `Header` (see the comment on `StringBuilder`).
@@ -150,7 +150,7 @@ impl Header {
         }
     }
 
-    pub fn curl(&self) -> HeaderCurlFormatter<'_> {
+    pub(crate) fn curl(&self) -> HeaderCurlFormatter<'_> {
         HeaderCurlFormatter { header: self }
     }
 }
@@ -192,7 +192,7 @@ impl fmt::Display for Header {
 const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
 const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
 
-pub struct HeaderCurlFormatter<'a> {
+struct HeaderCurlFormatter<'a> {
     header: &'a Header,
 }
 
@@ -435,7 +435,7 @@ pub struct Response<'a> {
     pub status_code: u32,
     pub status: &'a [u8],
     pub headers: HeaderList<'a>,
-    pub bytes_read: c_int,
+    pub bytes_read: usize,
 }
 
 impl<'a> Default for Response<'a> {
@@ -539,7 +539,9 @@ impl<'a> Response<'a> {
                     headers: HeaderList {
                         list: &src[0..num_headers.min(src.len())],
                     },
-                    bytes_read: rc,
+                    // > 0 here: -1/-2 were handled above and 0 is not a
+                    // return value of phr_parse_response.
+                    bytes_read: rc as usize,
                 })
             }
         }

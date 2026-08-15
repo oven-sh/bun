@@ -15,31 +15,20 @@ use bun_sys::{self as sys, Fd, Tag};
 // `bun_sys::EntryKind` (and as `crate::node::types::DirentKind`).
 use bun_sys::EntryKind;
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IteratorError {
-    #[error("AccessDenied")]
-    AccessDenied,
-    #[error("SystemResources")]
-    SystemResources,
-    /// posix.UnexpectedError
-    #[error("Unexpected")]
-    Unexpected,
-}
-
 pub struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
     /// (streaming-iterator contract — invalidated on next `next()` call).
     /// The kernel writes `d_name` NUL-terminated, so the backing has a NUL at
     /// `[name.len()]` (see `name_assume_z`).
     pub name: RawSlice<u8>,
-    pub kind: EntryKind,
+    pub(crate) kind: EntryKind,
 }
 
 impl IteratorResult {
     /// The entry name as a NUL-terminated `&ZStr` — the POSIX `d_name` is always
     /// NUL-terminated in the `getdents` buffer.
     #[inline]
-    pub fn name_assume_z(&self) -> &bun_core::ZStr {
+    pub(crate) fn name_assume_z(&self) -> &bun_core::ZStr {
         let s = self.name.slice();
         // SAFETY: `d_name` is NUL-terminated by the kernel; `name` points at it
         // with len excluding the NUL, so `[len] == 0`.
@@ -51,23 +40,27 @@ pub type Result = sys::Result<Option<IteratorResult>>;
 /// The `u16` twin of `IteratorResult.name` (`RawSlice<u16>` + `slice_assume_z()`),
 /// kept separate so callers avoid an `if (Environment.isWindows) ...` split.
 // Lifetime: borrows the iterator's internal `name_data` buffer; invalidated on next().
+#[cfg(windows)]
 pub struct IteratorResultWName {
     // `RawSlice` invariant: the iterator's `name_data` outlives this result
     // (streaming-iterator contract — invalidated on next `next()` call).
     // len excludes trailing NUL; storage has NUL at [len].
     data: RawSlice<u16>,
 }
+#[cfg(windows)]
 impl IteratorResultWName {
-    pub fn slice(&self) -> &[u16] {
+    pub(crate) fn slice(&self) -> &[u16] {
         self.data.slice()
     }
 }
 
+#[cfg(windows)]
 pub struct IteratorResultW {
     pub name: IteratorResultWName,
-    pub kind: EntryKind,
+    pub(crate) kind: EntryKind,
 }
-pub type ResultW = sys::Result<Option<IteratorResultW>>;
+#[cfg(windows)]
+pub(crate) type ResultW = sys::Result<Option<IteratorResultW>>;
 
 /// Cross-platform marker for the const-bool→buffer-type selection. On Windows
 /// this is the real `Select<B>` machinery (see the `windows` `platform` mod);
@@ -77,7 +70,7 @@ pub type ResultW = sys::Result<Option<IteratorResultW>>;
 /// `where` clause that propagates the Windows bound without cfg-splitting
 /// every impl.
 #[cfg(windows)]
-pub use platform::SelectImpl as WrappedSelect;
+pub(crate) use platform::SelectImpl as WrappedSelect;
 #[cfg(not(windows))]
 pub trait WrappedSelect<const B: bool> {}
 #[cfg(not(windows))]
@@ -97,21 +90,21 @@ mod platform {
     /// aligned by the kernel (`d_reclen` rounds to 4), so reads still go
     /// through `read_unaligned`.
     #[repr(C, align(8))]
-    pub struct DirentBuf(pub [u8; 8192]);
+    pub(crate) struct DirentBuf(pub [u8; 8192]);
 
-    pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
-        pub dir: Fd,
-        pub seek: i64,
-        pub buf: DirentBuf,
-        pub index: usize,
-        pub end_index: usize,
-        pub received_eof: bool,
+    pub(crate) struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
+        pub(crate) dir: Fd,
+        pub(crate) seek: i64,
+        pub(crate) buf: DirentBuf,
+        pub(crate) index: usize,
+        pub(crate) end_index: usize,
+        pub(crate) received_eof: bool,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> Result {
+        pub(crate) fn next(&mut self) -> Result {
             self.next_darwin()
         }
 
@@ -249,17 +242,17 @@ mod platform {
     /// FreeBSD's `struct dirent` leads with `ino_t` (u64, align 8); a bare
     /// `[u8; N]` field has alignment 1, so wrap it to force 8-byte alignment.
     #[repr(C, align(8))]
-    pub struct DirentBuf(pub [u8; 8192]);
+    pub(crate) struct DirentBuf(pub [u8; 8192]);
 
-    pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
-        pub dir: Fd,
-        pub buf: DirentBuf,
-        pub index: usize,
-        pub end_index: usize,
+    pub(crate) struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
+        pub(crate) dir: Fd,
+        pub(crate) buf: DirentBuf,
+        pub(crate) index: usize,
+        pub(crate) end_index: usize,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
-        pub fn next(&mut self) -> Result {
+        pub(crate) fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // SAFETY: dir is a valid open fd; buf is dirent-aligned scratch.
@@ -340,21 +333,21 @@ mod platform {
     /// The kernel pads `d_reclen` to a multiple of 8, so every record stays
     /// 8-aligned as long as the base is.
     #[repr(C, align(8))]
-    pub struct DirentBuf(pub [u8; 8192]);
+    pub(crate) struct DirentBuf(pub [u8; 8192]);
     const _: () =
         assert!(core::mem::align_of::<DirentBuf>() >= core::mem::align_of::<libc::dirent64>());
 
-    pub struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
-        pub dir: Fd,
-        pub buf: DirentBuf,
-        pub index: usize,
-        pub end_index: usize,
+    pub(crate) struct NewIterator<const USE_WINDOWS_OSPATH: bool> {
+        pub(crate) dir: Fd,
+        pub(crate) buf: DirentBuf,
+        pub(crate) index: usize,
+        pub(crate) end_index: usize,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH> {
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(&mut self) -> Result {
+        pub(crate) fn next(&mut self) -> Result {
             'start_over: loop {
                 if self.index >= self.end_index {
                     // glibc doesn't expose getdents64; go straight to the
@@ -403,7 +396,7 @@ mod platform {
                 // instead of dereferencing the raw `*const dirent64`.
                 let name_off = entry_idx + offset_of!(libc::dirent64, d_name);
                 let region = &self.buf.0[name_off..next_index];
-                let nul = region.iter().position(|&b| b == 0).unwrap_or(region.len());
+                let nul = bun_core::strings::index_of_char_usize(region, 0).unwrap_or(region.len());
                 let name = &region[..nul];
 
                 // skip . and .. entries
@@ -531,28 +524,28 @@ mod platform {
     }
 
     #[repr(C, align(8))]
-    pub struct NewIterator<const USE_WINDOWS_OSPATH: bool>
+    pub(crate) struct NewIterator<const USE_WINDOWS_OSPATH: bool>
     where
         (): SelectImpl<USE_WINDOWS_OSPATH>,
     {
-        pub dir: Fd,
+        pub(crate) dir: Fd,
 
         // This structure must be aligned on a LONGLONG (8-byte) boundary.
         // If a buffer contains two or more of these structures, the
         // NextEntryOffset value in each entry, except the last, falls on an
         // 8-byte boundary.
         // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_directory_information
-        pub buf: [u8; 8192],
-        pub index: usize,
-        pub end_index: usize,
-        pub first: bool,
-        pub name_data: <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::NameData,
+        pub(crate) buf: [u8; 8192],
+        pub(crate) index: usize,
+        pub(crate) end_index: usize,
+        pub(crate) first: bool,
+        pub(crate) name_data: <Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::NameData,
         /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
         /// Evaluated by FsRtlIsNameInExpression (case-insensitive, supports `*` and `?`).
         /// Only honored on the first call (RestartScan=TRUE); sticky for the handle lifetime.
         // Lifetime: caller-owned UTF-16 slice, stored as raw ptr+len; the caller
         // must keep it alive for the iterator's lifetime.
-        pub name_filter: Option<(*const u16, usize)>,
+        pub(crate) name_filter: Option<(*const u16, usize)>,
     }
 
     impl<const USE_WINDOWS_OSPATH: bool> NewIterator<USE_WINDOWS_OSPATH>
@@ -561,7 +554,7 @@ mod platform {
     {
         /// Memory such as file names referenced in this returned entry becomes invalid
         /// with subsequent calls to `next`, as well as when this `Dir` is deinitialized.
-        pub fn next(
+        pub(crate) fn next(
             &mut self,
         ) -> sys::Result<Option<<Select<USE_WINDOWS_OSPATH> as WindowsOsPath>::Entry>> {
             loop {
@@ -849,7 +842,7 @@ mod platform {
     }
 }
 
-pub use platform::NewIterator;
+pub(crate) use platform::NewIterator;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Wrapped iterator — selects the underlying `NewIterator<B>` and provides a
@@ -864,27 +857,20 @@ pub struct NewWrappedIterator<const IS_U16: bool>
 where
     (): WrappedSelect<IS_U16>,
 {
-    pub iter: NewIterator<IS_U16>,
+    pub(crate) iter: NewIterator<IS_U16>,
 }
 
 impl NewWrappedIterator<false> {
     #[inline]
-    pub fn next(&mut self) -> Result {
+    pub(crate) fn next(&mut self) -> Result {
         self.iter.next()
     }
 }
 
 impl NewWrappedIterator<true> {
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn next(&mut self) -> Result {
-        // On POSIX the underlying iterator ignores `USE_WINDOWS_OSPATH` and
-        // always yields UTF-8 `IteratorResult`s.
-        self.iter.next()
-    }
     #[cfg(windows)]
     #[inline]
-    pub fn next(&mut self) -> ResultW {
+    pub(crate) fn next(&mut self) -> ResultW {
         self.iter.next()
     }
 }
@@ -893,7 +879,7 @@ impl<const IS_U16: bool> NewWrappedIterator<IS_U16>
 where
     (): WrappedSelect<IS_U16>,
 {
-    pub fn init(dir: Fd) -> Self {
+    pub(crate) fn init(dir: Fd) -> Self {
         #[cfg(target_os = "macos")]
         {
             return Self {
@@ -965,9 +951,10 @@ where
 }
 
 pub type WrappedIterator = NewWrappedIterator<false>;
-pub type WrappedIteratorW = NewWrappedIterator<true>;
+#[cfg(windows)]
+pub(crate) type WrappedIteratorW = NewWrappedIterator<true>;
 
-pub fn iterate<const IS_U16: bool>(self_: Fd) -> NewWrappedIterator<IS_U16>
+pub(crate) fn iterate<const IS_U16: bool>(self_: Fd) -> NewWrappedIterator<IS_U16>
 where
     (): WrappedSelect<IS_U16>,
 {

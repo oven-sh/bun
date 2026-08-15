@@ -3,7 +3,7 @@
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
@@ -25,23 +25,12 @@ pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
 pub trait AsyncFormDataExt {
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> Result<(), JsTerminated>;
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // Only a VM-termination error can escape
-    // (JS exceptions are routed into the promise rejection above).
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> Result<(), JsTerminated> {
+    /// Parse errors are routed into the promise rejection; only settlement's own exception escapes.
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(
@@ -78,10 +67,10 @@ impl AsyncFormDataExt for AsyncFormData {
 pub struct Field<'a> {
     /// Borrows into the caller-owned input buffer (binary body slice).
     pub value: &'a [u8],
-    pub filename: bun_semver::String,
-    pub content_type: bun_semver::String,
-    pub is_file: bool,
-    pub zero_count: u8,
+    pub(crate) filename: bun_semver::String,
+    pub(crate) content_type: bun_semver::String,
+    pub(crate) is_file: bool,
+    pub(crate) zero_count: u8,
 }
 
 impl Default for Field<'_> {
@@ -115,7 +104,7 @@ impl FormData {
 }
 
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
-pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [input_value, boundary_value] = frame.arguments_as_array::<2>();
     let boundary_slice: ZigStringSlice;
 
@@ -162,12 +151,11 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
         Err(crate::Error::JSError) => Err(JsError::Thrown),
-        Err(crate::Error::JSTerminated) => Err(JsError::Terminated),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
 }
 
-pub fn to_js_from_multipart_data(
+pub(crate) fn to_js_from_multipart_data(
     global: &JSGlobalObject,
     input: &[u8],
     boundary: &[u8],
@@ -257,7 +245,7 @@ pub fn to_js_from_multipart_data(
     Ok(form_data_value)
 }
 
-pub fn for_each_multipart_entry<C>(
+pub(crate) fn for_each_multipart_entry<C>(
     input: &[u8],
     boundary: &[u8],
     ctx: &mut C,

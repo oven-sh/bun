@@ -351,6 +351,21 @@ pub mod registry {
                 }
             }
 
+            // The config loaders only split `user:pass@` / `:token@` out of
+            // literal registry strings; an expanded `$ENV_VAR` gets the same
+            // split here. Explicitly configured credentials take precedence.
+            let from_url = api::NpmRegistry::from_url(&registry.url);
+            registry.url = from_url.url;
+            if registry.token.is_empty() {
+                registry.token = from_url.token;
+            }
+            if registry.username.is_empty() {
+                registry.username = from_url.username;
+            }
+            if registry.password.is_empty() {
+                registry.password = from_url.password;
+            }
+
             // `url` borrows the owned `registry_url` buffer for the duration
             // of parsing. The final href is moved into `Scope.url: OwnedURL`
             // (owned `Box<[u8]>`).
@@ -359,22 +374,6 @@ pub mod registry {
             let mut auth: &[u8] = b"";
             let mut user: &mut [u8] = &mut [];
             let mut needs_normalize = false;
-
-            // Userinfo is still in the URL here when it came from `$VAR` or the object form.
-            if !url.password.is_empty() {
-                if registry.token.is_empty()
-                    && registry.username.is_empty()
-                    && registry.password.is_empty()
-                {
-                    if url.username.is_empty() {
-                        registry.token = url.password.into();
-                    } else {
-                        registry.username = url.username.into();
-                        registry.password = url.password.into();
-                    }
-                }
-                needs_normalize = true;
-            }
 
             // Backing storage for `user`/`auth` when synthesized from
             // username:password.

@@ -855,10 +855,10 @@ describe.concurrent("bun-install", () => {
   });
 
   // `registry = "https://user:pass@host/"` written literally is split into
-  // credentials while bunfig.toml is parsed. These cover the registry URLs that
-  // only exist later, when `Scope::from_api` runs: `$ENV_VAR` references and
-  // the object form's `url`.
-  describe("credentials embedded in a registry URL that is not a literal registry string", () => {
+  // credentials while bunfig.toml is parsed. A `registry = "$ENV_VAR"` value is
+  // only expanded later, in `Scope::from_api`, so the credentials inside the
+  // variable's URL have to be split out there.
+  describe("credentials embedded in a registry URL taken from an env var", () => {
     const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
     const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
     const basic = `Basic ${Buffer.from("alice:s3cret").toString("base64")}`;
@@ -866,6 +866,7 @@ describe.concurrent("bun-install", () => {
     async function installWith(opts: {
       bunfig: (registryOrigin: string) => string;
       env?: (registryOrigin: string) => Record<string, string>;
+      files?: (registryOrigin: string) => Record<string, string>;
       dependency?: string;
     }) {
       const requests: { path: string; authorization: string | null }[] = [];
@@ -901,6 +902,7 @@ describe.concurrent("bun-install", () => {
       using dir = tempDir("registry-url-credentials", {
         "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { [dependency]: "1.0.0" } }),
         "bunfig.toml": opts.bunfig(origin),
+        ...opts.files?.(origin),
       });
 
       await using proc = spawn({
@@ -923,16 +925,17 @@ describe.concurrent("bun-install", () => {
         },
       ],
       [
+        "install.registry = $ENV_VAR, set in the project's .env",
+        {
+          bunfig: () => `[install]\nregistry = "$MY_REG"\n`,
+          files: origin => ({ ".env": `MY_REG=http://alice:s3cret@${origin}/\n` }),
+        },
+      ],
+      [
         "install.registry = { url = $ENV_VAR }",
         {
           bunfig: () => `[install]\nregistry = { url = "$MY_REG" }\n`,
           env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),
-        },
-      ],
-      [
-        "install.registry = { url = literal }",
-        {
-          bunfig: origin => `[install]\nregistry = { url = "http://alice:s3cret@${origin}/" }\n`,
         },
       ],
       [
@@ -992,7 +995,7 @@ describe.concurrent("bun-install", () => {
       expect(exitCode).toBe(1);
     });
 
-    it("credentials configured next to the URL win over the ones inside it", async () => {
+    it("credentials configured explicitly override the ones inside the URL", async () => {
       const { requests, stderr, exitCode } = await installWith({
         bunfig: () => `[install]\nregistry = { url = "$MY_REG", token = "configured-token" }\n`,
         env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),

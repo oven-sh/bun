@@ -1208,7 +1208,7 @@ describe("readme", () => {
 
   // A README that is a symlink is not packed (symlinks never are), so its
   // target must not be published as the readme either.
-  test.skipIf(isWindows)("a README that is a symlink is not sent as readme", async () => {
+  test("a README that is a symlink is not sent as readme", async () => {
     let captured: any = null;
     using mock = Bun.serve({
       port: 0,
@@ -1234,7 +1234,7 @@ describe("readme", () => {
       write(join(packageDir, "package.json"), JSON.stringify({ name: "readme-pkg-3", version: "3.0.0" })),
       write(join(packageDir, "index.js"), "module.exports = 3;"),
     ]);
-    await symlink("../outside/README.md", join(packageDir, "README.md"));
+    await symlink(join("..", "outside", "README.md"), join(packageDir, "README.md"), "file");
 
     const { err, exitCode } = await publish(env, packageDir);
     expect(err).not.toContain("error:");

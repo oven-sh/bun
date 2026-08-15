@@ -1528,17 +1528,27 @@ fn bin_path_escapes_root(p: &[u8]) -> bool {
     path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
-/// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
-fn bin_kind_without_following_symlinks(root_dir: &Dir, bin_path: &[u8]) -> bun_sys::FileKind {
+/// `lstat` kind of `bin_path` (relative to the package root, `/`-separated), or
+/// `Unknown` if it is missing or a parent component is not a real directory.
+fn bin_kind_without_following_symlinks(
+    abs_workspace_path: &[u8],
+    bin_path: &[u8],
+) -> bun_sys::FileKind {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
     let bin_path = strings::without_trailing_slash(bin_path);
+    // By absolute path: on Windows `lstatat` reports a reparse point as its target's kind.
+    let mut spill: Vec<u8> = Vec::new();
     let mut end = 0;
     loop {
         end += match strings::index_of_char_usize(&bin_path[end..], b'/') {
             Some(i) => i,
             None => bin_path.len() - end,
         };
-        let kind = match bun_sys::lstatat(root_dir, &ZBox::from_bytes(&bin_path[..end])) {
+        let abs_path = resolve_path::join_z_spill::<resolve_path::platform::Auto>(
+            &mut spill,
+            &[abs_workspace_path, &bin_path[..end]],
+        );
+        let kind = match bun_sys::lstat(abs_path) {
             Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
             Err(_) => return bun_sys::FileKind::Unknown,
         };
@@ -2296,7 +2306,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             BinType::File => bun_sys::FileKind::File,
             BinType::Dir => bun_sys::FileKind::Directory,
         };
-        if bin_kind_without_following_symlinks(&root_dir, bin.path.as_bytes()) != expected_kind {
+        if bin_kind_without_following_symlinks(abs_workspace_path, bin.path.as_bytes())
+            != expected_kind
+        {
             continue;
         }
 

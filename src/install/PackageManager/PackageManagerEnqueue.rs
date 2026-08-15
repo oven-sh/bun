@@ -2078,12 +2078,9 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // A peer that is not being installed yet binds here only to its exact
-    // best match; otherwise it is deferred (`is_peer && !install_peer` below)
-    // and bound in phase 2 (`get_or_put_resolved_package`), once every
-    // non-peer row is resolved, to the highest version present that satisfies
-    // it. `*` expresses no preference, so it may also bind now to a version
-    // that is settled already (`Lockfile::get_package_id`).
+    // A peer not being installed yet binds now only to its exact best match
+    // (`*` also to a version every install has) and is otherwise deferred to
+    // the peer pass in `get_or_put_resolved_package`.
     let suppress_peer_satisfies = behavior.is_peer()
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());

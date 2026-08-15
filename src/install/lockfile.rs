@@ -190,48 +190,28 @@ pub struct Lockfile {
 
     pub(crate) saved_config_version: Option<ConfigVersion>,
 
-    /// `packages.len()` at the moment lockfile load (including npm/pnpm/yarn
-    /// migration) finished. Packages with `id < this` were carried in from a
-    /// lockfile and represent a user-pinned resolution; packages with
-    /// `id >= this` were appended in the current resolve session. Set by
-    /// `mark_loaded_packages`; a fresh lockfile has `0`.
-    ///
-    /// Runtime-only — never serialised.
+    /// `packages.len()` once the lockfile (or a migrated one) was loaded:
+    /// packages below it came from the lockfile, the rest were appended in
+    /// this run (`mark_loaded_packages`). Runtime-only, never serialised.
     pub(crate) loaded_package_count: PackageID,
 
-    /// Packages with `id < this` are present on every install of this
-    /// package.json, whatever order the registry answers in: they were loaded
-    /// from the lockfile, or were appended before the last point at which
-    /// resolution had drained completely (`mark_settled_packages`). The rest
-    /// were appended while manifests were still arriving, and which of them
-    /// exist at any given moment depends on arrival order, unless they were
-    /// appended for a direct dependency (`AppendedFor::direct`). See
-    /// `get_package_id`.
-    ///
-    /// Runtime-only — never serialised.
+    /// Packages below this were loaded or appended before resolution last
+    /// drained (`mark_settled_packages`), so they exist on every install; see
+    /// `get_package_id`. Runtime-only, never serialised.
     pub(crate) settled_package_count: PackageID,
 
-    /// `appended_for[id]` for every package appended from a registry manifest
-    /// in this resolve session (`mark_appended_for`); indexed by `PackageID`,
-    /// grown lazily, and only consulted for `id >= loaded_package_count`.
-    ///
-    /// Runtime-only — never serialised.
+    /// Indexed by `PackageID`, filled by `mark_appended_for` for the packages
+    /// appended from a manifest in this run. Runtime-only, never serialised.
     pub(crate) appended_for: Vec<AppendedFor>,
 }
 
-/// What `Lockfile::get_package_id` needs to know about the dependency row a
-/// package was appended from a registry manifest to resolve.
+/// The dependency row a package was appended to resolve; see
+/// `Lockfile::get_package_id`.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AppendedFor {
-    /// The row belongs to the root or a workspace package. Those rows are
-    /// enqueued before any manifest is processed and each manifest's waiting
-    /// rows are resolved FIFO, so for a given package name they resolve before
-    /// any transitive row, and what they append is present on every install
-    /// even while manifests are still arriving.
+    /// Declared by the root or a workspace package.
     pub direct: bool,
-    /// The row's range (after overrides and catalogs) was an exact version, a
-    /// deliberate choice that ranges from any major may settle on; a version a
-    /// range picked only attracts ranges that would pick the same major.
+    /// Its range (after overrides and catalogs) was an exact version.
     pub exact: bool,
 }
 
@@ -2004,18 +1984,13 @@ impl Lockfile {
         self.settled_package_count = self.loaded_package_count;
     }
 
-    /// Call once nothing is left to resolve (every enqueued row is bound and
-    /// no manifest is in flight), e.g. between resolving regular rows and
-    /// installing peers: the packages present at such a point are the same on
-    /// every install, so rows resolved afterwards may settle on any of them.
+    /// Call only while nothing is being resolved (no row enqueued, no manifest
+    /// in flight); see `get_package_id`.
     #[inline]
     pub(crate) fn mark_settled_packages(&mut self) {
         self.settled_package_count = self.packages.len() as PackageID;
     }
 
-    /// Record that package `id` was just appended from a registry manifest to
-    /// resolve `dependency_id`, whose range (after overrides and catalogs) was
-    /// an exact version iff `exact`.
     pub(crate) fn mark_appended_for(
         &mut self,
         id: PackageID,
@@ -2035,16 +2010,15 @@ impl Lockfile {
 
     /// The package `resolution` is already stored as, if any.
     ///
-    /// When `version` is an npm range, `resolution` is the range's best match
-    /// from the manifest, and the highest version already present that the
-    /// range accepts is preferred over it (lockfile versions unconditionally,
-    /// others when pinned exactly or of the best match's major), provided
-    /// that version is present on every install of this package.json
-    /// (`settled_package_count`, `AppendedFor::direct`). A version that is
-    /// present only because some transitive dependency's manifest happened to
-    /// be processed already is not a candidate, and resolves the range only
-    /// when it is the best match itself, so the answer does not depend on the
-    /// order the registry answered in.
+    /// For an npm range `version`, `resolution` is its best match from the
+    /// manifest, and an existing version the range accepts is preferred (a
+    /// lockfile version always, an appended one when pinned exactly or of the
+    /// best match's major) if it exists on every install: settled, or appended
+    /// for a direct row. Direct rows are enqueued before any manifest is
+    /// processed and a manifest's waiting rows resolve FIFO, so for one name
+    /// they resolve before every transitive row; what transitive rows appended
+    /// so far depends on registry timing, so those only answer for a range
+    /// whose best match they are.
     pub(crate) fn get_package_id(
         &self,
         name_hash: u64,

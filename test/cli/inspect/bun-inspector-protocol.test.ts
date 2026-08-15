@@ -133,7 +133,7 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
       if (line) foundUrl(new URL(line.trim()));
     }
     noUrl(new Error(`No inspector URL in stderr:\n${stderr}`));
-  })();
+  })().catch(error => noUrl(error instanceof Error ? error : new Error(String(error))));
 
   const ws = new WebSocket(await inspectorUrl);
   const { promise: failed, reject: fail } = Promise.withResolvers<never>();

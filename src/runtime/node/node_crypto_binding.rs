@@ -1124,8 +1124,7 @@ mod _impl {
         // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
         // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
         // (`.toString('hex')`, `.readUInt32BE`, …) depend on it.
-        let out_arraybuffer =
-            JSValue::create_buffer_from_length(global_this, data.length as usize)?;
+        let out_arraybuffer = JSValue::create_buffer_from_length(global_this, data.length)?;
         let Some(mut output) = out_arraybuffer.as_array_buffer(global_this) else {
             return Err(global_this.throw_out_of_memory());
         };

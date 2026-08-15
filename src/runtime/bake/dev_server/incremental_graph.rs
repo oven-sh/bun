@@ -198,6 +198,17 @@ enum FreeCssMode {
     IgnoreCss,
 }
 
+/// Whether the file `insert_stale_extra` adds is a route. On the server this
+/// sets `File::is_route`, which makes `trace_dependencies` look the file up in
+/// `DevServer::route_lookup`, so callers passing `Route` must register it
+/// there. The client graph ignores it; HTML routes are found through
+/// `File::html_route_bundle_index`.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum RouteKind {
+    NotRoute,
+    Route,
+}
+
 #[derive(Copy, Clone)]
 pub enum InsertFailureKey<'a> {
     AbsPath(&'a [u8]),
@@ -1277,23 +1288,30 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     pub(crate) fn insert_stale(
         &mut self,
         abs_path: &[u8],
-        is_ssr_graph: bool,
+        graph: bake::Graph,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
-        self.insert_stale_extra(abs_path, is_ssr_graph, false)
+        self.insert_stale_extra(abs_path, graph, RouteKind::NotRoute)
     }
 
     /// `IncrementalGraph(side).insertStaleExtra` (spec :1300).
+    ///
+    /// `graph` is `Client` on the client graph; on the server graph it picks
+    /// which of the two server graphs (`Server` = RSC, `Ssr`) the file is in.
     pub(crate) fn insert_stale_extra(
         &mut self,
         abs_path: &[u8],
-        is_ssr_graph: bool,
-        is_route: bool,
+        graph: bake::Graph,
+        route: RouteKind,
     ) -> Result<FileIndex<SIDE>, bun_alloc::AllocError> {
+        debug_assert!(match SIDE {
+            Side::Client => graph == bake::Graph::Client,
+            Side::Server => graph != bake::Graph::Client,
+        });
         let gop = self.bundled_files.get_or_put(abs_path)?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if found_existing {
-            if matches!(SIDE, Side::Server) && is_route {
+            if matches!(SIDE, Side::Server) && route == RouteKind::Route {
                 gop.value_ptr.is_route = true;
             }
         } else {
@@ -1322,13 +1340,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 }
             }
             Side::Server => {
+                let is_ssr_graph = graph == bake::Graph::Ssr;
                 if !found_existing {
                     self.bundled_files.values_mut()[idx] = File {
                         kind: FileKind::Unknown,
                         failed: false,
                         is_rsc: !is_ssr_graph,
                         is_ssr: is_ssr_graph,
-                        is_route,
+                        is_route: route == RouteKind::Route,
                         is_client_component_boundary: false,
                         ..Default::default()
                     };

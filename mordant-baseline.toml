@@ -97,9 +97,6 @@
 "unchecked_construction:src/runtime/server/mod.rs" = 1
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 
-[bun_shell_parser]
-"bare_bool_args:src/shell_parser/parse.rs" = 1
-
 [bun_sql_jsc]
 "bare_bool_args:src/sql_jsc/shared/datetime_text.rs" = 1
 "same_match_twice:src/sql_jsc/mysql/protocol/ResultSet.rs" = 1

@@ -1,5 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
+import { join } from "node:path";
+import { isASAN, isDebug, tempDir } from "harness";
 import { itBundled } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and
@@ -1063,4 +1065,102 @@ describe("bundler", () => {
       expect(out).toMatch(/__MEMO_CACHE_SENTINEL\)\s*\{[^}]*globalFn\(\)/);
     },
   });
+});
+
+// validate_locals_not_reassigned_after_render (src/react_compiler/validation)
+// records the locals a component's closures capture while walking the
+// component body, and reports a nested function that assigns to one of them,
+// with a different diagnostic when that function, or one it is nested in, is
+// async. `error` is the headline of the diagnostic, or null when the component
+// compiles.
+//
+// In a normal build a reported component is silently left uncompiled, and the
+// aliasing validator independently reports the same components, so the
+// diagnostic text is the only place this validator's decision is observable.
+// That needs the fixture pragma support, which turns compiler diagnostics into
+// build errors and is compiled out of release builds (see
+// react-compiler-fixtures.test.ts).
+const localReassignmentCases = {
+  InComponentBody: {
+    error: null,
+    source: /* jsx */ `
+      export function Comp({ items }) {
+        let count = 0;
+        count = items.length;
+        const onClick = () => console.log(count);
+        return <button onClick={onClick}>{count}</button>;
+      }
+    `,
+  },
+  InSyncCallback: {
+    error: "React Compiler: Error: Cannot reassign variable after render completes",
+    source: /* jsx */ `
+      import { useEffect } from "react";
+      export function Comp({ items }) {
+        let count = 0;
+        useEffect(() => {
+          count = items.length;
+        });
+        return <div>{count}</div>;
+      }
+    `,
+  },
+  InAsyncCallback: {
+    error: "React Compiler: Error: Cannot reassign variable in async function",
+    source: /* jsx */ `
+      export function Comp({ load }) {
+        let data = null;
+        const onClick = async () => {
+          data = await load();
+        };
+        return <button onClick={onClick}>{data}</button>;
+      }
+    `,
+  },
+  InSyncCallbackInsideAsyncCallback: {
+    error: "React Compiler: Error: Cannot reassign variable in async function",
+    source: /* jsx */ `
+      export function Comp({ load }) {
+        let data = null;
+        const onClick = async () => {
+          const store = value => {
+            data = value;
+          };
+          store(await load());
+        };
+        return <button onClick={onClick}>{data}</button>;
+      }
+    `,
+  },
+};
+
+test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function reassigned a local", async () => {
+  using dir = tempDir(
+    "react-compiler-reassign",
+    Object.fromEntries(Object.entries(localReassignmentCases).map(([name, { source }]) => [`${name}.jsx`, source])),
+  );
+
+  const results: Record<string, { error: string | null; memoized: boolean }> = {};
+  for (const name of Object.keys(localReassignmentCases)) {
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), `${name}.jsx`)],
+      target: "browser",
+      external: ["*"],
+      reactCompiler: true,
+      // @ts-expect-error test-only option, not in bun-types
+      reactCompilerParseTestPragmas: true,
+      throw: false,
+    });
+    const errors = result.logs.filter(log => log.level === "error");
+    results[name] = {
+      error: errors.length === 0 ? null : errors.map(log => String(log.message).split(".")[0]).join("\n"),
+      memoized: result.success && /\b_c\(\d+\)/.test(await result.outputs[0].text()),
+    };
+  }
+
+  expect(results).toEqual(
+    Object.fromEntries(
+      Object.entries(localReassignmentCases).map(([name, { error }]) => [name, { error, memoized: error === null }]),
+    ),
+  );
 });

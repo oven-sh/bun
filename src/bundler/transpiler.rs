@@ -550,7 +550,7 @@ impl<'a> Transpiler<'a> {
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
-                    "Browser build cannot use Node.js builtin \"{}\" as an entry point. To use Node.js builtins, set target to 'node' or 'bun'",
+                    "Cannot use Node.js builtin \"{}\" as an entry point",
                     bstr::BStr::new(entry_point)
                 ),
             );

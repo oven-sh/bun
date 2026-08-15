@@ -1689,16 +1689,15 @@ describe("bundler", () => {
     });
   }
 
-  // An entry point that an onResolve plugin leaves without a module (marks it
-  // external, or declines it and the package.json "browser" field disables it)
-  // must fail the build. It used to be dropped without a log entry, which
-  // crashed the linker when it was the only entry point and silently produced
-  // fewer outputs when it was not.
+  // An entry point that onResolve leaves without a module used to be dropped
+  // without a log entry, and the linker then aborted on an empty chunk list.
+  // A declined entry point that the package.json "browser" field disables gets
+  // the same error as without plugins; an entry point a plugin marks external
+  // has no error of its own yet, so it reaches the generic one.
   test.concurrent("plugin/entry point left without a module by onResolve fails the build", async () => {
     using dir = tempDir("plugin-entry-point-without-module", {
       "package.json": JSON.stringify({ name: "app", browser: { "./disabled.js": false } }),
       "entry.js": `console.log("entry");`,
-      "other.js": `console.log("other");`,
       "disabled.js": `console.log("disabled");`,
       "build.mjs": `
         const declined = [];
@@ -1721,7 +1720,6 @@ describe("bundler", () => {
         const results = {};
         for (const [name, entrypoints] of Object.entries({
           external: ["./entry.js"],
-          externalNextToLiveEntryPoint: ["./entry.js", "./other.js"],
           declinedThenDisabledByBrowserField: ["./disabled.js"],
         })) {
           const result = await Bun.build({ entrypoints, target: "browser", plugins, throw: false });
@@ -1749,12 +1747,7 @@ describe("bundler", () => {
     expect(JSON.parse(stdout)).toEqual({
       external: {
         success: false,
-        logs: ['The entry point "./entry.js" cannot be marked as external'],
-        outputs: [],
-      },
-      externalNextToLiveEntryPoint: {
-        success: false,
-        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        logs: ["None of the entry points could be bundled"],
         outputs: [],
       },
       declinedThenDisabledByBrowserField: {

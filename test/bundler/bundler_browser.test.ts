@@ -449,8 +449,8 @@ describe("bundler", () => {
     target: "browser",
     bundleErrors: {
       "<bun>": [
-        `Browser build cannot use Node.js builtin "fs" as an entry point. To use Node.js builtins, set target to 'node' or 'bun'`,
-        `Browser build cannot use Node.js builtin "node:fs" as an entry point. To use Node.js builtins, set target to 'node' or 'bun'`,
+        `Cannot use Node.js builtin "fs" as an entry point`,
+        `Cannot use Node.js builtin "node:fs" as an entry point`,
       ],
     },
   });

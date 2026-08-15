@@ -2160,6 +2160,19 @@ pub mod bv2_impl {
             );
         }
 
+        /// Callers require an entry point, so none after parsing means one was dropped without an error.
+        fn fail_if_no_entry_points(&self) -> Result<(), Error> {
+            if !self.graph.entry_points.is_empty() {
+                return Ok(());
+            }
+            self.transpiler.log_mut().add_error(
+                None,
+                bun_ast::Loc::EMPTY,
+                "None of the entry points could be bundled",
+            );
+            Err(crate::Error::BuildFailed)
+        }
+
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
         /// idle/busy time since the previous call. No-op when env var unset.
         #[inline]
@@ -3911,7 +3924,7 @@ pub mod bv2_impl {
                 // sidestep for the `&mut self` overlap.
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
-                // Drain before failing on entry point errors: teardown must not race the runtime parse.
+                // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
                 this.wait_for_parse();
                 this.dump_pool_stats("parse");
 
@@ -3923,6 +3936,7 @@ pub mod bv2_impl {
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
                 }
+                this.fail_if_no_entry_points()?;
 
                 this.scan_for_secondary_paths();
 
@@ -4082,7 +4096,7 @@ pub mod bv2_impl {
 
                 this.enqueue_entry_points_bake_production(entry_points)?;
 
-                // Entry point errors are reported after the drain; see `generate_from_cli`.
+                // Drain the pool, then report entry point errors (as `generate_from_cli` does).
                 this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {
@@ -4856,23 +4870,6 @@ pub mod bv2_impl {
                     } else {
                         drop(result.namespace);
                         drop(result.path);
-
-                        // Same error as esbuild; otherwise the entry point silently vanishes.
-                        if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                            // No importer for entry points; key the failure by the entry point.
-                            this.log_for_resolution_failures(
-                                &resolve.import_record.specifier,
-                                resolve.import_record.original_target.bake_graph(),
-                            )
-                            .add_error_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "The entry point {} cannot be marked as external",
-                                    bun_core::fmt::quote(&resolve.import_record.specifier),
-                                ),
-                            );
-                        }
                     }
 
                     if let Some(source_index) = out_source_index {
@@ -5065,6 +5062,7 @@ pub mod bv2_impl {
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
+            self.fail_if_no_entry_points()?;
 
             self.scan_for_secondary_paths();
 

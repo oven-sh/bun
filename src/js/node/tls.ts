@@ -871,9 +871,22 @@ TLSSocket.prototype._destroySSL = function _destroySSL() {
   this._secureEstablished = false;
 };
 
+// Starts the client handshake over the wrapped stream. In Node this is what
+// tls.connect() itself calls once the underlying socket is connected, and
+// libraries doing STARTTLS (e.g. `mysql`) call it on a `new TLSSocket(socket)`
+// and wait for 'secure'.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1110-L1129
 TLSSocket.prototype._start = function _start() {
-  // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
-  this.connect();
+  // The constructor parks the wrapped stream in _handle until connect() swaps
+  // in the native TLS handle (deferred, with `connecting` set, while the stream
+  // is itself still connecting). Anything else means there is nothing to start:
+  // no wrapped stream (a socket-less TLSSocket handshakes by itself once
+  // connect()ed), already started, or destroyed.
+  const wrapped = this._handle;
+  if (this.connecting || !(wrapped instanceof Duplex)) return;
+  // connect() takes servername from its options; carry over a setServername()
+  // made before starting.
+  this.connect({ socket: wrapped, servername: this.servername });
 };
 
 TLSSocket.prototype._final = function _final(callback) {

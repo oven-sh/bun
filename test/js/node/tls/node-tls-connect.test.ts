@@ -1426,3 +1426,154 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("TLSSocket.prototype._start()", () => {
+  // Node's tls.connect({ socket }) calls _start() itself once the socket it was
+  // handed is connected, and STARTTLS-style libraries (the `mysql` package for
+  // one) call it on a `new TLSSocket(socket)` and wait for 'secure'. Expected
+  // values below were taken from node v26.3.0: _start() returns undefined,
+  // 'secure' fires when the handshake completes and data then flows through
+  // the wrap. It used to throw ERR_MISSING_ARGS here.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1110-L1129
+  async function echoServer(onConnection?: (socket: TLSSocket) => void) {
+    const server = tls.createServer({ ...COMMON_CERT_ }, socket => {
+      onConnection?.(socket);
+      socket.on("data", data => socket.write(`echo:${data}`));
+      socket.on("end", () => socket.end());
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return {
+      port: (server.address() as AddressInfo).port,
+      [Symbol.dispose]() {
+        server.close();
+      },
+    };
+  }
+
+  // Records the handshake-then-echo exchange every wrap below is put through.
+  function exchange(socket: TLSSocket): Promise<string[]> {
+    const seen: string[] = [];
+    socket.on("secure", () => {
+      seen.push("secure");
+      socket.end("ping");
+    });
+    socket.on("data", data => seen.push(`data:${data}`));
+    socket.on("error", (err: any) => seen.push(`error:${err.code ?? err.message}`));
+    return once(socket, "close").then(() => seen);
+  }
+
+  function start(socket: TLSSocket) {
+    return (socket as any)._start();
+  }
+
+  it.each(["connected", "connecting"])("runs the handshake over a %s net.Socket and emits 'secure'", async state => {
+    using server = await echoServer();
+    const raw = net.connect(server.port, "127.0.0.1");
+    if (state === "connected") await once(raw, "connect");
+    const socket = new TLSSocket(raw, { rejectUnauthorized: false });
+    const result = exchange(socket);
+    expect(start(socket)).toBeUndefined();
+    expect(await result).toEqual(["secure", "data:echo:ping"]);
+  });
+
+  it.each(["connected", "connecting"])("a second call on a %s net.Socket wrap does not start another", async state => {
+    // Node aborts the process on a second _start() (TLSWrap::Start checks
+    // !started_), so the only useful behavior is to ignore it.
+    using server = await echoServer();
+    const raw = net.connect(server.port, "127.0.0.1");
+    if (state === "connected") await once(raw, "connect");
+    const socket = new TLSSocket(raw, { rejectUnauthorized: false });
+    const result = exchange(socket);
+    start(socket);
+    expect(start(socket)).toBeUndefined();
+    expect(await result).toEqual(["secure", "data:echo:ping"]);
+  });
+
+  it("runs the handshake over a plain Duplex", async () => {
+    // Same in-memory pair as the tls.connect({ socket }) test above, with the
+    // client side driven by new TLSSocket(duplex)._start() instead.
+    const makeSide = (peer: () => Duplex) =>
+      new Duplex({
+        read() {},
+        write(chunk, _encoding, callback) {
+          peer().push(chunk);
+          callback();
+        },
+        final(callback) {
+          peer().push(null);
+          callback();
+        },
+      });
+    const clientSide: Duplex = makeSide(() => serverSide);
+    const serverSide: Duplex = makeSide(() => clientSide);
+    const serverSeen: string[] = [];
+    const server = new TLSSocket(serverSide, { isServer: true, secureContext: tls.createSecureContext(COMMON_CERT_) });
+    server.on("secure", () => serverSeen.push("secure"));
+    server.on("data", data => {
+      serverSeen.push(`data:${data}`);
+      server.write(`echo:${data}`);
+    });
+    server.on("end", () => server.end());
+
+    const client = new TLSSocket(clientSide, { rejectUnauthorized: false });
+    const result = exchange(client);
+    expect(start(client)).toBeUndefined();
+    expect({ client: await result, server: serverSeen }).toEqual({
+      client: ["secure", "data:echo:ping"],
+      server: ["secure", "data:ping"],
+    });
+  });
+
+  it("sends the servername set before it is called", async () => {
+    const sni = Promise.withResolvers<string | undefined>();
+    using server = await echoServer(socket => sni.resolve((socket as any).servername));
+    const raw = net.connect(server.port, "127.0.0.1");
+    await once(raw, "connect");
+    const socket = new TLSSocket(raw, { rejectUnauthorized: false });
+    (socket as any).setServername("wrapped.example");
+    const result = exchange(socket);
+    start(socket);
+    expect({ exchange: await result, server: await sni.promise, client: (socket as any).servername }).toEqual({
+      exchange: ["secure", "data:echo:ping"],
+      server: "wrapped.example",
+      client: "wrapped.example",
+    });
+  });
+
+  it.each([
+    ["an untrusted peer", { rejectUnauthorized: false }, "DEPTH_ZERO_SELF_SIGNED_CERT"],
+    ["a peer matching the constructor's ca", { ca: COMMON_CERT_.cert, rejectUnauthorized: true }, null],
+  ])(
+    "leaves the verification result of %s in ssl.verifyError() for the 'secure' listener",
+    async (_, options, code) => {
+      // This is how the mysql package decides whether the upgraded connection
+      // is trusted: onSecure(rejectUnauthorized ? this.ssl.verifyError() : null).
+      using server = await echoServer();
+      const raw = net.connect(server.port, "127.0.0.1");
+      await once(raw, "connect");
+      const socket = new TLSSocket(raw, options);
+      const verified = Promise.withResolvers<string | null>();
+      socket.on("secure", () => verified.resolve((socket as any).ssl.verifyError()?.code ?? null));
+      const result = exchange(socket);
+      start(socket);
+      expect({ exchange: await result, verifyError: await verified.promise }).toEqual({
+        exchange: ["secure", "data:echo:ping"],
+        verifyError: code,
+      });
+    },
+  );
+
+  it.each(["before", "after"])("is harmless %s connect() on a TLSSocket created without a socket", async when => {
+    // Node parks the call until 'connect' (tls.connect() passes _start as the
+    // connect listener); here such a socket handshakes as soon as it connects,
+    // so either order has to work and neither may throw.
+    using server = await echoServer();
+    const socket = new TLSSocket(null as any, { rejectUnauthorized: false });
+    const result = exchange(socket);
+    if (when === "before") expect(start(socket)).toBeUndefined();
+    socket.connect(server.port, "127.0.0.1");
+    if (when === "after") expect(start(socket)).toBeUndefined();
+    expect(await result).toEqual(["secure", "data:echo:ping"]);
+  });
+});

@@ -1236,8 +1236,9 @@ describe("bundledDependencies", () => {
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundled names from dependencies and optionalDependencies`, async () => {
       // bundled-with-optional@1.0.0 has dependencies { no-deps }, optionalDependencies { a-dep, basic-1 }
-      // and bundleDependencies [no-deps, a-dep]. Its tarball ships no-deps and a-dep. Only basic-1
-      // should be installed from the registry.
+      // and bundleDependencies [no-deps, a-dep, not-a-dependency]. Its tarball ships no-deps and a-dep.
+      // Only basic-1 should be installed from the registry; not-a-dependency is declared in no group
+      // (and does not exist in the registry), so listing it must have no effect.
       await write(
         packageJson,
         JSON.stringify({
@@ -1284,7 +1285,7 @@ describe("bundledDependencies", () => {
             "packages": {
               "basic-1": ["basic-1@1.0.0", "http://localhost:1234/basic-1/-/basic-1-1.0.0.tgz", {}, "sha512-NW5qBU1Kn7DzCjfVfnAbBBRGuQ7krbBtrnezZwOXutA9NvrCT4SI4EJMog3AGsNeK/1OygErysF8RN/FqDYunA=="],
 
-              "bundled-with-optional": ["bundled-with-optional@1.0.0", "http://localhost:1234/bundled-with-optional/-/bundled-with-optional-1.0.0.tgz", { "dependencies": { "no-deps": "1.0.0" }, "optionalDependencies": { "a-dep": "1.0.1", "basic-1": "1.0.0" } }, "sha512-2h1wxQF17tpxHhBUpqQ10gBwuTzeqLkKKqjChDpIYRFKZFW+p0fqMQX/VN/Xxn6/TYz8+M84vWFkUNruCEF4fg=="],
+              "bundled-with-optional": ["bundled-with-optional@1.0.0", "http://localhost:1234/bundled-with-optional/-/bundled-with-optional-1.0.0.tgz", { "dependencies": { "no-deps": "1.0.0" }, "optionalDependencies": { "a-dep": "1.0.1", "basic-1": "1.0.0" } }, "sha512-rq4Jtdsk53QE4T00/KaOP5lyv3d8Gnt4VABtara3PFos+8POKMkRIQPYCXVRRBey7K+ttzkiA5MkHhe+T19eYA=="],
 
               "bundled-with-optional/a-dep": ["a-dep@1.0.1", "http://localhost:1234/a-dep/-/a-dep-1.0.1.tgz", { "bundled": true }, "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg=="],
 

@@ -13,14 +13,15 @@
 			},
 			"bundleDependencies": [
 				"no-deps",
-				"a-dep"
+				"a-dep",
+				"not-a-dependency"
 			],
 			"_id": "bundled-with-optional@1.0.0",
-			"integrity": "sha512-2h1wxQF17tpxHhBUpqQ10gBwuTzeqLkKKqjChDpIYRFKZFW+p0fqMQX/VN/Xxn6/TYz8+M84vWFkUNruCEF4fg==",
-			"shasum": "ca6fb22e675ca5390b1b083d9756d181c6590ec1",
+			"integrity": "sha512-rq4Jtdsk53QE4T00/KaOP5lyv3d8Gnt4VABtara3PFos+8POKMkRIQPYCXVRRBey7K+ttzkiA5MkHhe+T19eYA==",
+			"shasum": "b5dbbcef38296b5a75d4e7441216dff1467d6ebd",
 			"dist": {
-				"integrity": "sha512-2h1wxQF17tpxHhBUpqQ10gBwuTzeqLkKKqjChDpIYRFKZFW+p0fqMQX/VN/Xxn6/TYz8+M84vWFkUNruCEF4fg==",
-				"shasum": "ca6fb22e675ca5390b1b083d9756d181c6590ec1",
+				"integrity": "sha512-rq4Jtdsk53QE4T00/KaOP5lyv3d8Gnt4VABtara3PFos+8POKMkRIQPYCXVRRBey7K+ttzkiA5MkHhe+T19eYA==",
+				"shasum": "b5dbbcef38296b5a75d4e7441216dff1467d6ebd",
 				"tarball": "http://localhost:4873/bundled-with-optional/-/bundled-with-optional-1.0.0.tgz"
 			},
 			"contributors": []
@@ -39,7 +40,7 @@
 	"_distfiles": {},
 	"_attachments": {
 		"bundled-with-optional-1.0.0.tgz": {
-			"shasum": "ca6fb22e675ca5390b1b083d9756d181c6590ec1",
+			"shasum": "b5dbbcef38296b5a75d4e7441216dff1467d6ebd",
 			"version": "1.0.0"
 		}
 	},

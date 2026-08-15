@@ -129,15 +129,24 @@ pub struct DedupeMapEntry {
     /// for this task id. See `PackageManager::has_created_manifest_task`.
     pub(crate) is_extended_manifest: bool,
     /// Manifest tasks only: a request for the abbreviated document has been
-    /// issued, so the dependencies that wanted the extended one have something to
-    /// fall back to if the extended request fails (`extended_manifest_failed`).
+    /// issued for this task id.
     pub(crate) has_abbreviated_manifest_request: bool,
     /// Manifest tasks only: the extended request failed. Every dependency on the
-    /// package now resolves from the abbreviated document
-    /// (`PackageManager::needs_extended_manifest`), whether it was requested
-    /// before the failure or is requested by a regular dependency reached after
-    /// it; that is the pre-libc behavior for this one package.
+    /// package now resolves from the abbreviated document instead
+    /// (`PackageManager::needs_extended_manifest`), which is the pre-libc
+    /// behavior for this one package.
     pub(crate) extended_manifest_failed: bool,
+}
+
+impl DedupeMapEntry {
+    /// Whether the document a dependency needs has been requested.
+    pub(crate) fn manifest_requested(&mut self, extended: bool) -> &mut bool {
+        if extended {
+            &mut self.is_extended_manifest
+        } else {
+            &mut self.has_abbreviated_manifest_request
+        }
+    }
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.

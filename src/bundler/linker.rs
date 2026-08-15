@@ -449,11 +449,8 @@ impl Linker {
                         if strings::starts_with(import_record.path.text, b"node:") {
                             // if a module is not found here, it is not found at
                             // all so we can just disable it
-                            had_resolve_errors = Self::when_builtin_not_found::<IS_BUN>(
-                                self.log_mut(),
-                                import_record,
-                                source,
-                            );
+                            had_resolve_errors =
+                                Self::when_builtin_not_found(self.log_mut(), import_record, source);
 
                             if had_resolve_errors {
                                 return Err(crate::Error::ResolveMessage);
@@ -537,7 +534,7 @@ impl Linker {
     ///
     /// Takes the disjoint pieces explicitly rather than `&mut self` plus
     /// overlapping sub-borrows of `result`.
-    fn when_builtin_not_found<const IS_BUN: bool>(
+    fn when_builtin_not_found(
         log: &mut Log,
         import_record: &mut ImportRecord,
         source: &bun_ast::Source,
@@ -553,14 +550,12 @@ impl Linker {
             return false;
         }
 
-        if IS_BUN {
-            // make these happen at runtime
-            if import_record.kind == ImportKind::Require
-                || import_record.kind == ImportKind::RequireResolve
-                || import_record.kind == ImportKind::Dynamic
-            {
-                return false;
-            }
+        // make these happen at runtime
+        if import_record.kind == ImportKind::Require
+            || import_record.kind == ImportKind::RequireResolve
+            || import_record.kind == ImportKind::Dynamic
+        {
+            return false;
         }
 
         log.add_resolve_error(

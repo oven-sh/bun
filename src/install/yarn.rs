@@ -101,8 +101,7 @@ pub(crate) struct ParsedNpmAlias<'a> {
 }
 
 impl<'a> Entry<'a> {
-    /// yarn lists every spec that resolved to the same tarball on one key line, so the alias spec
-    /// naming the package may come after plain specs of it.
+    /// The alias spec may follow plain specs of the same package on yarn's shared key line.
     pub(crate) fn package_name_of(specs: &[&'a [u8]]) -> &'a [u8] {
         if let Some(name) = specs.iter().find_map(|spec| Self::npm_alias_target(spec)) {
             return name;
@@ -128,8 +127,7 @@ impl<'a> Entry<'a> {
         })
     }
 
-    /// Package identity (with `version`) for both consolidation and the package-id pass: a git
-    /// entry is its repository, since its spec name is whatever the dependent called it.
+    /// Identity shared by consolidation and the package-id pass; git entries go by repository.
     pub(crate) fn dedupe_name(&self) -> &[u8] {
         match &self.git_repo_name {
             Some(repo_name) if !self.has_direct_url_spec() => repo_name,

@@ -116,6 +116,17 @@ pub enum FileKind {
     // NotFound,
 }
 
+impl FileKind {
+    /// Names the colliding files in `InsertionHandler::on_router_collision_error`:
+    /// "Multiple {collision_noun} matching the same route pattern is ambiguous".
+    pub(crate) fn collision_noun(self) -> &'static str {
+        match self {
+            FileKind::Page => "pages",
+            FileKind::Layout => "layout",
+        }
+    }
+}
+
 pub enum RouteMarker {}
 pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
 

@@ -35,7 +35,6 @@
 
 [bun_runtime]
 "bare_bool_args:src/runtime/api.rs" = 2
-"bare_bool_args:src/runtime/bake/dev_server/incremental_graph.rs" = 1
 "bare_bool_args:src/runtime/dns_jsc/dns.rs" = 1
 "defaulted_failure:src/runtime/ffi/ffi_body.rs" = 1
 "defaulted_failure:src/runtime/server/RequestContext.rs" = 1
@@ -45,7 +44,6 @@
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 32
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
-"parallel_vecs:src/runtime/api/html_rewriter.rs" = 1
 "reimplemented_helper:src/runtime/api/bun/Terminal.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
 "same_match_twice:src/runtime/api/bun/h2_frame_parser.rs" = 1

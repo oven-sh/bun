@@ -575,6 +575,11 @@ impl UpdateInteractiveCommand {
             manager,
             populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
         )?;
+        // A dependency whose manifest did not arrive would otherwise pass as
+        // up to date below.
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
+        }
 
         // Get outdated packages
         let (mut outdated_packages, checked) =

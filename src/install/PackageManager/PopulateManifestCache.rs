@@ -2,13 +2,11 @@ use crate::lockfile::package::PackageColumns as _;
 use bun_collections::HashMap;
 use bun_core::Output;
 
-use crate::Dependency;
 use crate::DependencyID;
 use crate::ManifestLoad;
 use crate::NetworkTask;
 use crate::PackageID;
 use crate::Resolution;
-use crate::dependency::Behavior;
 use crate::invalid_package_id;
 // Import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
@@ -44,21 +42,16 @@ impl From<StartManifestTaskError> for crate::Error {
     }
 }
 
+/// `is_required` decides how `run_tasks` logs a failed fetch: an error for a
+/// manifest the caller cannot do without, a warning for one it can skip.
 fn start_manifest_task(
     manager: &mut PackageManager,
     pkg_name: &[u8],
-    dep: &Dependency,
+    is_required: bool,
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
-    // Read the *raw* OPTIONAL bit
-    // — not `Behavior.isOptional()` (which is `optional && !peer`). For
-    // optional-peer deps the raw bit is `true` but `is_optional()` is `false`,
-    // which would flip both the dedupe-map `is_required` bookkeeping and
-    // `for_manifest`'s error-suppression branch. Mirror runTasks.rs and read
-    // the raw flag.
-    let is_optional = dep.behavior.contains(Behavior::OPTIONAL);
-    if run_tasks::has_created_network_task(manager, task_id, is_optional) {
+    if run_tasks::has_created_network_task(manager, task_id, is_required) {
         return Ok(());
     }
     if manager.options.log_level.show_progress() {
@@ -91,7 +84,7 @@ fn start_manifest_task(
         pkg_name,
         scope.get(),
         None,
-        is_optional,
+        !is_required,
         needs_extended_manifest,
     )?;
 
@@ -99,9 +92,16 @@ fn start_manifest_task(
     Ok(())
 }
 
+/// A manifest that cannot be fetched is logged as an error only for a required
+/// dependency of `Ids`: those callers (`bun outdated`, `bun update -i`) answer
+/// for exactly those dependencies and report the failures with
+/// [`print_fetch_failures`]. `All` and `Exact` back best-effort passes whose
+/// callers skip what is missing, so theirs are warnings.
 #[derive(Clone, Copy)]
 pub enum Packages<'a> {
+    /// Every npm package in the lockfile (the backfill after a yarn/pnpm migration).
     All,
+    /// The direct dependencies of these (workspace) packages.
     Ids(&'a [PackageID]),
     /// The manifests of these packages themselves (by name), not of their dependencies.
     Exact(&'a [PackageID]),
@@ -157,7 +157,7 @@ pub fn populate_manifest_cache(
         Packages::All => {
             let mut seen_pkg_ids: HashMap<PackageID, ()> = HashMap::new();
 
-            for (_dep_id, dep) in dependencies.iter().enumerate() {
+            for _dep_id in 0..dependencies.len() {
                 let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
                 let pkg_id = resolutions[dep_id as usize];
@@ -203,10 +203,10 @@ pub fn populate_manifest_cache(
                         // `start_manifest_task` only touches the network-task
                         // pool / progress bar / log, never `lockfile.buffers`
                         // or `lockfile.packages`, so the outstanding shared
-                        // slices (`pkg_name_slice`, `dep`) stay valid.
+                        // slice (`pkg_name_slice`) stays valid.
                         unsafe { &mut *manager_ptr },
                         pkg_name_slice,
-                        dep,
+                        false,
                         needs_extended_manifest,
                     )?;
                 }
@@ -258,10 +258,10 @@ pub fn populate_manifest_cache(
                             // root; `start_manifest_task` only touches the
                             // network-task pool / progress bar / log, never
                             // `lockfile.buffers` or `lockfile.packages`, so
-                            // `package_name` / `dep` stay valid.
+                            // `package_name` stays valid.
                             unsafe { &mut *manager_ptr },
                             package_name,
-                            dep,
+                            dep.behavior.is_required(),
                             needs_extended_manifest,
                         )?;
 
@@ -274,7 +274,6 @@ pub fn populate_manifest_cache(
             }
         }
         Packages::Exact(ids) => {
-            let placeholder = Dependency::default();
             for &pkg_id in ids {
                 if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm {
                     continue;
@@ -296,7 +295,7 @@ pub fn populate_manifest_cache(
                         // SAFETY: SRW root; `start_manifest_task` never mutates `lockfile`, so `package_name` stays valid.
                         unsafe { &mut *manager_ptr },
                         package_name,
-                        &placeholder,
+                        false,
                         needs_extended_manifest,
                     )?;
                     // SAFETY: SRW root; network-queue flush does not mutate `lockfile`.
@@ -370,4 +369,20 @@ pub fn populate_manifest_cache(
     }
 
     Ok(())
+}
+
+/// Prints what a [`Packages::Ids`] pass logged (a `GET <url> - <status>` or
+/// `<error> downloading package manifest <name>` line per manifest it did not
+/// get) and returns whether any of it is an error, i.e. whether a required
+/// dependency's manifest is missing and the caller has to fail rather than
+/// pass that dependency off as up to date.
+pub fn print_fetch_failures(manager: &PackageManager) -> crate::Result<bool> {
+    let log = manager.log_mut();
+    let failed_required = log.has_errors();
+    if !log.msgs.is_empty() {
+        Output::flush();
+        log.print(core::ptr::from_mut(Output::error_writer()))?;
+        log.reset();
+    }
+    Ok(failed_required)
 }

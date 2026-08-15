@@ -241,9 +241,7 @@ impl Order {
         Ok(())
     }
 
-    /// Checks, once the whole file is scheduled, that every sequence a failing hook skips over
-    /// belongs to the scope that declared the hook. `AllOrderResult::set_failure_skip_to` keeps
-    /// this true by closing the concurrent group that ends the skipped range.
+    /// Every sequence a failing hook skips over must belong to the scope that declared the hook.
     pub(crate) fn assert_skip_ranges_stay_in_scope(&self) {
         if !bun_core::Environment::CI_ASSERT {
             return;
@@ -252,8 +250,7 @@ impl Order {
             if group.failure_skip_to <= index + 1 {
                 continue; // a test group, or a hook with nothing to skip
             }
-            // Only hook groups skip past the next group, and `generate_all_order` gives each hook a
-            // group of its own.
+            // only hook groups skip further than the next group, and each of them holds a single hook
             debug_assert_eq!(group.sequence_end - group.sequence_start, 1);
             let Some(hook) = self.sequences[group.sequence_start].first_entry else {
                 continue;
@@ -298,9 +295,7 @@ impl AllOrderResult {
         for group in &mut this.groups[self.start..self.end] {
             group.failure_skip_to = skip_to;
         }
-        // The skipped range ends with the last group scheduled so far. A concurrent test scheduled
-        // after it must open a new group instead of extending that one, or a failing hook would skip
-        // it too even though it belongs to an enclosing scope.
+        // seal the last skipped group; a concurrent test scheduled next must not extend it
         this.previous_group_was_concurrent = false;
     }
 }

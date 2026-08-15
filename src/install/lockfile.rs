@@ -203,11 +203,8 @@ pub struct Lockfile {
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
 
-    /// Packages appended for a root/workspace package.json dependency or for an
-    /// exact `=X.Y.Z` dependency. Both resolve independently of manifest
-    /// arrival order, so `get_package_id` may dedupe onto them freely; the
-    /// order-independence guard there only applies to the remaining
-    /// (transitive, range-resolved) entries.
+    /// Packages appended for a root/workspace package.json dependency or an
+    /// exact `=X.Y.Z` dependency; exempt from the guard in `get_package_id`.
     ///
     /// Runtime-only — never serialised.
     pub(crate) local_pinned: DynamicBitSet,
@@ -2042,11 +2039,9 @@ impl Lockfile {
             if !npm_v.satisfies(existing_ver, buf, buf) {
                 return false;
             }
-            // Order-independence guard: a wide range may not collapse onto a
-            // lower major that a sibling's manifest happened to append first.
-            // Lockfile-loaded entries (`loaded_package_count`) and
-            // `local_pinned` entries are order-independent and exempt; a lower
-            // entry within the same major is still ^-compatible and allowed.
+            // A wide range must not collapse onto a lower major that a sibling's
+            // manifest merely happened to append first. Lockfile-loaded and
+            // `local_pinned` entries do not depend on manifest order.
             if id >= loaded_watermark && !local_pinned.is_set_allow_out_of_bound(id as usize, false)
             {
                 if let Some(floor) = resolved_npm_floor {

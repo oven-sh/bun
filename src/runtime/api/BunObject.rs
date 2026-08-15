@@ -971,9 +971,8 @@ fn open_in_editor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
                 column = Some(column_.to_slice(global_this)?);
             }
         } else if !opts.is_undefined_or_null() {
-            return Err(
-                global_this.throw_invalid_arguments(format_args!("Expected options to be an object"))
-            );
+            return Err(global_this
+                .throw_invalid_arguments(format_args!("Expected options to be an object")));
         }
     }
 

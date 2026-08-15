@@ -1,11 +1,13 @@
-// An install killed while it is linking a package out of the cache must not
-// leave a partial copy at the package's final path: both linkers treat an
+// Packages are linked out of the cache into a staging directory that is renamed
+// onto the package's final path once complete. An install killed while linking
+// must not leave a partial copy at the final path: both linkers treat an
 // installed package.json as "this package is installed", so a truncated
-// directory that already received its package.json is reported as up to date
-// by every later `bun install`.
+// directory that already received its package.json would be reported as up to
+// date by every later `bun install`. The rename must also cope with the final
+// path being occupied already, which the hoisted linker does to itself.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 // Enough files that the kill below lands long before linking finishes, even
@@ -84,9 +86,9 @@ async function install(cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-// Kills `bun install` as soon as anything for the package shows up in the
-// directory the package is installed into, i.e. while its files are being
-// linked out of the cache.
+// Kills `bun install` as soon as anything shows up in the directory the package
+// is installed into (the package is the only thing that goes there), i.e. while
+// its files are being linked out of the cache.
 async function installAndKillWhileLinking(cwd: string, packageParentDir: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install"],
@@ -99,7 +101,7 @@ async function installAndKillWhileLinking(cwd: string, packageParentDir: string)
   proc.exited.then(() => (exited = true));
   let killed = false;
   while (!exited && !killed) {
-    if (existsSync(packageParentDir) && readdirSync(packageParentDir).some(name => name.includes("many-files"))) {
+    if (existsSync(packageParentDir) && readdirSync(packageParentDir).length > 0) {
       proc.kill("SIGKILL");
       killed = true;
     } else {
@@ -155,5 +157,81 @@ for (const [linker, packageDir] of Object.entries(packageDirs)) {
     expect(repaired.exitCode).toBe(0);
     expect(compareWithExpectedTree(installed)).toEqual(completeTree);
     expect(readdirSync(installedParent).sort()).toEqual(finishedParentListing);
+  });
+}
+
+// A workspace that other packages depend on under a second name is linked into
+// node_modules under both names, and the hoisted linker walks the packages
+// nested inside it once per name. The second walk finds the first one's result
+// already sitting at the final path.
+const aliasLinkDirs = {
+  hoisted: "node_modules/inner-alias",
+  isolated: "packages/second/node_modules/inner-alias",
+};
+
+for (const [linker, aliasLinkDir] of Object.entries(aliasLinkDirs)) {
+  test(`${linker} linker: a package reached through two workspace aliases is installed under both`, async () => {
+    const depTarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "package/index.js": "module.exports = 1;\n",
+      },
+      { compress: "gzip" },
+    ).bytes();
+    using dir = tempDir(`staging-alias-${linker}`, {
+      // The root's own `dep` keeps inner's `dep` from being hoisted out of inner.
+      "package.json": JSON.stringify({
+        name: "app",
+        workspaces: ["packages/*"],
+        dependencies: { dep: "file:./dep-root" },
+      }),
+      "dep-root/package.json": JSON.stringify({ name: "dep", version: "2.0.0" }),
+      "dep-1.0.0.tgz": Buffer.from(depTarball),
+      "packages/inner/package.json": JSON.stringify({
+        name: "inner",
+        version: "1.0.0",
+        dependencies: { dep: "file:../../dep-1.0.0.tgz" },
+      }),
+      "packages/second/package.json": JSON.stringify({
+        name: "second",
+        version: "1.0.0",
+        dependencies: { "inner-alias": "workspace:inner@*" },
+      }),
+      "bunfig.toml": ({ root }) => Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker } }),
+    });
+    const root = String(dir);
+
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+
+    const version = (packageDir: string) =>
+      JSON.parse(readFileSync(join(root, packageDir, "package.json"), "utf8")).version;
+    expect({
+      rootDep: version("node_modules/dep"),
+      innerDep: version("packages/inner/node_modules/dep"),
+      aliasedInnerDep: version(join(aliasLinkDir, "node_modules/dep")),
+      innerNodeModules: readdirSync(join(root, "packages/inner/node_modules")),
+    }).toEqual({ rootDep: "2.0.0", innerDep: "1.0.0", aliasedInnerDep: "1.0.0", innerNodeModules: ["dep"] });
+  });
+}
+
+// An alias may already be as long as a file name can be, so the staging
+// directory's name cannot be derived from it by adding to it.
+for (const linker of ["hoisted", "isolated"]) {
+  test(`${linker} linker: a package whose alias is 255 characters long is installed`, async () => {
+    const alias = Buffer.alloc(255, "a").toString();
+    using dir = tempDir(`staging-long-alias-${linker}`, {
+      "package.json": JSON.stringify({ name: "app", dependencies: { [alias]: "file:./a-package" } }),
+      "a-package/package.json": JSON.stringify({ name: "a-package", version: "1.0.0" }),
+      "bunfig.toml": ({ root }) => Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), linker } }),
+    });
+    const root = String(dir);
+
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(join(root, "node_modules", alias, "package.json"), "utf8")).name).toBe("a-package");
+    expect(readdirSync(join(root, "node_modules")).filter(name => name !== ".bun")).toEqual([alias]);
   });
 }

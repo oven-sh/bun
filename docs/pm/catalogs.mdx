@@ -13,7 +13,7 @@ Instead of each workspace package specifying its own versions, you:
 2. Reference those versions with the `catalog:` protocol
 3. Update every package at once by changing the version in one place
 
-This matters most in large monorepos where dozens of packages depend on the same versions of key dependencies.
+Catalogs matter most in large monorepos where dozens of packages depend on the same versions of key dependencies.
 
 ## How to Use Catalogs
 
@@ -91,7 +91,7 @@ In your workspace packages, use the `catalog:` protocol to reference versions:
 }
 ```
 
-`catalog:` and `catalog:<name>` are accepted in `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies`, and as the value of a root [`overrides` / `resolutions`](/pm/overrides) rule. A catalog peer is resolved and hoisted exactly as if the catalog's range were written inline: if an ancestor already provides a version that satisfies the catalog range, the workspace package reuses that copy instead of getting its own. If no ancestor provides a satisfying version, the workspace package gets its own copy of whatever the catalog range resolves to, just as it would with the range written inline. `bun.lock` stores the catalog ranges themselves, not a resolved version per reference, so a catalog reference binds to whichever version in the lockfile satisfies the range, again like an inline range. (pnpm additionally pins each catalog entry to the version it first resolved to; Bun does not.)
+`catalog:` references work in `dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`, and as the value of a root [`overrides`](/pm/overrides) rule. A catalog reference behaves exactly as if the catalog's range were written inline.
 
 ### 3. Run Bun Install
 
@@ -238,17 +238,15 @@ To update versions across all packages, change the version in the root package.j
 
 Then run `bun install` to update all packages.
 
-To add a dependency to the catalog, run `bun add` with `--catalog` (or `--catalog=<name>`) from the workspace package or from the root; an entry that already exists is reused unless you give a version:
+## Adding to the catalog with `bun add`
+
+`bun add --catalog` (or `--catalog=<name>`) adds the entry to the root catalog and writes `"catalog:"` to the current package. Bun reuses an existing catalog entry unless you pass an explicit version. See [`bun add --catalog`](/pm/cli/add#--catalog).
 
 ```bash terminal icon="terminal"
 bun add react --catalog
 ```
 
-Bun writes the entry to the catalog in the root `package.json` (the range the current `package.json` already declares, otherwise the resolved version) and `"catalog:"` to the `package.json` you ran the command in. See [`bun add --catalog`](/pm/cli/add#--catalog).
-
-When the entry already existed and differs from the range the package declared, `bun add` says so on stderr, e.g. `note: react in app now follows the catalog entry "^19.0.0" instead of "^18.2.0"`. With `--filter`, the first selected package that declares a range seeds a missing entry; a later package whose declared range does not fit that entry keeps its range and gets a `keeps` note instead.
-
-`bun add react` without the flag also uses the default catalog when it lists `react`: the package gets `"catalog:"`, and an existing `"catalog:<name>"` reference is kept. `bun add react@latest` (or any explicit version) writes a concrete range instead. Named catalogs are only used through `--catalog=<name>` or an existing reference, and a version you type is never checked against the catalog (there is no equivalent of pnpm's `catalogMode` setting).
+Even without the flag, `bun add react` (no version) writes `"catalog:"` when the default catalog already lists `react`. Pass a version to write a concrete range instead.
 
 ## Lockfile Integration
 
@@ -295,10 +293,10 @@ Bun's lockfile tracks catalog versions, so installs are consistent across enviro
 ## Limitations and Edge Cases
 
 - Catalog references must match a dependency defined in either `catalog` or one of the named `catalogs`
-- Empty strings and whitespace in catalog names are ignored (treated as default catalog)
-- `catalog:default` is the same as `catalog:`; both read the `catalog` field, or `catalogs.default` if that is where the entry is defined (as pnpm names it). A package may be defined in only one of the two: if both `catalog` and `catalogs.default` list it, `bun install` stops with `error: "react" is defined in both "catalog" and "catalogs.default"` (`bun add --catalog` always edits the one that already defines the package)
+- Bun ignores empty strings and whitespace in catalog names and treats them as the default catalog
+- `catalog:default` is the same as `catalog:`. You can define the default catalog as either `catalog` or `catalogs.default`, but a package listed in both is an error
 - Invalid dependency versions in catalogs fail to resolve during `bun install`
-- `catalog:` is only understood in the root `package.json` and in workspace packages. A `catalog:` specifier inside an installed package (from the registry, git, a tarball or a `file:` folder) never reads your catalogs: as a regular dependency it fails to resolve (`x@catalog: failed to resolve`), and as a peer dependency it behaves like an optional `*` peer: it binds to whichever version the package that depends on it already provides, and no copy is installed for it otherwise. Publish with `bun publish` or `bun pm pack`, which substitute the ranges (see [Publishing](#publishing))
+- `catalog:` only works in the root and workspace `package.json` files. Inside a published package it fails to resolve. Publish with `bun publish` or `bun pm pack`, which replace it with the real range (see [Publishing](#publishing))
 
 ## Publishing
 

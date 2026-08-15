@@ -12,7 +12,7 @@ To use it with `bun install`, add a `bunfig.toml` file to your project with the 
 
 ### Configure with bunfig.toml
 
-Replace `MY_SUBDOMAIN` with your JFrog Artifactory subdomain, such as `jarred1234`, and `MY_TOKEN` with your base64-encoded `username:password`; Bun sends this value as-is in a `Basic` `Authorization` header. To authenticate with a JFrog access token instead, use `_authToken=` in place of `_auth=`; Bun sends that value as a `Bearer` token.
+Replace `MY_SUBDOMAIN` with your JFrog Artifactory subdomain, such as `jarred1234`. Replace `MY_TOKEN` with your base64-encoded `username:password`. Bun sends this value as-is in a `Basic` `Authorization` header. To authenticate with a JFrog access token instead, use `_authToken=` in place of `_auth=`. Bun sends that value as a `Bearer` token.
 
 ```toml bunfig.toml icon="settings"
 [install.registry]

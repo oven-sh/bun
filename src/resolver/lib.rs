@@ -282,8 +282,7 @@ pub mod fs {
                 Some(d) => DirnameStore::instance().append_slice(d)?,
                 None => {
                     let mut buf = bun_paths::PathBuffer::default();
-                    let n = bun_sys::getcwd(&mut buf[..])?;
-                    DirnameStore::instance().append_slice(&buf[..n])?
+                    DirnameStore::instance().append_slice(bun_core::getcwd(&mut buf)?.as_bytes())?
                 }
             };
             // Seed the lower-tier `bun_paths::fs::FileSystem` singleton with the

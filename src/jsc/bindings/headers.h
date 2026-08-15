@@ -167,6 +167,7 @@ CPP_DECL void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0);
 
 CPP_DECL JSC::EncodedJSValue Bun__REPL__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* filenamePtr, size_t filenameLen, JSC::EncodedJSValue* exception);
 CPP_DECL JSC::EncodedJSValue Bun__REPL__getCompletions(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue targetValue, const unsigned char* prefixPtr, size_t prefixLen);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__getProperty(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue baseValue, const unsigned char* namePtr, size_t nameLen);
 CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue valueEncoded, int32_t depth, bool colors);
 
 #pragma mark - JSC::JSGlobalObject

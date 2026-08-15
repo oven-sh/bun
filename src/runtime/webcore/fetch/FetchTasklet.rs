@@ -1601,7 +1601,7 @@ impl FetchTasklet {
             // SAFETY: the stream (held Strong above) owns a live ByteStream embedded in
             // its Source; JS thread.
             unsafe {
-                let source = (*bytes).parent();
+                let source = crate::webcore::readable_stream::NewSource::from_context_ptr(bytes);
                 (*source).increment_count();
                 this.response_stream_source = NonNull::new(source);
             }
@@ -2674,7 +2674,6 @@ pub struct FetchOptions {
     pub(crate) proxy_headers: Option<Headers>,
     pub(crate) url_proxy_buffer: Box<[u8]>,
     pub(crate) signal: Option<*mut AbortSignal>,
-    pub global_this: Option<GlobalRef>,
     // Custom Hostname
     pub(crate) hostname: Option<Box<[u8]>>,
     pub(crate) check_server_identity: StrongOptional,
@@ -2689,7 +2688,7 @@ pub struct FetchOptions {
 impl Default for FetchOptions {
     fn default() -> Self {
         // Zero-values for the required fields
-        // (method/headers/body/url/bools/unix_socket_path/globalThis) so
+        // (method/headers/body/url/bools/unix_socket_path) so
         // callers can use `..Default::default()` struct-update syntax while
         // still overriding the required fields explicitly.
         Self {
@@ -2709,7 +2708,6 @@ impl Default for FetchOptions {
             proxy_headers: None,
             url_proxy_buffer: Box::default(),
             signal: None,
-            global_this: None,
             hostname: None,
             check_server_identity: StrongOptional::empty(),
             unix_socket_path: ZigStringSlice::EMPTY,

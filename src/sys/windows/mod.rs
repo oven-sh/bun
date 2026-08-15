@@ -224,17 +224,6 @@ pub(crate) fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_
     }
 }
 
-/// Convert a [`TimeLike`](crate::TimeLike) (seconds + nanoseconds since the
-/// Unix epoch) into a Windows `FILETIME`.
-#[inline]
-pub fn timespec_to_filetime(t: crate::TimeLike) -> FILETIME {
-    let ticks = (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
-    FILETIME {
-        dwLowDateTime: ticks as u32,
-        dwHighDateTime: (ticks >> 32) as u32,
-    }
-}
-
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
 pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];

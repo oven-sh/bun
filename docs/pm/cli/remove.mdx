@@ -13,13 +13,13 @@ import Remove from "/snippets/cli/remove.mdx";
 bun remove ts-node
 ```
 
-The package is deleted from every one of `dependencies`, `devDependencies`, `optionalDependencies` and `peerDependencies` it appears in (there is no flag to limit the removal to one of them), `bun.lock` is updated, and `node_modules/<pkg>` is deleted once no package in the lockfile still depends on it.
+Bun removes the package from every dependency group in `package.json` that lists it and updates `bun.lock`. Once nothing else depends on the package, Bun deletes it from `node_modules`.
 
 ## `--filter`
 
 <Note>**Alias** — `-F`</Note>
 
-In a monorepo, `--filter` removes the package from the matching workspace package(s) instead of the package in the current directory, using the same patterns as [`bun add --filter`](/pm/cli/add#--filter). To remove a package from every workspace, use `--filter '*'` (the root `package.json` is only included when a pattern names it, e.g. `--filter '*' --filter '<root-name>'`); there is no `--recursive`/`-r` flag. Selected workspaces that don't list the package are left untouched, and if none of them list it no `package.json` is edited and the command exits 0.
+In a monorepo, remove the package from the matching workspace(s) instead of the current directory's package, using the same patterns as [`bun add --filter`](/pm/cli/add#--filter). Use `--filter '*'` to remove it from every workspace package. Workspaces that don't list the package are left untouched.
 
 ```bash terminal icon="terminal"
 bun remove zod --filter api

@@ -3,11 +3,12 @@
 //! `parse` builds one of two shapes from `bun_parsers::xml` (see bun.d.ts
 //! for the user-facing description): the compact object (default) —
 //! `{ [root]: value }` where an element with no attributes and no child
-//! elements is its trimmed text, and otherwise an object with `"@name"`
+//! elements is its text, exactly, and otherwise an object with `"@name"`
 //! attribute keys, one key per distinct child element name (an array when
-//! the name repeats), and `"#text"` — or, with `{ compact: false }`, the node
-//! tree `{ name, attributes, children }`. `stringify` accepts either shape
-//! and always emits well-formed XML or throws.
+//! the name repeats), and `"#text"` — or, with
+//! `{ compact: false }`, the node tree `{ name, attributes, children }` whose
+//! children also include `{ comment }` and `{ target, data }`. `stringify`
+//! accepts either shape and always emits well-formed XML or throws.
 
 use bun_collections::HashMap;
 use bun_core::{OwnedString, String as BunString};
@@ -28,10 +29,12 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // A function here is reserved for a reviver; reject it rather than read
+    // it as an options object with no keys.
     let options = frame.argument(1);
     let compact = if options.is_undefined_or_null() {
         true
-    } else if options.is_object() {
+    } else if options.is_object() && !options.is_callable() {
         options
             .get_boolean_strict(global, "compact")?
             .unwrap_or(true)
@@ -60,12 +63,13 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 super::SourceEncoding::Utf16Text => xml::InputEncoding::Text,
             };
             bun_core::analytics::Features::xml_parse_inc();
+            let options = xml::Options { compact, encoding };
             let mut result = if source_encoding == super::SourceEncoding::Utf16Text {
                 // The scaffold hands the string's code units over as bytes.
                 let units: &[u16] = bytemuck::cast_slice(&source.contents);
-                XML::parse_utf16(source, units, log, arena, compact)
+                XML::parse_utf16(source, units, log, arena, options)
             } else {
-                XML::parse(source, log, arena, xml::Options { compact, encoding })
+                XML::parse(source, log, arena, options)
             };
             let utf8;
             let utf8_source;
@@ -143,7 +147,8 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     };
 
     let result = if is_node(global, root)? {
-        stringifier.stringify_node(global, root)
+        let name = root.get(global, "name")?;
+        stringifier.stringify_node(global, root, name)
     } else {
         stringifier.stringify_compact_document(global, root)
     };
@@ -279,13 +284,19 @@ impl Stringifier {
 
     // ── node tree ──────────────────────────────────────────────────────────
 
-    /// `{ name, attributes, children }` → `<name ...>children</name>`.
-    fn stringify_node(&mut self, global: &JSGlobalObject, node: JSValue) -> StringifyResult<()> {
+    /// `{ name, attributes, children }` → `<name ...>children</name>`;
+    /// `name` is the node's already-fetched `name` property.
+    fn stringify_node(
+        &mut self,
+        global: &JSGlobalObject,
+        node: JSValue,
+        name: Option<JSValue>,
+    ) -> StringifyResult<()> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
         self.mark_visiting(global, node)?;
-        let result = self.stringify_node_inner(global, node);
+        let result = self.stringify_node_inner(global, node, name);
         self.visiting.remove(&node);
         result
     }
@@ -294,12 +305,13 @@ impl Stringifier {
         &mut self,
         global: &JSGlobalObject,
         node: JSValue,
+        name: Option<JSValue>,
     ) -> StringifyResult<()> {
-        let name = match node.get(global, "name")? {
+        let name = match name {
             Some(name) if name.is_string() => OwnedString::new(name.to_bun_string(global)?),
             _ => {
                 return Err(global
-                    .throw(format_args!("XML.stringify: element children must be strings or {{ name, attributes, children }} nodes with a string name"))
+                    .throw(format_args!("XML.stringify: element children must be strings, {{ name, attributes, children }} elements, {{ comment }} or {{ target, data }}"))
                     .into());
             }
         };
@@ -385,8 +397,13 @@ impl Stringifier {
             }
             if child.is_object() && !child.is_array() && !child.is_date() {
                 // Inside `children` there is no compact/node ambiguity: any
-                // object is a node and must have a name.
-                self.stringify_node(global, child)?;
+                // object is an element (`name`), a comment (`comment`) or a
+                // processing instruction (`target`).
+                let name = child.get(global, "name")?;
+                if name.is_none() && self.stringify_markup(global, child)? {
+                    continue;
+                }
+                self.stringify_node(global, child, name)?;
             } else if child.is_array() {
                 return Err(global
                     .throw(format_args!(
@@ -406,6 +423,112 @@ impl Stringifier {
         }
         self.append_end_tag(*name);
         Ok(())
+    }
+
+    /// `{ comment }` → `<!--comment-->`, `{ target, data }` → `<?target data?>`;
+    /// `false` if `child` is neither.
+    fn stringify_markup(
+        &mut self,
+        global: &JSGlobalObject,
+        child: JSValue,
+    ) -> StringifyResult<bool> {
+        if let Some(comment) = child.get(global, "comment")? {
+            if child.get(global, "target")?.is_some() {
+                return Err(global.throw(format_args!("XML.stringify: a child with both 'comment' and 'target' is neither a comment nor a processing instruction")).into());
+            }
+            if !comment.is_string() {
+                return Err(global
+                    .throw(format_args!(
+                        "XML.stringify: a comment node's 'comment' must be a string"
+                    ))
+                    .into());
+            }
+            let text = OwnedString::new(comment.to_bun_string(global)?);
+            let len = text.length();
+            let mut i = 0;
+            let mut prev_dash = false;
+            while i < len {
+                let (cp, w) = code_point_at(&text, i);
+                i += w;
+                if !xml::is_xml_char(cp) {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: XML cannot represent the character U+{:04X}",
+                            cp
+                        ))
+                        .into());
+                }
+                if cp == 0x2D && (prev_dash || i == len) {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: a comment cannot contain '--' or end with '-'"
+                        ))
+                        .into());
+                }
+                prev_dash = cp == 0x2D;
+            }
+            self.builder.append_latin1(b"<!--");
+            self.builder.append_string(*text);
+            self.builder.append_latin1(b"-->");
+            return Ok(true);
+        }
+        if let Some(target) = child.get(global, "target")? {
+            if !target.is_string() {
+                return Err(global
+                    .throw(format_args!(
+                        "XML.stringify: a processing instruction's 'target' must be a string"
+                    ))
+                    .into());
+            }
+            let target = OwnedString::new(target.to_bun_string(global)?);
+            self.check_name(global, &target, "processing instruction target")?;
+            if target.length() == 3 {
+                let lower = |i| target.char_at(i) | 0x20;
+                if lower(0) == u16::from(b'x')
+                    && lower(1) == u16::from(b'm')
+                    && lower(2) == u16::from(b'l')
+                {
+                    return Err(global.throw(format_args!("XML.stringify: 'xml' is reserved and cannot be a processing instruction target")).into());
+                }
+            }
+            self.builder.append_latin1(b"<?");
+            self.builder.append_string(*target);
+            match child.get(global, "data")? {
+                None => {}
+                Some(data) if data.is_null() => {}
+                Some(data) if data.is_string() => {
+                    let data = OwnedString::new(data.to_bun_string(global)?);
+                    let len = data.length();
+                    if len > 0 {
+                        let mut i = 0;
+                        let mut prev_q = false;
+                        while i < len {
+                            let (cp, w) = code_point_at(&data, i);
+                            i += w;
+                            if !xml::is_xml_char(cp) {
+                                return Err(global.throw(format_args!("XML.stringify: XML cannot represent the character U+{:04X}", cp)).into());
+                            }
+                            if prev_q && cp == 0x3E {
+                                return Err(global.throw(format_args!("XML.stringify: processing instruction data cannot contain '?>'")).into());
+                            }
+                            prev_q = cp == 0x3F;
+                        }
+                        self.builder.append_lchar(b' ');
+                        self.builder.append_string(*data);
+                    }
+                }
+                Some(_) => {
+                    return Err(global
+                        .throw(format_args!(
+                            "XML.stringify: a processing instruction's 'data' must be a string"
+                        ))
+                        .into());
+                }
+            }
+            self.builder.append_latin1(b"?>");
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     // ── compact object ─────────────────────────────────────────────────────

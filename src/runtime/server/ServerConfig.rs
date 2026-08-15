@@ -51,6 +51,8 @@ pub struct ServerConfig {
     pub(crate) on_error: JSValue,
     pub(crate) on_request: JSValue,
     pub(crate) on_node_http_request: JSValue,
+    /// Created with `onNodeHTTPRequest`; unlike the handler above, `reload()` never clears this.
+    pub(crate) is_node_http_server: bool,
 
     pub(crate) websocket: Option<WebSocketServerContext>,
 
@@ -86,6 +88,7 @@ impl Default for ServerConfig {
             on_error: JSValue::ZERO,
             on_request: JSValue::ZERO,
             on_node_http_request: JSValue::ZERO,
+            is_node_http_server: false,
             websocket: None,
             reuse_port: false,
             id: Box::default(),
@@ -272,6 +275,7 @@ impl ServerConfig {
             on_error: self.on_error,
             on_request: self.on_request,
             on_node_http_request: self.on_node_http_request,
+            is_node_http_server: self.is_node_http_server,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
@@ -1355,6 +1359,7 @@ impl ServerConfig {
                 )));
             }
             args.on_node_http_request = on_request_;
+            args.is_node_http_server = true;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1364,9 +1369,10 @@ impl ServerConfig {
             }
             args.on_request = on_request_;
         } else if args.bake.is_none()
-            && args.on_node_http_request.is_empty()
-            && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
-                && !opts.has_user_routes)
+            && !args.is_node_http_server
+            && (args.static_routes.len() + args.user_routes_to_build.len()) == 0
+            && !opts.previous_fetch
+            && !(opts.previous_routes && !args.had_routes_object)
             && opts.is_fetch_required
         {
             if global.has_exception() {
@@ -1644,7 +1650,14 @@ impl ServerConfig {
 pub struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
     pub(crate) is_fetch_required: bool,
-    pub(crate) has_user_routes: bool,
+    /// What the running server keeps answering with when a `reload()` config
+    /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays
+    /// unless the new config replaces it, and callback routes stay as long as
+    /// the new config has no `routes` object at all (`routes: {}` replaces
+    /// them). Static routes and the node:http handler are replaced on every
+    /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
+    pub(crate) previous_fetch: bool,
+    pub(crate) previous_routes: bool,
 }
 
 impl Default for FromJSOptions {
@@ -1652,7 +1665,8 @@ impl Default for FromJSOptions {
         Self {
             allow_bake_config: true,
             is_fetch_required: true,
-            has_user_routes: false,
+            previous_fetch: false,
+            previous_routes: false,
         }
     }
 }

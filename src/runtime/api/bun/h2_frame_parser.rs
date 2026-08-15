@@ -1135,18 +1135,10 @@ enum BatchSegment {
 /// Flags for one `H2FrameParser::send_data` call.
 #[derive(Clone, Copy)]
 struct SendDataOptions {
-    /// End the stream after the payload: END_STREAM on the last DATA frame, or, while the
-    /// stream is waiting for trailers, an onWantTrailers dispatch instead.
     close: bool,
-    /// Skip the HALF_CLOSED_LOCAL onStreamEnd dispatch: the synchronous caller (writeStream)
-    /// hands the settled state to JS via its return value instead of re-entering the VM
-    /// mid-host-call.
+    /// Report a HALF_CLOSED_LOCAL transition through the return value instead of onStreamEnd.
     suppress_half_closed_local_dispatch: bool,
-    /// When the payload is handed to the socket without being queued (no flow-control /
-    /// socket backpressure), do not invoke the write callback here; report it as deferred so
-    /// the JS caller completes it asynchronously and a node Writable's `_write` callback never
-    /// settles synchronously inside `write()`. A queued payload keeps its callback with the
-    /// engine either way: it runs once the queued frames are flushed.
+    /// Hand an unqueued payload's write callback back to the caller instead of invoking it here.
     defer_write_callback: bool,
 }
 
@@ -7482,10 +7474,8 @@ impl H2FrameParser {
         ))
     }
 
-    /// Returns `(settled_state, callback_deferred)`: the state code the close tail settled on
-    /// (5 = HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = no close-tail transition ran), and whether
-    /// `callback` was left for the caller to complete (see
-    /// `SendDataOptions::defer_write_callback`).
+    /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
+    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether `callback` was left to the caller.
     fn send_data(
         &self,
         stream: &mut Stream,

@@ -383,8 +383,8 @@ impl EventLoopCtx {
     }
     /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
-    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
-        // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read; the enum itself is only touched through the guard it returns.
+    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard> {
+        // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read; the borrow ends at `;`.
         unsafe { (*self.pipe_read_scratch()).claim() }
     }
     #[inline]

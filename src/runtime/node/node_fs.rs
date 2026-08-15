@@ -7160,9 +7160,7 @@ impl NodeFS {
                         if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine`
-                            // (per-thread singleton; see `pipe_read_buffer`
-                            // above) — `BackRef` invariant holds.
+                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,

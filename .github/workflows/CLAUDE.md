@@ -6,7 +6,7 @@ This document provides guidance for maintaining the GitHub Actions workflows in 
 
 ### Overview
 
-The `format.yml` workflow runs code formatters (Prettier, clang-format, and `cargo fmt`) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel.
+The `format.yml` workflow runs code formatters (Prettier, clang-format, and `cargo fmt`) on pull requests and pushes to main. It's optimized for speed by running all formatters in parallel. It also regenerates the checked-in `*.generated.rs` string maps (`bun run codegen:string-maps`) before the formatters start: everything the step leaves modified, formatting or codegen, is what the autofix.ci action at the end of the job pushes back to the PR (failing the run when it had anything to push), so nothing that produces fixes may run after it, and nothing that only verifies should run before it.
 
 ### Key Components
 

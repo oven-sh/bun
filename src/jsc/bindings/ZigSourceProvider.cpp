@@ -196,10 +196,9 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
-// `inputSourceCodeSize` is always in bytes; when `inputIsUtf16` the buffer
-// holds native-endian, 2-byte-aligned UTF-16 code units. The input width must
-// match the width the runtime source string will have, or the SourceCodeKey
-// derived from the bytecode won't match at load time.
+// `inputSourceCodeSize` is in bytes; when `inputIsUtf16` the buffer holds
+// native-endian, 2-byte-aligned UTF-16 code units. The input width must match
+// the runtime source string's width or the SourceCodeKey won't match.
 static WTF::String sourceStringForBytecode(const uint8_t* inputSourceCode, size_t inputSourceCodeSize, bool inputIsUtf16)
 {
     if (inputIsUtf16)

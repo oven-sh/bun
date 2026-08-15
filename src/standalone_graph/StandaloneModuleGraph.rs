@@ -836,8 +836,12 @@ unsafe fn slice_to_z(base: *const u8, len: usize, ptr: StringPointer) -> &'stati
 /// Server-side JS modules are stored in the width JSC will load them in
 /// (Latin-1 or UTF-16) so the runtime can wrap the mmapped section bytes in a
 /// zero-copy external string instead of transcoding the whole module into a
-/// 16-bit heap copy at startup. Client chunks and non-JS files are served as
-/// raw bytes (assets, `Bun.embeddedFiles`) and must stay verbatim UTF-8.
+/// 16-bit heap copy at startup. The printer escapes non-ASCII in server JS,
+/// but `--banner`/`--footer`/hashbang text is concatenated verbatim as UTF-8.
+/// Client chunks and non-JS files are served as raw bytes (assets,
+/// `Bun.embeddedFiles`) and must stay verbatim UTF-8. Bytecode generation in
+/// `generateChunksInParallel.rs` mirrors this conversion; the two must agree
+/// or the SourceCodeKey won't match at runtime.
 fn stores_transcoded_contents(output_file: &OutputFile) -> bool {
     matches!(
         output_file.loader,
@@ -886,10 +890,8 @@ pub(crate) fn to_bytes(
                 if stores_transcoded_contents(output_file)
                     && strings::first_non_ascii(bytes).is_some()
                 {
-                    // Worst case for the transcoded form: UTF-16 doubles every
-                    // ASCII byte, plus 1 byte of alignment padding and the NUL.
-                    // `move_to_slice` is truncated to `len`, so over-counting
-                    // only costs transient capacity.
+                    // Transcoded worst case: UTF-16 doubles every ASCII byte,
+                    // plus 1 byte of alignment padding and the NUL.
                     string_builder.cap += bytes.len() * 2 + 2;
                 } else {
                     string_builder.count_z(bytes);
@@ -1062,15 +1064,8 @@ pub(crate) fn to_bytes(
             StringPointer::default()
         };
 
-        // Latin1/Utf16 let the runtime wrap the mmapped section bytes in a
-        // zero-copy ExternalStringImpl of the width JSC loads them in. The
-        // printer escapes non-ASCII for server-side JS, but
-        // `--banner`/`--footer`/hashbang text is concatenated verbatim as
-        // UTF-8, so non-ASCII server modules are converted here (must stay in
-        // sync with the bytecode generation input in
-        // `generateChunksInParallel.rs`, or the SourceCodeKey won't match).
-        // Client (target=browser) chunks are served as raw bytes and stay
-        // verbatim UTF-8 under `Binary`.
+        // Store JS text in the width JSC loads it in; see
+        // `stores_transcoded_contents` for why and for what must stay UTF-8.
         let (contents, encoding) = if matches!(
             output_file.loader,
             Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
@@ -1082,8 +1077,7 @@ pub(crate) fn to_bytes(
                 Some(units) => {
                     if units.is_utf16() && string_builder.len % 2 != 0 {
                         // UTF-16 code units must land at an even offset; the
-                        // section base is even on every platform (see the
-                        // bytecode alignment notes above).
+                        // section base is even on every platform.
                         string_builder.writable()[0] = 0;
                         string_builder.len += 1;
                     }
@@ -1094,8 +1088,7 @@ pub(crate) fn to_bytes(
                     };
                     (string_builder.append_count_z(units.as_bytes()), encoding)
                 }
-                // Unreachable in practice: `first_non_ascii` found a non-ASCII
-                // byte above, but pure-ASCII is Latin-1 as-is either way.
+                // Pure ASCII (unreachable here): Latin-1 as-is.
                 None => (string_builder.append_count_z(buf_bytes), Encoding::Latin1),
             }
         } else {

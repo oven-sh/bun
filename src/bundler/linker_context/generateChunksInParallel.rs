@@ -1060,13 +1060,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         let mut source_provider_url =
                             bun_core::OwnedString::new(source_provider_url);
 
-                        // For --compile, the standalone graph stores server-side
-                        // modules in the width JSC loads them in (Latin-1 or
-                        // UTF-16; see `stores_transcoded_contents` in
-                        // `StandaloneModuleGraph.rs`). Bytecode must be
-                        // generated from those exact code units, or the
-                        // SourceCodeKey won't match at runtime and the cache is
-                        // silently ignored.
+                        // For --compile, bytecode must be generated from the
+                        // exact code units the executable stores (see
+                        // `stores_transcoded_contents` in
+                        // `StandaloneModuleGraph.rs`), or the SourceCodeKey
+                        // won't match at runtime.
                         let transcoded = if c.options.compile_mode.is_executable()
                             && side == options::Side::Server
                         {

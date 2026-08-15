@@ -827,4 +827,13 @@ console.log("value", "café 😀");
     expect(stdout + stderr).toContain("Cache hit for sourceCode");
     expect(exitCode).toBe(0);
   });
+
+  test("bytecode cache hits with UTF-16 source", async () => {
+    const [stdout, stderr, exitCode] = await buildAndRun(["--bytecode", "--banner", "// 😀 emoji"], {
+      BUN_JSC_verboseDiskCache: "1",
+    });
+    expect(stdout).toContain("width 16bit");
+    expect(stdout + stderr).toContain("Cache hit for sourceCode");
+    expect(exitCode).toBe(0);
+  });
 });

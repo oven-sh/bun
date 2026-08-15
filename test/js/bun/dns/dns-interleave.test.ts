@@ -10,6 +10,8 @@
 //
 // https://github.com/oven-sh/bun/issues/4938
 // https://github.com/oven-sh/bun/issues/33278
+import { dns } from "bun";
+import { dnsIsAllLoopbackOfOneFamily, dnsIsLocalhostName } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl } from "harness";
 
@@ -199,31 +201,64 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
   );
 });
 
-// The connect-path resolver asks getaddrinfo with AI_ADDRCONFIG, and glibc does
-// not count loopback addresses as "configured": on a host whose only IPv6
-// address is ::1 (an IPv4-only Docker network) "localhost" resolves to just
-// 127.0.0.1 on the connect side, while Bun.serve()/Bun.listen() on "localhost"
-// resolve without the flag and bind ::1. The connect side must hand usockets
-// every loopback address the name maps to, so whichever one the listener picked
-// gets a connection attempt.
-//
-// For each address the system maps the name to, the fixture starts servers
-// bound to only that address and connects to them through the *name* with each
-// client that uses the connect-path resolver. A family the kernel refuses to
-// bind (IPv6 disabled outright) is skipped: nothing can listen there.
-function loopbackNameFixture(name: string) {
+// Loopback: the connect-path resolver asks getaddrinfo with AI_ADDRCONFIG, and
+// glibc does not count loopback addresses as "configured". On a host whose only
+// IPv6 address is ::1 (a container on an IPv4-only Docker network) it answers
+// "localhost" with 127.0.0.1 only, while Bun.serve()/Bun.listen() on "localhost"
+// resolve without the flag and bind ::1, so nothing in Bun can connect to them
+// by name. The resolver does what Chrome's does about it:
+//   1. localhost names (RFC 6761) are answered with [::1, 127.0.0.1] without
+//      asking the resolver at all, and
+//   2. any other name whose answer is loopback addresses of a single family is
+//      looked up again without AI_ADDRCONFIG.
+// The tables below pin both rules; the fixtures then bind listeners to specific
+// loopback addresses and connect to them through a name with every client that
+// goes through this resolver. An address the kernel refuses to bind (IPv6
+// disabled outright) is skipped: nothing could be listening there.
+describe("loopback names", () => {
+  test("localhost names (rule 1): Chrome's IsLocalHostname", () => {
+    const names = {
+      "localhost": true,
+      "LOCALHOST": true,
+      "localhost.": true,
+      "app.localhost": true,
+      "app.localhost.": true,
+      "a.b.LocalHost": true,
+      "notlocalhost": false,
+      "localhost.example": false,
+      "localhost2": false,
+      "localhost..": false,
+      "127.0.0.1": false,
+      "::1": false,
+      "": false,
+    };
+    expect(Object.fromEntries(Object.keys(names).map(name => [name, dnsIsLocalhostName(name)]))).toEqual(names);
+  });
+
+  test("answers that are retried without AI_ADDRCONFIG (rule 2): Chrome's IsAllLocalhostOfOneFamily", () => {
+    const answers: [answer: string[], retried: boolean][] = [
+      [["127.0.0.1"], true],
+      // glibc's AI_ADDRCONFIG answer for a hosts-file name listed for both families.
+      [["127.0.0.1", "127.0.0.1"], true],
+      [["127.0.0.2"], true],
+      [["::1"], true],
+      [["::1", "127.0.0.1"], false],
+      [["127.0.0.1", "10.0.0.1"], false],
+      // Ordinary names keep costing one getaddrinfo() call.
+      [["93.184.216.34"], false],
+      [["2606:2800:21f:cb07::1"], false],
+      [[], false],
+    ];
+    expect(answers.map(([answer]) => [answer, dnsIsAllLoopbackOfOneFamily(answer)])).toEqual(answers);
+  });
+});
+
+function reachThroughName(name: string, addresses: string[]) {
   return /* js */ `
     const name = ${JSON.stringify(name)};
-    let addresses;
-    try {
-      addresses = (await Bun.dns.lookup(name, { backend: "system" })).map(r => r.address);
-    } catch (e) {
-      console.log(JSON.stringify({ unresolvable: e.code }));
-      process.exit(0);
-    }
     const bound = [];
     const results = [];
-    for (const address of new Set(addresses)) {
+    for (const address of ${JSON.stringify(addresses)}) {
       let server;
       try {
         server = Bun.serve({
@@ -238,13 +273,13 @@ function loopbackNameFixture(name: string) {
       } catch {
         continue;
       }
-      bound.push(address);
       const listener = Bun.listen({ hostname: address, port: 0, socket: { open(s) { s.end(); }, data() {} } });
+      bound.push(address);
       const result = { address };
       try {
         result.fetch = await (await fetch("http://" + name + ":" + server.port + "/")).text();
       } catch (e) {
-        result.fetch = e.code;
+        result.fetch = e.code ?? e.name;
       }
       result.websocket = await new Promise(resolve => {
         const ws = new WebSocket("ws://" + name + ":" + server.port + "/");
@@ -256,7 +291,7 @@ function loopbackNameFixture(name: string) {
           hostname: name,
           port: listener.port,
           socket: {
-            open(s) { resolve(s.remoteAddress); },
+            open(s) { resolve(s.remoteAddress); s.end(); },
             connectError(_s, e) { resolve(e.code); },
             data() {},
           },
@@ -271,7 +306,7 @@ function loopbackNameFixture(name: string) {
   `;
 }
 
-function reachableViaName(bound: string[]) {
+function reached(bound: string[]) {
   return bound.map(address => ({
     address,
     fetch: `http via ${address}`,
@@ -280,30 +315,55 @@ function reachableViaName(bound: string[]) {
   }));
 }
 
-describe.concurrent("loopback names resolve to every loopback address on the connect path", () => {
-  test("fetch(), WebSocket and Bun.connect() reach a listener on each address localhost maps to", async () => {
-    const { out, stderr, exitCode, signal } = await run(loopbackNameFixture("localhost"));
-    expect(out.unresolvable).toBeUndefined();
-    expect(out.bound.length).toBeGreaterThan(0);
-    expect({ results: out.results, stderr, exitCode, signal }).toEqual({
-      results: reachableViaName(out.bound),
-      stderr: "",
-      exitCode: 0,
-      signal: null,
+// Whatever the system resolver says about these names (most answer neither
+// `localhost.` nor `*.localhost`), a listener on either loopback address is
+// reachable through them.
+describe.concurrent(
+  "fetch(), WebSocket and Bun.connect() reach a listener on 127.0.0.1 or ::1 through a localhost name",
+  () => {
+    test.each(["localhost", "localhost.", "bun-dns-test.localhost", "bun-dns-test.localhost."])("%s", async name => {
+      const { out, stderr, exitCode, signal } = await run(reachThroughName(name, ["127.0.0.1", "::1"]));
+      expect({ out, stderr, exitCode, signal }).toEqual({
+        out: { bound: expect.arrayContaining(["127.0.0.1"]), results: reached(out.bound ?? []) },
+        stderr: "",
+        exitCode: 0,
+        signal: null,
+      });
     });
-  });
+  },
+);
 
-  // Only resolvers that implement RFC 6761 for *.localhost (systemd-resolved,
-  // for one) answer this name; elsewhere there is nothing to bind and the
-  // fixture reports the name as unresolvable.
-  test("same for a *.localhost name, where the system resolves it", async () => {
-    const { out, stderr, exitCode, signal } = await run(loopbackNameFixture("bun-dns-test.localhost"));
-    if (out.unresolvable !== undefined) return;
-    expect({ results: out.results, stderr, exitCode, signal }).toEqual({
-      results: reachableViaName(out.bound),
-      stderr: "",
-      exitCode: 0,
-      signal: null,
-    });
-  });
-});
+// Debian, Ubuntu, Alpine and every Docker container list these names for ::1 in
+// /etc/hosts (Fedora uses localhost6). On a host whose only IPv6 address is ::1,
+// glibc answers them with 127.0.0.1 under AI_ADDRCONFIG; rule 2 asks again and
+// gets ::1. The system's own unfiltered answer says which listener the name has
+// to reach; a host whose hosts file lacks the name has nothing to test.
+const hostsFileLoopbackNames = await Promise.all(
+  ["ip6-localhost", "ip6-loopback", "localhost6"].map(async name => {
+    const addresses = await dns.lookup(name, { backend: "system" }).then(
+      records => [...new Set(records.map(record => record.address))],
+      () => [],
+    );
+    return { name, addresses };
+  }),
+);
+
+describe.concurrent(
+  "fetch(), WebSocket and Bun.connect() reach the listener a hosts-file loopback name maps to",
+  () => {
+    for (const { name, addresses } of hostsFileLoopbackNames) {
+      test.skipIf(addresses.length === 0)(
+        `${name} -> ${addresses.join(", ") || "(not in this host's hosts file)"}`,
+        async () => {
+          const { out, stderr, exitCode, signal } = await run(reachThroughName(name, addresses));
+          expect({ out, stderr, exitCode, signal }).toEqual({
+            out: { bound: out.bound ?? [], results: reached(out.bound ?? []) },
+            stderr: "",
+            exitCode: 0,
+            signal: null,
+          });
+        },
+      );
+    }
+  },
+);

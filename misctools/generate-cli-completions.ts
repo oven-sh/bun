@@ -15,13 +15,26 @@
  *
  * Output is saved to completions/bun-cli.json for use in generating
  * shell completions (fish, bash, zsh).
+ *
+ * It documents the bun that runs it (or $BUN_DEBUG_BUILD), so regenerate the
+ * checked-in file with:
+ *
+ *   bun bd misctools/generate-cli-completions.ts
+ *
+ * test/internal/generate-cli-completions.test.ts fails when the checked-in
+ * file does not match the --help output of the build under test, so a change
+ * to help text is regenerated in the same PR. The file describes a canary
+ * build (what `bun bd` and CI build) and is the same on every platform: the
+ * two pieces of help text that differ between builds are canonicalized in
+ * parseFlag.
  */
 
 import { spawn } from "bun";
-import { mkdirSync, writeFileSync, mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
-interface FlagInfo {
+export interface FlagInfo {
   name: string;
   shortName?: string;
   description: string;
@@ -74,7 +87,7 @@ interface CommandInfo {
   };
 }
 
-interface CompletionData {
+export interface CompletionData {
   version: string;
   commands: Record<string, CommandInfo>;
   globalFlags: FlagInfo[];
@@ -100,25 +113,35 @@ interface CompletionData {
   };
 }
 
-const BUN_EXECUTABLE = process.env.BUN_DEBUG_BUILD || "bun";
+export const OUTPUT_PATH = join(import.meta.dir, "..", "completions", "bun-cli.json");
+
+// Flags gated on SHOW_CRASH_TRACE in src/runtime/cli/Arguments.rs only exist in debug builds.
+const DEBUG_ONLY_FLAG_PREFIX = "DEBUG MODE:";
+
+// BACKEND_PARAM in src/install/PackageManager/CommandLineArguments.rs is selected per target OS;
+// the file records the macOS text because it is the one that lists every backend.
+const BACKEND_VALUES_OTHER_PLATFORMS = 'Possible values: "hardlink" (default), "symlink", "copyfile"';
+const BACKEND_VALUES_MACOS = 'Possible values: "clonefile" (default), "hardlink", "symlink", "copyfile"';
 
 /**
  * Parse flag line from help output
  */
-function parseFlag(line: string): FlagInfo | null {
+export function parseFlag(line: string): FlagInfo | null {
   // Match patterns like:
   // -h, --help                          Display this menu and exit
   // --timeout=<val>              Set the per-test timeout in milliseconds, default is 5000.
   // -r, --preload=<val>                 Import a module before other modules are loaded
+  // -p, --package <package>             Specify package to install when binary name differs from package name
+  // --depth <NUM>                Maximum depth of the dependency tree to display
   // --watch                         Automatically restart the process on file change
 
   const patterns = [
-    // Long flag with short flag and value: -r, --preload=<val>
-    /^\s*(-[a-zA-Z]),\s+(--[a-zA-Z-]+)=(<[^>]+>)\s+(.+)$/,
+    // Long flag with short flag and value: -r, --preload=<val> or -p, --package <package>
+    /^\s*(-[a-zA-Z]),\s+(--[a-zA-Z-]+)[= ](<[^>]+>)\s+(.+)$/,
     // Long flag with short flag: -h, --help
     /^\s*(-[a-zA-Z]),\s+(--[a-zA-Z-]+)\s+(.+)$/,
-    // Long flag with value: --timeout=<val>
-    /^\s+(--[a-zA-Z-]+)=(<[^>]+>)\s+(.+)$/,
+    // Long flag with value: --timeout=<val> or --depth <NUM>
+    /^\s+(--[a-zA-Z-]+)[= ](<[^>]+>)\s+(.+)$/,
     // Long flag without value: --watch
     /^\s+(--[a-zA-Z-]+)\s+(.+)$/,
     // Short flag only: -i
@@ -162,6 +185,14 @@ function parseFlag(line: string): FlagInfo | null {
 
       // The help printer drops escaped <placeholder> tags, leaving doubled spaces behind
       description = description.replace(/\s{2,}/g, " ").trim();
+
+      if (description.startsWith(DEBUG_ONLY_FLAG_PREFIX)) {
+        return null;
+      }
+
+      if (longName === "--backend") {
+        description = description.replace(BACKEND_VALUES_OTHER_PLATFORMS, BACKEND_VALUES_MACOS);
+      }
 
       // Extract additional info from description
       const hasValue = !!valueSpec;
@@ -272,42 +303,6 @@ function parseUsage(usage: string): {
   return args;
 }
 
-const temppackagejson = mkdtempSync("package");
-writeFileSync(
-  join(temppackagejson, "package.json"),
-  JSON.stringify({
-    name: "test",
-    version: "1.0.0",
-    scripts: {},
-  }),
-);
-process.once("beforeExit", () => {
-  rmSync(temppackagejson, { recursive: true });
-});
-
-/**
- * Execute bun command and get help output
- */
-async function getHelpOutput(command: string[]): Promise<string> {
-  try {
-    const proc = spawn({
-      cmd: [BUN_EXECUTABLE, ...command, "--help"],
-      stdout: "pipe",
-      stderr: "pipe",
-      cwd: temppackagejson,
-    });
-
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-
-    await proc.exited;
-
-    return stdout || stderr || "";
-  } catch (error) {
-    console.error(`Failed to get help for command: ${command.join(" ")}`, error);
-    return "";
-  }
-}
-
 /**
  * Parse PM subcommands from help output
  */
@@ -384,18 +379,6 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
     const line = lines[i];
     const trimmed = line.trim();
 
-    // Extract command description (usually the first non-usage line)
-    if (
-      !command.description &&
-      trimmed &&
-      !trimmed.startsWith("Usage:") &&
-      !trimmed.startsWith("Alias:") &&
-      currentSection === ""
-    ) {
-      command.description = trimmed;
-      continue;
-    }
-
     // Extract aliases
     if (trimmed.startsWith("Alias:")) {
       const aliasMatch = trimmed.match(/Alias:\s*(.+)/);
@@ -416,7 +399,7 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
     }
 
     // Track sections
-    if (trimmed === "Flags:") {
+    if (trimmed === "Flags:" || trimmed === "Options:") {
       inFlags = true;
       currentSection = "flags";
       continue;
@@ -439,6 +422,13 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
       continue;
     }
 
+    // Extract command description (the first line before any section), skipping the
+    // "bun <command> v1.2.3 (abcdef123)" banner that outdated and publish print first
+    if (!command.description && trimmed && currentSection === "" && !/^bun \S+ v\d/.test(trimmed)) {
+      command.description = trimmed;
+      continue;
+    }
+
     // Parse flags
     if (inFlags && line.match(/^\s+(-|\s+--)/)) {
       const flag = parseFlag(line);
@@ -448,9 +438,10 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
     }
 
     // Parse examples
-    if (inExamples && trimmed && !trimmed.startsWith("Full documentation")) {
-      if (trimmed.startsWith("bun ") || trimmed.startsWith("./") || trimmed.startsWith("Bundle")) {
-        command.examples.push(trimmed);
+    if (inExamples && trimmed) {
+      const example = trimmed.replace(/^\$ /, "");
+      if (example.startsWith("bun ") || example.startsWith("./") || example.startsWith("Bundle")) {
+        command.examples.push(example);
       }
     }
   }
@@ -458,6 +449,15 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
   // Special case for pm command
   if (commandName === "pm") {
     command.subcommands = parsePmSubcommands(helpText);
+  } else if (commandName === "audit") {
+    // `bun audit fix --help` prints the audit help, so the subcommand is not discoverable from --help output
+    command.subcommands = {
+      fix: {
+        name: "fix",
+        description:
+          "Upgrade vulnerable packages to the lowest safe version that still satisfies every dependent's range",
+      },
+    };
   }
 
   // Add dynamic completion info based on command
@@ -516,8 +516,7 @@ function parseHelpOutput(helpText: string, commandName: string): CommandInfo {
 /**
  * Get list of main commands from bun --help
  */
-async function getMainCommands(): Promise<string[]> {
-  const helpText = await getHelpOutput([]);
+function parseMainCommands(helpText: string): string[] {
   const lines = helpText.split("\n");
   const commands: string[] = [];
 
@@ -606,22 +605,48 @@ function addCommandAliases(commands: Record<string, CommandInfo>): void {
 }
 
 /**
+ * Read `bun --help` and `bun <command> --help` for every command it lists.
+ *
+ * The commands run in a directory with an empty package.json so that `bun run --help`
+ * does not list the scripts of whatever project this is run from.
+ */
+async function readHelpTexts(bunExecutable: string): Promise<{ main: string; commands: Map<string, string> }> {
+  const cwd = mkdtempSync(join(tmpdir(), "bun-cli-completions-"));
+  writeFileSync(join(cwd, "package.json"), JSON.stringify({ name: "test", version: "1.0.0", scripts: {} }));
+  const env = { ...process.env, NO_COLOR: "1", FORCE_COLOR: undefined, BUN_DEBUG_QUIET_LOGS: "1" };
+
+  async function getHelpOutput(command: string[]): Promise<string> {
+    const proc = spawn({
+      cmd: [bunExecutable, ...command, "--help"],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return (stdout || stderr).replaceAll("\r\n", "\n");
+  }
+
+  try {
+    const main = await getHelpOutput([]);
+    const commandNames = parseMainCommands(main);
+    const helpTexts = await Promise.all(commandNames.map(commandName => getHelpOutput([commandName])));
+    return { main, commands: new Map(commandNames.map((commandName, i) => [commandName, helpTexts[i]])) };
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+/**
  * Main function to generate completion data
  */
-async function generateCompletions(): Promise<void> {
-  console.log("🔍 Discovering Bun commands...");
-
-  // Get main help and extract commands
-  const mainHelpText = await getHelpOutput([]);
-  const mainCommands = await getMainCommands();
-  const globalFlags = parseGlobalFlags(mainHelpText);
-
-  console.log(`📋 Found ${mainCommands.length} main commands: ${mainCommands.join(", ")}`);
+export async function generateCompletionData(bunExecutable: string): Promise<CompletionData> {
+  const helpTexts = await readHelpTexts(bunExecutable);
 
   const completionData: CompletionData = {
     version: "1.1.0",
     commands: {},
-    globalFlags,
+    globalFlags: parseGlobalFlags(helpTexts.main),
     specialHandling: {
       bareCommand: {
         description: "Run JavaScript/TypeScript files directly or access package scripts and binaries",
@@ -645,56 +670,27 @@ async function generateCompletions(): Promise<void> {
   };
 
   // Parse each command
-  for (const commandName of mainCommands) {
-    console.log(`📖 Parsing help for: ${commandName}`);
-
-    try {
-      const helpText = await getHelpOutput([commandName]);
-      if (helpText.trim()) {
-        const commandInfo = parseHelpOutput(helpText, commandName);
-        completionData.commands[commandName] = commandInfo;
-      }
-    } catch (error) {
-      console.error(`❌ Failed to parse ${commandName}:`, error);
+  for (const [commandName, helpText] of helpTexts.commands) {
+    if (helpText.trim()) {
+      completionData.commands[commandName] = parseHelpOutput(helpText, commandName);
     }
   }
 
   // Add common aliases
   addCommandAliases(completionData.commands);
 
-  // Also check some common subcommands that might have their own help
-  const additionalCommands = ["pm"];
-  for (const commandName of additionalCommands) {
-    if (!completionData.commands[commandName]) {
-      console.log(`📖 Parsing help for additional command: ${commandName}`);
+  return completionData;
+}
 
-      try {
-        const helpText = await getHelpOutput([commandName]);
-        if (helpText.trim() && !helpText.includes("error:") && !helpText.includes("Error:")) {
-          const commandInfo = parseHelpOutput(helpText, commandName);
-          completionData.commands[commandName] = commandInfo;
-        }
-      } catch (error) {
-        console.error(`❌ Failed to parse ${commandName}:`, error);
-      }
-    }
-  }
+async function main(): Promise<void> {
+  const bunExecutable = process.env.BUN_DEBUG_BUILD || process.execPath;
+  console.log(`🔍 Reading --help output of ${bunExecutable}`);
 
-  // Ensure completions directory exists
-  const completionsDir = join(process.cwd(), "completions");
-  try {
-    mkdirSync(completionsDir, { recursive: true });
-  } catch (error) {
-    // Directory might already exist
-  }
+  const completionData = await generateCompletionData(bunExecutable);
 
-  // Write the JSON file
-  const outputPath = join(completionsDir, "bun-cli.json");
-  const jsonData = JSON.stringify(completionData, null, 2);
+  writeFileSync(OUTPUT_PATH, JSON.stringify(completionData, null, 2) + "\n");
 
-  writeFileSync(outputPath, jsonData, "utf8");
-
-  console.log(`✅ Generated CLI completion data at: ${outputPath}`);
+  console.log(`✅ Generated CLI completion data at: ${OUTPUT_PATH}`);
   console.log(`📊 Statistics:`);
   console.log(`   - Commands: ${Object.keys(completionData.commands).length}`);
   console.log(`   - Global flags: ${completionData.globalFlags.length}`);
@@ -722,7 +718,6 @@ async function generateCompletions(): Promise<void> {
   console.log(`   - Total subcommands: ${totalSubcommands}`);
 }
 
-// Run the script
 if (import.meta.main) {
-  generateCompletions().catch(console.error);
+  await main();
 }

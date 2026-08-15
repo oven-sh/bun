@@ -77,7 +77,7 @@ macro_rules! maybe_debug_params {
 // `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
 // Expose the flag in crash-trace builds (debug/test/asan).
 const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
-    "--verbose-error-trace             Dump error return traces"
+    "--verbose-error-trace             DEBUG MODE: dump error return traces"
 )];
 macro_rules! maybe_verbose_error_trace {
     () => {

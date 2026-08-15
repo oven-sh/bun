@@ -501,9 +501,7 @@ impl Default for Framework {
     }
 }
 
-/// Resolves `fileSystemRouterTypes[index].root` for both `Framework::resolve`
-/// implementations. A root that does not fit in a `PathBuffer` cannot name a
-/// directory: it is reported like an unresolvable entry point and `None` is returned.
+/// Resolves `fileSystemRouterTypes[index].root`; reports it and returns `None` when it does not fit in a `PathBuffer`.
 pub(crate) fn resolve_router_root(index: usize, root: &[u8]) -> Option<Box<[u8]>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut buf = paths::path_buffer_pool::get();

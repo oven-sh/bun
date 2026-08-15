@@ -203,14 +203,13 @@ pub struct Lockfile {
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
 
-    /// `bit[id] == true` ⇔ package `id` was appended for a dependency that is
-    /// either (a) declared in a local package.json (root or any workspace), or
-    /// (b) an exact `=X.Y.Z` anywhere in the tree. `get_package_id`'s
-    /// order-independence guard never blocks deduping to one of these: a local
-    /// dependency is enqueued before any network-ordered transitive, and an
-    /// exact pin resolves to exactly one version regardless of manifest
-    /// arrival order, so deduping to either is deterministic. Runtime-only —
-    /// never serialised; sized lazily in `mark_local_pin`.
+    /// Packages appended for a root/workspace package.json dependency or for an
+    /// exact `=X.Y.Z` dependency. Both resolve independently of manifest
+    /// arrival order, so `get_package_id` may dedupe onto them freely; the
+    /// order-independence guard there only applies to the remaining
+    /// (transitive, range-resolved) entries.
+    ///
+    /// Runtime-only — never serialised.
     pub(crate) local_pinned: DynamicBitSet,
 }
 
@@ -1984,8 +1983,7 @@ impl Lockfile {
         self.loaded_package_count = self.packages.len() as PackageID;
     }
 
-    /// Record that package `id` was appended for a dependency whose resolution
-    /// order is deterministic (see the `local_pinned` field doc).
+    /// See `local_pinned`.
     #[inline]
     pub(crate) fn mark_local_pin(&mut self, id: PackageID) {
         let i = id as usize;
@@ -2044,24 +2042,11 @@ impl Lockfile {
             if !npm_v.satisfies(existing_ver, buf, buf) {
                 return false;
             }
-            // Order-independence guard. We refuse to dedupe a wide range to a
-            // *lower* existing entry only when ALL of the following hold:
-            //   - the entry was appended in this resolve session
-            //     (lockfile-loaded entries are the user's existing pin),
-            //   - the entry was NOT appended for a dependency declared in a
-            //     local package.json (root or workspace) nor for an exact
-            //     `=X.Y.Z` — either is processed in a deterministic order
-            //     independent of manifest arrival, so deduping onto it is
-            //     stable and npm-compatible (`dragon test 2` /
-            //     "dependency from root satisfies range from dependency" /
-            //     "transitive wide range dedupes onto root range"),
-            //   - the manifest's best-match is a *different major* (within a
-            //     major, deduping to an older patch is the long-standing
-            //     behaviour and the worst case is still ^-compatible).
-            // What this leaves is exactly the cross-parent network-order
-            // flake: a wide range (`*`, `>=X`) collapsing onto a sibling's
-            // *transitive range-resolved* lower major depending on whose
-            // manifest landed first ("text lockfile is hoisted").
+            // Order-independence guard: a wide range may not collapse onto a
+            // lower major that a sibling's manifest happened to append first.
+            // Lockfile-loaded entries (`loaded_package_count`) and
+            // `local_pinned` entries are order-independent and exempt; a lower
+            // entry within the same major is still ^-compatible and allowed.
             if id >= loaded_watermark && !local_pinned.is_set_allow_out_of_bound(id as usize, false)
             {
                 if let Some(floor) = resolved_npm_floor {

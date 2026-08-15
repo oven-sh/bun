@@ -570,7 +570,7 @@ describe.concurrent("trace string identifies the build", () => {
       env: mergeWindowEnvs([bunEnv, { BUN_CRASH_REPORT_URL: base, BUN_ENABLE_CRASH_REPORTING: "1" }]),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     expect(exitCode).not.toBe(0);
 
     // {base}/{bun version}/{payload}. The payload itself may contain '/'

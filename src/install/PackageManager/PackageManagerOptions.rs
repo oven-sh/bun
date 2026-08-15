@@ -607,26 +607,47 @@ impl Options {
                     if !registry_.is_empty()
                         && (registry_.starts_with(b"https://") || registry_.starts_with(b"http://"))
                     {
-                        let prev_scope = self.scope.clone();
-                        let prev_url = prev_scope.url.url();
-                        let new_url = bun_url::URL::parse(registry_);
-                        let token = if bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                        {
-                            prev_scope.token
-                        } else {
-                            Box::default()
-                        };
-                        // Default (empty strings) is the zero value for Api::NpmRegistry.
-                        let api_registry = Api::NpmRegistry {
-                            url: registry_.into(),
-                            token,
-                            ..Default::default()
-                        };
+                        let mut api_registry = Api::NpmRegistry::from_url(registry_);
+                        // Credentials in the URL win, as they do for `registry=` in .npmrc.
+                        if !api_registry.has_credentials() {
+                            let prev_url = self.scope.url.url();
+                            let new_url = bun_url::URL::parse(&api_registry.url);
+                            if bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                            {
+                                api_registry.token = core::mem::take(&mut self.scope.token);
+                            }
+                        }
                         self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                         break;
                     }
+                }
+            }
+        }
+
+        if let Some(cli) = &maybe_cli {
+            if !cli.registry.is_empty() {
+                let api_registry = Api::NpmRegistry::from_url(cli.registry);
+                if api_registry.has_credentials() {
+                    self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                } else {
+                    let new_url = bun_url::URL::parse(&api_registry.url);
+                    let same_origin = {
+                        let prev_url = self.scope.url.url();
+                        bun_core::without_trailing_slash(new_url.host)
+                            == bun_core::without_trailing_slash(prev_url.host)
+                            && (new_url.is_https() || !prev_url.is_https())
+                    };
+                    if !same_origin {
+                        self.scope.token = Box::default();
+                        self.scope.auth = Box::default();
+                        self.scope.user = Box::default();
+                    }
+                    let href = api_registry.url;
+                    self.scope.url_hash =
+                        Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
+                    self.scope.url = bun_url::OwnedURL::from_href(href);
                 }
             }
         }
@@ -686,25 +707,6 @@ impl Options {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
-
-            if !cli.registry.is_empty() {
-                let new_url = bun_url::URL::parse(cli.registry);
-                let same_origin = {
-                    let prev_url = self.scope.url.url();
-                    bun_core::without_trailing_slash(new_url.host)
-                        == bun_core::without_trailing_slash(prev_url.host)
-                        && (new_url.is_https() || !prev_url.is_https())
-                };
-                if !same_origin {
-                    self.scope.token = Box::default();
-                    self.scope.auth = Box::default();
-                    self.scope.user = Box::default();
-                }
-                let href: Box<[u8]> = cli.registry.into();
-                self.scope.url_hash =
-                    Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
-                self.scope.url = bun_url::OwnedURL::from_href(href);
-            }
 
             if let Some(cache_dir) = cli.cache_dir {
                 self.cache_directory = cache_dir;

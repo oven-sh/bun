@@ -1303,16 +1303,12 @@ mod draft {
         configs
     }
 
-    fn has_credentials(registry: &NpmRegistry) -> bool {
-        !registry.token.is_empty() || !registry.username.is_empty() || !registry.password.is_empty()
-    }
-
     pub fn apply_registry_auth(install: &mut BunInstall, auth: &[RegistryAuth]) {
         if auth.is_empty() {
             return;
         }
         if let Some(registry) = install.default_registry.as_mut() {
-            if !has_credentials(registry) {
+            if !registry.has_credentials() {
                 for item in auth {
                     let matched = item.matches(if registry.url.is_empty() {
                         bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes()
@@ -1327,7 +1323,7 @@ mod draft {
         }
         if let Some(scoped) = install.scoped.as_mut() {
             for registry in scoped.scopes.values_mut() {
-                if has_credentials(registry) {
+                if registry.has_credentials() {
                     continue;
                 }
                 for item in auth {

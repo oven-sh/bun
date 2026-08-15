@@ -283,6 +283,10 @@ pub mod entry {
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
 
+        /// Exists only inside the packages declaring it (`isolated_install::ContainedFolders`):
+        /// no store directory, task or hoist slot; linked in `Installer::symlink_dependencies`.
+        pub nested_folder: bool,
+
         pub peer_hash: PeerHash,
 
         /// Content hash of (package + sorted resolved dependency global-store keys),
@@ -313,6 +317,7 @@ pub mod entry {
             parents: Vec<Id>,
             step: core::sync::atomic::AtomicU32,
             hoisted: bool,
+            nested_folder: bool,
             peer_hash: PeerHash,
             entry_hash: u64,
             scripts: core::cell::Cell<Option<*mut package::scripts::List>>,
@@ -328,6 +333,7 @@ pub mod entry {
                 // `Step::LinkPackage as u32 == 0`.
                 step: core::sync::atomic::AtomicU32::new(0),
                 hoisted: false,
+                nested_folder: false,
                 peer_hash: PeerHash::NONE,
                 entry_hash: 0,
                 scripts: core::cell::Cell::new(None),

@@ -213,6 +213,98 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
+/// `dep` is a `file:` dependency whose path is relative to the package declaring it
+/// (resolved as `declarer`): `Package::from_npm` stores these paths as declared,
+/// `Package::parse` and `overrides` store top-level relative ones. Such a folder is
+/// linked from inside the package and is not a peer provider for the packages below.
+fn dependency_is_contained_folder(
+    lockfile: &Lockfile,
+    declarer: &Resolution,
+    dep: &install::Dependency,
+) -> bool {
+    if matches!(
+        declarer.tag,
+        ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder
+    ) || dep.version.tag != VersionTag::Folder
+    {
+        return false;
+    }
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    !lockfile
+        .overrides
+        .contains_name(dep.name_hash, dep.name.slice(string_buf), string_buf)
+}
+
+/// `dependency_is_contained_folder` evaluated once for the whole lockfile.
+struct ContainedFolders {
+    /// Indexed by `DependencyID`.
+    dependencies: DynamicBitSet,
+    /// Indexed by `PackageID`: folders only such dependencies resolve to. They get
+    /// no store entry (`store::entry::Entry::nested_folder`).
+    packages: DynamicBitSet,
+}
+
+fn contained_folders(lockfile: &Lockfile) -> Result<ContainedFolders, AllocError> {
+    let pkgs = lockfile.packages.slice();
+    let pkg_resolutions = pkgs.items_resolution();
+    let resolutions = &lockfile.buffers.resolutions[..];
+    let dependencies = &lockfile.buffers.dependencies[..];
+
+    let mut contained = ContainedFolders {
+        dependencies: DynamicBitSet::init_empty(dependencies.len())?,
+        packages: DynamicBitSet::init_empty(pkg_resolutions.len())?,
+    };
+    for (pkg_id, pkg_res) in pkg_resolutions.iter().enumerate() {
+        if pkg_res.tag == ResolutionTag::Folder {
+            contained.packages.set(pkg_id);
+        }
+    }
+    if contained.packages.count() == 0 {
+        return Ok(contained);
+    }
+
+    for (pkg_id, pkg_deps) in pkgs.items_dependencies().iter().enumerate() {
+        for dep_id in pkg_deps.begin()..pkg_deps.end() {
+            let target = resolutions[dep_id as usize];
+            if target == invalid_package_id
+                || target as usize >= pkg_resolutions.len()
+                || pkg_resolutions[target as usize].tag != ResolutionTag::Folder
+            {
+                continue;
+            }
+            if dependency_is_contained_folder(
+                lockfile,
+                &pkg_resolutions[pkg_id],
+                &dependencies[dep_id as usize],
+            ) {
+                contained.dependencies.set(dep_id as usize);
+            } else {
+                contained.packages.unset(target as usize);
+            }
+        }
+    }
+
+    Ok(contained)
+}
+
+/// `pkg_id` has a `dependency_is_contained_folder` dependency resolving to `folder_pkg_id`.
+pub(crate) fn folder_is_inside_package(
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+    folder_pkg_id: PackageID,
+) -> bool {
+    let pkgs = lockfile.packages.slice();
+    let declarer = &pkgs.items_resolution()[pkg_id as usize];
+    let pkg_deps = pkgs.items_dependencies()[pkg_id as usize];
+    let resolutions = &lockfile.buffers.resolutions[..];
+    let dependencies = &lockfile.buffers.dependencies[..];
+
+    (pkg_deps.begin()..pkg_deps.end()).any(|dep_id| {
+        resolutions[dep_id as usize] == folder_pkg_id
+            && dependency_is_contained_folder(lockfile, declarer, &dependencies[dep_id as usize])
+    })
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -230,6 +322,9 @@ pub(crate) fn build_store(
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
     let string_buf = &lockfile.buffers.string_bytes[..];
+
+    let contained = contained_folders(lockfile)?;
+    let is_contained_folder = |dep_id: DependencyID| contained.dependencies.is_set(dep_id as usize);
 
     let mut nodes: store::node::List = store::node::List::default();
 
@@ -289,7 +384,8 @@ pub(crate) fn build_store(
 
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
-        // filtered out by bundled/disabled/unresolved).
+        // filtered out by bundled/disabled/unresolved) and are peer providers for
+        // the packages below (contained folders are not, see the walk below).
         let own_peers: DynamicBitSetList =
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
         let provides: DynamicBitSetList =
@@ -305,15 +401,17 @@ pub(crate) fn build_store(
                 };
                 if dep.behavior.is_peer() {
                     own_peers.set(pkg_id as usize, bit);
-                } else if !is_filtered_dependency_or_workspace(
-                    dep_id,
-                    pkg_id,
-                    workspace_filters,
-                    install_root_dependencies,
-                    manager,
-                    lockfile,
-                    resolutions,
-                ) {
+                } else if !is_contained_folder(dep_id)
+                    && !is_filtered_dependency_or_workspace(
+                        dep_id,
+                        pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                        resolutions,
+                    )
+                {
                     provides.set(pkg_id as usize, bit);
                 }
             }
@@ -504,6 +602,7 @@ pub(crate) fn build_store(
                                         for ids in &node_dependencies[curr_id.get() as usize] {
                                             if dependencies[ids.dep_id as usize].name_hash
                                                 == peer_name_hash
+                                                && !is_contained_folder(ids.dep_id)
                                             {
                                                 break 'resolved ids.pkg_id;
                                             }
@@ -581,7 +680,9 @@ pub(crate) fn build_store(
                         let mut curr_id = entry.parent_id;
                         'walk: while curr_id != store::node::Id::INVALID {
                             for ids in &node_dependencies[curr_id.get() as usize] {
-                                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash {
+                                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash
+                                    && !is_contained_folder(ids.dep_id)
+                                {
                                     break 'walk;
                                 }
                             }
@@ -743,6 +844,11 @@ pub(crate) fn build_store(
                         let dep = &dependencies[ids.dep_id as usize];
 
                         if dep.name_hash != peer_dep.name_hash {
+                            continue;
+                        }
+
+                        // private to the ancestor; a package's own one still satisfies its own peer
+                        if curr_id != node_id && is_contained_folder(ids.dep_id) {
                             continue;
                         }
 
@@ -1007,8 +1113,11 @@ pub(crate) fn build_store(
 
         let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
+        // never hoisted, so it must not claim the hoist slots for its name below
+        let new_entry_nested_folder = contained.packages.is_set(pkg_id as usize);
+
         let hoisted = 'hoisted: {
-            if !manager.options.hoist {
+            if !manager.options.hoist || new_entry_nested_folder {
                 break 'hoisted false;
             }
 
@@ -1039,6 +1148,7 @@ pub(crate) fn build_store(
             parents: new_entry_parents,
             peer_hash: new_entry_peer_hash,
             hoisted,
+            nested_folder: new_entry_nested_folder,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
             scripts: core::cell::Cell::new(None),
@@ -1080,7 +1190,7 @@ pub(crate) fn build_store(
                             .name
                             .slice(string_buf);
                         public_hoisted.put(dep_name, ())?;
-                    } else {
+                    } else if !new_entry_nested_folder {
                         // transitive dependencies (also direct dependencies of workspaces!)
                         let dep_name = dependencies[new_entry_dep_id as usize]
                             .name
@@ -1110,6 +1220,10 @@ pub(crate) fn build_store(
             peers: node_peers[entry.node_id.get() as usize].clone(),
         });
 
+        debug_assert!(
+            !new_entry_nested_folder || node_nodes[entry.node_id.get() as usize].is_empty(),
+            "a folder declared by a remote package is resolved without dependencies"
+        );
         for &child_node_id in &node_nodes[entry.node_id.get() as usize] {
             entry_queue.write_item(QueuedEntry {
                 node_id: child_node_id,
@@ -1968,6 +2082,7 @@ pub(crate) fn install_isolated_packages(
         let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
         let entry_hoisted = entries.items_hoisted();
+        let entry_nested_folder = entries.items_nested_folder();
 
         // Reborrow through a
         // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
@@ -2182,6 +2297,31 @@ pub(crate) fn install_isolated_packages(
                     continue;
                 }
                 ResolutionTag::Folder => {
+                    if entry_nested_folder[entry_id.get() as usize] {
+                        // linked by the packages containing it (`Installer::symlink_dependencies`)
+                        debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
+                        let folder = pkg_res.folder().slice(string_buf);
+                        let state = if crate::bin::bin_target_escapes_package_dir(folder) {
+                            // the resolver rejects these; only an edited or old lockfile gets here
+                            Output::err_generic(
+                                "refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
+                                (BStr::new(pkg_name.slice(string_buf)), BStr::new(folder)),
+                            );
+                            Output::flush();
+                            if installer.manager().options.enable.fail_early() {
+                                Global::exit(1);
+                            }
+                            installer::CompleteState::Fail
+                        } else {
+                            installer::CompleteState::Skipped
+                        };
+                        // .monotonic is okay because the task isn't running on another thread.
+                        entry_steps[entry_id.get() as usize]
+                            .store(installer::Step::Done as u32, Ordering::Relaxed);
+                        installer.on_task_complete(entry_id, state);
+                        continue;
+                    }
+
                     // folders are always hardlinked to keep them up-to-date
                     installer.start_task(entry_id);
                     continue;

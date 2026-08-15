@@ -1777,14 +1777,15 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     // before that entry is on disk. A resolve that had to fetch the manifest
     // again writes the entry again, with the same small chance of losing it, so
     // allow a few attempts.
-    for (let attempt = 1; ; attempt++) {
+    const maxAttempts = 5;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       await rm(lockfilePath);
       await rm(join(String(dir), "node_modules"), { recursive: true });
       registry.requests.length = 0;
       ({ err } = await install(String(dir)));
       expect(err).toContain(unmetPeerWarning);
       expect(await file(lockfilePath).text()).toBe(lockfile);
-      if (registry.requests.length === 0 || attempt === 5) break;
+      if (registry.requests.length === 0) break;
     }
     expect(registry.requests).toEqual([]);
   });

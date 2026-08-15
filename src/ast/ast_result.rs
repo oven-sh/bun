@@ -38,8 +38,8 @@ pub struct Ast<'a> {
     pub force_cjs_to_esm: bool,
     pub exports_kind: ExportsKind,
 
-    // This is a list of ES6 features. They are ranges instead of booleans so
-    // that they can be used in log messages. Check to see if "Len > 0".
+    // ES6 features the file uses. `top_level_await_keyword` keeps the range so
+    // a diagnostic can point at it.
     /// Whether the file uses the `export` keyword (not counting
     /// TypeScript-specific syntax).
     pub uses_export_keyword: bool,

@@ -686,7 +686,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         // len/cap) and then gathers *every* field via `ptr::read`; for the
         // hot per-token path that dominated `add_source_mapping`. Each
         // `items::<>` is a single `base + CONST*cap` pointer add.
-        let mut original_column = loc.get() as i32 - byte_offsets[idx] as i32;
+        let mut original_column = (loc.get() - byte_offsets[idx]) as i32;
         {
             // `first_non_ascii` is `i32::MAX as u32` for ASCII-only lines, so the
             // comparison below is false and the `columns_for_non_ascii` SoA column

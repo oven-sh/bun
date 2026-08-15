@@ -614,7 +614,11 @@ impl Loc {
     /// The location `bytes` further into the file.
     #[inline]
     pub fn add(self, bytes: u32) -> Loc {
-        Loc::new(self.get() + bytes)
+        Loc::new(
+            self.get()
+                .checked_add(bytes)
+                .expect("Loc offset out of range"),
+        )
     }
 
     /// The location `bytes` further into the file (`bytes` may be negative).
@@ -630,7 +634,11 @@ impl Loc {
     /// The location `bytes` back towards the start of the file.
     #[inline]
     pub fn sub(self, bytes: u32) -> Loc {
-        Loc::new(self.get() - bytes)
+        Loc::new(
+            self.get()
+                .checked_sub(bytes)
+                .expect("Loc offset out of range"),
+        )
     }
 }
 

@@ -669,7 +669,7 @@ pub fn parse(
                             if mapping.ensure_with_names().is_err() {
                                 return Err(ParseFail {
                                     err: crate::Error::Alloc(bun_alloc::AllocError),
-                                    loc: Some(Loc::from_usize(bytes.len() - remain.len())),
+                                    loc: None,
                                 });
                             }
                         }

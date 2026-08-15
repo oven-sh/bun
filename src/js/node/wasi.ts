@@ -406,7 +406,6 @@ var require_wasi = __commonJS({
       function (mod) {
         return mod && mod.__esModule ? mod : { default: mod };
       };
-    let fs;
     Object.defineProperty(exports, "__esModule", { value: true });
     var SC_OPEN_MAX = 32768;
     var types_1 = require_types();
@@ -586,7 +585,7 @@ var require_wasi = __commonJS({
         this.view = void 0;
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
         const bindings = this.bindings;
-        fs = bindings.fs;
+        const fs = bindings.fs;
         this.FD_MAP = /* @__PURE__ */ new Map([
           [
             constants_1.WASI_STDIN_FILENO,
@@ -1653,7 +1652,7 @@ var require_wasi = __commonJS({
       fstatSync(real_fd) {
         if (real_fd <= 2) {
           try {
-            return fs.fstatSync(real_fd);
+            return this.bindings.fs.fstatSync(real_fd);
           } catch {
             const now = new Date();
             return {
@@ -1678,7 +1677,7 @@ var require_wasi = __commonJS({
             };
           }
         }
-        return fs.fstatSync(real_fd);
+        return this.bindings.fs.fstatSync(real_fd);
       }
       shortPause() {
         if (this.sleep == null) return;

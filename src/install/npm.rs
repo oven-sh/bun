@@ -351,9 +351,7 @@ pub mod registry {
                 }
             }
 
-            // The config loaders only split `user:pass@` / `:token@` out of
-            // literal registry strings; an expanded `$ENV_VAR` gets the same
-            // split here. Explicitly configured credentials take precedence.
+            // The config loaders split literal strings; an expanded $ENV_VAR is split here.
             let from_url = api::NpmRegistry::from_url(&registry.url);
             registry.url = from_url.url;
             if registry.token.is_empty() {

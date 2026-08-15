@@ -807,6 +807,50 @@ describe("--dry-run", async () => {
   });
 });
 
+describe.concurrent("tarball path", () => {
+  // --dry-run stops before the first request, so credentials in the registry url are enough
+  // for the auth check and the closed port guarantees nothing is contacted.
+  const dryRunEnv = { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" };
+
+  function packageDir(name: string) {
+    return tempDir(name, { "package.json": JSON.stringify({ name, version: "1.0.0" }) });
+  }
+
+  // The tarball path is resolved against the package directory (`${dir}/${tarballPath}`) into a
+  // buffer of MAX_PATH_BYTES: 4096 bytes on Linux, 1024 on macOS. On Windows the buffer holds more
+  // than the longest command line the OS accepts, so an argument cannot overflow it.
+  const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
+  const tarballPathBytes: [string, (dir: string) => number][] = [
+    ["longer than the path buffer", () => 5000],
+    ["one byte longer than the path buffer once resolved", dir => PATH_BUFFER_BYTES + 1 - Buffer.byteLength(dir + "/")],
+    // Fills the buffer, so it leaves no room for the terminating NUL and is refused when opened.
+    ["as long as the path buffer once resolved", dir => PATH_BUFFER_BYTES - Buffer.byteLength(dir + "/")],
+  ];
+
+  test.skipIf(isWindows).each(tarballPathBytes)("%s fails with ENAMETOOLONG", async (_, bytes) => {
+    using dir = packageDir("publish-tarball-path-too-long");
+    const tarballPath = Buffer.alloc(bytes(String(dir)), "d").toString();
+
+    const { err, exitCode } = await publish(dryRunEnv, String(dir), tarballPath, "--dry-run");
+
+    expect(err).toContain(`ENAMETOOLONG: File name too long: failed to read tarball: '${tarballPath}'`);
+    expect(exitCode).toBe(1);
+  });
+
+  // What has to fit the buffer is the resolved path, not the argument as written.
+  test("that only fits the path buffer once resolved is read", async () => {
+    using dir = packageDir("publish-tarball-path-resolved");
+    await pack(String(dir), env);
+    const tarballPath = Buffer.alloc(5000, "x/../").toString() + "publish-tarball-path-resolved-1.0.0.tgz";
+
+    const { out, err, exitCode } = await publish(dryRunEnv, String(dir), tarballPath, "--dry-run");
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + publish-tarball-path-resolved@1.0.0 (dry-run)");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("lifecycle scripts", async () => {
   const script = `const fs = require("fs");
     fs.writeFileSync(process.argv[2] + ".txt", \`

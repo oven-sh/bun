@@ -646,9 +646,8 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
-// Rejects everything the view still awaits. Walks the slots, not m_pending:
-// a navigation drops its m_pending entry when Page.navigate replies and
-// then waits for Page.loadEventFired with only its slot set.
+// Slots, not m_pending: a navigation that Chrome has already answered is
+// waiting for Page.loadEventFired and exists only in its slot.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;
@@ -1291,12 +1290,9 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     m_mode = TransportMode::None;
     m_wsOpen = false;
     m_wsPending.clear();
-    // Settling allocates, and a GC in that allocation can run ~JSWebView()
-    // for a view dropped without close(), which removes it from m_views.
-    // Move the map into a local first so that removal never hits the map
-    // being iterated.
     m_pending.clear();
     m_sessions.clear();
+    // ~JSWebView() (a GC while settling) removes from m_views; iterate a local.
     auto views = std::exchange(m_views, {});
     if (!m_global) return;
     auto* g = m_global;

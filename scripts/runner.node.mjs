@@ -155,6 +155,10 @@ const { values: options, positionals: filters } = parseArgs({
       multiple: true,
       default: undefined,
     },
+    ["skip-slower-than"]: {
+      type: "string",
+      default: undefined,
+    },
     ["quiet"]: {
       type: "boolean",
       default: false,
@@ -2473,6 +2477,35 @@ async function getVendorTests(cwd) {
 }
 
 /**
+ * Checked-in median wall-clock duration per test file for this lane, from
+ * expected-durations.json (see scripts/update-test-durations.mjs).
+ * @param {string} cwd
+ * @returns {Record<string, number>}
+ */
+function loadExpectedDurations(cwd) {
+  const durations = {};
+  try {
+    const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
+    const step = options["step"] || "";
+    const lane = step.includes("asan")
+      ? "asan"
+      : step.includes("musl")
+        ? "musl"
+        : isWindows || step.includes("windows")
+          ? "windows"
+          : "default";
+    for (const [path, entry] of Object.entries(raw)) {
+      if (path === "_meta") continue;
+      const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
+      if (typeof ms === "number") durations[path] = ms;
+    }
+  } catch (e) {
+    console.warn("expected-durations.json not loaded:", e?.message || e);
+  }
+  return durations;
+}
+
+/**
  * @param {string} cwd
  * @param {string[]} testModifiers
  * @param {TestExpectation[]} testExpectations
@@ -2522,6 +2555,22 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     }
   }
 
+  // Drop the slowest files by expected duration. Used on lanes that trade a
+  // little coverage for throughput; the same files still run on other lanes.
+  const skipSlowerThan = parseInt(options["skip-slower-than"]);
+  if (skipSlowerThan > 0) {
+    const durations = loadExpectedDurations(cwd);
+    const slow = availableTests.filter(testPath => (durations[testPath.replaceAll("\\", "/")] ?? 0) >= skipSlowerThan);
+    for (const testPath of slow) availableTests.splice(availableTests.indexOf(testPath), 1);
+    !isQuiet &&
+      console.log(
+        `Skipping tests slower than ${skipSlowerThan}ms:`,
+        slow.length,
+        "/",
+        availableTests.length + slow.length,
+      );
+  }
+
   const skipExpectations = testExpectations
     .filter(
       ({ modifiers, expectations }) =>
@@ -2564,25 +2613,7 @@ function getRelevantTests(cwd, testModifiers, testExpectations) {
     // machines without any coordination. Tests absent from the table (new
     // files, or the file failing to load) fall back to the table's median so
     // they spread across shards instead of all landing on shard 0.
-    let durations = {};
-    try {
-      const raw = JSON.parse(readFileSync(join(cwd, "expected-durations.json"), "utf8"));
-      const step = options["step"] || "";
-      const lane = step.includes("asan")
-        ? "asan"
-        : step.includes("musl")
-          ? "musl"
-          : isWindows || step.includes("windows")
-            ? "windows"
-            : "default";
-      for (const [path, entry] of Object.entries(raw)) {
-        if (path === "_meta") continue;
-        const ms = entry[lane] ?? entry.default ?? entry.asan ?? entry.musl ?? entry.windows;
-        if (typeof ms === "number") durations[path] = ms;
-      }
-    } catch (e) {
-      console.warn("expected-durations.json not loaded, sharding by index:", e?.message || e);
-    }
+    const durations = loadExpectedDurations(cwd);
     const known = Object.values(durations).sort((a, b) => a - b);
     const unknownCost = known.length ? known[Math.floor(known.length / 2)] : 100;
     const costOf = testPath => durations[testPath.replaceAll("\\", "/")] ?? unknownCost;

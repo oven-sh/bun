@@ -136,12 +136,8 @@ pub use bun_jsc::generated::JSBlob as js;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-// is_s3: defined once above (near is_bun_file); duplicate removed to fix E0034.
-
 // is_all_ascii: canonical impl lives later in this file (pub). Duplicate
 // private helper removed here to fix E0592.
-
-// needs_to_read_file: defined once above; duplicate removed to fix E0034.
 
 // ──────────────────────────────────────────────────────────────────────────
 // BlobExt — `bun_runtime`-tier behaviour layered on the `bun_jsc` data type.
@@ -153,9 +149,9 @@ pub use bun_jsc::generated::JSBlob as js;
 #[allow(non_snake_case, clippy::too_many_arguments)]
 pub trait BlobExt {
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>>;
-    // `has_content_type_from_user`/`content_type_or_mime_type`/`is_bun_file`/
-    // `is_s3`/`needs_to_read_file`/`get_file_name`: data-only predicates,
-    // hoisted to inherent `impl Blob` in `bun_jsc::webcore_types` (LAYERING).
+    // `has_content_type_from_user`/`content_type_or_mime_type`/`is_s3`/
+    // `needs_to_read_file`/`get_file_name`: data-only predicates, hoisted to
+    // inherent `impl Blob` in `bun_jsc::webcore_types` (LAYERING).
     fn do_read_from_s3<F: read_file::ReadFileToJs>(
         &self,
         global: &JSGlobalObject,

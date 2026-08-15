@@ -834,17 +834,16 @@ impl BunTest {
 
         // error is only reported for the first done() call
         if first_call && was_error {
-            // Report against the entry the ref names, like `bun_test_then_or_catch`, so a late
-            // done(error) from a timed-out entry is not charged to whatever runs now. No ref means
-            // done() is still inside its own callback (the ref is attached after it returns).
             let owner = ref_in
                 .as_ref()
                 .and_then(|r| Some((r.buntest_weak.upgrade()?, &r.phase)));
             match owner {
+                // Same attribution as `bun_test_then_or_catch`: a stale ref is reported as unhandled, not charged to the running entry.
                 Some((strong, phase)) => {
                     // SAFETY: `&mut` derived via `UnsafeCell`; the borrow ends with this call.
                     strong.get().on_uncaught_exception(global_this, Some(value), false, phase);
                 }
+                // No ref yet: done() is still inside its own callback (`run_test_callback` attaches the ref after it returns).
                 None => {
                     let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
                 }

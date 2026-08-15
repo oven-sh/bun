@@ -159,8 +159,7 @@ pub struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
-    /// Bumped by every [`Execution::reset_sequence`] (retry or repeat). [`EntryData`] carries the
-    /// generation a callback started under, so a completion from an earlier attempt is stale.
+    /// Bumped by every [`Execution::reset_sequence`]; an [`EntryData`] with an older one is from an earlier retry/repeat.
     pub(crate) generation: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,

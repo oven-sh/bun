@@ -390,7 +390,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             && !p.lexer.has_newline_before
                                         {
                                             opts.is_async = true;
-                                            opts.async_range = Some(name_range);
 
                                             // p.markSyntaxFeature(ObjectAccessors, name_range)
 

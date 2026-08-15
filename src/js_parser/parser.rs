@@ -1347,7 +1347,6 @@ pub(crate) struct ImportClause<'a> {
 }
 
 pub struct PropertyOpts {
-    pub(crate) async_range: Option<bun_ast::Range>,
     pub(crate) declare_range: Option<bun_ast::Range>,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
@@ -1366,7 +1365,6 @@ pub struct PropertyOpts {
 impl Default for PropertyOpts {
     fn default() -> Self {
         Self {
-            async_range: None,
             declare_range: None,
             is_async: false,
             is_generator: false,

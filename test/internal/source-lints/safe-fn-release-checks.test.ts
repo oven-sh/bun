@@ -8,9 +8,10 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // precondition must check that precondition with a real `assert!` (or be an
 // `unsafe fn`). A `debug_assert!` compiles out of the release profile
 // (`[profile.release]` leaves debug-assertions off; scripts/build/rust.ts only
-// turns them on for debug and asan builds), so with one the shipped binary
-// trusts every one of the function's callers and a single length bug becomes
-// an out-of-bounds read handed to a syscall, or an invalid enum value.
+// turns them on for the debug, asan and assertions profiles), so with one the
+// shipped binary trusts every one of the function's callers and a single
+// length bug becomes an out-of-bounds read handed to a syscall, or an invalid
+// enum value.
 //
 // The functions below are the NUL-terminated string / errno constructors
 // that had exactly that shape (the Zig originals ran these checks in
@@ -19,6 +20,19 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // moving it between files does not require touching this lint; renaming its
 // parameters does, and the "defined exactly once" assertion makes that loud
 // instead of silently passing.
+//
+// Scope: the GUARDED table is the enforcement boundary. It pins functions that
+// have already been converted so they cannot quietly go back to
+// `debug_assert!`; it does not try to recognize the shape syntactically, since
+// "debug_assert! followed by unsafe" also matches hundreds of fns whose
+// precondition is a private invariant with a real check at the pub boundary,
+// or an O(n) condition whose unchecked variant should become an `unsafe fn`
+// instead. Those are a separate, pre-existing population (e.g.
+// `DynamicBitSetList::at`, `strings::eql_long(.., false)`,
+// `copy_utf16_into_utf8_with_utf8_len` at the time of writing): convert them
+// on sight and add an entry here when you do. Deliberately not converted:
+// `ZStr::as_cstr`, whose debug check guards `CStr`'s no-interior-NUL contract
+// rather than memory and would cost a scan of every path before every syscall.
 //
 // Sibling guards: unsound-erased-box.test.ts, self-receiver-reclaim.test.ts.
 

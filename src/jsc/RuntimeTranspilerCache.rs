@@ -145,6 +145,17 @@ impl Default for Metadata {
 }
 
 impl Metadata {
+    /// The width the entry's output is stored and loaded in (`decode` rejects
+    /// every tag other than these two).
+    pub fn output_width(&self) -> EncodingNonAscii {
+        if self.output_encoding == Encoding::UTF16 {
+            EncodingNonAscii::Utf16
+        } else {
+            debug_assert!(self.output_encoding == Encoding::LATIN1);
+            EncodingNonAscii::Latin1
+        }
+    }
+
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
     pub(crate) const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
@@ -256,7 +267,8 @@ impl Entry {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        output_code: &BunString,
+        output_bytes: &[u8],
+        output_encoding: Encoding,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.save");
@@ -271,8 +283,6 @@ impl Entry {
         // Reborrow shared: `Tmpfile::create` wants `&ZStr`, and we still need
         // it for the errdefer `unlinkat` below.
         let tmpfilename: &ZStr = &*tmpfilename;
-
-        let output_bytes = output_code.byte_slice();
 
         // First we open the tmpfile, to avoid any other work in the event of failure.
         let mut tmpfile = sys::Tmpfile::create(destination_dir, tmpfilename)?;
@@ -294,15 +304,7 @@ impl Entry {
                         ExportsKind::Cjs => ModuleType::Cjs,
                         _ => ModuleType::Esm,
                     },
-                    // `put` only builds the two views `load` reads straight
-                    // back into string storage; a UTF-8 view has no tag.
-                    output_encoding: if output_code.is_utf16() {
-                        Encoding::UTF16
-                    } else if !output_code.is_utf8() {
-                        Encoding::LATIN1
-                    } else {
-                        return Err(crate::CrateError::UnknownEncoding);
-                    },
+                    output_encoding,
                     sourcemap_byte_length: sourcemap.len() as u64,
                     output_byte_offset: Metadata::SIZE as u64,
                     output_byte_length: output_bytes.len() as u64,
@@ -780,7 +782,8 @@ impl RuntimeTranspilerCache {
         features_hash: u64,
         sourcemap: &[u8],
         esm_record: &[u8],
-        source_code: &BunString,
+        output_bytes: &[u8],
+        output_encoding: Encoding,
         exports_kind: ExportsKind,
     ) -> crate::CrateResult<()> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
@@ -828,7 +831,8 @@ impl RuntimeTranspilerCache {
             features_hash,
             sourcemap,
             esm_record,
-            source_code,
+            output_bytes,
+            output_encoding,
             exports_kind,
         )
     }
@@ -967,28 +971,11 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             }
             debug_assert!(this.entry.is_none());
 
-            // Borrowed views; `output_code_bytes` outlives the synchronous
-            // `to_file` call. The entry is tagged with the width the printer
-            // produced, which is the width `Entry::load` hands straight back.
-            let utf16_copy: Vec<u16>;
-            let output_code = match output_encoding {
-                // An unmarked 8-bit view, i.e. Latin-1 (the name is historical).
-                EncodingNonAscii::Latin1 => BunString::ascii(output_code_bytes),
-                EncodingNonAscii::Utf16 => {
-                    let units: &[u16] = match bytemuck::try_cast_slice(output_code_bytes) {
-                        Ok(units) => units,
-                        Err(_) => {
-                            utf16_copy = output_code_bytes
-                                .as_chunks::<2>()
-                                .0
-                                .iter()
-                                .map(|&pair| u16::from_ne_bytes(pair))
-                                .collect();
-                            &utf16_copy
-                        }
-                    };
-                    BunString::borrow_utf16(units)
-                }
+            // The entry is tagged with the width the printer produced, which
+            // is the width `Entry::load` reads it back in.
+            let tag = match output_encoding {
+                EncodingNonAscii::Latin1 => Encoding::LATIN1,
+                EncodingNonAscii::Utf16 => Encoding::UTF16,
                 // Only the runtime's Latin-1/UTF-16 printers carry a cache.
                 EncodingNonAscii::Utf8 => {
                     debug_assert!(false, "transpiler cache fed UTF-8 printer output");
@@ -1001,7 +988,8 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 this.features_hash.unwrap(),
                 sourcemap,
                 esm_record,
-                &output_code,
+                output_code_bytes,
+                tag,
                 this.exports_kind,
             );
             if let Err(err) = result {

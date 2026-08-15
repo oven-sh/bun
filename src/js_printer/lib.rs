@@ -7184,6 +7184,13 @@ impl BufferWriter {
         Ok(bytes.len())
     }
 
+    /// Ill-formed bytes are decoded by the same `CodepointIterator` the lexer
+    /// builds string literal values with, so verbatim text comes out exactly as
+    /// a string literal written with the same bytes would (#38262 changes that
+    /// shared decode to U+FFFD replacement and this path follows it). A UTF-8
+    /// writer copies the bytes instead, and whoever later reads that file
+    /// decodes them with replacement, so a WTF-8 encoded lone surrogate
+    /// survives only in this path.
     pub fn write_verbatim_utf8(&mut self, text: &[u8]) -> crate::Result<usize> {
         if self.encoding == OutputEncoding::Utf8 {
             return self.write_all(text);
@@ -7224,8 +7231,8 @@ impl BufferWriter {
         Ok(1)
     }
 
-    /// `c` is above U+00FF (a lone surrogate decoded from WTF-8 stays a single
-    /// unit, like the `\uD800` escape it used to be printed as).
+    /// `c` is above U+00FF; a lone surrogate is written as the single unit it
+    /// decoded to (see [`Self::write_verbatim_utf8`]).
     fn write_wide_char(&mut self, c: u32) -> crate::Result<usize> {
         if self.encoding == OutputEncoding::Latin1 {
             self.widen_to_utf16()?;

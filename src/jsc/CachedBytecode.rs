@@ -9,17 +9,28 @@ bun_opaque::opaque_ffi! {
     pub struct CachedBytecode;
 }
 
-/// `input_encoding` of the generators below; mirrors `BytecodeSourceEncoding`
-/// in ZigSourceProvider.cpp. JSC only accepts bytecode generated from a string
-/// equal to the one the module loader builds, so the generator has to decode
-/// the bytes the same way the load path for that kind of source does: bundler
-/// output on disk is UTF-8, while the runtime printer's buffer is already in
-/// its final width (see `bun_js_printer::BufferWriter::init_latin1`).
-fn encoding_tag(encoding: EncodingNonAscii) -> u8 {
-    match encoding {
-        EncodingNonAscii::Utf8 => 0,
-        EncodingNonAscii::Latin1 => 1,
-        EncodingNonAscii::Utf16 => 2,
+/// How the generators read `input_code`; the C++ side of the enum is in
+/// ZigSourceProvider.cpp and the two must stay in step. JSC only accepts
+/// bytecode generated from a string equal to the one the module loader builds,
+/// so the generator has to decode the bytes the same way the load path for
+/// that kind of source does: bundler output on disk is UTF-8, while the
+/// runtime printer's buffer is already in its final width (see
+/// `bun_js_printer::BufferWriter::init_latin1`).
+#[repr(u8)]
+#[derive(Clone, Copy)]
+enum BytecodeSourceEncoding {
+    Utf8 = 0,
+    Latin1 = 1,
+    Utf16 = 2,
+}
+
+impl From<EncodingNonAscii> for BytecodeSourceEncoding {
+    fn from(encoding: EncodingNonAscii) -> Self {
+        match encoding {
+            EncodingNonAscii::Utf8 => Self::Utf8,
+            EncodingNonAscii::Latin1 => Self::Latin1,
+            EncodingNonAscii::Utf16 => Self::Utf16,
+        }
     }
 }
 
@@ -27,7 +38,7 @@ type Generator = unsafe extern "C" fn(
     source_provider_url: *mut BunString,
     input_code: *const u8,
     input_source_code_size: usize,
-    input_encoding: u8,
+    input_encoding: BytecodeSourceEncoding,
     output_byte_code: *mut Option<NonNull<u8>>,
     output_byte_code_size: *mut usize,
     cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -38,7 +49,7 @@ unsafe extern "C" {
         source_provider_url: *mut BunString,
         input_code: *const u8,
         input_source_code_size: usize,
-        input_encoding: u8,
+        input_encoding: BytecodeSourceEncoding,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -48,7 +59,7 @@ unsafe extern "C" {
         source_provider_url: *mut BunString,
         input_code: *const u8,
         input_source_code_size: usize,
-        input_encoding: u8,
+        input_encoding: BytecodeSourceEncoding,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -85,7 +96,7 @@ impl CachedBytecode {
                 source_provider_url,
                 input.as_ptr(),
                 input.len(),
-                encoding_tag(input_encoding),
+                BytecodeSourceEncoding::from(input_encoding),
                 &raw mut output_ptr,
                 &raw mut output_size,
                 &raw mut this,

@@ -3043,16 +3043,11 @@ fn transpile_source_code_inner(
                         && source.path.is_file()
                         && loader.is_java_script_like()
                     {
-                        let encoding = if entry.output_code.is_utf16() {
-                            EncodingNonAscii::Utf16
-                        } else {
-                            EncodingNonAscii::Latin1
-                        };
                         bun_jsc::node_compile_cache::fetch(
                             source.path.text,
                             is_commonjs_module,
                             entry.output_code.byte_slice(),
-                            encoding,
+                            entry.metadata.output_width(),
                         )
                     } else {
                         None

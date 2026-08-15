@@ -3081,11 +3081,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             .map_err(|_| bun_js_printer::Error::WriteFailed)?;
         const SOURCE_MAP_URL_PREFIX_START: &[u8] =
             b"//# sourceMappingURL=data:application/json;base64,";
-        // TODO: do we need to %-encode the path?
-        let source_url_len = source.path.text.len();
-        const SOURCE_MAPPING_URL: &[u8] = b"\n//# sourceURL=";
-        let prefix_len =
-            SOURCE_MAP_URL_PREFIX_START.len() + SOURCE_MAPPING_URL.len() + source_url_len;
 
         self.vm_source_mappings_mut()
             .put_mappings(source, chunk.buffer)
@@ -3103,14 +3098,10 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
         // `SourceMapHandlerGetter` doc for why `printer` is not stored as `&'a mut`.
         let printer = unsafe { &mut *self.printer };
 
-        // Everything goes through the writer rather than straight into its
-        // byte buffer: the buffer may be holding UTF-16 by now, and the path is
-        // source text that may not be ASCII.
+        // Appended through the writer rather than straight into its byte
+        // buffer, since the buffer may be holding UTF-16 by now. The module's
+        // URL is the provider's; no `//# sourceURL=` directive is needed.
         let encode_len = bun_base64::encode_len(temp_json_buffer.list.as_slice());
-        printer
-            .ctx
-            .buffer
-            .grow_if_needed(encode_len + prefix_len + 2)?;
         printer.ctx.write_all(b"\n")?;
         printer.ctx.write_all(SOURCE_MAP_URL_PREFIX_START)?;
         {
@@ -3126,9 +3117,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
             };
             printer.ctx.advance_by(wrote as u64);
         }
-        printer.ctx.write_all(SOURCE_MAPPING_URL)?;
-        // TODO: do we need to %-encode the path?
-        printer.ctx.write_verbatim_utf8(source.path.text)?;
         printer.ctx.write_all(b"\n")?;
         Ok(())
     }

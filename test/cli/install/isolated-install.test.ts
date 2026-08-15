@@ -2205,6 +2205,37 @@ describe("long store entry names", () => {
     ).toEqual({ name: "no-deps", version: "1.0.0" });
   });
 
+  test("a cut that would split a multi-byte character backs up to the character boundary", async () => {
+    // `file+x` is 6 bytes and every character after it is 2 bytes wide, so
+    // byte 63 of the resolution falls inside a character and the cut ends at
+    // byte 62. Only the shape is asserted: how non-ASCII bytes are spelled in
+    // the name is a separate matter (#32304), the boundary handling is not.
+    const folder = `x${Buffer.alloc(40 * 2, "\u00e9").toString()}`;
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: { [`${folder}/package.json`]: JSON.stringify({ name: "non-ascii", version: "1.0.0" }) },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({ name: "test-non-ascii-store-entry-name", dependencies: { "non-ascii": `file:./${folder}` } }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entries = await storeEntries(packageDir);
+    expect(entries).toEqual([expect.stringMatching(/^non-ascii@file\+x.*\+[0-9a-f]{16}$/)]);
+    const [entry] = entries;
+    const cutResolution = entry.slice("non-ascii@".length, -"+0123456789abcdef".length);
+    expect(Buffer.byteLength(cutResolution)).toBe(CUT_RESOLUTION_LEN - 1);
+    expect(readlinkSync(join(packageDir, "node_modules", "non-ascii"))).toBe(
+      join(".bun", entry, "node_modules", "non-ascii"),
+    );
+    expect(await file(join(packageDir, "node_modules", "non-ascii", "package.json")).json()).toEqual({
+      name: "non-ascii",
+      version: "1.0.0",
+    });
+  });
+
   test("a tarball URL longer than NAME_MAX installs, also into the global store", async () => {
     const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
     const segment = Buffer.alloc(255, "t").toString();

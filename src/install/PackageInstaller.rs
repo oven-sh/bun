@@ -627,6 +627,7 @@ impl<'a> PackageInstaller<'a> {
                         PostinstallOptimizer::NativeBinlink => {
                             let target_cpu = manager.options.cpu;
                             let target_os = manager.options.os;
+                            let target_libc = manager.options.libc;
                             if let Some(replacement_pkg_id) =
                                 PostinstallOptimizer::get_native_binlink_replacement_package_id(
                                     pkg_resolutions_lists[package_id as usize]
@@ -634,6 +635,7 @@ impl<'a> PackageInstaller<'a> {
                                     pkg_metas,
                                     target_cpu,
                                     target_os,
+                                    target_libc,
                                 )
                             {
                                 let Some(target_tree_id) = find_native_binlink_target_tree(
@@ -1981,6 +1983,7 @@ impl<'a> PackageInstaller<'a> {
                                     self.lockfile().packages.items_meta(),
                                     self.manager().options.cpu,
                                     self.manager().options.os,
+                                    self.manager().options.libc,
                                 )
                             {
                                 if PackageManager::verbose_install() {
@@ -2320,6 +2323,7 @@ impl<'a> PackageInstaller<'a> {
                             self.lockfile().packages.items_meta(),
                             self.manager().options.cpu,
                             self.manager().options.os,
+                            self.manager().options.libc,
                         )
                     {
                         if PackageManager::verbose_install() {

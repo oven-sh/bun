@@ -771,6 +771,19 @@ impl PackageVersion {
         self.bundled_dependencies.is_invalid()
     }
 
+    /// The libc constraint to record for this version: the manifest's own
+    /// `libc` field when the registry sent one, otherwise, for a version that
+    /// declares `os` or `cpu`, the one implied by `package_name`
+    /// (see [`Libc::infer_from_package_name`]).
+    pub(crate) fn libc_for(&self, package_name: &[u8]) -> Libc {
+        if self.libc != Libc::NONE
+            || (self.os == OperatingSystem::ALL && self.cpu == Architecture::ALL)
+        {
+            return self.libc;
+        }
+        Libc::infer_from_package_name(package_name)
+    }
+
     /// Used by `Package.fromNPM` to walk dependency groups by name.
     pub(crate) fn dep_group(&self, field: &[u8]) -> ExternalStringMap {
         match field {

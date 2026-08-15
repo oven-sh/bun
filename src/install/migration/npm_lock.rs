@@ -23,7 +23,7 @@ use crate::integrity::Integrity;
 use crate::lockfile::{self, Lockfile, PackageListEntry};
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::WorkspaceMap;
-use crate::npm as Npm;
+use crate::npm::{self as Npm, NegatableExt as _};
 use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
 use crate::versioned_url::VersionedURLType;
@@ -54,6 +54,25 @@ impl Bundle {
             Bundle::Names(names) => names.contains_key(name),
         }
     }
+}
+
+/// The `os` / `cpu` / `libc` array npm copies from a package's manifest into its
+/// lockfile entry. `None` when the entry has no such field.
+fn parse_platform_list<T: Npm::NegatableEnum>(
+    pkg: &E::ObjectJSON,
+    key: &[u8],
+) -> Result<Option<T>, Error> {
+    let Some(value) = pkg.get(key) else {
+        return Ok(None);
+    };
+    let Some(arr) = value.as_array() else {
+        return Err(Error::InvalidNPMLockfile);
+    };
+    let mut list = T::NONE.negatable();
+    for item in arr.items() {
+        list.apply(item.as_str().ok_or(Error::InvalidNPMLockfile)?);
+    }
+    Ok(Some(list.combine()))
 }
 
 fn parse_bundle(pkg: &E::ObjectJSON) -> Result<Bundle, Error> {
@@ -307,49 +326,9 @@ impl<'a> Migrator<'a> {
                 lockfile::Origin::Npm
             },
 
-            arch: if let Some(cpu_array) = pkg.get(b"cpu") {
-                'arch: {
-                    let mut arch = Npm::Architecture::NONE.negatable();
-                    let Some(arr) = cpu_array.as_array() else {
-                        return Err(Error::InvalidNPMLockfile);
-                    };
-                    let items = arr.items();
-                    if items.is_empty() {
-                        break 'arch arch.combine();
-                    }
-                    for item in items {
-                        let Some(s) = item.as_str() else {
-                            return Err(Error::InvalidNPMLockfile);
-                        };
-                        arch.apply(s);
-                    }
-                    break 'arch arch.combine();
-                }
-            } else {
-                Npm::Architecture::ALL
-            },
-
-            os: if let Some(os_array) = pkg.get(b"os") {
-                'os: {
-                    let mut os = Npm::OperatingSystem::NONE.negatable();
-                    let Some(arr) = os_array.as_array() else {
-                        return Err(Error::InvalidNPMLockfile);
-                    };
-                    let items = arr.items();
-                    if items.is_empty() {
-                        break 'os Npm::OperatingSystem::ALL;
-                    }
-                    for item in items {
-                        let Some(s) = item.as_str() else {
-                            return Err(Error::InvalidNPMLockfile);
-                        };
-                        os.apply(s);
-                    }
-                    break 'os os.combine();
-                }
-            } else {
-                Npm::OperatingSystem::ALL
-            },
+            arch: parse_platform_list(pkg, b"cpu")?.unwrap_or(Npm::Architecture::ALL),
+            os: parse_platform_list(pkg, b"os")?.unwrap_or(Npm::OperatingSystem::ALL),
+            libc: parse_platform_list(pkg, b"libc")?.unwrap_or(Npm::Libc::NONE),
 
             man_dir: SemverString::default(),
 

@@ -739,6 +739,7 @@ _bun_prune_completion() {
         '--dry-run[Print what would be removed without deleting anything]' \
         '*--os[Prune for a different operating system than the current one]:os' \
         '*--cpu[Prune for a different CPU architecture than the current one]:cpu' \
+        '*--libc[Prune for a different libc than the current one]:libc:(glibc musl)' \
         '--linker[Prune a node_modules installed with the given linker]:linker:(isolated hoisted)' \
         '*--filter[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \
         '*-F[Only prune the node_modules folders of the matching workspaces]:workspace pattern' \

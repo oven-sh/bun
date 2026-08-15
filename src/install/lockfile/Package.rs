@@ -448,8 +448,13 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
 
 impl<SemverIntType: VersionInt> Package<SemverIntType> {
     #[inline]
-    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
-        self.meta.is_disabled(cpu, os)
+    pub(crate) fn is_disabled(
+        &self,
+        cpu: Npm::Architecture,
+        os: Npm::OperatingSystem,
+        libc: Npm::Libc,
+    ) -> bool {
+        self.meta.is_disabled(cpu, os, libc)
     }
 }
 
@@ -853,6 +858,7 @@ impl Package<u64> {
 
             package.meta.arch = package_version.cpu;
             package.meta.os = package_version.os;
+            package.meta.libc = package_version.libc_for(manifest.name());
             package.meta.integrity = package_version.integrity;
             package
                 .meta

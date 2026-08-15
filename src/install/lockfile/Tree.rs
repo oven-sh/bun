@@ -414,7 +414,7 @@ pub enum BuilderMethod {
 
     /// This will filter out disabled dependencies, resulting in more aggresive
     /// hoisting compared to `.resolvable`. We skip dependencies based on 'os', 'cpu',
-    /// 'libc' (TODO), and omitted dependency types (`--omit=dev/peer/optional`).
+    /// 'libc', and omitted dependency types (`--omit=dev/peer/optional`).
     /// Dependencies of a disabled package are not included in the output.
     Filter,
 }
@@ -574,26 +574,33 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
     let parent_res = &pkg_resolutions[parent_pkg_id as usize];
 
-    if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os) {
+    let meta = &pkg_metas[pkg_id as usize];
+    if meta.is_disabled(
+        manager.options.cpu,
+        manager.options.os,
+        manager.options.libc,
+    ) {
         if manager.options.log_level.is_verbose() {
-            let meta = &pkg_metas[pkg_id as usize];
             let name = lockfile.str(&pkg_names[pkg_id as usize]);
-            if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
-                bun_core::pretty_errorln!(
-                    "<d>Skip installing<r> <b>{}<r> <d>- cpu & os mismatch<r>",
-                    bstr::BStr::new(name)
-                );
-            } else if !meta.os.is_match(manager.options.os) {
-                bun_core::pretty_errorln!(
-                    "<d>Skip installing<r> <b>{}<r> <d>- os mismatch<r>",
-                    bstr::BStr::new(name)
-                );
-            } else if !meta.arch.is_match(manager.options.cpu) {
-                bun_core::pretty_errorln!(
-                    "<d>Skip installing<r> <b>{}<r> <d>- cpu mismatch<r>",
-                    bstr::BStr::new(name)
-                );
+            let mismatches = [
+                (!meta.arch.is_match(manager.options.cpu), "cpu"),
+                (!meta.os.is_match(manager.options.os), "os"),
+                (!meta.libc.is_match(manager.options.libc), "libc"),
+            ];
+            let mut reason = String::new();
+            for (mismatched, field) in mismatches {
+                if mismatched {
+                    if !reason.is_empty() {
+                        reason.push_str(" & ");
+                    }
+                    reason.push_str(field);
+                }
             }
+            bun_core::pretty_errorln!(
+                "<d>Skip installing<r> <b>{}<r> <d>- {} mismatch<r>",
+                bstr::BStr::new(name),
+                reason
+            );
         }
         return true;
     }

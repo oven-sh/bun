@@ -715,7 +715,10 @@ impl<T: NegatableEnum> Negatable<T> {
             }
         }
         let included = kvs.len() - usize::from(removed);
-        let print_included = usize::from(removed) > kvs.len() - usize::from(removed);
+        // Prefer the shorter form; on a tie (always the case for a single
+        // `libc` value, since there are only two) list what is included, so a
+        // glibc-only package serializes as `"glibc"` rather than `"!musl"`.
+        let print_included = usize::from(removed) >= included;
 
         let one = (print_included && included == 1) || (!print_included && removed == 1);
 
@@ -878,23 +881,71 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 pub struct Libc(pub u8);
 
 impl Libc {
+    /// Unlike `OperatingSystem::NONE` / `Architecture::NONE`, this is also what
+    /// a package without a `libc` field carries (the npm manifest cache and
+    /// lockfiles written before libc was recorded both hold 0), so
+    /// [`is_match`](Self::is_match) treats it as unconstrained.
     pub const NONE: Self = Self(0);
-    pub(crate) const ALL: Self = Self(Self::ALL_VALUE);
+    pub const ALL: Self = Self(Self::ALL_VALUE);
 
     pub(crate) const GLIBC: u8 = 1 << 1;
     pub(crate) const MUSL: u8 = 1 << 2;
 
     pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: runtime libc detection
+    /// A musl build of Bun only runs on musl and a gnu build only on glibc, so
+    /// the target env is the host libc. Platforms without either (macOS,
+    /// Windows) default to glibc: packages that declare `libc` are Linux-only
+    /// anyway, and it keeps cross-target `--os=linux` installs picking the
+    /// common variant unless `--libc` says otherwise.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT: Self = Self(Self::MUSL);
+    #[cfg(not(all(target_os = "linux", target_env = "musl")))]
+    pub const CURRENT: Self = Self(Self::GLIBC);
 
+    /// `self` is the package's `libc` constraint, `target` the libc being
+    /// installed for. An unconstrained package matches everything.
     #[inline]
-    pub(crate) fn has(self, other: u8) -> bool {
+    pub fn is_match(self, target: Self) -> bool {
+        self == Self::NONE || (self.0 & target.0) != 0
+    }
+
+    /// The abbreviated registry manifest Bun installs from carries `os` and
+    /// `cpu` but never `libc`, so for the per-platform packages native modules
+    /// split themselves into, the libc is read off the name the way pnpm does:
+    /// `@rollup/rollup-linux-x64-gnu` is glibc, `@next/swc-linux-x64-musl` is
+    /// musl, `@img/sharp-linux-x64` is [`NONE`](Self::NONE) (unconstrained).
+    /// Callers apply this only to packages that declare `os` or `cpu`.
+    pub fn infer_from_package_name(name: &[u8]) -> Libc {
+        let unscoped = match strings::index_of_char_usize(name, b'/') {
+            Some(slash) => &name[slash + 1..],
+            None => name,
+        };
+        let mut libc = Libc::NONE;
+        for token in strings::tokenize_any(unscoped, b"-_.") {
+            libc.0 |= LIBC_NAME_TOKENS.get(token).copied().unwrap_or(0);
+        }
+        libc
+    }
+    #[inline]
+    pub fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
     }
 }
 
 negatable_names! { Libc: u8, LIBC_NAMES => [ b"musl" => MUSL, b"glibc" => GLIBC ] }
+
+// Rust target-triple spellings included, since that is what most packages
+// are named after (`-gnu`, `-gnueabihf`, `-musl`, `-musleabihf`).
+bun_core::comptime_string_map! {
+    static LIBC_NAME_TOKENS: u8 = {
+        b"gnu" => Libc::GLIBC,
+        b"musl" => Libc::MUSL,
+        b"glibc" => Libc::GLIBC,
+        b"gnueabihf" => Libc::GLIBC,
+        b"musleabihf" => Libc::MUSL,
+    };
+}
 
 // ──────────────────────────────────────────────────────────────────────────
 

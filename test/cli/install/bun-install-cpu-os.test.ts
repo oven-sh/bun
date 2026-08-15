@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, readdirSorted, toMatchNodeModulesAt } from "harness";
+import { bunEnv, bunExe, libcFamily, readdirSorted, toMatchNodeModulesAt } from "harness";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -603,5 +603,228 @@ describe("bun install --cpu and --os flags", () => {
 
     // Should skip x64 dep and install other CPU deps
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-arm64", "dep-ppc64"]);
+  });
+});
+
+describe("libc field and --libc flag", () => {
+  // The dummy registry serves the same version list for every package name, so
+  // each package pins the version that carries the libc constraint it stands for.
+  const otherLibc = libcFamily === "glibc" ? "musl" : "glibc";
+  const libcVersions = {
+    "1.0.0": { libc: ["glibc"] },
+    "2.0.0": { libc: ["musl"] },
+    "3.0.0": {},
+  };
+  const packageJson = JSON.stringify({
+    name: "test-libc",
+    version: "1.0.0",
+    optionalDependencies: {
+      "dep-glibc": "1.0.0",
+      "dep-musl": "2.0.0",
+      "dep-any-libc": "3.0.0",
+    },
+  });
+
+  async function install(...args: string[]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    return { out, err, exitCode };
+  }
+
+  async function freshInstall(...args: string[]) {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    await rm(join(package_dir, "bun.lock"), { force: true });
+    return install(...args);
+  }
+
+  async function installed() {
+    return (await readdirSorted(join(package_dir, "node_modules"))).filter(name => name !== ".cache");
+  }
+
+  it("installs only the variant matching the libc bun runs on", async () => {
+    setHandler(dummyRegistry([], libcVersions));
+    await writeFile(join(package_dir, "package.json"), packageJson);
+
+    const { err, exitCode } = await install();
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", `dep-${libcFamily}`]);
+
+    // Installing from the lockfile just written (no manifests consulted) makes the same choice.
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    expect((await install()).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", `dep-${libcFamily}`]);
+  });
+
+  it("records libc in bun.lock and applies it when installing from the lockfile", async () => {
+    setHandler(dummyRegistry([], libcVersions));
+    await writeFile(join(package_dir, "package.json"), packageJson);
+
+    expect((await install("--save-text-lockfile")).exitCode).toBe(0);
+
+    const lockfile = Bun.JSONC.parse(await Bun.file(join(package_dir, "bun.lock")).text()) as {
+      packages: Record<string, unknown[]>;
+    };
+    expect({
+      glibc: lockfile.packages["dep-glibc"][2],
+      musl: lockfile.packages["dep-musl"][2],
+      any: lockfile.packages["dep-any-libc"][2],
+    }).toEqual({
+      glibc: { libc: "glibc" },
+      musl: { libc: "musl" },
+      any: {},
+    });
+
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    expect((await install("--frozen-lockfile")).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", `dep-${libcFamily}`]);
+
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    expect((await install("--frozen-lockfile", "--libc", otherLibc)).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", `dep-${otherLibc}`]);
+  });
+
+  it("--libc picks the variant to install", async () => {
+    setHandler(dummyRegistry([], libcVersions));
+    await writeFile(join(package_dir, "package.json"), packageJson);
+
+    expect((await freshInstall("--libc", "glibc")).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", "dep-glibc"]);
+
+    expect((await freshInstall("--libc", "musl")).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", "dep-musl"]);
+
+    expect((await freshInstall("--libc", "*")).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", "dep-glibc", "dep-musl"]);
+
+    expect((await freshInstall("--libc", `!${libcFamily}`)).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", `dep-${otherLibc}`]);
+  });
+
+  it("filters by libc together with --os and --cpu", async () => {
+    // What a native package's optionalDependencies look like: same os and cpu, different libc.
+    setHandler(
+      dummyRegistry([], {
+        "1.0.0": { os: ["linux"], cpu: ["x64"], libc: ["glibc"] },
+        "2.0.0": { os: ["linux"], cpu: ["x64"], libc: ["musl"] },
+      }),
+    );
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-libc-os-cpu",
+        version: "1.0.0",
+        optionalDependencies: {
+          "dep-glibc": "1.0.0",
+          "dep-musl": "2.0.0",
+        },
+      }),
+    );
+
+    expect((await freshInstall("--os", "linux", "--cpu", "x64", "--libc", "musl")).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-musl"]);
+
+    expect((await freshInstall("--os", "linux", "--cpu", "x64", "--libc", "glibc")).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-glibc"]);
+
+    expect((await freshInstall("--os", "darwin", "--cpu", "x64", "--libc", "glibc")).exitCode).toBe(0);
+    expect(await installed()).toEqual([]);
+  });
+
+  // The abbreviated manifests registries serve never include `libc`, so for
+  // packages that declare os/cpu it is read off the name, like pnpm does.
+  describe("inferred from the package name", () => {
+    const currentToken = libcFamily === "glibc" ? "dep-linux-x64-gnu" : "dep-musl";
+    const otherToken = libcFamily === "glibc" ? "dep-musl" : "dep-linux-x64-gnu";
+    const linuxX64 = { os: ["linux"], cpu: ["x64"] };
+    const platformVersions = { "1.0.0": linuxX64, "2.0.0": linuxX64, "3.0.0": linuxX64 };
+    const platformPackageJson = JSON.stringify({
+      name: "test-libc-inferred",
+      version: "1.0.0",
+      optionalDependencies: {
+        "dep-linux-x64-gnu": "1.0.0",
+        "dep-musl": "2.0.0",
+        "dep-any-libc": "3.0.0",
+      },
+    });
+
+    it("skips the other libc's variant of a platform package", async () => {
+      setHandler(dummyRegistry([], platformVersions));
+      await writeFile(join(package_dir, "package.json"), platformPackageJson);
+
+      expect((await install("--os", "linux", "--cpu", "x64", "--save-text-lockfile")).exitCode).toBe(0);
+      expect(await installed()).toEqual(["dep-any-libc", currentToken]);
+
+      const lockfile = Bun.JSONC.parse(await Bun.file(join(package_dir, "bun.lock")).text()) as {
+        packages: Record<string, unknown[]>;
+      };
+      expect({
+        gnu: lockfile.packages["dep-linux-x64-gnu"][2],
+        musl: lockfile.packages["dep-musl"][2],
+        any: lockfile.packages["dep-any-libc"][2],
+      }).toEqual({
+        gnu: { os: "linux", cpu: "x64", libc: "glibc" },
+        musl: { os: "linux", cpu: "x64", libc: "musl" },
+        any: { os: "linux", cpu: "x64" },
+      });
+
+      expect((await freshInstall("--os", "linux", "--cpu", "x64", "--libc", otherLibc)).exitCode).toBe(0);
+      expect(await installed()).toEqual(["dep-any-libc", otherToken]);
+
+      expect((await freshInstall("--os", "linux", "--cpu", "x64", "--libc", "*")).exitCode).toBe(0);
+      expect(await installed()).toEqual(["dep-any-libc", "dep-linux-x64-gnu", "dep-musl"]);
+    });
+
+    it("applies to a bun.lock written before libc was recorded", async () => {
+      setHandler(dummyRegistry([], platformVersions));
+      await writeFile(join(package_dir, "package.json"), platformPackageJson);
+      expect((await install("--os", "linux", "--cpu", "x64", "--save-text-lockfile")).exitCode).toBe(0);
+
+      const lockfilePath = join(package_dir, "bun.lock");
+      const withLibc = await Bun.file(lockfilePath).text();
+      const withoutLibc = withLibc.replaceAll(/, "libc": "\w+"/g, "");
+      expect(withoutLibc).not.toBe(withLibc);
+      await writeFile(lockfilePath, withoutLibc);
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+
+      expect((await install("--os", "linux", "--cpu", "x64")).exitCode).toBe(0);
+      expect(await installed()).toEqual(["dep-any-libc", currentToken]);
+      // Inferring is not a reason to rewrite the lockfile.
+      expect(await Bun.file(lockfilePath).text()).toBe(withoutLibc);
+    });
+
+    it("is not applied to a package that declares neither os nor cpu", async () => {
+      setHandler(dummyRegistry([], { "1.0.0": {}, "2.0.0": {} }));
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "test-libc-not-inferred",
+          version: "1.0.0",
+          optionalDependencies: { "dep-linux-x64-gnu": "1.0.0", "dep-musl": "2.0.0" },
+        }),
+      );
+
+      expect((await install("--save-text-lockfile")).exitCode).toBe(0);
+      expect(await installed()).toEqual(["dep-linux-x64-gnu", "dep-musl"]);
+      const lockfile = Bun.JSONC.parse(await Bun.file(join(package_dir, "bun.lock")).text()) as {
+        packages: Record<string, unknown[]>;
+      };
+      expect([lockfile.packages["dep-linux-x64-gnu"][2], lockfile.packages["dep-musl"][2]]).toEqual([{}, {}]);
+    });
+  });
+
+  it("rejects an unknown --libc value", async () => {
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "test-invalid-libc", version: "1.0.0" }));
+
+    const { err, exitCode } = await install("--libc", "bionic");
+    expect(err).toContain("Invalid libc: 'bionic'. Valid values are: *, any, glibc, musl.");
+    expect(exitCode).toBe(1);
   });
 });

@@ -385,6 +385,19 @@ where
                 let _ = w.end_array();
             }
 
+            if pkg.meta.libc != Npm::Libc::NONE && pkg.meta.libc != Npm::Libc::ALL {
+                w.object_field(b"libc")?;
+                w.begin_array()?;
+
+                for (key, value) in Npm::Libc::NAME_MAP_KVS {
+                    if pkg.meta.libc.has(*value) {
+                        w.write(*key)?;
+                    }
+                }
+
+                let _ = w.end_array();
+            }
+
             w.object_field(b"integrity")?;
             if pkg.meta.integrity.tag != IntegrityTag::UNKNOWN {
                 w.print(format_args!("\"{}\"", pkg.meta.integrity))?;

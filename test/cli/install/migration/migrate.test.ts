@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, pack, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, libcFamily, pack, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -401,16 +401,21 @@ function npmNameFromFolder(folder: string) {
   return scope?.startsWith("@") ? `${scope}/${base}` : base;
 }
 
-// Regular (non-optional) `file:` folder dependency whose package.json declares `os`/`cpu`
+// The os/cpu/libc arrays that do not match the machine running the tests.
+const nonMatchingPlatform = {
+  os: [`!${process.platform}`],
+  cpu: [`!${process.arch}`],
+  libc: [`!${libcFamily}`],
+};
+
+// Regular (non-optional) `file:` folder dependency whose package.json declares `os`/`cpu`/`libc`
 // arrays. npm records those fields in the package-lock.json entry for every package, but
 // Bun only applies platform constraints to npm registry packages; a fresh `bun install`
 // of the same package.json installs the folder regardless. Migrating must not diverge.
-function filePlatformFixture(name: string, folder: string, os: string[], cpu: string[]) {
-  const folderPackageJson: Record<string, unknown> = { name, version: "1.0.0" };
-  const folderLockEntry: Record<string, unknown> = { version: "1.0.0" };
+function filePlatformFixture(name: string, folder: string, platform: Partial<typeof nonMatchingPlatform>) {
+  const folderPackageJson: Record<string, unknown> = { name, version: "1.0.0", ...platform };
+  const folderLockEntry: Record<string, unknown> = { version: "1.0.0", ...platform };
   if (npmNameFromFolder(folder) !== name) folderLockEntry.name = name;
-  if (os.length) folderPackageJson.os = folderLockEntry.os = os;
-  if (cpu.length) folderPackageJson.cpu = folderLockEntry.cpu = cpu;
   return {
     "package.json": JSON.stringify({ name: "repro", dependencies: { [name]: `file:./${folder}` } }),
     [`${folder}/package.json`]: JSON.stringify(folderPackageJson),
@@ -440,10 +445,7 @@ async function install(testDir: string, ...args: string[]) {
 }
 
 test.concurrent("package-lock.json migration does not platform-skip a regular file: folder dependency", async () => {
-  await using testDir = tempDir(
-    "migrate-folder-platform",
-    filePlatformFixture("a", "vendor/a", [`!${process.platform}`], [`!${process.arch}`]),
-  );
+  await using testDir = tempDir("migrate-folder-platform", filePlatformFixture("a", "vendor/a", nonMatchingPlatform));
 
   const { stderr, exitCode } = await install(testDir);
   expect(stderr).toContain("migrated lockfile from package-lock.json");
@@ -466,7 +468,7 @@ test.concurrent.each([
 ])(
   "package-lock.json migration writes a bun.lock its own parser accepts for file: folder dependency %s at %s",
   async (name, folder) => {
-    await using testDir = tempDir("migrate-folder-name", filePlatformFixture(name, folder, [], []));
+    await using testDir = tempDir("migrate-folder-name", filePlatformFixture(name, folder, {}));
 
     const first = await install(testDir);
     expect(first.stderr).toContain("migrated lockfile from package-lock.json");
@@ -549,12 +551,11 @@ test.concurrent(
 
 test.concurrent("package-lock.json migration does not platform-skip a regular file: tarball dependency", async () => {
   // Same divergence as the folder variant, for a `LocalTarball` resolution. npm records
-  // the packed package's `os`/`cpu` arrays in its lockfile entry, and a fresh resolve of
-  // the same package.json extracts and installs the tarball regardless of them.
-  const nonMatching = { os: [`!${process.platform}`], cpu: [`!${process.arch}`] };
+  // the packed package's `os`/`cpu`/`libc` arrays in its lockfile entry, and a fresh resolve
+  // of the same package.json extracts and installs the tarball regardless of them.
   await using testDir = tempDir("migrate-tarball-platform", {
     "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./a-1.0.0.tgz" } }),
-    "src-a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...nonMatching }),
+    "src-a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...nonMatchingPlatform }),
   });
 
   await pack(join(testDir, "src-a"), bunEnv, "--destination", testDir);
@@ -568,7 +569,7 @@ test.concurrent("package-lock.json migration does not platform-skip a regular fi
       requires: true,
       packages: {
         "": { name: "repro", dependencies: { a: "file:./a-1.0.0.tgz" } },
-        "node_modules/a": { version: "1.0.0", resolved: "file:a-1.0.0.tgz", ...nonMatching },
+        "node_modules/a": { version: "1.0.0", resolved: "file:a-1.0.0.tgz", ...nonMatchingPlatform },
       },
     }),
   );
@@ -645,17 +646,12 @@ test.concurrent(
 );
 
 test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file: folder dependency", async () => {
-  // The pnpm migration copied the lockfile's `os`/`cpu` arrays into every package the
+  // The pnpm migration copied the lockfile's `os`/`cpu`/`libc` arrays into every package the
   // same way the npm one did. pnpm records them for any `packages:` entry whose manifest
   // declares them, so a `file:` folder dependency was silently dropped on a mismatch.
   await using testDir = tempDir("migrate-pnpm-folder-platform", {
     "package.json": JSON.stringify({ name: "repro", dependencies: { a: "file:./vendor/a" } }),
-    "vendor/a/package.json": JSON.stringify({
-      name: "a",
-      version: "1.0.0",
-      os: [`!${process.platform}`],
-      cpu: [`!${process.arch}`],
-    }),
+    "vendor/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", ...nonMatchingPlatform }),
     "pnpm-lock.yaml": [
       "lockfileVersion: '9.0'",
       "",
@@ -677,6 +673,7 @@ test.concurrent("pnpm-lock.yaml migration does not platform-skip a regular file:
       "    resolution: {directory: vendor/a, type: directory}",
       `    os: ['!${process.platform}']`,
       `    cpu: ['!${process.arch}']`,
+      `    libc: ['!${libcFamily}']`,
       "    version: 1.0.0",
       "",
       "snapshots:",
@@ -1625,6 +1622,26 @@ describe("package-lock.json migration fixes", () => {
     expect(stderr).not.toContain("InvalidNPMLockfile");
     expect(exitCode).toBe(0);
     expect(lock.packages.x).toStrictEqual(["x@1.0.0", `${OFFLINE_REGISTRY}x/-/x-1.0.0.tgz`, {}, ""]);
+    await frozen(dir);
+  });
+
+  test.concurrent("os, cpu and libc of registry packages are carried into the migrated lockfile", async () => {
+    const optionalDependencies = { a: "1.0.0", b: "1.0.0", c: "1.0.0" };
+    using dir = synthetic("npm-migrate-libc", {
+      "package.json": JSON.stringify({ name: "platform-fields", optionalDependencies }),
+      "package-lock.json": npmLock("platform-fields", {
+        "": { name: "platform-fields", optionalDependencies },
+        "node_modules/a": { version: "1.0.0", os: ["linux"], cpu: ["x64"], libc: ["glibc"], optional: true },
+        "node_modules/b": { version: "1.0.0", os: ["linux"], cpu: ["x64"], libc: ["musl"], optional: true },
+        "node_modules/c": { version: "1.0.0", os: ["darwin"], cpu: ["arm64"], optional: true },
+      }),
+    });
+    const { lock } = await migrate(dir);
+    expect({ a: lock.packages.a[2], b: lock.packages.b[2], c: lock.packages.c[2] }).toStrictEqual({
+      a: { os: "linux", cpu: "x64", libc: "glibc" },
+      b: { os: "linux", cpu: "x64", libc: "musl" },
+      c: { os: "darwin", cpu: "arm64" },
+    });
     await frozen(dir);
   });
 

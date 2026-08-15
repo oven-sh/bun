@@ -586,6 +586,7 @@ impl Lockfile {
             }
 
             bun_core::analytics::Features::text_lockfile_inc();
+            self.infer_unrecorded_libc();
 
             return LoadResult::Ok(LoadResultOk {
                 lockfile: self,
@@ -693,12 +694,40 @@ impl Lockfile {
             self.verify_data().expect("lockfile data is corrupt");
         }
 
+        self.infer_unrecorded_libc();
+
         LoadResult::Ok(LoadResultOk {
             lockfile: self,
             serializer_result: load_result,
             migrated: Migrated::None,
             format: LockfileFormat::Binary,
         })
+    }
+
+    /// A lockfile written before `libc` was recorded carries only `os`/`cpu`
+    /// for its platform packages. Give those the libc a fresh resolve would
+    /// record ([`Npm::PackageVersion::libc_for`]) so an existing project stops
+    /// installing the other libc's variant too. This does not make the lockfile
+    /// dirty; the libc is written out whenever it is next saved for another reason.
+    fn infer_unrecorded_libc(&mut self) {
+        let mut pkgs = self.packages.slice();
+        let self::package::PackageColumnsMut {
+            name: pkg_names,
+            resolution: pkg_resolutions,
+            meta: pkg_metas,
+            ..
+        } = pkgs.split_mut();
+        let string_buf = self.buffers.string_bytes.as_slice();
+
+        for ((name, resolution), meta) in pkg_names.iter().zip(&*pkg_resolutions).zip(pkg_metas) {
+            if resolution.tag != ResolutionTag::Npm
+                || meta.libc != Npm::Libc::NONE
+                || (meta.os == Npm::OperatingSystem::ALL && meta.arch == Npm::Architecture::ALL)
+            {
+                continue;
+            }
+            meta.libc = Npm::Libc::infer_from_package_name(name.slice(string_buf));
+        }
     }
 
     pub(crate) fn is_resolved_dependency_disabled(
@@ -708,8 +737,9 @@ impl Lockfile {
         meta: &package::Meta,
         cpu: Npm::Architecture,
         os: Npm::OperatingSystem,
+        libc: Npm::Libc,
     ) -> bool {
-        if meta.is_disabled(cpu, os) {
+        if meta.is_disabled(cpu, os, libc) {
             return true;
         }
 
@@ -1429,6 +1459,14 @@ impl Lockfile {
                         continue;
                     };
 
+                    // Computed before the string builder below takes the string buffer
+                    // `pkg_name_str` points into.
+                    let pkg_libc = if UPDATE_OS_CPU {
+                        pkg.package.libc_for(pkg_name_str)
+                    } else {
+                        Npm::Libc::NONE
+                    };
+
                     // `manager.lockfile` is the same `Lockfile` as `self`. Re-deriving a
                     // whole `&mut Lockfile` from `manager_ptr` here would create a
                     // second mutable reference aliasing `self` (UB) — go through
@@ -1476,12 +1514,15 @@ impl Lockfile {
 
                     if UPDATE_OS_CPU {
                         let pkg_meta = &mut pkg_metas[i];
-                        // Update os/cpu metadata if not already set
+                        // Update os/cpu/libc metadata if not already set
                         if pkg_meta.os == Npm::OperatingSystem::ALL {
                             pkg_meta.os = pkg.package.os;
                         }
                         if pkg_meta.arch == Npm::Architecture::ALL {
                             pkg_meta.arch = pkg.package.cpu;
+                        }
+                        if pkg_meta.libc == Npm::Libc::NONE {
+                            pkg_meta.libc = pkg_libc;
                         }
                     }
                 }

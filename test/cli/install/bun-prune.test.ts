@@ -3273,6 +3273,7 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
           --dry-run         Print what would be removed without deleting anything
           --os=<val>        Prune for a different operating system than the current one
           --cpu=<val>       Prune for a different CPU architecture than the current one
+          --libc=<val>      Prune for a different libc (glibc or musl) than the current one
           --linker=<val>    Prune a node_modules installed with the given linker (one of "isolated" or "hoisted")
       -F, --filter=<val>    Only prune the node_modules folders of the matching workspaces
           --silent          Don't log anything

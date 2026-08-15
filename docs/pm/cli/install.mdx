@@ -420,21 +420,25 @@ jobs:
 
 ## Platform-specific dependencies?
 
-Bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
+Bun stores normalized `cpu`, `os` and `libc` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
 
-### `--cpu` and `--os` flags
+`libc` distinguishes the glibc and musl builds of a native package. Registries don't include a package's `libc` field in the metadata used for installs, so for a package that declares `os` or `cpu`, Bun also reads it from the package name: `@rollup/rollup-linux-x64-gnu` is glibc, `@rollup/rollup-linux-x64-musl` is musl (the `gnu`, `gnueabihf`, `glibc`, `musl` and `musleabihf` name segments are recognized). On Linux, Bun installs the variant matching the libc it was built against: the regular Bun build installs `glibc` packages and the musl build (Alpine) installs `musl` packages. Elsewhere, `glibc` is assumed.
+
+### `--cpu`, `--os` and `--libc` flags
 
 You can override the target platform for package selection:
 
 ```bash
-bun install --cpu=x64 --os=linux
+bun install --cpu=x64 --os=linux --libc=musl
 ```
 
-These flags install packages for the specified platform instead of the current system. Use them for cross-platform builds or when preparing deployments for different environments.
+These flags install packages for the specified platform instead of the current system. Use them for cross-platform builds or when preparing deployments for different environments. Each flag can be repeated, and `*` installs the packages for every value.
 
 **Accepted values for `--cpu`**: `arm`, `arm64`, `ia32`, `mips`, `mipsel`, `ppc`, `ppc64`, `s390`, `s390x`, `x32`, `x64`
 
 **Accepted values for `--os`**: `aix`, `darwin`, `freebsd`, `linux`, `openbsd`, `sunos`, `win32`, `android`
+
+**Accepted values for `--libc`**: `glibc`, `musl`
 
 ## Peer dependencies?
 

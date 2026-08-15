@@ -646,8 +646,7 @@ struct HoistedTree<'a> {
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
     quiet: bool,
-    /// The expected tree excludes dev/optional/peer dependencies, so the
-    /// hoisted positions can differ from the ones a full install produced.
+    /// The expected tree excludes dev/optional/peer dependencies.
     filtered: bool,
     kept_mismatched: Cell<bool>,
     checked: RefCell<DynamicBitSet>,
@@ -661,10 +660,9 @@ enum Installed {
     Matches,
     Missing,
     Mismatch,
-    /// The position holds a different version that the lockfile does install
-    /// somewhere. Only produced when `filtered` is set: excluding dev or
-    /// optional dependencies changes which copy the hoist favors, so a full
-    /// install legitimately leaves the other copy here. Kept without warning.
+    /// A version the lockfile installs elsewhere; the filter just favors a
+    /// different copy at this position, so it is kept without warning.
+    /// Only produced when `filtered` is set.
     OtherVersion,
 }
 
@@ -890,9 +888,8 @@ impl<'a> HoistedTree<'a> {
         }
     }
 
-    /// Whether some npm package with the same name in the lockfile resolves to
-    /// `version`: the copy at this position came from the lockfile, the
-    /// filtered view just favors a different one.
+    /// Whether some npm package with the same name in the lockfile resolves
+    /// to `version`.
     fn version_in_lockfile(&self, pkg_id: PackageID, version: &[u8]) -> bool {
         let lockfile = self.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();

@@ -329,10 +329,9 @@ struct Row {
     name: Box<[u8]>,
     /// The removed version.
     from: Box<[u8]>,
-    /// Surviving version(s) its dependents now resolve to; empty when the
-    /// version is dropped outright (no dependents remain).
+    /// Surviving version(s); empty when `from` is dropped outright.
     to: Box<[u8]>,
-    /// Every surviving version is a lower major than the removed one.
+    /// Every survivor is a lower major than `from`.
     downgrade: bool,
 }
 

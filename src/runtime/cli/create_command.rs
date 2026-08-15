@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::cell::Cell;
 use std::io::Write as _;
 
@@ -1090,6 +1090,11 @@ impl CreateCommand {
                 } else {
                     create_options.skip_git =
                         GitHandler::run::<false>(destination, path_env).unwrap_or(false);
+                }
+                // `run` runs inline on the main thread here (no postinstall
+                // concurrency), so printing the timing line immediately is safe.
+                if !create_options.skip_git {
+                    GitHandler::print_timing();
                 }
             }
         }
@@ -2373,6 +2378,10 @@ impl CreateListExamplesCommand {
 struct GitHandler;
 
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
+// Elapsed git time (ms), stored by the git worker thread and printed on the
+// main thread after `wait()` so the timing line cannot interleave mid-stream
+// with postinstall output. Fixes #36953.
+static GIT_ELAPSED_MS: AtomicU64 = AtomicU64::new(0);
 // bun_threading has no top-level Thread wrapper yet,
 // so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
 // PORTING.md §Global mutable state: written in `spawn`, taken in `wait`, both
@@ -2422,7 +2431,20 @@ impl GitHandler {
         let outcome = SUCCESS.load(Ordering::Acquire) == 1;
         // SAFETY: THREAD set in spawn() on this same thread before wait() called
         let _ = unsafe { (*THREAD.get()).take() }.unwrap().join();
+        Self::print_timing();
         outcome
+    }
+
+    /// Prints the git timing line. Must run on the main thread (after the git
+    /// worker has joined) so it never interleaves with postinstall output.
+    fn print_timing() {
+        let elapsed_ms = GIT_ELAPSED_MS.load(Ordering::Relaxed);
+        if elapsed_ms == 0 {
+            return;
+        }
+        bun_core::pretty_error!("\n");
+        Output::print_elapsed(elapsed_ms as f64);
+        bun_core::pretty_error!(" <d>git<r>\n");
     }
 
     fn run<const VERBOSE: bool>(destination: &[u8], path: &[u8]) -> crate::Result<bool> {
@@ -2495,9 +2517,9 @@ impl GitHandler {
                 })?;
             }
 
-            bun_core::pretty_error!("\n");
-            Output::print_start_end(git_start, bun_core::time::nano_timestamp());
-            bun_core::pretty_error!(" <d>git<r>\n");
+            let elapsed_ms = ((bun_core::time::nano_timestamp() - git_start) as i64)
+                / bun_core::time::NS_PER_MS as i64;
+            GIT_ELAPSED_MS.store(elapsed_ms as u64, Ordering::Relaxed);
             return Ok(true);
         }
 

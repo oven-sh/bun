@@ -31,10 +31,12 @@ setDefaultTimeout(isDebug ? 90_000 : 10_000);
 
 // Nearly every test below owns its Worker / MessageChannel / subprocess outright,
 // so they are test.concurrent: the file's cost is startup latency (a worker or a
-// bun subprocess per test), which overlaps. The two tests in this describe hook
-// process-wide state ('worker' event listeners, process.emit) that would observe
-// any other test's Worker, so they stay serial and run first, before anything
-// else has created a Worker.
+// bun subprocess per test), which overlaps. A plain test() in between is a
+// barrier that runs alone once the tests before it have finished; the few that
+// stay serial say why ("terminate with work in flight" needs the parent to react
+// within milliseconds). The two tests in this describe hook process-wide state
+// ('worker' event listeners, process.emit) that would observe any other test's
+// Worker, so they run first, before anything else has created a Worker.
 describe("worker event", () => {
   test("is emitted on the next tick with the right value", () => {
     const { promise, resolve } = Promise.withResolvers();
@@ -2155,61 +2157,55 @@ parentPort.on("message", m => parentPort.postMessage("got " + m + " " + listener
 // or cross-thread work of that worker is still pending. They exercise the
 // refusal / wait paths of VM teardown; a broken build crashes or trips ASAN
 // rather than failing an assertion.
-describe.concurrent("terminate with work in flight", () => {
-  // Every worker posts "go" right after queueing its job and is terminated as
-  // soon as that arrives. The workers are started together so that the pool is
-  // busy and terminate() meets the jobs in every state: still queued, running,
-  // and completing against a VM that is going away.
-  async function terminateEach(count: number, start: () => Worker) {
-    await Promise.all(
-      Array.from({ length: count }, async () => {
-        const w = start();
-        const [msg] = await once(w, "message");
-        expect(msg).toBe("go");
-        expect(await w.terminate()).toBe(1);
-      }),
-    );
-  }
-
+describe("terminate with work in flight", () => {
+  // The first three tests stay serial (and so run with an otherwise idle parent):
+  // each worker posts "go" the moment its job is queued, and terminate() has to
+  // reach it while the job is still in flight. The jobs take milliseconds, so a
+  // parent that is busy with other tests reacts too late, the worker has exited
+  // on its own, and terminate() resolves 0 instead of 1.
   test("a transpile queued on the thread pool that starts after terminate()", async () => {
     using dir = tempDir("worker-terminate-transpile", {
       // large enough that the pool job is still queued/running at terminate
       "big.ts": Array.from({ length: 4000 }, (_, i) => `export const v${i}: number = ${i};`).join("\n"),
       "w.js": `require("worker_threads").parentPort.postMessage("go"); import("./big.ts").then(() => {});`,
     });
-    await terminateEach(8, () => new Worker(join(String(dir), "w.js")));
+    for (let i = 0; i < 8; i++) {
+      const w = new Worker(join(String(dir), "w.js"));
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
   });
 
   test("a SubtleCrypto digest still on the work queue at terminate()", async () => {
-    await terminateEach(
-      4,
-      () =>
-        new Worker(
-          `const { parentPort } = require("worker_threads");
-           crypto.subtle.digest("SHA-256", new Uint8Array(64 << 20)).then(() => {});
-           parentPort.postMessage("go");`,
-          { eval: true },
-        ),
-    );
+    for (let i = 0; i < 4; i++) {
+      const w = new Worker(
+        `const { parentPort } = require("worker_threads");
+         crypto.subtle.digest("SHA-256", new Uint8Array(64 << 20)).then(() => {});
+         parentPort.postMessage("go");`,
+        { eval: true },
+      );
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
   });
 
   test("an async zlib job on the thread pool at terminate()", async () => {
-    await terminateEach(
-      4,
-      () =>
-        new Worker(
-          `const { parentPort } = require("worker_threads");
-           const zlib = require("zlib");
-           const buf = Buffer.alloc(32 << 20, "a");
-           zlib.deflate(buf, () => {});
-           zlib.brotliCompress(buf.subarray(0, 4 << 20), () => {});
-           parentPort.postMessage("go");`,
-          { eval: true },
-        ),
-    );
+    for (let i = 0; i < 4; i++) {
+      const w = new Worker(
+        `const { parentPort } = require("worker_threads");
+         const zlib = require("zlib");
+         const buf = Buffer.alloc(32 << 20, "a");
+         zlib.deflate(buf, () => {});
+         zlib.brotliCompress(buf.subarray(0, 4 << 20), () => {});
+         parentPort.postMessage("go");`,
+        { eval: true },
+      );
+      await new Promise(r => w.once("message", r));
+      expect(await w.terminate()).toBe(1);
+    }
   });
 
-  test("a fetch whose body is still streaming at terminate(), then process exit", async () => {
+  test.concurrent("a fetch whose body is still streaming at terminate(), then process exit", async () => {
     // Subprocess: the exiting main thread must not touch the dead worker's fetch.
     await using proc = Bun.spawn({
       cmd: [
@@ -2244,7 +2240,7 @@ describe.concurrent("terminate with work in flight", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the main thread exits while a worker is mid-way through sqlite statements", async () => {
+  test.concurrent("the main thread exits while a worker is mid-way through sqlite statements", async () => {
     using dir = tempDir("worker-sqlite-main-exit", {});
     await using proc = Bun.spawn({
       cmd: [
@@ -2271,7 +2267,7 @@ describe.concurrent("terminate with work in flight", () => {
     expect(await proc.exited).toBe(0);
   });
 
-  test("a fetch still in flight when the main thread exits", async () => {
+  test.concurrent("a fetch still in flight when the main thread exits", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

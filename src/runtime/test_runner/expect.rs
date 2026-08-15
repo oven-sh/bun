@@ -623,10 +623,19 @@ impl Expect {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
-        let execution_entry = parent
-            .phase
-            .entry(buntest)
-            .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
+        let execution_entry = match &parent.phase {
+            // `entry()` is None once the runner has advanced past the entry that was
+            // running when this expect() was created.
+            bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => {
+                parent.phase.entry(buntest).ok_or(crate::Error::TestNotActive)?
+            }
+            bun_test::RefDataValue::Execution { entry_data: None, .. } => {
+                return Err(crate::Error::SnapshotInConcurrentGroup);
+            }
+            bun_test::RefDataValue::Start
+            | bun_test::RefDataValue::Collection { .. }
+            | bun_test::RefDataValue::Done => return Err(crate::Error::NoTest),
+        };
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
@@ -1252,6 +1261,9 @@ impl Expect {
                     }
                     crate::Error::TestNotActive => {
                         global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
+                    }
+                    crate::Error::NoTest => {
+                        global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test"))
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);

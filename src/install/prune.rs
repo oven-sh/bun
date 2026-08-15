@@ -1787,7 +1787,7 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
 }
 
 #[cfg(not(windows))]
-fn prune_bins(dir: &Dir) {
+pub(crate) fn prune_bins(dir: &Dir) {
     let Some(bin) = open_real_subdir(dir, b".bin") else {
         return;
     };
@@ -1807,7 +1807,7 @@ fn prune_bins(dir: &Dir) {
 
 // `.bunx` layout: windows-shim/BinLinkingShim.rs (target path is relative to this node_modules folder).
 #[cfg(windows)]
-fn prune_bins(dir: &Dir) {
+pub(crate) fn prune_bins(dir: &Dir) {
     let Some(bin) = open_real_subdir(dir, b".bin") else {
         return;
     };

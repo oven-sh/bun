@@ -808,23 +808,31 @@ fn prune_node_modules_at(rel_path: &[u8], prunable: &StringHashMap<()>) {
         names.push(name.to_vec());
     }
 
+    let mut deleted_any = false;
     for name in &names {
         if name[0] == b'@' {
             // The prunable set stores scoped packages as `@scope/pkg`.
-            prune_scoped_node_modules(&dir, name, prunable);
+            deleted_any |= prune_scoped_node_modules(&dir, name, prunable);
             continue;
         }
-        if prunable.contains_key(name.as_slice()) {
-            let _ = dir.delete_tree(name);
+        if prunable.contains_key(name.as_slice()) && dir.delete_tree(name).is_ok() {
+            deleted_any = true;
         }
+    }
+
+    // A removed package may have had bins linked into this `.bin`; sweep the
+    // now-dangling links like `remove_collapsed_copies` does.
+    if deleted_any {
+        crate::prune::prune_bins(&dir);
     }
 }
 
-fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMap<()>) {
+/// Returns whether any entry was deleted.
+fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMap<()>) -> bool {
     // `open_real_subdir` refuses a symlinked `@scope`, so the deletes below
     // cannot escape the workspace's `node_modules`.
     let Some(scope_dir) = crate::prune::open_real_subdir(parent, scope) else {
-        return;
+        return false;
     };
 
     let mut names: Vec<Vec<u8>> = Vec::new();
@@ -834,7 +842,7 @@ fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMa
         let entry = match iter.next() {
             Ok(Some(e)) => e,
             Ok(None) => break,
-            Err(_) => return,
+            Err(_) => return false,
         };
         let name = entry.name.slice_u8();
         if name.is_empty() {
@@ -847,6 +855,7 @@ fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMa
         names.push(name.to_vec());
     }
 
+    let mut deleted_any = false;
     for name in &names {
         let mut full_name = Vec::with_capacity(scope.len() + 1 + name.len());
         full_name.extend_from_slice(scope);
@@ -860,6 +869,8 @@ fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMa
 
         if scope_dir.delete_tree(name).is_err() {
             has_remaining = true;
+        } else {
+            deleted_any = true;
         }
     }
 
@@ -875,6 +886,8 @@ fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMa
         let z = bun_core::ZStr::from_buf(&scope_z, scope.len());
         let _ = sys::rmdirat(parent.fd(), z);
     }
+
+    deleted_any
 }
 
 // ported from: src/install/hoisted_install.zig

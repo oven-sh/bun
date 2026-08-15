@@ -1240,66 +1240,53 @@ fn load_module(
     }
 }
 
-/// BakeSourceProvider.cpp entry points; each returns empty iff it threw, as
-/// `from_js_host_call` requires.
+/// BakeSourceProvider.cpp entry points; each returns empty iff it threw (`from_js_host_call`).
 mod c {
     use super::*;
 
-    /// Returns the promise for loading and evaluating the module named by the `key` JSString.
+    unsafe extern "C" {
+        safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
+        /// Not `safe`: `ptr` must be readable for `len` bytes.
+        fn BakeGetOnModuleNamespace(
+            global: &JSGlobalObject,
+            module_namespace: JSValue,
+            ptr: *const u8,
+            len: usize,
+        ) -> JSValue;
+    }
+
+    /// Returns the promise for evaluating the module that `key` (a JSString) names.
     pub(super) fn bake_load_module_by_key(
         global: &JSGlobalObject,
         key: JSValue,
     ) -> JsResult<JSValue> {
-        unsafe extern "C" {
-            safe fn BakeLoadModuleByKey(global: &JSGlobalObject, key: JSValue) -> JSValue;
-        }
         jsc::from_js_host_call(global, || BakeLoadModuleByKey(global, key))
     }
 
-    /// The module's promise from [`bake_load_module_by_key`] must already be fulfilled.
+    /// The promise from [`bake_load_module_by_key`] for `key` must already be fulfilled.
     pub(super) fn bake_get_module_namespace(
         global: &JSGlobalObject,
         key: JSValue,
     ) -> JsResult<JSValue> {
-        unsafe extern "C" {
-            safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
-        }
         jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key))
     }
 
-    /// The module's evaluation promise must already be fulfilled.
+    /// The module `key` names must already be evaluated (here: the config module).
     pub(super) fn bake_get_default_export_from_module(
         global: &JSGlobalObject,
         key: JSValue,
     ) -> JsResult<JSValue> {
-        unsafe extern "C" {
-            safe fn BakeGetDefaultExportFromModule(
-                global: &JSGlobalObject,
-                key: JSValue,
-            ) -> JSValue;
-        }
         jsc::from_js_host_call(global, || BakeGetDefaultExportFromModule(global, key))
     }
 
-    /// `module_namespace` comes from [`bake_get_module_namespace`].
     pub(super) fn bake_get_on_module_namespace(
         global: &JSGlobalObject,
         module_namespace: JSValue,
         property: &[u8],
     ) -> JsResult<JSValue> {
-        unsafe extern "C" {
-            // PRECONDITION: `ptr` must be readable for `len` bytes (C++ builds an
-            // `Identifier` from the slice). Cannot be `safe fn` — raw ptr+len pair
-            // carries a caller-side validity precondition.
-            fn BakeGetOnModuleNamespace(
-                global: &JSGlobalObject,
-                module_namespace: JSValue,
-                ptr: *const u8,
-                len: usize,
-            ) -> JSValue;
-        }
-        // SAFETY: `property.as_ptr()`/`len()` describe a borrowed `&[u8]` that
-        // outlives the call, which discharges the ptr+len precondition above.
+        // SAFETY: `property` is borrowed for the whole call, so `ptr` is readable for `len` bytes.
         jsc::from_js_host_call(global, || unsafe {
             BakeGetOnModuleNamespace(global, module_namespace, property.as_ptr(), property.len())
         })

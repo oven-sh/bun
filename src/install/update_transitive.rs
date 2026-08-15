@@ -1346,8 +1346,7 @@ fn edges_on_instances(
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        // After the named rows resolved, a superseded package's rows are still in the buffers;
-        // only owners something still resolves to contribute followers.
+        // Post-resolution, a superseded package's rows are still in the buffers: only owners something still resolves to contribute followers.
         let referenced = post_resolution.then(|| {
             let mut referenced = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
             for owner in 0..packages_len {
@@ -1550,8 +1549,7 @@ fn direct_row_stays(
             _ => return false,
         }
     };
-    // `keep_locked_if_ahead`: update never moves a direct row below what bun.lock already has,
-    // so a lookup at or below `current` lands the row back on `current`.
+    // `keep_locked_if_ahead`: a lookup at or below `current` lands the row back on `current`.
     found.is_some_and(|found| {
         found.version.order(current, &manifest.string_buf, buf) != Ordering::Greater
     })

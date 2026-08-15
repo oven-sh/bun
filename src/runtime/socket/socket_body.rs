@@ -5162,11 +5162,13 @@ pub mod testing_apis {
                 fi::POLL_START
             } else if syscall_str.eql_comptime(b"session_buffer") {
                 fi::SESSION_BUFFER
+            } else if syscall_str.eql_comptime(b"listen_poll") {
+                fi::LISTEN_POLL
             } else {
                 // socket/close/shutdown have enum slots but no bsd.c hooks;
                 // accepting them would arm rules that can never fire.
                 return Err(global.throw(format_args!(
-                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer"
+                    "rule.syscall must be one of: recv, send, writev, sendmsg, recvmsg, connect, accept, ssl_loop_buffer, poll_start, session_buffer, listen_poll"
                 )));
             };
 

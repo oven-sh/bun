@@ -1830,8 +1830,7 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // `Some` only when FOR_PUBLISH == true.
 pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
-/// The package.json being packed, via the manager's cache. The entry is only valid until the cache
-/// changes: `pack()` calls this again after invalidating it and after anything that may add entries.
+/// The entry lives in the cache's hash map: fetch it again after anything that inserts or clears.
 fn read_package_json<'a>(
     manager_ptr: *mut PackageManager,
     abs_package_json_path: &ZStr,
@@ -2084,9 +2083,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         break 'post_scripts (postpack_script, None, None, did_run_scripts);
     };
 
-    // The lifecycle scripts may have edited this package.json, or any other one in the workspace
-    // (a `prepublishOnly` that bumps versions, say): the cache was filled before they ran, and
-    // `WorkspaceManifests::load` below reads through it too.
+    // The scripts may have edited any package.json in the workspace, and the cache predates them.
     if ran_scripts {
         pm_workspace_cache(manager_ptr).map.clear();
         json = read_package_json(manager_ptr, abs_package_json_path);
@@ -3196,8 +3193,7 @@ fn add_archive_entry(
     Ok(entry.clear())
 }
 
-/// What goes into the tarball's package.json in place of a `workspace:` or `catalog:` spec, which
-/// only mean something inside this workspace.
+/// What the tarball's package.json gets in place of a `workspace:` or `catalog:` spec.
 enum Substitution<'a> {
     /// `workspace:^`, `workspace:~`, `workspace:*`: the workspace's current version behind that prefix.
     WorkspaceVersion { prefix: &'static str },
@@ -3228,8 +3224,7 @@ impl<'a> Substitution<'a> {
     }
 }
 
-/// Visits every entry of the dependency sections `bun pm pack` rewrites, section by section in
-/// dependencies, devDependencies, peerDependencies, optionalDependencies order.
+/// Section order is the order errors get reported in.
 fn for_each_dependency(
     package_json: Expr,
     mut f: impl FnMut(&'static [u8], &mut bun_ast::G::Property),
@@ -3253,8 +3248,7 @@ fn for_each_dependency(
     }
 }
 
-/// The workspace's other package.json files are only read when a spec resolves through them, so a
-/// package without such specs packs whatever state the workspace around it is in.
+/// Packages without such specs must pack whatever state the rest of the workspace is in.
 fn needs_workspace_manifests(package_json: Expr) -> bool {
     let mut needed = false;
     for_each_dependency(package_json, |_, dependency| {
@@ -3268,9 +3262,8 @@ fn needs_workspace_manifests(package_json: Expr) -> bool {
     needed
 }
 
-/// Replaces the `workspace:` and `catalog:` specs in `json` (in place: `bun publish` sends the same
-/// tree to the registry), then returns the printed json. `workspace_manifests` is `Some` whenever
-/// `needs_workspace_manifests(json.root)` is true.
+/// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.
+/// `workspace_manifests` is `Some` whenever `needs_workspace_manifests(json.root)` is.
 fn edit_root_package_json(
     workspace_manifests: Option<&WorkspaceManifests>,
     json: &mut WorkspacePackageJSONCache::MapEntry,

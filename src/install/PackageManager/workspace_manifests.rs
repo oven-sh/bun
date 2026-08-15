@@ -77,19 +77,16 @@ impl ScratchManifests {
     }
 }
 
-/// What `bun pm pack` and `bun publish` substitute for `workspace:` and `catalog:` specs: the
-/// versions the workspace's package.json files declare right now, parsed the way `bun install`
-/// parses them. bun.lock is deliberately not consulted. It records what the files said at the last
-/// install, and a release bumps versions (`bun pm version`, changesets, ...) between that install
-/// and the publish.
+/// The workspace versions and catalogs `bun pm pack` / `bun publish` substitute, read from the
+/// package.json files as they are now. Not from bun.lock: it has the versions of the last install,
+/// and releases bump versions between that install and the publish.
 pub struct WorkspaceManifests {
     lockfile: Lockfile,
     root_package_json_path: Box<[u8]>,
 }
 
 impl WorkspaceManifests {
-    /// Reads the root package.json and every workspace it lists. Prints the same errors
-    /// `bun install` would print for them and exits when they do not parse.
+    /// Exits with `bun install`'s errors when the root package.json or a workspace does not parse.
     pub fn load(manager: &mut PackageManager) -> WorkspaceManifests {
         let mut scratch = ScratchManifests::new();
         if let Err(err) = scratch.parse_root(manager) {

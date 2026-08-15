@@ -684,8 +684,7 @@ pub mod js_bundler {
                         let slice = env.to_slice(global_this)?;
                         match api::DotEnvBehavior::parse_str(slice.slice()) {
                             Ok((behavior, prefix)) => {
-                                // `parse_str` maps "disable" to `Disable`, which is also the
-                                // no-`env`-option default that still defines NODE_ENV.
+                                // `Disable` is also the no-option default, which defines NODE_ENV.
                                 this.env_behavior = if behavior == api::DotEnvBehavior::Disable {
                                     api::DotEnvBehavior::DisableWithoutInlining
                                 } else {

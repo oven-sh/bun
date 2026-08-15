@@ -79,19 +79,13 @@ impl DirEntryProbe for DirEntryKeys {
 pub enum DotEnvBehavior {
     #[default]
     _none = 0,
-    /// The default when no `env` option is given: `.env` files are not loaded and no
-    /// environment variable is inlined, but the bundler still defines
-    /// `process.env.NODE_ENV` / `process.env.BUN_ENV` from the build-time NODE_ENV.
+    /// No-option default: no `.env` files, nothing inlined, NODE_ENV / BUN_ENV still defined.
     disable = 1,
     prefix = 2,
     load_all = 3,
-    /// `.env` files are loaded (so the process sees them) but nothing is inlined,
-    /// not even the implicit NODE_ENV defines. Used at runtime and by
-    /// `bun build --env disable`.
+    /// Loads `.env` files, inlines nothing (not even NODE_ENV): runtime, `bun build --env disable`.
     load_all_without_inlining = 4,
-    /// `disable`, minus the implicit NODE_ENV defines: nothing is loaded and nothing
-    /// is inlined. Used by `Bun.build({ env: "disable" })`, which must not load `.env`
-    /// files into the environment of the process that is running the build.
+    /// `disable` minus the NODE_ENV defines; set by `Bun.build({ env: "disable" })`.
     disable_without_inlining = 5,
 }
 

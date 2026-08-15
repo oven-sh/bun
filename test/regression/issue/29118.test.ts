@@ -376,6 +376,7 @@ test("pathological long relative `cwd` does not crash", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Over-long cwd is dropped; the text still renders normally.
   expect(stdout).toBe("hi\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -396,6 +397,7 @@ test("pathological long absolute `cwd` with kittyGraphics does not crash", async
   // Over-long cwd is dropped; the image falls back to the camera marker + alt.
   expect(stdout).toContain("📷");
   expect(stdout).toContain("alt");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -414,5 +416,6 @@ test("pathological long image `src` with kittyGraphics does not crash", async ()
   // The base+src join overflows the path buffer → falls back to the marker.
   expect(stdout).toContain("📷");
   expect(stdout).toContain("alt");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });

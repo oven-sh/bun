@@ -387,10 +387,6 @@ struct IsIDLDictionary : public std::integral_constant<bool, WTF::IsTemplate<T, 
 };
 
 template<typename T>
-struct IsIDLEnumeration : public std::integral_constant<bool, WTF::IsTemplate<T, IDLEnumeration>::value> {
-};
-
-template<typename T>
 struct IsIDLSequence : public std::integral_constant<bool, WTF::IsTemplate<T, IDLSequence>::value> {
 };
 

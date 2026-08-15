@@ -1630,11 +1630,6 @@ impl Data {
             None
         }
     }
-    /// True if this is an `EString`.
-    #[inline]
-    pub fn is_e_string(&self) -> bool {
-        matches!(self, Data::EString(_))
-    }
 
     // ── Remaining StoreRef<E::*> field-style accessors ──────────────────
     // Callers `.unwrap()` (or pattern-match) — the `Option` is the cheapest

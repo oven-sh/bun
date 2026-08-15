@@ -235,9 +235,6 @@
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
@@ -3110,9 +3107,6 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
 }
-
-// This is like `putDirectBuiltinFunction` but for the global static list.
-#define globalBuiltinFunction(vm, globalObject, identifier, function, attributes) JSC::JSGlobalObject::GlobalPropertyInfo(identifier, JSFunction::create(vm, function, globalObject), attributes)
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {

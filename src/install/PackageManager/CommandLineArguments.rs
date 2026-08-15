@@ -1445,8 +1445,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
         }
 
-        // link and unlink default to not saving (their --help says so via
-        // `LINK_SAVE_PARAMS`), all others default to saving.
+        // link and unlink default to not saving (see `LINK_SAVE_PARAMS`), all others to saving.
         if matches!(subcommand, Subcommand::Link | Subcommand::Unlink) {
             cli.no_save = !args.flag(b"--save");
         } else {

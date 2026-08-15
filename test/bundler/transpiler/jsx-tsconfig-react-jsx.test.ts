@@ -187,10 +187,15 @@ describe("the cwd tsconfig.json is not the base for files governed by another ts
     ],
   ];
 
-  async function build(cmd: string[], cwd: string) {
-    await using proc = Bun.spawn({ cmd, cwd, env: noNodeEnv, stdout: "pipe", stderr: "pipe" });
+  async function buildOutput(cmd: string[], cwd: string, env: Record<string, string | undefined> = noNodeEnv) {
+    await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
     // stderr is drained but not asserted: the key-after-spread fixture prints a deprecation warning.
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  async function build(cmd: string[], cwd: string) {
+    const { stdout, exitCode } = await buildOutput(cmd, cwd);
     return { refs: runtimeRefsOf(stdout), exitCode };
   }
 
@@ -238,6 +243,40 @@ describe("the cwd tsconfig.json is not the base for files governed by another ts
       expect(await run(join(String(dir), c.cwd ?? ""), c)).toEqual({ refs: c.refs, exitCode: 0 });
     });
   }
+
+  // The dev/prod bit is part of the base as well. Bundled builds then choose dev/prod per build from
+  // the cwd tsconfig / NODE_ENV / --production (the force_node_env arms in bundle_v2), so the per-file
+  // value only shows in --no-bundle, which emits it as is.
+  describe("bun build --no-bundle", () => {
+    const importsOf = (code: string) => [...code.matchAll(/ from "([^"]+)"/g)].map(m => m[1]);
+
+    test.concurrent('a nested tsconfig without "jsx" does not inherit the cwd tsconfig\'s "react-jsx"', async () => {
+      using dir = tempDir("jsx-tsconfig-base-dev", {
+        "tsconfig.json": tsconfig({ jsx: "react-jsx" }),
+        "app/tsconfig.json": tsconfig({ jsxImportSource: "nested-src" }),
+        "app/m.jsx": element,
+      });
+      const { stdout, exitCode } = await buildOutput([bunExe(), "build", "--no-bundle", "app/m.jsx"], String(dir));
+      expect({ imports: importsOf(stdout), exitCode }).toEqual({
+        imports: ["nested-src/jsx-dev-runtime"],
+        exitCode: 0,
+      });
+    });
+
+    // NODE_ENV is applied to the base before the cwd tsconfig is read; copying the cwd tsconfig's
+    // settings (development: true unless it sets "jsx") over the base used to discard it.
+    test.concurrent('NODE_ENV=production survives a cwd tsconfig that does not set "jsx"', async () => {
+      using dir = tempDir("jsx-tsconfig-base-node-env", {
+        "tsconfig.json": tsconfig({ jsxImportSource: "shim" }),
+        "m.jsx": element,
+      });
+      const { stdout, exitCode } = await buildOutput([bunExe(), "build", "--no-bundle", "m.jsx"], String(dir), {
+        ...noNodeEnv,
+        NODE_ENV: "production",
+      });
+      expect({ imports: importsOf(stdout), exitCode }).toEqual({ imports: ["shim/jsx-runtime"], exitCode: 0 });
+    });
+  });
 
   // A browser-side HTML entry point inside a server-side build is resolved by a second transpiler
   // derived from the main one, so its base has to be carried over without the cwd tsconfig too.

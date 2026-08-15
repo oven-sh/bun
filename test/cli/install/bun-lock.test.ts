@@ -9,6 +9,7 @@ import {
   normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
+  tempDir,
   toBeValidBin,
   VerdaccioRegistry,
 } from "harness";
@@ -1033,6 +1034,77 @@ describe.concurrent("hand-edited bun.lock overrides", () => {
     `);
     expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
     expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent("hand-edited bun.lock that lists workspaces but has no packages object", () => {
+  const lockfileWithoutPackages = (lockfileVersion: number) =>
+    JSON.stringify(
+      {
+        lockfileVersion,
+        workspaces: {
+          "": { name: "no-packages-object" },
+          "packages/member": { name: "member", version: "1.0.0" },
+        },
+      },
+      null,
+      2,
+    );
+
+  const projectFiles = (lockfileVersion: number) => ({
+    "package.json": JSON.stringify({ name: "no-packages-object", workspaces: ["packages/*"] }),
+    "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+    "bun.lock": lockfileWithoutPackages(lockfileVersion),
+  });
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(out, cwd), err: normalizeBunSnapshot(err, cwd), exitCode };
+  }
+
+  it("bun install links the workspace and writes the packages object back", async () => {
+    using dir = tempDir("bun-lock-no-packages-object", projectFiles(1));
+    const { out, err, exitCode } = await install(String(dir));
+    expect(err).toMatchInlineSnapshot(`"Saved lockfile"`);
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(String(dir), "node_modules", "member", "package.json")).json()).toEqual({
+      name: "member",
+      version: "1.0.0",
+    });
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(
+      `"packages": {\n    "member": ["member@workspace:packages/member"],\n  }`,
+    );
+  });
+
+  it("bun install --frozen-lockfile treats it like an empty packages object", async () => {
+    using dir = tempDir("bun-lock-no-packages-object-frozen", projectFiles(2));
+    const { out, err, exitCode } = await install(String(dir), "--frozen-lockfile");
+    expect(err).toMatchInlineSnapshot(`""`);
+    expect(out).toMatchInlineSnapshot(`
+      "bun install <version> (<revision>)
+
+      1 package installed"
+    `);
+    expect(exitCode).toBe(0);
+
+    expect(await file(join(String(dir), "node_modules", "member", "package.json")).json()).toEqual({
+      name: "member",
+      version: "1.0.0",
+    });
+    expect(await file(join(String(dir), "bun.lock")).text()).toBe(lockfileWithoutPackages(2));
   });
 });
 

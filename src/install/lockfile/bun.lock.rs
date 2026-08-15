@@ -2488,23 +2488,29 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
-    let Some(pkgs_expr) = root.get(b"packages") else {
-        // packages is empty, but there might be empty workspace packages
-        if workspace_pkgs_len == 0 {
-            lockfile.init_empty();
-        }
+    let pkgs_expr = root.get(b"packages");
+
+    // A missing "packages" object is parsed like an empty one. With no
+    // workspace packages there is nothing to resolve, otherwise the workspace
+    // packages appended above and the root's dependencies on them still need
+    // the resolution pass below (which also sizes `buffers.resolutions`).
+    if pkgs_expr.is_none() && workspace_pkgs_len == 0 {
+        lockfile.init_empty();
         return Ok(());
-    };
+    }
 
     {
-        if !pkgs_expr.is_object() {
-            log.add_error(
-                Some(source),
-                value_loc_of(source, pkgs_expr.loc),
-                b"Expected an object",
-            );
-            return Err(ParseError::InvalidPackagesObject);
+        if let Some(pkgs_expr) = &pkgs_expr {
+            if !pkgs_expr.is_object() {
+                log.add_error(
+                    Some(source),
+                    value_loc_of(source, pkgs_expr.loc),
+                    b"Expected an object",
+                );
+                return Err(ParseError::InvalidPackagesObject);
+            }
         }
+        let pkg_rows: &[JSON::E::PropertyJSON] = pkgs_expr.as_ref().map_or(&[], object_rows);
 
         // find the bundle roots.
         //
@@ -2518,7 +2524,7 @@ pub(crate) fn parse_into_binary_lockfile(
         // the bundled map, and mark the dependency bundled if it exists. This works
         // because package's direct bundled dependencies can only exist at the top
         // level of it's node_modules.
-        for row in object_rows(&pkgs_expr) {
+        for row in pkg_rows {
             let pkg_path = row.key.slice();
 
             let Some(pkg_info) = row.value.as_array() else {
@@ -2546,7 +2552,7 @@ pub(crate) fn parse_into_binary_lockfile(
             bundled_pkgs.put(pkg_path, ());
         }
 
-        'next_pkg_key: for row in object_rows(&pkgs_expr) {
+        'next_pkg_key: for row in pkg_rows {
             let key_loc = row.key_loc;
             let pkg_path = row.key.slice();
 
@@ -3202,7 +3208,7 @@ pub(crate) fn parse_into_binary_lockfile(
         }
 
         // then each package dependency
-        for row in object_rows(&pkgs_expr) {
+        for row in pkg_rows {
             let pkg_path = row.key.slice();
 
             let Some(&pkg_id) = pkg_map.get(pkg_path) else {

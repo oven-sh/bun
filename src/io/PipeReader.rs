@@ -721,6 +721,8 @@ impl PosixBufferedReader {
                 (true, Some(scratch)) => {
                     // SAFETY: caller contract; the borrow ends before the dispatch.
                     let (filled, stop) = unsafe { (*this).fill_scratch(file_type, fd, scratch) };
+                    // SAFETY: caller contract; borrow ends at `;`.
+                    unsafe { Self::close_if_final(this, stop.as_ref()) };
                     let keep_going = if filled == 0 {
                         true
                     } else if streaming {
@@ -738,6 +740,8 @@ impl PosixBufferedReader {
                 _ => {
                     // SAFETY: caller contract; the borrow ends before the dispatch.
                     let stop = unsafe { (*this).fill_buffer(file_type, fd, streaming) };
+                    // SAFETY: caller contract; borrow ends at `;`.
+                    unsafe { Self::close_if_final(this, stop.as_ref()) };
                     // SAFETY: caller contract; borrow ends at `;`.
                     let keep_going = if !streaming || unsafe { (*this)._buffer.is_empty() } {
                         true
@@ -769,7 +773,6 @@ impl PosixBufferedReader {
                 Some(Stop::Eof | Stop::OverBudget) => {
                     // SAFETY: caller contract; `done()` is the tail.
                     unsafe {
-                        (*this).close_without_reporting();
                         if !(*this).flags.contains(PosixFlags::IS_DONE) {
                             Self::done(this);
                         }
@@ -825,6 +828,17 @@ impl PosixBufferedReader {
                     return;
                 }
             }
+        }
+    }
+
+    /// Closes before the final chunk is delivered, so a consumer that pulls again from inside `on_read_chunk` finds the reader done instead of reading past EOF or the byte budget.
+    ///
+    /// # Safety
+    /// `this` is the live reader.
+    unsafe fn close_if_final(this: *mut Self, stop: Option<&Stop>) {
+        if matches!(stop, Some(Stop::Eof | Stop::OverBudget)) {
+            // SAFETY: caller contract; borrow ends at `;`.
+            unsafe { (*this).close_without_reporting() };
         }
     }
 

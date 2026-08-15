@@ -25,6 +25,7 @@ bun_boringssl_sys.workspace = true
 bun_core.workspace = true
 bun_errno.workspace = true
 bun_http_types.workspace = true
+bun_usockets.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

@@ -1,0 +1,22 @@
+[package]
+name = "bun_usockets"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_opaque.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_boringssl_sys.workspace = true
+bun_core.workspace = true
+bun_errno.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true
+bun_libuv_sys.workspace = true

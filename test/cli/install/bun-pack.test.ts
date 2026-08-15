@@ -837,6 +837,50 @@ test("lifecycle script modifying version updates tarball filename (#17195)", asy
   ]);
 });
 
+describe.concurrent("package.json that cannot be loaded", () => {
+  test("unparsable package.json", async () => {
+    using dir = tempDir("pack-unparsable-package-json", {
+      "package.json": `{ "name": "pack-unparsable", "version": "1.0.0",`,
+    });
+
+    const { err } = await packExpectError(String(dir), bunEnv);
+    // the parser's own diagnostic is printed along with the error
+    expect(err).toMatch(/at .*package\.json:1:\d+/);
+    expect(err).toMatch(/^ParserError: failed to parse package\.json: .*package\.json$/m);
+  });
+
+  test("prepack script removes package.json before it is re-read", async () => {
+    using dir = tempDir("pack-prepack-removes-package-json", {
+      "package.json": JSON.stringify({
+        name: "pack-prepack-removes",
+        version: "1.0.0",
+        scripts: { prepack: `${bunExe()} remove.js` },
+      }),
+      "remove.js": `require("fs").unlinkSync("package.json");`,
+    });
+
+    const { err } = await packExpectError(String(dir), bunEnv);
+    expect(err).toMatch(/^ENOENT: failed to read package\.json: .*package\.json$/m);
+    expect(await exists(join(String(dir), "pack-prepack-removes-1.0.0.tgz"))).toBeFalse();
+  });
+
+  test("prepack script leaves package.json unparsable before it is re-read", async () => {
+    using dir = tempDir("pack-prepack-breaks-package-json", {
+      "package.json": JSON.stringify({
+        name: "pack-prepack-breaks",
+        version: "1.0.0",
+        scripts: { prepack: `${bunExe()} break.js` },
+      }),
+      "break.js": `require("fs").writeFileSync("package.json", "{ broken\\n");`,
+    });
+
+    const { err } = await packExpectError(String(dir), bunEnv);
+    expect(err).toMatch(/at .*package\.json:1:\d+/);
+    expect(err).toMatch(/^ParserError: failed to parse package\.json: .*package\.json$/m);
+    expect(await exists(join(String(dir), "pack-prepack-breaks-1.0.0.tgz"))).toBeFalse();
+  });
+});
+
 describe("bundledDependnecies", () => {
   for (const bundledDependencies of ["bundledDependencies", "bundleDependencies"]) {
     test(`basic (${bundledDependencies})`, async () => {

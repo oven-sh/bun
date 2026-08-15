@@ -1544,14 +1544,10 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
-    /// `--bail` reached its failure count: report, then exit 1 through the same
-    /// teardown as the end of a normal run (`exec`). A bare `Global::exit` here
-    /// would skip the `BUN_DESTRUCT_VM_ON_EXIT` teardown, and the leak-check
-    /// lanes then report every wrapper box the JSC finalizers still own.
-    ///
-    /// Reached mid-file (`handle_test_completed`, with the file's `BunTest`
-    /// still held by `TestCommand::run`) and after a failed module evaluation;
-    /// `process.exit()` inside a test tears the VM down from the same state.
+    /// `--bail` reached its failure count: report, then exit 1 through the
+    /// same VM teardown as the end of a normal run (`exec`). A bare
+    /// `Global::exit` would skip the `BUN_DESTRUCT_VM_ON_EXIT` teardown and
+    /// leave every JSC-finalizer-owned wrapper box for the leak checker.
     pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
         self.print_summary();
         pretty_error!(
@@ -1570,11 +1566,9 @@ impl CommandLineReporter {
         // `run_with_api_lock` takes `&self` only, so the closure holds the
         // unique mutable access on this single-threaded path.
         vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
-        // Same order as `exec`: exit listeners (user JS) ran above while the
-        // runner was intact; now release the `bun:test` state and unpublish
-        // `RUNNER` so nothing running inside the teardown GC can observe a
-        // half-torn-down `TestRunner`. The reporter itself stays allocated:
-        // both callers still borrow it.
+        // Exit listeners (user JS) ran above while the runner was intact; now
+        // release the `bun:test` GC roots so the teardown GC can't observe a
+        // half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
         // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS
         // thread; no concurrent reader exists on this shutdown path.

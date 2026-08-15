@@ -958,9 +958,14 @@ impl Lockfile {
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
+        // Pruning a target that only an optional peer slot still reaches is a lockfile edit.
+        // A frozen install never writes the lockfile, and lockfiles saved by older versions
+        // still list such targets, so pruning there would only make the frozen comparison
+        // reject them.
+        let keep_optional_peer_targets =
+            manager.options.enable.frozen_lockfile() || !manager.summary.changes_resolutions();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
-        let keep_optional_peer_targets = !manager.summary.changes_resolutions();
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,

@@ -618,7 +618,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.log_expr_errors(&mut errors);
             if spread_range.is_some() {
                 p.log()
-                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                    .add_range_error(Some(p.source), spread_range, b"Unexpected \"...\"");
                 return Err(crate::Error::SyntaxError);
             }
 

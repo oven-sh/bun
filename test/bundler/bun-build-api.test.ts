@@ -599,6 +599,14 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
+  test.concurrent("a spread in a parenthesized expression is reported at the spread", async () => {
+    const dir = tempDirWithFiles("spread-in-parens", { "index.js": "(1, ...a);\n" });
+    const x = await Bun.build({ entrypoints: [join(dir, "index.js")], throw: false });
+    expect(x.success).toBe(false);
+    expect(x.logs[0].message).toBe('Unexpected "..."');
+    expect(x.logs[0].position).toMatchObject({ line: 1, column: 5, lineText: "(1, ...a);" });
+  });
+
   test.concurrent("module() throws error", async () => {
     expect(() =>
       Bun.build({

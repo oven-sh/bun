@@ -347,9 +347,13 @@ Object.defineProperty(crypto_exports, "fips", {
   set: setFips,
 });
 
+// DEP0115 is documentation-only: node's lib/crypto.js getRandomBytesAlias only
+// wraps these in util.deprecate() under --pending-deprecation.
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
+    __proto__: null,
+    value: process.pendingDeprecation ? deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115") : randomBytes,
+    writable: true,
     enumerable: false,
     configurable: true,
   });

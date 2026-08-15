@@ -84,20 +84,20 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk = |this, chunk, _has_more| {
         let state = &mut *((*(*this).handle).state as *mut State);
-        let _ = state.read_chunk(&mut *this, &chunk);
+        state.read_chunk(&mut *this, &chunk);
         true
     };
     on_reader_done  = |this| {
         (*this).ended = true;
         let handle = (*this).handle;
         let state = &mut *(*handle).state.cast_mut();
-        let _ = state.maybe_finish(&mut *handle);
+        state.maybe_finish(&mut *handle);
     };
     on_reader_error = |this, _err| {
         (*this).ended = true;
         let handle = (*this).handle;
         let state = &mut *(*handle).state.cast_mut();
-        let _ = state.maybe_finish(&mut *handle);
+        state.maybe_finish(&mut *handle);
     };
     loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
     event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
@@ -329,7 +329,7 @@ bun_spawn::link_impl_ProcessExit! {
                 ProcessHandle::drain_and_close_pipes(this);
             }
             let state = &mut *(*this).state.cast_mut();
-            let _ = state.maybe_finish(&mut *this);
+            state.maybe_finish(&mut *this);
         },
     }
 }
@@ -366,7 +366,7 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) -> Result<(), Error> {
+    fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) {
         pipe.line_buffer.extend_from_slice(chunk);
 
         // Route to correct parent stream: child stdout -> parent stdout, child stderr -> parent stderr
@@ -381,11 +381,9 @@ impl<'a> State<'a> {
             let line = &pipe.line_buffer[0..newline_pos + 1];
             // SAFETY: pipe.handle backref set in ProcessHandle::start()
             let handle = unsafe { &*pipe.handle };
-            self.write_line_with_prefix(handle, line, writer)?;
-            // Remove processed line from buffer
+            let _ = self.write_line_with_prefix(handle, line, writer);
             pipe.line_buffer.drain_front(newline_pos + 1);
         }
-        Ok(())
     }
 
     fn write_line_with_prefix(
@@ -418,11 +416,7 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    fn flush_pipe_buffer(
-        &self,
-        handle: &ProcessHandle<'a>,
-        pipe: &mut PipeReader<'a>,
-    ) -> Result<(), Error> {
+    fn flush_pipe_buffer(&self, handle: &ProcessHandle<'a>, pipe: &mut PipeReader<'a>) {
         if !pipe.line_buffer.is_empty() {
             let line = &pipe.line_buffer[..];
             let needs_newline = !line.is_empty() && line[line.len() - 1] != b'\n';
@@ -431,24 +425,59 @@ impl<'a> State<'a> {
             } else {
                 Output::writer()
             };
-            self.write_line_with_prefix(handle, line, writer)?;
+            let _ = self.write_line_with_prefix(handle, line, writer);
             if needs_newline {
                 let _ = writer.write_all(b"\n");
             }
             pipe.line_buffer.clear();
         }
-        Ok(())
+    }
+
+    fn print_exit_status(&self, handle: &ProcessHandle<'a>) -> Result<(), Error> {
+        {
+            let writer = Output::error_writer();
+            self.write_prefix(handle, writer)?;
+
+            let slot = handle.process.as_ref().unwrap();
+            match &slot.status {
+                Status::Exited(exited) => {
+                    if exited.code != 0 {
+                        writeln!(writer, "Exited with code {}", exited.code)?;
+                    } else {
+                        if let Some(end) = slot.end_time {
+                            let duration = end.duration_since(slot.start_time);
+                            let ms = duration.as_nanos() as f64 / 1_000_000.0;
+                            if ms > 1000.0 {
+                                writeln!(writer, "Done in {:.2}s", ms / 1000.0)?;
+                            } else {
+                                writeln!(writer, "Done in {:.0}ms", ms)?;
+                            }
+                        } else {
+                            writer.write_all(b"Done\n")?;
+                        }
+                    }
+                }
+                Status::Signaled(signal) => {
+                    let name = bun_sys::SignalCode(*signal).name().unwrap_or("unknown");
+                    writeln!(writer, "Signaled: {}", name)?;
+                }
+                _ => {
+                    writer.write_all(b"Error\n")?;
+                }
+            }
+            Ok(())
+        }
     }
 
     /// A script is finished once its process has exited *and* both pipes have
     /// ended; finishing on exit alone can drop output the exit notification
     /// beat. The exit path force-ends pipes a leftover child holds open
     /// (`drain_and_close_pipes`); on abort, exit alone suffices.
-    fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
+    fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) {
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
         let pipes_open = !handle.stdout_reader.ended || !handle.stderr_reader.ended;
         if handle.finished || !exited || (pipes_open && !self.aborted) {
-            return Ok(());
+            return;
         }
         handle.finished = true;
         self.remaining_scripts -= 1;
@@ -462,44 +491,15 @@ impl<'a> State<'a> {
         // SAFETY: handle_ptr is live for this call; flush_pipe_buffer reads only
         // `config`/`color_idx` from `handle` and writes only `pipe.line_buffer`.
         unsafe {
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader)?;
-            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader)?;
+            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stdout_reader);
+            self.flush_pipe_buffer(&*handle_ptr, &mut (*handle_ptr).stderr_reader);
         }
 
-        // Print exit status to stderr (status messages always go to stderr)
-        let writer = Output::error_writer();
-        self.write_prefix(handle, writer)?;
-
-        let slot = handle.process.as_ref().unwrap();
-        match &slot.status {
-            Status::Exited(exited) => {
-                if exited.code != 0 {
-                    writeln!(writer, "Exited with code {}", exited.code)?;
-                } else {
-                    if let Some(end) = slot.end_time {
-                        let duration = end.duration_since(slot.start_time);
-                        let ms = duration.as_nanos() as f64 / 1_000_000.0;
-                        if ms > 1000.0 {
-                            writeln!(writer, "Done in {:.2}s", ms / 1000.0)?;
-                        } else {
-                            writeln!(writer, "Done in {:.0}ms", ms)?;
-                        }
-                    } else {
-                        writer.write_all(b"Done\n")?;
-                    }
-                }
-            }
-            Status::Signaled(signal) => {
-                let name = bun_sys::SignalCode(*signal).name().unwrap_or("unknown");
-                writeln!(writer, "Signaled: {}", name)?;
-            }
-            _ => {
-                writer.write_all(b"Error\n")?;
-            }
-        }
+        // Best-effort: a closed stderr must not stop the abort or the dependents below.
+        let _ = self.print_exit_status(handle);
 
         // Check if we should abort on error
-        let failed = match &slot.status {
+        let failed = match &handle.process.as_ref().unwrap().status {
             Status::Exited(exited) => exited.code != 0,
             Status::Signaled(_) => true,
             _ => true,
@@ -507,7 +507,7 @@ impl<'a> State<'a> {
 
         if failed && !self.no_exit_on_error {
             self.abort();
-            return Ok(());
+            return;
         }
 
         if failed {
@@ -521,7 +521,7 @@ impl<'a> State<'a> {
             if !self.aborted {
                 Self::start_dependents(&next);
             }
-            return Ok(());
+            return;
         }
 
         // Success: cascade to all dependents
@@ -531,9 +531,7 @@ impl<'a> State<'a> {
             Self::start_dependents(&group);
             Self::start_dependents(&next);
         }
-        Ok(())
     }
-
     fn start_dependents(dependents: &[*mut ProcessHandle]) {
         for &dependent in dependents {
             // SAFETY: dependent points into State.handles which outlives this call
@@ -590,7 +588,7 @@ impl<'a> State<'a> {
             // handles finish when their exit arrives.
             // SAFETY: same `self.handles` element as above; the exclusive
             // reborrow is confined to this call.
-            let _ = self.maybe_finish(unsafe { &mut *handle });
+            self.maybe_finish(unsafe { &mut *handle });
         }
     }
 

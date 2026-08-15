@@ -1439,8 +1439,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
   function createProject(registryUrl: string, files: Record<string, string>) {
     return tempDir("unmet-peer-", {
       ...files,
-      "bunfig.toml": ({ root }) =>
-        Bun.TOML.stringify({ install: { cache: join(root, ".bun-cache"), registry: registryUrl, linker } }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: registryUrl, linker } }),
     });
   }
 
@@ -1448,7 +1447,10 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     await using proc = spawn({
       cmd: [bunExe(), "install", ...args],
       cwd,
-      env,
+      // The request assertions below need a cache of their own per project: the
+      // environment's cache dir takes precedence over bunfig, and a package
+      // extracted there by one of the concurrent tests is not downloaded again.
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
       stdout: "pipe",
       stderr: "pipe",
       // Only matters if an install never returns.

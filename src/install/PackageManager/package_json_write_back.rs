@@ -58,6 +58,28 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
+/// Queues the root package.json a pnpm migration edited in memory (`pnpm::update_package_json_after_migration`).
+/// Called only where the migrated lockfile is saved, so a load that is not saved (`--frozen-lockfile`, `--dry-run`,
+/// `bun outdated`, ...) leaves the file untouched.
+pub(crate) fn record_migrated_root(manager: &mut PackageManager) {
+    if manager.migrated_package_json_moves.is_empty()
+        || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
+    {
+        return;
+    }
+    let moved = core::mem::take(&mut manager.migrated_package_json_moves);
+    if !manager.options.log_level.is_silent() {
+        bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
+    }
+    record(manager, root_target(), false);
+}
+
+/// For the commands that save the lockfile without going through `install_with_manager` (`bun pm migrate`, `bun pm trust`).
+pub fn write_migrated_root(manager: &mut PackageManager) -> Result<(), crate::Error> {
+    record_migrated_root(manager);
+    flush(manager)
+}
+
 /// Phase 1 (before bun.lock is saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them.
 #[inline]
 pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<()> {

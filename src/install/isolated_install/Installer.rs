@@ -701,8 +701,6 @@ pub struct DownloadError {
     pub(crate) url: Box<[u8]>,
 }
 
-/// One dependency whose bins could not be linked into the failing entry's
-/// `node_modules/.bin`.
 #[derive(Clone, Copy)]
 pub struct DependencyBinariesError {
     pub(crate) dep_entry_id: StoreEntryId,
@@ -713,11 +711,7 @@ pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
     RunScripts(crate::Error),
-    /// The entry's own bins (`Step::Binaries`).
     Binaries(crate::Error),
-    /// Bins of the entry's dependencies (`Step::SymlinkDependencyBinaries`).
-    /// Every dependency is attempted before the step fails, so this holds
-    /// one error per dependency that failed; never empty.
     DependencyBinaries(Box<[DependencyBinariesError]>),
     Patching(Log),
     Download(DownloadError),
@@ -2335,9 +2329,6 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    /// Links the bins of every dependency of `parent_entry_id` into its
-    /// `node_modules/.bin`. A dependency that fails does not stop the rest from
-    /// being linked; the failures are returned together afterwards.
     pub(crate) fn link_dependency_bins(
         &self,
         parent_entry_id: StoreEntryId,

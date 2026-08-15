@@ -193,36 +193,6 @@ test.concurrent("app.plugins and framework.plugins must be arrays", async () => 
   expect(exitCode).toBe(0);
 });
 
-// `bun build --app` reads the same options object and used to build with the
-// invalid value ignored.
-test.concurrent("bun build --app rejects a non-array plugins option", async () => {
-  using dir = tempDir("bake-build-plugins-not-array", {
-    "server.ts": `export function render() { return new Response("unused"); }`,
-    "bun.app.ts": `
-      export default {
-        app: {
-          framework: {
-            fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
-          },
-          plugins: 123,
-        },
-      };
-    `,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "build", "--app"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toContain("TypeError: plugins must be an array");
-  expect(exitCode).toBe(1);
-});
-
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

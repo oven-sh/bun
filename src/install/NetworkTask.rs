@@ -4,14 +4,15 @@ use core::sync::atomic::Ordering;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
-use bun_core::{self, fmt::quote};
-use bun_core::{MutableString, strings};
+use bun_core::fmt::{quote, redacted_npm_url};
+use bun_core::{self, MutableString, strings};
 use bun_http::{
     self as http, AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
 use bun_threading::thread_pool::Batch;
 use bun_url::URL;
+use std::io::Write as _;
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
@@ -459,6 +460,13 @@ impl bun_core::output::ErrName for ForManifestError {
     }
 }
 
+/// Redacted before `quote()`: the password scan only recognizes an unquoted URL.
+fn redacted_url(url: &[u8]) -> Vec<u8> {
+    let mut out: Vec<u8> = Vec::new();
+    let _ = write!(out, "{}", redacted_npm_url(url));
+    out
+}
+
 impl NetworkTask {
     pub(crate) fn for_manifest(
         &mut self,
@@ -492,13 +500,14 @@ impl NetworkTask {
             );
 
             if tmp.tag() == bun_core::Tag::Dead {
+                let redacted_registry = redacted_url(scope.url.href());
                 if !is_optional {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(scope.url.href()),
+                            quote(&redacted_registry),
                             quote(name),
                         ),
                     );
@@ -508,31 +517,8 @@ impl NetworkTask {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Failed to join registry {} and package {} URLs",
-                            quote(scope.url.href()),
+                            quote(&redacted_registry),
                             quote(name),
-                        ),
-                    );
-                }
-                return Err(ForManifestError::InvalidURL);
-            }
-
-            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
-                if !is_optional {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            tmp
-                        ),
-                    );
-                } else {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Registry URL must be http:// or https://\nReceived: \"{}\"",
-                            tmp
                         ),
                     );
                 }
@@ -541,6 +527,30 @@ impl NetworkTask {
 
             // This actually duplicates the string! The WTF managed one above drops at scope exit.
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
+
+            if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
+                let redacted_manifest_url = redacted_url(&url_bytes);
+                if !is_optional {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Registry URL must be http:// or https://\nReceived: {}",
+                            quote(&redacted_manifest_url)
+                        ),
+                    );
+                } else {
+                    log.add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Registry URL must be http:// or https://\nReceived: {}",
+                            quote(&redacted_manifest_url)
+                        ),
+                    );
+                }
+                return Err(ForManifestError::InvalidURL);
+            }
 
             {
                 let joined = URL::parse(&url_bytes);
@@ -553,6 +563,8 @@ impl NetworkTask {
                     || joined.get_port_auto() != registry.get_port_auto()
                     || !joined.pathname.starts_with(registry_dir)
                 {
+                    let redacted_manifest_url = redacted_url(&url_bytes);
+                    let redacted_registry = redacted_url(scope.url.href());
                     if !is_optional {
                         log.add_error_fmt(
                             None,
@@ -560,8 +572,8 @@ impl NetworkTask {
                             format_args!(
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
-                                quote(&url_bytes),
-                                quote(scope.url.href()),
+                                quote(&redacted_manifest_url),
+                                quote(&redacted_registry),
                             ),
                         );
                     } else {
@@ -571,8 +583,8 @@ impl NetworkTask {
                             format_args!(
                                 "Invalid package name {}: manifest URL {} is not on registry {}",
                                 quote(name),
-                                quote(&url_bytes),
-                                quote(scope.url.href()),
+                                quote(&redacted_manifest_url),
+                                quote(&redacted_registry),
                             ),
                         );
                     }
@@ -797,6 +809,7 @@ impl NetworkTask {
         };
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
+            let redacted_tarball_url = redacted_url(&self.url_buf);
             // SAFETY: `pm.log` is the long-lived `*mut Log` the package
             // manager was constructed with.
             pm.log_mut().add_error_fmt(
@@ -804,7 +817,7 @@ impl NetworkTask {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
-                    quote(&self.url_buf),
+                    quote(&redacted_tarball_url),
                     quote(tarball.name.slice()),
                 ),
             );

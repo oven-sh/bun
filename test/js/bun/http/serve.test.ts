@@ -1060,6 +1060,55 @@ describe("streaming", () => {
   });
 });
 
+// A handler's Response reaches the server four ways: returned from fetch(),
+// returned from fetch() through an already-settled promise, returned from
+// error(), and returned from error() through a promise. A Bun.file() or
+// ReadableStream body is still being sent after the handler has returned, and
+// all four paths have to keep the Response alive for it; each must deliver
+// such a body whole.
+describe("file and stream bodies arrive whole from every handler path", () => {
+  const expected = Buffer.alloc(16 * 1024, "p").toString();
+  const chunk = Buffer.alloc(4 * 1024, "p").toString();
+  const boom = (): never => {
+    throw new Error("boom");
+  };
+  type Handlers = { fetch: () => Response | Promise<Response>; error?: () => Response | Promise<Response> };
+  const paths: [label: string, status: number, handlers: (make: () => Response) => Handlers][] = [
+    ["returned from fetch()", 201, make => ({ fetch: make })],
+    ["returned from fetch() through a settled promise", 201, make => ({ fetch: async () => make() })],
+    ["returned from error()", 597, make => ({ fetch: boom, error: make })],
+    ["returned from error() through a settled promise", 597, make => ({ fetch: boom, error: async () => make() })],
+  ];
+  const bodies: [kind: string, body: (dir: string) => Blob | ReadableStream][] = [
+    ["Bun.file()", dir => file(join(dir, "payload.txt"))],
+    [
+      "ReadableStream",
+      () => {
+        let remaining = 4;
+        return new ReadableStream({
+          pull(controller) {
+            controller.enqueue(chunk);
+            if (--remaining === 0) controller.close();
+          },
+        });
+      },
+    ],
+  ];
+
+  describe.each(bodies)("%s body", (_kind, body) => {
+    it.each(paths)("%s", async (_label, status, handlers) => {
+      using dir = tempDir("serve-deferred-body", { "payload.txt": expected });
+      using server = serve({
+        port: 0,
+        development: false,
+        ...handlers(() => new Response(body(String(dir)), { status })),
+      });
+      const response = await fetch(server.url);
+      expect({ status: response.status, body: await response.text() }).toEqual({ status, body: expected });
+    });
+  });
+});
+
 it("should work for a hello world", async () => {
   await runTest(
     {

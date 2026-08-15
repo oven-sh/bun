@@ -299,6 +299,24 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir, ["", PKG1]);
   });
 
+  // Same rule for the other non-registry kinds: the registry has a no-deps, so naming this entry with --latest or an
+  // explicit spec used to replace the folder with the registry package (exit 0).
+  test.each([[["no-deps"]], [["no-deps", "--latest"]], [["no-deps@^1.0.0"]], [["no-deps@latest"]]])(
+    "a file: entry is kept as written by bun update %j",
+    async args => {
+      const dir = await setup({
+        "package.json": root({ dependencies: { "no-deps": "file:./local-no-deps" } }),
+        "local-no-deps/package.json": { name: "no-deps", version: "1.0.0" },
+      });
+      const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+      await run(dir, "update", ...args);
+      expect(await pkgText(dir)).toBe(pkgBefore);
+      expect(await lockText(dir)).toBe(lockBefore);
+      expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.0.0" });
+      await expectInSync(dir);
+    },
+  );
+
   test("bun update <workspace member> from a member declaring it keeps the entry as written", async () => {
     const dir = await setup(WORKSPACES({}, { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:~" } } }));
     const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir, PKG2), lockText(dir)]);

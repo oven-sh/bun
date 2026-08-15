@@ -1336,12 +1336,9 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` keeps a `catalog:` reference or a `workspace:` range as written; `bun add` still replaces them.
+            // `bun update <pkg>` only moves registry entries, like `edit_update_entries`; `bun add` still replaces any entry.
             if manager.subcommand == Subcommand::Update
-                && matches!(
-                    dependency::Tag::infer(e_string.data.slice()),
-                    dependency::Tag::Catalog | dependency::Tag::Workspace
-                )
+                && !dependency::Tag::infer(e_string.data.slice()).is_npm()
             {
                 continue;
             }

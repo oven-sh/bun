@@ -20,7 +20,6 @@
 "parallel_vecs:src/js_printer/lib.rs" = 1
 
 [bun_jsc]
-"bare_bool_args:src/jsc/ZigStackFrame.rs" = 1
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
 "same_match_twice:src/jsc/VirtualMachine.rs" = 1
 

@@ -1051,7 +1051,7 @@ pub mod bv2_impl {
                 pub(crate) specifier: Box<[u8]>,
                 pub(crate) importer_source_index: u32,
                 pub(crate) import_record_index: u32,
-                pub(crate) range: bun_ast::Range,
+                pub(crate) range: Option<bun_ast::Range>,
                 pub(crate) original_target: Target,
             }
 
@@ -2043,7 +2043,7 @@ pub mod bv2_impl {
                     // The pass as a whole fails at its next checkpoint.
                     self.transpiler.log_mut().add_error(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         &b"Bun.build was cancelled: the VM that started it shut down"[..],
                     );
                 }
@@ -2919,7 +2919,7 @@ pub mod bv2_impl {
             {
                 this.transpiler.log_mut().add_error(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     "Code splitting is currently only supported when format is set to \"esm\"",
                 );
             }
@@ -3536,7 +3536,7 @@ pub mod bv2_impl {
                         bun_ast::b::Identifier {
                             r#ref: server_manifest_ref,
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     value: Some(server_manifest_value),
                 }])),
@@ -3557,7 +3557,7 @@ pub mod bv2_impl {
                         bun_ast::b::Identifier {
                             r#ref: ssr_manifest_ref,
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     value: Some(ssr_manifest_value),
                 }])),
@@ -4465,7 +4465,7 @@ pub mod bv2_impl {
                     // we have no way of loading non-files.
                     let _ = log.add_error_fmt(
                         Some(source),
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Module not found {} in namespace {}",
                             bun_core::fmt::quote(source.path.pretty),
@@ -4701,7 +4701,7 @@ pub mod bv2_impl {
                     if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let _ = log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "Module not found {} in namespace {}",
                                 bun_core::fmt::quote(&resolve.import_record.specifier),
@@ -5686,7 +5686,7 @@ pub mod bv2_impl {
                             specifier: entry_point.into(),
                             importer_source_index: u32::MAX, // Sentinel value for entry points
                             import_record_index: 0,
-                            range: bun_ast::Range::NONE,
+                            range: None,
                             original_target: target,
                         },
                     );
@@ -6121,7 +6121,7 @@ pub mod bv2_impl {
                     if self.framework.is_none() {
                         self.log_for_resolution_failures(source.path.text, bake::Graph::Ssr).add_error_fmt(
                             Some(source),
-                            import_record.range.loc,
+                            import_record.range.map(|r| r.loc),
                             format_args!("The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle"),
                         );
                         continue;
@@ -6139,7 +6139,7 @@ pub mod bv2_impl {
                     if !is_supported {
                         self.log_for_resolution_failures(source.path.text, bake::Graph::Ssr).add_error_fmt(
                             Some(source),
-                            import_record.range.loc,
+                            import_record.range.map(|r| r.loc),
                             format_args!("Framework does not have a separate SSR graph to put this import into"),
                         );
                         continue;
@@ -6905,7 +6905,7 @@ pub mod bv2_impl {
                             data: unique_key.into(),
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     empty_html_file_source,
                     // We replace this runtime API call's ref later via .link on the Symbol.
@@ -7046,7 +7046,7 @@ pub mod bv2_impl {
                         .clone_to_with_recycled(this.transpiler.log_mut(), true);
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
-                        || !result.ast.top_level_await_keyword.is_empty();
+                        || result.ast.top_level_await_keyword.is_some();
 
                     // Warning: `input_files` and `ast` arrays may resize in this function call
                     // It is not safe to cache slices from them.
@@ -7354,7 +7354,7 @@ pub mod bv2_impl {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             this.transpiler.log_mut().add_error_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "{} while {}",
                                     bstr::BStr::new(err.err.name()),
@@ -7446,7 +7446,7 @@ pub mod bv2_impl {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct ImportTracker {
         pub(crate) source_index: Index,
-        pub(crate) name_loc: bun_ast::Loc,
+        pub(crate) name_loc: Option<bun_ast::Loc>,
         pub(crate) import_ref: bun_ast::Ref,
     }
 

@@ -488,7 +488,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
-        let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+        let _ = self.log.add_error_fmt(None, None, args);
     }
 
     fn buf(&self) -> &[u8] {
@@ -1069,7 +1069,7 @@ impl Tree {
                 let resolutions = lockfile.packages.items_resolution();
                 let _ = builder.log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
                         names[package_id as usize].fmt(buf),

@@ -8,7 +8,7 @@ use std::fmt::Write as _;
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 
-use bun_ast::{Loc, Log, Source};
+use bun_ast::{Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
@@ -337,7 +337,7 @@ fn generate_client_reference_proxy(
                 ..Default::default()
             }),
             args: bun_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
-            close_parens_loc: Loc::EMPTY,
+            close_parens_loc: None,
             ..Default::default()
         });
 
@@ -354,7 +354,7 @@ fn generate_client_reference_proxy(
                 b.new_expr(E::Arrow {
                     body: G::FnBody {
                         stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
-                        loc: Loc::EMPTY,
+                        loc: None,
                     },
                     ..Default::default()
                 }),
@@ -369,21 +369,14 @@ fn generate_client_reference_proxy(
             // export default registerClientReference(...);
             b.append_stmt(S::ExportDefault {
                 value: StmtOrExpr::Expr(value),
-                default_name: LocRef {
-                    loc: Loc::EMPTY,
-                    ref_,
-                },
+                default_name: LocRef { loc: None, ref_ },
             })?;
         } else {
             // export const Component = registerClientReference(...);
             let export_ref = b.new_symbol(symbol::Kind::Other, key)?;
             b.append_stmt(S::Local {
                 decls: G::DeclList::from_slice(&[G::Decl {
-                    binding: Binding::alloc(
-                        b.bump,
-                        B::Identifier { r#ref: export_ref },
-                        Loc::EMPTY,
-                    ),
+                    binding: Binding::alloc(b.bump, B::Identifier { r#ref: export_ref }, None),
                     value: Some(value),
                 }]),
                 is_export: true,

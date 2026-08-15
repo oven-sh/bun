@@ -418,7 +418,7 @@ impl PackageJSON {
                 if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
                     r_log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Cannot read file \"{}\": {}",
                             bstr::BStr::new(input_path),
@@ -1043,7 +1043,10 @@ pub(crate) struct Visitor<'a> {
 
 impl<'a> Visitor<'a> {
     pub(crate) fn visit(&mut self, expr: js_ast::Expr) -> Entry {
-        let vloc = json_parser::ValueLocation::Property(expr.loc);
+        let vloc = json_parser::ValueLocation::Property(
+            expr.loc
+                .expect("package.json values come from the JSON parser and are located"),
+        );
         match &expr.data {
             js_ast::ExprData::ENull(_) => Entry {
                 data: EntryData::Null,
@@ -1092,7 +1095,10 @@ impl<'a> Visitor<'a> {
         let mut is_conditional_sugar = false;
         for (i, prop) in rows.iter().enumerate() {
             let key: Box<[u8]> = Box::from(prop.key.slice());
-            let key_range: bun_ast::Range = self.source.range_of_string(prop.key_loc);
+            let key_range: bun_ast::Range = self
+                .source
+                .range_of_string(prop.key_loc)
+                .unwrap_or_else(|| bun_ast::Range::at(prop.key_loc));
 
             // If exports is an Object with both a key starting with "." and a key
             // not starting with ".", throw an Invalid Package Configuration error.
@@ -1182,20 +1188,17 @@ impl<'a> Visitor<'a> {
                 js_lexer::range_of_identifier(self.source, vloc.resolve(&self.source.contents))
             }
             // TODO: range of number
-            js_ast::ExprData::ENumber(_) => bun_ast::Range {
+            js_ast::ExprData::ENumber(_) => Some(bun_ast::Range {
                 loc: vloc.resolve(&self.source.contents),
                 len: 1,
-            },
-            _ => bun_ast::Range {
-                loc: vloc.resolve(&self.source.contents),
-                ..bun_ast::Range::NONE
-            },
+            }),
+            _ => Some(bun_ast::Range::at(vloc.resolve(&self.source.contents))),
         };
         self.invalid(first_token)
     }
 
     #[cold]
-    fn invalid(&mut self, first_token: bun_ast::Range) -> Entry {
+    fn invalid(&mut self, first_token: impl Into<Option<bun_ast::Range>>) -> Entry {
         self.log.add_range_warning(
             Some(self.source),
             first_token,

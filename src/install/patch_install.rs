@@ -2,7 +2,7 @@ use crate::lockfile::package::PackageColumns as _;
 
 use bstr::BStr;
 
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -624,7 +624,7 @@ impl PatchTask {
                     bun_ast::add_error_pretty!(
                         log,
                         None,
-                        Loc::EMPTY,
+                        None,
                         "Couldn't find patch file: '{}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>",
                         BStr::new(&calc_hash.patchfile_path),
                         BStr::new(
@@ -642,7 +642,7 @@ impl PatchTask {
                 bun_ast::add_warning_pretty!(
                     log,
                     None,
-                    Loc::EMPTY,
+                    None,
                     "patchfile <b>{}<r> is empty, please restore or delete it.",
                     BStr::new(absolute_patchfile_path.as_bytes()),
                 );
@@ -655,7 +655,7 @@ impl PatchTask {
             bun_ast::add_error_pretty!(
                 log,
                 None,
-                Loc::EMPTY,
+                None,
                 "patchfile <b>{}<r> is empty, please restore or delete it.",
                 BStr::new(absolute_patchfile_path.as_bytes()),
             );
@@ -664,11 +664,7 @@ impl PatchTask {
 
         let file = match sys::File::open(absolute_patchfile_path, sys::O::RDONLY, 0) {
             sys::Result::Err(e) => {
-                log.add_error_fmt(
-                    None,
-                    Loc::EMPTY,
-                    format_args!("failed to open patch file: {}", e),
-                );
+                log.add_error_fmt(None, None, format_args!("failed to open patch file: {}", e));
                 return None;
             }
             sys::Result::Ok(f) => f,
@@ -685,7 +681,7 @@ impl PatchTask {
                 sys::Result::Err(e) => {
                     log.add_error_fmt(
                         None,
-                        Loc::EMPTY,
+                        None,
                         format_args!(
                             "failed to read from patch file: {} ({})",
                             e,

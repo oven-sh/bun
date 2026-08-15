@@ -85,7 +85,7 @@ impl<'a> JsonObjectStringRows<'a> {
 }
 
 impl<'a> Iterator for JsonObjectStringRows<'a> {
-    type Item = (&'a [u8], Option<&'a [u8]>, bun_ast::Loc);
+    type Item = (&'a [u8], Option<&'a [u8]>, Option<bun_ast::Loc>);
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
@@ -101,21 +101,27 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
             }
             Self::Json(iter) => {
                 let row = iter.next()?;
-                Some((row.key.slice(), row.value.as_str(), row.key_loc))
+                Some((row.key.slice(), row.value.as_str(), Some(row.key_loc)))
             }
         }
     }
 }
 
-pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> bun_ast::Loc {
-    crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
+/// The location of the value whose key is at `key_loc`, falling back to the
+/// key's; `None` without a key location.
+pub(crate) fn value_loc_of(
+    source: &bun_ast::Source,
+    key_loc: Option<bun_ast::Loc>,
+) -> Option<bun_ast::Loc> {
+    let key_loc = key_loc?;
+    Some(crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc))
 }
 
 #[cold]
 fn invalid_trusted_dependencies(
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
-    loc: bun_ast::Loc,
+    loc: Option<bun_ast::Loc>,
 ) -> crate::Error {
     let _ = bun_ast::add_error_pretty!(
         log,
@@ -1741,7 +1747,7 @@ impl Package<u64> {
         workspace_ver: Option<SemverVersion>,
         external_alias: ExternalString,
         version: &[u8],
-        key_loc: bun_ast::Loc,
+        key_loc: Option<bun_ast::Loc>,
     ) -> crate::Result<Option<Dependency>> {
         #[cfg(windows)]
         let external_version = 'brk: {
@@ -1945,7 +1951,7 @@ impl Package<u64> {
                         // and this version doesn't match it, fail to install
                         log.add_error_fmt(
                             source,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "No matching version for workspace dependency \"{}\". Version: \"{}\"",
                                 bstr::BStr::new(external_alias.slice(buf)),
@@ -2886,7 +2892,7 @@ impl Package<u64> {
                         workspace_version,
                         external_name,
                         path_,
-                        bun_ast::Loc::EMPTY,
+                        None,
                     )? {
                         let mut dep = dep_;
                         if group.behavior.is_peer()
@@ -2983,7 +2989,7 @@ impl Package<u64> {
                 None,
                 external_name,
                 b"*",
-                bun_ast::Loc::EMPTY,
+                None,
             )? {
                 let mut dep = dep_;
                 dep.behavior.insert(Behavior::OPTIONAL);

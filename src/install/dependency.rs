@@ -672,7 +672,7 @@ impl VersionExt for Version {
             n => {
                 ctx.log.add_error_fmt(
                     None,
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!("Corrupt lockfile: invalid dependency version tag {n}"),
                 );
                 Tag::Uninitialized
@@ -1442,7 +1442,7 @@ pub(crate) fn parse_with_tag(
                 if let Some(log) = log_ {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "invalid or unsupported dependency \"{}\"",
                             bstr::BStr::new(dependency)
@@ -1565,7 +1565,7 @@ pub(crate) fn parse_with_tag(
                 if let Some(log) = log_ {
                     log.add_error_fmt(
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!("Unsupported protocol {}", bstr::BStr::new(dependency)),
                     );
                 }

@@ -3,7 +3,7 @@ use std::io::Write as _;
 use crate::Error;
 use crate::cli::command::Context;
 use bun_ast::{E, Expr, ExprData, G};
-use bun_ast::{Loc, Log, Source};
+use bun_ast::{Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -667,7 +667,7 @@ impl PmPkgCommand {
         if nested_obj.is_none()
             || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
         {
-            let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
+            let new_obj = Expr::init(E::Object::default(), None);
 
             root.data
                 .e_object_mut()
@@ -688,19 +688,19 @@ impl PmPkgCommand {
     fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
         if parse_json {
             if value == b"true" {
-                return Ok(Expr::init(E::Boolean { value: true }, Loc::EMPTY));
+                return Ok(Expr::init(E::Boolean { value: true }, None));
             } else if value == b"false" {
-                return Ok(Expr::init(E::Boolean { value: false }, Loc::EMPTY));
+                return Ok(Expr::init(E::Boolean { value: false }, None));
             } else if value == b"null" {
-                return Ok(Expr::init(E::Null {}, Loc::EMPTY));
+                return Ok(Expr::init(E::Null {}, None));
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
+                return Ok(Expr::init(E::Number::new(int_val as f64), None));
             }
 
             if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
+                return Ok(Expr::init(E::Number::new(float_val), None));
             }
 
             let temp_source = Source::init_path_string(b"package.json", value);
@@ -711,11 +711,11 @@ impl PmPkgCommand {
                 return Ok(json_expr);
             } else {
                 let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-                return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
+                return Ok(Expr::init(E::String::init(data), None));
             }
         } else {
             let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-            Ok(Expr::init(E::String::init(data), Loc::EMPTY))
+            Ok(Expr::init(E::String::init(data), None))
         }
     }
 

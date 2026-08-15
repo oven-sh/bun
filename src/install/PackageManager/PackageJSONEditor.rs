@@ -213,17 +213,14 @@ pub(crate) fn edit_patched_dependencies(
         }
     }
 
-    let patchfile_expr = Expr::init(
-        E::EString::init(arena_dup(arena, patchfile_path)),
-        bun_ast::Loc::EMPTY,
-    );
+    let patchfile_expr = Expr::init(E::EString::init(arena_dup(arena, patchfile_path)), None);
 
     patched_dependencies.put(arena, arena_dup(arena, patch_key), patchfile_expr)?;
 
     package_json.data.e_object_mut().unwrap().put(
         arena,
         b"patchedDependencies",
-        Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
+        Expr::init(patched_dependencies, None),
     )?;
     Ok(())
 }
@@ -281,7 +278,7 @@ pub fn edit_trusted_dependencies(
             while i > 0 {
                 i -= 1;
                 if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
-                    deps[i] = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
+                    deps[i] = Expr::init(E::EString::init(name), None);
                     break;
                 }
             }
@@ -309,7 +306,7 @@ pub fn edit_trusted_dependencies(
                 items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
                 ..Default::default()
             },
-            bun_ast::Loc::EMPTY,
+            None,
         )
     };
 
@@ -334,7 +331,7 @@ pub fn edit_trusted_dependencies(
         let root_properties: Vec<G::Property> = vec![G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
-                bun_ast::Loc::EMPTY,
+                None,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
@@ -345,7 +342,7 @@ pub fn edit_trusted_dependencies(
                 properties: G::PropertyList::move_from_list(root_properties),
                 ..Default::default()
             },
-            bun_ast::Loc::EMPTY,
+            None,
         );
     } else if needs_new_trusted_dependencies_list {
         let obj = package_json
@@ -360,7 +357,7 @@ pub fn edit_trusted_dependencies(
         root_properties.push(G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
-                bun_ast::Loc::EMPTY,
+                None,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
@@ -370,7 +367,7 @@ pub fn edit_trusted_dependencies(
                 properties: G::PropertyList::move_from_list(root_properties),
                 ..Default::default()
             },
-            bun_ast::Loc::EMPTY,
+            None,
         );
     }
     Ok(())
@@ -522,11 +519,8 @@ fn edit_update_entries(
                                 continue;
                             }
                             changed = true;
-                            dep.value = Some(Expr::allocate(
-                                arena,
-                                E::EString::init(temp_version),
-                                bun_ast::Loc::EMPTY,
-                            ));
+                            dep.value =
+                                Some(Expr::allocate(arena, E::EString::init(temp_version), None));
                         }
                     }
                 } else {
@@ -629,7 +623,7 @@ fn edit_update_entries(
                                     dep.value = Some(Expr::allocate(
                                         arena,
                                         E::EString::init(arena_str(arena, &new_version)),
-                                        bun_ast::Loc::EMPTY,
+                                        None,
                                     ));
                                     break 'updated;
                                 }
@@ -742,11 +736,7 @@ pub(crate) fn edit_catalogs_before_update(
 
             if update_to_latest {
                 let temp_version = with_alias_of(arena, version_literal, b"latest");
-                dep.value = Some(Expr::allocate(
-                    arena,
-                    E::EString::init(temp_version),
-                    bun_ast::Loc::EMPTY,
-                ));
+                dep.value = Some(Expr::allocate(arena, E::EString::init(temp_version), None));
             }
         }
         Ok(())
@@ -814,11 +804,7 @@ pub(crate) fn edit_catalogs_after_update(
 
             changed |= !strings::eql_long(new_literal, &info.original_version_literal, true);
 
-            dep.value = Some(Expr::allocate(
-                arena,
-                E::EString::init(new_literal),
-                bun_ast::Loc::EMPTY,
-            ));
+            dep.value = Some(Expr::allocate(arena, E::EString::init(new_literal), None));
         }
         Ok(())
     })?;
@@ -1195,14 +1181,14 @@ pub(crate) fn edit(
                         arena,
                         request.get_resolved_name(&manager.lockfile),
                     )),
-                    bun_ast::Loc::EMPTY,
+                    None,
                 ));
 
                 new_dependencies[k].value = Some(Expr::allocate(
                     arena,
                     // we set it later
                     E::EString::init(b""),
-                    bun_ast::Loc::EMPTY,
+                    None,
                 ));
 
                 request.e_string = Some(
@@ -1240,7 +1226,7 @@ pub(crate) fn edit(
                     properties: bun_alloc::AstAlloc::vec(),
                     ..Default::default()
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             )
         };
 
@@ -1268,7 +1254,7 @@ pub(crate) fn edit(
                 key: Some(Expr::allocate(
                     arena,
                     E::EString::init(arena_dup(arena, dependency_list)),
-                    bun_ast::Loc::EMPTY,
+                    None,
                 )),
                 value: Some(dependencies_object),
                 ..Default::default()
@@ -1280,7 +1266,7 @@ pub(crate) fn edit(
                     properties: G::PropertyList::move_from_list(root_properties),
                     ..Default::default()
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             );
         } else if needs_new_dependency_list {
             let obj = current_package_json
@@ -1296,7 +1282,7 @@ pub(crate) fn edit(
                 key: Some(Expr::allocate(
                     arena,
                     E::EString::init(arena_dup(arena, dependency_list)),
-                    bun_ast::Loc::EMPTY,
+                    None,
                 )),
                 value: Some(dependencies_object),
                 ..Default::default()
@@ -1307,7 +1293,7 @@ pub(crate) fn edit(
                     properties: G::PropertyList::move_from_list(root_properties),
                     ..Default::default()
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             );
         }
     }

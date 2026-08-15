@@ -439,7 +439,6 @@ type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 pub mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
     use bun_analytics::{OperatingSystem, Platform};
-    use bun_ast::Loc;
     use bun_ast::e::EString;
     use bun_ast::{E, Expr, G};
     use bun_core::Environment::Architecture;
@@ -471,7 +470,7 @@ pub mod BunInfo {
 
     #[inline]
     fn str_expr(s: &[u8]) -> Expr {
-        Expr::init(EString::init(s), Loc::EMPTY)
+        Expr::init(EString::init(s), None)
     }
 
     #[inline]
@@ -506,7 +505,7 @@ pub mod BunInfo {
                 is_single_line: false,
                 ..E::Object::default()
             },
-            Loc::EMPTY,
+            None,
         );
 
         let root_props = bun_alloc::AstAlloc::vec_from_iter([
@@ -519,7 +518,7 @@ pub mod BunInfo {
                 is_single_line: false,
                 ..E::Object::default()
             },
-            Loc::EMPTY,
+            None,
         ))
     }
 }

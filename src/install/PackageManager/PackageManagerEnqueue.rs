@@ -126,7 +126,7 @@ pub fn enqueue_dependency_list(
             if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
                 log.add_warning_with_note(
                     None,
-                    bun_ast::Loc::default(),
+                    None,
                     err.name().as_bytes(),
                     format_args!("error occurred while resolving {}", path_fmt),
                 );
@@ -803,7 +803,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.log_mut()
                     .add_error_fmt(
                                                 None,
-                                                bun_ast::Loc::EMPTY,
+                                                None,
                                                 format_args!(
                                                     "Package \"{}\" with tag \"{}\" not found, but package exists",
                                                     bstr::BStr::new(this.lockfile.str(&name)),
@@ -823,7 +823,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
                                             None,
-                                            bun_ast::Loc::EMPTY,
+                                            None,
                                             "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
                                             bstr::BStr::new(this.lockfile.str(&version.literal)),
                                             bstr::BStr::new(this.lockfile.str(&name)),
@@ -842,7 +842,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             bun_ast::add_error_pretty!(
                                                 this.log_mut(),
                                                 None,
-                                                bun_ast::Loc::EMPTY,
+                                                None,
                                                 "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(
@@ -854,7 +854,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             bun_ast::add_error_pretty!(
                                                 this.log_mut(),
                                                 None,
-                                                bun_ast::Loc::EMPTY,
+                                                None,
                                                 "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(
@@ -874,7 +874,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.log_mut()
                     .add_error_fmt(
                                                 None,
-                                                bun_ast::Loc::EMPTY,
+                                                None,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
                                                     bstr::BStr::new(this.lockfile.str(version.folder())),
@@ -884,7 +884,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     } else {
                                         this.log_mut().add_error_fmt(
                                             None,
-                                            bun_ast::Loc::EMPTY,
+                                            None,
                                             format_args!(
                                                 "Could not find package.json for dependency \"{}\"",
                                                 bstr::BStr::new(this.lockfile.str(&name)),
@@ -1078,7 +1078,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         let min_age_seconds = min_age_ms / MS_PER_S;
                                                         let _ = this.log_mut().add_error_fmt(
                                                             None,
-                                                            bun_ast::Loc::EMPTY,
+                                                            None,
                                                             format_args!(
                                                                 "Version \"{}@{}\" was published within minimum release age of {} seconds",
                                                                 bstr::BStr::new(package_name),
@@ -1467,7 +1467,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     bun_ast::add_error_pretty!(
                         this.log_mut(),
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                         bstr::BStr::new(this.lockfile.str(&name)),
                         PackageWorkspaceSearchPathFormatter {
@@ -1480,7 +1480,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     bun_ast::add_error_pretty!(
                         this.log_mut(),
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
                         bstr::BStr::new(this.lockfile.str(&name)),
                     );
@@ -1490,7 +1490,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     bun_ast::add_warning_pretty!(
                         this.log_mut(),
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         "Workspace dependency \"{}\" not found\n\nSearched in <b>{}<r>\n\nWorkspace documentation: https://bun.com/docs/install/workspaces\n\n",
                         bstr::BStr::new(this.lockfile.str(&name)),
                         PackageWorkspaceSearchPathFormatter {
@@ -1503,7 +1503,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     bun_ast::add_warning_pretty!(
                         this.log_mut(),
                         None,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         "Package \"{}\" is not linked\n\nTo install a linked package:\n   <cyan>bun link my-pkg-name-from-package-json<r>\n\nTip: the package name is from package.json, which can differ from the folder name.\n\n",
                         bstr::BStr::new(this.lockfile.str(&name)),
                     );
@@ -2288,7 +2288,7 @@ fn get_or_put_resolved_package(
                             let existing_package = this.lockfile.packages.get(existing_id as usize);
                             this.log_mut().add_warning_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "incorrect peer dependency \"{}@{}\"",
                                     existing_package
@@ -2339,7 +2339,7 @@ fn get_or_put_resolved_package(
                                 this.lockfile.packages.get(existing_package_id as usize);
                             this.log_mut().add_warning_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "incorrect peer dependency \"{}@{}\"",
                                     existing_package

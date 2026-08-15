@@ -378,7 +378,7 @@ impl<'a> RouteLoader<'a> {
                 let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
                 self.log.add_error_fmt(
                     Some(&source),
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!(
                         "Route \"{}\" is already defined by {}",
                         bstr::BStr::new(route.name),
@@ -404,7 +404,7 @@ impl<'a> RouteLoader<'a> {
                     let source = bun_ast::Source::init_empty_file(new_route.abs_path.as_bytes());
                     self.log.add_error_fmt(
                         Some(&source),
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Route \"{}\" is already defined by {}",
                             bstr::BStr::new(new_route.name),
@@ -433,7 +433,7 @@ impl<'a> RouteLoader<'a> {
                     let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
                     self.log.add_error_fmt(
                         Some(&source),
-                        bun_ast::Loc::EMPTY,
+                        None,
                         format_args!(
                             "Route \"{}\" is already defined by {}",
                             bstr::BStr::new(route.name),
@@ -893,7 +893,7 @@ impl Route {
                             needs_close.set(false);
                             log.add_error_fmt(
                                 None,
-                                bun_ast::Loc::EMPTY,
+                                None,
                                 format_args!(
                                     "{} opening route: {}",
                                     bstr::BStr::new(err.name()),
@@ -912,7 +912,7 @@ impl Route {
                     Err(err) => {
                         log.add_error_fmt(
                             None,
-                            bun_ast::Loc::EMPTY,
+                            None,
                             format_args!(
                                 "{} resolving route: {}",
                                 bstr::BStr::new(err.name()),
@@ -1267,7 +1267,7 @@ pub mod pattern {
                 let source = bun_ast::Source::init_empty_file(input);
                 log.add_error_fmt(
                     Some(&source),
-                    bun_ast::Loc::EMPTY,
+                    None,
                     format_args!("Route name must be plaintext"),
                 );
                 return None;
@@ -1287,14 +1287,14 @@ pub mod pattern {
                             PatternParseError::CatchAllMustBeAtTheEnd => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!("Catch-all route must be at the end of the path"),
                                 );
                             }
                             PatternParseError::InvalidCatchAllRoute => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!(
                                         "Invalid catch-all route, e.g. should be [...param]"
                                     ),
@@ -1303,7 +1303,7 @@ pub mod pattern {
                             PatternParseError::InvalidOptionalCatchAllRoute => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!(
                                         "Invalid optional catch-all route, e.g. should be [[...param]]"
                                     ),
@@ -1312,21 +1312,21 @@ pub mod pattern {
                             PatternParseError::InvalidRoutePattern => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!("Invalid dynamic route"),
                                 );
                             }
                             PatternParseError::MissingParamName => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!("Route is missing a parameter name, e.g. [param]"),
                                 );
                             }
                             PatternParseError::PatternMissingClosingBracket => {
                                 log.add_error_fmt(
                                     Some(&source),
-                                    bun_ast::Loc::EMPTY,
+                                    None,
                                     format_args!("Route is missing a closing bracket]"),
                                 );
                             }

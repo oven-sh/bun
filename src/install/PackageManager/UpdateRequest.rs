@@ -1,7 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
@@ -231,7 +231,7 @@ impl UpdateRequest {
                 } else {
                     log.add_error_fmt(
                         None,
-                        Loc::EMPTY,
+                        None,
                         format_args!(
                             "unrecognised dependency format: {}",
                             bstr::BStr::new(positional)
@@ -270,7 +270,7 @@ impl UpdateRequest {
                 } else {
                     log.add_error_fmt(
                         None,
-                        Loc::EMPTY,
+                        None,
                         format_args!(
                             "unrecognised dependency format: {}",
                             bstr::BStr::new(positional)

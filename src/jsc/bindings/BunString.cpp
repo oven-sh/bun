@@ -444,7 +444,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(bytes), length });
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length });
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }

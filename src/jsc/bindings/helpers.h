@@ -72,6 +72,37 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
+// WTF::String::fromUTF8ReplacingInvalidSequences sizes its intermediate
+// Vector<char16_t> by the UTF-8 *byte* count, and Vector CRASH()es past
+// isValidCapacityForVector<char16_t> (~2^30) elements, so a 1-2 GiB
+// non-ASCII string aborts the process even when the resulting UTF-16
+// string would fit in a WTF::String. Convert oversized input with an
+// exact-size allocation instead (the BunString__fromUTF8 idiom);
+// oversized invalid UTF-8 yields the null string, matching the other
+// "too long" paths in this file.
+static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
+{
+    if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
+        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
+
+    const char* data = reinterpret_cast<const char*>(bytes.data());
+    if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
+        return {};
+    size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
+    if (utf16Length == bytes.size()) {
+        // Every byte is one UTF-16 unit, i.e. all-ASCII: keep it 8-bit.
+        return WTF::StringImpl::create(bytes);
+    }
+    if (utf16Length > WTF::String::MaxLength) [[unlikely]]
+        return {};
+    std::span<char16_t> out;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(utf16Length, out);
+    if (!impl) [[unlikely]]
+        return {};
+    RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(data, bytes.size(), out.data()) == utf16Length);
+    return WTF::String(WTF::move(impl));
+}
+
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
 static const WTF::String toString(ZigString str)
 {
@@ -92,7 +123,7 @@ static const WTF::String toString(ZigString str)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        return convertUTF8ToString(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
@@ -132,7 +163,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
+        return convertUTF8ToString(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
@@ -160,7 +191,7 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
+        return convertUTF8ToString(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
@@ -188,7 +219,7 @@ static const WTF::String toStringCopy(ZigString str)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        return convertUTF8ToString(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
@@ -223,7 +254,7 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
                 return;
             }
         }
-        WTF::String converted = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        WTF::String converted = convertUTF8ToString(std::span { untag(str.ptr), str.len });
         builder.append(converted);
         return;
     }

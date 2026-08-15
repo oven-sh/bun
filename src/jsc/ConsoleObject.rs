@@ -223,11 +223,13 @@ impl ParentWorkerWriter {
         }
     }
 
-    /// SAFETY: `writer` is the `head` of a live `ParentWorkerWriter` (repr(C), first field).
+    /// # Safety
+    /// `writer` is the `head` of a live `ParentWorkerWriter` (repr(C), first field).
     unsafe fn write_all(
         writer: *mut bun_core::io::Writer,
         bytes: &[u8],
     ) -> bun_core::CrateResult<()> {
+        // SAFETY: fn contract — `head` is the first field of a repr(C) `Self`.
         let this = unsafe { &mut *writer.cast::<Self>() };
         this.buffered.extend_from_slice(bytes);
         if this.buffered.len() >= Self::FLUSH_AT {
@@ -236,8 +238,10 @@ impl ParentWorkerWriter {
         Ok(())
     }
 
-    /// SAFETY: as for [`Self::write_all`].
+    /// # Safety
+    /// As for [`Self::write_all`].
     unsafe fn flush(writer: *mut bun_core::io::Writer) -> bun_core::CrateResult<()> {
+        // SAFETY: fn contract — `head` is the first field of a repr(C) `Self`.
         unsafe { &mut *writer.cast::<Self>() }.post();
         Ok(())
     }

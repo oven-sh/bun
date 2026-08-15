@@ -3,8 +3,6 @@
 // point; node:worker_threads requires it too (on any thread) for the binding and what was set up here.
 // It must stay cheap: nothing here loads streams, console or path — those come in on first use.
 
-declare const self: typeof globalThis;
-
 const binding = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as unknown[];
 const rawWorkerData = binding[0] as any;
 const threadId = binding[1] as number;

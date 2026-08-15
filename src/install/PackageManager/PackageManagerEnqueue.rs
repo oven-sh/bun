@@ -2704,24 +2704,7 @@ fn get_or_put_resolved_package(
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Workspace => {
             if !behavior.is_workspace() && !this.lockfile.is_workspace_dependency(dependency_id) {
@@ -2776,24 +2759,7 @@ fn get_or_put_resolved_package(
                 this,
             );
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Symlink => {
             let link_dir = package_manager_real::global_link_dir_path(this);
@@ -2805,28 +2771,30 @@ fn get_or_put_resolved_package(
                 this,
             );
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
 
         _ => Ok(None),
     }
+}
+
+fn resolved_folder_package(
+    this: &mut PackageManager,
+    res: FolderResolutionValue,
+    dependency_id: DependencyID,
+    success_fn: SuccessFn,
+) -> crate::Result<Option<ResolvedPackageResult>> {
+    let (package_id, is_first_time) = match res {
+        FolderResolutionValue::Err(err) => return Err(err),
+        FolderResolutionValue::PackageId(package_id) => (package_id, false),
+        FolderResolutionValue::NewPackageId(package_id) => (package_id, true),
+    };
+    success_fn(this, dependency_id, package_id);
+    Ok(Some(ResolvedPackageResult {
+        package: *this.lockfile.packages.get(package_id as usize),
+        is_first_time,
+        task: None,
+    }))
 }
 
 /// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
@@ -2889,10 +2857,7 @@ fn locked_version_in_lockfile<'a>(
         return None;
     }
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
     let range = &version.npm().version;
@@ -2925,10 +2890,7 @@ fn patched_package_satisfying(
     if lockfile.patched_dependencies.count() == 0 {
         return None;
     }
-    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
     candidates.iter().copied().find(|&id| {

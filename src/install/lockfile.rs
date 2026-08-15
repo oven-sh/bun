@@ -323,6 +323,17 @@ pub enum LoadStep {
     Migrating,
 }
 
+impl LoadStep {
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            LoadStep::OpenFile => "open",
+            LoadStep::ReadFile => "read",
+            LoadStep::ParseFile => "parse",
+            LoadStep::Migrating => "migrate",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Migrated {
     #[default]
@@ -2559,6 +2570,15 @@ pub mod package_index {
     pub enum Entry {
         Id(PackageID),
         Ids(PackageIDList),
+    }
+
+    impl Entry {
+        pub(crate) fn as_slice(&self) -> &[PackageID] {
+            match self {
+                Entry::Id(id) => core::slice::from_ref(id),
+                Entry::Ids(ids) => ids.as_slice(),
+            }
+        }
     }
 
     impl Default for Entry {

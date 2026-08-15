@@ -168,8 +168,7 @@ impl PatchTask {
                 // cannot hold a `&mut ch` across the call.
             }
             Callback::Apply(_) => {
-                // bun.handleOom(this.apply()) → panic on OOM.
-                self.apply().expect("OOM");
+                bun_core::handle_oom(self.apply());
             }
         }
         let mgr = self.manager.as_ptr();

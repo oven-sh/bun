@@ -205,9 +205,20 @@ impl InstallResult {
     pub(crate) fn fail(
         err: crate::Error,
         step: Step,
-        _trace: Option<&bun_crash_handler::StackTrace>,
+        trace: Option<&bun_crash_handler::StackTrace>,
     ) -> InstallResult {
-        InstallResult::Failure(Box::new(Failure {
+        InstallResult::Failure(Failure::boxed(err, step, trace))
+    }
+}
+
+impl Failure {
+    #[inline]
+    fn boxed(
+        err: crate::Error,
+        step: Step,
+        _trace: Option<&bun_crash_handler::StackTrace>,
+    ) -> Box<Failure> {
+        Box::new(Failure {
             err,
             step,
             #[cfg(bun_debug)]
@@ -215,11 +226,7 @@ impl InstallResult {
                 Some(t) => bun_core::StoredTrace::from(Some(t)),
                 None => bun_core::StoredTrace::capture(None /* @returnAddress() */),
             },
-        }))
-    }
-
-    fn is_fail(&self) -> bool {
-        matches!(self, InstallResult::Failure(_))
+        })
     }
 }
 
@@ -276,10 +283,11 @@ impl PackageInstall<'_> {
 
 // ───────────────────────────── InstallDirState ─────────────────────────────
 
+/// What `init_install_dir` opens for one package install. `walker` owns the
+/// cache directory it walks.
 struct InstallDirState {
-    cached_package_dir: Dir,
-    // `Walker` has no `Default`; wrap in Option.
-    walker: Option<Walker>,
+    walker: Walker,
+    /// Not opened on Windows; the copy loops there work from `buf`/`buf2`.
     subdir: Dir,
     // A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
@@ -295,27 +303,6 @@ struct InstallDirState {
     to_copy_buf_off: usize, // offset into `buf` where the copy-target tail starts
     #[cfg(windows)]
     to_copy_buf2_off: usize, // offset into `buf2` where the copy-target tail starts
-}
-
-impl Default for InstallDirState {
-    fn default() -> Self {
-        Self {
-            cached_package_dir: Dir::from_fd(Fd::INVALID),
-            walker: None,
-            #[cfg(not(windows))]
-            subdir: Dir::from_fd(Fd::INVALID),
-            #[cfg(windows)]
-            subdir: Dir::from_fd(Fd::INVALID),
-            #[cfg(windows)]
-            buf: bun_paths::w_path_buffer_pool::get(),
-            #[cfg(windows)]
-            buf2: bun_paths::w_path_buffer_pool::get(),
-            #[cfg(windows)]
-            to_copy_buf_off: 0,
-            #[cfg(windows)]
-            to_copy_buf2_off: 0,
-        }
-    }
 }
 
 // ───────────────────────────── helpers ─────────────────────────────
@@ -1031,8 +1018,8 @@ impl<'a> PackageInstall<'a> {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err, Step::OpeningCacheDir, None)),
         };
-        let mut walker_ = match walker_skippable::walk(
-            cached_package_dir.fd(),
+        let mut walker_ = match walker_skippable::walk_owned(
+            cached_package_dir,
             &[] as &[&OSPathSlice],
             &[] as &[&OSPathSlice],
         ) {
@@ -1140,14 +1127,13 @@ impl<'a> PackageInstall<'a> {
 
     fn init_install_dir(
         &mut self,
-        state: &mut InstallDirState,
         destination_dir: &Dir,
         method: Method,
-    ) -> InstallResult {
+    ) -> Result<InstallDirState, Box<Failure>> {
         let destbase = destination_dir;
         let destpath = self.destination_dir_subpath;
 
-        state.cached_package_dir = match {
+        let cached_package_dir = match {
             #[cfg(windows)]
             {
                 if method == Method::Symlink {
@@ -1167,7 +1153,7 @@ impl<'a> PackageInstall<'a> {
             }
         } {
             Ok(d) => d,
-            Err(err) => return InstallResult::fail(err, Step::OpeningCacheDir, None),
+            Err(err) => return Err(Failure::boxed(err, Step::OpeningCacheDir, None)),
         };
 
         // `bun.OSPathLiteral("node_modules")` — u8 on posix / u16 on windows.
@@ -1197,19 +1183,16 @@ impl<'a> PackageInstall<'a> {
             &[]
         };
 
-        state.walker = Some(
-            walker_skippable::walk(
-                state.cached_package_dir.fd(),
-                &[] as &[&OSPathSlice],
-                skip_dirs,
-            )
-            .expect("oom"), // bun.handleOom
-        );
-        state.walker.as_mut().unwrap().resolve_unknown_entry_types = true;
+        let mut walker = bun_core::handle_oom(walker_skippable::walk_owned(
+            cached_package_dir,
+            &[] as &[&OSPathSlice],
+            skip_dirs,
+        ));
+        walker.resolve_unknown_entry_types = true;
 
         #[cfg(not(windows))]
         {
-            state.subdir = match destbase.make_open_path(
+            let subdir = match destbase.make_open_path(
                 destpath.as_bytes(),
                 OpenDirOptions {
                     iterate: true,
@@ -1217,19 +1200,17 @@ impl<'a> PackageInstall<'a> {
                 },
             ) {
                 Ok(d) => d,
-                Err(err) => {
-                    // Drop on the caller's `state` runs unconditionally on this early
-                    // return, so an explicit close here would double-close. Drop handles it.
-                    return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
-                }
+                Err(err) => return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None)),
             };
-            return InstallResult::Success;
+            return Ok(InstallDirState { walker, subdir });
         }
 
         #[cfg(windows)]
         {
             let _ = destbase;
             let mut join_buf = path::path_buffer_pool::get();
+            let mut buf = bun_paths::w_path_buffer_pool::get();
+            let mut buf2 = bun_paths::w_path_buffer_pool::get();
 
             // `\\?\`-prefixed so CopyFileW/CreateHardLinkW accept >MAX_PATH.
             let dest_dir = path::resolve_path::join_abs_string_buf::<path::platform::Windows>(
@@ -1237,53 +1218,59 @@ impl<'a> PackageInstall<'a> {
                 &mut join_buf.0,
                 &[destpath.as_bytes()],
             );
-            let mut i = strings::to_kernel32_path(&mut state.buf[..], dest_dir).len();
+            let mut i = strings::to_kernel32_path(&mut buf[..], dest_dir).len();
             if i == 0 {
-                return InstallResult::fail(
+                return Err(Failure::boxed(
                     crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
                     Step::OpeningDestDir,
                     None,
-                );
+                ));
             }
-            if state.buf[i - 1] != u16::from(b'\\') {
-                state.buf[i] = u16::from(b'\\');
+            if buf[i - 1] != u16::from(b'\\') {
+                buf[i] = u16::from(b'\\');
                 i += 1;
             }
-            state.buf[i] = 0;
-            let fullpath = bun_core::WStr::from_buf(&state.buf[..], i);
+            buf[i] = 0;
+            let fullpath = bun_core::WStr::from_buf(&buf[..], i);
 
             let _ = mkdir_recursive_os_path(fullpath);
-            state.to_copy_buf_off = fullpath.len();
+            let to_copy_buf_off = fullpath.len();
 
             let cache_dir = path::resolve_path::join_abs_string_buf::<path::platform::Windows>(
                 self.cache_dir_path,
                 &mut join_buf.0,
                 &[self.cache_dir_subpath.as_bytes()],
             );
-            let n = strings::to_kernel32_path(&mut state.buf2[..], cache_dir).len();
+            let n = strings::to_kernel32_path(&mut buf2[..], cache_dir).len();
             if n == 0 {
-                return InstallResult::fail(
+                return Err(Failure::boxed(
                     crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
                     Step::CopyingFiles,
                     None,
-                );
+                ));
             }
-            state.to_copy_buf2_off = if state.buf2[n - 1] != u16::from(b'\\') {
-                state.buf2[n] = u16::from(b'\\');
+            let to_copy_buf2_off = if buf2[n - 1] != u16::from(b'\\') {
+                buf2[n] = u16::from(b'\\');
                 n + 1
             } else {
                 n
             };
-            InstallResult::Success
+            Ok(InstallDirState {
+                walker,
+                subdir: Dir::from_fd(Fd::INVALID),
+                buf,
+                buf2,
+                to_copy_buf_off,
+                to_copy_buf2_off,
+            })
         }
     }
 
     fn install_with_copyfile(&mut self, destination_dir: &Dir) -> InstallResult {
-        let mut state = InstallDirState::default();
-        let res = self.init_install_dir(&mut state, destination_dir, Method::Copyfile);
-        if res.is_fail() {
-            return res;
-        }
+        let mut state = match self.init_install_dir(destination_dir, Method::Copyfile) {
+            Ok(state) => state,
+            Err(failure) => return InstallResult::Failure(failure),
+        };
 
         #[cfg(windows)]
         type WinSlice<'b> = &'b mut [u16];
@@ -1499,7 +1486,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         let result = copy(
             &state.subdir,
-            state.walker.as_mut().unwrap(),
+            &mut state.walker,
             self.progress.as_deref_mut(),
             state.to_copy_buf_off,
             &mut state.buf[..],
@@ -1509,9 +1496,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         let result = copy(
             &state.subdir,
-            // Field-projected `&mut` so the `&state.subdir` borrow above stays disjoint
-            // (`state.walker()` would reborrow `&mut state` and conflict).
-            state.walker.as_mut().unwrap(),
+            &mut state.walker,
             self.progress.as_deref_mut(),
             (),
             (),
@@ -1527,11 +1512,10 @@ impl<'a> PackageInstall<'a> {
     }
 
     fn install_with_hardlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
-        let mut state = InstallDirState::default();
-        let res = self.init_install_dir(&mut state, dest_dir, Method::Hardlink);
-        if res.is_fail() {
-            return Ok(res);
-        }
+        let mut state = match self.init_install_dir(dest_dir, Method::Hardlink) {
+            Ok(state) => state,
+            Err(failure) => return Ok(InstallResult::Failure(failure)),
+        };
 
         #[cfg(windows)]
         type WinSlice<'b> = &'b mut [u16];
@@ -1684,21 +1668,14 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         let result = copy(
             &state.subdir,
-            state.walker.as_mut().unwrap(),
+            &mut state.walker,
             state.to_copy_buf_off,
             &mut state.buf[..],
             state.to_copy_buf2_off,
             &mut state.buf2[..],
         );
         #[cfg(not(windows))]
-        let result = copy(
-            &state.subdir,
-            state.walker.as_mut().unwrap(),
-            (),
-            (),
-            (),
-            (),
-        );
+        let result = copy(&state.subdir, &mut state.walker, (), (), (), ());
 
         if let Err(err) = result {
             #[cfg(windows)]
@@ -1723,11 +1700,10 @@ impl<'a> PackageInstall<'a> {
     }
 
     fn install_with_symlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
-        let mut state = InstallDirState::default();
-        let res = self.init_install_dir(&mut state, dest_dir, Method::Symlink);
-        if res.is_fail() {
-            return Ok(res);
-        }
+        let mut state = match self.init_install_dir(dest_dir, Method::Symlink) {
+            Ok(state) => state,
+            Err(failure) => return Ok(InstallResult::Failure(failure)),
+        };
 
         #[cfg(not(windows))]
         let mut buf2 = PathBuffer::uninit();
@@ -1889,7 +1865,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(windows)]
         let result = copy(
             &state.subdir,
-            state.walker.as_mut().unwrap(),
+            &mut state.walker,
             state.to_copy_buf_off,
             &mut state.buf[..],
             state.to_copy_buf2_off,
@@ -1898,7 +1874,7 @@ impl<'a> PackageInstall<'a> {
         #[cfg(not(windows))]
         let result = copy(
             &state.subdir,
-            state.walker.as_mut().unwrap(),
+            &mut state.walker,
             (),
             (),
             to_copy_buf2_offset,

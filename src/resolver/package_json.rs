@@ -1043,10 +1043,7 @@ pub(crate) struct Visitor<'a> {
 
 impl<'a> Visitor<'a> {
     pub(crate) fn visit(&mut self, expr: js_ast::Expr) -> Entry {
-        let vloc = json_parser::ValueLocation::Property(
-            expr.loc
-                .expect("package.json values come from the JSON parser and are located"),
-        );
+        let vloc = json_parser::ValueLocation::At(expr.loc);
         match &expr.data {
             js_ast::ExprData::ENull(_) => Entry {
                 data: EntryData::Null,
@@ -1083,7 +1080,7 @@ impl<'a> Visitor<'a> {
             }
             js_ast::E::JsonValue::Number(_) => {
                 let loc = vloc.resolve(&self.source.contents);
-                self.invalid(bun_ast::Range { loc, len: 1 })
+                self.invalid(loc.map(|loc| bun_ast::Range { loc, len: 1 }))
             }
         }
     }
@@ -1183,16 +1180,12 @@ impl<'a> Visitor<'a> {
         data: &js_ast::ExprData,
         vloc: json_parser::ValueLocation<'_>,
     ) -> Entry {
+        let loc = vloc.resolve(&self.source.contents);
         let first_token = match data {
-            js_ast::ExprData::EBoolean(_) => {
-                js_lexer::range_of_identifier(self.source, vloc.resolve(&self.source.contents))
-            }
+            js_ast::ExprData::EBoolean(_) => js_lexer::range_of_identifier(self.source, loc),
             // TODO: range of number
-            js_ast::ExprData::ENumber(_) => Some(bun_ast::Range {
-                loc: vloc.resolve(&self.source.contents),
-                len: 1,
-            }),
-            _ => Some(bun_ast::Range::at(vloc.resolve(&self.source.contents))),
+            js_ast::ExprData::ENumber(_) => loc.map(|loc| bun_ast::Range { loc, len: 1 }),
+            _ => loc.map(bun_ast::Range::at),
         };
         self.invalid(first_token)
     }

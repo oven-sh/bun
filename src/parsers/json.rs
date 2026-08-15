@@ -765,18 +765,22 @@ pub fn value_loc_of_property(
 /// Where an immutable-AST JSON value sits in its document, so its source location can be recovered.
 #[derive(Clone, Copy)]
 pub enum ValueLocation<'p> {
+    /// The value's own location, when the node carries one (the document root).
+    At(Option<bun_ast::Loc>),
+    /// The value of the property whose key is at this location.
     Property(bun_ast::Loc),
     ArrayItem(&'p ValueLocation<'p>, usize),
 }
 
 impl ValueLocation<'_> {
     /// First byte of the value, falling back to the nearest key/container location.
-    pub fn resolve(&self, contents: &[u8]) -> bun_ast::Loc {
+    pub fn resolve(&self, contents: &[u8]) -> Option<bun_ast::Loc> {
         match self {
-            ValueLocation::Property(key_loc) => property_value_loc_or_key(contents, *key_loc),
+            ValueLocation::At(loc) => *loc,
+            ValueLocation::Property(key_loc) => Some(property_value_loc_or_key(contents, *key_loc)),
             ValueLocation::ArrayItem(array, index) => {
-                let array_loc = array.resolve(contents);
-                array_item_loc(contents, array_loc, *index).unwrap_or(array_loc)
+                let array_loc = array.resolve(contents)?;
+                Some(array_item_loc(contents, array_loc, *index).unwrap_or(array_loc))
             }
         }
     }
@@ -940,10 +944,7 @@ fn materialize_impl(
         stack_check: bun_core::StackCheck::init(),
         overflowed: core::cell::Cell::new(false),
     };
-    let out = m.expr(
-        root,
-        root.loc.expect("the parser locates the document root"),
-    );
+    let out = m.expr(root);
     if m.overflowed.get() {
         return Err(crate::Error::StackOverflow);
     }
@@ -959,17 +960,15 @@ struct Materializer<'a> {
 }
 
 impl Materializer<'_> {
-    fn expr(&self, e: &Expr, loc: bun_ast::Loc) -> Expr {
+    fn expr(&self, e: &Expr) -> Expr {
+        let loc = e.loc;
         match &e.data {
             js_ast::expr::Data::EObjectJSON(o) => Expr::init(self.object(o.get()), loc),
             js_ast::expr::Data::EArrayJSON(a) => Expr::init(self.array(a.get(), loc), loc),
             js_ast::expr::Data::EString(s) => {
                 Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
             }
-            _ => Expr {
-                data: e.data,
-                loc: Some(loc),
-            },
+            _ => *e,
         }
     }
 
@@ -997,7 +996,7 @@ impl Materializer<'_> {
             properties.push(G::Property {
                 flags: E::own_key_property_flags(&key),
                 key: Some(key),
-                value: Some(self.json_value(&row.value, value_loc)),
+                value: Some(self.json_value(&row.value, Some(value_loc))),
                 kind: G::PropertyKind::Normal,
                 initializer: None,
                 ..Default::default()
@@ -1012,7 +1011,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn array(&self, a: &E::ArrayJSON, loc: bun_ast::Loc) -> E::Array {
+    fn array(&self, a: &E::ArrayJSON, loc: Option<bun_ast::Loc>) -> E::Array {
         if !self.stack_check.is_safe_to_recurse() {
             self.overflowed.set(true);
             return E::Array::default();
@@ -1021,14 +1020,14 @@ impl Materializer<'_> {
         let mut items: js_ast::ExprNodeList =
             Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
         let item_locs = a.item_locs();
-        let mut cursor = match item_locs {
-            Some(_) => None,
-            None => array_first_item(self.contents, loc.usize()),
+        let mut cursor = match (item_locs, loc) {
+            (None, Some(loc)) => array_first_item(self.contents, loc.usize()),
+            _ => None,
         };
         for (i, item) in rows.iter().enumerate() {
             let item_loc = match item_locs {
-                Some(locs) => locs[i],
-                None => cursor.map_or(loc, bun_ast::usize2loc),
+                Some(locs) => Some(locs[i]),
+                None => cursor.map(bun_ast::usize2loc).or(loc),
             };
             items.push(self.json_value(item, item_loc));
             if item_locs.is_none() {
@@ -1044,7 +1043,7 @@ impl Materializer<'_> {
         }
     }
 
-    fn json_value(&self, value: &E::JsonValue, loc: bun_ast::Loc) -> Expr {
+    fn json_value(&self, value: &E::JsonValue, loc: Option<bun_ast::Loc>) -> Expr {
         match value {
             E::JsonValue::Object(o) => Expr::init(self.object(o.get()), loc),
             E::JsonValue::Array(a) => Expr::init(self.array(a.get(), loc), loc),

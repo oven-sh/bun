@@ -459,7 +459,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             b'"' | b'\'' => Ok((E::JsonValue::String(self.parse_string_utf8_at(start)?), loc)),
             _ => {
                 let e = self.parse_scalar(loc)?;
-                let value_loc = e.loc.expect("parse_scalar locates every value it returns");
+                let value_loc = e.loc.unwrap_or(loc);
                 Ok((
                     match e.data {
                         Data::ENumber(n) => E::JsonValue::Number(n),

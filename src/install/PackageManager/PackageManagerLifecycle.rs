@@ -443,18 +443,14 @@ impl PackageManager {
         Ok(())
     }
 
-    /// The `bun install` that fetches a git dependency's own dependencies for
-    /// its `prepare` scripts runs with the dependency's checkout as its project
-    /// directory, so it does not see this project's `bunfig.toml`/`.npmrc`.
-    /// Forward the settings it would otherwise lose through the environment
-    /// variables `bun install` already reads.
+    /// The nested install's project directory is the checkout, so this project's
+    /// `bunfig.toml`/`.npmrc` settings have to reach it through the environment.
     fn put_install_config_for_prepare(
         &mut self,
         script_env: &mut bun_dotenv::Map,
     ) -> Result<(), crate::Error> {
         let scope = &self.options.scope;
-        // The token is only ever forwarded together with the registry it
-        // belongs to, so the nested install cannot send it somewhere else.
+        // The token only travels together with its registry.
         if self.options.did_override_default_scope || !scope.token.is_empty() {
             script_env.put(b"BUN_CONFIG_REGISTRY", scope.url.href())?;
             if !scope.token.is_empty() {
@@ -462,11 +458,12 @@ impl PackageManager {
             }
         }
 
+        // Opening the cache directory is what fills in its path.
         let _ = self.get_cache_directory();
-        script_env.put(
-            b"BUN_INSTALL_CACHE_DIR",
-            self.cache_directory_path.as_bytes(),
-        )?;
+        let cache_directory_path = self.cache_directory_path.as_bytes();
+        if !cache_directory_path.is_empty() {
+            script_env.put(b"BUN_INSTALL_CACHE_DIR", cache_directory_path)?;
+        }
 
         Ok(())
     }

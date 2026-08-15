@@ -7116,31 +7116,28 @@ impl NodeFS {
         // If we manage to read the entire file, we don't need to call stat() at all.
         // This will make it slightly slower to read e.g. 512 KB files, but usually the OS won't return a full 512 KB in one read anyway.
         //
-        // The sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
-        // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
-        // zero-length so the loop is skipped and we fall through to fstat.
-        // The async path heap-allocates a 256 KB buffer instead (Zig used a
-        // comptime-sized stack array; Rust cannot size a stack array on
-        // `flavor`, so heap is forced, but the slab stays uninitialised: it
-        // is write-only, `Syscall::read` hands it straight to the kernel).
+        // The sync case claims the per-VM pipe-read scratch when it is free;
+        // otherwise (async, no VM, or a read further up the stack holds it)
+        // a heap buffer stands in. It stays uninitialised: it is write-only,
+        // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
-        let mut async_stack_buffer: Vec<u8> = Vec::new();
-        if flavor != Flavor::Sync && async_stack_buffer.try_reserve_exact(256 * 1024).is_ok() {
+        let mut scratch = match self.vm {
+            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM); nothing else touches the scratch while the guard lives.
+            Some(vm) if flavor == Flavor::Sync => unsafe {
+                (*vm.as_ptr()).rare_data().pipe_read_scratch().claim()
+            },
+            _ => None,
+        };
+        let mut heap_buffer: Vec<u8> = Vec::new();
+        if scratch.is_none() && heap_buffer.try_reserve_exact(256 * 1024).is_ok() {
             // SAFETY: `u8` has no validity invariant; the buffer is handed
             // straight to the kernel which only stores into it. Only the
             // `[..total]` prefix actually filled by `read` is ever observed.
-            unsafe { async_stack_buffer.expand_to_capacity() };
+            unsafe { heap_buffer.expand_to_capacity() };
         }
-        let pre_stat_buf: &mut [u8] = if flavor == Flavor::Sync {
-            match self.vm {
-                // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
-                // `rare_data()` lazily inits the heap slab and the returned
-                // `&mut [u8; 256*1024]` outlives this call (single-threaded VM).
-                Some(vm) => unsafe { &mut (*vm.as_ptr()).rare_data().pipe_read_buffer()[..] },
-                None => &mut [][..],
-            }
-        } else {
-            &mut async_stack_buffer[..]
+        let pre_stat_buf: &mut [u8] = match scratch.as_mut() {
+            Some(scratch) => &mut scratch[..],
+            None => &mut heap_buffer[..],
         };
         let temporary_read_buffer_before_stat_call: &[u8] = {
             let mut available: &mut [u8] = &mut pre_stat_buf[..];

@@ -266,7 +266,7 @@ pub struct RareData {
     /// owns the data, no sidecar `Mutex<()>`).
     pub(crate) listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
-    pub(crate) temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
+    pub(crate) pipe_read_scratch: bun_event_loop::PipeReadScratch,
 
     /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
@@ -328,7 +328,7 @@ impl Default for RareData {
             node_fs_stat_watcher_scheduler: None,
             memory_pressure_watcher: None,
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
-            temp_pipe_read_buffer: None,
+            pipe_read_scratch: bun_event_loop::PipeReadScratch::new(),
             h2_padded_frame_buffer: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
@@ -376,15 +376,6 @@ impl PathBuf {
 }
 
 // Drop is automatic for Option<Box<...>> fields — no explicit deinit needed.
-
-// ──────────────────────────────────────────────────────────────────────────
-// PipeReadBuffer / constants
-// ──────────────────────────────────────────────────────────────────────────
-
-// Canonical definition lives in the lower-tier `bun_event_loop` crate (shared
-// with `MiniEventLoop`'s scratch buffer). Re-export so `rare_data::PipeReadBuffer`
-// remains a stable path for existing callers.
-pub use bun_event_loop::PipeReadBuffer;
 
 /// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];
@@ -663,9 +654,8 @@ impl RareData {
     }
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
-    pub fn pipe_read_buffer(&mut self) -> &mut PipeReadBuffer {
-        self.temp_pipe_read_buffer
-            .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)
+    pub fn pipe_read_scratch(&mut self) -> &mut bun_event_loop::PipeReadScratch {
+        &mut self.pipe_read_scratch
     }
 
     /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
@@ -1072,7 +1062,7 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / h2_padded_frame_buffer / spawn_sync_event_loop_ /
+        // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
         // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
         // path_buf / tls_default_ciphers:
         // all dropped automatically via field Drop.

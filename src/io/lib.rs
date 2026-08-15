@@ -326,7 +326,7 @@ bun_dispatch::link_interface! {
             cb: Option<OpaqueCallback>,
             ctx: Option<core::ptr::NonNull<core::ffi::c_void>>,
         );
-        fn pipe_read_buffer() -> *mut [u8];
+        fn pipe_read_scratch() -> *mut PipeReadScratch;
     }
 }
 
@@ -381,22 +381,11 @@ impl EventLoopCtx {
         // discipline above — see block comment.
         unsafe { &mut *self.file_polls_ptr() }
     }
-    /// Single nonnull-asref accessor for the per-loop pipe-read scratch
-    /// buffer. Same contract as [`loop_mut`]: `pub(crate)`, the buffer is a
-    /// per-thread set-once allocation owned by the VM/Mini loop, and the
-    /// event loop is single-threaded, so no second `&mut [u8]` to it can be
-    /// live. Every in-crate caller (`PipeReader::read_*`) uses it for one
-    /// blocking syscall and drops the borrow before re-entering the loop.
-    /// `'static` matches the unbounded lifetime the inline raw-ptr derefs at
-    /// the call sites already produced; collapses their N identical
-    /// `&mut *ctx.pipe_read_buffer()` derefs into this one block.
+    /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
-    fn pipe_read_buffer_mut(&self) -> &'static mut [u8] {
-        // SAFETY: per-thread set-once scratch buffer (`BackRef`-shaped); the
-        // event loop is single-threaded so this is the sole live `&mut`, and
-        // every crate-internal caller drops the borrow before any path that
-        // could re-derive it — see doc comment above.
-        unsafe { &mut *self.pipe_read_buffer() }
+    fn claim_pipe_read_scratch(&self) -> Option<PipeReadScratchGuard<'static>> {
+        // SAFETY: per-thread scratch owned by the VM/Mini loop, which outlives every read; the enum itself is only touched through the guard it returns.
+        unsafe { (*self.pipe_read_scratch()).claim() }
     }
     #[inline]
     pub(crate) fn loop_ref(&self) {
@@ -471,12 +460,14 @@ pub mod heap;
 pub mod max_buf;
 #[path = "openForWriting.rs"]
 pub mod open_for_writing_mod;
+pub mod pipe_read_scratch;
 #[path = "PipeReader.rs"]
 pub mod pipe_reader;
 #[path = "PipeWriter.rs"]
 pub mod pipe_writer;
 #[path = "pipes.rs"]
 pub mod pipes;
+pub use pipe_read_scratch::{PipeReadScratch, PipeReadScratchGuard};
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;

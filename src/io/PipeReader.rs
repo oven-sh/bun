@@ -148,38 +148,6 @@ impl Drop for ParentKeepAlive {
     }
 }
 
-// The per-loop `pipe_read_buffer` scratch is handed to `on_read_chunk` as the
-// chunk itself, and a consumer may keep parsing it while running user code
-// that starts a *second* reader synchronously (HTMLRewriter handlers do). A
-// nested read loop must not refill the scratch under the outer one, so only
-// the outermost loop on the thread borrows it; nested ones read into their
-// own `_buffer`.
-thread_local! {
-    static READ_SCRATCH_IN_USE: core::cell::Cell<bool> = const { core::cell::Cell::new(false) };
-}
-
-struct ReadScratchClaim;
-
-impl ReadScratchClaim {
-    fn try_claim() -> Option<Self> {
-        READ_SCRATCH_IN_USE.with(|in_use| {
-            if in_use.get() {
-                // Not `then_some(Self)`: its argument is built before the test,
-                // and dropping that refused claim would release the outer one.
-                return None;
-            }
-            in_use.set(true);
-            Some(Self)
-        })
-    }
-}
-
-impl Drop for ReadScratchClaim {
-    fn drop(&mut self) {
-        READ_SCRATCH_IN_USE.with(|in_use| in_use.set(false));
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // PosixBufferedReader
 // ──────────────────────────────────────────────────────────────────────────
@@ -829,20 +797,17 @@ impl PosixBufferedReader {
         // SAFETY: caller contract — `this` is live.
         let vtable = unsafe { (*this).vtable };
         let mut received_hup = received_hup_initially;
-        let scratch = ReadScratchClaim::try_claim();
+        let mut scratch = vtable.event_loop().claim_pipe_read_scratch();
         loop {
             let streaming = vtable.is_streaming_enabled();
             let mut got_retry = false;
 
             // SAFETY: caller contract; borrow ends at `;`.
-            let unbuffered = scratch.is_some() && unsafe { (*this)._buffer.is_empty() };
-            if unbuffered {
-                // Use stack buffer for streaming — per-loop scratch buffer;
-                // single-threaded event loop (see `EventLoopCtx::pipe_read_buffer_mut`).
+            let buffer_empty = unsafe { (*this)._buffer.is_empty() };
+            if let (true, Some(scratch)) = (buffer_empty, scratch.as_mut()) {
                 // SAFETY: caller contract; `maxbuf` is Copy.
                 let maxbuf = unsafe { (*this).maxbuf };
-                let stack_buffer = vtable.event_loop().pipe_read_buffer_mut();
-                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
+                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, &mut scratch[..]);
 
                 match sys::read_nonblocking(fd, stack_buffer) {
                     sys::Result::Ok(bytes_read) => {
@@ -910,14 +875,8 @@ impl PosixBufferedReader {
             } else {
                 // SAFETY: caller contract; `maxbuf` is Copy, borrow ends at `;`.
                 let maxbuf = unsafe { (*this).maxbuf };
-                // Streaming delivers and clears per read, so this reserve is the
-                // chunk size. Nested reads (a consumer re-pulling from inside its
-                // chunk handler, e.g. `process.stdin.on("data")`) all land here
-                // rather than in the scratch, so give them a whole default pipe
-                // buffer per read.
-                let reserve = if streaming { 64 * 1024 } else { 16 * 1024 };
                 // SAFETY: caller contract; borrow ends at `;`.
-                unsafe { (*this)._buffer.reserve(reserve) };
+                unsafe { (*this)._buffer.reserve(16 * 1024) };
                 // SAFETY: caller contract. `sys::read_nonblocking` writes only
                 // initialized bytes into the prefix it reports; `commit_spare`
                 // exposes exactly that prefix. The `_buffer` borrow ends before
@@ -1076,13 +1035,10 @@ impl PosixBufferedReader {
         // SAFETY: caller contract — `this` is live.
         let vtable = unsafe { (*this).vtable };
         let streaming = vtable.is_streaming_enabled();
-        let scratch = ReadScratchClaim::try_claim();
+        let mut scratch = vtable.event_loop().claim_pipe_read_scratch();
 
-        if streaming && scratch.is_some() {
-            // Per-loop scratch buffer; single-threaded event loop (see
-            // `EventLoopCtx::pipe_read_buffer_mut`).
-            let event_loop = vtable.event_loop();
-            let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
+        if let (true, Some(scratch)) = (streaming, scratch.as_mut()) {
+            let stack_buffer_len = scratch.len();
             // SAFETY: caller contract; borrow ends at the loop test.
             while unsafe { (*this)._buffer.is_empty() } {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
@@ -1092,7 +1048,7 @@ impl PosixBufferedReader {
                     // before the syscall's buffer borrow (event-loop scratch,
                     // not `*this`).
                     let (maxbuf, offset) = unsafe { ((*this).maxbuf, (*this)._offset) };
-                    let buf = &mut event_loop.pipe_read_buffer_mut()[head_start..];
+                    let buf = &mut scratch[head_start..];
                     let buf = MaxBuf::clamp_read_buf(maxbuf, buf);
 
                     match sys_fn(fd, buf, offset) {
@@ -1111,10 +1067,8 @@ impl PosixBufferedReader {
                                 // SAFETY: caller contract; borrow ends at `;`.
                                 unsafe { (*this).close_without_reporting() };
                                 if head_start > 0 {
-                                    let _ = vtable.on_read_chunk(
-                                        &event_loop.pipe_read_buffer_mut()[..head_start],
-                                        ReadState::Eof,
-                                    );
+                                    let _ = vtable
+                                        .on_read_chunk(&scratch[..head_start], ReadState::Eof);
                                 }
                                 // SAFETY: caller contract; `done()` is the tail.
                                 unsafe {
@@ -1140,7 +1094,7 @@ impl PosixBufferedReader {
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
                                 let keep_going = vtable.on_read_chunk(
-                                    &event_loop.pipe_read_buffer_mut()[..head_start],
+                                    &scratch[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
@@ -1178,19 +1132,15 @@ impl PosixBufferedReader {
                                 }
 
                                 if head_start > 0 {
-                                    let _ = vtable.on_read_chunk(
-                                        &event_loop.pipe_read_buffer_mut()[..head_start],
-                                        ReadState::Drained,
-                                    );
+                                    let _ = vtable
+                                        .on_read_chunk(&scratch[..head_start], ReadState::Drained);
                                 }
                                 return;
                             }
 
                             if head_start > 0 {
-                                let _ = vtable.on_read_chunk(
-                                    &event_loop.pipe_read_buffer_mut()[..head_start],
-                                    ReadState::Progress,
-                                );
+                                let _ = vtable
+                                    .on_read_chunk(&scratch[..head_start], ReadState::Progress);
                             }
                             // SAFETY: caller contract; `on_error` is the tail.
                             unsafe { Self::on_error(this, err) };
@@ -1201,7 +1151,7 @@ impl PosixBufferedReader {
 
                 if head_start > 0 {
                     let keep_going = vtable.on_read_chunk(
-                        &event_loop.pipe_read_buffer_mut()[..head_start],
+                        &scratch[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
@@ -1226,14 +1176,11 @@ impl PosixBufferedReader {
             let take_stack_path = !streaming
                 && scratch.is_some()
                 && unsafe { (*this)._buffer.capacity() == 0 && (*this)._offset == 0 };
-            if take_stack_path {
+            if let (true, Some(scratch)) = (take_stack_path, scratch.as_mut()) {
                 // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.
-                // Per-loop scratch buffer; single-threaded event loop (see
-                // `EventLoopCtx::pipe_read_buffer_mut`).
                 // SAFETY: caller contract; `maxbuf` is Copy.
                 let maxbuf = unsafe { (*this).maxbuf };
-                let stack_buffer = vtable.event_loop().pipe_read_buffer_mut();
-                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, stack_buffer);
+                let stack_buffer = MaxBuf::clamp_read_buf(maxbuf, &mut scratch[..]);
 
                 // Unlike the block of code following this one, only handle the non-streaming case.
                 debug_assert!(!streaming);

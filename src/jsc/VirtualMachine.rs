@@ -2250,9 +2250,7 @@ bun_io::link_impl_EventLoopCtx! {
             vm.after_event_loop_callback = cb;
             vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
         },
-        pipe_read_buffer() => {
-            core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
-        },
+        pipe_read_scratch() => core::ptr::from_mut(vm_from_owner(this.cast()).rare_data().pipe_read_scratch()),
     }
 }
 

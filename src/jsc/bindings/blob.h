@@ -10,6 +10,9 @@ extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
 extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
 extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
+// True for Bun.file() / Bun.s3() blobs, whose bytes are not in memory: Blob__getDataPtr and
+// Blob__getSize describe them as empty.
+extern "C" bool Blob__needsAsyncRead(JSC::EncodedJSValue blob);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);

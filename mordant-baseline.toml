@@ -1,5 +1,4 @@
 [bun_ast]
-"bare_bool_args:src/ast/lib.rs" = 1
 
 [bun_bundler]
 "bare_bool_args:src/bundler/Chunk.rs" = 1

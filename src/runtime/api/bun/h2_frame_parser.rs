@@ -32,7 +32,8 @@ use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
+    AbortSignalRef, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef,
+    JsResult, StrongOptional,
 };
 use bun_ptr::IntrusiveRc;
 
@@ -1561,14 +1562,7 @@ pub struct Stream {
 }
 
 pub(crate) struct SignalRef {
-    // LIFETIMES.tsv: SHARED — AbortSignal is intrusively refcounted across FFI/codegen.
-    // `AbortSignal` is an opaque C++ type whose ref/unref go through
-    // `WebCore__AbortSignal__ref/unref`; it does not (and cannot) implement
-    // `bun_ptr::RefCounted`, so balance refs by hand in `attach_signal` /
-    // `Drop`. `BackRef` captures the backref invariant
-    // (signal is `ref_()`'d in `attach_signal` and outlives this struct until
-    // `Drop` calls `detach()`/`unref()`), so reads go through safe `Deref`.
-    signal: bun_ptr::BackRef<AbortSignal>,
+    signal: AbortSignalRef,
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
     // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
     // `Cell<u32>` ref count (not `bun_ptr::RefCount<Self>`), so `IntrusiveRc`'s
@@ -1582,7 +1576,6 @@ pub(crate) struct SignalRef {
 
 impl SignalRef {
     pub(crate) fn is_aborted(&self) -> bool {
-        // BackRef invariant: signal kept alive via .ref_() in attach_signal.
         self.signal.aborted()
     }
 
@@ -1606,12 +1599,9 @@ impl SignalRef {
 
 impl Drop for SignalRef {
     fn drop(&mut self) {
-        // BackRef invariant: `signal` is the C++-refcounted AbortSignal we
-        // ref_()'d in `attach_signal`; valid until this `detach` releases our
-        // listener and unrefs. Copy the `BackRef` out first so the `&mut self`
-        // taken by `from_mut` doesn't overlap the receiver borrow.
-        let signal = self.signal;
-        signal.detach(std::ptr::from_mut(self).cast::<c_void>());
+        // `attach_signal` registered the listener with `self`'s address as ctx.
+        let ctx = std::ptr::from_mut(self).cast::<c_void>();
+        self.signal.clean_native_bindings(ctx);
         // ParentRef backref — parser outlives every SignalRef (ref()'d in
         // `attach_signal`); release that ref now via the inherent `deref()`.
         H2FrameParser::deref(self.parser.get());
@@ -2133,20 +2123,19 @@ impl Stream {
             .unwrap_or_else(|| JSValue::js_number(self.id as f64))
     }
 
-    pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
-        // `ref_()` bumps the C++ intrusive refcount and returns the same live
-        // `self` pointer with FFI (wildcard) provenance — store *that* in the
-        // `BackRef` so its validity is tied to the refcount, not to the
-        // borrowed `&mut AbortSignal` parameter's lifetime.
-        let refed = core::ptr::NonNull::new(signal.ref_()).expect("AbortSignal::ref_");
+    pub fn attach_signal(&mut self, parser: &H2FrameParser, signal: &AbortSignal) {
+        // SAFETY: `signal` is live (borrowed from the JS wrapper the caller is
+        // holding); `ref_()` returns the same pointer carrying a `+1`, which
+        // the `AbortSignalRef` now owns.
+        let owned = unsafe { AbortSignalRef::adopt(signal.ref_()) };
         // we need a stable pointer to know what signal points to what stream_id + parser
         let mut signal_ref = Box::new(SignalRef {
-            signal: bun_ptr::BackRef::from(refed),
+            signal: owned,
             parser: bun_ptr::ParentRef::new(parser),
             stream_id: self.id,
         });
         // `signal_ref` is heap-allocated and outlives the listener registration
-        // (cleared via `detach` in `Drop for SignalRef`).
+        // (removed in `Drop for SignalRef`).
         signal.listen(&raw mut *signal_ref);
         // TODO: We should not need this ref counting here, since Parser owns Stream
         parser.ref_();
@@ -9399,8 +9388,7 @@ impl H2FrameParser {
 
             if let Some(signal_arg) = options.get(global_object, "signal")? {
                 if let Some(signal_ptr) = AbortSignal::from_js(signal_arg) {
-                    // SAFETY: `from_js` returns a live *mut AbortSignal owned by JSC; rooted via `signal_arg` on the stack.
-                    let signal_ = unsafe { &mut *signal_ptr };
+                    let signal_ = AbortSignal::opaque_ref(signal_ptr);
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
                         let wrapped =

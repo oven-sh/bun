@@ -29,7 +29,7 @@ use crate::api::bun_process::{Process, Rusage, Status};
 use crate::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
-use crate::webcore::{self, AbortSignal, FileSink};
+use crate::webcore::{self, FileSink};
 #[cfg(windows)]
 use bun_libuv_sys::UvHandle as _;
 
@@ -147,10 +147,8 @@ pub struct Subprocess<'a> {
     /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
     /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub(crate) weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
-    /// +1 C++-intrusive ref held; released in `clear_abort_signal` via
-    /// `AbortSignal::unref()`. Not `Arc` — `AbortSignal` is an opaque FFI
-    /// handle whose refcount lives on the C++ side.
-    pub(crate) abort_signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// The `signal` spawn option, with our abort listener registered on it.
+    pub(crate) abort_signal: JsCell<Option<jsc::abort_signal::PendingActivityRef>>,
 
     pub(crate) event_loop_timer_refd: Cell<bool>,
     /// Intrusive timer node. `JsCell` so `&self` can hand `*mut EventLoopTimer`
@@ -359,16 +357,10 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl Subprocess<'_> {
-    /// Shared borrow of the attached `AbortSignal`, if any.
-    ///
-    /// `abort_signal` holds a +1 C++-intrusive ref taken in
-    /// `spawn_maybe_sync`; the pointee is therefore live for as long as the
-    /// cell is `Some` (it is `take`n *before* `unref()` in
-    /// [`clear_abort_signal`](Self::clear_abort_signal)) — i.e. the
-    /// owner-outlives-holder `BackRef` invariant holds.
+    /// Owned, so it stays valid if `clear_abort_signal` runs meanwhile.
     #[inline]
-    pub(crate) fn abort_signal_ref(&self) -> Option<bun_ptr::BackRef<AbortSignal>> {
-        self.abort_signal.get().map(bun_ptr::BackRef::from)
+    pub(crate) fn abort_signal_ref(&self) -> Option<jsc::AbortSignalRef> {
+        self.abort_signal.get().as_ref().map(|s| s.signal_ref())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1280,14 +1272,7 @@ impl Subprocess<'_> {
     }
 
     fn clear_abort_signal(&self) {
-        if let Some(signal) = self.abort_signal.replace(None).map(bun_ptr::BackRef::from) {
-            // `signal` was stored with a +1 C++ intrusive ref (taken in
-            // `spawn_maybe_sync`); it stays live until `unref()` below, so the
-            // `BackRef` invariant (pointee outlives holder) holds for this scope.
-            signal.pending_activity_unref();
-            signal.clean_native_bindings(self.as_ctx_ptr().cast::<c_void>());
-            signal.unref();
-        }
+        drop(self.abort_signal.replace(None));
     }
 
     pub fn finalize(self: Box<Self>) {

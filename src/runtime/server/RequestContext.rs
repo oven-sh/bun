@@ -12,8 +12,8 @@ use bun_uws::{self as uws, WebSocketUpgradeContext};
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use crate::server::{RangeRequest, ServerLike};
 use crate::webcore::{
-    self as WebCore, AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders,
-    Request, Response, blob::SizeType as BlobSizeType, body, readable_stream, request, response,
+    self as WebCore, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders, Request, Response,
+    blob::SizeType as BlobSizeType, body, readable_stream, request, response,
 };
 
 /// Q: Why is this needed?
@@ -117,13 +117,10 @@ pub struct RequestContext<
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, HTTP3>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
-    // NOTE: `Arc<AbortSignal>` was wrong —
-    // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
-    // the C++ allocation. Store the raw pointer. The request holds TWO counts:
-    // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
-    // pending-activity count for GC visibility. Both are released together via
-    // `shim::signal_release` in `on_abort`/`finalize_without_deinit`.
-    pub(crate) signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// `request.signal` (the `Request` holds its own ref to it). Taken out in
+    /// `on_abort` / `finalize_without_deinit`, or moved to the `ServerWebSocket`
+    /// on upgrade.
+    pub(crate) signal: JsCell<Option<jsc::abort_signal::PendingActivityRef>>,
     pub method: Method,
     /// Owned `+1` ref on a C++ `CookieMap` (taken in `set_cookies`, released
     /// when the field is dropped/replaced — `CookieMapRef` handles the unref).
@@ -367,36 +364,6 @@ mod shim {
     #[inline]
     pub(super) fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
         r.detach_readable_stream(g)
-    }
-    #[inline]
-    pub(super) fn signal_aborted(s: NonNull<AbortSignal>) -> bool {
-        // `signal` is kept alive by the intrusive C++ refcount (+1 from
-        // `AbortSignal::new()` / `ref_()`) plus `pending_activity_ref()` until
-        // `signal_release` drops both — satisfies the `BackRef` outlives-holder
-        // invariant for the duration of this call.
-        bun_ptr::BackRef::from(s).aborted()
-    }
-    #[inline]
-    pub(super) fn signal_fire(
-        s: NonNull<AbortSignal>,
-        g: &JSGlobalObject,
-        r: jsc::CommonAbortReason,
-    ) {
-        // See `signal_aborted` — counted ref keeps pointee live.
-        bun_ptr::BackRef::from(s).signal(g, r)
-    }
-    /// Release BOTH refcounts the request holds on its AbortSignal.
-    /// `pending_activity_unref()` drops the GC-visibility count and `unref()`
-    /// drops the intrusive C++ `RefPtr` count taken at creation. `s` must not
-    /// be dereferenced after this call.
-    #[inline]
-    pub(super) fn signal_release(s: NonNull<AbortSignal>) {
-        // See `signal_aborted`. Order: pending-activity first,
-        // then the owning intrusive ref (which may free). `BackRef` is dropped
-        // before `unref()` returns, so no dangling deref.
-        let signal = bun_ptr::BackRef::from(s);
-        signal.pending_activity_unref();
-        signal.unref();
     }
     #[inline]
     pub(super) fn iec_trigger(
@@ -653,12 +620,15 @@ where
     }
 
     pub(crate) fn set_signal_aborted(&self, reason: jsc::CommonAbortReason) {
-        if let Some(signal) = self.signal.get() {
-            if let Some(server) = self.server.get() {
-                // server is a BACKREF — valid while this RequestContext is alive
-                let global = server.global_this();
-                shim::signal_fire(signal, global, reason);
-            }
+        // Own ref, not a borrow of the cell: abort listeners may end the request
+        // and empty it.
+        let Some(signal) = self.signal.get().as_ref().map(|s| s.signal_ref()) else {
+            return;
+        };
+        if let Some(server) = self.server.get() {
+            // server is a BACKREF — valid while this RequestContext is alive
+            let global = server.global_this();
+            signal.signal(global, reason);
         }
     }
 
@@ -1331,7 +1301,7 @@ where
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range: RangeRequest::raw_from_request(&Self::any_request(req)),
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
-                signal: Cell::new(None),
+                signal: JsCell::new(None),
                 cookies: JsCell::new(None),
                 flags: Flags::<DEBUG_MODE>::default(),
                 upgrade_context: Cell::new(UpgradeState::None),
@@ -1452,16 +1422,11 @@ where
             this.request_weakref.with_mut(|w| w.deref());
         }
         // if signal is not aborted, abort the signal
-        if let Some(signal) = this.signal.take() {
-            if !shim::signal_aborted(signal) {
-                shim::signal_fire(
-                    signal,
-                    global_this,
-                    jsc::CommonAbortReason::ConnectionClosed,
-                );
+        if let Some(signal) = this.signal.replace(None) {
+            if !signal.aborted() {
+                signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed);
                 any_js_calls.set(true);
             }
-            shim::signal_release(signal);
         }
 
         // if have sink, call onAborted on sink
@@ -1544,15 +1509,10 @@ where
         }
 
         // if signal is not aborted, abort the signal
-        if let Some(signal) = self.signal.take() {
-            if self.flags.aborted() && !shim::signal_aborted(signal) {
-                shim::signal_fire(
-                    signal,
-                    global_this,
-                    jsc::CommonAbortReason::ConnectionClosed,
-                );
+        if let Some(signal) = self.signal.replace(None) {
+            if self.flags.aborted() && !signal.aborted() {
+                signal.signal(global_this, jsc::CommonAbortReason::ConnectionClosed);
             }
-            shim::signal_release(signal);
         }
 
         // Case 1:

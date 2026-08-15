@@ -1,7 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem;
-use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
@@ -10,8 +9,8 @@ use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
-    self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
-    JSType, JSValue, JsError, JsRef, JsResult, ZigStringSlice,
+    self, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject, JSType, JSValue,
+    JsError, JsRef, JsResult, ZigStringSlice, abort_signal,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::Blob;
@@ -26,17 +25,15 @@ bun_output::declare_scope!(WebSocketServer, visible);
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` on the SAME `m_ctx`. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
-// mutability (`Cell` for `Copy` flags/signal, `JsCell` for the non-`Copy`
-// `JsRef`) carries the writes.
+// mutability (`Cell`, `JsCell` for the non-`Copy` `JsRef`) carries the writes.
 #[bun_jsc::JsClass]
 pub struct ServerWebSocket {
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
-    // `AbortSignal` is an opaque C++ type
-    // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
-    // caller transfers a +1 ref; `finalize`/`on_close` unref it.
-    signal: Cell<Option<NonNull<AbortSignal>>>,
+    /// The upgraded request's signal, moved here from its `RequestContext`;
+    /// `on_close` takes it out and fires it.
+    signal: Cell<Option<abort_signal::PendingActivityRef>>,
 }
 
 // We pack the per-socket data into this struct below:
@@ -357,12 +354,11 @@ impl ServerWebSocket {
     // pub const js = jsc.Codegen.JSServerWebSocket; — provided by #[bun_jsc::JsClass]
     // toJS / fromJS / fromJSDirect — provided by codegen (see `to_js_ptr` / `JsClass` impl)
 
-    /// Initialize a ServerWebSocket with the given handler, data value, and signal.
-    /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
+    /// `signal` is the upgraded request's; it is fired when the socket closes.
     pub(crate) fn init(
         handler: &WebSocketServerHandler,
         data_value: JSValue,
-        signal: Option<NonNull<AbortSignal>>,
+        signal: Option<abort_signal::PendingActivityRef>,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
         let this = bun_core::heap::into_raw(Box::new(ServerWebSocket {
@@ -709,15 +705,8 @@ impl ServerWebSocket {
             .try_get()
             .unwrap_or(JSValue::UNDEFINED);
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
-        let _cleanup = scopeguard::guard(signal, move |sig| {
-            if let Some(sig) = sig {
-                // `sig` was stored with a +1 ref by the upgrade caller; it
-                // stays live until this paired `unref()`, so the transient
-                // `BackRef` (pointee-outlives-holder) is sound for both calls.
-                let sig = bun_ptr::BackRef::from(sig);
-                sig.pending_activity_unref();
-                sig.unref();
-            }
+        let cleanup = scopeguard::guard(signal, move |signal| {
+            drop(signal);
             if was_not_empty {
                 // The `server` traced edge set in `init` must outlive this
                 // wrapper: `self.handler` points into the server's allocation
@@ -746,10 +735,7 @@ impl ServerWebSocket {
 
             let _loop_guard = vm.enter_event_loop_scope();
 
-            if let Some(sig) = signal {
-                // `sig` is held alive by the +1 ref released in `_cleanup`;
-                // BackRef invariant (pointee outlives the temporary) holds.
-                let sig = bun_ptr::BackRef::from(sig);
+            if let Some(sig) = cleanup.as_deref() {
                 if !sig.aborted() {
                     sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
                 }
@@ -774,12 +760,9 @@ impl ServerWebSocket {
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 return handler.run_error_callback(on_error, global_object, err);
             }
-        } else if let Some(sig) = signal {
+        } else if let Some(sig) = cleanup.as_deref() {
             let _loop_guard = vm.enter_event_loop_scope();
 
-            // `sig` is held alive by the +1 ref released in `_cleanup`;
-            // BackRef invariant (pointee outlives the temporary) holds.
-            let sig = bun_ptr::BackRef::from(sig);
             if !sig.aborted() {
                 sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
             }
@@ -813,15 +796,7 @@ impl ServerWebSocket {
     pub fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(WebSocketServer, "finalize");
         self.this_value.with_mut(|v| v.finalize());
-        if let Some(signal) = self.signal.take() {
-            // `signal` was stored with a +1 ref by the upgrade caller; it
-            // stays live until this paired `unref()`, so the transient
-            // `BackRef` (pointee-outlives-holder) is sound for both calls —
-            // same pattern as `on_close()`'s `_cleanup` guard.
-            let sig = bun_ptr::BackRef::from(signal);
-            sig.pending_activity_unref();
-            sig.unref();
-        }
+        // Dropping the box releases `signal` if `on_close` never ran.
     }
 
     #[bun_jsc::host_fn(method)]

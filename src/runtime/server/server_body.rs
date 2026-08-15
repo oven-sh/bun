@@ -120,7 +120,7 @@ trait RequestCtxOps: RequestCtx {
         reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
     )]
     fn request_body_mut(&self) -> Option<&mut BodyValue>;
-    fn set_signal(&self, sig: *mut AbortSignal);
+    fn set_signal(&self, sig: jsc::abort_signal::PendingActivityRef);
     fn set_request_weakref(&self, req: *mut Request);
     fn clear_req(&self);
     fn set_is_web_browser_navigation(&self, v: bool);
@@ -209,12 +209,8 @@ where
             .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
     #[inline]
-    fn set_signal(&self, sig: *mut AbortSignal) {
-        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
-        // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
-        // and pairs the unref in RequestContext cleanup (`shim::signal_release`,
-        // which drops both the pending-activity count and the intrusive ref).
-        self.signal.set(NonNull::new(sig));
+    fn set_signal(&self, sig: jsc::abort_signal::PendingActivityRef) {
+        self.signal.set(Some(sig));
     }
     #[inline]
     fn set_request_weakref(&self, req: *mut Request) {
@@ -2183,7 +2179,7 @@ where
         // --- After this point, do not throw an exception
         // See https://github.com/oven-sh/bun/issues/1339
         upgrader.upgrade_context.set(UpgradeState::Upgraded);
-        let signal = upgrader.signal.take();
+        let signal = upgrader.signal.replace(None);
         upgrader.resp.set(None);
 
         // Snapshot lazy url/headers before detaching (mirrors to_async_without_abort_handler).
@@ -3226,15 +3222,9 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.set_request_body(Some(body_hive.clone()));
 
-        let signal = AbortSignal::new(&server.global());
+        let signal = jsc::abort_signal::PendingActivityRef::new(AbortSignal::new(&server.global()));
+        let signal_for_req = signal.signal_ref();
         ctx.set_signal(signal);
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-
-        // Bump once for the Request's owned
-        // copy and adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
         let request_object_box = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
@@ -3496,17 +3486,11 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::finalize`.
         ctx.request_body.set(Some(body_hive.clone()));
 
-        let signal = AbortSignal::new(&this.global());
-        // The
-        // RequestContext owns one ref so aborts during the WS-upgrade fallback
-        // fetch path propagate.
-        ctx.signal.set(NonNull::new(signal));
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // Bump once for the Request's copy and
-        // adopt into RAII so it pairs with `Request::Drop`'s unref.
-        // SAFETY: `signal` is live; `ref_()` returns the same non-null ptr +1.
-        let signal_for_req = unsafe { jsc::AbortSignalRef::adopt((*signal).ref_()) };
+        // The RequestContext holds the signal too, so aborts during the
+        // WS-upgrade fallback fetch path propagate.
+        let signal = jsc::abort_signal::PendingActivityRef::new(AbortSignal::new(&this.global()));
+        let signal_for_req = signal.signal_ref();
+        ctx.signal.set(Some(signal));
         let request_object_box = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),

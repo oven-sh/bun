@@ -115,7 +115,8 @@ impl Drop for HeadersRef {
 
 /// Errors the owning fetch `Response`'s body on abort (Fetch spec "abort a fetch" step 4).
 pub(crate) struct BodyAbortListener {
-    signal: AbortSignalRef,
+    /// `on_abort` is registered on it with this box's address as ctx.
+    signal: bun_jsc::abort_signal::PendingActivityRef,
     /// `Response` owns `Box<Self>`, so a ref-counted pointer here would cycle.
     response: bun_ptr::ParentRef<Response, bun_ptr::Mut>,
     global: GlobalRef,
@@ -152,14 +153,6 @@ impl BodyAbortListener {
             // R-2: re-derive after `error()` ran JS.
             let _ = response.get_body_value().to_error_instance(err, &global);
         }
-    }
-}
-
-impl Drop for BodyAbortListener {
-    fn drop(&mut self) {
-        let ctx = core::ptr::from_mut(self).cast::<c_void>();
-        self.signal.clean_native_bindings(ctx);
-        self.signal.pending_activity_unref();
     }
 }
 
@@ -519,19 +512,19 @@ impl Response {
         global: &JSGlobalObject,
         signal: &AbortSignal,
     ) {
-        // SAFETY: `signal` is live; `ref_()` bumps the intrusive refcount.
+        // SAFETY: `signal` is live; `ref_()` returns it carrying the `+1`
+        // adopted here.
         let signal_ref = unsafe { AbortSignalRef::adopt(signal.ref_()) };
-        signal.pending_activity_ref();
         let mut listener = Box::new(BodyAbortListener {
-            signal: signal_ref,
+            signal: bun_jsc::abort_signal::PendingActivityRef::new(signal_ref),
             // SAFETY: caller contract; `this` is live and owns the box.
             response: unsafe { bun_ptr::ParentRef::from_raw_mut(this) },
             global: GlobalRef::new(global),
         });
-        signal.add_listener(
-            core::ptr::from_mut(&mut *listener).cast::<c_void>(),
-            BodyAbortListener::on_abort,
-        );
+        let ctx = core::ptr::from_mut(&mut *listener).cast::<c_void>();
+        listener
+            .signal
+            .add_listener(ctx, BodyAbortListener::on_abort);
         // SAFETY: caller contract; `this` is live.
         unsafe { (*this).abort_listener.set(Some(listener)) };
     }

@@ -322,6 +322,97 @@ describe.concurrent("bun install config precedence", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `registry = "<url>"` and `registry = { url = "<url>" }` must read credentials
+  // written into the URL the same way.
+  const registryForms: [form: string, registry: (url: string) => unknown][] = [
+    ["string", url => url],
+    ["object", url => ({ url })],
+  ];
+  const userBasicAuth = `Basic ${Buffer.from("config-precedence:verysecure").toString("base64")}`;
+
+  test.each(registryForms)("bunfig registry %s sends the user:password written into its URL", async (_, registry) => {
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/bunfig.toml": bunfig({
+        registry: registry(`http://config-precedence:verysecure@localhost:${capture.port}/`),
+      }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([userBasicAuth]));
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(registryForms)("bunfig registry %s sends the :token written into its URL", async (_, registry) => {
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/bunfig.toml": bunfig({ registry: registry(`http://:token-from-url@localhost:${capture.port}/`) }),
+      "project/package.json": packageJson({ "no-deps": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set(["Bearer token-from-url"]));
+    expect(installed(String(dir), "no-deps")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(registryForms)(
+    "bunfig scoped registry %s sends the user:password written into its URL",
+    async (_, registry) => {
+      using dead = deadRegistry();
+      using capture = capturingRegistry();
+      using dir = tempDir("config-precedence", {
+        "project/bunfig.toml": bunfig({
+          registry: dead.url,
+          scopes: { "needs-auth": registry(`http://config-precedence:verysecure@localhost:${capture.port}/`) },
+        }),
+        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+      });
+      const { stderr, exitCode } = await install(String(dir));
+      expect(stderr).not.toContain("error:");
+      expect(dead.hits).toBe(0);
+      expect(new Set(capture.authorizations)).toStrictEqual(new Set([userBasicAuth]));
+      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("bunfig registry object keys override the credentials written into its URL", async () => {
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "project/bunfig.toml": bunfig({
+        registry: {
+          url: `http://config-precedence:password-from-url@localhost:${capture.port}/`,
+          password: "verysecure",
+        },
+      }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([userBasicAuth]));
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  test("credentials written into a bunfig registry object URL beat the _authToken for the same registry in ~/.npmrc", async () => {
+    using capture = capturingRegistry();
+    using dir = tempDir("config-precedence", {
+      "home/.npmrc": `//localhost:${capture.port}/:_authToken=token-from-npmrc\n`,
+      "project/bunfig.toml": bunfig({
+        registry: { url: `http://config-precedence:verysecure@localhost:${capture.port}/` },
+      }),
+      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+    });
+    const { stderr, exitCode } = await install(String(dir));
+    expect(stderr).not.toContain("error:");
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([userBasicAuth]));
+    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
   test("--linker beats ~/.npmrc, project .npmrc and bunfig", async () => {
     using dir = tempDir("config-precedence", {
       "home/.npmrc": "install-strategy=hoisted\n",

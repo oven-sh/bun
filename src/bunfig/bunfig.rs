@@ -1181,28 +1181,31 @@ impl Bunfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl<'a> Parser<'a> {
-    fn parse_registry_url_string(&mut self, str: &E::EString) -> crate::Result<api::NpmRegistry> {
+    fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
         // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
         // The api `Parser` is generic over log/source and never reads them for
         // this path, so we just hand it our reborrowed handles.
-        let bytes = str.string(self.bump)?;
         Ok(bun_api::npm_registry::Parser {
             log: &mut *self.log,
             source: self.source,
         }
-        .parse_registry_url_string_impl(bytes)?)
+        .parse_registry_url_string_impl(url)?)
     }
 
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
-        let mut registry = api::NpmRegistry::default();
+        // Credentials written into `url` (`https://user:pass@host/`,
+        // `https://:token@host/`) are split out exactly as for the string form;
+        // userinfo left in the URL is never sent. The explicit keys below
+        // override what the URL provided.
+        let mut registry = match obj.get(b"url") {
+            Some(url) => {
+                self.expect_string(&url)?;
+                let url = url.as_string(self.bump).expect("infallible: type checked");
+                self.parse_registry_url(url)?
+            }
+            None => api::NpmRegistry::default(),
+        };
 
-        if let Some(url) = obj.get(b"url") {
-            self.expect_string(&url)?;
-            registry.url = url
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
         if let Some(username) = obj.get(b"username") {
             self.expect_string(&username)?;
             registry.username = username
@@ -1230,7 +1233,10 @@ impl<'a> Parser<'a> {
 
     fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
-            ExprData::EString(s) => self.parse_registry_url_string(s),
+            ExprData::EString(s) => {
+                let url = s.string(self.bump)?;
+                self.parse_registry_url(url)
+            }
             ExprData::EObject(o) => self.parse_registry_object(o),
             _ => {
                 self.add_error(

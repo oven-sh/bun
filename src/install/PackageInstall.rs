@@ -251,14 +251,10 @@ impl Step {
     }
 }
 
-/// The directory a package is linked into before being renamed onto its real
-/// path in one step (`@scope/name` becomes `@scope/.bun-tmp-<hash>`), so the
-/// real path, whose contents later installs take as proof that the package is
-/// installed, never exists half-written. The leading dot keeps it from being
-/// treated as a package. The name is a hash of the package path rather than the
-/// path itself because a package name may already be as long as a file name can
-/// be, and it is deterministic so that the next install of the package finds and
-/// removes whatever an interrupted one left behind.
+/// Where a package is linked to before being renamed onto its real path, which
+/// later installs take as proof that it is installed: `@scope/name` becomes
+/// `@scope/.bun-tmp-<hash>`. Hashed because a name may already be NAME_MAX long,
+/// deterministic so the next install of the package removes a stale one.
 pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
 
 impl core::fmt::Display for StagingPath<'_> {
@@ -274,20 +270,14 @@ impl core::fmt::Display for StagingPath<'_> {
     }
 }
 
-/// Renames a fully linked `StagingPath` onto the package's real path. Both are
-/// relative to `dir`. Fails if something is already installed at `dest`; the
-/// caller decides what to do with it.
-///
-/// On Windows a directory cannot be renamed while another process holds a file
-/// inside it open without `FILE_SHARE_DELETE`, which is how virus scanners look
-/// at files that were just written (https://github.com/oven-sh/bun/issues/11250
-/// is the same failure for the cache); that clears within milliseconds, so back
-/// off and retry like the cache publish in `extract_tarball.rs` does. Windows
-/// reports an occupied `dest` with the same errors, so that case is told apart
-/// by looking for `dest` instead of waited on.
+/// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`. Fails if
+/// `dest` is occupied.
 pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
     #[cfg(windows)]
     {
+        // A scanner still holding a just-written file open fails the rename for a
+        // few milliseconds (#11250 is the same failure for the cache). An occupied
+        // `dest` fails with the same errors and is not worth waiting on.
         const RETRIES: u32 = 6;
         for attempt in 0..RETRIES {
             match sys::renameat(dir, staging, dir, dest) {
@@ -2393,8 +2383,7 @@ impl<'a> PackageInstall<'a> {
                 None,
             );
         };
-        // The backends write over whatever is already there, and what an interrupted
-        // install left behind may belong to another version of the package.
+        // A stale one may hold files of another version, which the backends would keep.
         if let Err(err) = destination_dir.delete_tree(staging.as_bytes()) {
             return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
         }
@@ -2409,10 +2398,8 @@ impl<'a> PackageInstall<'a> {
         let dest = self.destination_dir_subpath;
         let mut renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
         if renamed.is_err() && dest.as_bytes() != b"." {
-            // Something is installed there even though nothing was moved away above:
-            // a workspace that is depended on under two names has its node_modules
-            // walked as two trees, so the packages in it are installed twice. Replace
-            // it, as overwriting it file by file did before.
+            // Occupied: a workspace depended on under two names is walked as two trees,
+            // so the packages inside it are installed twice. The later one replaces it.
             self.uninstall_before_install(destination_dir);
             renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
         }

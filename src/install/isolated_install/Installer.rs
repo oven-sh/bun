@@ -407,9 +407,7 @@ impl<'a> Installer<'a> {
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball
         ) {
-            // Whatever a failed link left behind is in the staging directory; the
-            // final path is only created by a completed link, so the next install
-            // links the package again.
+            // A failed link only ever wrote to the staging directory.
             let mut staging = AutoPath::init_top_level_dir();
             self.append_real_store_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
@@ -1224,9 +1222,8 @@ impl Task {
                             }
                         }
 
-                        // The previous tree has to be gone for the rename below to land, and
-                        // a staging tree left by an interrupted install must not be overlaid:
-                        // hardlink/copyfile keep files that are only in the existing tree.
+                        // The final path must be free for the rename below, and the backends
+                        // would keep whatever a stale staging tree holds.
                         for which in [Which::Final, Which::Staging] {
                             let mut leftover = AutoPath::init_top_level_dir();
                             installer.append_real_store_path(&mut leftover, self.entry_id, which);
@@ -2540,11 +2537,8 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Publish a project-local entry's package directory by renaming the
-    /// `StagingPath` it was linked into onto its final path, which
-    /// `Step::LinkPackage` cleared first. The next install skips the entry if
-    /// its `package.json` (or patch tag) exists at the final path, so nothing
-    /// may show up there before every file has been linked.
+    /// Renames a project-local entry's fully linked `StagingPath` onto its final
+    /// path, which is what the next install's skip check looks at.
     pub(crate) fn commit_local_store_package(&self, entry_id: StoreEntryId) -> sys::Result<()> {
         debug_assert!(!self.entry_uses_global_store(entry_id));
         let mut staging = AutoPath::init_top_level_dir();
@@ -2729,9 +2723,8 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// `node_modules/.bun/<storepath>/node_modules/<pkg>` of an npm, git,
-    /// tarball or folder entry, or (`Which::Staging`) the sibling directory a
-    /// package is linked into out of the cache before being renamed onto it.
+    /// `node_modules/.bun/<storepath>/node_modules/<pkg>`, or with
+    /// `Which::Staging` the `StagingPath` next to it.
     fn append_store_package_path(
         &self,
         buf: &mut impl paths::PathLike,
@@ -2857,18 +2850,12 @@ impl<'a> Installer<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Which {
-    /// The published location (`<cache>/links/<entry>`, or the entry's
-    /// `node_modules/.bun/<storepath>` directory for project-local entries).
-    /// Use for symlink *targets* that point at other entries, and for the
-    /// warm-hit check.
+    /// The published location. Use for symlink *targets* that point at other
+    /// entries, and for the warm-hit check.
     Final,
-    /// The location the build steps write into, renamed onto `Final` once
-    /// complete. For a global-store entry that is the per-process temp sibling
-    /// of the whole entry (`<entry>.tmp-<suffix>`): use it for *destinations*
-    /// of clonefile/hardlink/dep-symlink/bin-link when building the entry. For
-    /// a project-local entry only the package directory itself is staged (see
-    /// `StagingPath`); its `node_modules` directory is written in place, so
-    /// `Staging` only differs from `Final` in `append_real_store_path`.
+    /// What the build steps write into, renamed onto `Final` once complete: the
+    /// whole entry (`<entry>.tmp-<suffix>`) for a global-store entry, only the
+    /// package directory (`StagingPath`) for a project-local one.
     Staging,
 }
 

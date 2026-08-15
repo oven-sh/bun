@@ -2782,10 +2782,8 @@ mod draft {
     /// information (PII). The stackframes point to Bun's open-source native code
     /// (not user code), and are safe to share publicly and with the Bun team.
     ///
-    /// The upload child outlives the crashing process and is given its own cwd
-    /// instead of inheriting ours: Windows refuses to delete a directory that is
-    /// some process's cwd, and whoever removes the crashed process's cwd after
-    /// seeing it exit would otherwise get EBUSY until the upload finishes.
+    /// The upload child outlives us, so it must not inherit our cwd: on Windows a
+    /// directory cannot be deleted while it is any process's cwd.
     fn report(url: &[u8]) {
         if !is_reporting_enabled() {
             return;
@@ -2872,10 +2870,8 @@ mod draft {
             let cmd_line_slice = &mut cmd_line.slice()[0..end];
             // Rust has no [:0] sentinel slices — pass the raw pointer instead.
             // SAFETY: all pointer args are either null or point to stack-local
-            // buffers/structs valid for the duration of the call; cmd_line is
-            // NUL-terminated above, and `sysdir` is NUL-terminated because it was
-            // zero-initialized and `GetSystemDirectoryW` wrote fewer than
-            // `sysdir.len()` units into it (checked above).
+            // buffers/structs valid for the duration of the call; cmd_line and
+            // `sysdir` (zero-initialized, length-checked above) are NUL-terminated.
             let spawn_result = unsafe {
                 windows::kernel32::CreateProcessW(
                     core::ptr::null(),
@@ -2948,8 +2944,7 @@ mod draft {
                             libc::close(i);
                         }
                     }
-                    // `curl` came from `which()` with an absolute cwd, so it is an
-                    // absolute path and does not depend on the cwd we leave here.
+                    // `curl` is absolute (`which()` was given an absolute cwd).
                     // SAFETY: chdir is async-signal-safe; the path is a static C string.
                     unsafe {
                         libc::chdir(c"/".as_ptr());

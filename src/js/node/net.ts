@@ -426,7 +426,10 @@ const SocketHandlers: SocketHandler = {
       const writeChunk = self._pendingData;
       if ($isArray(writeChunk)) {
         self._pendingData = self[kwriteCallback] = null;
-        if (writeChunksUntilFull(self, socket, writeChunk, callback)) callback(null);
+        if (writeChunksUntilFull(self, socket, writeChunk, callback)) {
+          unrefAfterDrain(self, socket);
+          callback(null);
+        }
         return;
       }
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
@@ -1294,7 +1297,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       if ($isArray(writeChunk)) {
         self._pendingData = self[kwriteCallback] = null;
         if (writeChunksUntilFull(self, socket, writeChunk, callback)) {
-          if (self[kended] && !self[kUserUnrefed] && socket === self._handle) socket.unref?.();
+          unrefAfterDrain(self, socket);
           callback(null);
         }
         return;
@@ -2744,7 +2747,8 @@ function parkPendingChunks(self, socket, chunks, callback) {
   self._pendingData = chunks;
   self._pendingEncoding = "";
   self[kwriteCallback] = callback;
-  if (self[kended] && !self[kUserUnrefed]) socket.ref?.();
+  // Same hold as _write's short-write branch; unrefAfterDrain lets go again.
+  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed]) socket.ref?.();
 }
 
 function writeChunksUntilFull(self, socket, chunks, callback) {

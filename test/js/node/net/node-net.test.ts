@@ -2361,6 +2361,47 @@ describe("net.Socket write buffering behind a stalled peer", () => {
       server.close();
     }
   });
+
+  // Multi-chunk twin of "a write still waiting for drain does keep it alive":
+  // the unread reply pauses the client (dropping its hold on the loop), the
+  // first chunk's drain gives the hold up again via unrefAfterDrain, and the
+  // batch _writev then parks behind it must re-take it the way _write does,
+  // or the process exits with the queue unflushed.
+  it.skipIf(isWindows)("a parked _writev batch keeps the process alive until it drains", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const net = require("net");
+        let drained = false;
+        const server = net.createServer(s => {
+          s.unref();
+          s.pause();
+          s.write(Buffer.alloc(256 * 1024, 0x61));
+          setTimeout(() => { s.on("data", () => {}); s.resume(); }, 100).unref();
+        });
+        server.unref();
+        server.listen(0, () => {
+          const c = net.connect(server.address().port, () => {
+            for (let i = 0; i < 127; i++) c.write(Buffer.alloc(64 * 1024, 0x62));
+            c.write(Buffer.alloc(64 * 1024, 0x62), () => { drained = true; c.destroy(); });
+          });
+        });
+        process.on("exit", code => console.log("exit", code, "drained", drained));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: "exit 0 drained true",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // On Windows the connect-error path receives raw WSA codes (WSAECONNRESET,

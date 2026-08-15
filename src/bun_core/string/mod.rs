@@ -362,9 +362,7 @@ impl String {
         debug_assert!(!units.is_empty());
         // SAFETY: units describes a valid, 2-byte-aligned slice; C++ side
         // stores ptr/len without copying and never frees it.
-        unsafe {
-            BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false)
-        }
+        unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
     }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string.

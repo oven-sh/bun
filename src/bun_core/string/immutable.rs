@@ -2638,9 +2638,7 @@ impl WtfUnits {
             WtfUnits::Utf16(units) => {
                 // SAFETY: a `u8` view over an initialized `u16` slice is always
                 // in-bounds and aligned.
-                unsafe {
-                    core::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len() * 2)
-                }
+                unsafe { core::slice::from_raw_parts(units.as_ptr().cast::<u8>(), units.len() * 2) }
             }
         }
     }

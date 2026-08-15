@@ -521,10 +521,7 @@ impl File {
                     // base is even on every platform (the bytecode subrange in
                     // the same section relies on base % 128 == 8).
                     let units = unsafe {
-                        core::slice::from_raw_parts(
-                            bytes.as_ptr().cast::<u16>(),
-                            bytes.len() / 2,
-                        )
+                        core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
                     };
                     self.wtf_string = BunString::create_static_external_utf16(units);
                 }

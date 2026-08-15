@@ -206,31 +206,35 @@ test.concurrent("directory named bunfig.toml does not short-circuit the walk", a
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("a compiled executable reads config from its run directory only", async () => {
-  using dir = tempDir("bunfig-walk-compile", {
-    "package.json": `{"name":"root"}\n`,
-    "bunfig.toml": `preload = ["./preload.ts"]\n`,
-    "preload.ts": `console.log("preload script executed!");\n`,
-    "app.ts": `console.log("compiled app");\n`,
-    "sub/.keep": "",
-  });
-  const exe = join(String(dir), "sub", isWindows ? "app.exe" : "app");
+test.concurrent(
+  "a compiled executable reads config from its run directory only",
+  async () => {
+    using dir = tempDir("bunfig-walk-compile", {
+      "package.json": `{"name":"root"}\n`,
+      "bunfig.toml": `preload = ["./preload.ts"]\n`,
+      "preload.ts": `console.log("preload script executed!");\n`,
+      "app.ts": `console.log("compiled app");\n`,
+      "sub/.keep": "",
+    });
+    const exe = join(String(dir), "sub", isWindows ? "app.exe" : "app");
 
-  const [, buildErr, buildCode] = await runIn(String(dir), ["build", "--compile", "app.ts", "--outfile", exe]);
-  expect(buildErr).not.toContain("error");
-  expect(buildCode).toBe(0);
+    const [, buildErr, buildCode] = await runIn(String(dir), ["build", "--compile", "app.ts", "--outfile", exe]);
+    expect(buildErr).not.toContain("error");
+    expect(buildCode).toBe(0);
 
-  // Run from `sub`, which has no bunfig.toml; the parent one must not apply.
-  await using proc = Bun.spawn({
-    cmd: [exe],
-    env: bunEnv,
-    cwd: join(String(dir), "sub"),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Run from `sub`, which has no bunfig.toml; the parent one must not apply.
+    await using proc = Bun.spawn({
+      cmd: [exe],
+      env: bunEnv,
+      cwd: join(String(dir), "sub"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stdout).toBe("compiled app\n");
-  expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-}, 30_000);
+    expect(stdout).toBe("compiled app\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

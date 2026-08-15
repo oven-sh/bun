@@ -7,6 +7,11 @@
 // Modes:
 //   entry          in-memory (`files`) entry point at the long path
 //   asset          in-memory entry point importing an in-memory image at the long path
+//   asset-dir      like `asset`, with an asset naming template that starts with [dir]
+//                  (the asset's output path then contains the long directory too)
+//   chunk-dir      in-memory entry point dynamically importing an in-memory module at the
+//                  long path, with splitting and a chunk naming template that starts with
+//                  [dir] (the module's chunk is emitted under the long directory)
 //   import         entry point on disk importing a file on disk at the long path
 //   import-plugin  like `import`, with an onResolve plugin that declines every path
 //                  (imports then reach the resolver through the plugin code path)
@@ -51,12 +56,28 @@ switch (mode) {
     options = { entrypoints: [path], files: { [path]: "console.log(1);" } };
     break;
   }
-  case "asset": {
+  case "asset":
+  case "asset-dir": {
     path = longPath(root, "image.png");
     const entry = join(process.cwd(), "entry.js");
     options = {
       entrypoints: [entry],
       files: { [entry]: `import url from ${JSON.stringify(path)}; console.log(url);`, [path]: "not really a png" },
+      naming: mode === "asset-dir" ? { asset: "[dir]/[name]-[hash].[ext]" } : undefined,
+    };
+    break;
+  }
+  case "chunk-dir": {
+    path = longPath(root, "lazy.js");
+    const entry = join(process.cwd(), "entry.js");
+    options = {
+      entrypoints: [entry],
+      files: { [entry]: `import(${JSON.stringify(path)}).then(console.log);`, [path]: "export default 42;" },
+      // Without this the root would be the common ancestor of both modules,
+      // the filesystem root, and [dir] would not contain the cwd's `..` levels.
+      root: process.cwd(),
+      splitting: true,
+      naming: { chunk: "[dir]/[name]-[hash].[ext]" },
     };
     break;
   }

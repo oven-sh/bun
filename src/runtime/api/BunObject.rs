@@ -1461,7 +1461,8 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             crate::server::server_config::FromJSOptions {
                 allow_bake_config: bun_core::FeatureFlags::bake(),
                 is_fetch_required: true,
-                has_user_routes: false,
+                previous_fetch: false,
+                previous_routes: false,
             },
         )?;
 

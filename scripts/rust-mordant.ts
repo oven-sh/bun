@@ -32,6 +32,9 @@ const off = [
 ];
 
 const rustflags = [
+  // The workspace denies warnings; a finding over the baseline should be
+  // reported (and fail the run below), not abort the crate and hide the rest.
+  "--cap-lints warn",
   // Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s of
   // lints added since then are unknown to it.
   "-A unknown_lints",
@@ -53,7 +56,21 @@ const prep = spawnSync("bun", ["scripts/build.ts", "--quiet", "--target=codegen"
 if (prep.status !== 0) process.exit(prep.status ?? 1);
 
 const r = spawnSync("cargo", ["dylint", "--all", "--workspace", "--keep-going", "--", "--keep-going"], {
-  stdio: "inherit",
+  stdio: ["inherit", "inherit", "pipe"],
   env: { ...process.env, DYLINT_RUSTFLAGS: rustflags },
+  maxBuffer: 1 << 28,
 });
-process.exit(r.status ?? 1);
+const stderr = r.stderr?.toString() ?? "";
+process.stderr.write(stderr);
+if (r.status !== 0) process.exit(r.status ?? 1);
+// Cargo's own summary lines ("warning: `crate` (lib) generated N warnings")
+// are not findings; anything else at warning level came from a lint.
+const findings = stderr
+  .split("\n")
+  .filter(l => /^warning: /.test(l) && !/generated \d+ warnings?/.test(l) && !/^warning: build failed/.test(l));
+if (findings.length > 0 && !process.env.MORDANT_BASELINE_WRITE) {
+  console.error(
+    `\n${findings.length} finding(s) over mordant-baseline.toml; fix them or regenerate the baseline (MORDANT_BASELINE_WRITE=1 bun run rust:mordant).`,
+  );
+  process.exit(1);
+}

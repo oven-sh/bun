@@ -1653,7 +1653,7 @@ fn warn_unmet_peer_dependency(
     bun_ast::add_warning_pretty!(
         this.log_mut(),
         None,
-        bun_ast::Loc::EMPTY,
+        None,
         "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
         bstr::BStr::new(this.lockfile.str(&version.literal)),
         bstr::BStr::new(this.lockfile.str(&name)),

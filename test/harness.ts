@@ -1880,6 +1880,46 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
+/**
+ * Builds the gzipped tarball GitHub serves for `/repos/<owner>/<repo>/tarball/<ref>`: one
+ * root directory, which GitHub names `<owner>-<repo>-<short sha>`, with the repository's
+ * files inside it. `bun install` reads the dependency's resolved commit (the lockfile's
+ * third tuple element and the installed `.bun-tag`) from the archive's first entry, so the
+ * root directory entry has to come first; `Bun.Archive` only writes file entries and cannot
+ * produce this layout.
+ *
+ * Serve the bytes from a local server and pass its URL as `GITHUB_API_URL` to install
+ * `owner/repo#ref` dependencies without contacting api.github.com.
+ */
+export function githubTarball(rootDir: string, files: Record<string, string | Uint8Array>): Uint8Array {
+  function header(name: string, size: number, type: "0" | "5"): Buffer {
+    if (Buffer.byteLength(name) > 100) throw new Error(`tar entry name longer than the 100 byte ustar limit: ${name}`);
+    const block = Buffer.alloc(512);
+    block.write(name, 0);
+    block.write(type === "5" ? "0000755\0" : "0000644\0", 100);
+    block.write("0000000\0", 108); // uid
+    block.write("0000000\0", 116); // gid
+    block.write(size.toString(8).padStart(11, "0") + "\0", 124);
+    block.write("00000000000\0", 136); // mtime
+    block.fill(" ", 148, 156); // the checksum is computed with its own field blanked out
+    block.write(type, 156);
+    block.write("ustar\0", 257);
+    block.write("00", 263);
+    let checksum = 0;
+    for (const byte of block) checksum += byte;
+    block.write(checksum.toString(8).padStart(6, "0") + "\0 ", 148);
+    return block;
+  }
+
+  const blocks = [header(`${rootDir}/`, 0, "5")];
+  for (const [path, contents] of Object.entries(files)) {
+    const body = Buffer.from(contents);
+    blocks.push(header(`${rootDir}/${path}`, body.length, "0"), body, Buffer.alloc((512 - (body.length % 512)) % 512));
+  }
+  blocks.push(Buffer.alloc(1024)); // end-of-archive marker
+  return Bun.gzipSync(Buffer.concat(blocks));
+}
+
 export class VerdaccioRegistry {
   port: number;
   process: ChildProcess | undefined;

@@ -379,20 +379,47 @@ describe.concurrent("bun install config precedence", () => {
     },
   );
 
-  test("bunfig registry object keys override the credentials written into its URL", async () => {
+  // Credential keys replace the credentials written into the URL as a set.
+  // `authToken` is only known after beforeAll, hence the thunks.
+  const keyedRegistries: [
+    name: string,
+    registry: (port: number) => Record<string, string>,
+    expectedAuthorization: () => string,
+  ][] = [
+    [
+      "username/password keys beat the user:password written into its URL",
+      port => ({
+        url: `http://user-from-url:password-from-url@localhost:${port}/`,
+        username: "config-precedence",
+        password: "verysecure",
+      }),
+      () => userBasicAuth,
+    ],
+    [
+      "username/password keys beat the :token written into its URL",
+      port => ({
+        url: `http://:token-from-url@localhost:${port}/`,
+        username: "config-precedence",
+        password: "verysecure",
+      }),
+      () => userBasicAuth,
+    ],
+    [
+      "token key beats the user:password written into its URL",
+      port => ({ url: `http://user-from-url:password-from-url@localhost:${port}/`, token: authToken }),
+      () => `Bearer ${authToken}`,
+    ],
+  ];
+
+  test.each(keyedRegistries)("bunfig registry object %s", async (_, registry, expectedAuthorization) => {
     using capture = capturingRegistry();
     using dir = tempDir("config-precedence", {
-      "project/bunfig.toml": bunfig({
-        registry: {
-          url: `http://config-precedence:password-from-url@localhost:${capture.port}/`,
-          password: "verysecure",
-        },
-      }),
+      "project/bunfig.toml": bunfig({ registry: registry(capture.port) }),
       "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
     });
     const { stderr, exitCode } = await install(String(dir));
     expect(stderr).not.toContain("error:");
-    expect(new Set(capture.authorizations)).toStrictEqual(new Set([userBasicAuth]));
+    expect(new Set(capture.authorizations)).toStrictEqual(new Set([expectedAuthorization()]));
     expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
     expect(exitCode).toBe(0);
   });

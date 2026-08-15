@@ -1195,8 +1195,7 @@ impl<'a> Parser<'a> {
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
         // Credentials written into `url` (`https://user:pass@host/`,
         // `https://:token@host/`) are split out exactly as for the string form;
-        // userinfo left in the URL is never sent. The explicit keys below
-        // override what the URL provided.
+        // userinfo left in the URL is never sent.
         let mut registry = match obj.get(b"url") {
             Some(url) => {
                 self.expect_string(&url)?;
@@ -1206,21 +1205,36 @@ impl<'a> Parser<'a> {
             None => api::NpmRegistry::default(),
         };
 
-        if let Some(username) = obj.get(b"username") {
+        let username = obj.get(b"username");
+        let password = obj.get(b"password");
+        let token = obj.get(b"token");
+
+        // The URL's credentials only apply when the object configures none of
+        // its own; the keys replace them as a set. `Scope::from_api` sends a
+        // token in preference to a username/password pair, so a `:token@` left
+        // in the URL must not survive next to `username`/`password` keys.
+        if username.is_some() || password.is_some() || token.is_some() {
+            registry = api::NpmRegistry {
+                url: registry.url,
+                ..Default::default()
+            };
+        }
+
+        if let Some(username) = username {
             self.expect_string(&username)?;
             registry.username = username
                 .as_string(self.bump)
                 .expect("infallible: type checked")
                 .into();
         }
-        if let Some(password) = obj.get(b"password") {
+        if let Some(password) = password {
             self.expect_string(&password)?;
             registry.password = password
                 .as_string(self.bump)
                 .expect("infallible: type checked")
                 .into();
         }
-        if let Some(token) = obj.get(b"token") {
+        if let Some(token) = token {
             self.expect_string(&token)?;
             registry.token = token
                 .as_string(self.bump)

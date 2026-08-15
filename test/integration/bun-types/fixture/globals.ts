@@ -318,6 +318,19 @@ clearTimeout(1);
 setImmediate(() => {});
 clearImmediate(1);
 
+// The global object is itself an EventTarget: addEventListener, removeEventListener
+// and dispatchEvent are functions on globalThis (main thread and workers alike).
+{
+  const listener = (event: Event) => event.type;
+  addEventListener("asdf", listener);
+  removeEventListener("asdf", listener);
+  expectType(dispatchEvent(new Event("asdf"))).is<boolean>();
+  expectType(dispatchEvent(new ErrorEvent("error", { message: "asdf" }))).is<boolean>();
+  expectType(globalThis.dispatchEvent(new Event("asdf"))).is<boolean>();
+  // @ts-expect-error dispatchEvent takes an Event instance, not an event type
+  dispatchEvent("asdf");
+}
+
 const err = new Error("test");
 err.cause = "asdf";
 err.cause = new Error("asdf");

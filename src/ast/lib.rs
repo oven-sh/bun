@@ -595,10 +595,13 @@ impl Loc {
         usize::try_from(self.start.max(0)).expect("int cast")
     }
 
-    /// `None` for [`Loc::EMPTY`] (or any negative start), unlike [`Loc::i`] which clamps to 0.
+    /// The byte offset of this location in `contents`, if it is one: `None` for
+    /// [`Loc::EMPTY`], a negative start, or a start at or past the end.
     #[inline]
-    pub fn to_index(self) -> Option<usize> {
-        usize::try_from(self.start).ok()
+    pub fn index_in(self, contents: &[u8]) -> Option<usize> {
+        usize::try_from(self.start)
+            .ok()
+            .filter(|&i| i < contents.len())
     }
 
     #[inline]
@@ -1255,14 +1258,11 @@ impl Default for Range {
 /// `isIdentifierStart/Continue` tables (via `bun_core::identifier`) and
 /// `\u{...}` escape skipping.
 pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
-    let text = match loc.to_index() {
-        Some(start) if start < contents.len() => &contents[start..],
-        Some(_) | None => return Range::NONE,
+    let Some(start) = loc.index_in(contents) else {
+        return Range::NONE;
     };
+    let text = &contents[start..];
     let mut r = Range { loc, len: 0 };
-    if text.is_empty() {
-        return r;
-    }
     let end = text.len() as u32;
 
     let iter = bun_core::strings::CodepointIterator::init(text);

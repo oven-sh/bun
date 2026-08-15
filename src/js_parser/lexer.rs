@@ -3762,18 +3762,14 @@ pub use bun_core::identifier::{is_identifier, is_identifier_utf16};
 
 pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     let contents = &source.contents;
-    let start = match loc.to_index() {
-        Some(start) if start < contents.len() => start,
-        Some(_) | None => return Range::NONE,
+    let Some(start) = loc.index_in(contents) else {
+        return Range::NONE;
     };
 
     let iter = CodepointIterator::init(&contents[start..]);
     let mut cursor = strings::Cursor::default();
 
     let mut r = Range { loc, len: 0 };
-    if iter.bytes.is_empty() {
-        return r;
-    }
     let text = iter.bytes;
     let end = u32::try_from(text.len()).expect("int cast");
 

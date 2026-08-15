@@ -2755,6 +2755,10 @@ mod tests {
             b"C:\\bin\\BUNX.EXE",
             b"bunx.exe"
         ));
+        assert!(super::ends_with_case_insensitive_ascii(b"BUNX", b"bunx"));
+        assert!(!super::ends_with_case_insensitive_ascii(
+            b"bun.exe", b"bunx"
+        ));
         assert!(!super::ends_with_case_insensitive_ascii(b"bun", b"bunx"));
         assert!(super::ends_with_case_insensitive_ascii(b"bunx", b""));
         assert!(super::ends_with_case_insensitive_ascii(b"", b""));

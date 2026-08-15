@@ -2277,19 +2277,17 @@ where
             );
             self.config.on_request = new_config.on_request;
         }
-        // On a node:http server, swap on any change, *including* clearing to
-        // ZERO when the reload config omits the handler, so subsequent
-        // `on_web_socket_upgrade` / `set_routes` stop routing through the
-        // node:http path (a later reload may set it again).
+        // Swap on any change, *including* clearing to ZERO when the reload
+        // config omits the handler, so subsequent `on_web_socket_upgrade` /
+        // `set_routes` stop routing through the node:http path.
         //
-        // A server that was not created as a node:http server cannot become
-        // one through reload() (`is_node_http_server` is never copied from
-        // `new_config`): listen() already sized every future connection's
-        // socket ext block for this server's kind (HttpResponseData vs the
-        // bigger NodeHttpResponseData) and set_routes would swap the context
-        // onto the node:http handler instantiation under those already-sized
-        // allocations, so the node request path would construct and index past
-        // them.
+        // Never the other direction: a server that was not created as a
+        // node:http server cannot become one through reload(). listen()
+        // already sized every future connection's socket ext block for this
+        // server's kind (HttpResponseData vs the bigger NodeHttpResponseData)
+        // and set_routes would swap the context onto the node:http handler
+        // instantiation under those already-sized allocations, so the node
+        // request path would construct and index past them.
         if self.config.is_node_http_server
             && self.config.on_node_http_request != new_config.on_node_http_request
         {

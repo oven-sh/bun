@@ -51,12 +51,9 @@ pub struct ServerConfig {
     pub(crate) on_error: JSValue,
     pub(crate) on_request: JSValue,
     pub(crate) on_node_http_request: JSValue,
-    /// The server was created by node:http (`serve()` was called with
-    /// `onNodeHTTPRequest`). Fixed for the server's lifetime: it selects the
-    /// uWS context's node:http mode in `set_routes()` and the node:http
-    /// close/drain semantics, and `reload()` leaves it alone, whereas
-    /// `on_node_http_request` is the current handler and a reload that omits
-    /// it clears it.
+    /// `serve()` was called with `onNodeHTTPRequest` (node:http's server).
+    /// Fixed for the server's lifetime, unlike `on_node_http_request`, which
+    /// is the current handler and can be cleared by `reload()`.
     pub(crate) is_node_http_server: bool,
 
     pub(crate) websocket: Option<WebSocketServerContext>,

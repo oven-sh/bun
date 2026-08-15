@@ -2734,8 +2734,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // Puts the uWS context into node:http mode (needed for the Node socket
-        // callbacks even when user routes cover "/*"). Idempotent on reload.
+        // Idempotent, so re-running set_routes on reload() is fine.
         if self.config.is_node_http_server {
             ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
         }

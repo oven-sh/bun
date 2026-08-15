@@ -967,8 +967,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     let loop_ = unsafe { (*el).usockets_loop() };
 
     // ── tick_immediate_tasks ────────────────────────────────────────────
-    // After this call only next-iteration immediates are pending, which is
-    // what the `has_pending_immediate` read below must reflect.
+    // `has_pending_immediate` below is read after this, so it covers what the
+    // batch queued.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
     // SAFETY: as above.
@@ -1033,8 +1033,6 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
     // rather than running unconditionally.
     {
-        // Read AFTER `tick_immediate_tasks` above, so this reflects the
-        // immediates queued during it (which run on the next iteration).
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
             || unsafe { &*el }.has_pending_immediates()

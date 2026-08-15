@@ -50,30 +50,20 @@ pub struct EventLoop {
     /// releases instead of parking (nothing will tick this loop again).
     closed_for_tasks: bool,
 
-    /// setImmediate() gets its own two task queues.
-    ///
-    /// `setImmediate` pushes onto `immediate_tasks`; each loop iteration
-    /// (`tick_immediate_tasks`) moves everything queued so far into
-    /// `immediate_batch` and runs that batch, so what the callbacks queue waits
-    /// for the next iteration, as in Node.js (and a `setImmediate` inside a
-    /// `setImmediate` callback cannot keep the iteration going forever).
-    ///
-    /// The batch lives on the loop, not on the ticking frame's stack, because
-    /// a callback can tick the loop itself (`wait_for_promise` under
-    /// `expect(..).resolves`, an async `Bun.build` plugin setup, ...): that
-    /// nested tick continues this batch from `immediate_batch_next`, so the
-    /// callbacks queued alongside the waiting one (the ones that settle what
-    /// it waits for) run instead of sitting behind it until it returns. Between
-    /// ticks the batch is empty.
+    /// `setImmediate` queues here; `tick_immediate_tasks` swaps the queue into
+    /// `immediate_batch` and runs the batch, so what a callback queues runs on
+    /// the next iteration, as in Node.js.
     ///
     /// Note (§Dispatch): payload is `*mut ()` — the real
     /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
     /// (cycle). Low tier stores the erased pointer; the high-tier hook
     /// (link-time `__bun_run_immediate_task`) casts it back.
     immediate_tasks: Vec<*mut ()>,
+    /// The batch being run, `immediate_batch_next` being the next entry to run.
+    /// On the loop rather than on the ticking frame's stack so that a callback
+    /// which ticks the loop itself (`wait_for_promise`) runs the rest of its
+    /// batch. Empty between ticks.
     immediate_batch: Vec<*mut ()>,
-    /// Index into `immediate_batch` of the next callback to run; the ones
-    /// before it have run (or are running, further up the stack).
     immediate_batch_next: usize,
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
@@ -824,20 +814,18 @@ impl EventLoop {
     /// immediate's keep-alive on this loop, so the loop must still exist.
     fn release_pending_immediates(&mut self) {
         let pending = core::mem::take(&mut self.immediate_tasks);
-        // Teardown entered from a callback of the batch being run
-        // (`process.exit()` inside a setImmediate): the rest of that batch is
-        // pending too, and taking the batch ends the tick further up the stack.
+        // The batch is non-empty when teardown was entered from one of its
+        // callbacks (`process.exit()` inside a setImmediate).
         let mut batch = core::mem::take(&mut self.immediate_batch);
         let next = core::mem::take(&mut self.immediate_batch_next);
         if pending.is_empty() && next >= batch.len() {
-            // Nothing to cancel; also the state of a loop nothing was ever queued
-            // on (the macro loop, normally), which has no `vm()` backref to read.
+            // An unused loop (the macro loop) has no `vm()` backref.
             return;
         }
         let vm = self.vm();
         for task in pending.into_iter().chain(batch.drain(next..)) {
-            // SAFETY: `task` came from `enqueue_immediate_task` and has not been
-            // handed to `__bun_run_immediate_task`; `vm` is the live per-thread VM.
+            // SAFETY: `task` came from `enqueue_immediate_task` and was never run;
+            // `vm` is the live per-thread VM.
             unsafe { __bun_cancel_pending_immediate(task, vm) };
         }
     }
@@ -869,9 +857,8 @@ impl EventLoop {
         self.immediate_tasks.push(task);
     }
 
-    /// Whether a `tick_immediate_tasks` has callbacks to run: queued for the
-    /// next iteration, or left of the batch a tick up the stack is running.
-    /// A poll before it must not block.
+    /// Whether the next `tick_immediate_tasks` has callbacks to run (queued, or
+    /// left of a batch a tick up the stack is running): a poll must not block.
     pub fn has_pending_immediates(&self) -> bool {
         !self.immediate_tasks.is_empty() || self.immediate_batch_next < self.immediate_batch.len()
     }
@@ -896,16 +883,9 @@ impl EventLoop {
         true
     }
 
-    /// `tickImmediateTasks` — the immediates phase of one loop iteration: runs
-    /// one batch (see `immediate_tasks`) and returns with it empty.
-    ///
-    /// The batch is what `setImmediate` queued before this call, unless a tick
-    /// further up the stack is still running one (a callback of it ticked the
-    /// loop: `wait_for_promise`): then this call runs the rest of that batch,
-    /// in queue order, and the outer tick finds nothing left when its callback
-    /// returns. Either way what the callbacks queue runs on a later iteration,
-    /// and the poll that follows does not block while any of it is queued
-    /// ([`Self::has_pending_immediates`]).
+    /// `tickImmediateTasks` — runs the batch a tick up the stack is still in
+    /// (a callback of it ticked the loop: `wait_for_promise`), else everything
+    /// `setImmediate` has queued. Returns with the batch empty either way.
     ///
     /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
     /// the per-task body dispatches through `__bun_run_immediate_task` (link-
@@ -919,23 +899,16 @@ impl EventLoop {
         // the only thing reaching the `__bun_run_immediate_task` extern call is
         // `virtual_machine` — a *separate* pointer parameter that LLVM is told
         // does NOT alias `*self` (even though `EventLoop` is a value field of
-        // `*virtual_machine`). Through it the callback re-enters this loop:
-        // `setImmediate` pushes onto `immediate_tasks`, and a nested tick
-        // advances `immediate_batch_next` or replaces `immediate_batch`. Every
-        // read below must observe that, so all of them go through the
-        // laundered `this`, re-laundered after each callback so nothing read
-        // before it is carried across.
+        // `*virtual_machine`). The callback reaches this loop through it
+        // (`setImmediate`, a nested tick), so every field is re-read through the
+        // laundered `this`, re-laundered after each callback.
         let mut this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
 
-        // SAFETY: `this` is the live `EventLoop`; the borrow ends before any
-        // callback runs.
+        // SAFETY: `this` is the live `EventLoop`; no borrow of it spans a callback.
         unsafe {
             let el = &mut *this;
             if el.immediate_batch_next >= el.immediate_batch.len() {
-                // Nothing left of a batch up the stack (at most the callback we
-                // are inside of, already handed out): this iteration's batch is
-                // everything queued so far, and the cleared batch buffer becomes
-                // the queue for what its callbacks queue.
+                // Not nested (or the outer tick is on its last entry: us).
                 el.immediate_batch.clear();
                 core::mem::swap(&mut el.immediate_batch, &mut el.immediate_tasks);
                 el.immediate_batch_next = 0;
@@ -953,11 +926,9 @@ impl EventLoop {
                 el.immediate_batch_next += 1;
                 task
             };
-            // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `__bun_run_immediate_task` consumes them, and each batch entry
-            // is handed to it exactly once (the index advanced above, before the
-            // callback could tick the loop); `virtual_machine` is the live owning
-            // VM per caller contract.
+            // SAFETY: the index was advanced before the callback can tick the loop,
+            // so each ImmediateObject (alive until run) is run exactly once;
+            // `virtual_machine` is the live owning VM per caller contract.
             exception_thrown = unsafe { __bun_run_immediate_task(task, virtual_machine) };
             this = core::hint::black_box(this);
         }
@@ -968,8 +939,6 @@ impl EventLoop {
             let _ = unsafe { (*this).maybe_drain_microtasks() };
         }
 
-        // The batch is done (by this tick, or a nested one that ran the rest of
-        // it and already emptied it). Keep the buffer for the next swap.
         // SAFETY: as above.
         unsafe {
             let el = &mut *this;

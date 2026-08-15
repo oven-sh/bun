@@ -1,9 +1,10 @@
 // What happens to a Chrome-backend operation that is still waiting when
-// the browser goes away. The interesting case is a navigation-shaped op
-// (navigate / reload / goBack): once Chrome has answered its command the
-// backend only remembers it through the promise slot on the view, waiting
-// for Page.loadEventFired. Losing Chrome after that point must still
-// settle the promise and clear view.loading.
+// the browser goes away (or, for the last mock cases, just the view's own
+// page). The interesting case is a navigation-shaped op (navigate / reload
+// / goBack): once Chrome has answered its command the backend only
+// remembers it through the promise slot on the view, waiting for
+// Page.loadEventFired. Losing Chrome after that point must still settle
+// the promise and clear view.loading.
 //
 // Most tests here drive the backend from a mock CDP endpoint (a Bun.serve
 // WebSocket speaking just enough of the protocol), so they run without a
@@ -185,7 +186,18 @@ test.concurrent("a dropped connection rejects the committed navigation of every 
   });
 });
 
-test.concurrent("Target.detachedFromTarget during a load rejects navigate() and clears loading", async () => {
+// The connection stays up but the view's own page goes away. The promise
+// was already rejected on these paths; they also have to clear loading.
+test.concurrent.each([
+  ["view.close()", `view.close()`, "WebView closed"],
+  // Browser-level event (no sessionId on the envelope) for the only
+  // view's target, which is the first one the mock handed out.
+  [
+    "Target.detachedFromTarget",
+    `mock.emit("Target.detachedFromTarget", { sessionId: "S1", targetId: "T1" })`,
+    "page detached (crashed or closed)",
+  ],
+])("%s during a load rejects navigate() and clears loading", async (_, takePageAway, reason) => {
   const result = await runScenario(`
     const mock = startMockCDP();
     const view = mock.newView();
@@ -198,18 +210,12 @@ test.concurrent("Target.detachedFromTarget during a load rejects navigate() and 
     await committed.promise;
     const loadingBefore = view.loading;
 
-    // Browser-level event (no sessionId on the envelope): the only view's
-    // target is the first one the mock handed out.
-    mock.emit("Target.detachedFromTarget", { sessionId: "S1", targetId: "T1" });
+    ${takePageAway};
     const navigate = await nav;
     console.log(JSON.stringify({ loadingBefore, navigate, loadingAfter: view.loading }));
     mock.stop();
   `);
-  expect(result).toEqual({
-    loadingBefore: true,
-    navigate: "rejected: page detached (crashed or closed)",
-    loadingAfter: false,
-  });
+  expect(result).toEqual({ loadingBefore: true, navigate: `rejected: ${reason}`, loadingAfter: false });
 });
 
 // Same scenario against a real Chrome over the debugging pipe: closeAll()

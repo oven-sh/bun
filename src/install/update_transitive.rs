@@ -1215,8 +1215,7 @@ fn plan_edges(
                 (edge, owner)
             })
             .collect();
-        // Where the differ lands each direct row: rows back on `current` are stayers the redirect
-        // can still carry; moved rows' landings are earlier redirect targets of their own.
+        // Rows landing back on `current` are stayers the redirect can still carry; moved rows' landings are redirect targets of their own.
         let mut direct_stayers: Vec<DependencyID> = Vec::new();
         let mut direct_landings: Vec<(Semver::Version, bool)> = Vec::new();
         for &(dep_id, latest, keep) in &edges_on.direct[inst_i] {

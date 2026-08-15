@@ -590,7 +590,7 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
 
 // React 18 marks elements with Symbol.for("react.element"), React 19 with
 // Symbol.for("react.transitional.element"). Matcher diffs print both as JSX, the way
-// Bun.inspect does, instead of dumping the element's fields.
+// React 18 elements always have, instead of dumping the element's fields.
 it.each(["react.element", "react.transitional.element"])(
   "expect() diffs print %s elements as JSX",
   async $$typeofKey => {
@@ -625,23 +625,23 @@ it.each(["react.element", "react.transitional.element"])(
     // Keep only the matcher output: from each `error:` line up to its stack trace.
     const diffs = [...stderr.matchAll(/^error: expect\(received\)[^]*?(?=\n\s+at )/gm)].map(m => m[0]);
     expect(diffs.join("\n")).toMatchInlineSnapshot(`
-    "error: expect(received).toEqual(expected)
+      "error: expect(received).toEqual(expected)
 
-    Expected: <div id="expected" />
-    Received: <div id="received" />
-    error: expect(received).toStrictEqual(expected)
+      Expected: <div id="expected" />
+      Received: <div id="received" />
+      error: expect(received).toStrictEqual(expected)
 
-      <ul>
-    -   <li>two</li>
-    +   <li>one</li>
-      </ul>
+        <ul>
+      -   <li>two</li>
+      +   <li>one</li>
+        </ul>
 
-    - Expected  - 1
-    + Received  + 1
-    error: expect(received).not.toEqual(expected)
+      - Expected  - 1
+      + Received  + 1
+      error: expect(received).not.toEqual(expected)
 
-    Expected: not <div id="x" />"
-  `);
+      Expected: not <div id="x" />"
+    `);
     expect(exitCode).toBe(1);
   },
 );

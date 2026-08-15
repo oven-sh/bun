@@ -1797,22 +1797,13 @@ impl JSFrameworkRouter {
         // `Style` owns a `Strong` (Drop type), so `?` on any error path below
         // drops it automatically.
 
-        let abs_root: Box<[u8]> = {
-            let mut buf = paths::path_buffer_pool::get();
-            let Some(joined) =
-                paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
-                    bun_resolver::fs::FileSystem::get().top_level_dir,
-                    &mut buf[..],
-                    &[root.slice()],
-                )
-            else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "options.root resolves to a path longer than {} bytes",
-                    MAX_PATH_BYTES
-                )));
-            };
-            strings::without_trailing_slash(joined).into()
+        let Some(joined_root) = crate::bake::bake_body::join_router_root(root.slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "options.root must resolve to a path shorter than {} bytes",
+                MAX_PATH_BYTES
+            )));
         };
+        let abs_root: Box<[u8]> = strings::without_trailing_slash(&joined_root).into();
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),

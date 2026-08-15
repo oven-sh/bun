@@ -1,8 +1,8 @@
 use crate::Error;
 use bun_ast::{E, ExprData};
 use bun_core::strings;
-use bun_core::{Output, zstr};
-use bun_paths::PathBuffer;
+use bun_core::{Output, ZStr, zstr};
+use bun_paths::{AutoAbsPath, PathBuffer};
 use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString};
 use bun_sys::{self, Fd, File, O};
@@ -11,8 +11,8 @@ use crate::install::{self as Install, PackageManager, Subcommand};
 use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile, Migrated,
 };
-use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::lockfile_real::package::{PackageColumns as _, parse_append_trusted_dependencies};
 use crate::npm::{self as Npm};
 use crate::pnpm;
 use crate::pnpm::MigratePnpmLockfileError;
@@ -64,11 +64,13 @@ pub fn detect_and_load_other_lockfile<'a>(
                 }
             };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "package-lock.json");
-        }
-
-        return migrate_result;
+        return finish_migration(
+            migrate_result,
+            manager,
+            log,
+            &timer,
+            zstr!("package-lock.json"),
+        );
     }
 
     'yarn: {
@@ -88,11 +90,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "yarn.lock");
-        }
-
-        return migrate_result;
+        return finish_migration(migrate_result, manager, log, &timer, zstr!("yarn.lock"));
     }
 
     'pnpm: {
@@ -155,14 +153,84 @@ pub fn detect_and_load_other_lockfile<'a>(
             }
         };
 
-        if matches!(migrate_result, LoadResult::Ok { .. }) {
-            report_migrated(manager, log, &timer, "pnpm-lock.yaml");
-        }
-
-        return migrate_result;
+        return finish_migration(
+            migrate_result,
+            manager,
+            log,
+            &timer,
+            zstr!("pnpm-lock.yaml"),
+        );
     }
 
     LoadResult::NotFound
+}
+
+fn finish_migration<'a>(
+    migrate_result: LoadResult<'a>,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    timer: &std::time::Instant,
+    lockfile_name: &'static ZStr,
+) -> LoadResult<'a> {
+    let ok = match migrate_result {
+        LoadResult::Ok(ok) => ok,
+        other => return other,
+    };
+    if let Err(err) = record_trusted_dependencies(&mut *ok.lockfile, manager, log) {
+        if !manager.options.log_level.is_silent() && log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            Output::flush();
+        }
+        log.reset();
+        return LoadResult::Err(LoadResultErr {
+            step: LoadStep::Migrating,
+            value: err,
+            lockfile_path: lockfile_name,
+            format: LockfileFormat::Text,
+        });
+    }
+    report_migrated(manager, log, timer, lockfile_name);
+    LoadResult::Ok(ok)
+}
+
+/// No other package manager's lockfile carries `trustedDependencies`, so a
+/// migrated lockfile takes the root's and every workspace member's list from
+/// package.json, exactly as `Package::parse_with_json` does on a fresh
+/// `bun install`. `bun pm migrate` writes the result as-is, and a frozen
+/// install never rewrites it, so a list left out here stays out for
+/// `bun pm untrusted` / `bun pm trust` too.
+fn record_trusted_dependencies(
+    lockfile: &mut Lockfile,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+) -> Result<(), Error> {
+    let bump = bun_alloc::Arena::new();
+    let string_bytes = lockfile.buffers.string_bytes.as_slice();
+    let root: &[u8] = b"";
+    let members = lockfile
+        .workspace_paths
+        .values()
+        .iter()
+        .map(|path| path.slice(string_bytes));
+    for relative_dir in core::iter::once(root).chain(members) {
+        let mut package_json_path = AutoAbsPath::init_top_level_dir();
+        let _ = package_json_path.append(relative_dir);
+        let _ = package_json_path.append(b"package.json");
+        let crate::GetJsonResult::Entry(entry) = manager
+            .workspace_package_json_cache
+            .get_with_path(log, package_json_path.slice(), Default::default())
+        else {
+            continue;
+        };
+        parse_append_trusted_dependencies(
+            &mut lockfile.trusted_dependencies,
+            log,
+            &entry.source,
+            entry.root,
+            &bump,
+        )?;
+    }
+    Ok(())
 }
 
 /// True when the migrator already printed the version warn/error + upgrade note, so lockfile-load reporters must stay quiet.
@@ -229,7 +297,7 @@ fn report_migrated(
     manager: &PackageManager,
     log: &mut bun_ast::Log,
     timer: &std::time::Instant,
-    lockfile_name: &str,
+    lockfile_name: &ZStr,
 ) {
     if manager.options.log_level.is_silent() {
         log.reset();
@@ -240,7 +308,10 @@ fn report_migrated(
         log.reset();
     }
     Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-    bun_core::pretty_errorln!(" <d>migrated lockfile from <r><green>{}<r>", lockfile_name);
+    bun_core::pretty_errorln!(
+        " <d>migrated lockfile from <r><green>{}<r>",
+        bstr::BStr::new(lockfile_name.as_bytes())
+    );
     Output::flush();
 }
 

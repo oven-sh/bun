@@ -2469,10 +2469,7 @@ impl<'a> Resolver<'a> {
         specifier: &[u8],
     ) -> bool {
         if bun_paths::is_absolute(specifier) {
-            let dir = bun_paths::dirname_platform(specifier, bun_paths::Platform::AUTO);
-            let a = self.bust_dir_cache(dir);
-            let b = self.bust_dir_cache(specifier);
-            return a || b;
+            return self.bust_dir_cache_and_parent(specifier);
         }
 
         if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
@@ -2487,10 +2484,17 @@ impl<'a> Resolver<'a> {
             bun_paths::Platform::AUTO,
             specifier,
         );
-        let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
+        self.bust_dir_cache_and_parent(joined)
+    }
+
+    /// `path` comes from the import specifier, so it may still end in a
+    /// separator (`./hello/`); cache keys never do (see `assert_valid_cache_key`).
+    fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
+        let path = strings::without_trailing_slash_windows_path(path);
+        let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);
-        let b = self.bust_dir_cache(joined);
+        let b = self.bust_dir_cache(path);
         a || b
     }
 

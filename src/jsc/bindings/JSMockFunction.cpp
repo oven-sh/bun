@@ -994,11 +994,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     }
 
     JSObject* newTarget = asObject(callframe->newTarget());
-    JSValue prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
+    JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, newTarget);
     RETURN_IF_EXCEPTION(scope, {});
-    JSObject* thisObject = prototype.isObject()
-        ? JSC::constructEmptyObject(globalObject, asObject(prototype))
-        : JSC::constructEmptyObject(globalObject);
+    Structure* structure = InternalFunction::createSubclassStructure(globalObject, newTarget, functionGlobalObject->objectStructureForObjectConstructor());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* thisObject = JSC::constructEmptyObject(vm, structure);
 
     JSValue result = JSValue::decode(jsMockFunctionCallImpl(globalObject, fn, callframe, thisObject));
     RETURN_IF_EXCEPTION(scope, {});

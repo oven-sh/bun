@@ -282,7 +282,8 @@ new file mode 100644
     if (asRoot) {
       // Hand the whole tree to the unprivileged uid so it can write the cache,
       // staging tree and node_modules.
-      Bun.spawnSync(["chown", "-R", `${NOBODY}:${NOBODY}`, String(filedir)]);
+      const chown = Bun.spawnSync(["chown", "-R", `${NOBODY}:${NOBODY}`, String(filedir)]);
+      expect(chown.exitCode).toBe(0);
     }
 
     await using proc = Bun.spawn({

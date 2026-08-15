@@ -128,8 +128,7 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
 //     contract).
 
 /// Returns `Some(u16)` (the trailing lead surrogate) when `SKIP_TRAILING_REPLACEMENT` and a
-/// dangling lead surrogate is at the end; otherwise `None`. `Err` when `list` cannot
-/// grow; the TextEncoderStream encoder throws it to JS.
+/// dangling lead surrogate is at the end; otherwise `None`.
 pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     list: &mut Vec<u8>,
     utf16: &[u16],

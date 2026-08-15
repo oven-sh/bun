@@ -24,8 +24,6 @@ pub struct TextEncoderStreamEncoder {
     scratch: core::cell::RefCell<Vec<u8>>,
 }
 
-// Output buffers are sized by the chunk, so the `*_into` encoders reserve them
-// fallibly and every entry point throws `Err` to JS as out-of-memory.
 impl TextEncoderStreamEncoder {
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
         if input.is_empty() {

@@ -754,13 +754,14 @@ test.concurrent.each([
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const entry = stdout.split(/\r?\n/).find(line => line.includes("--ignore-scripts"));
   expect(entry).toBeDefined();
   expect(entry).toContain("trusted dependencies");
   // The wording from before trustedDependencies existed.
   expect(entry).not.toContain("dependency scripts are never run");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

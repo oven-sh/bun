@@ -1,6 +1,7 @@
-//! C++ export that joins a path against the VM's cwd. Lives in `jsc/` because
-//! it reaches into `globalObject.bunVM().transpiler.fs`; `paths/` is JSC-free.
-//! Referenced from `PathInlines.h`.
+//! JSC-facing entry points into `bun_paths`, which is itself JSC-free: the C++
+//! export that joins a path against the VM's cwd (it reaches into
+//! `globalObject.bunVM().transpiler.fs`; referenced from `PathInlines.h`), and
+//! the `bun:internal-for-testing` bridges in [`testing_apis`].
 
 use crate::JSGlobalObject;
 use bun_core::String as BunString;
@@ -30,4 +31,32 @@ extern "C" fn ResolvePath__joinAbsStringBufCurrentPlatformBunString(
     );
 
     BunString::clone_utf8(out_slice)
+}
+
+pub mod testing_apis {
+    use crate::bun_string_jsc::to_js;
+    use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+    use bun_core::String as BunString;
+
+    /// `pathsInternals.withoutTrailingSlashWindows` in `internal-for-testing.ts`:
+    /// the Windows arm of `without_trailing_slash_windows_path`, which its
+    /// callers only reach on a Windows host.
+    #[bun_jsc::host_fn]
+    pub fn without_trailing_slash_windows(
+        global: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let path_value = call_frame.argument(0);
+        if !path_value.is_string() {
+            return Err(global.throw(format_args!("expected a string path")));
+        }
+        let path = path_value.to_slice(global)?;
+
+        let output = BunString::clone_utf8(
+            bun_paths::string_paths::without_trailing_slash_windows(path.slice()),
+        );
+        let js = to_js(&output, global);
+        output.deref();
+        js
+    }
 }

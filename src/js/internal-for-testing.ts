@@ -737,6 +737,18 @@ export const stringsInternals = {
   ) => string,
 };
 
+export const pathsInternals = {
+  /**
+   * `bun_paths::string_paths::without_trailing_slash_windows`, the arm of
+   * `without_trailing_slash_windows_path` (the resolver's directory cache key
+   * normalizer) that its callers only reach on Windows. Bound directly so the
+   * drive-root handling is tested on every platform.
+   */
+  withoutTrailingSlashWindows: $newRustFunction("string_paths.rs", "TestingAPIs.withoutTrailingSlashWindows", 1) as (
+    path: string,
+  ) => string,
+};
+
 /** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
 export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 2) as (
   hostname: string,

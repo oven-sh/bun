@@ -342,6 +342,20 @@
           "multiple": false
         },
         {
+          "name": "experimental-http2-fetch",
+          "description": "Offer h2 in fetch() TLS ALPN. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "experimental-http3-fetch",
+          "description": "Honor Alt-Svc: h3 in fetch() and upgrade to HTTP/3. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "max-http-header-size",
           "description": "Set the maximum size of HTTP headers in bytes. Default is 16KiB",
           "hasValue": true,
@@ -475,6 +489,48 @@
         {
           "name": "use-bundled-ca",
           "description": "Use bundled CA store",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.0",
+          "description": "Set the default TLS minimum to TLSv1.0",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.1",
+          "description": "Set the default TLS minimum to TLSv1.1",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.2",
+          "description": "Set the default TLS minimum to TLSv1.2",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.3",
+          "description": "Set the default TLS minimum to TLSv1.3",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-max-v1.2",
+          "description": "Set the default TLS maximum to TLSv1.2",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-max-v1.3",
+          "description": "Set the default TLS maximum to TLSv1.3",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1427,6 +1483,20 @@
           "multiple": false
         },
         {
+          "name": "experimental-http2-fetch",
+          "description": "Offer h2 in fetch() TLS ALPN. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "experimental-http3-fetch",
+          "description": "Honor Alt-Svc: h3 in fetch() and upgrade to HTTP/3. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "max-http-header-size",
           "description": "Set the maximum size of HTTP headers in bytes. Default is 16KiB",
           "hasValue": true,
@@ -1560,6 +1630,48 @@
         {
           "name": "use-bundled-ca",
           "description": "Use bundled CA store",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.0",
+          "description": "Set the default TLS minimum to TLSv1.0",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.1",
+          "description": "Set the default TLS minimum to TLSv1.1",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.2",
+          "description": "Set the default TLS minimum to TLSv1.2",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-min-v1.3",
+          "description": "Set the default TLS minimum to TLSv1.3",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-max-v1.2",
+          "description": "Set the default TLS maximum to TLSv1.2",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "tls-max-v1.3",
+          "description": "Set the default TLS maximum to TLSv1.3",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -6381,6 +6493,20 @@
       "multiple": false
     },
     {
+      "name": "experimental-http2-fetch",
+      "description": "Offer h2 in fetch() TLS ALPN. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT=1",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "experimental-http3-fetch",
+      "description": "Honor Alt-Svc: h3 in fetch() and upgrade to HTTP/3. Same as BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT=1",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
       "name": "max-http-header-size",
       "description": "Set the maximum size of HTTP headers in bytes. Default is 16KiB",
       "hasValue": true,
@@ -6514,6 +6640,48 @@
     {
       "name": "use-bundled-ca",
       "description": "Use bundled CA store",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "tls-min-v1.0",
+      "description": "Set the default TLS minimum to TLSv1.0",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "tls-min-v1.1",
+      "description": "Set the default TLS minimum to TLSv1.1",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "tls-min-v1.2",
+      "description": "Set the default TLS minimum to TLSv1.2",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "tls-min-v1.3",
+      "description": "Set the default TLS minimum to TLSv1.3",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "tls-max-v1.2",
+      "description": "Set the default TLS maximum to TLSv1.2",
+      "hasValue": false,
+      "required": false,
+      "multiple": false
+    },
+    {
+      "name": "tls-max-v1.3",
+      "description": "Set the default TLS maximum to TLSv1.3",
       "hasValue": false,
       "required": false,
       "multiple": false

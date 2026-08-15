@@ -134,16 +134,17 @@ export function parseFlag(line: string): FlagInfo | null {
   // -p, --package <package>             Specify package to install when binary name differs from package name
   // --depth <NUM>                Maximum depth of the dependency tree to display
   // --watch                         Automatically restart the process on file change
+  // --tls-min-v1.2                  Set the default TLS minimum to TLSv1.2
 
   const patterns = [
     // Long flag with short flag and value: -r, --preload=<val> or -p, --package <package>
-    /^\s*(-[a-zA-Z]),\s+(--[a-zA-Z-]+)[= ](<[^>]+>)\s+(.+)$/,
+    /^\s*(-[a-zA-Z]),\s+(--[a-zA-Z0-9.-]+)[= ](<[^>]+>)\s+(.+)$/,
     // Long flag with short flag: -h, --help
-    /^\s*(-[a-zA-Z]),\s+(--[a-zA-Z-]+)\s+(.+)$/,
+    /^\s*(-[a-zA-Z]),\s+(--[a-zA-Z0-9.-]+)\s+(.+)$/,
     // Long flag with value: --timeout=<val> or --depth <NUM>
-    /^\s+(--[a-zA-Z-]+)[= ](<[^>]+>)\s+(.+)$/,
+    /^\s+(--[a-zA-Z0-9.-]+)[= ](<[^>]+>)\s+(.+)$/,
     // Long flag without value: --watch
-    /^\s+(--[a-zA-Z-]+)\s+(.+)$/,
+    /^\s+(--[a-zA-Z0-9.-]+)\s+(.+)$/,
     // Short flag only: -i
     /^\s+(-[a-zA-Z])\s+(.+)$/,
   ];

@@ -1072,6 +1072,33 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("static block: Bar\nBar Bar Bar\nBaz Baz\n");
       expect(exitCode).toBe(0);
     });
+
+    test.concurrent("a static member named `name` declared by the class wins", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Getter = class { static get name() { return "from getter"; } @dec m() {} };
+        const Setter = class { static set name(v) {} @dec m() {} };
+        const Method = class { static name() {} @dec m() {} };
+        const DecoratedMethod = class { @dec static name() {} };
+        const Accessor = class { static accessor name = "from accessor"; @dec m() {} };
+        const Field = class { static name = "from field"; @dec m() {} };
+        const Uninitialized = class { static name; @dec m() {} };
+        const Instance = class { name = "instance"; @dec m() {} };
+        console.log(JSON.stringify([
+          Getter.name,
+          Setter.name,
+          typeof Method.name,
+          typeof DecoratedMethod.name,
+          Accessor.name,
+          Field.name,
+          Uninitialized.name,
+          Instance.name,
+        ]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["from getter",null,"function","function","from accessor","from field",null,"Instance"]\n');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("private member calls in lowered classes", () => {

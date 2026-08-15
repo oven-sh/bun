@@ -102,7 +102,6 @@
 
 [bun_sql_jsc]
 "bare_bool_args:src/sql_jsc/shared/datetime_text.rs" = 1
-"same_match_twice:src/sql_jsc/mysql/protocol/ResultSet.rs" = 1
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4

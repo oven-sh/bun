@@ -4967,8 +4967,7 @@ void Process::finishCreation(JSC::VM& vm)
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
 
-    // Main-thread-only in node. Own properties, not processObjectTable entries:
-    // deleting a table entry in workers would reify every lazy property of process.
+    // Main-thread-only in node; not table entries because deleting one in a worker would reify every lazy property.
     if (!WebCore::clientData(vm)->isWorkerVM()) {
         auto* globalObject = this->globalObject();
         for (auto name : { "_debugProcess"_s, "_debugEnd"_s, "_startProfilerIdleNotifier"_s, "_stopProfilerIdleNotifier"_s })

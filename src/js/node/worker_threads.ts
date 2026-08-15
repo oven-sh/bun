@@ -461,8 +461,7 @@ function setupWorkerStdio(stdio) {
   const stdoutStream = makePortWritable(stdout);
   const stderrStream = makePortWritable(stderr);
   const proc: any = process;
-  // Assignment replaces the lazy native stdio properties without building them;
-  // Object.defineProperty would construct the fd-backed streams first.
+  // Assignment, unlike Object.defineProperty, does not build the lazy fd-backed streams first.
   proc.stdout = stdoutStream;
   proc.stderr = stderrStream;
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
@@ -852,8 +851,7 @@ function fakeParentPort() {
 if (!isMainThread && _isNodeWorker) {
   applyWorkerProcessOverrides();
 }
-// Never `delete` from process here: that builds every lazy process property. The
-// main-only internals node deletes in workers are not defined on worker VMs (BunProcess.cpp).
+// Never `delete` from process here (it builds every lazy property); worker VMs lack the main-only internals.
 function applyWorkerProcessOverrides() {
   const proc: any = process;
   // node defaults debugPort to 9229 in workers (still settable). Per-object property:

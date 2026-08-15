@@ -852,6 +852,39 @@ describe("bounded output per input chunk", () => {
     await expect(writer.closed).rejects.toMatchObject({ name: "AbortError" });
   });
 
+  // Delivering the first piece resolves the pending read(), and resolving a promise
+  // with an object looks up its `then`, so user code can abort from inside the
+  // chunk's very first step, before it has been parked.
+  test("writer.abort() re-entered from the chunk's first step settles the write", async () => {
+    const ds = new DecompressionStream("brotli");
+    const writer = ds.writable.getWriter();
+    const reader = ds.readable.getReader();
+    const read = reader.read();
+
+    let aborted: Promise<void> | undefined;
+    Object.defineProperty(Object.prototype, "then", {
+      configurable: true,
+      get() {
+        delete (Object.prototype as any).then;
+        aborted = writer.abort(new Error("stop"));
+        return undefined;
+      },
+    });
+    let write: Promise<void>;
+    try {
+      write = writer.write(bombs.brotli());
+      expect((await read).value!.byteLength).toBeLessThanOrEqual(kDefaultHighWaterMark);
+    } finally {
+      delete (Object.prototype as any).then;
+    }
+    expect(aborted).toBeDefined();
+
+    expect(await write).toBeUndefined();
+    await aborted;
+    await expect(writer.closed).rejects.toThrow("stop");
+    await expect(reader.read()).rejects.toThrow("stop");
+  });
+
   // An abort during close() is different: the close in progress wins, so a flush
   // being drained keeps going and the reader still gets all of it.
   test("writer.abort() during a multi-step flush does not truncate it", async () => {

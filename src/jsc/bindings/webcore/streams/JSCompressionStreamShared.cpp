@@ -187,11 +187,11 @@ static CodecOutcome stepChunkHere(JSGlobalObject* globalObject, JSTransformStrea
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_nativeStateInUse);
-    bool continuation = !!stream->m_codecPromise;
+    ASSERT(stream->m_codecPromise);
     for (;;) {
         CodecStepResult step = runStepHere(globalObject, stream, coder, input, inputLen, finish);
         RETURN_IF_EXCEPTION(scope, CodecOutcome::Failed);
-        if (continuation && !stream->m_codecPromise)
+        if (!stream->m_codecPromise)
             return CodecOutcome::Pending;
         if (!step.thrown.isEmpty()) {
             thrown = step.thrown;
@@ -236,7 +236,7 @@ static void settleCodecChunk(JSGlobalObject* globalObject, JSTransformStream* st
         resolvePromise(globalObject, promise, jsUndefined());
 }
 
-// Applies the outcome of a step that ran from a later turn to the pending chunk.
+// Applies a round of stepping to the chunk's promise.
 static void settlePendingChunk(JSGlobalObject* globalObject, JSTransformStream* stream, CodecOutcome outcome, JSValue thrown)
 {
     auto& vm = getVM(globalObject);
@@ -265,9 +265,11 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
     ASSERT(!stream->m_codecPromise);
     ASSERT(coder);
 
+    // Registered before the first step: delivering a step can run user code (an enqueue may
+    // resolve a read), and a terminal reached from there abandons the chunk through it.
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    stream->m_codecPromise.set(vm, stream, promise);
     if (inputLen > kAsyncCodecThreshold) {
-        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-        stream->m_codecPromise.set(vm, stream, promise);
         stream->m_codecChunkOffThread = true;
         dispatchStepOffThread(globalObject, stream, coder, chunk, input, inputLen, finish);
         scope.assertNoException();
@@ -277,23 +279,8 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
     JSValue thrown;
     CodecOutcome outcome = stepChunkHere(globalObject, stream, coder, input, inputLen, finish, thrown);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    switch (outcome) {
-    case CodecOutcome::Done:
-        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, jsUndefined()));
-    case CodecOutcome::Failed:
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    case CodecOutcome::DoneSinkFull: {
-        auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
-        stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
-        return ready;
-    }
-    case CodecOutcome::Pending: {
-        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-        stream->m_codecPromise.set(vm, stream, promise);
-        return promise;
-    }
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    settlePendingChunk(globalObject, stream, outcome, thrown);
+    return promise;
 }
 
 void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream)

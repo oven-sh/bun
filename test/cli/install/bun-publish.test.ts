@@ -849,6 +849,59 @@ test("publishes a workspace package next to a bun.lock that does not parse", asy
   });
 });
 
+test("a published package can depend on another workspace by its directory", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const bunfig = await registry.authBunfig("workspacepath");
+  const corePkgJson = { name: "publish-pkg-path-core", version: "1.2.3" };
+  await Promise.all([
+    rm(join(registry.packagesPath, "publish-pkg-path-core"), { recursive: true, force: true }),
+    rm(join(registry.packagesPath, "publish-pkg-path-ui"), { recursive: true, force: true }),
+    write(join(packageDir, "bunfig.toml"), bunfig),
+    write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] })),
+    write(join(packageDir, "packages", "core", "package.json"), JSON.stringify(corePkgJson)),
+    write(
+      join(packageDir, "packages", "ui", "package.json"),
+      JSON.stringify({
+        name: "publish-pkg-path-ui",
+        version: "2.0.0",
+        dependencies: {
+          "core-alias": "workspace:../core",
+          "publish-pkg-path-core": "workspace:../core",
+        },
+      }),
+    ),
+  ]);
+
+  for (const pkg of ["core", "ui"]) {
+    const { out, err, exitCode } = await publish(env, join(packageDir, "packages", pkg));
+    expect(err).not.toContain("error:");
+    expect(out).toContain(`+ publish-pkg-path-${pkg}@`);
+    expect(exitCode).toBe(0);
+  }
+
+  // consume the published package from the registry
+  await Promise.all([
+    rm(join(packageDir, "packages"), { recursive: true, force: true }),
+    write(packageJson, JSON.stringify({ name: "root", dependencies: { "publish-pkg-path-ui": "2.0.0" } })),
+  ]);
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "publish-pkg-path-ui", "package.json")).json()).toEqual({
+    name: "publish-pkg-path-ui",
+    version: "2.0.0",
+    dependencies: {
+      "core-alias": "npm:publish-pkg-path-core@1.2.3",
+      "publish-pkg-path-core": "1.2.3",
+    },
+  });
+  expect(
+    await Promise.all([
+      file(join(packageDir, "node_modules", "core-alias", "package.json")).json(),
+      file(join(packageDir, "node_modules", "publish-pkg-path-core", "package.json")).json(),
+    ]),
+  ).toEqual([corePkgJson, corePkgJson]);
+});
+
 describe("--dry-run", async () => {
   test("does not publish", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

@@ -912,6 +912,198 @@ describe("workspaces", () => {
       expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({ "pkg1": "1.1.1" });
     });
   }
+
+  // pkgs/ui depends on its sibling workspaces by directory (`workspace:../core`)
+  async function createDirectoryWorkspace(uiDependencies: Record<string, Record<string, string>>) {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "root", workspaces: ["pkgs/*", "pkgs/@scoped/*"] }),
+      ),
+      write(join(packageDir, "pkgs", "core", "package.json"), JSON.stringify({ name: "@acme/core", version: "1.2.3" })),
+      write(join(packageDir, "pkgs", "plain", "package.json"), JSON.stringify({ name: "plain", version: "0.5.0" })),
+      write(
+        join(packageDir, "pkgs", "@scoped", "thing", "package.json"),
+        JSON.stringify({ name: "thing", version: "0.0.7" }),
+      ),
+      write(
+        join(packageDir, "pkgs", "ui", "package.json"),
+        JSON.stringify({ name: "@acme/ui", version: "2.0.0", ...uiDependencies }),
+      ),
+    ]);
+  }
+
+  test("replaces workspace: directories with the version of the workspace in that directory", async () => {
+    await createDirectoryWorkspace({
+      dependencies: {
+        "core": "workspace:../core",
+        // declared under the workspace's own name, so no alias is needed
+        "@acme/core": "workspace:../core",
+        "core-dot": "workspace:./../core",
+        "core-slash": "workspace:../core/",
+        // the `@` in the directory does not make this `workspace:<name>@<range>`
+        "scoped-dir": "workspace:../@scoped/thing",
+        "self": "workspace:.",
+      },
+      devDependencies: {
+        "plain": "workspace:../plain",
+      },
+      peerDependencies: {
+        "plain-peer": "workspace:../plain",
+      },
+      optionalDependencies: {
+        "plain-optional": "workspace:../plain",
+      },
+    });
+    // every one of these is a spec `bun install` links
+    await runBunInstall(bunEnv, packageDir);
+
+    await pack(join(packageDir, "pkgs", "ui"), bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "@acme/ui",
+      version: "2.0.0",
+      dependencies: {
+        "core": "npm:@acme/core@1.2.3",
+        "@acme/core": "1.2.3",
+        "core-dot": "npm:@acme/core@1.2.3",
+        "core-slash": "npm:@acme/core@1.2.3",
+        "scoped-dir": "npm:thing@0.0.7",
+        "self": "npm:@acme/ui@2.0.0",
+      },
+      devDependencies: {
+        "plain": "0.5.0",
+      },
+      peerDependencies: {
+        "plain-peer": "npm:plain@0.5.0",
+      },
+      optionalDependencies: {
+        "plain-optional": "npm:plain@0.5.0",
+      },
+    });
+  });
+
+  test("replaces workspace: directories in the workspace root with the versions in the workspaces' package.json files", async () => {
+    await createDirectoryWorkspace({});
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "pack-workspace-root-directories",
+        version: "3.0.0",
+        workspaces: ["pkgs/*", "pkgs/@scoped/*"],
+        dependencies: {
+          "core": "workspace:pkgs/core",
+          "plain": "workspace:./pkgs/plain",
+        },
+      }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+    // bumped after the install, so bun.lock still says 0.5.0
+    await write(join(packageDir, "pkgs", "plain", "package.json"), JSON.stringify({ name: "plain", version: "0.6.0" }));
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-workspace-root-directories-3.0.0.tgz"));
+    expect(tarball.entries[0]).toMatchObject({ pathname: "package/package.json" });
+    expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({
+      "core": "npm:@acme/core@1.2.3",
+      "plain": "0.6.0",
+    });
+  });
+
+  test("replaces a workspace: directory given as a bare directory name", async () => {
+    // `bun install` joins whatever follows `workspace:` onto the declaring package.json's directory,
+    // so from the root the directory name alone is enough. Only a dependency that is itself a
+    // workspace reads it as a version range instead.
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-workspace-bare-directory",
+          version: "3.0.0",
+          workspaces: ["core", "plain"],
+          dependencies: { "bare": "workspace:core", "@acme/core": "workspace:core", "plain": "workspace:0.x" },
+        }),
+      ),
+      write(join(packageDir, "core", "package.json"), JSON.stringify({ name: "@acme/core", version: "1.2.3" })),
+      write(join(packageDir, "plain", "package.json"), JSON.stringify({ name: "plain", version: "0.5.0" })),
+    ]);
+    await runBunInstall(bunEnv, packageDir);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-workspace-bare-directory-3.0.0.tgz"));
+    expect(tarball.entries[0]).toMatchObject({ pathname: "package/package.json" });
+    expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({
+      "bare": "npm:@acme/core@1.2.3",
+      "@acme/core": "1.2.3",
+      "plain": "0.x",
+    });
+  });
+
+  test("replaces workspace: directories without a lockfile", async () => {
+    await createDirectoryWorkspace({ dependencies: { "core": "workspace:../core", "plain": "workspace:../plain" } });
+
+    await pack(join(packageDir, "pkgs", "ui"), bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({
+      "core": "npm:@acme/core@1.2.3",
+      "plain": "0.5.0",
+    });
+  });
+
+  test("copies workspace: aliases as written", async () => {
+    // `workspace:<name>@<range>` installs workspace <name> under the dependency's name; it is
+    // neither a directory nor a range of the dependency, and must not be rejected as one.
+    await createDirectoryWorkspace({
+      dependencies: { "core-alias": "workspace:@acme/core@^1.0.0", "plain-alias": "workspace:plain@*" },
+    });
+
+    await pack(join(packageDir, "pkgs", "ui"), bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pkgs", "ui", "acme-ui-2.0.0.tgz"));
+    expect(JSON.parse(tarball.entries[0].contents).dependencies).toEqual({
+      "core-alias": "@acme/core@^1.0.0",
+      "plain-alias": "plain@*",
+    });
+  });
+
+  const notAWorkspaceSpecs = [
+    // exists on disk, but the root's `workspaces` does not list it (written below)
+    { group: "devDependencies", name: "unlisted", spec: "workspace:../../unlisted" },
+    { group: "dependencies", name: "missing", spec: "workspace:../missing" },
+    // a range only means something for a dependency that is itself a workspace
+    { group: "peerDependencies", name: "not-a-workspace", spec: "workspace:1.2.3" },
+    // and `<name>@<range>` only when <name> is a workspace
+    { group: "optionalDependencies", name: "bogus-alias", spec: "workspace:nope@*" },
+  ];
+
+  for (const { group, name, spec } of notAWorkspaceSpecs) {
+    test(`fails when a workspace: spec is neither a workspace's directory nor a workspace's range: ${spec}`, async () => {
+      await createDirectoryWorkspace({ dependencies: { "plain": "workspace:../plain" }, [group]: { [name]: spec } });
+      await write(join(packageDir, "unlisted", "package.json"), JSON.stringify({ name: "unlisted", version: "1.0.0" }));
+
+      const { err } = await packExpectError(join(packageDir, "pkgs", "ui"), bunEnv);
+      expect(err).toContain(`error: Failed to resolve workspace version for "${name}" in \`${group}\` (`);
+      expect(err).toContain(
+        `package.json" has no workspace named "${name}" and no workspace in the directory "${spec.slice("workspace:".length)}").`,
+      );
+      expect(await exists(join(packageDir, "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
+    });
+  }
+
+  test("fails when the workspace in a workspace: directory has no version", async () => {
+    await createDirectoryWorkspace({ dependencies: { "no-version": "workspace:../unversioned" } });
+    await write(join(packageDir, "pkgs", "unversioned", "package.json"), JSON.stringify({ name: "unversioned" }));
+
+    const { err } = await packExpectError(join(packageDir, "pkgs", "ui"), bunEnv);
+    expect(err).toContain(
+      'error: Failed to resolve workspace version for "no-version" in `dependencies` (the package.json of workspace "unversioned" in the directory "../unversioned" has no version).',
+    );
+    expect(await exists(join(packageDir, "pkgs", "ui", "acme-ui-2.0.0.tgz"))).toBeFalse();
+  });
 });
 
 test("lifecycle scripts execution order", async () => {

@@ -123,10 +123,13 @@ fn class_copy(c: &G::Class) -> G::Class {
     }
 }
 
-/// `static name`, `static get name()`, ...: the class replaces its own `.name`.
-fn defines_static_name(props: &[Property]) -> bool {
+/// A static method or accessor keyed `name` is installed before any static block runs.
+/// (A `static name` field is initialized after them and replaces the name by itself.)
+fn defines_static_name_method(props: &[Property]) -> bool {
     props.iter().any(|prop| {
         prop.flags.contains(Flags::Property::IsStatic)
+            && (prop.flags.contains(Flags::Property::IsMethod)
+                || prop.kind == PropertyKind::AutoAccessor)
             && match &prop.key {
                 Some(key) => {
                     matches!(&key.data, js_ast::ExprData::EString(s) if s.eql_comptime(b"name"))
@@ -1144,6 +1147,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_ref = class.class_name.as_ref().unwrap().ref_;
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
+        // Decided before Phase 2 replaces decorated computed keys with temporaries.
+        let restore_inferred_name =
+            expr_class_is_anonymous && !defines_static_name_method(class.properties.slice());
 
         let mut inner_class_ref: Ref = class_name_ref;
         if !is_expr {
@@ -2412,7 +2418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // A string literal, unlike a class binding, survives the bundler's renaming.
-        if expr_class_is_anonymous && !defines_static_name(&new_properties) {
+        if restore_inferred_name {
             let this_e = p.new_expr(E::This {}, loc);
             let name_e = p.new_expr(
                 E::EString {

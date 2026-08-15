@@ -1080,8 +1080,9 @@ describe("ES Decorators", () => {
         const Setter = class { static set name(v) {} @dec m() {} };
         const Method = class { static name() {} @dec m() {} };
         const DecoratedMethod = class { @dec static name() {} };
+        const DecoratedComputed = class { @dec static ["name"]() {} };
         const Accessor = class { static accessor name = "from accessor"; @dec m() {} };
-        const Field = class { static name = "from field"; @dec m() {} };
+        const Field = class { static seenBefore = this.name; static name = "from field"; @dec m() {} };
         const Uninitialized = class { static name; @dec m() {} };
         const Instance = class { name = "instance"; @dec m() {} };
         console.log(JSON.stringify([
@@ -1089,14 +1090,18 @@ describe("ES Decorators", () => {
           Setter.name,
           typeof Method.name,
           typeof DecoratedMethod.name,
+          typeof DecoratedComputed.name,
           Accessor.name,
+          Field.seenBefore,
           Field.name,
           Uninitialized.name,
           Instance.name,
         ]));
       `);
       expect(stderr).toBe("");
-      expect(stdout).toBe('["from getter",null,"function","function","from accessor","from field",null,"Instance"]\n');
+      expect(stdout).toBe(
+        '["from getter",null,"function","function","function","from accessor","Field","from field",null,"Instance"]\n',
+      );
       expect(exitCode).toBe(0);
     });
   });

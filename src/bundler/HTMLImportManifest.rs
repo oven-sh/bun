@@ -51,6 +51,8 @@ use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
+use crate::linker_context_mod::is_document;
+
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
     pub(crate) index: u32,
@@ -289,6 +291,28 @@ pub(crate) fn write<W: Write + ?Sized>(
         }
     }
 
+    // The assets of this entry point's documents carry no entry bits of their
+    // own (see `is_document`); only assets imported from JS do.
+    let mut referenced_by_documents = AutoBitSet::init_empty(file_entry_bits.len())?;
+    if !additional_output_files.is_empty() {
+        let css_asts = linker_graph.ast.items_css();
+        let loaders = graph.input_files.items_loader();
+        let import_records = linker_graph.ast.items_import_records();
+        for source_index in linker_graph.reachable_files.iter() {
+            let source_index = source_index.get() as usize;
+            if !is_document(css_asts, loaders, source_index)
+                || !file_entry_bits[source_index].has_intersection(&entry_point_bits)
+            {
+                continue;
+            }
+            for record in import_records[source_index].iter() {
+                if record.source_index.is_valid() {
+                    referenced_by_documents.set(record.source_index.get() as usize);
+                }
+            }
+        }
+    }
+
     for (i, output_file) in additional_output_files.iter().enumerate() {
         // Only print the file once.
         if already_visited_output_file.is_set(i) {
@@ -301,7 +325,9 @@ pub(crate) fn write<W: Write + ?Sized>(
             }
             let bits: &AutoBitSet = &file_entry_bits[source_index.get() as usize];
 
-            if bits.has_intersection(&entry_point_bits) {
+            if bits.has_intersection(&entry_point_bits)
+                || referenced_by_documents.is_set(source_index.get() as usize)
+            {
                 already_visited_output_file.set(i);
                 if !first {
                     writer.write_all(b",")?;

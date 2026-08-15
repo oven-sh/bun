@@ -701,8 +701,8 @@ fn worker_flush_aggregates(
     ctx: &Command::ContextData,
     cmds: &mut WorkerCommands,
 ) {
-    // Snapshots flush lazily when the next file opens its snapshot file; the
-    // last file each worker ran has no successor to trigger that.
+    // Each file's `.snap` is written when the file finishes (`TestCommand::run`);
+    // inline snapshots are only written here, once per worker.
     if let Some(runner) = crate::test_runner::jest::Jest::runner() {
         let _ = runner.snapshots.write_inline_snapshots().unwrap_or(false);
         let _ = runner.snapshots.write_snapshot_file();

@@ -3417,6 +3417,11 @@ impl TestCommand {
             }
             junit.current_file = Box::default();
         }
+        // Per file, so this file's snapshots are on disk however a later file ends.
+        if let Err(err) = reporter.jest.snapshots.write_snapshot_file() {
+            Output::err(err.name(), "Failed to write snapshot file", ());
+            return Err(err);
+        }
         Ok(())
     }
 }

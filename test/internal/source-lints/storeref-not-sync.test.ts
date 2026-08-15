@@ -11,16 +11,15 @@
 //
 // The trip-wire catches regressions at compile time; this test is the
 // suite-level projection of the same invariants, with a readable failure
-// message instead of a rustc diagnostic. Like
-// `test/internal/source-lints/dead-code-escapes.test.ts`, it asserts on the
-// source text.
+// message instead of a rustc diagnostic. Like its sibling
+// `dead-code-escapes.test.ts`, it asserts on the source text.
 // (Booleans are extracted first so a failure prints `true`/`false`, not the
 // whole file.)
 
 import { expect, test } from "bun:test";
 import path from "path";
 
-const root = path.resolve(import.meta.dir, "..", "..");
+const root = path.resolve(import.meta.dir, "..", "..", "..");
 const source = await Bun.file(path.join(root, "src", "jsc", "webcore_types.rs")).text();
 
 test("StoreRef does not implement Sync", () => {

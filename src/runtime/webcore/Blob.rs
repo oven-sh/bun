@@ -2147,7 +2147,7 @@ impl BlobExt for Blob {
                     store::Data::File(f) => {
                         f.last_modified.load(core::sync::atomic::Ordering::Relaxed)
                     }
-                    _ => jsc::INIT_TIMESTAMP,
+                    _ => unreachable!("checked via matches! above"),
                 };
                 return JSValue::js_number(JSValue::purify_nan(last_modified as f64));
             }

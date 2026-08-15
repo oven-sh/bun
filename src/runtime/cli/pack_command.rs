@@ -25,7 +25,7 @@ use bun_paths::{self as path, PathBuffer, SEP_STR};
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
 use bun_ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path;
@@ -2007,8 +2007,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         &mut *ctx.command_ctx,
         &mut this_transpiler,
         Some(pm_env(ctx.manager)),
-        ctx.manager.options.log_level != LogLevel::Silent,
-        false,
+        ConfigureEnvOptions {
+            log_errors: ctx.manager.options.log_level != LogLevel::Silent,
+            store_root_fd: false,
+        },
     ) {
         if matches!(err, crate::Error::Alloc(_)) {
             return Err(PackError::OutOfMemory);

@@ -57,7 +57,6 @@
 "bare_bool_args:src/runtime/api.rs" = 2
 "bare_bool_args:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "bare_bool_args:src/runtime/bake/dev_server/incremental_graph.rs" = 1
-"bare_bool_args:src/runtime/cli/run_command.rs" = 1
 "bare_bool_args:src/runtime/dns_jsc/dns.rs" = 1
 "bare_bool_args:src/runtime/node/types.rs" = 4
 "defaulted_failure:src/runtime/ffi/ffi_body.rs" = 1

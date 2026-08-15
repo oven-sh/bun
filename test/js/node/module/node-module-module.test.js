@@ -216,6 +216,156 @@ console.log("survived", require("./late.js"));`,
     expect(exitCode).toBe(0);
   });
 
+  async function runWithCompileCache(dir, script, cacheDir, extraEnv = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), script],
+      cwd: String(dir),
+      env: { ...bunEnv, NODE_COMPILE_CACHE: cacheDir, ...extraEnv },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Entry layout (src/jsc/NodeCompileCache.rs): magic u32 | code_size u32 |
+  // cache_size u32 | sha256(code) | sha256(bytecode), then the stored source.
+  const entryHeaderSize = 3 * 4 + 2 * 32;
+  function compileCacheEntryFor(cacheDir, marker) {
+    const entries = [...new Bun.Glob("*/*").scanSync({ cwd: cacheDir, onlyFiles: true })].map(name => {
+      const bytes = fs.readFileSync(path.join(cacheDir, name));
+      const codeSize = bytes.readUInt32LE(4);
+      return {
+        bytecodeSize: bytes.readUInt32LE(8),
+        code: bytes.subarray(entryHeaderSize, entryHeaderSize + codeSize).toString(),
+      };
+    });
+    const matching = entries.filter(entry => entry.code.includes(marker));
+    expect(matching).toHaveLength(1);
+    return matching[0];
+  }
+
+  const depFunctions = `
+    function add(a, b) {
+      let total = a;
+      for (let i = 0; i < b; i++) total += 1;
+      return total;
+    }
+    function greet(name) {
+      const parts = ["hello", name];
+      return parts.join(" ");
+    }
+    function neverCalled(value) {
+      return JSON.stringify({ value, doubled: value * 2 });
+    }
+  `;
+  const depMarker = "compile-cache-dep-marker";
+
+  test.each([
+    [
+      "CommonJS",
+      {
+        "dep.js": `${depFunctions}\nmodule.exports = { add, greet, neverCalled, marker: "${depMarker}" };`,
+        "load.js": `require("./dep.js"); console.log("loaded");`,
+        "run.js": `const dep = require("./dep.js"); console.log(dep.add(2, 3), dep.greet("cache"));`,
+      },
+    ],
+    [
+      "ESM",
+      {
+        "dep.mjs": `${depFunctions}\nexport { add, greet, neverCalled };\nexport const marker = "${depMarker}";`,
+        "load.mjs": `import "./dep.mjs"; console.log("loaded");`,
+        "run.mjs": `import { add, greet } from "./dep.mjs"; console.log(add(2, 3), greet("cache"));`,
+      },
+    ],
+  ])("compile cache stores the bytecode of the functions a %s module actually ran", async (kind, files) => {
+    using dir = tempDir("compile-cache-lazy", files);
+    const ext = kind === "ESM" ? ".mjs" : ".js";
+    const onlyLoadedDir = path.join(String(dir), "cc-loaded");
+    const ranDir = path.join(String(dir), "cc-ran");
+
+    expect(await runWithCompileCache(dir, `load${ext}`, onlyLoadedDir)).toEqual({
+      stdout: "loaded\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await runWithCompileCache(dir, `run${ext}`, ranDir)).toEqual({
+      stdout: "5 hello cache\n",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    // Same source either way; the entry written by the run that called add()
+    // and greet() additionally holds their compiled bytecode. neverCalled()
+    // stays a lazy stub in both, so neither entry pays for it.
+    const onlyLoaded = compileCacheEntryFor(onlyLoadedDir, depMarker);
+    const ran = compileCacheEntryFor(ranDir, depMarker);
+    expect(ran.code).toBe(onlyLoaded.code);
+    expect(ran.bytecodeSize).toBeGreaterThan(onlyLoaded.bytecodeSize);
+
+    // The functions recorded as updates are loaded back from the entry.
+    const warm = await runWithCompileCache(dir, `run${ext}`, ranDir, { NODE_DEBUG_NATIVE: "COMPILE_CACHE" });
+    expect(warm.stdout).toBe("5 hello cache\n");
+    expect(warm.stderr).toContain(`dep${ext} was accepted`);
+    expect(warm.stderr).not.toContain("writing cache");
+    expect(warm.exitCode).toBe(0);
+  });
+
+  test("compile cache persists modules loaded by a worker_threads Worker", async () => {
+    using dir = tempDir("compile-cache-worker", {
+      "main.js": `
+        const { Worker } = require("worker_threads");
+        new Worker("./worker.js").on("exit", code => console.log("worker exit", code));
+      `,
+      "worker.js": `console.log(require("./worker-dep.js").twice(21));`,
+      "worker-dep.js": `function twice(n) { return n * 2; }\nmodule.exports = { twice, marker: "compile-cache-worker-dep" };`,
+    });
+    const cacheDir = path.join(String(dir), "cc");
+
+    // The worker's modules are compiled on the worker's VM, which is torn down
+    // before the process exits; their bytecode still has to reach the exit
+    // persist. One cold run (a debug-build worker is slow to start).
+    expect(await runWithCompileCache(dir, "main.js", cacheDir)).toEqual({
+      stdout: "42\nworker exit 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    // main.js, worker.js and worker-dep.js.
+    expect([...new Bun.Glob("*/*").scanSync({ cwd: cacheDir, onlyFiles: true })]).toHaveLength(3);
+    expect(compileCacheEntryFor(cacheDir, "compile-cache-worker-dep").bytecodeSize).toBeGreaterThan(0);
+  });
+
+  test("compile cache persists the version of a module that was rewritten and re-required in the same process", async () => {
+    using dir = tempDir("compile-cache-rewrite", {
+      "dep.js": `module.exports = { version() { return "v1"; }, marker: "compile-cache-rewrite" };`,
+      // The marker is assembled at runtime so that only dep.js's entry
+      // contains it verbatim.
+      "main.js": `
+        const fs = require("fs");
+        const dep = require.resolve("./dep.js");
+        const versions = [require(dep).version()];
+        const marker = ["compile-cache", "rewrite"].join("-");
+        fs.writeFileSync(dep, 'module.exports = { version() { return "v2"; }, marker: "' + marker + '" };');
+        delete require.cache[dep];
+        versions.push(require(dep).version());
+        console.log(versions.join(","));
+      `,
+    });
+    const cacheDir = path.join(String(dir), "cc");
+
+    expect(await runWithCompileCache(dir, "main.js", cacheDir)).toEqual({
+      stdout: "v1,v2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(compileCacheEntryFor(cacheDir, "compile-cache-rewrite").code).toContain('"v2"');
+
+    // dep.js is now v2 on disk, so the persisted entry must be v2's bytecode.
+    const warm = await runWithCompileCache(dir, "main.js", cacheDir, { NODE_DEBUG_NATIVE: "COMPILE_CACHE" });
+    expect(warm.stdout).toBe("v2,v2\n");
+    expect(warm.stderr).toContain("dep.js was accepted");
+    expect(warm.exitCode).toBe(0);
+  });
+
   const compileCacheEnv = { ...bunEnv };
   delete compileCacheEnv.NODE_COMPILE_CACHE;
   delete compileCacheEnv.NODE_COMPILE_CACHE_PORTABLE;

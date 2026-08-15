@@ -30,7 +30,6 @@
     ]
   },
   "src/jsc/NodeCompileCache.rs": {
-    "thread spawn": 1,
     "unsafe impl Send": [
       "AlignedBlob",
       "CacheState"

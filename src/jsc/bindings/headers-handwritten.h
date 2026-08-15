@@ -134,6 +134,11 @@ typedef struct ResolvedSource {
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
+    // Node compile cache entry that missed on disk (NodeCompileCache.rs): the
+    // SourceProvider collects the bytecode JSC generates for this source under
+    // this key. entry_id == 0 means no collection (hit, or cache disabled).
+    uint64_t node_compile_cache_key;
+    uint64_t node_compile_cache_entry_id;
 } ResolvedSource;
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {

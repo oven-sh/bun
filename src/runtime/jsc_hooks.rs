@@ -3038,7 +3038,7 @@ fn transpile_source_code_inner(
                     // Node compile cache hook (transpiler-cache-hit path); must
                     // read `output_code` before it is consumed below. UTF-16
                     // output would hash differently than the print path — skip.
-                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                    let node_compile_cache = if bun_jsc::node_compile_cache::is_enabled()
                         && source.path.is_file()
                         && loader.is_java_script_like()
                         && !matches!(&entry.output_code, OutputCode::String(s) if s.is_utf16())
@@ -3109,19 +3109,19 @@ fn transpile_source_code_inner(
                     } else {
                         ResolvedSourceTag::Javascript
                     };
-                    let (bytecode_cache, bytecode_cache_size) =
-                        node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
-                    return Ok(OwnedResolvedSource::from(ResolvedSource {
+                    let mut resolved_source = ResolvedSource {
                         source_code,
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         is_commonjs_module,
                         module_info,
                         tag,
-                        bytecode_cache,
-                        bytecode_cache_size,
                         ..Default::default()
-                    }));
+                    };
+                    if let Some(fetched) = node_compile_cache {
+                        fetched.apply(&mut resolved_source);
+                    }
+                    return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 
                 // Link import records.
@@ -3296,7 +3296,7 @@ fn transpile_source_code_inner(
                     let printer: &mut bun_js_printer::BufferPrinter =
                         unsafe { &mut *(*extra).source_code_printer };
                     let written = printer.ctx.get_written();
-                    let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                    let node_compile_cache = if bun_jsc::node_compile_cache::is_enabled()
                         && path.is_file()
                         && loader.is_java_script_like()
                     {
@@ -3316,9 +3316,8 @@ fn transpile_source_code_inner(
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
                     resolved_source.module_info = module_info;
-                    if let Some((ptr, size)) = node_compile_cache_blob {
-                        resolved_source.bytecode_cache = ptr;
-                        resolved_source.bytecode_cache_size = size;
+                    if let Some(fetched) = node_compile_cache {
+                        fetched.apply(&mut resolved_source);
                     }
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
@@ -3382,7 +3381,7 @@ fn transpile_source_code_inner(
                 let written = printer.ctx.get_written();
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
-                let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
+                let node_compile_cache = if bun_jsc::node_compile_cache::is_enabled()
                     && path.is_file()
                     && loader.is_java_script_like()
                 {
@@ -3411,19 +3410,19 @@ fn transpile_source_code_inner(
                 // (fd close handled by `_fd_guard` registered above; spec
                 // :251-256 `defer` fires on every exit path.)
 
-                let (bytecode_cache, bytecode_cache_size) =
-                    node_compile_cache_blob.unwrap_or((core::ptr::null_mut(), 0));
-                return Ok(OwnedResolvedSource::from(ResolvedSource {
+                let mut resolved_source = ResolvedSource {
                     source_code,
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
                     is_commonjs_module,
                     module_info,
                     tag,
-                    bytecode_cache,
-                    bytecode_cache_size,
                     ..Default::default()
-                }));
+                };
+                if let Some(fetched) = node_compile_cache {
+                    fetched.apply(&mut resolved_source);
+                }
+                return Ok(OwnedResolvedSource::from(resolved_source));
             }
         }
 

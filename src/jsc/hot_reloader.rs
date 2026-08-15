@@ -674,8 +674,9 @@ fn arm_watch_reload_grace_timer() {
     let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
     let force = || -> ! {
         // Same as the sibling reload paths: execve never reaches on_exit, so
-        // flush the compile cache first (safe off the JS thread; generation
-        // runs on its own worker VM).
+        // flush the compile cache first (safe off the JS thread: persisting
+        // only copies bytecode the providers already encoded, under their
+        // own locks).
         crate::node_compile_cache::persist_now();
         Output::flush();
         bun_core::reload_process(

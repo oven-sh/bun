@@ -1889,6 +1889,43 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // `Some` only when FOR_PUBLISH == true.
 pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
+/// The package.json being packed, through the manager's cache; a package.json
+/// that cannot be read or parsed ends the command.
+///
+/// `workspace_package_json_cache` and `log` are disjoint fields on
+/// `PackageManager`; route through raw-pointer field projections so the two
+/// `&mut` borrows don't conflict.
+fn package_json_entry<'a>(
+    manager_ptr: *mut PackageManager,
+    abs_package_json_path: &ZStr,
+) -> &'a mut WorkspacePackageJSONCache::MapEntry {
+    let result = pm_workspace_cache(manager_ptr).get_with_path(
+        pm_log(manager_ptr),
+        abs_package_json_path.as_bytes(),
+        WorkspacePackageJSONCache::GetJSONOptions {
+            guess_indentation: true,
+            ..Default::default()
+        },
+    );
+    match result.entry() {
+        Ok(entry) => entry,
+        Err((step, err)) => {
+            Output::err(
+                err,
+                "failed to {} package.json: {}",
+                (
+                    step.verb(),
+                    bstr::BStr::new(abs_package_json_path.as_bytes()),
+                ),
+            );
+            if step == WorkspacePackageJSONCache::GetStep::Parse {
+                let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
+            }
+            Global::crash();
+        }
+    }
+}
+
 pub(crate) fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
@@ -1899,36 +1936,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
     let bump = pack_bump();
-    // Note: `workspace_package_json_cache` and `log` are disjoint fields on
-    // `PackageManager`; route through raw-pointer field projections so the
-    // two `&mut` borrows don't conflict.
-    let mut json = match pm_workspace_cache(manager_ptr).get_with_path(
-        pm_log(manager_ptr),
-        abs_package_json_path.as_bytes(),
-        WorkspacePackageJSONCache::GetJSONOptions {
-            guess_indentation: true,
-            ..Default::default()
-        },
-    ) {
-        WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
-            Output::err(
-                err,
-                "failed to read package.json: {}",
-                format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-            );
-            Global::crash();
-        }
-        WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
-            Output::err(
-                err,
-                "failed to parse package.json: {}",
-                format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-            );
-            let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-            Global::crash();
-        }
-        WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
-    };
+    let mut json = package_json_entry(manager_ptr, abs_package_json_path);
 
     if FOR_PUBLISH {
         if let Some(config) = json.root.get(b"publishConfig") {
@@ -2153,34 +2161,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let cache_key: &[u8] = abs_package_json_path.as_bytes();
         let _ = pm_workspace_cache(manager_ptr).map.remove(cache_key);
 
-        // Re-read package.json from disk
-        json = match pm_workspace_cache(manager_ptr).get_with_path(
-            pm_log(manager_ptr),
-            abs_package_json_path.as_bytes(),
-            WorkspacePackageJSONCache::GetJSONOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
-            WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
-                Output::err(
-                    err,
-                    "failed to read package.json: {}",
-                    format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-                );
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
-                Output::err(
-                    err,
-                    "failed to parse package.json: {}",
-                    format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-                );
-                let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
-        };
+        json = package_json_entry(manager_ptr, abs_package_json_path);
 
         // Re-validate private flag after scripts may have modified it.
         if FOR_PUBLISH {

@@ -324,7 +324,8 @@ pub enum LoadStep {
 }
 
 impl LoadStep {
-    pub(crate) fn verb(self) -> &'static str {
+    /// The word for the step in a "failed to ... lockfile" message.
+    pub fn verb(self) -> &'static str {
         match self {
             LoadStep::OpenFile => "open",
             LoadStep::ReadFile => "read",

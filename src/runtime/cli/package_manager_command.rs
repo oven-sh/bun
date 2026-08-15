@@ -6,7 +6,7 @@ use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
 use bun_install::dependency::Dependency;
-use bun_install::lockfile::{LoadResult, LoadStep, Lockfile, package::PackageColumns as _, tree};
+use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
@@ -51,15 +51,6 @@ impl<'a> ByName<'a> {
     }
 }
 
-fn load_step_verb(step: LoadStep) -> &'static str {
-    match step {
-        LoadStep::OpenFile => "open",
-        LoadStep::ReadFile => "read",
-        LoadStep::ParseFile => "parse",
-        LoadStep::Migrating => "migrate",
-    }
-}
-
 pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
@@ -93,7 +84,7 @@ impl PackageManagerCommand {
                 if not_silent && !migration::reported_unsupported_lockfile_version(err) {
                     Output::err_generic(
                         "failed to {s} lockfile: {s}",
-                        (load_step_verb(err.step), err.value.name()),
+                        (err.step.verb(), err.value.name()),
                     );
                 }
                 Global::exit(1);

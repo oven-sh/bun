@@ -1674,11 +1674,7 @@ fn warn_unmet_peer_dependency(
     );
 }
 
-/// A `link:` target with `..` or an absolute path is resolved against the project
-/// (`normalize_package_json_path`) and linked from the global link dir, so it names a
-/// directory of the installing machine, which only the package.json files read from the
-/// project can mean to do. The `file:` directory form is refused the same way in
-/// `get_or_put_resolved_package`.
+/// `normalize_package_json_path` resolves the value against the project, not the declaring package, so only package.json files read from the project may use `..` or an absolute path.
 #[cold]
 #[inline(never)]
 fn reject_escaping_link_of_remote_package(

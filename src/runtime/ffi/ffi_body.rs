@@ -318,15 +318,18 @@ impl Source {
 mod stdarg {
     use super::*;
 
+    // Defined in c-bindings.cpp. Only their addresses are taken (handed to
+    // TinyCC below); the `ap` parameter of the `v*` variants is a `va_list`,
+    // declared here as an opaque pointer.
     unsafe extern "C" {
-        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub(super) fn ffi_vprintf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ap: *mut c_void) -> c_int;
+        pub(super) fn ffi_vprintf(_: *const c_char, ap: *mut c_void) -> c_int;
         pub(super) fn ffi_fprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_printf(_: *const c_char, ...) -> c_int;
         pub(super) fn ffi_fscanf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_scanf(_: *const c_char, ...) -> c_int;
         pub(super) fn ffi_sscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
-        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ap: *mut c_void) -> c_int;
         pub(super) fn ffi_fopen(_: *const c_char, _: *const c_char) -> *mut c_void;
         pub(super) fn ffi_fclose(_: *mut c_void) -> c_int;
         pub(super) fn ffi_fgetc(_: *mut c_void) -> c_int;

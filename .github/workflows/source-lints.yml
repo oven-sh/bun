@@ -13,7 +13,10 @@ on:
     branches: [main]
     paths:
       - "src/**/*.rs"
+      - "src/**/*.cpp"
+      - "src/**/*.h"
       - "src/jsc/bindings/**"
+      - "packages/bun-usockets/src/crypto/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "test/harness.ts"
@@ -25,7 +28,10 @@ on:
   pull_request:
     paths:
       - "src/**/*.rs"
+      - "src/**/*.cpp"
+      - "src/**/*.h"
       - "src/jsc/bindings/**"
+      - "packages/bun-usockets/src/crypto/**"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "test/harness.ts"

@@ -138,6 +138,15 @@ export const validGitUrls: { [K in Provider]: { [K in string]: object } } = {
     "git+ssh://bitbucket.org:foo/bar": { ...defaults.bitbucket, default: "sshurl" },
     "git+ssh://bitbucket.org:foo/bar#branch": { ...defaults.bitbucket, default: "sshurl", committish: "branch" },
     "git+ssh://user@bitbucket.org:foo/bar": { ...defaults.bitbucket, default: "sshurl", auth: null },
+    // explicit non-default SSH port: the colon is a port separator, not the
+    // scp-style host:path separator (regression guard for #36931)
+    "git+ssh://user@bitbucket.org:2222/foo/bar": { ...defaults.bitbucket, default: "sshurl", auth: null },
+    "git+ssh://user@bitbucket.org:2222/foo/bar#branch": {
+      ...defaults.bitbucket,
+      default: "sshurl",
+      auth: null,
+      committish: "branch",
+    },
     "git+ssh://user@bitbucket.org:foo/bar#branch": {
       ...defaults.bitbucket,
       default: "sshurl",

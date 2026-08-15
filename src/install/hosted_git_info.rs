@@ -858,13 +858,23 @@ pub(crate) fn correct_url<'a>(
     };
 
     if col_idx > at_idx {
-        let mut duped: Box<[u8]> = Box::from(url_proto_pair.url_slice());
-        duped[usize::try_from(col_idx).expect("int cast")] = b'/';
+        let col_idx_usize = usize::try_from(col_idx).expect("int cast");
+        let url = url_proto_pair.url_slice();
+        // A colon followed by a digit is an explicit port (`ssh://git@host:2222/user/repo`),
+        // not the scp-style host:path separator. Leave the URL untouched, otherwise the
+        // port would be rewritten into a path segment (`/2222/user/repo`). Fixes #36931.
+        let is_port = url
+            .get(col_idx_usize + 1)
+            .is_some_and(|byte| byte.is_ascii_digit());
+        if !is_port {
+            let mut duped: Box<[u8]> = Box::from(url);
+            duped[col_idx_usize] = b'/';
 
-        return Ok(UrlProtocolPair {
-            url: UrlProtocolPairUrl::Managed(duped),
-            protocol: UrlProtocol::WellFormed(WellDefinedProtocol::GitPlusSsh),
-        });
+            return Ok(UrlProtocolPair {
+                url: UrlProtocolPairUrl::Managed(duped),
+                protocol: UrlProtocol::WellFormed(WellDefinedProtocol::GitPlusSsh),
+            });
+        }
     }
 
     let protocol = if col_idx == -1 && matches!(url_proto_pair.protocol, UrlProtocol::Unknown) {

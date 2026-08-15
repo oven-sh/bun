@@ -144,7 +144,6 @@ impl<'a> Entry<'a> {
     }
 
     /// yarn v1 writes tarball `resolved` fields as `<url>#<sha1 of the tarball>`.
-    /// The hash is yarn's integrity annotation, not part of the URL.
     pub(crate) fn url_without_hash(resolved: &[u8]) -> &[u8] {
         match strings::index_of_char_usize(resolved, b'#') {
             Some(hash_idx) => &resolved[..hash_idx],
@@ -1074,11 +1073,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::default();
                 }
 
-                // A versioned entry is a registry package whose tarball is `resolved`,
-                // even when nothing follows `.tgz`: yarn only appends the `#sha1` when
-                // the registry reported a shasum. `has_trusted_dependency` compares this
-                // URL against the canonical registry tarball URL, so it must be stored
-                // the way a fresh install would have recorded it.
+                // `has_trusted_dependency` compares this URL with the canonical registry
+                // tarball URL, so it must be the bare URL a fresh install records: no
+                // `#sha1`, and no RemoteTarball just because the URL ends in `.tgz`.
                 let is_default_registry = resolved.starts_with(b"https://registry.yarnpkg.com/")
                     || resolved.starts_with(b"https://registry.npmjs.org/");
 

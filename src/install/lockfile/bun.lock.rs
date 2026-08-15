@@ -3368,10 +3368,8 @@ pub(crate) fn resolve_peer_dep_version_based(
     )
 }
 
-/// The scan behind `resolve_peer_dep_version_based`, for callers that have no printed tree to fall
-/// back on: lockfile migration binds every non-optional peer of the root and the workspaces this
-/// way, `*` ranges included. `None` (overridden name, or nothing to bind to) leaves the edge to a
-/// fresh resolve.
+/// The scan behind `resolve_peer_dep_version_based`, for a caller with no printed tree to fall back
+/// on (the yarn.lock migration binds the root's and workspaces' required peers with it, `*` included).
 pub(crate) fn resolve_peer_dep_by_range(
     dep: &Dependency,
     range: &DependencyVersion,

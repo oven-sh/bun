@@ -510,15 +510,10 @@ struct Binder<'a> {
 }
 
 impl Binder<'_> {
-    /// yarn.lock has no entries for the root and the workspaces themselves; what it records for each
-    /// dependency they declare is keyed by the exact `name@range` written in package.json, so only
-    /// that key may bind it. Another entry for the same name that happens to satisfy the range is a
-    /// different resolution. Peers are the exception: yarn never locked them, so they are bound the
-    /// way a fresh `bun install` binds them, and optional peers stay unresolved for the hoister.
-    ///
-    /// `None` drops the dependency from the migrated package, which makes `bun install` resolve it
-    /// like any dependency added after the lockfile was written (instead of failing on a dependency
-    /// that has no resolution).
+    /// A root or workspace dependency is keyed in yarn.lock by the exact `name@range` it declares;
+    /// a same-name entry that merely satisfies the range is a different resolution. yarn never locked
+    /// peers, so required peers bind like a loaded bun.lock's and optional peers are left to the
+    /// hoister. `None` drops the row, and `bun install` resolves it like a newly added dependency.
     fn bind(&mut self, this: &Lockfile, dep: &Dependency) -> Option<PackageID> {
         let string_bytes = this.buffers.string_bytes.as_slice();
         if dep.version.tag == dependency::Tag::Workspace {
@@ -549,9 +544,8 @@ impl Binder<'_> {
     }
 }
 
-/// Binds the dependencies of the root and the workspace packages (ids `0..importer_count`). They
-/// were parsed straight from the package.json files, so at this point they are the only rows in the
-/// dependency buffers; the buffers are rebuilt with the rows that bound.
+/// Packages `0..importer_count` are the root and the workspaces; their package.json rows are the
+/// only rows in the buffers at this point, and the buffers are rebuilt with the ones that bind.
 fn bind_importer_dependencies(
     this: &mut Lockfile,
     importer_count: usize,
@@ -632,9 +626,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
     }
 
-    // The root and the workspaces are parsed from their package.json files exactly like a fresh
-    // install parses them; their dependencies are bound to the yarn.lock entries once those have
-    // package ids (`bind_importer_dependencies`).
     let root = {
         let mut package_json_path = AutoAbsPath::init_top_level_dir();
         let _ = package_json_path.append(b"package.json");

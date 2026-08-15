@@ -50,13 +50,17 @@ const tracked: Set<string> | null = (() => {
 
 const STATIC_MUT = /&\s*'static\s+mut\b/;
 
-/** Skip a balanced `open`..`close` group starting at `source[i] === open`; returns the index after `close`, or -1. */
+/**
+ * Skip a balanced `open`..`close` group starting at `source[i] === open`;
+ * returns the index after `close`, or -1. The `>` of a `->` token inside a
+ * generic list (`<F: FnOnce() -> T>`) is not a closer.
+ */
 function skipBalanced(source: string, i: number, open: string, close: string): number {
   let depth = 0;
   for (; i < source.length; i++) {
     const c = source[i];
     if (c === open) depth++;
-    else if (c === close && --depth === 0) return i + 1;
+    else if (c === close && !(close === ">" && source[i - 1] === "-") && --depth === 0) return i + 1;
   }
   return -1;
 }
@@ -148,6 +152,7 @@ describe("staticMutFns", () => {
         fn buf<const N: usize>(b: &UnsafeCell<[u8; N]>) -> &'static mut [u8; N] { todo!() }
         fn pair(len: usize) -> (Self, &'static mut [u8]) { todo!() }
         fn after_array_semi() -> Result<[u8; 4], &'static mut Thing> { todo!() }
+        fn lazy_init<F: FnOnce() -> Box<Thing>>(init: F) -> &'static mut Thing { todo!() }
         pub(crate) fn take_worker<T: Send>(
             slot: &Slot<T>,
         ) -> &'static mut T
@@ -163,7 +168,17 @@ describe("staticMutFns", () => {
         fn callback(project: fn(&mut Source) -> &mut Writer) -> &'static str { "" }
         let not_a_fn: fn() -> &'static mut u8 = f;
       `),
-    ).toEqual(["after_array_semi", "buf", "ffi_thing", "http_thread", "pair", "runner", "take_worker", "vm_mut"]);
+    ).toEqual([
+      "after_array_semi",
+      "buf",
+      "ffi_thing",
+      "http_thread",
+      "lazy_init",
+      "pair",
+      "runner",
+      "take_worker",
+      "vm_mut",
+    ]);
   });
 });
 

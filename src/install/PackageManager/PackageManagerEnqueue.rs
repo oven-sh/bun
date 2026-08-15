@@ -1672,10 +1672,7 @@ fn warn_unmet_peer_dependency(
     );
 }
 
-/// `enqueue_local_tarball` reads the path relative to the project, which is what
-/// a manifest in the project means by it. A package extracted from the cache
-/// meant a file of its own, so its path must not be applied to the project;
-/// the project can still supply the dependency through `overrides`.
+/// `enqueue_local_tarball` would read the path relative to the project, not to the declarer.
 #[cold]
 #[inline(never)]
 fn reject_local_tarball_of_remote_package(

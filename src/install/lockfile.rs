@@ -782,8 +782,7 @@ impl Lockfile {
         self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
     }
 
-    /// The package whose dependency list `id` belongs to. `None` for the
-    /// dependencies `enqueue_dependency_to_root` appends outside of any package.
+    /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
     pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
         for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
             if dependencies.contains(id) {

@@ -965,8 +965,7 @@ impl Tag {
         self == Tag::Git || self == Tag::Github
     }
 
-    /// Packages whose package.json is read from the project (the root, its
-    /// workspaces and `file:` folders) rather than extracted into the cache.
+    /// The package.json is read from the project rather than extracted into the cache.
     pub(crate) fn is_local_package(self) -> bool {
         self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }

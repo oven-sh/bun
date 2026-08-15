@@ -702,11 +702,7 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args are opaque-ZST handles valid for the call;`,
       `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
       ...(ret === "()"
-        ? [
-            `    unsafe { raw::${fn.name}(${callArgsStr}) };`,
-            `    __scope.return_if_exception()?;`,
-            `    Ok(())`,
-          ]
+        ? [`    unsafe { raw::${fn.name}(${callArgsStr}) };`, `    __scope.return_if_exception()?;`, `    Ok(())`]
         : [
             `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
             `    __scope.return_if_exception()?;`,

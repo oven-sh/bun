@@ -5943,21 +5943,19 @@ describe.skipIf(isWindows)("readFileSync on a FIFO larger than the stat size", (
     // process: on a debug build each extra bun startup costs most of a second
     // of this test's budget. writeFile's open() parks on the pool until the
     // fixture opens the read end, and its close() is the fixture's EOF.
+    //
+    // The fixture's output is asserted before the writer is awaited so that a
+    // failure reports the fixture's error: pre-fix it either never returns
+    // (RawVec doubling balloons RSS to multiple GB) or dies with ENOMEM, which
+    // fails the writer with EPIPE, and a fixture that dies before opening the
+    // FIFO leaves the writer parked in open() with nothing to report.
     const writer = promises.writeFile(fifo, Buffer.alloc(SIZE, "a")).catch(err => err);
 
-    // Pre-fix the fixture either never returns (RawVec doubling balloons RSS to
-    // multiple GB) or dies with ENOMEM, which also fails the writer with EPIPE;
-    // the fixture's output is asserted first so that is what a failure reports.
-    const [stdout, stderr, exitCode, writeError] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-      writer,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe(`len=${SIZE} allA=true`);
     expect(exitCode).toBe(0);
-    expect(writeError).toBeUndefined();
+    expect(await writer).toBeUndefined();
   });
 });
 

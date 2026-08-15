@@ -401,6 +401,28 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
     expect(why.exitCode).toBe(0);
   });
 
+  test("an npm version whose pre-release tag looks like a UUID is printed unchanged", async () => {
+    await using server = await startTarballServer();
+    const stamped = "1.0.0-a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    using dir = tempDir("redacted-resolution-versions", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { direct: spec(server), stamped } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { direct: spec(server), stamped } } },
+        packages: {
+          direct: [`direct@${spec(server)}`, {}, ""],
+          stamped: [`stamped@${stamped}`, "", {}, ""],
+        },
+      }),
+    });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["pm", "ls"]);
+    expect(out).toContain(`direct@${masked(server)}\n`);
+    expect(out).toContain(`stamped@${stamped}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(0);
+  });
+
   test("download failure: retry warnings, the final error and the unresolved dependency", async () => {
     using server = startClosingServer();
     const url = masked(server);

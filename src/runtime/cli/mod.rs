@@ -824,9 +824,7 @@ pub mod command {
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
-    /// Does argv[0] end in `name` (or `name.exe` on Windows)? Case-insensitive:
-    /// Windows resolves executables case-insensitively and `PATHEXT` commonly
-    /// yields `bunx.EXE` (#36826).
+    /// Case-insensitive argv[0] suffix match; Windows also drops a trailing `.exe` (#36826).
     fn invoked_as(argv0: &[u8], name: &[u8]) -> bool {
         let mut argv0 = argv0;
         if cfg!(windows) && strings::ends_with_case_insensitive_ascii(argv0, b".exe") {

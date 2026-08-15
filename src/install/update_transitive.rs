@@ -1394,9 +1394,7 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
                 .as_deref()
                 .is_some_and(|targets| lockfile.is_dependency_of_workspace_in(targets, row.dep_id))
         };
-        // Mirrors `should_update`: bare update re-resolves the target workspaces' rows (the cwd
-        // workspace's without -r/--filter) and every catalog row; a named update re-resolves the
-        // in-scope rows naming a requested package.
+        // Mirrors `should_update`: bare updates re-resolve the target (or cwd) workspaces' rows and catalog rows; named updates re-resolve the in-scope requested rows.
         let reresolves = if bare {
             row.catalog
                 || if has_targets {

@@ -96,7 +96,8 @@ enum State {
 
 struct StackFrame {
     id: store::entry::Id,
-    dep_idx: u32,
+    /// Position in `id`'s dependency list, not a `DependencyID`.
+    next_dep: u32,
     hasher: Wyhash,
 }
 
@@ -213,13 +214,20 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
+/// Whether `build_store` reports how long each of its two passes took.
+#[derive(Clone, Copy)]
+pub(crate) enum Timings {
+    Print,
+    Quiet,
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
-    print_timings: bool,
+    timings: Timings,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
     let pkgs = lockfile.packages.slice();
@@ -861,7 +869,7 @@ pub(crate) fn build_store(
         node_queue[queue_mark..].reverse();
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let full_tree_end = timer.elapsed();
         timer = std::time::Instant::now();
         bun_core::pretty_errorln!(
@@ -1118,7 +1126,7 @@ pub(crate) fn build_store(
         }
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let dedupe_end = timer.elapsed();
         bun_core::pretty_errorln!(
             "Created store [{}]",
@@ -1150,13 +1158,18 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
+    let timings = if manager.options.log_level.is_verbose() {
+        Timings::Print
+    } else {
+        Timings::Quiet
+    };
     let store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
-        manager.options.log_level.is_verbose(),
+        timings,
     )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
@@ -1196,13 +1209,13 @@ pub(crate) fn install_isolated_packages(
             // their own store-path bytes.
             let mut stack: Vec<StackFrame> = Vec::new();
 
-            for _root_id in 0..store.entries.len() {
-                if states[_root_id] != State::Unvisited {
+            for root_entry_idx in 0..store.entries.len() {
+                if states[root_entry_idx] != State::Unvisited {
                     continue;
                 }
                 stack.push(StackFrame {
-                    id: store::entry::Id::from(u32::try_from(_root_id).expect("int cast")),
-                    dep_idx: 0,
+                    id: store::entry::Id::from(u32::try_from(root_entry_idx).expect("int cast")),
+                    next_dep: 0,
                     // Placeholder; reinitialized below before first use when state == Unvisited.
                     hasher: Wyhash::init(0),
                 });
@@ -1212,12 +1225,12 @@ pub(crate) fn install_isolated_packages(
                     // Reshaped for borrowck — re-borrow `top` after each
                     // potential `stack.push()` realloc.
                     let id = stack[top_idx].id;
-                    let idx = id.get() as usize;
+                    let entry_idx = id.get() as usize;
 
-                    if states[idx] == State::Unvisited {
-                        states[idx] = State::InProgress;
+                    if states[entry_idx] == State::Unvisited {
+                        states[entry_idx] = State::InProgress;
 
-                        let node_id = entry_node_ids[idx];
+                        let node_id = entry_node_ids[entry_idx];
                         let pkg_id = node_pkg_ids[node_id.get() as usize];
                         let dep_id = node_dep_ids[node_id.get() as usize];
                         let pkg_res = &pkg_resolutions[pkg_id as usize];
@@ -1292,8 +1305,8 @@ pub(crate) fn install_isolated_packages(
                         };
 
                         if !eligible {
-                            states[idx] = State::Ineligible;
-                            entry_hashes[idx] = 0;
+                            states[entry_idx] = State::Ineligible;
+                            entry_hashes[entry_idx] = 0;
                             stack.pop();
                             continue;
                         }
@@ -1323,32 +1336,32 @@ pub(crate) fn install_isolated_packages(
                             .update(bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity));
                     }
 
-                    if states[idx] == State::Ineligible {
+                    if states[entry_idx] == State::Ineligible {
                         stack.pop();
                         continue;
                     }
 
-                    let deps = entry_dependencies[idx].slice();
+                    let deps = entry_dependencies[entry_idx].slice();
                     let mut advanced = false;
-                    while (stack[top_idx].dep_idx as usize) < deps.len() {
-                        let dep = &deps[stack[top_idx].dep_idx as usize];
-                        let dep_idx = dep.entry_id.get() as usize;
+                    while (stack[top_idx].next_dep as usize) < deps.len() {
+                        let dep = &deps[stack[top_idx].next_dep as usize];
+                        let dep_entry_idx = dep.entry_id.get() as usize;
                         let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
-                        match states[dep_idx] {
+                        match states[dep_entry_idx] {
                             State::Done => {
                                 stack[top_idx]
                                     .hasher
                                     .update(bun_core::bytes_of(&dep_name_hash));
                                 stack[top_idx]
                                     .hasher
-                                    .update(bun_core::bytes_of(&entry_hashes[dep_idx]));
+                                    .update(bun_core::bytes_of(&entry_hashes[dep_entry_idx]));
                             }
                             State::Ineligible => {
                                 // A dep that can't live in the global store poisons
                                 // this entry too: its symlink would point at a
                                 // project-local path.
-                                states[idx] = State::Ineligible;
-                                entry_hashes[idx] = 0;
+                                states[entry_idx] = State::Ineligible;
+                                entry_hashes[entry_idx] = 0;
                             }
                             State::InProgress => {
                                 // Cycle back-edge: the dep's hash isn't known yet.
@@ -1363,7 +1376,7 @@ pub(crate) fn install_isolated_packages(
                             State::Unvisited => {
                                 stack.push(StackFrame {
                                     id: dep.entry_id,
-                                    dep_idx: 0,
+                                    next_dep: 0,
                                     // Placeholder; reinitialized on next iteration before use.
                                     hasher: Wyhash::init(0),
                                 });
@@ -1372,24 +1385,24 @@ pub(crate) fn install_isolated_packages(
                                 break;
                             }
                         }
-                        if states[idx] == State::Ineligible {
+                        if states[entry_idx] == State::Ineligible {
                             break;
                         }
-                        stack[top_idx].dep_idx += 1;
+                        stack[top_idx].next_dep += 1;
                     }
 
                     if advanced {
                         continue;
                     }
 
-                    if states[idx] != State::Ineligible {
+                    if states[entry_idx] != State::Ineligible {
                         let mut h = stack[top_idx].hasher.final_();
                         // 0 is the "not eligible" sentinel.
                         if h == 0 {
                             h = 1;
                         }
-                        entry_hashes[idx] = h;
-                        states[idx] = State::Done;
+                        entry_hashes[entry_idx] = h;
+                        states[entry_idx] = State::Done;
                     }
                     stack.pop();
                 }

@@ -323,6 +323,17 @@ pub enum LoadStep {
     Migrating,
 }
 
+impl LoadStep {
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            LoadStep::OpenFile => "open",
+            LoadStep::ReadFile => "read",
+            LoadStep::ParseFile => "parse",
+            LoadStep::Migrating => "migrate",
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Migrated {
     #[default]
@@ -2554,6 +2565,15 @@ pub mod package_index {
         Ids(PackageIDList),
     }
 
+    impl Entry {
+        pub(crate) fn as_slice(&self) -> &[PackageID] {
+            match self {
+                Entry::Id(id) => core::slice::from_ref(id),
+                Entry::Ids(ids) => ids.as_slice(),
+            }
+        }
+    }
+
     impl Default for Entry {
         /// `HashMap::get_or_put` needs a `Default` to fill the value slot before
         /// the caller writes the real `Entry::Id(..)` / `Entry::Ids(..)`.
@@ -2644,8 +2664,12 @@ impl<'a> EqlSorter<'a> {
 }
 
 impl Lockfile {
-    /// `cut_off_pkg_id` should be removed when we stop appending packages to lockfile during install step
-    pub(crate) fn eql(&self, r: &Lockfile, cut_off_pkg_id: usize) -> Result<bool, AllocError> {
+    /// A placement of `r` bound past `r_loaded_package_count` was rebound after loading: a change.
+    pub(crate) fn eql(
+        &self,
+        r: &Lockfile,
+        r_loaded_package_count: usize,
+    ) -> Result<bool, AllocError> {
         let l: &Lockfile = self;
         let l_hoisted_deps = l.buffers.hoisted_dependencies.as_slice();
         let r_hoisted_deps = r.buffers.hoisted_dependencies.as_slice();
@@ -2684,7 +2708,7 @@ impl Lockfile {
                     continue;
                 }
                 let l_pkg_id = l.buffers.resolutions[l_dep_id as usize];
-                if l_pkg_id == invalid_package_id || l_pkg_id as usize >= cut_off_pkg_id {
+                if l_pkg_id == invalid_package_id {
                     continue;
                 }
                 sort_buf.push(PathToId {
@@ -2712,8 +2736,11 @@ impl Lockfile {
                     continue;
                 }
                 let r_pkg_id = r.buffers.resolutions[r_dep_id as usize];
-                if r_pkg_id == invalid_package_id || r_pkg_id as usize >= cut_off_pkg_id {
+                if r_pkg_id == invalid_package_id {
                     continue;
+                }
+                if r_pkg_id as usize >= r_loaded_package_count {
+                    return Ok(false);
                 }
                 sort_buf.push(PathToId {
                     pkg_id: r_pkg_id,

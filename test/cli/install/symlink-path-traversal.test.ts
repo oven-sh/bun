@@ -817,6 +817,58 @@ it.skipIf(isWindows)(
 );
 
 it.skipIf(isWindows)(
+  "does not change permissions of a directory reached through a symlinked bin target with a trailing slash",
+  async () => {
+    // Same as above, but the bin target is written as "payload/". The kernel
+    // follows a symlink named with a trailing slash even when chmod is told not
+    // to follow symlinks, so the installer has to drop the slash before it
+    // stats, links and chmods the target.
+    using dir = tempDir("bin-target-symlink-trailing-slash-test", {
+      "bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+      "package.json": JSON.stringify({
+        name: "bin-target-symlink-slash-app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/dep/package.json": JSON.stringify({
+        name: "dep-with-symlinked-dir-bin",
+        version: "1.0.0",
+        bin: { "dep-with-symlinked-dir-bin": "./payload/" },
+      }),
+      "victim-dir/keep": "",
+    });
+    const installDir = String(dir);
+
+    const victimDir = join(installDir, "victim-dir");
+    await chmod(victimDir, 0o700);
+    await symlink(join("..", "..", "victim-dir"), join(installDir, "packages", "dep", "payload"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: installDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect((await stat(victimDir)).mode & 0o777).toBe(0o700);
+
+    // Without the slash this target links (see above), so with it the result is the same.
+    const binLink = join(installDir, "node_modules", ".bin", "dep-with-symlinked-dir-bin");
+    expect(await readlink(binLink)).toBe(join("..", "dep-with-symlinked-dir-bin", "payload"));
+
+    if (exitCode !== 0) {
+      console.error("Install failed with exit code:", exitCode);
+      console.error("stdout:", stdout);
+      console.error("stderr:", stderr);
+    }
+    expect(exitCode).toBe(0);
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
   "skips a package bin entry whose name contains a NUL byte and links the remaining entries",
   async () => {
     using dir = tempDir("bin-name-nul-test", {

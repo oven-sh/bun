@@ -885,6 +885,13 @@ pub mod fs {
         // Payload is `&'static mut DirEntry`; auto-deref coerces to `&DirEntry` / `&mut DirEntry`.
         bun_core::enum_unwrap!(pub EntriesOption, Entries => fn entries / entries_mut -> DirEntry);
 
+        pub(crate) fn as_entries(&self) -> Option<&DirEntry> {
+            match self {
+                EntriesOption::Entries(entries) => Some(&**entries),
+                EntriesOption::Err(_) => None,
+            }
+        }
+
         /// Probe the cached listing for `query` and return the lookup plus the
         /// listing fd, in one `entries_mutex` critical section. A
         /// stale-generation re-read rewrites the slot's `DirEntry` (and frees

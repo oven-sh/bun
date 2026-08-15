@@ -3083,6 +3083,72 @@ describe("binaries", () => {
     );
   });
 
+  test("bin targets with a trailing slash are linked", async () => {
+    // npm resolves each target with path.resolve, which drops trailing separators,
+    // so all of these link the file. Covers the string, single-entry and multi-entry
+    // forms of "bin" since each is linked by a separate code path.
+    const script = (name: string) => `#!/usr/bin/env node\nconsole.log("${name}")`;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "file-bin": "./file-bin",
+            "named-file-bin": "./named-file-bin",
+            "map-bin": "./map-bin",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "file-bin", "package.json"),
+        JSON.stringify({ name: "file-bin", version: "1.0.0", bin: "file-bin.js/" }),
+      ),
+      write(join(packageDir, "file-bin", "file-bin.js"), script("file-bin")),
+      write(
+        join(packageDir, "named-file-bin", "package.json"),
+        JSON.stringify({
+          name: "named-file-bin",
+          version: "1.0.0",
+          bin: { "named-file-bin": "./bin/named-file-bin.js/" },
+        }),
+      ),
+      write(join(packageDir, "named-file-bin", "bin", "named-file-bin.js"), script("named-file-bin")),
+      write(
+        join(packageDir, "map-bin", "package.json"),
+        JSON.stringify({
+          name: "map-bin",
+          version: "1.0.0",
+          bin: {
+            "map-bin-1": "map-bin-1.js//",
+            "map-bin-2": "map-bin-2.js\\",
+            "map-bin-3": "map-bin-3.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "map-bin", "map-bin-1.js"), script("map-bin-1")),
+      write(join(packageDir, "map-bin", "map-bin-2.js"), script("map-bin-2")),
+      write(join(packageDir, "map-bin", "map-bin-3.js"), script("map-bin-3")),
+    ]);
+
+    const expectBins = () => {
+      const bin = (name: string) => join(packageDir, "node_modules", ".bin", name);
+      expect(bin("file-bin")).toBeValidBin(join("..", "file-bin", "file-bin.js"));
+      expect(bin("named-file-bin")).toBeValidBin(join("..", "named-file-bin", "bin", "named-file-bin.js"));
+      expect(bin("map-bin-1")).toBeValidBin(join("..", "map-bin", "map-bin-1.js"));
+      expect(bin("map-bin-2")).toBeValidBin(join("..", "map-bin", "map-bin-2.js"));
+      expect(bin("map-bin-3")).toBeValidBin(join("..", "map-bin", "map-bin-3.js"));
+    };
+
+    await runBunInstall(env, packageDir);
+    expectBins();
+
+    // The lockfile keeps the targets as written, so linking from it has to normalize them as well.
+    await rm(join(packageDir, "node_modules", ".bin"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expectBins();
+  });
+
   test("root resolution bins", async () => {
     // As of writing this test, the only way to get a root resolution
     // is to migrate a package-lock.json with a root resolution. For now,

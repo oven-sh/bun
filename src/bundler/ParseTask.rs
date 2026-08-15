@@ -148,6 +148,16 @@ pub(crate) enum ResultValue {
     Empty { source_index: Index },
 }
 
+impl ResultValue {
+    pub(crate) fn source_index(&self) -> u32 {
+        match self {
+            ResultValue::Empty { source_index } => source_index.get(),
+            ResultValue::Err(data) => data.source_index.get(),
+            ResultValue::Success(val) => val.source.index.0,
+        }
+    }
+}
+
 pub(crate) struct WatcherData {
     pub(crate) fd: Fd,
     pub(crate) dir_fd: Fd,

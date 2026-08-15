@@ -4899,6 +4899,38 @@ void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
     arg0->finalizeSynchronousJSExecution();
 }
 
+// A "name" redefined with Object.defineProperty (tsc's __setFunctionName, esbuild's and Bun's
+// __name) is what node displays; JSC's calculatedDisplayName() only looks at "displayName" and
+// the executable. "displayName" keeps its precedence.
+static WTF::String explicitFunctionName(JSC::VM& vm, JSC::JSFunction* function)
+{
+    if (!function->displayName(vm).isEmpty()) {
+        return WTF::String();
+    }
+
+    JSC::JSValue name = function->getDirect(vm, vm.propertyNames->name);
+    if (name && JSC::isJSString(name)) {
+        return JSC::asString(name)->tryGetValue();
+    }
+
+    return WTF::String();
+}
+
+// The function JSObject::calculatedClassName() would name an object after: its own
+// "constructor" (prototype objects) or its prototype's (instances).
+static JSC::JSFunction* constructorForClassName(JSC::VM& vm, JSC::JSObject* object)
+{
+    JSC::JSValue constructor = object->getDirect(vm, vm.propertyNames->constructor);
+    if (!constructor && !object->structure()->typeInfo().overridesGetPrototype()) {
+        JSC::JSValue prototype = object->getPrototypeDirect();
+        if (prototype.isObject()) {
+            constructor = JSC::asObject(prototype)->getDirect(vm, vm.propertyNames->constructor);
+        }
+    }
+
+    return constructor ? dynamicDowncast<JSC::JSFunction>(constructor) : nullptr;
+}
+
 void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigString* arg2)
 {
     JSValue value = JSValue::decode(JSValue0);
@@ -4918,6 +4950,14 @@ void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
     }
 
     JSObject* obj = value.toObject(arg1);
+
+    if (JSC::JSFunction* constructor = constructorForClassName(arg1->vm(), obj)) {
+        auto explicitName = explicitFunctionName(arg1->vm(), constructor);
+        if (!explicitName.isEmpty()) {
+            *arg2 = Zig::toZigString(explicitName);
+            return;
+        }
+    }
 
     auto calculated = JSObject::calculatedClassName(obj);
     if (calculated.length() > 0) {
@@ -4961,6 +5001,11 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     }
 
     if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
+        WTF::String explicitName = explicitFunctionName(vm, function);
+        if (!explicitName.isEmpty()) {
+            *arg2 = Zig::toZigString(explicitName);
+            return;
+        }
 
         WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
@@ -4992,6 +5037,14 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSObject* object = value.getObject();
+    if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(object)) {
+        auto explicitName = explicitFunctionName(vm, function);
+        if (!explicitName.isEmpty()) {
+            *arg2 = Bun::toStringRef(explicitName);
+            return;
+        }
+    }
+
     auto displayName = JSC::getCalculatedDisplayName(vm, object);
 
     // JSC doesn't include @@toStringTag in calculated display name

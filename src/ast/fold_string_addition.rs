@@ -3,8 +3,8 @@ use crate::{E, Expr, StoreRef, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
 // ── local rope helpers ─────────────────────────────────────────────────────
-// `EString` has no `push` / `clone_rope_nodes` inherent methods yet;
-// provide the minimal surface here.
+// `EString` has no `push` inherent method taking a `StoreRef` yet; provide the
+// minimal surface here.
 
 #[inline]
 fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
@@ -40,69 +40,15 @@ fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
     }
 }
 
-/// Deep-copy the `next` chain into fresh Store nodes so mutating the result
-/// can't alias an inlined-enum's string.
-fn clone_rope_nodes(s: &E::EString) -> E::EString {
-    let mut root = s.shallow_clone();
-    if let Some(first) = root.next {
-        // Clone the first link, then walk the freshly-cloned chain via
-        // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
-        // cursor. Each cloned node's `next` still points at the original
-        // chain (shallow clone), so re-clone link-by-link.
-        let mut tail: StoreRef<E::EString> = store_append_string(first.get().shallow_clone());
-        root.next = Some(tail);
-        while let Some(next) = tail.next {
-            let cloned = store_append_string(next.get().shallow_clone());
-            tail.next = Some(cloned);
-            tail = cloned;
-        }
-        root.end = Some(tail);
-    }
-    root
-}
-
-/// Concatenate two `E::String`s, mutating BOTH inputs
-/// unless `has_inlined_enum_poison` is set.
-///
-/// Currently inlined enum poison refers to where mutation would cause output
-/// bugs due to inlined enum values sharing `E::String`s. If a new use case
-/// besides inlined enums comes up to set this to true, please rename the
-/// variable and document it.
-fn join_strings(
-    left: &E::EString,
-    right: &E::EString,
-    has_inlined_enum_poison: bool,
-) -> E::EString {
-    let mut new = if has_inlined_enum_poison {
-        // Inlined enums can be shared by multiple call sites. In
-        // this case, we need to ensure that the ENTIRE rope is
-        // cloned. In other situations, the lhs doesn't have any
-        // other owner, so it is fine to mutate `lhs.data.end.next`.
-        //
-        // Consider the following case:
-        //   const enum A {
-        //     B = "a" + "b",
-        //     D = B + "d",
-        //   };
-        //   console.log(A.B, A.D);
-        clone_rope_nodes(left)
-    } else {
-        left.shallow_clone()
-    };
-
-    // Similarly, the right side has to be cloned for an enum rope too.
-    //
-    // Consider the following case:
-    //   const enum A {
-    //     B = "1" + "2",
-    //     C = ("3" + B) + "4",
-    //   };
-    //   console.log(A.B, A.C);
-    let rhs_clone = store_append_string(if has_inlined_enum_poison {
-        clone_rope_nodes(right)
-    } else {
-        right.shallow_clone()
-    });
+/// Concatenate two `E::String`s. The rope chains of BOTH inputs are linked into
+/// the result and later folds append to them in place. That is only sound
+/// because a string reachable from more than one expression is always flat
+/// (`can_be_const_value` rejects ropes, the enum visitor flattens member
+/// values), and the one node such a string does have is copied here, never
+/// mutated.
+fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
+    let mut new = left.shallow_clone();
+    let rhs_clone = store_append_string(right.shallow_clone());
 
     estring_push(&mut new, rhs_clone);
     new.prefer_template = new.prefer_template || rhs_clone.get().prefer_template;
@@ -179,11 +125,8 @@ pub fn fold_string_addition(
                     // "bar" + "baz" => "barbaz"
                     Data::EString(right) => {
                         if right.is_utf8() {
-                            let has_inlined_enum_poison = matches!(l.data, Data::EInlinedEnum(_))
-                                || matches!(r.data, Data::EInlinedEnum(_));
-
                             return Some(Expr::init(
-                                join_strings(left.get(), right.get(), has_inlined_enum_poison),
+                                join_strings(left.get(), right.get()),
                                 lhs.loc,
                             ));
                         }
@@ -198,7 +141,6 @@ pub fn fold_string_addition(
                                     head: e::TemplateContents::Cooked(join_strings(
                                         left.get(),
                                         right.head.cooked(),
-                                        matches!(l.data, Data::EInlinedEnum(_)),
                                     )),
                                 },
                                 l.loc,
@@ -250,17 +192,12 @@ pub fn fold_string_addition(
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
                                         last_tail.cooked(),
                                         right.get(),
-                                        matches!(r.data, Data::EInlinedEnum(_)),
                                     ));
                                     left.parts_mut()[i].tail = new_tail;
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() {
-                                let new_head = join_strings(
-                                    left.head.cooked(),
-                                    right.get(),
-                                    matches!(r.data, Data::EInlinedEnum(_)),
-                                );
+                                let new_head = join_strings(left.head.cooked(), right.get());
                                 left.head = e::TemplateContents::Cooked(new_head);
                                 return Some(lhs);
                             }
@@ -276,7 +213,6 @@ pub fn fold_string_addition(
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
                                         last_tail.cooked(),
                                         right.head.cooked(),
-                                        matches!(r.data, Data::EInlinedEnum(_)),
                                     ));
                                     left.parts_mut()[i].tail = new_tail;
 
@@ -289,11 +225,8 @@ pub fn fold_string_addition(
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() && right.head.is_utf8() {
-                                let new_head = join_strings(
-                                    left.head.cooked(),
-                                    right.head.cooked(),
-                                    matches!(r.data, Data::EInlinedEnum(_)),
-                                );
+                                let new_head =
+                                    join_strings(left.head.cooked(), right.head.cooked());
                                 left.head = e::TemplateContents::Cooked(new_head);
                                 left.parts = right.parts;
                                 return Some(lhs);

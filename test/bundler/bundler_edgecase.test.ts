@@ -1435,6 +1435,49 @@ describe("bundler", () => {
       stdout: "12 312\n12 3124",
     },
   });
+  // A member initialized with a concatenation is stored as a rope. Folding a
+  // template literal that inlines it used to append the template's text onto
+  // that rope, changing the member everywhere: its declaration, every inlined
+  // use in the same file and every cross-module use.
+  itBundled("edgecase/EnumInliningRopeStringTemplateLiteral", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Routes, users } from "./routes";
+        enum Local {
+          X = "x" + "y",
+        }
+        function tail(prefix: string) {
+          return \`\${prefix}-\${Local.X}-z\`;
+        }
+        console.log(users);
+        console.log(Routes.Base);
+        console.log(\`\${Routes.Base}/posts\`);
+        console.log(JSON.stringify(Routes));
+        console.log(tail("p"));
+        console.log(Local.X);
+        console.log(JSON.stringify(Local));
+      `,
+      "/routes.ts": /* ts */ `
+        export enum Routes {
+          Base = "/api" + "/v1",
+          Health = "/health",
+        }
+        export const users = \`\${Routes.Base}/users\`;
+      `,
+    },
+    minifySyntax: true,
+    run: {
+      stdout: `
+        /api/v1/users
+        /api/v1
+        /api/v1/posts
+        {"Base":"/api/v1","Health":"/health"}
+        p-xy-z
+        xy
+        {"X":"xy"}
+      `,
+    },
+  });
   itBundled("edgecase/ProtoNullProtoInlining", {
     files: {
       "/entry.ts": `

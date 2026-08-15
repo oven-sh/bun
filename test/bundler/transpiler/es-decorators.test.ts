@@ -845,6 +845,7 @@ describe("ES Decorators", () => {
           import Cls from "./mod.js";
           const c = new Cls();
           console.log(c.foo());
+          console.log(Cls.name);
         `,
         "mod.js": `
           function dec(fn, ctx) { console.log("decorated", ctx.name); return fn; }
@@ -863,7 +864,7 @@ describe("ES Decorators", () => {
 
       const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(filterStderr(rawStderr)).toBe("");
-      expect(stdout).toBe("decorated foo\n42\n");
+      expect(stdout).toBe("decorated foo\n42\ndefault\n");
       expect(exitCode).toBe(0);
     });
 
@@ -979,6 +980,97 @@ describe("ES Decorators", () => {
       expect(output).not.toContain("class default");
       // the lowered output must still be valid syntax
       expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+  });
+
+  describe("inferred names of lowered anonymous class expressions", () => {
+    // Lowering turns `const Bar = class { ... }` into `_class = class { ... }`,
+    // which would otherwise make the class infer the name "_class". The name
+    // the source position would have inferred must be restored without adding
+    // a class binding: a binding can only hold identifier names, shadows the
+    // outer variable inside the class body, and is renamed by the bundler.
+    test.concurrent("names that are not valid identifiers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const obj = {
+          "foo-bar": class { @dec m() {} },
+          "": class { @dec m() {} },
+          default: class { @dec m() {} },
+          "with space": class { accessor x; },
+        };
+        console.log(JSON.stringify([obj["foo-bar"].name, obj[""].name, obj.default.name, obj["with space"].name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["foo-bar","","default","with space"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("every naming context", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const A = class { @dec m() {} };
+        let B; B = class { @dec m() {} };
+        const { C = class { @dec m() {} } } = {};
+        const [D = class { @dec m() {} }] = [];
+        const obj = { E: class { @dec m() {} } };
+        class Holder {
+          static F = class { @dec m() {} };
+          G = class { @dec m() {} };
+        }
+        const H = @dec class {};
+        console.log(JSON.stringify([A.name, B.name, C.name, D.name, obj.E.name, Holder.F.name, new Holder().G.name, H.name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["A","B","C","D","E","F","G","H"]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("no naming context leaves the name empty", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const id = x => x;
+        console.log(JSON.stringify([id(class { @dec m() {} }).name, id(@dec class {}).name, id(class { accessor x; }).name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["","",""]\n');
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("class body still refers to the outer binding", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        let Bar = class {
+          @dec m() { return Bar; }
+          static s() { return Bar; }
+        };
+        const Original = Bar;
+        Bar = "reassigned";
+        console.log(Original.name, new Original().m(), Original.s());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Bar reassigned reassigned\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("name is set before static initializers run", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const Bar = class {
+          static field = this.name;
+          static #priv = this.name;
+          static priv() { return this.#priv; }
+          static { console.log("static block:", this.name); }
+          @dec m() {}
+        };
+        console.log(Bar.name, Bar.field, Bar.priv());
+        const Baz = @dec class {
+          static field = this.name;
+        };
+        console.log(Baz.name, Baz.field);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("static block: Bar\nBar Bar Bar\nBaz Baz\n");
+      expect(exitCode).toBe(0);
     });
   });
 

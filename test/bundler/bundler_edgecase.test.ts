@@ -3170,6 +3170,51 @@ describe("bundler", () => {
     },
     run: { stdout: "try:false" },
   });
+  // Standard-decorator lowering rewrites `const Bar = class { ... }` into
+  // `_class = class { ... }`, so the class no longer infers its name from the
+  // binding. The name the lowering attaches instead has to survive the
+  // bundler's renaming of symbols that collide in the enclosing scope (the
+  // function-local `Bar` here, the CommonJS-wrapped module scope below) and
+  // identifier minification.
+  const decoratedAnonymousClassNames = /* js */ `
+    function dec() {}
+    function f() {
+      const Bar = class { @dec m() {} };
+      const Baz = class { accessor x; };
+      let Qux; Qux = class { @dec static s() {} };
+      const obj = { "not-an-identifier": class { @dec m() {} } };
+      return [Bar.name, Baz.name, Qux.name, obj["not-an-identifier"].name];
+    }
+    console.log(JSON.stringify(f()));
+  `;
+  itBundled("edgecase/DecoratedAnonymousClassExprKeepsInferredName", {
+    files: {
+      "/entry.js": decoratedAnonymousClassNames,
+    },
+    run: { stdout: '["Bar","Baz","Qux","not-an-identifier"]' },
+  });
+  itBundled("edgecase/DecoratedAnonymousClassExprKeepsInferredNameMinified", {
+    files: {
+      "/entry.js": decoratedAnonymousClassNames,
+    },
+    minifyIdentifiers: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    run: { stdout: '["Bar","Baz","Qux","not-an-identifier"]' },
+  });
+  itBundled("edgecase/DecoratedAnonymousClassExprKeepsInferredNameInCJSWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("./mod.cjs").name);
+      `,
+      "/mod.cjs": /* js */ `
+        function dec() {}
+        const Bar = class { @dec m() {} };
+        module.exports = Bar;
+      `,
+    },
+    run: { stdout: "Bar" },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

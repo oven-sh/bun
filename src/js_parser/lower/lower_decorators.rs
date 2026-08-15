@@ -5,9 +5,8 @@ use bun_alloc::ArenaVecExt as _;
 
 use bun_collections::{HashMap, VecExt};
 
-use crate::lexer as js_lexer;
 use crate::p::P;
-use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, is_eval_or_arguments};
+use crate::parser::{ARGUMENTS_STR as arguments_str, Ref};
 use bun_ast::g::{DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
@@ -122,21 +121,6 @@ fn class_copy(c: &G::Class) -> G::Class {
         has_decorators: c.has_decorators,
         should_lower_standard_decorators: c.should_lower_standard_decorators,
     }
-}
-
-/// Whether a context-inferred name (`export default` → "default", object
-/// property keys, assignment targets) can be attached to a lowered anonymous
-/// class expression as its syntactic binding name. Class bodies are always
-/// strict mode code and the output may be a module, so reserved words
-/// ("default", "let", "await", …), `eval`/`arguments`, and non-identifier
-/// strings would turn `_class = class <name> {}` into a syntax error.
-#[inline]
-fn can_be_class_binding_name(name: &[u8]) -> bool {
-    js_lexer::is_identifier(name)
-        && js_lexer::keyword(name).is_none()
-        && !js_lexer::is_strict_mode_reserved_word(name)
-        && name != b"await"
-        && !is_eval_or_arguments(name)
 }
 
 // ── impl P ───────────────────────────────────────────────────────────────────
@@ -1142,14 +1126,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 class_name_ref = ecr;
                 class_name_loc = loc;
                 expr_class_is_anonymous = true;
-                if let Some(name) = name_from_context
-                    && can_be_class_binding_name(name)
-                {
-                    class.class_name = Some(js_ast::LocRef {
-                        ref_: p.new_sym(js_ast::symbol::Kind::Other, name),
-                        loc,
-                    });
-                }
             }
         } else {
             class_name_ref = class.class_name.as_ref().unwrap().ref_;
@@ -2420,6 +2396,26 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 merged.push(np);
             }
             new_properties = merged;
+        }
+
+        // `_class = class {}` would infer the name "_class", so restore the one
+        // the source position inferred. It is set with `__name` instead of by
+        // naming the class binding: the bundler renames a binding that collides
+        // with the enclosing scope (`const Bar = class Bar2 {}`), and a binding
+        // would shadow the outer `Bar` inside the class body. The block goes
+        // first so static initializers left in the body observe the name.
+        if expr_class_is_anonymous {
+            let this_e = p.new_expr(E::This {}, loc);
+            let name_e = p.new_expr(
+                E::EString {
+                    data: name_from_context.unwrap_or(b"").into(),
+                    ..Default::default()
+                },
+                loc,
+            );
+            let set_name = p.call_rt(loc, b"__name", &[this_e, name_e]);
+            let block = p.make_static_block(set_name, loc);
+            new_properties.insert(0, block);
         }
 
         class.properties = bun_ast::StoreSlice::new_mut(new_properties.into_bump_slice_mut());

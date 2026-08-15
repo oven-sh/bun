@@ -227,6 +227,51 @@ describe("net.createServer listen", () => {
       }),
     );
   });
+
+  it("emits 'listening' on the next tick, before the event loop polls", async () => {
+    const server: Server = createServer();
+    const order: string[] = [];
+    server.on("listening", () => order.push("listening"));
+    server.listen(0);
+    process.nextTick(() => order.push("nextTick"));
+    await once(server, "listening");
+    server.close();
+    await once(server, "close");
+    expect(order).toEqual(["listening", "nextTick"]);
+  });
+
+  // How vite, get-port and friends probe for a free port: listen, then close()
+  // from the 'listening' handler. A peer that connects in between must be reset
+  // by the kernel when the listening fd closes, not accepted into the closing
+  // server, whose close() would then wait on a connection nobody is reading.
+  it("close() from 'listening' does not accept a peer that connected in between", async () => {
+    const server: Server = createServer();
+    let accepted = 0;
+    server.on("connection", () => accepted++);
+    server.listen(0, "127.0.0.1");
+
+    // Bun.connect() issues connect(2) synchronously, so the peer is already
+    // sitting in the listen backlog when the 'listening' handler runs.
+    const { port } = server.address() as AddressInfo;
+    const peer = Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      socket: {
+        data() {},
+        error() {},
+        connectError() {},
+      },
+    }).catch(() => null);
+
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    server.once("listening", () => {
+      server.close(() => onClosed());
+      peer.then(socket => socket?.end());
+    });
+
+    await closed;
+    expect(accepted).toBe(0);
+  });
 });
 
 describe("net.createServer events", () => {

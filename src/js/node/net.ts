@@ -3961,14 +3961,13 @@ Server.prototype[kRealListen] = function (
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
 
-  // We must schedule the emitListeningNextTick() only after the next run of
-  // the event loop's IO queue. Otherwise, the server may not actually be listening
-  // when the 'listening' event is emitted.
-  //
-  // That leads to all sorts of confusion.
-  //
-  // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this);
+  // Bun.listen() has already bound and called listen(2). Emitting on the next
+  // tick like Node means a server.close() from the 'listening' handler closes
+  // the listening fd before the event loop polls it, so a peer that connected
+  // in between is reset by the kernel instead of being accepted by a server
+  // that is already closing (vite probes free ports with exactly that pattern).
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2034-L2037
+  process.nextTick(emitListeningNextTick, this);
 };
 
 Server.prototype[EventEmitter.captureRejectionSymbol] = function (err, event, sock) {
@@ -4177,7 +4176,7 @@ Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   handle[kClusterOwner] = this;
   handle.listen(backlog || 511);
   if (this._unref) this.unref();
-  setTimeout(emitListeningNextTick, 1, this);
+  process.nextTick(emitListeningNextTick, this);
 };
 
 function onClusterConnection(err, clientHandle) {

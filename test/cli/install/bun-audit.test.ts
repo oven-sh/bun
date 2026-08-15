@@ -395,17 +395,28 @@ async function setupVulnerableADep(server: Registry) {
 
 // The same kind of project, installed through `server` instead of copied, so that the install cache holds the manifest
 // of every dependency. `bun audit fix` turns the manifest cache off and fetches manifests again, which a test that then
-// breaks the registry can only prove while the cache holds a manifest that would have answered.
+// breaks the registry can only prove while the cache holds a manifest that would have answered. `bun install` writes
+// those files from its thread pool and does not wait for them before exiting (`save_async` in src/install/npm.rs), so
+// an install occasionally ends without them: such a project is thrown away and installed again. The widening step
+// fetches nothing, so it runs once the files are there.
 async function setupWithCachedManifests(
   server: Registry,
   dependencies: Record<string, string>,
   widened: Record<string, string>,
 ) {
-  const dir = await installThrough(server, JSON.stringify({ name: "foo", dependencies }));
+  const pinned = JSON.stringify({ name: "foo", dependencies });
+  let dir = await installThrough(server, pinned);
+  for (let attempt = 1; cachedManifests(dir) < Object.keys(dependencies).length; attempt++) {
+    expect(attempt).toBeLessThan(5);
+    dir[Symbol.dispose]();
+    dir = await installThrough(server, pinned);
+  }
   await reinstall(dir, { name: "foo", dependencies: widened });
-  const manifests = Array.from(new Bun.Glob("*.npm").scanSync(join(dir, ".bun-cache")));
-  expect(manifests).toHaveLength(Object.keys(dependencies).length);
   return dir;
+}
+
+function cachedManifests(dir: string) {
+  return Array.from(new Bun.Glob("*.npm").scanSync(join(dir, ".bun-cache"))).length;
 }
 
 describe("setup()", () => {

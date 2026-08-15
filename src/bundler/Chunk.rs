@@ -424,22 +424,20 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
-/// What the paths `code()` writes in place of chunk and asset references are
-/// relative to when no public path is configured (a public path makes them
-/// outdir-relative regardless).
+/// What the paths `code()` writes over a chunk's references to other outputs
+/// are relative to. A public path makes them outdir-relative either way.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ReferencePathStyle {
-    /// Relative to the directory of the chunk being emitted, as esbuild does.
+    /// The directory of the chunk being emitted, as in esbuild.
     ImporterRelative,
-    /// Relative to the outdir no matter which directory the emitting chunk
-    /// lands in (`bun build --compile`).
+    /// The outdir, wherever the emitting chunk lands (`bun build --compile`).
     OutdirRelative,
 }
 
 impl ReferencePathStyle {
-    /// An executable loads every chunk from one virtual root. The browser
-    /// chunks a server build emits for its HTML imports are served over HTTP
-    /// instead, so they keep the regular layout even when `compile` is set.
+    /// An executable loads every chunk from one virtual root, except for the
+    /// browser chunks a server build emits for its HTML imports: those are
+    /// served over HTTP.
     pub(crate) fn for_chunk(chunk: &Chunk, compile: bool) -> ReferencePathStyle {
         if compile
             && !chunk
@@ -453,10 +451,9 @@ impl ReferencePathStyle {
     }
 }
 
-/// Whether `code()` records how far each resolved reference shifted the text
-/// after it (`CodeResult::shifts`). Only a chunk that is getting a source map
-/// needs them, since the map was generated against the unresolved references.
-/// Also gates the `//# debugId=` comment, which is only meaningful with a map.
+/// Whether `code()` records how far each path it writes moves the text after it
+/// (`CodeResult::shifts`, which the chunk's source map is corrected with) and
+/// appends the `//# debugId` comment. Only wanted for a chunk that gets a map.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SourceMapShiftTracking {
     Disabled,

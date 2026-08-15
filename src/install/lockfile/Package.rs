@@ -111,12 +111,9 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
-/// A folder dependency declared in the package.json of `pkg_dir`, rewritten
-/// relative to the top-level dir. This is the form `Version.value.folder` takes
-/// for every folder dependency declared by a root, workspace or `file:`
-/// package: `parse_dependency` stores it this way, and because lockfiles only
-/// keep the literal, `Lockfile::rebase_folder_dependencies` re-derives it
-/// after loading one. Returns `None` when the joined path does not fit in `buf`.
+/// `folder` as declared by the package.json in `pkg_dir`, made relative to the
+/// top-level dir: the form `Version.value.folder` has in root, workspace and
+/// `file:` packages. `None` if it does not fit in `buf`.
 pub(crate) fn folder_relative_to_top_level_dir<'a>(
     pkg_dir: &[u8],
     folder: &[u8],

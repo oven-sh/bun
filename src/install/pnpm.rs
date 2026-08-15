@@ -1781,14 +1781,10 @@ fn declared_package_peers(
     Ok(peers)
 }
 
-/// pnpm writes the `file:` dependencies of a `file:` package as directories
-/// relative to the lockfile (`file:sub-dep/child` for the `file:./child` that
-/// `sub-dep/package.json` declares), and the resolution pass above looks the
-/// packages up by that form. bun.lock stores what the package.json declares,
-/// relative to the package, and `Lockfile::rebase_folder_dependencies` reads the
-/// literal back that way, so once everything is resolved rewrite the literals
-/// of every folder package's folder rows into that form. Importers keep their
-/// `specifier`, which already is the declared literal.
+/// pnpm records a folder package's `file:` dependencies relative to the lockfile
+/// (`file:sub-dep/child` for a declared `file:./child`), which the resolution
+/// pass above keys on; bun.lock stores them relative to the declaring package,
+/// as declared. Importers already carry the declared `specifier`.
 fn declare_folder_dependencies_relative_to_their_package(
     lockfile: &mut Lockfile,
 ) -> Result<(), AllocError> {

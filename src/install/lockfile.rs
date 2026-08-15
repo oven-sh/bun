@@ -727,17 +727,10 @@ impl Lockfile {
         })
     }
 
-    /// A loaded lockfile only carries each dependency's literal, and for a folder
-    /// dependency that is the path as the declaring package.json wrote it,
-    /// relative to that package. `Package::parse` stores `Version.value.folder`
-    /// relative to the top-level dir and the resolver relies on that whenever a
-    /// row is resolved again (`bun update <name>`, a changed override), so derive
-    /// the value of every folder row the same way from its literal and the
-    /// declaring package's directory, for every package whose directory the
-    /// lockfile records. Rows declared by registry, git and tarball packages are
-    /// not rebased by `Package::from_npm` either and are left alone. Only the
-    /// value changes, never the literal, so this is idempotent and the lockfile
-    /// is written back unchanged.
+    /// A lockfile stores a folder dependency as its literal, relative to the
+    /// declaring package; give the rows of root, workspace and `file:` packages
+    /// the top-level relative `value.folder` that `Package::parse` gives them.
+    /// Idempotent, since the literal is left as is.
     pub(crate) fn rebase_folder_dependencies(&mut self) -> Result<(), AllocError> {
         let Lockfile {
             packages,

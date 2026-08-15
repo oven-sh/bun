@@ -1783,6 +1783,8 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
         // Not in yarn.lock (added to package.json after the last `yarn install`).
         dependencies: { "is-odd": "^3.0.1" },
         devDependencies: { lodash: "^4.17.21" },
+        // yarn applied this when it wrote yarn.lock; the workspaces' lodash peers bind all the same.
+        resolutions: { lodash: "^4.17.21" },
       }),
       "packages/a/package.json": JSON.stringify({
         name: "@mono/a",

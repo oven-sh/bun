@@ -536,11 +536,12 @@ impl Binder<'_> {
                 // Bound by the hoister, as after a fresh resolve.
                 return Some(install::INVALID_PACKAGE_ID);
             }
+            // Overrides are not consulted: yarn applied them to the entries the candidates come from.
+            let range = this.catalogs.resolve_range(string_bytes, dep);
             return lockfile::bun_lock::resolve_peer_dep_by_range(
-                dep,
-                this.catalogs.resolve_range(string_bytes, dep),
+                range,
+                lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes),
                 &this.package_index,
-                &this.overrides,
                 this.packages.items_resolution(),
                 string_bytes,
             );

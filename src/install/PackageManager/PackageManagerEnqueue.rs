@@ -2945,6 +2945,24 @@ fn resolution_satisfies_dependency(
     resolution.satisfies_dependency_version(dependency, buf, buf)
 }
 
+/// The first npm package of this name that `version` allows and `accept` takes.
+fn npm_package_satisfying(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+    accept: impl Fn(PackageID) -> bool,
+) -> Option<PackageID> {
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    candidates.iter().copied().find(|&id| {
+        let res = &pkg_res[id as usize];
+        res.tag == ResolutionTag::Npm
+            && res.satisfies_dependency_version(version, buf, buf)
+            && accept(id)
+    })
+}
+
 fn patched_package_satisfying(
     this: &PackageManager,
     name_hash: PackageNameHash,
@@ -2954,18 +2972,12 @@ fn patched_package_satisfying(
     if lockfile.patched_dependencies.count() == 0 {
         return None;
     }
-    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    candidates.iter().copied().find(|&id| {
-        let res = &pkg_res[id as usize];
-        res.tag == ResolutionTag::Npm
-            && res.satisfies_dependency_version(version, buf, buf)
-            && lockfile
-                .patched_dependencies
-                .contains(&Semver::string::Builder::string_hash(
-                    &crate::dedupe::label(lockfile, id),
-                ))
+    npm_package_satisfying(lockfile, name_hash, version, |id| {
+        lockfile
+            .patched_dependencies
+            .contains(&Semver::string::Builder::string_hash(
+                &crate::dedupe::label(lockfile, id),
+            ))
     })
 }
 
@@ -2976,17 +2988,8 @@ fn direct_dependency_package_satisfying(
     version: &dependency::Version,
 ) -> Option<PackageID> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
-    let pkg_res = lockfile.packages.items_resolution();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    candidates.iter().copied().find(|&id| {
-        let res = &pkg_res[id as usize];
-        res.tag == ResolutionTag::Npm
-            && res.satisfies_dependency_version(version, buf, buf)
-            && lockfile.is_direct_dependency_resolution(id)
+    npm_package_satisfying(lockfile, name_hash, version, |id| {
+        lockfile.is_direct_dependency_resolution(id)
     })
 }
 

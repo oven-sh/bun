@@ -40,6 +40,9 @@ const EXTERN_C_FUNCTION = /extern\s+"C"\s+[^;{}()]*?\b(\w+)\s*\(/g;
 // `Zig::GlobalObject*`, which every global satisfies.
 const BAKE_GLOBAL_PARAM = /(?<![\w:])(?:(?:::)?Bake::)?GlobalObject\s*(?:const\s*)?[*&]/;
 
+// Only the C++ side is comment-stripped (a commented-out declaration is not an
+// entry point). The Rust side is matched as-is because `// HOST_EXPORT(..)`
+// markers are themselves line comments.
 function stripLineComments(source: string): string {
   // `[ \t]*`, not `\s*`, so blank lines survive and line numbers stay right.
   return source.replace(/^[ \t]*\/\/.*$/gm, "");
@@ -52,15 +55,16 @@ function lineOf(source: string, index: number): number {
 function* readSources(dir: string, pattern: string): Generator<{ file: string; source: string }> {
   for (const rel of new Glob(pattern).scanSync({ cwd: path.join(root, dir) })) {
     const file = path.posix.join(dir, rel.replaceAll(path.sep, "/"));
-    yield { file, source: stripLineComments(readFileSync(path.join(root, file), "utf8")) };
+    yield { file, source: readFileSync(path.join(root, file), "utf8") };
   }
 }
 
 // C++ function name -> where it is declared with a `Bake::GlobalObject*` parameter.
 const declaredAt = new Map<string, string[]>();
 let scannedCxx = 0;
-for (const { file, source } of readSources(bakeDir, "*.{cpp,h}")) {
+for (const { file, source: rawSource } of readSources(bakeDir, "*.{cpp,h}")) {
   scannedCxx++;
+  const source = stripLineComments(rawSource);
   for (const m of source.matchAll(EXTERN_C_FUNCTION)) {
     const paramsStart = m.index + m[0].length;
     let depth = 1;

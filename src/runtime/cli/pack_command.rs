@@ -28,7 +28,7 @@ type CowString = CowSlice<u8>;
 use crate::cli::run_command::RunCommand;
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path;
+use bun_paths::resolve_path::{self, normalize_buf_spill};
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_sys::{
@@ -1460,12 +1460,14 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     let mut bins: Vec<BinInfo> = Vec::new();
 
     let mut path_buf = PathBuffer::uninit();
+    let mut path_spill: Vec<u8> = Vec::new();
 
     if let Some(bin) = json.as_property(b"bin") {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                bin_str,
+            let normalized = normalize_buf_spill::<path::platform::Posix>(
                 &mut path_buf,
+                &mut path_spill,
+                bin_str,
             );
             if !bin_path_escapes_root(normalized) {
                 bins.push(BinInfo {
@@ -1484,9 +1486,10 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
-                        let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                            bin_str,
+                        let normalized = normalize_buf_spill::<path::platform::Posix>(
                             &mut path_buf,
+                            &mut path_spill,
+                            bin_str,
                         );
                         if !bin_path_escapes_root(normalized) {
                             bins.push(BinInfo {
@@ -1506,9 +1509,10 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-                    let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                        bin_str,
+                    let normalized = normalize_buf_spill::<path::platform::Posix>(
                         &mut path_buf,
+                        &mut path_spill,
+                        bin_str,
                     );
                     if !bin_path_escapes_root(normalized) {
                         bins.push(BinInfo {
@@ -2309,12 +2313,13 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     let mut excludes: Vec<Pattern> = Vec::new();
 
                     let mut path_buf = PathBuffer::uninit();
+                    let mut path_spill: Vec<u8> = Vec::new();
                     while let Some(files_entry) = files_array.next() {
                         if let Some(file_entry_str) = files_entry.as_string(bump) {
-                            let normalized = resolve_path::normalize_buf::<
-                                resolve_path::platform::Posix,
-                            >(
-                                file_entry_str, &mut path_buf
+                            let normalized = normalize_buf_spill::<path::platform::Posix>(
+                                &mut path_buf,
+                                &mut path_spill,
+                                file_entry_str,
                             );
                             let Some(parsed) = Pattern::from_utf8(normalized)? else {
                                 continue;

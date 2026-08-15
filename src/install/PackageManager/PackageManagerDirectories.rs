@@ -1167,7 +1167,11 @@ pub fn save_lockfile(
     if cfg!(debug_assertions) {
         if !matches!(load_result, LoadResult::NotFound) {
             if load_result.loaded_from_text_lockfile() {
-                if !Lockfile::eql(&this.lockfile, lockfile_before_install)? {
+                if !Lockfile::eql(
+                    &this.lockfile,
+                    lockfile_before_install,
+                    packages_len_before_install,
+                )? {
                     Output::panic(format_args!("Lockfile non-deterministic after saving"));
                 }
             } else {

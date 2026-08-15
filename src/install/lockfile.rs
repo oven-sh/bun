@@ -2664,8 +2664,16 @@ impl<'a> EqlSorter<'a> {
 }
 
 impl Lockfile {
-    /// Compares the hoisted trees: every placement's package name, resolution, bins and scripts.
-    pub(crate) fn eql(&self, r: &Lockfile) -> Result<bool, AllocError> {
+    /// Compares the hoisted tree of `self` (the lockfile `clean_with_logger` produced) with the
+    /// tree `r` was hoisted into when it was loaded: every placement's package name, resolution,
+    /// bins and scripts. Resolving may since have rebound edges of `r` to packages it appended
+    /// (ids at or past `r_loaded_package_count`, see `mark_loaded_packages`); `r`'s stale tree
+    /// still places those edges, and such a placement is a changed resolution.
+    pub(crate) fn eql(
+        &self,
+        r: &Lockfile,
+        r_loaded_package_count: usize,
+    ) -> Result<bool, AllocError> {
         let l: &Lockfile = self;
         let l_hoisted_deps = l.buffers.hoisted_dependencies.as_slice();
         let r_hoisted_deps = r.buffers.hoisted_dependencies.as_slice();
@@ -2734,6 +2742,9 @@ impl Lockfile {
                 let r_pkg_id = r.buffers.resolutions[r_dep_id as usize];
                 if r_pkg_id == invalid_package_id {
                     continue;
+                }
+                if r_pkg_id as usize >= r_loaded_package_count {
+                    return Ok(false);
                 }
                 sort_buf.push(PathToId {
                     pkg_id: r_pkg_id,

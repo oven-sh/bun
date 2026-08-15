@@ -1,6 +1,6 @@
 import assert from "assert";
 import { describe, expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import Module from "node:module";
 import path from "path";
 
@@ -164,10 +164,12 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
   }
 });
 // Every assignment in these tests is executed more than once from the same
-// statement (a loop body or a helper function), which is how install()/revert()
-// helpers in packages like pirates, @babel/register and ts-node assign to
-// require.extensions. The second execution of a statement is the one that used
-// to be served by the property inline cache instead of reaching the loader.
+// statement (a loop body or a helper function). The assignment used to reach
+// the loader only the first time a statement ran; afterwards a property inline
+// cache stored straight into the object. With a literal key (`[".js"] =`) the
+// interpreter caches the second execution already; with a variable key (the
+// `extensions[ext] =` loop in pirates, @babel/register and ts-node) the cache
+// appears once the helper is JIT compiled, which the last test forces.
 describe("assigning require.extensions repeatedly from one statement", () => {
   test("a builtin extension can be overridden again after it was restored", () => {
     using dir = tempDir("require-extensions-reoverride", {
@@ -280,6 +282,75 @@ describe("assigning require.extensions repeatedly from one statement", () => {
       delete Module._extensions[".reregistered"];
     }
     expect(loaded).toEqual(["one", "two", "three"]);
+  });
+
+  test("variable-key install/restore helpers keep working after they are JIT compiled", async () => {
+    const files: Record<string, string> = {
+      "index.js": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const originalJs = Module._extensions[".js"];
+        const dispatched = [];
+
+        function install(extension, tag) {
+          Module._extensions[extension] = function (module) {
+            dispatched.push(tag);
+            module.exports = tag;
+          };
+        }
+        function restore(extension, previous) {
+          Module._extensions[extension] = previous;
+        }
+
+        // No require() in here: this only gets both helpers compiled by every JIT tier.
+        for (let i = 0; i < 200; i++) {
+          install(".js", "warm-js-" + i);
+          restore(".js", originalJs);
+          install(".hooked", "warm-hooked-" + i);
+        }
+
+        const rounds = [];
+        for (let i = 0; i < 3; i++) {
+          install(".js", "js-" + i);
+          const jsExports = require(path.join(__dirname, "js-" + i + ".js"));
+          restore(".js", originalJs);
+          const afterRestore = require(path.join(__dirname, "restored-" + i + ".js"));
+          install(".hooked", "hooked-" + i);
+          const hookedExports = require(path.join(__dirname, "file-" + i + ".hooked"));
+          rounds.push({ jsExports, afterRestore, hookedExports });
+        }
+
+        console.log(JSON.stringify({ rounds, dispatched, restored: Module._extensions[".js"] === originalJs }));
+      `,
+    };
+    for (let i = 0; i < 3; i++) {
+      files[`js-${i}.js`] = `module.exports = "builtin js-${i}";`;
+      files[`restored-${i}.js`] = `module.exports = "builtin restored-${i}";`;
+      files[`file-${i}.hooked`] = "only loadable through the .hooked handler";
+    }
+    using dir = tempDir("require-extensions-jit", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      // Compile on the main thread, so after the warm-up loop the helpers are
+      // guaranteed to run as JIT code (baseline and DFG) when the rounds start.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      rounds: [
+        { jsExports: "js-0", afterRestore: "builtin restored-0", hookedExports: "hooked-0" },
+        { jsExports: "js-1", afterRestore: "builtin restored-1", hookedExports: "hooked-1" },
+        { jsExports: "js-2", afterRestore: "builtin restored-2", hookedExports: "hooked-2" },
+      ],
+      dispatched: ["js-0", "hooked-0", "js-1", "hooked-1", "js-2", "hooked-2"],
+      restored: true,
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

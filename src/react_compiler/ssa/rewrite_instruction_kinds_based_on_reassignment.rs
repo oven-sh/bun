@@ -20,9 +20,7 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
 use crate::hir::visitors::each_pattern_operand;
-use crate::hir::{
-    BlockKind, DeclarationId, HirFunction, InstructionKind, InstructionValue, ParamPattern, Place,
-};
+use crate::hir::{BlockKind, DeclarationId, HirFunction, InstructionKind, InstructionValue, Place};
 
 use crate::hir::environment::Environment;
 
@@ -130,10 +128,7 @@ pub(crate) fn rewrite_instruction_kinds_based_on_reassignment(
 
     // Seed with parameters
     for param in &func.params {
-        let place: &Place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place: &Place = param.place();
         let ident = &env.identifiers[place.identifier.0 as usize];
         if ident.name.is_some() {
             declarations.insert(ident.declaration_id, DeclarationLoc::ParamOrContext);

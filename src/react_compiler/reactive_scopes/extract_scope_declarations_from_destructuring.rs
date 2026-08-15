@@ -11,9 +11,9 @@
 use std::collections::HashSet;
 
 use crate::hir::{
-    DeclarationId, IdentifierId, IdentifierName, InstructionKind, InstructionValue, LValue,
-    ParamPattern, Place, ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock,
-    ReactiveStatement, ReactiveValue, environment::Environment, visitors,
+    DeclarationId, IdentifierId, IdentifierName, InstructionKind, InstructionValue, LValue, Place,
+    ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveValue,
+    environment::Environment, visitors,
 };
 
 use crate::reactive_scopes::visitors::{
@@ -33,10 +33,7 @@ pub(crate) fn extract_scope_declarations_from_destructuring(
 ) -> Result<(), crate::diagnostics::CompilerError> {
     let mut declared: HashSet<DeclarationId> = HashSet::new();
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
         declared.insert(identifier.declaration_id);
     }

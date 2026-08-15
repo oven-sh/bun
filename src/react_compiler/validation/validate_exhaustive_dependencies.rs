@@ -13,8 +13,8 @@ use crate::hir::visitors::{
 use crate::hir::{
     ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
     IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
-    ManualMemoDependencyRoot, NonLocalBinding, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
-    StoreStr, Terminal, Type, hir_vec,
+    ManualMemoDependencyRoot, NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr,
+    Terminal, Type, hir_vec,
 };
 use bun_core::BStr;
 use core::fmt::Write as _;
@@ -38,10 +38,7 @@ pub(crate) fn validate_exhaustive_dependencies(
 
     let mut temporaries: IdMap<IdentifierId, Temporary> = IdMap::new();
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         temporaries.insert(
             place.identifier,
             Temporary::Local {
@@ -469,10 +466,7 @@ fn collect_dependencies(
 
     if is_function_expression {
         for param in &func.params {
-            let place = match param {
-                ParamPattern::Place(p) => p,
-                ParamPattern::Spread(s) => &s.place,
-            };
+            let place = param.place();
             locals.insert(place.identifier);
         }
     }

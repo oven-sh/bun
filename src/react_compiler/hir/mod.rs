@@ -311,6 +311,23 @@ pub enum ParamPattern {
     Spread(SpreadPattern),
 }
 
+impl ParamPattern {
+    /// The parameter's binding, whether or not it is a rest parameter.
+    pub fn place(&self) -> &Place {
+        match self {
+            ParamPattern::Place(p) => p,
+            ParamPattern::Spread(s) => &s.place,
+        }
+    }
+
+    pub fn place_mut(&mut self) -> &mut Place {
+        match self {
+            ParamPattern::Place(p) => p,
+            ParamPattern::Spread(s) => &mut s.place,
+        }
+    }
+}
+
 /// The HIR control-flow graph
 #[derive(Debug, Clone)]
 pub struct HIR {

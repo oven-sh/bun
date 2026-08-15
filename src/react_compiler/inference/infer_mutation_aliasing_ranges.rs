@@ -497,10 +497,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
 
     // Create nodes for params, context vars, and return
     for param in &func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p,
-            crate::hir::ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         state.create(place, NodeValue::Object);
     }
     for ctx in &func.context {
@@ -722,10 +719,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
         collect_param_effects(&state, ctx, &mut function_effects);
     }
     for param in &func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p,
-            crate::hir::ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         collect_param_effects(&state, place, &mut function_effects);
     }
 
@@ -734,10 +728,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     // were mutated before setting effects
     let mut captured_params: HashSet<IdentifierId> = HashSet::default();
     for param in &func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p,
-            crate::hir::ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         if let Some(node) = state.nodes.get(&place.identifier) {
             if node.local.is_some() || node.transitive.is_some() {
                 captured_params.insert(place.identifier);
@@ -754,10 +745,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
 
     // Now mutate the effects on params/context in place
     for param in &mut func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p,
-            crate::hir::ParamPattern::Spread(s) => &mut s.place,
-        };
+        let place = param.place_mut();
         if captured_params.contains(&place.identifier) {
             place.effect = Effect::Capture;
         }
@@ -1062,10 +1050,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     // Determine precise data-flow effects by simulating transitive mutations
     let mut tracked: Vec<Place> = Vec::new();
     for param in &func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p.clone(),
-            crate::hir::ParamPattern::Spread(s) => s.place.clone(),
-        };
+        let place = param.place().clone();
         tracked.push(place);
     }
     for ctx in &func.context {

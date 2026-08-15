@@ -58,10 +58,7 @@ pub(crate) fn prune_non_escaping_scopes(
     // and which values are returned.
     let mut state = CollectState::new();
     for param in &func.params {
-        let place = match param {
-            crate::hir::ParamPattern::Place(p) => p,
-            crate::hir::ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
         state.declare(identifier.declaration_id);
     }

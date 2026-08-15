@@ -19,8 +19,8 @@ use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors::{each_pattern_operand, each_terminal_operand};
 use crate::hir::{
-    FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, ParamPattern, Place,
-    PropertyLiteral, Type, visitors,
+    FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place, PropertyLiteral,
+    Type, visitors,
 };
 
 /// Value classification for hook validation.
@@ -208,10 +208,7 @@ pub(crate) fn validate_hooks_usage(
 
     // Process params
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let kind = get_kind_for_place(place, &value_kinds, &env.identifiers);
         value_kinds.insert(place.identifier, kind);
     }

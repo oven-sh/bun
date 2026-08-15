@@ -64,10 +64,7 @@ pub(crate) fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut En
 
     // Promote params
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
         if identifier.name.is_none() {
             promote_identifier(place.identifier, &mut state, env);
@@ -510,10 +507,7 @@ fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env:
         let func = &env.functions[func_id.0 as usize];
         func.params
             .iter()
-            .map(|param| match param {
-                ParamPattern::Place(p) => p.identifier,
-                ParamPattern::Spread(s) => s.place.identifier,
-            })
+            .map(|param| param.place().identifier)
             .collect()
     };
     for id in param_ids {
@@ -929,10 +923,7 @@ fn promote_interposed_terminal(
 
 fn promote_all_instances_params(func: &ReactiveFunction, state: &mut State, env: &mut Environment) {
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let identifier = &env.identifiers[place.identifier.0 as usize];
         if identifier.name.is_none() && state.promoted.contains(&identifier.declaration_id) {
             promote_identifier(place.identifier, state, env);
@@ -1034,10 +1025,7 @@ fn promote_all_instances_value(value: &ReactiveValue, state: &mut State, env: &m
                     let param_ids: Vec<IdentifierId> = inner_func
                         .params
                         .iter()
-                        .map(|p| match p {
-                            ParamPattern::Place(p) => p.identifier,
-                            ParamPattern::Spread(s) => s.place.identifier,
-                        })
+                        .map(|p| p.place().identifier)
                         .collect();
                     for id in param_ids {
                         let identifier = &env.identifiers[id.0 as usize];

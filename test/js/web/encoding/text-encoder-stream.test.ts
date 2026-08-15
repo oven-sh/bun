@@ -322,6 +322,7 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
     };
     const describeError = e => ({ name: e.name, message: e.message });
     const SMALL = "ok\\u00e9";
+    const LEADING = ${JSON.stringify(leading)};
   `;
   const outOfMemory = { name: "RangeError", message: "Out of memory" };
   const smallEncoded = [0x6f, 0x6b, 0xc3, 0xa9];
@@ -373,9 +374,14 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
   });
 
   // With a native sink attached (Bun.serve's response sink here) the encoder
-  // writes into its scratch buffer instead of enqueueing Uint8Arrays: a separate
-  // entry point into the same encoders. The errored transform cancels the stream
-  // piped into it, so the source's cancel reason is where the error shows up.
+  // writes into its own buffer and hands that to the sink instead of enqueueing
+  // Uint8Arrays: a separate entry point into the same encoders. Each chunk is
+  // preceded by a dangling lead surrogate, so the output has to be assembled in
+  // the encoder's buffer (the replacement goes in front of the chunk's bytes);
+  // that is the case the sink path owns even if plain chunks are ever handed to
+  // the sink directly (#36877), and it also covers the prepend variant of every
+  // reservation. The errored transform cancels the stream piped into it, so the
+  // source's cancel reason is where the error shows up.
   test.concurrent("output written to a native sink: the transform errors and the server keeps serving", async () => {
     const { result, exitCode } = await runChild(/* js */ `
       const cancelReasons = {};
@@ -387,6 +393,7 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
           cancelReasons[name] = promise;
           const source = new ReadableStream({
             start(controller) {
+              controller.enqueue(LEADING);
               if (name in inputs) {
                 controller.enqueue(inputs[name]());
               } else {
@@ -414,7 +421,7 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
       latin1Stuck: outOfMemory,
       utf16: outOfMemory,
       utf16Invalid: outOfMemory,
-      afterwards: smallEncoded,
+      afterwards: replacementEncoded.concat(smallEncoded),
     });
     expect(exitCode).toBe(0);
   });

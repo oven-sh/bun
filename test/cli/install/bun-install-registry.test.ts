@@ -3508,16 +3508,23 @@ describe("binaries", () => {
     // on another branch of the tree contributes one `..` per component, so the
     // link target can be longer than the target's absolute path.
     test.skipIf(isWindows)("bun link with a link target longer than the path buffer", async () => {
-      const globalDir = join(packageDir, "global", "install", "global");
+      // As in the previous test, most of the depth has to sit above everything
+      // that ends up in a link target that is meant to be created (XFS), so it
+      // goes into the global directory itself.
+      const globalBase = join(packageDir, "global", "install");
+      const globalDir = join(globalBase, ...componentsUpTo(globalBase, maxPathBytes - 768, "g"));
       const pkgDir = join(packageDir, "far-bin");
       // The linker sees the target as <globalDir>/node_modules/far-bin/bins/<chain>/<entry>,
       // 20 bytes below the limit.
       const chain = componentsUpTo(join(globalDir, "node_modules", "far-bin", "bins"), maxPathBytes - 64, "d");
       const entry = Buffer.alloc(43, "e").toString();
-      await write(
-        join(pkgDir, "package.json"),
-        JSON.stringify({ name: "far-bin", version: "1.0.0", directories: { bin: join("bins", ...chain) } }),
-      );
+      await Promise.all([
+        mkdir(globalDir, { recursive: true }),
+        write(
+          join(pkgDir, "package.json"),
+          JSON.stringify({ name: "far-bin", version: "1.0.0", directories: { bin: join("bins", ...chain) } }),
+        ),
+      ]);
       await createBinChain(pkgDir, chain, { [entry]: script("far") });
       const link = (binDir: string) =>
         run(["link"], {
@@ -3532,7 +3539,8 @@ describe("binaries", () => {
 
       try {
         // Below the global directory the link target drops that common prefix and
-        // fits, even though the per-component estimate says it might not.
+        // fits (about 770 bytes), even though the per-component estimate says it
+        // might not.
         const nearBinDir = join(globalDir, "a", "b", "c", "d", "e", "bin");
         let { out, err, exitCode } = await link(nearBinDir);
         expect(err).not.toContain("error:");

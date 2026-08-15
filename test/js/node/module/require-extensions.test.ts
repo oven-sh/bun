@@ -1,6 +1,6 @@
 import assert from "assert";
 import { expect, mock, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -191,3 +191,150 @@ test("mutating extensions is banned by some files", () => {
     expect(globalThis.pass).toBe(n);
   }
 });
+test("a store refused by a non-writable entry does not reach the loader", () => {
+  using dir = tempDir("extensions-non-writable", {
+    "mod.locked": `module.exports = "loaded as javascript";`,
+  });
+  const file = require.resolve(path.join(String(dir), "mod.locked"));
+  const load = () => {
+    delete require.cache[file];
+    return require(file);
+  };
+  const held = mock(module => {
+    module.exports = "held";
+  });
+  const refused = mock(module => {
+    module.exports = "refused";
+  });
+
+  require.extensions[".locked"] = held;
+  try {
+    // Only the attributes change here, so the entry has to stay registered.
+    Object.defineProperty(require.extensions, ".locked", { writable: false });
+    expect(load()).toBe("held");
+
+    // This file is a module, so the refused store throws rather than failing silently.
+    expect(() => {
+      require.extensions[".locked"] = refused;
+    }).toThrow(TypeError);
+    expect(Reflect.set(require.extensions, ".locked", refused)).toBe(false);
+    expect(require.extensions[".locked"]).toBe(held);
+    expect(load()).toBe("held");
+    expect(refused).not.toHaveBeenCalled();
+    expect(held).toHaveBeenCalledTimes(2);
+  } finally {
+    // The entry is still configurable, so it can be removed.
+    delete require.extensions[".locked"];
+  }
+  expect(".locked" in require.extensions).toBe(false);
+  expect(load()).toBe("loaded as javascript");
+  delete require.cache[file];
+});
+test.concurrent("stores refused by a frozen require.extensions do not reach the loader", async () => {
+  using dir = tempDir("extensions-frozen", {
+    "index.cjs": `
+      const assert = require("assert");
+      const calls = [];
+      require.extensions[".hooked"] = m => { calls.push("kept"); m.exports = "kept"; };
+      const originalJs = require.extensions[".js"];
+      Object.freeze(require.extensions);
+
+      // This file is sloppy mode, so the frozen object refuses these silently.
+      require.extensions[".js"] = m => { calls.push(".js"); m.exports = "refused .js hook"; };
+      require.extensions[".hooked"] = m => { calls.push(".hooked"); m.exports = "refused .hooked hook"; };
+      require.extensions[".added"] = m => { calls.push(".added"); m.exports = "refused .added hook"; };
+      assert.strictEqual(require.extensions[".js"], originalJs);
+      assert.strictEqual(Object.hasOwn(require.extensions, ".added"), false);
+
+      console.log(JSON.stringify({
+        js: require("./plain.js"),
+        jsx: require("./classic-jsx.js"),
+        hooked: require("./mod.hooked"),
+        added: require("./mod.added"),
+        calls,
+      }));
+    `,
+    "plain.js": `module.exports = "plain";`,
+    // Object.freeze redefines the attributes of every builtin entry. The builtin ".js" entry
+    // must stay builtin afterwards: the default loader for .js files accepts JSX, while an
+    // explicitly registered require.extensions[".js"] handler does not.
+    "classic-jsx.js": `
+      /* @jsxRuntime classic */
+      /* @jsx h */
+      function h(tag) { return "jsx:" + tag; }
+      module.exports = <div />;
+    `,
+    "mod.hooked": `module.exports = "loaded as javascript";`,
+    "mod.added": `module.exports = "loaded as javascript";`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    js: "plain",
+    jsx: "jsx:div",
+    hooked: "kept",
+    added: "loaded as javascript",
+    calls: ["kept"],
+  });
+  expect(exitCode).toBe(0);
+});
+test.concurrent(
+  "stores refused by a non-configurable entry or a non-extensible require.extensions do not reach the loader",
+  async () => {
+    using dir = tempDir("extensions-non-configurable", {
+      "index.cjs": `
+        const assert = require("assert");
+        const calls = [];
+        const refused = how => m => { calls.push(how); m.exports = "refused " + how; };
+
+        require.extensions[".pinned"] = m => { calls.push("held"); m.exports = "held"; };
+        Object.defineProperty(require.extensions, ".pinned", { configurable: false, writable: false });
+        assert.throws(() => Object.defineProperty(require.extensions, ".pinned", { value: refused("defineProperty") }), TypeError);
+        assert.strictEqual(Reflect.defineProperty(require.extensions, ".pinned", { value: refused("Reflect.defineProperty") }), false);
+        require.extensions[".pinned"] = refused("assignment");
+        assert.strictEqual(delete require.extensions[".pinned"], false);
+
+        Object.preventExtensions(require.extensions);
+        require.extensions[".fresh"] = refused("assignment of a new entry");
+        assert.throws(() => Object.defineProperty(require.extensions, ".defined", { value: refused("defineProperty of a new entry") }), TypeError);
+        assert.strictEqual(Object.hasOwn(require.extensions, ".fresh"), false);
+        assert.strictEqual(Object.hasOwn(require.extensions, ".defined"), false);
+
+        console.log(JSON.stringify({
+          pinned: require("./mod.pinned"),
+          fresh: require("./mod.fresh"),
+          defined: require("./mod.defined"),
+          calls,
+        }));
+      `,
+      "mod.pinned": `module.exports = "loaded as javascript";`,
+      "mod.fresh": `module.exports = "loaded as javascript";`,
+      "mod.defined": `module.exports = "loaded as javascript";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      pinned: "held",
+      fresh: "loaded as javascript",
+      defined: "loaded as javascript",
+      calls: ["held"],
+    });
+    expect(exitCode).toBe(0);
+  },
+);

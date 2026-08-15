@@ -214,13 +214,20 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
+/// Whether `build_store` reports how long each of its two passes took.
+#[derive(Clone, Copy)]
+pub(crate) enum Timings {
+    Print,
+    Quiet,
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
     install_root_dependencies: bool,
     workspace_filters: &[WorkspaceFilter],
     packages_to_install: Option<&[PackageID]>,
-    print_timings: bool,
+    timings: Timings,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
     let pkgs = lockfile.packages.slice();
@@ -862,7 +869,7 @@ pub(crate) fn build_store(
         node_queue[queue_mark..].reverse();
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let full_tree_end = timer.elapsed();
         timer = std::time::Instant::now();
         bun_core::pretty_errorln!(
@@ -1119,7 +1126,7 @@ pub(crate) fn build_store(
         }
     }
 
-    if print_timings {
+    if matches!(timings, Timings::Print) {
         let dedupe_end = timer.elapsed();
         bun_core::pretty_errorln!(
             "Created store [{}]",
@@ -1151,13 +1158,18 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
+    let timings = if manager.options.log_level.is_verbose() {
+        Timings::Print
+    } else {
+        Timings::Quiet
+    };
     let store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
         workspace_filters,
         packages_to_install,
-        manager.options.log_level.is_verbose(),
+        timings,
     )?;
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {

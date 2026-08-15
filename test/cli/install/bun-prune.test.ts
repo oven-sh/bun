@@ -641,6 +641,28 @@ test.concurrent("isolated linker: removes unused store entries and their links",
   await expectProductionInstallIsNoop(dir);
 });
 
+test.concurrent("isolated linker: --verbose does not print the store build timings", async () => {
+  const dir = await setup(
+    { name: "foo", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "one-dep": "1.0.0" } },
+    { linker: "isolated" },
+  );
+
+  // `--production` makes prune build the store twice (once with every
+  // dependency type, once with the production set); `bun install --verbose`
+  // prints a timing line per store build, prune must print none.
+  const { stdout, stderr, exitCode } = await prune(dir, "--production", "--verbose");
+  expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+
+    - no-deps@1.0.1
+    - one-dep@1.0.0
+    2 packages removed (checked 5)"
+  `);
+  expect(stderr).not.toContain("Resolved peers");
+  expect(stderr).not.toContain("Created store");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("isolated linker: prune removes the peer-hash variants a peer bump left behind", async () => {
   const dir = await setupWithLinker("isolated", {
     name: "foo",

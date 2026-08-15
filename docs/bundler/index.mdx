@@ -553,6 +553,11 @@ Running this build results in the following files:
 
 The generated `chunk-2fce6291bf86559d.js` file contains the shared code. To avoid collisions, the file name includes a content hash by default. Customize this with [`naming`](#naming).
 
+<Note>
+  Code splitting is only supported when [`format`](#format) is `"esm"`. With `"cjs"` or `"iife"`, `splitting` is ignored
+  with a warning and each entrypoint is bundled on its own.
+</Note>
+
 ### plugins
 
 A list of plugins to use during bundling.

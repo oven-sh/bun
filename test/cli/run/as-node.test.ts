@@ -119,21 +119,24 @@ describe("fake node cli", () => {
   // ignore ASCII case. Misclassified as plain `bun`, the bare invocation
   // below would run the empty piped stdin and exit 0 instead of printing
   // "Missing script".
-  test.each(isWindows ? ["node.EXE", "NODE.EXE"] : ["NODE", "nodE"])("detects node mode when invoked as %s", name => {
-    using temp = tempDir("fake-node-case", {});
-    const dir = String(temp);
-    if (isWindows) {
-      // On disk the file is lowercase; only the invocation casing differs.
-      copyFileSync(bunExe(), join(dir, "node.exe"));
-    } else {
-      symlinkSync(bunExe(), join(dir, name));
-    }
-    const result = Bun.spawnSync([join(dir, name)], {
-      cwd: dir,
-      env: { ...bunEnv, NODE_ENV: undefined },
-      stdin: Buffer.alloc(0),
-    });
-    expect(result.stderr.toString()).toContain("Missing script");
-    expect(result.success).toBe(false);
-  });
+  test.concurrent.each(isWindows ? ["node.EXE", "NODE.EXE"] : ["NODE", "nodE"])(
+    "detects node mode when invoked as %s",
+    name => {
+      using temp = tempDir("fake-node-case", {});
+      const dir = String(temp);
+      if (isWindows) {
+        // On disk the file is lowercase; only the invocation casing differs.
+        copyFileSync(bunExe(), join(dir, "node.exe"));
+      } else {
+        symlinkSync(bunExe(), join(dir, name));
+      }
+      const result = Bun.spawnSync([join(dir, name)], {
+        cwd: dir,
+        env: { ...bunEnv, NODE_ENV: undefined },
+        stdin: Buffer.alloc(0),
+      });
+      expect(result.stderr.toString()).toContain("Missing script");
+      expect(result.success).toBe(false);
+    },
+  );
 });

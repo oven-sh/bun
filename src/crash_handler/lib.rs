@@ -403,71 +403,57 @@ pub use bun_io::{FmtAdapter, Write};
 /// Never returns `Err`: callers `abort()` on error, which would also skip the
 /// report upload and the re-raise of the original signal, so a closed stderr
 /// or a vanished reader silently drops the bytes. A full stderr is waited for.
+///
+/// Everything below is async-signal-safe: `bun_sys::write` is a bare
+/// `write(2)` (a bare kernel32 `WriteFile` on Windows, which matters there
+/// too: the CRT's `_write` takes a per-fd lock that the VEH handler would
+/// self-deadlock on when the faulting thread was inside CRT stdio),
+/// `bun_sys::posix::poll` is a bare `poll(2)`, and `bun_sys::Error` does not
+/// allocate.
 pub(crate) struct StderrWriter;
 pub(crate) fn stderr_writer() -> StderrWriter {
     StderrWriter
 }
 impl Write for StderrWriter {
     fn write_all(&mut self, mut bytes: &[u8]) -> bun_io::Result<()> {
-        #[cfg(windows)]
-        {
-            // On Windows this is `GetStdHandle(STD_ERROR_HANDLE)` + kernel32
-            // `WriteFile`, NOT the CRT. Routing through MSVCRT `_write(2,…)`
-            // would (1) text-mode-translate `\n`→`\r\n` and (2) take the CRT
-            // per-fd lock, which can self-deadlock when the VEH crash handler
-            // fires on a thread that faulted *inside* CRT stdio. WriteFile is
-            // lock-free at the kernel32 layer.
-            let h = bun_sys::windows::kernel32::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE);
-            while !bytes.is_empty() {
-                let mut written: u32 = 0;
-                // SAFETY: `h` is the cached stderr HANDLE (or INVALID_HANDLE_VALUE,
-                // in which case WriteFile fails harmlessly); `bytes` is valid for
-                // reads of `len`; `written` is a valid out-pointer; lpOverlapped
-                // is null for synchronous I/O.
-                let ok = unsafe {
-                    bun_sys::windows::kernel32::WriteFile(
-                        h,
-                        bytes.as_ptr(),
-                        u32::try_from(bytes.len()).unwrap_or(u32::MAX),
-                        &mut written,
-                        core::ptr::null_mut(),
-                    )
-                };
-                if ok == 0 || written == 0 {
-                    break;
-                }
-                bytes = &bytes[written as usize..];
-            }
-        }
         #[cfg(not(windows))]
-        {
-            // Everything here is async-signal-safe: write(2) and poll(2), and
-            // `bun_sys::Error` carries no allocation.
-            let stderr = bun_sys::Fd::stderr();
-            while !bytes.is_empty() {
-                match bun_sys::write(stderr, bytes) {
-                    Ok(0) => break,
-                    Ok(n) => bytes = &bytes[n..],
-                    Err(err) => match err.get_errno() {
-                        bun_sys::E::EINTR => {}
-                        // fd 2 is O_NONBLOCK once `process.stderr` has touched a
-                        // pipe (the flag is on the open file description, so it is
-                        // inherited too). A full pipe only means the reader is
-                        // behind: wait for it, as a blocking stderr would, instead
-                        // of dropping the rest of the report.
-                        bun_sys::E::EAGAIN => {
-                            let mut pfd = [bun_sys::posix::PollFd {
-                                fd: stderr.native(),
-                                events: bun_sys::posix::POLL_OUT,
-                                revents: 0,
-                            }];
-                            if bun_sys::posix::poll(&mut pfd, -1).is_err() {
-                                break;
-                            }
+        let stderr = bun_sys::Fd::stderr();
+        // Looked up live rather than through `Fd::stderr()`: the cache behind
+        // that is filled by `Output`'s stdio init, which runs after the crash
+        // handler is installed, and crashes in between still have to print.
+        #[cfg(windows)]
+        let Some(stderr) = bun_sys::windows::GetStdHandle(bun_sys::windows::STD_ERROR_HANDLE)
+            .map(bun_sys::Fd::from_system)
+        else {
+            return Ok(());
+        };
+        while !bytes.is_empty() {
+            match bun_sys::write(stderr, bytes) {
+                Ok(0) => break,
+                Ok(n) => bytes = &bytes[n..],
+                Err(err) => match err.get_errno() {
+                    // `bun_sys::write` retries EINTR itself on Linux, but not on
+                    // macOS (`write$NOCANCEL` is issued once).
+                    #[cfg(unix)]
+                    bun_sys::E::EINTR => {}
+                    // fd 2 is O_NONBLOCK once `process.stderr` has touched a
+                    // pipe (the flag is on the open file description, so it is
+                    // inherited too). A full pipe only means the reader is
+                    // behind: wait for it, as a blocking stderr would, instead
+                    // of dropping the rest of the report.
+                    #[cfg(unix)]
+                    bun_sys::E::EAGAIN => {
+                        let mut pfd = [bun_sys::posix::PollFd {
+                            fd: stderr.native(),
+                            events: bun_sys::posix::POLL_OUT,
+                            revents: 0,
+                        }];
+                        if bun_sys::posix::poll(&mut pfd, -1).is_err() {
+                            break;
                         }
-                        _ => break,
-                    },
-                }
+                    }
+                    _ => break,
+                },
             }
         }
         Ok(())

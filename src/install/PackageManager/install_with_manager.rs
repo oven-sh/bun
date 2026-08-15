@@ -677,6 +677,7 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
+    manager.lockfile.bind_peers_to_own_dependencies();
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved);

@@ -2512,6 +2512,86 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect(out).toContain("no changes");
 });
 
+// A workspace declares the same package as a devDependency and as a peerDependency with a
+// lagging range (peer react ^17, dev react ^18), while a transitive dependency still pulls in a
+// version the peer range accepts. The workspace has to get its devDependency, and the lockfile
+// written by a fresh install has to be accepted by `--frozen-lockfile` as is.
+describe.each(["hoisted", "isolated"])("workspace peerDependency on its own devDependency (%s)", linker => {
+  async function install(ctx: TestCtx, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", linker, ...args],
+      cwd: ctx.packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // "<tree path>": ["<name>@<resolution>", ...] rows of the "packages" section.
+  function lockedPackages(lock: string) {
+    return Object.fromEntries(Array.from(lock.matchAll(/^\s+"([^"]+)": \["([^"]+)"/gm), m => [m[1], m[2]]));
+  }
+
+  test.concurrent("fresh lockfile round-trips through --frozen-lockfile", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "root-app", workspaces: ["packages/*"] })),
+      write(
+        join(packageDir, "packages", "ws-1", "package.json"),
+        JSON.stringify({
+          name: "ws-1",
+          version: "1.0.0",
+          devDependencies: { "no-deps": "^2.0.0", "one-fixed-dep": "1.0.0" },
+          peerDependencies: { "no-deps": "^1.0.0" },
+        }),
+      ),
+      // one-fixed-dep@1.0.0 depends on no-deps@1.0.0, which satisfies the peer range.
+      write(
+        join(packageDir, "packages", "ws-1", "versions.js"),
+        `const { createRequire } = require("module");
+         const fromOneFixedDep = createRequire(require.resolve("one-fixed-dep/package.json"));
+         console.log(require("no-deps/package.json").version, fromOneFixedDep("no-deps/package.json").version);`,
+      ),
+    ]);
+
+    const fresh = await install(ctx);
+    expect(fresh.stderr).toContain("Saved lockfile");
+    expect(fresh.exitCode).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockedPackages(lockfile)).toEqual({
+      "no-deps": "no-deps@2.0.0",
+      "one-fixed-dep": "one-fixed-dep@1.0.0",
+      "one-fixed-dep/no-deps": "no-deps@1.0.0",
+      "ws-1": "ws-1@workspace:packages/ws-1",
+    });
+
+    const frozen = await install(ctx, "--frozen-lockfile");
+    expect(frozen.stderr).not.toContain("lockfile had changes");
+    expect(frozen.exitCode).toBe(0);
+
+    const again = await install(ctx);
+    expect(again.stderr).not.toContain("Saved lockfile");
+    expect(again.exitCode).toBe(0);
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "versions.js"],
+      cwd: join(packageDir, "packages", "ws-1"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("2.0.0 1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // While linking, the hoisted installer formats each package's version label (its
 // version, or for tarball/folder/git packages the spec it was resolved from) into a
 // 512 byte stack buffer. Labels longer than that used to abort the whole install.

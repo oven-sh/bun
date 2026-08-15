@@ -44,7 +44,8 @@ use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
-    PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
+    PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap,
+    own_dependency_for_peer, tree,
 };
 
 use bun_io::AsFmt;
@@ -3072,6 +3073,9 @@ pub(crate) fn parse_into_binary_lockfile(
             // first the root dependencies are resolved
             for _dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
                 let dep_id: DependencyID = _dep_id;
+                if is_peer_of_own_dependency(dependencies, pkg_deps[0], dep_id) {
+                    continue;
+                }
                 let dep = &mut dependencies[dep_id as usize];
 
                 let peer_res_id = resolve_peer_dep_version_based(
@@ -3132,6 +3136,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
                     let dep_id: DependencyID = _dep_id;
+                    if is_peer_of_own_dependency(dependencies, deps, dep_id) {
+                        continue;
+                    }
                     let dep = &mut dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
 
@@ -3220,6 +3227,9 @@ pub(crate) fn parse_into_binary_lockfile(
             let deps = pkg_deps[pkg_id as usize];
             'deps: for _dep_id in deps.begin()..deps.end() {
                 let dep_id: DependencyID = _dep_id;
+                if is_peer_of_own_dependency(dependencies, deps, dep_id) {
+                    continue 'deps;
+                }
                 let dep = &mut dependencies[dep_id as usize];
 
                 // A stripped `catalog:` edge (`CatalogMap::strip_reference`) stays unresolved, as in a fresh install.
@@ -3287,6 +3297,8 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
+        lockfile.bind_peers_to_own_dependencies();
+
         if let Err(err) = lockfile.resolve(log) {
             return Err(match err {
                 tree::SubtreeError::OutOfMemory => ParseError::OutOfMemory,
@@ -3296,6 +3308,19 @@ pub(crate) fn parse_into_binary_lockfile(
     }
 
     Ok(())
+}
+
+/// Skipped by the binding loops above: `Lockfile::bind_peers_to_own_dependencies` binds these
+/// edges to their sibling once the loops have bound it. Binding them like any other edge would
+/// pick by version (`resolve_peer_dep_version_based`), or fail the load when the sibling is
+/// unresolved and nothing of that name was printed.
+fn is_peer_of_own_dependency(
+    dependencies: &[Dependency],
+    pkg_deps: DependencySlice,
+    dep_id: DependencyID,
+) -> bool {
+    let deps = pkg_deps.get(dependencies);
+    own_dependency_for_peer(deps, &deps[(dep_id - pkg_deps.off) as usize]).is_some()
 }
 
 /// The catalog-resolved range of a peer edge the fresh resolver defers to its second phase

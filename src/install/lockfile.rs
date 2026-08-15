@@ -1252,6 +1252,55 @@ impl<'a> Cloner<'a> {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Peers the declaring package satisfies itself
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Index within `deps` (one package's dependency list) of the non-peer dependency on the
+/// same name as `peer`, when `peer` is one of that package's non-optional peers.
+///
+/// Packages parsed from a package.json (root, workspaces, folder/git/tarball dependencies)
+/// keep such a pair as two edges so bun.lock can print both groups; `Package::from_npm` drops
+/// the peer. A node_modules directory holds one package per name, so the peer edge has to
+/// resolve to the sibling's package (npm replaces the peer edge; the isolated linker satisfies
+/// a package's peers from its own dependencies). Resolved on its own, by version
+/// (`get_or_put_resolved_package` with `install_peer`, `resolve_peer_dep_version_based`), the
+/// peer can bind to another instance of the name. The hoister then places that instance in the
+/// declaring package's own node_modules, shadowing the sibling, a reload binds the sibling to
+/// that placement as well, and the next install drops the sibling's package: the bun.lock a
+/// fresh install just wrote fails `--frozen-lockfile`.
+///
+/// Optional peers are left alone: the resolver never binds them and the hoister binds them to
+/// the same-named dependency it meets while hoisting, which is the sibling.
+pub(crate) fn own_dependency_for_peer(deps: &[Dependency], peer: &Dependency) -> Option<usize> {
+    if !peer.behavior.is_peer() || peer.behavior.is_optional_peer() {
+        return None;
+    }
+    deps.iter()
+        .position(|dep| dep.name_hash == peer.name_hash && !dep.behavior.is_peer())
+}
+
+impl Lockfile {
+    /// Binds each peer edge `own_dependency_for_peer` pairs up to its sibling's resolution.
+    /// Runs once the siblings are bound: after a fresh resolve, before anything reads the
+    /// edges (`DirectDependencies::redirect_dependents`, `clean_with_logger`), and when
+    /// bun.lock is loaded, where the parser leaves these edges unresolved. `Package::clone`
+    /// re-applies the rule while cleaning so edges moved in between cannot diverge again.
+    pub(crate) fn bind_peers_to_own_dependencies(&mut self) {
+        let deps_buf = self.buffers.dependencies.as_slice();
+        let resolutions = self.buffers.resolutions.as_mut_slice();
+        for list in self.packages.items_dependencies() {
+            let deps = list.get(deps_buf);
+            let off = list.off as usize;
+            for (i, dep) in deps.iter().enumerate() {
+                if let Some(sibling) = own_dependency_for_peer(deps, dep) {
+                    resolutions[off + i] = resolutions[off + sibling];
+                }
+            }
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // resolve / filter / hoist
 // ────────────────────────────────────────────────────────────────────────────
 

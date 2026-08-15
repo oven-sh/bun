@@ -606,13 +606,18 @@ impl Package<u64> {
             .zip(resolutions.iter_mut())
             .enumerate()
         {
-            if *old_resolution >= max_package_id {
+            let old_resolution =
+                match lockfile::own_dependency_for_peer(old_dependencies, &old_dependencies[i]) {
+                    Some(sibling) => old_resolutions[sibling],
+                    None => *old_resolution,
+                };
+            if old_resolution >= max_package_id {
                 *resolution = invalid_package_id;
                 continue;
             }
 
             let pending = PendingResolution {
-                old_resolution: *old_resolution,
+                old_resolution,
                 resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
             };
 
@@ -623,7 +628,7 @@ impl Package<u64> {
                 continue;
             }
 
-            let mapped = package_id_mapping[*old_resolution as usize];
+            let mapped = package_id_mapping[old_resolution as usize];
             if mapped < max_package_id {
                 *resolution = mapped;
             } else {

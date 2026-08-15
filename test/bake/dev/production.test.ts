@@ -353,20 +353,6 @@ export default function Docs() {
     expect(exitCode).toBe(1);
   });
 
-  test("two pages resolving to the same route are reported", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
-      "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
-    });
-
-    const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
-  });
-
   test("handles build with no pages directory without crashing", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-no-pages", {
       "app.ts": `export default { app: { framework: "react" } };`,
@@ -698,22 +684,48 @@ export default function IndexPage() {
       expect(existsSync(path.join(dir, "dist"))).toBe(false);
     });
 
+    test("two dynamic routes with the same shape fail the build", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-route-alias", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/blog/[id].tsx": `export default function Post() { return <p>post</p>; }`,
+        "pages/blog/[slug].tsx": `export default function Post() { return <p>post</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/blog/[id].tsx");
+      expect(stderr).toContain("  - pages/blog/[slug].tsx");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+
     test("every route error is reported before the build fails", async () => {
+      const tooManyParams = "pages/" + Array.from({ length: 65 }, (_, i) => `[p${i}]`).join("/") + ".tsx";
       const dir = await tempDirWithBakeDeps("bake-production-route-errors", {
         "src/index.tsx": `export default { app: { framework: "react" } };`,
         "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
         "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
         "pages/_layout.tsx": `export default function Layout({ children }) { return <main>{children}</main>; }`,
         "pages/_layout.jsx": `export default function Layout({ children }) { return <main>{children}</main>; }`,
+        "pages/[id].tsx": `export default function Item() { return <p>item</p>; }`,
+        "pages/[name].tsx": `export default function Item() { return <p>item</p>; }`,
         "pages/blog-[slug].tsx": `export default function Post() { return <p>post</p>; }`,
+        [tooManyParams]: `export default function Deep() { return <p>deep</p>; }`,
       });
 
       const { exitCode, stderr } = await build(dir);
-      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
       expect(stderr).toContain("Multiple layout matching the same route pattern is ambiguous");
       expect(stderr).toContain("  - pages/_layout.tsx");
       expect(stderr).toContain("  - pages/_layout.jsx");
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/about.tsx");
+      expect(stderr).toContain("  - pages/about/index.tsx");
+      expect(stderr).toContain("  - pages/[id].tsx");
+      expect(stderr).toContain("  - pages/[name].tsx");
       expect(stderr).toContain('"pages/blog-[slug].tsx" is not a valid route');
+      expect(stderr).toContain("Parameters must take up the entire file name");
+      expect(stderr).toContain(`"${tooManyParams}" is not a valid route`);
+      expect(stderr).toContain("Pattern cannot have more than 64 params");
       expect(exitCode).toBe(1);
       expect(existsSync(path.join(dir, "dist"))).toBe(false);
     });

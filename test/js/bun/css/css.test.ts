@@ -7660,6 +7660,143 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  describe("relative colors", () => {
+    // The channel keywords are <number>s in the range of the function being
+    // written: r/g/b are 0..255 in rgb(), s/l (and hwb() w/b) and lab()/lch()
+    // l are 0..100, oklab()/oklch() l, color() channels and alpha are 0..1.
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    // lightningcss 1.30 produces the same output for all of these, except that
+    // it leaves calc(h + 30) and the "percentage pass" block unparsed.
+    describe("rgb()", () => {
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b) }", ".foo{color:#c86432}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) b g r) }", ".foo{color:#3264c8}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) calc(r + 10) g b) }", ".foo{color:#d26432}");
+      minify_test(".foo { color: rgba(from rgb(200 100 50) calc(r - 10) g b) }", ".foo{color:#be6432}");
+      minify_test(".foo { color: rgb(from red calc(100) g b) }", ".foo{color:#640000}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) calc(r / 2) calc(g * 2) b) }", ".foo{color:#64c832}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) calc(r + 100) calc(g - 300) b) }", ".foo{color:#ff0032}");
+      minify_test(".foo { color: rgb(from hsl(120 50% 40%) calc(r + 10) g b) }", ".foo{color:#3d9933}");
+      minify_test(
+        ".foo { color: rgb(from light-dark(rgb(200 100 50), rgb(50 100 200)) calc(r + 10) g b) }",
+        ".foo{color:light-dark(#d26432,#3c64c8)}",
+      );
+      // A missing channel is 0.
+      minify_test(".foo { color: rgb(from rgb(none 100 50) calc(r + 10) g b) }", ".foo{color:#0a6432}");
+      // r is 200 (not 200/255) when used as the alpha, and alpha is 1 (not 255) when used as a channel.
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b / calc(r / 255)) }", ".foo{color:#c86432c8}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) calc(alpha * 255) g b) }", ".foo{color:#ff6432}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b / calc(alpha - 0.5)) }", ".foo{color:#c8643280}");
+      // An unresolved alpha keeps the resolved channels.
+      minify_test(
+        ".foo { color: rgb(from rgb(200 100 50) calc(r + 10) g b / var(--a)) }",
+        ".foo{color:rgb(210 100 50/var(--a))}",
+      );
+    });
+
+    describe("hsl() and hwb()", () => {
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s l) }", ".foo{color:#393}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h l s) }", ".foo{color:#4db34d}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h calc(s + 10) l) }", ".foo{color:#29a329}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l + 10)) }", ".foo{color:#40bf40}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s calc(l * 2)) }", ".foo{color:#b3e6b3}");
+      minify_test(".foo { color: hsl(from rgb(200 100 50) h calc(s + 10) l) }", ".foo{color:#d56025}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h 60 l) }", ".foo{color:#29a329}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h 60% l) }", ".foo{color:#29a329}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h s l / calc(l / 100)) }", ".foo{color:#3936}");
+      minify_test(
+        ".foo { color: hsl(from hsl(120 50% 40%) h calc(s + 10) l / var(--a)) }",
+        ".foo{color:hsl(120 60% 40%/var(--a))}",
+      );
+      minify_test(".foo { color: hwb(from hwb(120 20% 30%) h w b) }", ".foo{color:#33b333}");
+      minify_test(".foo { color: hwb(from hwb(120 20% 30%) h calc(w + 10) b) }", ".foo{color:#4db34d}");
+      minify_test(".foo { color: hwb(from hwb(120 20% 30%) h w calc(b + 10)) }", ".foo{color:#339a33}");
+
+      describe("hue", () => {
+        // Any non-hue keyword is a <number>, which a hue accepts and an <angle>
+        // can be multiplied by but not added to. The hue keyword is only a hue.
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) s s l) }", ".foo{color:#983}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) alpha s l) }", ".foo{color:#993533}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(s * 1deg) s l) }", ".foo{color:#983}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(h + 30) s l) }", ".foo{color:#396}");
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) calc(h + 30deg) s l) }", ".foo{color:#396}");
+        minify_test(
+          ".foo { color: hsl(from hsl(120 50% 40%) calc(s + 30deg) s l) }",
+          ".foo{color:hsl(from #393 calc(s + 30deg)s l)}",
+        );
+        minify_test(".foo { color: hsl(from hsl(120 50% 40%) h h l) }", ".foo{color:hsl(from #393 h h l)}");
+      });
+    });
+
+    describe("lab(), lch(), oklab() and oklch()", () => {
+      minify_test(".foo { color: lab(from lab(50% 20 30) l a b) }", ".foo{color:lab(50% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + 10) a b) }", ".foo{color:lab(60% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) calc(l * 2) a b) }", ".foo{color:lab(100% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) 60 a b) }", ".foo{color:lab(60% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) calc(l + a) a b) }", ".foo{color:lab(70% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) a b l) }", ".foo{color:lab(20% 30 50)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) l alpha b) }", ".foo{color:lab(50% 1 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) l a b / calc(l / 100)) }", ".foo{color:lab(50% 20 30/.5)}");
+      minify_test(
+        ".foo { color: lab(from rgb(200 100 50) calc(l + 10) a b) }",
+        ".foo{color:lab(64.2174% 38.1977 46.2491)}",
+      );
+      minify_test(
+        ".foo { color: lab(from light-dark(lab(50% 20 30), lab(20% 30 50)) calc(l + 10) a b) }",
+        ".foo{color:light-dark(lab(60% 20 30),lab(30% 30 50))}",
+      );
+      minify_test(".foo { color: lch(from lch(50% 30 120) calc(l + 10) c h) }", ".foo{color:lch(60% 30 120)}");
+      minify_test(".foo { color: lch(from lch(50% 30 120) c l h) }", ".foo{color:lch(30% 50 120)}");
+      minify_test(".foo { color: lch(from lch(50% 30 120) l c calc(h + 30)) }", ".foo{color:lch(50% 30 150)}");
+      // The ok variants write lightness in 0..1.
+      minify_test(".foo { color: oklab(from oklab(50% 0.1 0.1) l a b) }", ".foo{color:oklab(50% .1 .1)}");
+      minify_test(".foo { color: oklab(from oklab(50% 0.1 0.1) calc(l + 0.1) a b) }", ".foo{color:oklab(60% .1 .1)}");
+      minify_test(".foo { color: oklch(from oklch(50% 0.1 120) calc(l + 0.1) c h) }", ".foo{color:oklch(60% .1 120)}");
+      minify_test(
+        ".foo { color: oklch(from oklch(50% 0.1 120) l c h / calc(l - 0.1)) }",
+        ".foo{color:oklch(50% .1 120/.4)}",
+      );
+    });
+
+    describe("color()", () => {
+      minify_test(
+        ".foo { color: color(from color(srgb 0.5 0.2 0.1) srgb calc(r + 0.1) g b) }",
+        ".foo{color:color(srgb .6 .2 .1)}",
+      );
+      minify_test(
+        ".foo { color: color(from color(srgb 0.5 0.2 0.1) srgb r g b / calc(alpha - 0.5)) }",
+        ".foo{color:color(srgb .5 .2 .1/.5)}",
+      );
+      minify_test(
+        ".foo { color: color(from rgb(200 100 50) xyz x y z) }",
+        ".foo{color:color(xyz .289515 .216258 .0566732)}",
+      );
+    });
+
+    describe("percentage pass", () => {
+      // What the <number> pass cannot fold is retried as a percentage
+      // expression, which is what folds min()/max() of keywords; lightningcss
+      // leaves all of these unparsed. Every keyword is compared as a number in
+      // the function's range, so alpha (1) and lab a/b (unscaled) mean the same
+      // thing next to r (0..255) or l (0..100) as they do on their own.
+      minify_test(".foo { color: rgb(from rgb(200 100 50) min(r, g) g b) }", ".foo{color:#646432}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g max(g, b)) }", ".foo{color:#c86464}");
+      minify_test(
+        ".foo { color: color(from color(srgb 0.8 0.4 0.2) srgb min(r, g) g b) }",
+        ".foo{color:color(srgb .4 .4 .2)}",
+      );
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h min(s, l) l) }", ".foo{color:#3d8f3d}");
+      minify_test(".foo { color: hwb(from hwb(120 20% 30%) h max(w, b) b) }", ".foo{color:#4cb34c}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h calc(50% + 10%) l) }", ".foo{color:#29a329}");
+      // min(200, 1), min(1, 200), min(50, 1), min(50, 20), max(20, 30), min(50, 30).
+      minify_test(".foo { color: rgb(from rgb(200 100 50) min(r, alpha) g b) }", ".foo{color:#016432}");
+      minify_test(".foo { color: rgb(from rgb(200 100 50) r g b / min(alpha, r)) }", ".foo{color:#c86432}");
+      minify_test(".foo { color: hsl(from hsl(120 50% 40%) h min(s, alpha) l) }", ".foo{color:#656765}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) min(l, a) a b) }", ".foo{color:lab(20% 20 30)}");
+      minify_test(".foo { color: lab(from lab(50% 20 30) max(a, b) a b) }", ".foo{color:lab(30% 20 30)}");
+      minify_test(".foo { color: lch(from lch(50% 30 120) min(l, c) c h) }", ".foo{color:lch(30% 30 120)}");
+    });
+  });
+
   describe("edge cases", () => {
     describe("invalid gradient", () => {
       cssTest(

@@ -131,20 +131,22 @@ Relative color syntax modifies individual components of an existing color. Adjus
 
 ```css title="styles.css" icon="file-code"
 .theme-color {
-  /* Start with a base color and increase lightness by 15% */
-  --accent: lch(from purple calc(l + 15%) c h);
+  /* Start with a base color and add 15 to its lightness, which runs from 0 to 100 */
+  --accent: lch(from purple calc(l + 15) c h);
 
   /* Take our brand blue and make a desaturated version */
   --subtle-blue: oklch(from var(--brand-blue) l calc(c * 0.8) h);
 }
 ```
 
-Bun's CSS bundler computes these relative color modifications at build time (when not using CSS variables) and generates static color values for browser compatibility:
+The channel keywords (`l`, `c`, `h`, `r`, `alpha`, ...) are numbers in the range the color function itself uses: `rgb()` channels run from 0 to 255, `hsl()` saturation and lightness and `lab()`/`lch()` lightness from 0 to 100, `oklab()`/`oklch()` lightness and `alpha` from 0 to 1.
+
+Bun's CSS bundler computes these relative color modifications at build time when the origin color is known, and leaves the ones that depend on CSS variables for the browser:
 
 ```css
 .theme-color {
-  --accent: lch(69.32% 58.34 328.37);
-  --subtle-blue: oklch(60.92% 0.112 240.01);
+  --accent: lch(44.6915% 66.8257 327.105);
+  --subtle-blue: oklch(from var(--brand-blue) l calc(c * 0.8) h);
 }
 ```
 

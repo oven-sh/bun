@@ -649,3 +649,60 @@ describe("color-mix() percentage range", () => {
     expect(color(input, "css")).toBe(expected);
   });
 });
+
+// https://drafts.csswg.org/css-color-5/#relative-colors
+// Each channel keyword is a <number> in the range of the function it is used
+// in: r/g/b are 0..255 in rgb(), s/l and lab()/lch() l are 0..100, oklab() l,
+// color() channels and alpha are 0..1. lightningcss 1.30 produces the same
+// values as the first group below.
+describe("relative color channel keywords", () => {
+  test.each([
+    ["rgb(from rgb(200 100 50) r g b)", "#c86432"],
+    ["rgb(from rgb(200 100 50) calc(r + 10) g b)", "#d26432"],
+    ["rgb(from red calc(100) g b)", "#640000"],
+    ["rgb(from rgb(none 100 50) calc(r + 10) g b)", "#0a6432"],
+    ["rgb(from rgb(200 100 50) r g b / calc(g / 255))", "#c8643264"],
+    ["rgb(from rgb(200 100 50) calc(alpha * 255) g b)", "#ff6432"],
+    ["rgb(from rgb(200 100 50) r g b / calc(alpha - 0.5))", "#c8643280"],
+    ["hsl(from hsl(120 50% 40%) h s l)", "#393"],
+    ["hsl(from hsl(120 50% 40%) h calc(s + 10) l)", "#29a329"],
+    ["hsl(from hsl(120 50% 40%) h s calc(l - 10))", "#267326"],
+    ["hsl(from hsl(120 50% 40%) h 60 l)", "#29a329"],
+    ["hsl(from hsl(120 50% 40%) h 60% l)", "#29a329"],
+    ["hsl(from hsl(120 50% 40%) calc(s * 2) s l)", "#593"],
+    ["hsl(from hsl(120 50% 40%) h s l / calc(l / 100))", "#3936"],
+    ["hwb(from hwb(120 20% 30%) h calc(w + 10) b)", "#4db34d"],
+    ["lab(from lab(50% 20 30) l a b)", "lab(50% 20 30)"],
+    ["lab(from lab(50% 20 30) calc(l + 10) a b)", "lab(60% 20 30)"],
+    ["lab(from lab(50% 20 30) l l l)", "lab(50% 50 50)"],
+    ["lab(from lab(50% 20 30) a b l)", "lab(20% 30 50)"],
+    ["lch(from lch(50% 30 120) calc(l + 10) c h)", "lch(60% 30 120)"],
+    ["oklab(from oklab(50% 0.1 0.1) calc(l + 0.1) a b)", "oklab(60% .1 .1)"],
+    ["oklch(from oklch(50% 0.1 120) calc(l + 0.1) c h)", "oklch(60% .1 120)"],
+    ["color(from color(srgb 0.5 0.2 0.1) srgb calc(r + 0.1) g b)", "color(srgb .6 .2 .1)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // min()/max() of keywords fold through the percentage pass, comparing the
+  // keywords as numbers in the function's range: min(200, 100), min(50, 40),
+  // max(20, 30), min(1, 200), min(50, 20).
+  test.each([
+    ["rgb(from rgb(200 100 50) min(r, g) g b)", "#646432"],
+    ["hsl(from hsl(120 50% 40%) h min(s, l) l)", "#3d8f3d"],
+    ["hwb(from hwb(120 20% 30%) h max(w, b) b)", "#4cb34c"],
+    ["rgb(from rgb(200 100 50) r g b / min(alpha, r))", "#c86432"],
+    ["lab(from lab(50% 20 30) min(l, a) a b)", "lab(20% 20 30)"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    // A <number> cannot be added to an <angle>.
+    "hsl(from hsl(120 50% 40%) calc(s + 30deg) s l)",
+    // The hue keyword is only a hue.
+    "hsl(from hsl(120 50% 40%) h h l)",
+  ])("%s is invalid", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+});

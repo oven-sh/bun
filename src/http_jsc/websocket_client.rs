@@ -1000,9 +1000,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let Ok(writable) = send_buffer.writable_with_size(frame_size) else {
-                return false;
-            };
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(frame_size));
             Copy::copy_compressed(
                 &self.global_this,
                 &mut writable[..frame_size],
@@ -1027,9 +1025,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let writable = send_buffer
-                .writable_with_size(write_len)
-                .expect("unreachable");
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(write_len));
             bytes.copy(
                 &self.global_this,
                 &mut writable[..write_len],

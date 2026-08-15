@@ -3319,6 +3319,13 @@ mod draft {
         }
     }
 
+    /// `suppress_core_dumps_if_necessary` for the C++ test hooks that crash on
+    /// purpose (`failICUAllocationForTesting` in `bun_icu_memory.cpp`).
+    #[unsafe(no_mangle)]
+    extern "C" fn CrashHandler__suppressCoreDumps() {
+        suppress_core_dumps_if_necessary();
+    }
+
     /// From now on, prevent crashes from being reported to bun.report or the URL overridden in
     /// BUN_CRASH_REPORT_URL. Should only be used for tests that are going to intentionally crash,
     /// so that they do not fail CI due to having a crash reported. And those cases should guard behind

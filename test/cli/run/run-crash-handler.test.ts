@@ -203,6 +203,37 @@ describe.skipIf(isMacOS)("an allocation failure inside ICU is reported as out of
     if (isPosix) expect(proc.signalCode).toBe("SIGABRT");
     expect(exitCode).not.toBe(0);
   });
+
+  // Like the crash_handler test hooks, arming disables core dumps, so the
+  // intended crash above does not leave a core for the coredump-upload CI
+  // lanes to flag. The shell raises the soft limit as far as the hard limit
+  // allows first (where the hard limit is already 0 there is nothing to
+  // observe), and the failure is armed far enough out that nothing in the
+  // script hits it.
+  test.skipIf(!isLinux).concurrent("arming the failure disables core dumps", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        "/bin/sh",
+        "-c",
+        `ulimit -c "$(ulimit -H -c)" 2>/dev/null; exec "$0" "$@"`,
+        bunExe(),
+        "-e",
+        `const { failICUAllocationForTesting } = require("bun:internal-for-testing");
+         const softCoreLimit = () =>
+           require("fs").readFileSync("/proc/self/limits", "utf8").match(/^Max core file size\\s+(\\S+)/m)[1];
+         const before = softCoreLimit();
+         failICUAllocationForTesting(2 ** 31 - 1);
+         console.log(JSON.stringify({ before, after: softCoreLimit() }));`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ before: expect.any(String), after: "0" });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // POSIX-only: Windows refuses to remove a directory that is any process's cwd.

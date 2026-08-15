@@ -22,6 +22,8 @@
 #include <atomic>
 #include <cstdlib>
 
+extern "C" void CrashHandler__suppressCoreDumps();
+
 namespace Bun {
 
 // Negative when disarmed; otherwise how many more allocations succeed before
@@ -66,6 +68,9 @@ void installICUMemoryFunctions()
 
 void failICUAllocationForTesting(size_t skip)
 {
+    // The crash this arms is intended, like the crash_handler test hooks'; the
+    // core-dump-collecting CI lanes must not treat its core as a failure.
+    CrashHandler__suppressCoreDumps();
     s_allocationsUntilInjectedFailure.store(static_cast<int64_t>(skip), std::memory_order_relaxed);
 }
 

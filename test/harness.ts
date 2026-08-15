@@ -1881,39 +1881,60 @@ export function textLockfile(version: number, pkgs: any): string {
 }
 
 export class VerdaccioRegistry {
-  port: number;
+  #port: number | undefined;
   process: ChildProcess | undefined;
   configPath: string;
   packagesPath: string;
   users: Record<string, string> = {};
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
-    this.port = randomPort();
     this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
     this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
   }
 
+  /** The port verdaccio is listening on. Only known once `start()` has resolved. */
+  get port(): number {
+    if (this.#port === undefined) {
+      throw new Error("VerdaccioRegistry.port is not known until start() has resolved");
+    }
+    return this.#port;
+  }
+
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    // Port 0 makes verdaccio bind a port the kernel knows is free, rather than one
+    // guessed here that another test file, a leaked registry or an outgoing connection
+    // may already hold; the preload reports which port it got.
+    //
     // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
     // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
     // while the install client connects to 127.0.0.1 and every request is refused.
-    const listen = `127.0.0.1:${this.port}`;
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
+    const preload = join(import.meta.dir, "cli", "install", "registry", "verdaccio-preload.ts");
+    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", "127.0.0.1:0"], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
+      execArgv: [...process.execArgv, "--preload", preload],
       env: {
         ...(bunEnv as any),
         NODE_NO_WARNINGS: "1",
       },
     });
 
+    // verdaccio explains a failed startup through its logger, which verdaccio.yaml points
+    // at stdout, so collect both streams until start() settles and put them in the error.
+    let startupOutput = "";
+    const collectStartupOutput = (data: Buffer) => {
+      startupOutput += data;
+    };
+    this.process.stdout?.on("data", collectStartupOutput);
+    this.process.stderr?.on("data", collectStartupOutput);
+
     this.process.stderr?.on("data", data => {
       console.error(`[verdaccio] stderr: ${data}`);
     });
 
-    const started = Promise.withResolvers();
+    const started = Promise.withResolvers<number>();
 
     this.process.on("error", error => {
       console.error(`Failed to start verdaccio: ${error}`);
@@ -1928,13 +1949,36 @@ export class VerdaccioRegistry {
       }
     });
 
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
+    // "close" rather than "exit": it fires once stdout/stderr have been read to the
+    // end, so the error carries everything verdaccio printed.
+    this.process.on("close", (code, signal) => {
+      started.reject(
+        new Error(
+          `Verdaccio exited with code ${code} and signal ${signal} before it started listening\n${startupOutput}`,
+        ),
+      );
+    });
+
+    this.process.on("message", (message: { verdaccio_port?: number; verdaccio_started?: boolean }) => {
+      if (typeof message.verdaccio_port === "number") {
+        started.resolve(message.verdaccio_port);
+      } else if (message.verdaccio_started) {
+        // The preload reports the port from a "listening" listener registered before the
+        // one verdaccio sends this from, so `started` is normally already resolved here
+        // and this reject is a no-op. It only takes effect when the preload stopped
+        // hooking the server verdaccio listens with.
+        started.reject(new Error("Verdaccio is listening but verdaccio-preload.ts did not report its port"));
       }
     });
 
-    await started.promise;
+    try {
+      this.#port = await started.promise;
+    } finally {
+      // Leave stdout unread from here on, as before: a registry serves thousands of
+      // requests per test file and logs every one of them.
+      this.process.stdout?.off("data", collectStartupOutput).pause();
+      this.process.stderr?.off("data", collectStartupOutput);
+    }
   }
 
   registryUrl() {

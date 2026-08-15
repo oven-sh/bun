@@ -1256,6 +1256,12 @@ fn write_sources_for(
         let mut join_buf = bun_paths::path_buffer_pool::get();
         for name in ism.map.external_source_names.iter() {
             let name: &[u8] = name.as_ref();
+            // The spec allows URLs in `sources[]` (e.g. `webpack:///src/a.ts`);
+            // path-joining would destroy the scheme, so pass them through.
+            if bun_core::strings::index_of(name, b"://").is_some() {
+                emit(joiner, name)?;
+                continue;
+            }
             if bun_paths::resolve_path::Platform::AUTO.is_absolute(name) {
                 let rel = LinkerContext::source_map_relative_path(chunk_abs_dir, name)?;
                 emit(joiner, &rel)?;

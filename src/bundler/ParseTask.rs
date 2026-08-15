@@ -2628,10 +2628,11 @@ pub mod parse_worker {
         // SAFETY: task.ctx backref valid for the bundle pass (outlives `'r`).
         let task_ctx = unsafe { task.ctx() };
         let module_type = opts.module_type;
-        // Copy `source_map` out before the tombstone: get_ast reborrows
+        // Copy these out before the tombstone: get_ast reborrows
         // `(*transpiler).options` mutably, invalidating `topts` under
         // Stacked Borrows.
         let source_map_option = topts.source_map;
+        let has_dev_server = topts.has_dev_server();
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
         let _ = topts;
@@ -2694,9 +2695,10 @@ pub mod parse_worker {
 
         // Scan for an inline `//# sourceMappingURL=data:...` map to chain
         // into the output sourcemap. Runs on `source.contents` regardless
-        // of origin (file read or plugin `onLoad`, covering #6173).
-        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if source_map_option
-            != options::SourceMapOption::None
+        // of origin (file read or plugin `onLoad`, covering #6173). Skipped
+        // under DevServer: its stitcher never consumes the result.
+        let input_source_map: Option<Box<bun_sourcemap::InputSourceMap>> = if !has_dev_server
+            && source_map_option != options::SourceMapOption::None
             && loader.can_have_source_map()
             && !source.contents.is_empty()
         {

@@ -134,6 +134,42 @@ describe.concurrent("Bun.build chains inline input sourcemaps", () => {
     expect(parsed.sourcesContent).toHaveLength(parsed.sources.length);
   });
 
+  // The Source Map spec allows `sources[i]` to be a URL
+  // (e.g. webpack's `webpack:///./src/x.ts`); path-joining such a name
+  // would destroy the scheme, so it must pass through verbatim.
+  test("URL-schemed inner source name passes through verbatim", async () => {
+    const authoredSrc = "export const w = 9;\n";
+    const innerMap = {
+      version: 3,
+      sources: ["webpack:///./src/original.ts"],
+      sourcesContent: [authoredSrc],
+      names: [],
+      mappings: "AAAA;",
+    };
+    const inline = `\n//# sourceMappingURL=data:application/json;base64,${Buffer.from(JSON.stringify(innerMap)).toString("base64")}\n`;
+
+    const dir = tempDirWithFiles("bun-build-chained-sourcemap-url", {
+      "intermediate.js": authoredSrc + inline,
+      "entry.ts": `import { w } from './intermediate.js';\nconsole.log(w);\n`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir, "entry.ts")],
+      outdir: join(dir, "out"),
+      format: "esm",
+      target: "bun",
+      sourcemap: "inline",
+    });
+    expect(result.success).toBe(true);
+
+    const text = await Bun.file(result.outputs[0].path).text();
+    const m = text.match(/\/\/# sourceMappingURL=data:application\/json(?:;charset=utf-?8)?;base64,(.+)/);
+    expect(m).not.toBeNull();
+    const parsed = JSON.parse(Buffer.from(m![1], "base64").toString("utf-8"));
+    // The scheme-prefixed name survives untouched (no join/relativize).
+    expect(parsed.sources).toContain("webpack:///./src/original.ts");
+  });
+
   // A malformed inline map must not break the build — we silently fall
   // back to the intermediate as the deepest source.
   test("malformed inline map — build succeeds and falls back", async () => {

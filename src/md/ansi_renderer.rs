@@ -2061,40 +2061,12 @@ impl<'a> AnsiRenderer<'a> {
         let budget = self.kitty_column_budget();
         // budget == 0: wrapping disabled, render at native size.
         if budget > 0 && width_px > budget.saturating_mul(ASSUMED_CELL_PX) {
-            let mut buf = [0u8; 16];
-            let s = format_c_hint(&mut buf, budget);
-            self.write_raw_no_color(s);
+            self.write_raw_no_color(b",c=");
+            let mut buf = bun_core::fmt::ItoaBuf::new();
+            self.write_raw_no_color(bun_core::fmt::itoa(&mut buf, budget));
         }
         self.write_raw_no_color(b";");
     }
-}
-
-/// Format `,c=<budget>` into a small stack buffer.
-fn format_c_hint(buf: &mut [u8; 16], budget: u32) -> &[u8] {
-    use core::fmt::Write as _;
-    struct BufWriter<'a> {
-        buf: &'a mut [u8],
-        pos: usize,
-    }
-    impl<'a> core::fmt::Write for BufWriter<'a> {
-        fn write_str(&mut self, s: &str) -> core::fmt::Result {
-            let bytes = s.as_bytes();
-            let end = self.pos + bytes.len();
-            if end > self.buf.len() {
-                return Err(core::fmt::Error);
-            }
-            self.buf[self.pos..end].copy_from_slice(bytes);
-            self.pos = end;
-            Ok(())
-        }
-    }
-    let mut w = BufWriter {
-        buf: &mut buf[..],
-        pos: 0,
-    };
-    let _ = write!(w, ",c={}", budget);
-    let n = w.pos;
-    &buf[..n]
 }
 
 // Drop is automatic for AnsiRenderer — all owned fields are Vec/Box.
@@ -2852,9 +2824,8 @@ fn read_png_dims(abs_path: &[u8]) -> Option<PngDims> {
     };
     let mut buf = [0u8; 24];
     // read_all loops over short reads (e.g. FUSE/network mounts).
-    let read_result = file.read_all(&mut buf);
-    let _ = file.close();
-    match read_result {
+    // `file` closes on Drop.
+    match file.read_all(&mut buf) {
         bun_sys::Result::Ok(amt) if amt >= 24 => parse_png_dims(&buf),
         _ => None,
     }

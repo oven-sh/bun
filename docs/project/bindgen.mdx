@@ -78,7 +78,7 @@ In JS files in `src/js/`, `$bindgenFn("bindgen_test.bind.ts", "add")` returns
 a handle to the implementation.
 
 Exported bindgen functions are snake_cased on the Rust side
-(`requiredAndOptionalArg` → `required_and_optional_arg`), and the generated
+(`requiredAndOptionalArg` → `required_and_optional_arg`). The generated
 callback constructor follows the same convention
 (`create_required_and_optional_arg_callback`).
 
@@ -190,7 +190,7 @@ A `oneOf` is a union of two or more types. It is represented as a Rust
 
 ## Attributes
 
-Attributes can be chained onto `t.*` types. On all types:
+You can chain attributes onto `t.*` types. On all types:
 
 - `.required`, in dictionary parameters only
 - `.optional`, in function arguments only
@@ -217,8 +217,8 @@ pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8
 ```
 
 Depending on the type, more attributes are available. See the type definitions
-in auto-complete for details. Only one of these three attributes can be
-applied, and it must be applied last.
+in auto-complete for details. You can apply only one of these three attributes,
+and you must apply it last.
 
 ### Integer Attributes
 

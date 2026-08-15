@@ -195,7 +195,7 @@ ls -lh dist/
 
 The `.jsc` file should be 2-8x larger than the `.js` file.
 
-To log whether the bytecode is used, set `BUN_JSC_verboseDiskCache=1` in your environment.
+To log whether Bun uses the bytecode, set `BUN_JSC_verboseDiskCache=1` in your environment.
 
 On a cache hit, Bun logs:
 
@@ -213,7 +213,7 @@ Several cache-miss lines are normal: Bun doesn't bytecode-cache the JavaScript i
 
 ### Common issues
 
-**Bytecode silently ignored**: Usually caused by a Bun version update. The cache version doesn't match, so bytecode is rejected. Regenerate to fix.
+**Bytecode silently ignored**: Usually caused by a Bun version update. The cache version doesn't match, so Bun rejects the bytecode. Regenerate to fix.
 
 **File size too large**: This is expected. Consider:
 
@@ -226,8 +226,8 @@ Several cache-miss lines are normal: Bun doesn't bytecode-cache the JavaScript i
 When you run JavaScript, the JavaScript engine doesn't execute your source code directly. Instead, it goes through several steps:
 
 1. **Parsing**: The engine reads your JavaScript source code and converts it into an Abstract Syntax Tree (AST)
-2. **Bytecode compilation**: The AST is compiled into bytecode - a lower-level representation that's faster to execute
-3. **Execution**: The bytecode is executed by the engine's interpreter or JIT compiler
+2. **Bytecode compilation**: The engine compiles the AST into bytecode - a lower-level representation that's faster to execute
+3. **Execution**: The engine's interpreter or JIT compiler executes the bytecode
 
 Bytecode is an intermediate representation - it's lower-level than JavaScript source code, but higher-level than machine code. Think of it as assembly language for a virtual machine. Each bytecode instruction represents a single operation like "load this variable," "add two numbers," or "call this function."
 
@@ -237,7 +237,7 @@ With bytecode caching, Bun moves steps 1 and 2 to the build step. At runtime, th
 
 ### Why lazy parsing makes this even better
 
-Modern JavaScript engines use an optimization called **lazy parsing**. They don't parse all your code upfront - instead, functions are only parsed when they're first called:
+Modern JavaScript engines use an optimization called **lazy parsing**. They don't parse all your code upfront. Instead, they parse each function only when it's first called:
 
 ```js
 // Without bytecode caching:
@@ -252,7 +252,7 @@ function main() {
 }
 ```
 
-This means parsing overhead isn't just a startup cost - it happens throughout your application's lifetime as different code paths execute. With bytecode caching, **all functions are pre-compiled**, even the ones the engine would otherwise parse lazily.
+Lazy parsing means parsing overhead isn't just a startup cost. It happens throughout your application's lifetime as different code paths execute. With bytecode caching, Bun **pre-compiles all functions**, even the ones the engine would otherwise parse lazily.
 
 ## The bytecode format
 
@@ -287,7 +287,7 @@ A `.jsc` file contains a serialized bytecode structure.
 **Function metadata** (for each function in your code):
 
 - **Register allocation**: How many registers (local variables) the function needs - `thisRegister`, `scopeRegister`, `numVars`, `numCalleeLocals`, `numParameters`.
-- **Code features**: A bitmask of function characteristics: is it a constructor? an arrow function? does it use `super`? does it have tail calls? These affect how the function is executed.
+- **Code features**: A bitmask of function characteristics: is it a constructor? an arrow function? does it use `super`? does it have tail calls? These affect how the engine executes the function.
 - **Lexically scoped features**: Strict mode and other lexical context.
 - **Parse mode**: The mode in which the function was parsed (normal, async, generator, async generator).
 
@@ -327,13 +327,13 @@ Compiles to bytecode that:
 - Creates the arrow function (which itself has bytecode)
 - Loads the initial value `0`
 - Sets up the call with the right number of arguments
-- Actually performs the call
+- Performs the call
 - Stores the result in `sum`
 
 Each of these steps is a separate bytecode instruction with its own metadata.
 
 **Constant pools store everything**:
-Every string literal, number, property name - everything gets stored in the constant pool. Even if your source code has `"hello"` a hundred times, the constant pool stores it once, but the identifier table and constant references add overhead.
+Every string literal, number, property name - everything gets stored in the constant pool. Even if your source code has `"hello"` a hundred times, the constant pool stores it once. The identifier table and constant references still add overhead.
 
 **Per-function metadata**:
 Each function - even small one-line functions - gets its own complete metadata:
@@ -398,11 +398,11 @@ The cache version in the `.jsc` file header is a hash of the JavaScriptCore fram
 
 1. It extracts the cache version from the `.jsc` file
 2. It computes the current JavaScriptCore version
-3. If they don't match, the bytecode is **silently rejected**
+3. If they don't match, Bun **silently rejects** the bytecode
 4. Bun falls back to parsing the `.js` source code
 
 **Graceful degradation**:
-This design means bytecode caching "fails open" - if anything goes wrong (version mismatch, corrupted file, missing file), your code still runs normally. You might see slower startup, but you won't see errors.
+This design means bytecode caching "fails open." If anything goes wrong (version mismatch, corrupted file, missing file), your code still runs normally. You might see slower startup, but you won't see errors.
 
 ## Unlinked vs. linked bytecode
 
@@ -435,7 +435,7 @@ When Bun runs bytecode, it "links" it - creating a runtime wrapper that adds:
 - **JIT compilation state**: References to baseline JIT or optimizing JIT (DFG/FTL) compiled versions of hot code.
 - **Runtime objects**: Pointers to actual JavaScript objects, prototypes, scopes, etc.
 
-This linked representation is created fresh every time you run your code. This separation allows:
+Bun creates this linked representation fresh every time you run your code. This separation allows:
 
 1. **Caching the expensive work** (parsing and compilation to unlinked bytecode)
 2. **Still collecting runtime profiling data** to guide optimizations

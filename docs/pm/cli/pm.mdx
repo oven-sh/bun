@@ -165,7 +165,7 @@ bun list --trusted
 
 ## licenses
 
-List every installed package grouped by license, as read from each package's `package.json` in `node_modules`. Packages without a `license` field are listed under `Unknown`. Packages only reachable through `devDependencies` are marked `(dev)`.
+List every installed package grouped by license, as read from each package's `package.json` in `node_modules`. Bun lists packages without a `license` field under `Unknown`. Bun marks packages only reachable through `devDependencies` with `(dev)`.
 
 ```bash terminal icon="terminal"
 bun pm licenses
@@ -214,9 +214,9 @@ bun pm licenses --json --prod
 }
 ```
 
-From a workspace root, every workspace's dependencies are listed; from inside a workspace package, only that package's. Use [`bun why`](/pm/cli/why) to find out what pulls in an unexpected package.
+From a workspace root, Bun lists every workspace's dependencies. From inside a workspace package, Bun lists only that package's dependencies. Use [`bun why`](/pm/cli/why) to find out what pulls in an unexpected package.
 
-Requires both `bun.lock` and `node_modules`. Packages in the lockfile but missing from `node_modules` (e.g. after `bun install --production`) are skipped with a warning.
+Requires both `bun.lock` and `node_modules`. Bun skips packages that are in the lockfile but missing from `node_modules` (e.g. after `bun install --production`) and prints a warning.
 
 ## whoami
 

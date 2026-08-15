@@ -4,8 +4,6 @@
 #include "ErrorCode.h"
 #include "JSCompressionStream.h"
 #include "JSDecompressionStream.h"
-#include "JSReadableStream.h"
-#include "JSReadableStreamDefaultController.h"
 #include "JSSink.h"
 #include "JSStreamsRuntime.h"
 #include "JSTransformStream.h"
@@ -16,6 +14,7 @@
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
+#include <limits>
 
 namespace Bun {
 namespace WebStreams {
@@ -23,8 +22,6 @@ namespace WebStreams {
 using namespace JSC;
 using WebCore::JSCompressionStream;
 using WebCore::JSDecompressionStream;
-using WebCore::JSReadableStreamDefaultController;
-using WebCore::JSStreamsRuntime;
 using WebCore::JSTransformStream;
 using WebCore::JSTransformStreamDefaultController;
 
@@ -46,6 +43,24 @@ std::optional<CompressionFormat> parseCompressionFormat(JSGlobalObject* globalOb
         return CompressionFormat::Zstd;
     Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "format"_s, formatValue, "must be one of: deflate, deflate-raw, gzip, brotli, zstd"_s);
     return std::nullopt;
+}
+
+// Default for the optional second constructor argument; the same default output size as the
+// node:zlib stream adapter (src/js/internal/streams/iter/transform.ts).
+static constexpr double kDefaultCodecHighWaterMark = 64 * 1024;
+
+size_t parseCodecHighWaterMark(JSGlobalObject* globalObject, JSValue strategy)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    QueuingStrategyDict dict = convertQueuingStrategyDict(globalObject, strategy);
+    RETURN_IF_EXCEPTION(scope, 0);
+    double highWaterMark = extractHighWaterMark(globalObject, dict, kDefaultCodecHighWaterMark);
+    RETURN_IF_EXCEPTION(scope, 0);
+    // +Infinity (spec-legal) means "never split a chunk's output"; the coder floors at one byte.
+    if (highWaterMark >= static_cast<double>(std::numeric_limits<size_t>::max()))
+        return std::numeric_limits<size_t>::max();
+    return static_cast<size_t>(highWaterMark);
 }
 
 // BufferSource → (ptr, len). `scratch` owns the bytes when `chunk` is a string
@@ -95,11 +110,14 @@ static constexpr size_t kAsyncCodecThreshold = 128 * 1024;
 
 // ─── Stepping a chunk through the coder ─────────────────────────────────────
 //
-// The coder emits a chunk (or the flush) in steps of bounded output (CompressionStreamCoder.rs).
-// A chunk its first step finishes completes synchronously like any other arm; otherwise it
-// stays pending on the stream (m_codecPromise) and is stepped again from later turns, once
-// the readable or the native sink has room for more. The coder holds a pending chunk's state,
-// so ClearAlgorithms defers the coder release to the chunk's terminal.
+// The coder emits a chunk (or the flush) in steps of at most the stream's highWaterMark
+// (CompressionStreamCoder.rs). A chunk its first step finishes completes synchronously like
+// any other arm. Otherwise its transform promise (m_codecPromise) stays pending, which keeps
+// the write in flight and so the producer waiting, and the consumer drives the remaining
+// steps: the readable's pull algorithm and the native sink's onReady call nativeCodecContinue;
+// the error and cancel terminals and a sink detach call nativeCodecAbandon. The coder holds a
+// pending chunk's state, so ClearAlgorithms defers the coder release meanwhile (the close
+// algorithm clears algorithms while a multi-step flush is still being drained).
 
 static void* coderOf(JSTransformStream* stream)
 {
@@ -112,57 +130,12 @@ static void* coderOf(JSTransformStream* stream)
 
 // One step, with its output already handed to the consumer.
 struct CodecStepResult {
-    // The coder stopped at its output cap; the chunk needs another step.
+    // The coder stopped at its output bound; the chunk needs another step.
     bool more { false };
     bool sinkBackpressure { false };
     // Codec error or failed delivery; empty on success (and on VM termination).
     JSValue thrown;
 };
-
-enum class CodecVerdict : uint8_t {
-    // Complete, or the rest of its output has no consumer left.
-    Done,
-    Failed,
-    // Complete, but the sink is full: the chunk's promise settles when the sink drains.
-    AwaitSink,
-    // More output pending and the consumer is full; onCodecChunkResume continues it.
-    ParkOnReadable,
-    ParkOnSink,
-    // More output pending and room for it.
-    Step,
-};
-
-// Whether the rest of a pending chunk's output still has somewhere to go (false once the
-// readable was cancelled or errored under it, or its native-sink pump finished and detached).
-static bool codecOutputWanted(JSTransformStream* stream)
-{
-    auto* readable = stream->m_readable.get();
-    if (readable->m_state != ReadableStreamState::Readable)
-        return false;
-    if (stream->m_nativeSinkPtr)
-        return true;
-    if (readable->m_controllerKind != ControllerKind::Default)
-        return false;
-    auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(readable->m_controller.get());
-    return controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller);
-}
-
-static CodecVerdict verdictAfterStep(JSTransformStream* stream, const CodecStepResult& step)
-{
-    if (!step.thrown.isEmpty())
-        return CodecVerdict::Failed;
-    // A sink that detached during the write will not signal again.
-    bool sinkFull = step.sinkBackpressure && stream->m_nativeSinkPtr;
-    if (!step.more)
-        return sinkFull ? CodecVerdict::AwaitSink : CodecVerdict::Done;
-    if (sinkFull)
-        return CodecVerdict::ParkOnSink;
-    if (!codecOutputWanted(stream))
-        return CodecVerdict::Done;
-    if (!stream->m_nativeSinkPtr && stream->m_backpressure)
-        return CodecVerdict::ParkOnReadable;
-    return CodecVerdict::Step;
-}
 
 // One step on this thread, delivered straight into the native JSSink when one is attached
 // (no JSUint8Array), otherwise enqueued. `input` is only passed on a chunk's first step.
@@ -188,22 +161,45 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     return step;
 }
 
-// Steps the chunk on this thread until it completes, fails, or has to wait (never returns
-// Step). The caller holds m_nativeStateInUse: a terminal reached from inside a delivery then
-// defers the coder release and the loop stops via codecOutputWanted instead.
-static CodecVerdict stepChunkHere(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, const uint8_t* input, size_t inputLen, bool finish, JSValue& thrown)
+enum class CodecOutcome : uint8_t {
+    Done,
+    // Done, but its last write left the sink full: the transform promise becomes
+    // m_nativeSinkReadyPromise and settles when the sink drains, as any backpressured write.
+    DoneSinkFull,
+    Failed,
+    // Nothing to settle: output is still pending and the consumer is full (it will continue
+    // the chunk), or a terminal reached from inside a delivery already abandoned it.
+    Pending,
+};
+
+static bool consumerFull(JSTransformStream* stream, const CodecStepResult& step)
+{
+    return stream->m_nativeSinkPtr ? step.sinkBackpressure : stream->m_backpressure;
+}
+
+// Steps on this thread until the chunk completes, fails, or its consumer is full. `input` is
+// only fed on the first step. The caller holds m_nativeStateInUse, so a terminal reached from
+// inside a delivery defers the coder release instead of freeing it under the loop.
+static CodecOutcome stepChunkHere(JSGlobalObject* globalObject, JSTransformStream* stream, void* coder, const uint8_t* input, size_t inputLen, bool finish, JSValue& thrown)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_nativeStateInUse);
+    bool continuation = !!stream->m_codecPromise;
     for (;;) {
         CodecStepResult step = runStepHere(globalObject, stream, coder, input, inputLen, finish);
-        RETURN_IF_EXCEPTION(scope, CodecVerdict::Failed);
-        CodecVerdict verdict = verdictAfterStep(stream, step);
-        if (verdict != CodecVerdict::Step) {
+        RETURN_IF_EXCEPTION(scope, CodecOutcome::Failed);
+        if (continuation && !stream->m_codecPromise)
+            return CodecOutcome::Pending;
+        if (!step.thrown.isEmpty()) {
             thrown = step.thrown;
-            return verdict;
+            return CodecOutcome::Failed;
         }
+        bool full = consumerFull(stream, step);
+        if (!step.more)
+            return full && stream->m_nativeSinkPtr ? CodecOutcome::DoneSinkFull : CodecOutcome::Done;
+        if (full)
+            return CodecOutcome::Pending;
         input = nullptr;
         inputLen = 0;
     }
@@ -215,13 +211,20 @@ static void dispatchStepOffThread(JSGlobalObject* globalObject, JSTransformStrea
     CompressionStreamCoder__transformAsync(coder, globalObject, JSValue::encode(stream), JSValue::encode(chunk), input, inputLen, finish);
 }
 
-// Terminal of a pending chunk; `thrown` empty means fulfilled.
-static void settleCodecChunk(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue thrown)
+// Takes the pending chunk's promise off the stream; the coder is idle again, so a deferred
+// release can go ahead.
+static JSPromise* takeCodecPromise(JSTransformStream* stream)
 {
     auto* promise = stream->m_codecPromise.get();
     stream->m_codecPromise.clear();
     stream->m_codecChunkOffThread = false;
     nativeTransformReleaseStateIfIdle(stream);
+    return promise;
+}
+
+static void settleCodecChunk(JSGlobalObject* globalObject, JSTransformStream* stream, JSValue thrown)
+{
+    auto* promise = takeCodecPromise(stream);
     ASSERT(promise);
     if (!promise) [[unlikely]]
         return;
@@ -231,74 +234,24 @@ static void settleCodecChunk(JSGlobalObject* globalObject, JSTransformStream* st
         resolvePromise(globalObject, promise, jsUndefined());
 }
 
-// CodecVerdict::AwaitSink: the chunk's promise becomes m_nativeSinkReadyPromise, which the
-// sink's onReady (or detaching from the sink) resolves. The coder is idle from here on.
-static JSPromise* completeChunkWhenSinkDrains(JSGlobalObject* globalObject, JSTransformStream* stream)
+// Applies the outcome of a step that ran from a later turn to the pending chunk.
+static void settlePendingChunk(JSGlobalObject* globalObject, JSTransformStream* stream, CodecOutcome outcome, JSValue thrown)
 {
     auto& vm = getVM(globalObject);
-    auto* promise = stream->m_codecPromise.get();
-    stream->m_codecPromise.clear();
-    stream->m_codecChunkOffThread = false;
-    if (!promise)
-        promise = JSPromise::create(vm, globalObject->promiseStructure());
-    stream->m_nativeSinkReadyPromise.set(vm, stream, promise);
-    nativeTransformReleaseStateIfIdle(stream);
-    return promise;
-}
-
-// CodecVerdict::ParkOnReadable / ParkOnSink: registers onCodecChunkResume on the readable's
-// [[backpressureChangePromise]] (resolved by its pull and, via transformStreamUnblockWrite, by
-// every error/cancel terminal, including the cancel-after-close branch of
-// transformStreamDefaultSourceCancelAlgorithm) or on a gate in m_nativeSinkReadyPromise
-// (resolved by the sink's onReady or by detaching from it). Returns the chunk's promise.
-static JSPromise* parkCodecChunk(JSGlobalObject* globalObject, JSTransformStream* stream, CodecVerdict wait)
-{
-    auto& vm = getVM(globalObject);
-    if (!stream->m_codecPromise)
-        stream->m_codecPromise.set(vm, stream, JSPromise::create(vm, globalObject->promiseStructure()));
-    JSPromise* gate;
-    if (wait == CodecVerdict::ParkOnSink) {
-        ASSERT(!stream->m_nativeSinkReadyPromise);
-        gate = JSPromise::create(vm, globalObject->promiseStructure());
-        stream->m_nativeSinkReadyPromise.set(vm, stream, gate);
-    } else {
-        ASSERT(wait == CodecVerdict::ParkOnReadable);
-        ASSERT(stream->m_backpressure);
-        gate = stream->m_backpressureChangePromise.get();
-        ASSERT(gate);
-    }
-    auto* runtime = JSStreamsRuntime::from(globalObject);
-    gate->performPromiseThenWithContext(vm, globalObject, runtime->onCodecChunkResume(), jsUndefined(), jsUndefined(), stream);
-    return stream->m_codecPromise.get();
-}
-
-// Applies a step's verdict to a chunk that is already pending (m_codecPromise set).
-static void continuePendingChunk(JSGlobalObject* globalObject, JSTransformStream* stream, CodecVerdict verdict, JSValue thrown)
-{
-    switch (verdict) {
-    case CodecVerdict::Done:
-    case CodecVerdict::Failed:
-        settleCodecChunk(globalObject, stream, thrown);
-        return;
-    case CodecVerdict::AwaitSink:
-        completeChunkWhenSinkDrains(globalObject, stream);
-        return;
-    case CodecVerdict::ParkOnReadable:
-    case CodecVerdict::ParkOnSink:
-        parkCodecChunk(globalObject, stream, verdict);
-        return;
-    case CodecVerdict::Step:
-        break;
-    }
-    // stepChunkHere loops on Step itself; an off-thread chunk's next step goes to the pool too.
-    ASSERT(stream->m_codecChunkOffThread);
-    void* coder = coderOf(stream);
-    ASSERT(coder);
-    if (!coder) [[unlikely]] {
+    switch (outcome) {
+    case CodecOutcome::Done:
         settleCodecChunk(globalObject, stream, JSValue());
         return;
+    case CodecOutcome::Failed:
+        settleCodecChunk(globalObject, stream, thrown);
+        return;
+    case CodecOutcome::DoneSinkFull:
+        if (auto* promise = takeCodecPromise(stream))
+            stream->m_nativeSinkReadyPromise.set(vm, stream, promise);
+        return;
+    case CodecOutcome::Pending:
+        return;
     }
-    dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);
 }
 
 // The transform / flush arm (under runNativeArm). Abrupt completions become a rejected
@@ -320,43 +273,59 @@ static JSPromise* transformChunk(JSGlobalObject* globalObject, JSTransformStream
     }
 
     JSValue thrown;
-    CodecVerdict verdict = stepChunkHere(globalObject, stream, coder, input, inputLen, finish, thrown);
+    CodecOutcome outcome = stepChunkHere(globalObject, stream, coder, input, inputLen, finish, thrown);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    switch (verdict) {
-    case CodecVerdict::Done:
+    switch (outcome) {
+    case CodecOutcome::Done:
         RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, jsUndefined()));
-    case CodecVerdict::Failed:
+    case CodecOutcome::Failed:
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, thrown));
-    case CodecVerdict::AwaitSink:
-        RELEASE_AND_RETURN(scope, completeChunkWhenSinkDrains(globalObject, stream));
-    case CodecVerdict::ParkOnReadable:
-    case CodecVerdict::ParkOnSink:
-        RELEASE_AND_RETURN(scope, parkCodecChunk(globalObject, stream, verdict));
-    case CodecVerdict::Step:
-        break;
+    case CodecOutcome::DoneSinkFull: {
+        auto* ready = JSPromise::create(vm, globalObject->promiseStructure());
+        stream->m_nativeSinkReadyPromise.set(vm, stream, ready);
+        return ready;
+    }
+    case CodecOutcome::Pending: {
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        stream->m_codecPromise.set(vm, stream, promise);
+        return promise;
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// The consumer a chunk was parked on has room again, or went away (see parkCodecChunk).
-static void resumeCodecChunk(JSGlobalObject* globalObject, JSTransformStream* stream)
+void nativeCodecContinue(JSGlobalObject* globalObject, JSTransformStream* stream)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!stream->m_codecPromise) [[unlikely]]
-        return;
+    ASSERT(stream->m_codecPromise);
     void* coder = coderOf(stream);
     ASSERT(coder);
-    if (!coder || !codecOutputWanted(stream))
+    if (!coder) [[unlikely]]
         RELEASE_AND_RETURN(scope, settleCodecChunk(globalObject, stream, JSValue()));
-    if (stream->m_codecChunkOffThread)
+    if (stream->m_codecChunkOffThread) {
+        // A step already on the pool re-dispatches itself from deliverAsync while there is room.
+        if (stream->m_asyncCodecInFlight)
+            return;
         RELEASE_AND_RETURN(scope, dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false));
+    }
     JSValue thrown;
     stream->m_nativeStateInUse = true;
-    CodecVerdict verdict = stepChunkHere(globalObject, stream, coder, nullptr, 0, false, thrown);
+    CodecOutcome outcome = stepChunkHere(globalObject, stream, coder, nullptr, 0, false, thrown);
     stream->m_nativeStateInUse = false;
     RETURN_IF_EXCEPTION(scope, void());
-    RELEASE_AND_RETURN(scope, continuePendingChunk(globalObject, stream, verdict, thrown));
+    settlePendingChunk(globalObject, stream, outcome, thrown);
+    // An abandon from inside the loop deferred its release to here.
+    RELEASE_AND_RETURN(scope, nativeTransformReleaseStateIfIdle(stream));
+}
+
+void nativeCodecAbandon(JSGlobalObject* globalObject, JSTransformStream* stream)
+{
+    if (!stream->m_codecPromise)
+        return;
+    // The in-flight write this chunk holds must still finish for the writable to reach its
+    // own terminal; the output that was never consumed is dropped with the coder.
+    settleCodecChunk(globalObject, stream, JSValue());
 }
 
 template<typename JSStream>
@@ -402,8 +371,8 @@ JSPromise* decompressionStreamFlush(JSGlobalObject* globalObject, JSDecompressio
 }
 
 // JS-thread completion of an off-thread step. `out` borrows the coder's buffer, so it is
-// consumed BEFORE m_asyncCodecInFlight is cleared and the verdict may release or re-dispatch
-// the coder. Returns into Rust, so this is an exception boundary rather than a throw scope.
+// consumed BEFORE m_asyncCodecInFlight is cleared and the coder may be released or
+// re-dispatched. Returns into Rust, so this is an exception boundary rather than a throw scope.
 extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue streamCell, const uint8_t* out, size_t outLen, bool more, JSC::EncodedJSValue error)
 {
     auto& vm = getVM(globalObject);
@@ -416,9 +385,10 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
 
     CodecStepResult step;
     step.more = more;
+    bool abandoned = !stream->m_codecPromise;
     if (error) {
         step.thrown = JSValue::decode(error);
-    } else if (outLen) {
+    } else if (outLen && !abandoned) {
         if (void* sinkPtr = stream->m_nativeSinkPtr) {
             JSValue wrote = JSValue::decode(Bun__NativeTransformSink__writeBytes(stream->m_nativeSinkId, sinkPtr, globalObject, out, outLen));
             if (!scope.exception())
@@ -444,26 +414,24 @@ extern "C" void Bun__CompressionStream__deliverAsync(JSC::JSGlobalObject* global
     }
 
     stream->m_asyncCodecInFlight = false;
-    continuePendingChunk(globalObject, stream, verdictAfterStep(stream, step), step.thrown);
+    // A terminal abandoned the chunk while this step ran (the delivery above may have been it).
+    if (!stream->m_codecPromise) {
+        nativeTransformReleaseStateIfIdle(stream);
+        return;
+    }
+    if (!step.thrown.isEmpty())
+        settleCodecChunk(globalObject, stream, step.thrown);
+    else if (!step.more)
+        settlePendingChunk(globalObject, stream, consumerFull(stream, step) && stream->m_nativeSinkPtr ? CodecOutcome::DoneSinkFull : CodecOutcome::Done, JSValue());
+    else if (!consumerFull(stream, step)) {
+        if (void* coder = coderOf(stream)) [[likely]]
+            dispatchStepOffThread(globalObject, stream, coder, jsUndefined(), nullptr, 0, false);
+        else
+            settleCodecChunk(globalObject, stream, JSValue());
+    }
+    // Otherwise the consumer continues the chunk once it has room.
     scope.assertNoException();
 }
 
 } // namespace WebStreams
 } // namespace Bun
-
-namespace WebCore {
-
-using namespace JSC;
-
-// [reaction-convention] _CODEC group; context = the JSCompressionStream / JSDecompressionStream.
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onCodecChunkResume, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = uncheckedDowncast<JSTransformStream>(callFrame->argument(1));
-    Bun::WebStreams::resumeCodecChunk(globalObject, stream);
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-} // namespace WebCore

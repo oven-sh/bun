@@ -161,6 +161,7 @@ void transformStreamErrorWritableAndUnblockWrite(JSGlobalObject* globalObject, J
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    nativeCodecAbandon(globalObject, stream);
     transformStreamDefaultControllerClearAlgorithms(stream->m_controller.get());
     writableStreamDefaultControllerErrorIfNeeded(globalObject, stream->m_writable->m_controller.get(), error);
     RETURN_IF_EXCEPTION(scope, void());
@@ -277,15 +278,11 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* controller = stream->m_controller.get();
-    if (auto* finishPromise = controller->m_finishPromise.get()) {
-        // The spec skips the reaction below (and its unblock-write step) while a close is in
-        // flight; a native codec flush parked on [[backpressureChangePromise]] still needs it,
-        // as the readable this cancel just closed will never pull again. Nothing else waits on
-        // that promise once a close has started.
-        transformStreamUnblockWrite(globalObject, stream);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+    // The readable is closed: a codec chunk (or, with a close in flight, flush) still being
+    // drained into it can no longer finish.
+    nativeCodecAbandon(globalObject, stream);
+    if (auto* finishPromise = controller->m_finishPromise.get())
         return finishPromise;
-    }
     auto* finishPromise = JSPromise::create(vm, globalObject->promiseStructure());
     controller->m_finishPromise.set(vm, controller, finishPromise);
 
@@ -301,9 +298,21 @@ JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSGlobalObject* globalObj
 
 JSPromise* transformStreamDefaultSourcePullAlgorithm(JSGlobalObject* globalObject, JSTransformStream* stream)
 {
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(stream->m_backpressure);
     ASSERT(stream->m_backpressureChangePromise);
     transformStreamSetBackpressure(globalObject, stream, false);
+    scope.assertNoException();
+    if (stream->m_codecPromise) [[unlikely]] {
+        // The readable is asking for the next piece of a native codec chunk. Its enqueues may
+        // set [[backpressure]] again right here; a null result (pull done) keeps the next pull
+        // valid in that case, and otherwise the usual promise does.
+        nativeCodecContinue(globalObject, stream);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (stream->m_backpressure)
+            return nullptr;
+    }
     return stream->m_backpressureChangePromise.get();
 }
 

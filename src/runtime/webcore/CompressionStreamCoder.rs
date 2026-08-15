@@ -63,12 +63,6 @@ impl Format {
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// Output bound of a step on the JS thread (a chunk larger than this may
-/// produce up to its own size per step: the bound is on expansion).
-pub const STEP_OUTPUT: usize = 64 * 1024;
-/// Output bound of a step on the thread pool, where every step is a round trip.
-pub const STEP_OUTPUT_OFF_THREAD: usize = 1024 * 1024;
-
 /// Room for one codec call: grows `out` by up to [`CHUNK`], clamped to `cap`.
 fn spare(out: &mut Vec<u8>, cap: usize) -> &mut [core::mem::MaybeUninit<u8>] {
     debug_assert!(out.len() < cap);
@@ -131,6 +125,10 @@ pub struct CompressionStreamCoder {
     /// ends with <4 bytes after frame-complete we cannot tell which yet.
     zstd_head: [u8; 4],
     zstd_head_len: u8,
+    /// The stream's `highWaterMark`: output bound of one step. A chunk larger
+    /// than this may produce up to its own size per step (the bound is on
+    /// expansion), so a big chunk still finishes in a step or two.
+    high_water_mark: usize,
     /// Set while a chunk's transform spans steps; `None` between chunks.
     pending: Option<Pending>,
     /// Output of the latest `step`, which clears it on entry.
@@ -178,7 +176,11 @@ enum CodecError {
 }
 
 impl CompressionStreamCoder {
-    fn new(format: Format, decompress: bool) -> Result<Box<Self>, CodecError> {
+    fn new(
+        format: Format,
+        decompress: bool,
+        high_water_mark: usize,
+    ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
                 let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
@@ -254,6 +256,7 @@ impl CompressionStreamCoder {
             ended: false,
             zstd_head: [0; 4],
             zstd_head_len: 0,
+            high_water_mark,
             pending: None,
             out: Vec::new(),
         }))
@@ -274,10 +277,10 @@ impl CompressionStreamCoder {
     }
 
     /// One step of the chunk (or, with `finish`, the final flush) in progress:
-    /// collects at most `max(min_cap, chunk length)` bytes into `self.out` and
+    /// collects at most `max(high_water_mark, chunk length)` bytes into `self.out` and
     /// returns `true` if the codec stopped at that cap, in which case the caller
     /// must step again (with no input) before feeding the next chunk.
-    fn step(&mut self, input: &[u8], finish: bool, min_cap: usize) -> Result<bool, CodecError> {
+    fn step(&mut self, input: &[u8], finish: bool) -> Result<bool, CodecError> {
         self.out.clear();
         if let Some(mut pending) = self.pending.take() {
             debug_assert!(input.is_empty());
@@ -304,7 +307,7 @@ impl CompressionStreamCoder {
         } else {
             input
         };
-        let cap = min_cap.max(input.len());
+        let cap = self.high_water_mark.max(input.len());
         match self.run(bytes, finish, false, cap)? {
             Progress::Done => Ok(false),
             Progress::More { consumed } => {
@@ -748,11 +751,12 @@ impl AsyncInput {
 pub extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
+    high_water_mark: usize,
 ) -> *mut CompressionStreamCoder {
     let Some(format) = Format::from_u8(format) else {
         return ptr::null_mut();
     };
-    match CompressionStreamCoder::new(format, decompress) {
+    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1)) {
         Ok(b) => Box::into_raw(b),
         Err(_) => ptr::null_mut(),
     }
@@ -792,7 +796,7 @@ pub extern "C" fn CompressionStreamCoder__transform(
     // SAFETY: `this` is the live coder owned by the calling JS cell; it is
     // only driven from the JS thread, so the call-scoped `&mut *this` has no
     // alias. No JS runs between `step` and `take` below.
-    match unsafe { (*this).step(slice, finish, STEP_OUTPUT) } {
+    match unsafe { (*this).step(slice, finish) } {
         Ok(has_more) => {
             *more = has_more;
             // SAFETY: as above.
@@ -859,7 +863,7 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
     // SAFETY: as in `CompressionStreamCoder__transform`.
-    match unsafe { (*this).step(slice, finish, STEP_OUTPUT) } {
+    match unsafe { (*this).step(slice, finish) } {
         Ok(has_more) => {
             *more = has_more;
             // SAFETY: as above; the sink copies before returning.
@@ -949,8 +953,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
-        match unsafe { (*this.coder).step(this.input.slice(), this.finish, STEP_OUTPUT_OFF_THREAD) }
-        {
+        match unsafe { (*this.coder).step(this.input.slice(), this.finish) } {
             Ok(more) => this.more = more,
             Err(e) => this.error = Some(e),
         }

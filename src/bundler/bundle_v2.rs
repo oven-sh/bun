@@ -2492,9 +2492,7 @@ pub mod bv2_impl {
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
-                >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
-                );
+                >(self.pretty_path_base_dir(), path.text);
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
@@ -5749,6 +5747,26 @@ pub mod bv2_impl {
             false
         }
 
+        /// The directory `Path.pretty` is computed relative to.
+        ///
+        /// In a dev server bundle the pretty path is the module id the HMR
+        /// runtimes load modules by, and the dev server derives the ids it asks
+        /// them to load from its root (`DevServer.root`, which it installs as
+        /// the `root_dir` of its transpilers). That root is not `top_level_dir`
+        /// when `app.root` is set or the process chdir()s after the server is
+        /// created, so dev server bundles relativize against it. Every other
+        /// build relativizes against the cwd.
+        /// `LinkerContext::pretty_path_base_dir` is the same rule for the
+        /// linking phase.
+        fn pretty_path_base_dir(&self) -> &[u8] {
+            if self.dev_server.is_some() {
+                debug_assert!(!self.transpiler.options.root_dir.is_empty());
+                &self.transpiler.options.root_dir
+            } else {
+                self.transpiler.fs().top_level_dir
+            }
+        }
+
         fn path_with_pretty_initialized(
             &self,
             path: &Fs::Path<'static>,
@@ -5761,7 +5779,7 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir,
+                self.pretty_path_base_dir(),
                 bump,
             )?;
             Ok(out)
@@ -6455,12 +6473,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                self.transpiler.fs().top_level_dir, path.text
-                            );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL
@@ -6486,8 +6498,6 @@ pub mod bv2_impl {
                                 };
                                 import_record.path.is_disabled = false;
                             } else {
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
                                     &self
                                         .path_with_pretty_initialized(path, target)
@@ -7568,7 +7578,7 @@ pub mod bv2_impl {
     pub fn generic_path_with_pretty_initialized(
         path: &bun_paths::fs::Path<'static>,
         target: options::Target,
-        top_level_dir: &[u8],
+        base_dir: &[u8],
         bump: &bun_alloc::Arena,
     ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
@@ -7590,7 +7600,7 @@ pub mod bv2_impl {
             let rel = bun_paths::resolve_path::relative_platform_buf::<
                 bun_paths::resolve_path::platform::Loose,
                 false,
-            >(&mut **buf2, top_level_dir, path.text);
+            >(&mut **buf2, base_dir, path.text);
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);

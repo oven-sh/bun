@@ -286,8 +286,12 @@ pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub(crate) magic: Magic,
-    /// Absolute path to project root directory. For the HMR
-    /// runtime, its module IDs are strings relative to this.
+    /// Absolute path to project root directory: `app.root`, or the cwd at the
+    /// time the server was created. The HMR runtimes' module IDs are paths
+    /// relative to this, both the ones the bundler prints into the bundles
+    /// (it is the `root_dir` of the three transpilers below) and the ones this
+    /// server asks the runtimes to load (`relative_path`). It is a snapshot:
+    /// `top_level_dir` follows `process.chdir()` while this does not.
     pub(crate) root: Box<[u8]>,
     /// Unique identifier for this DevServer instance. Used to identify it
     /// when using the debugger protocol.
@@ -610,13 +614,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    // FileSystem is a process-lifetime singleton; `init` interns the path into
-    // the `DirnameStore` (process-lifetime arena) so no caller-side leak is
-    // needed for the `'static` it stores.
-    let _fs = match bun_resolver::fs::FileSystem::init(Some(options.root.as_bytes())) {
-        Ok(fs) => fs,
-        Err(err) => return Err(global.throw_error(err, generic_action)),
-    };
+    // The process-wide `FileSystem` was initialized with the cwd when the VM
+    // started (and follows `process.chdir()`), so `top_level_dir` is not
+    // `options.root`. Everything that needs to be relative to the project root
+    // goes through `dev.root` instead.
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
@@ -650,8 +651,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     //
     // SAFETY: `init_transpiler` writes the slot via `MaybeUninit::write` (see
     // `bake_body.rs`), so the previous (uninitialized) bytes are never dropped.
-    // `framework`/`log`/`bundler_options` were written above; reborrowing each
-    // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
+    // `root`/`framework`/`log`/`bundler_options` were written above; reborrowing
+    // each individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
     // box. Widen `'a → 'static` here once.
@@ -664,6 +665,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // accessed below were each written above and are reborrowed disjointly via
     // `addr_of_mut!`, so no overlapping `&mut` exists.
     unsafe {
+        let root: &[u8] = &**addr_of_mut!((*p).root);
         let framework = &mut *addr_of_mut!((*p).framework);
         let log = &mut *addr_of_mut!((*p).log);
         let bundler_options = &mut *addr_of_mut!((*p).bundler_options);
@@ -673,6 +675,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             log,
             bake::Mode::Development,
             bake::Graph::Server,
+            root,
             &mut *addr_of_mut!((*p).server_transpiler),
             &bundler_options.server,
         ) {
@@ -684,6 +687,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             log,
             bake::Mode::Development,
             bake::Graph::Client,
+            root,
             &mut *addr_of_mut!((*p).client_transpiler),
             &bundler_options.client,
         ) {
@@ -696,6 +700,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 log,
                 bake::Mode::Development,
                 bake::Graph::Ssr,
+                root,
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {

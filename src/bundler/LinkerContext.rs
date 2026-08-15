@@ -382,8 +382,24 @@ impl<'a> LinkerContext<'a> {
         path: &bun_paths::fs::Path<'static>,
         arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
+        generic_path_with_pretty_initialized(
+            path,
+            self.options.target,
+            self.pretty_path_base_dir(),
+            arena,
+        )
+    }
+
+    /// See `BundleV2::pretty_path_base_dir`; the dev server's root reaches the
+    /// linker through the resolver's copy of the bundle options.
+    pub(crate) fn pretty_path_base_dir(&self) -> &[u8] {
+        if self.dev_server.is_some() {
+            let root_dir: &[u8] = &self.resolver().opts.root_dir;
+            debug_assert!(!root_dir.is_empty());
+            root_dir
+        } else {
+            bun_resolver::fs::FileSystem::get().top_level_dir
+        }
     }
 
     pub(crate) fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {

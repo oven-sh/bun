@@ -196,6 +196,8 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
+    /// `root` is the project root (`DevServer.root`); the bundler relativizes
+    /// the module ids it prints against it.
     /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub(crate) fn init_transpiler<'a>(
         &mut self,
@@ -203,6 +205,7 @@ impl Framework {
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
+        root: &[u8],
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
     ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
@@ -236,6 +239,9 @@ impl Framework {
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
+        // Read back by `pretty_path_base_dir` in the bundler; `sync_resolver_opts`
+        // below copies it to the resolver options the linker reads.
+        out.options.root_dir = root.into();
 
         out.options.react_fast_refresh = mode == Mode::Development
             && renderer == Graph::Client

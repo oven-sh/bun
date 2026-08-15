@@ -27,6 +27,8 @@ fn print_installed_workspace_section<
     printed_new_install: &mut bool,
     id_map: Option<&mut [DependencyID]>,
     update_owners: &[PackageID],
+    // The summary has no other sections, so `print_catalog_entry_updates` runs here.
+    sole_section: bool,
 ) -> Result<(), crate::Error>
 where
     W: Write,
@@ -114,14 +116,16 @@ where
     }
 
     if !PRINT_SECTION_HEADER {
-        if print_catalog_entry_updates::<W, ENABLE_ANSI_COLORS>(
-            this,
-            manager,
-            installed,
-            pkg_metas,
-            &mut update_dedupe,
-            writer,
-        )? {
+        if sole_section
+            && print_catalog_entry_updates::<W, ENABLE_ANSI_COLORS>(
+                this,
+                manager,
+                installed,
+                pkg_metas,
+                &mut update_dedupe,
+                writer,
+            )?
+        {
             *printed_new_install = true;
             printed_update = true;
         }
@@ -386,7 +390,7 @@ where
     Ok(())
 }
 
-/// A bare `bun update` moves the root's catalog entries for every importer at once, so an entry's move is reported through whichever `catalog:` row names it, not just the rows of `update_owners` (walked above, hence the shared `update_dedupe`). Like a direct dependency's row it prints whether or not the new version had to be installed.
+/// A bare `bun update` moves the root's catalog entries for every importer at once, but the summary's one section only walks the rows of `update_owners` (above, hence the shared `update_dedupe`), so the entries consumed elsewhere are reported through whichever `catalog:` row names them. The verbose summary prints a section per importer, each reporting its own `catalog:` rows, and skips this. Like a direct dependency's row, a row prints whether or not its new version had to be installed.
 fn print_catalog_entry_updates<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
     manager: &mut PackageManager,
@@ -687,6 +691,7 @@ where
                 &mut had_printed_new_install,
                 None,
                 &[0],
+                false,
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
@@ -700,6 +705,7 @@ where
                     &mut had_printed_new_install,
                     None,
                     &[workspace_package_id],
+                    false,
                 )?;
             }
         } else {
@@ -751,6 +757,7 @@ where
                 &mut had_printed_new_install,
                 Some(&mut id_map),
                 &update_owners,
+                true,
             )?;
         }
     } else {

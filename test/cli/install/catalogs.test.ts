@@ -455,6 +455,19 @@ describe("update", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--latest --verbose reports a catalog entry once, under the workspace that depends on it", async () => {
+    const { packageDir } = await registry.createTestDir();
+    await createUpdateMonorepo(packageDir, "catalog-update-verbose");
+    await runBunInstall(bunEnv, packageDir);
+
+    const { out, err, exitCode } = await runUpdate(packageDir, "--latest", "--verbose");
+    expect(err).not.toContain("error:");
+    const lines = out.split(/\r?\n/);
+    expect(lines.filter(line => line.includes("no-deps"))).toStrictEqual(["^ no-deps 1.1.0 -> 2.0.0"]);
+    expect(lines[lines.indexOf("pkg1:") + 1]).toBe("^ no-deps 1.1.0 -> 2.0.0");
+    expect(exitCode).toBe(0);
+  });
+
   test("--latest reports a catalog entry whose new version needs no install (isolated store already has it)", async () => {
     const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
     await createUpdateMonorepo(packageDir, "catalog-update-isolated-rerun");

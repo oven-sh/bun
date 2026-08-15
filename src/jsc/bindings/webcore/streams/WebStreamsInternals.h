@@ -454,7 +454,7 @@ JSC::JSPromise* transformStreamDefaultSinkWriteAlgorithm(JSC::JSGlobalObject*, J
 JSC::JSPromise* transformStreamDefaultSinkAbortAlgorithm(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue reason); // userJS: yes — TransformStreamOperations.cpp
 JSC::JSPromise* transformStreamDefaultSinkCloseAlgorithm(JSC::JSGlobalObject*, JSTransformStream*); // userJS: yes (user flush) — TransformStreamOperations.cpp
 JSC::JSPromise* transformStreamDefaultSourceCancelAlgorithm(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue reason); // userJS: yes — TransformStreamOperations.cpp
-JSC::JSPromise* transformStreamDefaultSourcePullAlgorithm(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — TransformStreamOperations.cpp
+JSC::JSPromise* transformStreamDefaultSourcePullAlgorithm(JSC::JSGlobalObject*, JSTransformStream*); // userJS: yes (steps a pending codec chunk, whose enqueue fulfills read requests) — TransformStreamOperations.cpp
 
 // JSTransformStreamDefaultController.cpp
 
@@ -516,7 +516,7 @@ JSC::JSPromise* decompressionStreamFlush(JSC::JSGlobalObject*, JSDecompressionSt
 // A codec chunk whose output is still pending (stream->m_codecPromise set) is driven by its
 // consumer: the readable's pull algorithm / the native sink's onReady continue it; the
 // error and cancel terminals and a sink detach abandon it (no-ops when nothing is pending).
-void nativeCodecContinue(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — JSCompressionStreamShared.cpp
+void nativeCodecContinue(JSC::JSGlobalObject*, JSTransformStream*); // userJS: yes (enqueues) — JSCompressionStreamShared.cpp
 void nativeCodecAbandon(JSC::JSGlobalObject*, JSTransformStream*); // userJS: no — JSCompressionStreamShared.cpp
 
 // CrossRealmTransform.cpp — transferable streams are NOT implemented. These signatures are

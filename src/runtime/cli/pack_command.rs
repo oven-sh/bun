@@ -2131,7 +2131,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // Loading added the other workspaces' package.json files to the cache `json` points into.
         json = read_package_json(manager_ptr, abs_package_json_path);
     }
-    let edited_package_json = edit_root_package_json(workspace_manifests.as_ref(), json)?;
+    let edited_package_json =
+        edit_root_package_json(workspace_manifests.as_ref(), abs_workspace_path, json)?;
 
     let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
@@ -3197,8 +3198,11 @@ fn add_archive_entry(
 enum Substitution<'a> {
     /// `workspace:^`, `workspace:~`, `workspace:*`: the workspace's current version behind that prefix.
     WorkspaceVersion { prefix: &'static str },
-    /// `workspace:1.2.3`, `workspace:1.x`, ...: the range as written.
-    WorkspaceRange(&'a [u8]),
+    /// Anything else after `workspace:`. `bun install` reads it as a version range when the
+    /// dependency is itself one of the workspaces (`"pkg1": "workspace:1.x"`) and otherwise as the
+    /// directory of the workspace to link (`"c7": "workspace:../core"`), so which one it is takes
+    /// the manifests; see `publish_spec_for_workspace_range_or_directory`.
+    WorkspaceRangeOrDirectory(&'a [u8]),
     /// `catalog:` / `catalog:<name>`: that catalog's entry for the dependency.
     Catalog { catalog_name: &'a [u8] },
 }
@@ -3210,17 +3214,13 @@ impl<'a> Substitution<'a> {
                 b"^" => Substitution::WorkspaceVersion { prefix: "^" },
                 b"~" => Substitution::WorkspaceVersion { prefix: "~" },
                 b"*" => Substitution::WorkspaceVersion { prefix: "" },
-                _ => Substitution::WorkspaceRange(range),
+                _ => Substitution::WorkspaceRangeOrDirectory(range),
             });
         }
         let catalog_name = strings::without_prefix_if_possible_comptime(spec, b"catalog:")?;
         Some(Substitution::Catalog {
             catalog_name: strings::trim(catalog_name, &strings::WHITESPACE_CHARS),
         })
-    }
-
-    fn needs_workspace_manifests(&self) -> bool {
-        !matches!(self, Substitution::WorkspaceRange(_))
     }
 }
 
@@ -3257,15 +3257,57 @@ fn needs_workspace_manifests(package_json: Expr) -> bool {
             .as_ref()
             .and_then(Expr::as_utf8_string_literal)
             .and_then(Substitution::for_spec)
-            .is_some_and(|substitution| substitution.needs_workspace_manifests());
+            .is_some();
     });
     needed
 }
 
+/// What the tarball gets for `Substitution::WorkspaceRangeOrDirectory`, or why there is nothing to
+/// publish for it. The directory reading is tried first because `"pkg1": "workspace:../pkg1"`
+/// satisfies both readings and only the directory has a version to publish: that workspace's own,
+/// as an `npm:` alias when the dependency is declared under another name (the registry's way of
+/// installing a package under a different name, and what pnpm publishes for this spec). A range is
+/// copied as written; so is `workspace:<name>@<range>`, which installs the workspace `<name>` under
+/// the dependency's name (the installer, too, only reads it that way when `<name>` is a workspace).
+fn publish_spec_for_workspace_range_or_directory(
+    manifests: &WorkspaceManifests,
+    package_dir: &[u8],
+    dependency_name: &[u8],
+    spec: &[u8],
+) -> Result<Vec<u8>, String> {
+    let Some(workspace_name) = manifests.workspace_name_at_path(package_dir, spec) else {
+        let is_alias = strings::last_index_of_char(spec, b'@')
+            .is_some_and(|at| at > 0 && manifests.has_workspace(&spec[..at]));
+        if manifests.has_workspace(dependency_name) || is_alias {
+            return Ok(spec.to_vec());
+        }
+        return Err(format!(
+            "\"{}\" has no workspace named \"{}\" and no workspace in the directory \"{}\"",
+            bstr::BStr::new(manifests.root_package_json_path()),
+            bstr::BStr::new(dependency_name),
+            bstr::BStr::new(spec),
+        ));
+    };
+    let Some(version) = manifests.workspace_version(workspace_name) else {
+        return Err(format!(
+            "the package.json of workspace \"{}\" in the directory \"{}\" has no version",
+            bstr::BStr::new(workspace_name),
+            bstr::BStr::new(spec),
+        ));
+    };
+    Ok(if workspace_name == dependency_name {
+        format!("{version}").into_bytes()
+    } else {
+        format!("npm:{}@{version}", bstr::BStr::new(workspace_name)).into_bytes()
+    })
+}
+
 /// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.
-/// `workspace_manifests` is `Some` whenever `needs_workspace_manifests(json.root)` is.
+/// `workspace_manifests` is `Some` whenever `needs_workspace_manifests(json.root)` is. `package_dir`
+/// is the directory of `json`, which `workspace:<directory>` specs are relative to.
 fn edit_root_package_json(
     workspace_manifests: Option<&WorkspaceManifests>,
+    package_dir: &[u8],
     json: &mut WorkspacePackageJSONCache::MapEntry,
 ) -> Result<Box<[u8]>, AllocError> {
     let bump = pack_bump();
@@ -3303,7 +3345,6 @@ fn edit_root_package_json(
 
         // `E::EString::init` keeps a pointer to the bytes, so they go into the pack arena.
         let replacement: &[u8] = match substitution {
-            Substitution::WorkspaceRange(range) => bump.alloc_slice_copy(range),
             Substitution::WorkspaceVersion { prefix } => {
                 let Some(version) = manifests().workspace_version(dependency_name) else {
                     fail(
@@ -3316,6 +3357,17 @@ fn edit_root_package_json(
                     )
                 };
                 bump.alloc_slice_copy(format!("{prefix}{version}").as_bytes())
+            }
+            Substitution::WorkspaceRangeOrDirectory(spec) => {
+                match publish_spec_for_workspace_range_or_directory(
+                    manifests(),
+                    package_dir,
+                    dependency_name,
+                    spec,
+                ) {
+                    Ok(published) => bump.alloc_slice_copy(&published),
+                    Err(why) => fail("workspace", format_args!("{why}")),
+                }
             }
             Substitution::Catalog { catalog_name } => {
                 match manifests().catalog_version(catalog_name, dependency_name) {

@@ -90,6 +90,13 @@ A specific version takes precedence over the package's `package.json` version:
 "workspace:1.0.2" -> "1.0.2" // Even if current version is 1.0.1
 ```
 
+You can also reference a workspace package by the path of its directory. The path is relative to the `package.json` that declares the dependency. Bun publishes the version of the package in that directory. When the dependency name differs from the package name, Bun publishes an `npm:` alias:
+
+```
+"pkg-b": "workspace:../pkg-b" -> "pkg-b": "1.0.1"
+"b": "workspace:../pkg-b"     -> "b": "npm:pkg-b@1.0.1"
+```
+
 Workspaces have a few major benefits.
 
 - **Split code into logical parts.** If one package relies on another, add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` installs your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.

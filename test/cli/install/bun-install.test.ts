@@ -995,19 +995,39 @@ describe.concurrent("bun-install", () => {
       expect(exitCode).toBe(1);
     });
 
-    it("credentials configured explicitly override the ones inside the URL", async () => {
-      const { requests, stderr, exitCode } = await installWith({
-        bunfig: () => `[install]\nregistry = { url = "$MY_REG", token = "configured-token" }\n`,
-        env: origin => ({ MY_REG: `http://alice:s3cret@${origin}/` }),
-        dependency: "not-on-this-registry",
+    // Either kind of configured credential has to win: `from_api` sends a token
+    // in preference to a username/password pair, so a token taken from the URL
+    // would otherwise displace an explicitly configured pair.
+    const explicitWins: [name: string, bunfig: string, urlUserinfo: string, expected: string][] = [
+      [
+        "configured token vs user:pass@ in the URL",
+        `[install]\nregistry = { url = "$MY_REG", token = "configured-token" }\n`,
+        "alice:s3cret",
+        "Bearer configured-token",
+      ],
+      [
+        "configured username/password vs :token@ in the URL",
+        `[install]\nregistry = { url = "$MY_REG", username = "configured-user", password = "configured-pass" }\n`,
+        ":s3cret",
+        `Basic ${Buffer.from("configured-user:configured-pass").toString("base64")}`,
+      ],
+    ];
+
+    for (const [name, bunfig, urlUserinfo, expected] of explicitWins) {
+      it(`credentials configured explicitly override the ones inside the URL (${name})`, async () => {
+        const { requests, stderr, exitCode } = await installWith({
+          bunfig: () => bunfig,
+          env: origin => ({ MY_REG: `http://${urlUserinfo}@${origin}/` }),
+          dependency: "not-on-this-registry",
+        });
+        expect({ requests, stderr }).toEqual({
+          requests: [{ path: "/not-on-this-registry", authorization: expected }],
+          stderr: expect.stringMatching(/error: GET http:\/\/127\.0\.0\.1:\d+\/+not-on-this-registry - 404/),
+        });
+        expect(stderr).not.toContain("s3cret");
+        expect(exitCode).toBe(1);
       });
-      expect({ requests, stderr }).toEqual({
-        requests: [{ path: "/not-on-this-registry", authorization: "Bearer configured-token" }],
-        stderr: expect.stringMatching(/error: GET http:\/\/127\.0\.0\.1:\d+\/+not-on-this-registry - 404/),
-      });
-      expect(stderr).not.toContain("s3cret");
-      expect(exitCode).toBe(1);
-    });
+    }
   });
 
   it("--silent suppresses verbose output even when RUNNER_DEBUG is set", async () => {

@@ -354,13 +354,9 @@ pub mod registry {
             // The config loaders split literal strings; an expanded $ENV_VAR is split here.
             let from_url = api::NpmRegistry::from_url(&registry.url);
             registry.url = from_url.url;
-            if registry.token.is_empty() {
+            if !registry.has_credentials() {
                 registry.token = from_url.token;
-            }
-            if registry.username.is_empty() {
                 registry.username = from_url.username;
-            }
-            if registry.password.is_empty() {
                 registry.password = from_url.password;
             }
 

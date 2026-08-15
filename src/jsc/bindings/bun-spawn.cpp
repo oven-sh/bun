@@ -247,8 +247,6 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
-    // What the child execs with. Empty rather than this thread's mask, like
-    // libuv and posix_spawnattr_reset_signals: the mask survives execve.
     sigemptyset(&childmask);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)

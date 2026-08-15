@@ -162,10 +162,11 @@ describe("done(err) fails the test or hook whose done() received it", () => {
     return { stdout: normalizeBunSnapshot(stdout), results: resultLines(stderr), exitCode };
   }
 
-  // `suffix` is "" or ".concurrent". The macrotask case goes last: everything before it
-  // completes while being started, so serial and concurrent runs report in the same order.
+  // `suffix` is "" or ".concurrent". Everything up to the macrotask case completes while being
+  // started, so serial and concurrent runs report in the same order. The beforeAll case goes
+  // last so that the tests it skips cannot include any of the other cases.
   const fixture = (suffix: string) => `
-    import { it, describe, beforeEach, afterEach } from "bun:test";
+    import { it, describe, beforeAll, beforeEach, afterEach, afterAll } from "bun:test";
 
     it${suffix}("sync done(err)", done => {
       done(new Error("sync boom"));
@@ -197,14 +198,31 @@ describe("done(err) fails the test or hook whose done() received it", () => {
         console.log("afterEach > body ran");
       });
     });
+    describe${suffix}("afterAll", () => {
+      afterAll(async done => {
+        await 1;
+        done(new Error("afterAll boom"));
+      });
+      it("test passes", () => {
+        console.log("afterAll > body ran");
+      });
+    });
     it${suffix}("macrotask done(err)", done => {
       setTimeout(() => done(new Error("macrotask boom")), 1);
+    });
+    describe${suffix}("beforeAll", () => {
+      beforeAll(done => {
+        done(new Error("beforeAll boom"));
+      });
+      it("body is skipped", () => {
+        console.log("beforeAll > body ran");
+      });
     });
   `;
 
   const expected = {
     exitCode: 1,
-    stdout: "bun test <version> (<revision>)\nafterEach > body ran",
+    stdout: "bun test <version> (<revision>)\nafterEach > body ran\nafterAll > body ran",
     results: [
       "error: sync boom",
       "(fail) sync done(err)",
@@ -216,10 +234,15 @@ describe("done(err) fails the test or hook whose done() received it", () => {
       "(fail) beforeEach > body is skipped",
       "error: afterEach boom",
       "(fail) afterEach > test fails",
+      "(pass) afterAll > test passes",
+      "error: afterAll boom",
+      "(fail) afterAll > (unnamed)",
       "error: macrotask boom",
       "(fail) macrotask done(err)",
-      "2 pass",
-      "5 fail",
+      "error: beforeAll boom",
+      "(fail) beforeAll > (unnamed)",
+      "3 pass",
+      "7 fail",
     ].join("\n"),
   };
 

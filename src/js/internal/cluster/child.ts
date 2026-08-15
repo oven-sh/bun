@@ -155,8 +155,7 @@ cluster._getServer = function (obj, options, cb) {
   });
 };
 
-// node:http binds its own SO_REUSEPORT socket instead of going through
-// _getServer, so it never enters `handles`. Register it so _disconnect closes it.
+// For servers that listen without _getServer (node:http), so _disconnect still closes them.
 cluster._trackServer = function (server) {
   handles.set(server, server);
   server.once("close", () => handles.delete(server));
@@ -317,8 +316,6 @@ Worker.prototype.disconnect = function () {
 };
 
 Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
-  // The primary may ask to disconnect more than once; a second pass would
-  // close the servers again and tear down an already-closed channel.
   if (this.exitedAfterDisconnect) return;
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;

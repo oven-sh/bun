@@ -1009,17 +1009,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         } else {
             options::CompileMode::None
         };
-
-        // For compile mode, set the public_path to the target-specific base path
-        // This ensures embedded resources like yoga.wasm are correctly found
-        if let Some(compile_opts) = &config.compile {
-            let base_public_path =
-                target_base_public_path(compile_opts.compile_target.os, b"root/");
-            transpiler.options.public_path = Box::from(base_public_path);
-        } else {
-            transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
-        }
-
+        transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
         transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
         transpiler.options.minify_syntax = config.minify.syntax;

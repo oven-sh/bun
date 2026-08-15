@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
+import { basename } from "node:path";
 
 describe("compile --target=browser", () => {
   test("inlines JS and CSS into HTML", async () => {
@@ -392,6 +393,46 @@ body { color: blue; }`,
     expect(result.success).toBe(true);
   });
 
+  // Writing the executable copies the whole bun binary, which can exceed the
+  // default timeout under debug + ASAN.
+  const EXECUTABLE_TIMEOUT = 60_000;
+
+  test(
+    "executable fallback replaces publicPath with the virtual filesystem root",
+    async () => {
+      using dir = tempDir("compile-browser-no-html-public-path", {
+        "app.js": `
+          import asset from "./data.bin" with { type: "file" };
+          import { readFileSync } from "node:fs";
+          console.log(JSON.stringify({ asset, content: readFileSync(asset, "utf8") }));
+        `,
+        "data.bin": "embedded",
+      });
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/app.js`],
+        compile: { outfile: `${dir}/app` },
+        target: "browser",
+        publicPath: "https://cdn.example.com/assets/",
+      });
+      expect(result.success).toBe(true);
+
+      await using proc = Bun.spawn({
+        cmd: [`${dir}/app${isWindows ? ".exe" : ""}`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const { asset, content } = JSON.parse(stdout);
+      expect(asset).toStartWith(isWindows ? "B:/~BUN/root/" : "/$bunfs/root/");
+      expect(content).toBe("embedded");
+      expect(exitCode).toBe(0);
+    },
+    EXECUTABLE_TIMEOUT,
+  );
+
   test("CLI --compile --target=browser with non-HTML falls back to normal compile", async () => {
     using dir = tempDir("compile-browser-cli-no-html", {
       "app.js": `console.log("test");`,
@@ -633,12 +674,66 @@ console.log(greet("world"));`,
       expect(htmlOutput).toBeDefined();
       expect(mapOutput).toBeDefined();
 
+      const mapFile = basename(mapOutput!.path);
+      expect(mapFile).toMatch(/\.js\.map$/);
+
+      // The inline <script> must reference the .map artifact relative to the
+      // HTML document, not the virtual filesystem root executable builds use
+      // ("/$bunfs/root/" or "B:/~BUN/root/").
       const html = await htmlOutput!.text();
-      expect(html).toContain("//# sourceMappingURL=");
+      expect(html).toContain(`//# sourceMappingURL=./${mapFile}\n</script>`);
 
       const map = JSON.parse(await mapOutput!.text());
       expect(map.version).toBe(3);
       expect(map.sourcesContent.join("\n")).toContain("function greet(name: string): string {");
+    });
+
+    test("Bun.build() with sourcemap: 'linked' prefixes the sourceMappingURL with publicPath", async () => {
+      using dir = tempDir("compile-browser-sourcemap-api-public-path", fixture);
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        sourcemap: "linked",
+        publicPath: "https://cdn.example.com/assets/",
+      });
+
+      expect(result.success).toBe(true);
+      const htmlOutput = result.outputs.find(o => o.loader === "html");
+      const mapOutput = result.outputs.find(o => o.kind === "sourcemap");
+      expect(htmlOutput).toBeDefined();
+      expect(mapOutput).toBeDefined();
+
+      const mapFile = basename(mapOutput!.path);
+      const html = await htmlOutput!.text();
+      expect(html).toContain(`//# sourceMappingURL=https://cdn.example.com/assets/${mapFile}\n</script>`);
+    });
+
+    test("Bun.build() with sourcemap: 'linked' and outdir links the .map written next to the HTML", async () => {
+      using dir = tempDir("compile-browser-sourcemap-api-outdir", fixture);
+      const outdir = `${dir}/dist`;
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        sourcemap: "linked",
+        outdir,
+      });
+
+      expect(result.success).toBe(true);
+      const files = Array.from(new Bun.Glob("**/*").scanSync({ cwd: outdir })).sort();
+      expect(files).toHaveLength(2);
+      expect(files).toContain("index.html");
+      const mapFile = files.find(f => f.endsWith(".js.map"))!;
+      expect(mapFile).toBeDefined();
+
+      const html = await Bun.file(`${outdir}/index.html`).text();
+      expect(html).toContain(`//# sourceMappingURL=./${mapFile}\n</script>`);
+
+      const map = await Bun.file(`${outdir}/${mapFile}`).json();
+      expect(map.version).toBe(3);
     });
 
     test("Bun.build() with sourcemap: 'inline' keeps a single HTML output", async () => {

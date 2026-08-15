@@ -1213,6 +1213,8 @@ pub mod js_bundler {
                         compile.compile_target.os,
                         b"root/",
                     );
+                    // Replaces any publicPath: executable assets live in the virtual filesystem.
+                    this.public_path.reset();
                     this.public_path.append(base_public_path)?;
 
                     // When using --compile, only `external` sourcemaps work, as we do not

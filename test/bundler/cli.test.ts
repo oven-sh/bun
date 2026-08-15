@@ -486,8 +486,10 @@ test("--watch reports an unresolvable relative import longer than the path buffe
   // When watching, an unresolved relative import busts the resolver's directory
   // cache for the path it would have resolved to. That path used to be joined
   // into a 4 KiB buffer, so a longer specifier aborted the process with
-  // "panic: range end index N out of range for slice of length 4095".
-  const specifier = "./" + Buffer.alloc(5 * 1024, "a").toString();
+  // "panic: range end index N out of range for slice of length 4095". It is now
+  // joined into a MAX_PATH_BYTES buffer (4 KiB on Linux, 1 KiB on macOS, about
+  // 96 KiB on Windows), so exceed that too and the bust is skipped everywhere.
+  const specifier = "./" + Buffer.alloc((isWindows ? 96 : 4) * 1024 + 1024, "a").toString();
   using dir = tempDir("build-watch-long-specifier", {
     "entry.ts": `import "${specifier}";\nconsole.log("entry");`,
   });

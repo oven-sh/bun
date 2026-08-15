@@ -2658,14 +2658,10 @@ pub mod bv2_impl {
             task.task.node.next = core::ptr::null_mut();
             task.tree_shaking = self.linker.options.tree_shaking;
             task.known_target = target;
-            {
-                let t = self.transpiler_for_target(target);
-                task.jsx.development = match t.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => t.options.jsx.development,
-                };
-            }
+            task.jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -2768,14 +2764,10 @@ pub mod bv2_impl {
             task.tree_shaking = self.linker.options.tree_shaking;
             task.is_entry_point = is_entry_point;
             task.known_target = target;
-            {
-                let bundler = self.transpiler_for_target(target);
-                task.jsx.development = match bundler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => bundler.options.jsx.development,
-                };
-            }
+            task.jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
 
             // Handle onLoad plugins as entry points
             if !self.enqueue_on_load_plugin_if_needed(task) {
@@ -6218,13 +6210,7 @@ pub mod bv2_impl {
                         resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
                         resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = match transpiler.options.force_node_env {
-                            options::ForceNodeEnv::Development => true,
-                            options::ForceNodeEnv::Production => false,
-                            options::ForceNodeEnv::Unspecified => {
-                                transpiler.options.jsx.development
-                            }
-                        };
+                        resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
@@ -6591,11 +6577,7 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
-                resolve_task.jsx.development = match transpiler.options.force_node_env {
-                    options::ForceNodeEnv::Development => true,
-                    options::ForceNodeEnv::Production => false,
-                    options::ForceNodeEnv::Unspecified => transpiler.options.jsx.development,
-                };
+                resolve_task.jsx.development = transpiler.options.forced_jsx_development();
 
                 resolve_task.loader = Some(import_record_loader);
                 resolve_task.tree_shaking = transpiler.options.tree_shaking;

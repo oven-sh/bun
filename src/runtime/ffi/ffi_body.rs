@@ -620,8 +620,8 @@ impl CompileC {
             Ok(dirs) => dirs,
             Err(err) => {
                 global_this.throw(format_args!(
-                    "cc() could not write its bundled C headers to the temporary directory \"{}\": {}. Set $BUN_TMPDIR to a writable directory.",
-                    BStr::new(Fs::RealFS::tmpdir_path()),
+                    "cc() could not write its bundled C headers to the temporary directory {}: {}. Set $BUN_TMPDIR to a writable directory.",
+                    bun_fmt::quote(Fs::RealFS::tmpdir_path()),
                     err,
                 ));
                 return Err(crate::Error::JSError);

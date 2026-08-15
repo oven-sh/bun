@@ -86,19 +86,28 @@ declare module "bun:test" {
   }
 }
 
+type Family = 4 | 6;
 // `address` and `ttl` are either literal values or asymmetric matchers such as expect.any(Number).
-type Answer = { address: any; family: 4 | 6; ttl: any };
-type Host = {
-  name: string;
-  /** The exact answers, or null when they come from a resolver this test does not control. */
-  answers: Answer[] | null;
-};
-type Wanted = 4 | 6 | "both";
+type Answer = { address: any; family: Family; ttl: any };
+type Host =
+  // The addresses come from a resolver this test does not control; only their shape is checked.
+  | { name: string; answers: null }
+  | {
+      name: string;
+      /** The exact answer a lookup restricted to that family returns. */
+      answers: Record<Family, Answer>;
+      /** The families a lookup that does not pick one must return; the other family may come along. */
+      unspecified: Family[];
+    };
+type Wanted = Family | "both";
 
 const LOOPBACK_V4: Answer = { address: "127.0.0.1", family: 4, ttl: expect.any(Number) };
 const LOOPBACK_V6: Answer = { address: "::1", family: 6, ttl: expect.any(Number) };
-const LOCALHOST: Host = { name: "localhost", answers: [LOOPBACK_V4, LOOPBACK_V6] };
-const FAKE_HOST: Host = { name: `host.${FAKE_ZONE}`, answers: [FAKE_V4, FAKE_V6] };
+// A lookup restricted to either family gets that loopback address everywhere, but whether an
+// unrestricted one also yields ::1 depends on the hosts file: Debian's maps ::1 to localhost, Ubuntu's
+// only to ip6-localhost, and the lookup stops at the hosts file's 127.0.0.1 there.
+const LOCALHOST: Host = { name: "localhost", answers: { 4: LOOPBACK_V4, 6: LOOPBACK_V6 }, unspecified: [4] };
+const FAKE_HOST: Host = { name: `host.${FAKE_ZONE}`, answers: { 4: FAKE_V4, 6: FAKE_V6 }, unspecified: [4, 6] };
 const EXAMPLE_COM: Host = { name: "example.com", answers: null };
 const hostsFor = (backend: Backend): Host[] => [LOCALHOST, backend === "c-ares" ? FAKE_HOST : EXAMPLE_COM];
 
@@ -123,7 +132,13 @@ function expectAnswers(result: DNSLookup[], host: Host, wanted: Wanted) {
     (a, b) => a.family - b.family || a.address.localeCompare(b.address),
   );
   if (host.answers !== null) {
-    expect(distinct).toEqual(wanted === "both" ? host.answers : host.answers.filter(a => a.family === wanted));
+    // The required families plus whichever optional one was returned, so a missing required answer
+    // and a wrong or unexpected address both show up in the diff.
+    const families: Family[] =
+      wanted === "both"
+        ? [...new Set([...host.unspecified, ...distinct.map(answer => answer.family)])].sort((a, b) => a - b)
+        : [wanted];
+    expect(distinct).toEqual(families.map(family => host.answers[family]));
     return;
   }
   expect(distinct).not.toBeEmpty();
@@ -159,8 +174,12 @@ const NOT_FOUND = {
 };
 
 // Well-formed, but under the TLD that RFC 6761 reserves for never existing, so a resolver can answer
-// it without asking anyone's authoritative servers.
-const nonexistentHostname = "does-not-exist.invalid";
+// it without asking anyone's authoritative servers. The c-ares backend gets its NXDOMAINs from the
+// fake server instantly, so it also exercises the search-list retries; the OS resolver gets the
+// absolute form (trailing dot), because on the debian CI machines every negative round trip takes
+// about 4s and the search-list retry would make this lookup the file's critical path.
+const nonexistentHostname = (backend: Backend) =>
+  backend === "c-ares" ? "does-not-exist.invalid" : "does-not-exist.invalid.";
 const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname"];
 
 // getaddrinfo reports malformed names with whatever EAI code the platform picks, and bun maps the
@@ -192,8 +211,8 @@ describe("dns", () => {
       });
     });
 
-    test(`${nonexistentHostname} rejects with ENOTFOUND`, async () => {
-      expect(await rejectionOf(dns.lookup(nonexistentHostname, { backend }))).toMatchObject(NOT_FOUND);
+    test(`${nonexistentHostname(backend)} rejects with ENOTFOUND`, async () => {
+      expect(await rejectionOf(dns.lookup(nonexistentHostname(backend), { backend }))).toMatchObject(NOT_FOUND);
     });
 
     test.each(malformedHostnames)("%j rejects", async hostname => {

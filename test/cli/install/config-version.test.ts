@@ -55,7 +55,7 @@ describe.concurrent("configVersion", () => {
 
     expect(await file(join(packageDir, "bun.lock")).text()).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 2,
+        "lockfileVersion": 1,
         "configVersion": 1,
         "workspaces": {
           "": {
@@ -108,7 +108,7 @@ describe.concurrent("configVersion", () => {
 
     expect(await file(join(packageDir, "bun.lock")).text()).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 2,
+        "lockfileVersion": 1,
         "configVersion": 1,
         "workspaces": {
           "": {

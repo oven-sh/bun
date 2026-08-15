@@ -6,7 +6,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -1169,7 +1169,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -1192,7 +1192,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -2703,7 +2703,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -2730,7 +2730,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -2998,7 +2998,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3023,7 +3023,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3051,7 +3051,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3078,7 +3078,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3574,7 +3574,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3621,7 +3621,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3669,7 +3669,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3710,7 +3710,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3743,7 +3743,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3768,7 +3768,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3835,7 +3835,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3867,7 +3867,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3889,7 +3889,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3913,7 +3913,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3944,7 +3944,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3967,7 +3967,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3990,7 +3990,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4013,7 +4013,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4036,7 +4036,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4061,7 +4061,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4090,7 +4090,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4118,7 +4118,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4218,7 +4218,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {},
@@ -4259,7 +4259,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4282,7 +4282,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4313,7 +4313,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4345,7 +4345,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4409,7 +4409,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4552,7 +4552,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4574,7 +4574,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {},
@@ -4596,7 +4596,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4641,7 +4641,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4670,7 +4670,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4704,7 +4704,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4753,7 +4753,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4786,7 +4786,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4842,7 +4842,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4875,7 +4875,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4902,7 +4902,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4933,7 +4933,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4968,7 +4968,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {

@@ -258,12 +258,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             .get(1)
             .is_some_and(|a| strings::eql_comptime(a, b"diff"));
         // `bun pm diff a b` needs registry config, not a project: outside one, run from a scratch folder.
+        // init() chdirs to the project root; relative diff paths mean the folder the user was in.
         let mut diff_original_cwd: Option<Vec<u8>> = None;
-        let mut init = PackageManager::init(&mut *ctx, cli, Subcommand::Pm);
-        if is_diff && matches!(&init, Err(e) if *e == bun_install::Error::MissingPackageJSON) {
+        if is_diff {
             let mut cwd_buf = PathBuffer::uninit();
             if let Ok(len) = bun_sys::getcwd(&mut cwd_buf[..]) {
                 diff_original_cwd = Some(cwd_buf[..len].to_vec());
+            }
+        }
+        let mut init = PackageManager::init(&mut *ctx, cli, Subcommand::Pm);
+        if is_diff && matches!(&init, Err(e) if *e == bun_install::Error::MissingPackageJSON) {
+            {
                 let mut scratch = Fs::RealFS::platform_temp_dir().to_vec();
                 scratch.extend_from_slice(b"/bun-pm-diff");
                 let _ = Fd::cwd().make_path_u8(&scratch);

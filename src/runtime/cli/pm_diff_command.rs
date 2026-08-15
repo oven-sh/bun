@@ -77,14 +77,16 @@ pub(crate) fn exec(
         Global::exit(1);
     }
 
-    let (left_spec, right_spec) = resolve_sides(pm, &args);
+    let (left_spec, right_spec) = resolve_sides(pm, &args, original_cwd);
     let mut left = materialize(pm, &left_spec)?;
     let mut right = materialize(pm, &right_spec)?;
     // Show local paths the way they were typed, not as resolved from a scratch cwd.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
-            if let Some(i) = args.iter().position(|a| a == p) {
-                tree.label = typed[i].to_vec();
+            match args.iter().position(|a| a == p) {
+                Some(i) => tree.label = typed[i].to_vec(),
+                None if args.is_empty() => tree.label = b".".to_vec(),
+                None => {}
             }
         }
     }
@@ -123,17 +125,21 @@ fn classify(spec: &[u8]) -> Spec<'_> {
 }
 
 /// Turns 0, 1 or 2 user arguments into the two sides to compare.
-fn resolve_sides<'a>(pm: &mut PackageManager, args: &[&'a [u8]]) -> (Spec<'a>, Spec<'a>) {
+fn resolve_sides<'a>(
+    pm: &mut PackageManager,
+    args: &[&'a [u8]],
+    original_cwd: Option<&[u8]>,
+) -> (Spec<'a>, Spec<'a>) {
     match args {
         // In a package folder: what is published under this name → the folder.
         [] => {
-            let name = root_package_name(pm);
+            let name = root_package_name(pm, original_cwd);
             (
                 Spec::Registry {
                     name,
                     version: b"latest",
                 },
-                Spec::Dir(b"."),
+                Spec::Dir(original_cwd.map_or(b".".as_slice(), |c| leak(c.to_vec()))),
             )
         }
         [one] => match classify(one) {
@@ -168,7 +174,7 @@ fn resolve_sides<'a>(pm: &mut PackageManager, args: &[&'a [u8]]) -> (Spec<'a>, S
             }
             // A folder or tarball on its own: compare what is published under its package.json name to it.
             local => {
-                let name = root_package_name(pm);
+                let name = root_package_name(pm, original_cwd);
                 (
                     Spec::Registry {
                         name,
@@ -206,9 +212,12 @@ fn leak(v: Vec<u8>) -> &'static [u8] {
     Vec::leak(v)
 }
 
-fn root_package_name(pm: &PackageManager) -> &'static [u8] {
+fn root_package_name(pm: &PackageManager, original_cwd: Option<&[u8]>) -> &'static [u8] {
+    let dir = original_cwd
+        .and_then(|c| bun_sys::open_dir_at(Fd::cwd(), c).ok())
+        .unwrap_or(Fd::cwd());
     // The folder we are in, before the workspace root the manager walked up to.
-    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), b"package.json") {
+    if let Ok(bytes) = bun_sys::File::read_from(dir, b"package.json") {
         let bump = Bump::new();
         let src: &[u8] = bump.alloc_slice_copy(&bytes);
         if let Ok(json) = bun_parsers::json::parse_utf8(

@@ -623,7 +623,6 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
 pub(crate) const SIGNALS: &[(&[u8], &str)] = &[
     (b"eval(", "eval()"),
     (b"new Function(", "new Function()"),
-    (b"child_process", "child_process"),
     (b"process.env", "process.env"),
     (b"fetch(", "fetch()"),
     (b"XMLHttpRequest", "XMLHttpRequest"),

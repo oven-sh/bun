@@ -831,12 +831,7 @@ pub struct Linker<'a> {
     pub abs_dest_buf: &'a mut [u8],
     pub rel_buf: &'a mut [u8],
 
-    /// Real path of the directory the target package's files were installed
-    /// from: its `file:` folder, or the cache. The symlink install backend
-    /// (`file:` folders, `--backend symlink`) fills the package directory with
-    /// one symlink per file pointing in here, and the executable bit has to
-    /// land on the file behind such a link (see `make_executable`). `None`
-    /// leaves a symlink at a bin target alone.
+    /// Real path the target package was installed from; see `make_executable`.
     pub installed_from: Option<&'a [u8]>,
 
     pub err: Option<Error>,
@@ -966,11 +961,7 @@ impl<'a> Linker<'a> {
         }
     }
 
-    /// `lchmod` so that a symlink shipped by the package as its bin target
-    /// cannot redirect the chmod to an arbitrary file. The one symlink that is
-    /// followed is the installer's own per-file link (see `installed_from`),
-    /// recognized by the file behind it lying inside that directory; the file
-    /// itself is again chmodded without following anything.
+    /// Follows only the symlink backend's own link into `installed_from`, never a package's.
     #[cfg(not(windows))]
     fn make_executable(installed_from: Option<&[u8]>, abs_target: &ZStr) {
         let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
@@ -1328,8 +1319,7 @@ impl<'a> Linker<'a> {
                     let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
-                    // `.bin` was just created, so the destination cannot exist yet:
-                    // no need to delete it and symlink again on failure.
+                    // It was just created, no need to delete destination and symlink again
                     if let Err(real_error) = sys::symlink_running_executable(rel_target, abs_dest) {
                         self.err = Some(real_error.into());
                     }

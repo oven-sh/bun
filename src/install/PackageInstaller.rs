@@ -595,8 +595,6 @@ impl<'a> PackageInstaller<'a> {
         let tree = &mut self.trees[tree_id as usize];
         let mut deferred: Vec<DependencyID> = Vec::new();
 
-        // Backing storage for `bin::Linker::installed_from`; the cache path is
-        // resolved at most once per tree.
         let mut real_folder_buf = bun_paths::path_buffer_pool::get();
         let mut real_cache_dir: Option<AbsPath> = None;
 
@@ -709,8 +707,7 @@ impl<'a> PackageInstaller<'a> {
                 let installed_from: Option<&[u8]> = {
                     let target_resolution = &pkg_resolutions[target_package_id as usize];
                     if target_resolution.tag == resolution::Tag::Folder {
-                        // The folder resolution is relative to the root package,
-                        // which is also how `PackageInstall` opens it.
+                        // Folder resolutions are relative to the root package.
                         let mut folder = AutoAbsPathChecked::init_top_level_dir();
                         match folder.join(&[target_resolution.folder().slice(string_buf)]) {
                             Ok(()) => {
@@ -725,9 +722,7 @@ impl<'a> PackageInstaller<'a> {
                         }
                         real_cache_dir.as_ref().map(AbsPath::slice)
                     } else {
-                        // Workspaces, `link:` and the root itself are installed as
-                        // one symlink to their own directory; a symlink found at a
-                        // bin target there is the package's own.
+                        // Directory-symlinked packages: never chmod through their own links.
                         None
                     }
                 };

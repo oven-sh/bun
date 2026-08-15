@@ -1528,9 +1528,7 @@ fn bin_path_escapes_root(p: &[u8]) -> bool {
     path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
-/// `lstat` kind of `bin_path`, or `Unknown` if it is missing or a parent
-/// component is not a real directory. Bins skip the tree walk, which packs
-/// nothing reached through a symlink, so they get the same check here.
+/// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
 fn bin_kind_without_following_symlinks(root_dir: &Dir, bin_path: &[u8]) -> bun_sys::FileKind {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
     let bin_path = strings::without_trailing_slash(bin_path);

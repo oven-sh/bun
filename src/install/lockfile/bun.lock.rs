@@ -1817,6 +1817,23 @@ impl<T> PkgMap<T> {
     }
 }
 
+impl PkgMap<PackageID> {
+    /// Whether one of the folders `pkg_path` is nested in holds `pkg_id` as well.
+    /// Every folder on the way down to a package is a key of its own; a prefix cut
+    /// inside a scoped name is not a key and does not match anything.
+    fn is_below_copy_of(&self, pkg_path: &[u8], pkg_id: PackageID) -> bool {
+        let mut end: usize = 0;
+        while let Some(i) = strings::index_of_char_usize(&pkg_path[end..], b'/') {
+            end += i;
+            if self.get(&pkg_path[..end]) == Some(&pkg_id) {
+                return true;
+            }
+            end += 1;
+        }
+        false
+    }
+}
+
 // const PkgMap = struct {};
 
 fn object_rows(expr: &Expr) -> &[JSON::E::PropertyJSON] {
@@ -3227,6 +3244,14 @@ pub(crate) fn parse_into_binary_lockfile(
 
             if res.tag == ResolutionTag::Workspace {
                 // we've already resolved the workspace dependencies above
+                continue;
+            }
+
+            // `Tree::process_subtree` gives a copy nested below another copy of the same
+            // package no node_modules of its own, so from this path its dependencies walk
+            // to whatever versions the copy happens to sit under. The copy above, which the
+            // tree was built from, binds them; this row is only a folder.
+            if pkg_map.is_below_copy_of(pkg_path, pkg_id) {
                 continue;
             }
 

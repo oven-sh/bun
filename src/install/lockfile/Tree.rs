@@ -649,6 +649,29 @@ impl Tree {
             return Ok(());
         }
 
+        // A copy of a package nested somewhere below another copy of itself only exists
+        // because a different version of its name shadows the copy above; its
+        // dependencies were all placed when that copy was processed. Laying them out again
+        // here would nest whichever of them the levels in between shadow, and in a cycle
+        // through two versions of the same names (a@1 -> b@1 -> a@2 -> b@2 -> a@1 ...)
+        // that shadows the next one in turn, so the copies never end. This is the point at
+        // which npm links back to the copy above; the copy stays as is here, and its
+        // dependencies resolve to whatever is on the path. bun.lock skips these copies when
+        // it binds dependencies from the tree, so this check and that one have to agree.
+        {
+            let trees = builder.list.items_tree();
+            let mut ancestor_id = self.id;
+            while ancestor_id != INVALID_ID {
+                let ancestor = &trees[ancestor_id as usize];
+                if (ancestor.dependency_id as usize) < builder.resolutions.len()
+                    && builder.resolutions[ancestor.dependency_id as usize] == parent_pkg_id
+                {
+                    return Ok(());
+                }
+                ancestor_id = ancestor.parent;
+            }
+        }
+
         builder.list.append(BuilderEntry {
             tree: Tree {
                 parent: self.id,
@@ -1104,6 +1127,18 @@ impl Tree {
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return Ok(id); // 1 or 2
             }
+        }
+
+        // The package this node_modules belongs to is itself resolvable from everything
+        // inside it. The walk stops at a bundled root before reaching the folder that holds
+        // it, so a bundled dependency depending back on the package bundling it would copy
+        // that package into its own node_modules, and processing the copy bundles the
+        // dependency again, without end.
+        if (this.dependency_id as usize) < deps.len()
+            && builder.resolutions[this.dependency_id as usize] == package_id
+            && deps[this.dependency_id as usize].name_hash == target_name_hash
+        {
+            return Ok(HoistDependencyResult::Hoisted); // 1
         }
 
         // place the dependency in the current tree

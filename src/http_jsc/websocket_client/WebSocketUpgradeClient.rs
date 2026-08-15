@@ -1568,13 +1568,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let overflow_len = remain_buf.len();
         let overflow_ptr: *mut u8 = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
-            if v.try_reserve_exact(overflow_len).is_err() {
-                // OOM here terminates with `InvalidResponse` rather than
-                // aborting the process.
-                // SAFETY: no `&mut Self` is live across this call.
-                unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
-                return;
-            }
+            bun_core::handle_oom(v.try_reserve_exact(overflow_len));
             v.extend_from_slice(remain_buf);
             // Leak across the FFI boundary; `InitialDataHandler` reconstructs
             // the `Box<[u8]>` and drops it after delivery.

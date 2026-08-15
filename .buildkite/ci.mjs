@@ -186,10 +186,8 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
-  // The `latest` lane only has two agents behind it right now (the Studios
-  // came back on macOS 15 and can only host 15 guests), so until they are on
-  // 26 it runs on main and on opt-in (see darwinLatestLaneEnabled), not on
-  // every PR push.
+  // All three darwin test lanes run on main and on opt-in only for now (see
+  // darwinTestsEnabled): the mac agent pool cannot keep up with PR volume.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -1545,11 +1543,11 @@ async function getPipeline(options = {}) {
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
-  const darwinLatestLaneEnabled =
+  const darwinTestsEnabled =
     isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
-  ).filter(({ os, tier }) => os !== "darwin" || tier !== "latest" || darwinLatestLaneEnabled);
+  ).filter(({ os }) => os !== "darwin" || darwinTestsEnabled);
   /** @type {string[]} */
   const testStepKeys = [];
   {

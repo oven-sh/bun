@@ -2178,9 +2178,10 @@ it("process.env.TZ changes reach the no-argument Date toLocale*String formatters
   // paths format through three Intl.DateTimeFormat objects JSC keeps per
   // global object, built the first time they are used. Node drops V8's
   // equivalent caches on every TZ write (DateTimeConfigurationChangeNotification).
-  // Every realm (a vm context, a ShadowRealm, the main global) is primed under
-  // the old zone first so a stale formatter shows up, and each phase lets a
-  // different one of the three methods be the first call after the change.
+  // Every realm (a vm context, a ShadowRealm, the main global) is primed before
+  // each change so a stale formatter shows up, and each of the three changes
+  // (set, set, delete) lets a different one of the three methods be the first
+  // call afterwards, i.e. the one that has to notice the change.
   // Comparing against the explicit `(undefined, {})` form, which builds a fresh
   // formatter with the same defaults, keeps the assertions locale-independent.
   await using proc = Bun.spawn({
@@ -2219,6 +2220,10 @@ it("process.env.TZ changes reach the no-argument Date toLocale*String formatters
          realms.main = inOrder(lead, name => d[name]());
          return { fresh: methods.map(name => d[name](undefined, {})), realms };
        }
+       // Build every realm's formatters under the starting zone (UTC) first, so
+       // that already the Los Angeles phase is a change noticed by a primed
+       // formatter rather than a first build.
+       snapshot(0);
        process.env.TZ = "America/Los_Angeles";
        const la = snapshot(0);
        process.env.TZ = "Asia/Tokyo";

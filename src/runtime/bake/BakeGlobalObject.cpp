@@ -268,9 +268,9 @@ extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
     return global;
 }
 
-extern "C" void BakeGlobalObject__attachPerThreadData(GlobalObject* global, void* perThreadData)
+extern "C" void BakeGlobalObject__attachPerThreadData(JSC::JSGlobalObject* global, void* perThreadData)
 {
-    global->m_perThreadData = perThreadData;
+    uncheckedDowncast<Bake::GlobalObject>(global)->m_perThreadData = perThreadData;
 }
 
 const JSC::ClassInfo Bake::GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, nullptr, nullptr,

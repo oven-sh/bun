@@ -54,7 +54,7 @@ extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* gl
   RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::profiledCall(global, JSC::ProfilingReason::API, fn, callData, JSC::jsUndefined(), args)));
 }
 
-extern "C" JSC::JSPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSString* key) {
+extern "C" JSC::JSPromise* BakeLoadModuleByKey(JSC::JSGlobalObject* global, JSC::JSString* key) {
   return JSC::loadAndEvaluateModule(global, key->getString(global), nullptr, nullptr);
 }
 

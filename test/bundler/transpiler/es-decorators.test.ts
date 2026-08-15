@@ -546,28 +546,64 @@ describe("ES Decorators", () => {
           static make() { return new Bar(); }
           id() { return this.#id; }
         }
+        // A private static method is enough to keep the name on the class as
+        // written, so the static fields that name reaches must stay there too.
+        @wrap class Store {
+          static instances = [];
+          static #register(instance) { Store.instances.push(instance); }
+          constructor() { Store.#register(this); }
+        }
+        const store = new Store();
         Foo.create();
         Foo.create();
-        console.log(JSON.stringify([tag(Foo), Foo.instances, Bar.make().id(), Bar.make().id(), Bar.made]));
+        console.log(JSON.stringify([
+          tag(Foo),
+          Foo.instances,
+          Bar.make().id(),
+          Bar.make().id(),
+          Bar.made,
+          Store.instances.length === 1 && Store.instances[0] === store,
+          Object.hasOwn(Store, "instances"),
+        ]));
       `);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(["wrapped", 2, 1, 2, 0]);
+      expect(JSON.parse(stdout)).toEqual(["wrapped", 2, 1, 2, 0, true, false]);
       expect(exitCode).toBe(0);
     });
 
-    test("class expression: static fields are initialized on the replacement", async () => {
+    test("class expressions: static fields move unless the body uses the expression's own name", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         ${wrap}
         const receivers = [];
-        const Foo = @wrap class Inner {
-          static self = Inner;
+        const Anonymous = @wrap class {
           static viaThis = (receivers.push(this), 1);
           static plain;
         };
-        console.log(JSON.stringify([tag(Foo), tag(Foo.self), receivers[0] === Foo, Object.keys(Foo)]));
+        const Registry = @wrap class Inner {
+          static entries = [];
+          static add(entry) { Inner.entries.push(entry); return Inner.entries.length; }
+        };
+        console.log(JSON.stringify([
+          tag(Anonymous),
+          receivers[0] === Anonymous,
+          Object.keys(Anonymous),
+          tag(Registry),
+          Registry.add("a"),
+          Object.keys(Registry),
+          Registry.entries,
+        ]));
       `);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(["wrapped", "wrapped", true, ["tag", "self", "viaThis", "plain"]]);
+      expect(JSON.parse(stdout)).toEqual([
+        "wrapped",
+        true,
+        ["tag", "viaThis", "plain"],
+        "wrapped",
+        1,
+        // Inner's body means the class as written, so entries stays there and is inherited.
+        ["tag"],
+        ["a"],
+      ]);
       expect(exitCode).toBe(0);
     });
 

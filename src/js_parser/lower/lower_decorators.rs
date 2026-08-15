@@ -156,13 +156,20 @@ fn has_private_key(prop: &Property) -> bool {
     matches!(prop.key, Some(key) if matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_)))
 }
 
-/// Undecorated private static field or static auto-accessor: initialized outside step 7's order.
+/// Its storage is initialized before the class decorator runs, outside step 7's source order.
 #[inline]
-fn is_unordered_static_initializer(prop: &Property) -> bool {
-    prop.flags.contains(Flags::Property::IsStatic)
-        && !prop.flags.contains(Flags::Property::IsMethod)
+fn is_undecorated_static_accessor(prop: &Property) -> bool {
+    prop.kind == PropertyKind::AutoAccessor
+        && prop.flags.contains(Flags::Property::IsStatic)
         && prop.ts_decorators.len_u32() == 0
-        && (has_private_key(prop) || prop.kind == PropertyKind::AutoAccessor)
+}
+
+fn has_private_static_member(class: &G::Class) -> bool {
+    class
+        .properties
+        .slice()
+        .iter()
+        .any(|prop| prop.flags.contains(Flags::Property::IsStatic) && has_private_key(prop))
 }
 
 /// Shapes `rewrite_expr` walks fully; never `super`, `new.target`, `#names`, functions or classes.
@@ -220,11 +227,7 @@ fn can_leave_class_body(expr: &Expr) -> bool {
 pub(crate) fn wants_inner_class_binding(class: &G::Class) -> bool {
     class.should_lower_standard_decorators
         && class.ts_decorators.len_u32() > 0
-        && !class
-            .properties
-            .slice()
-            .iter()
-            .any(|prop| prop.flags.contains(Flags::Property::IsStatic) && has_private_key(prop))
+        && !has_private_static_member(class)
 }
 
 // ── impl P ───────────────────────────────────────────────────────────────────
@@ -1272,7 +1275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
-        // Class expressions keep their per-evaluation name binding; see `relocated_name_rewrite`.
+        // Class expressions keep their own name binding (see `body_names_class_as_written`).
         let inner_class_ref: Ref = if is_expr {
             class_name_ref
         } else if visited_inner_class_ref.is_symbol() {
@@ -1290,10 +1293,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
+        // Relocated fields land on the decorated class; a body naming the original would miss them.
+        let body_names_class_as_written = if is_expr {
+            !expr_class_is_anonymous
+                && p.symbols[class_name_ref.inner_index() as usize].use_count_estimate > 0
+        } else {
+            has_private_static_member(class)
+        };
         // All or nothing (keys are pre-evaluated in Phase 2), so static members keep their order.
         let relocate_static_fields = class_decorators_len > 0
+            && !body_names_class_as_written
             && class.properties.slice().iter().all(|prop| {
-                !is_unordered_static_initializer(prop)
+                !is_undecorated_static_accessor(prop)
                     && (!prop.flags.contains(Flags::Property::IsComputed)
                         || prop.key.is_none_or(|key| can_leave_class_body(&key)))
                     && (!is_plain_static_field(prop)
@@ -1452,9 +1463,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .set(class_name_ref);
         }
 
-        // For named class expressions: swap to expr_class_ref for suffix ops and relocated code
+        // For named class expressions: swap to expr_class_ref for suffix ops
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
-        let mut relocated_name_rewrite: Option<RewriteKind> = None;
         if is_expr
             && !expr_class_is_anonymous
             && let Some(ecr) = expr_class_ref
@@ -1465,10 +1475,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .original_name
                     .slice(),
             );
-            relocated_name_rewrite = Some(RewriteKind::ReplaceRef {
-                old: class_name_ref,
-                new: ecr,
-            });
             class_name_ref = ecr;
             class_name_loc = loc;
         }
@@ -2368,9 +2374,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         loc: class_name_loc,
                                     },
                                 );
-                                if let Some(rewrite) = relocated_name_rewrite {
-                                    p.rewrite_expr(init, rewrite);
-                                }
                                 let init = *init;
                                 suffix_exprs.push(p.call_rt(
                                     key.loc,

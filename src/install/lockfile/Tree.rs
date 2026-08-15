@@ -1107,11 +1107,105 @@ impl Tree {
             }
         }
 
+        // This is the hoist root of a bundled dependency's subtree. Placing here puts the package
+        // in front of everything that resolves this name through this tree to something above,
+        // so if that is a different package, nest next to the dependent like any other conflict.
+        if !AS_DEFINED
+            && this.id == hoist_root_id
+            && Tree::hoist_root_resolves_elsewhere(
+                this.id,
+                package_id,
+                dependency.name_hash,
+                builder,
+            )
+        {
+            return Ok(HoistDependencyResult::DependencyLoop); // 3
+        }
+
         // place the dependency in the current tree
         Ok(HoistDependencyResult::Placement(Placement {
             id: this.id,
             bundled: false,
         })) // 2
+    }
+
+    /// `hoist_root` is the node_modules of a package with bundled dependencies. The bundle's
+    /// dependencies hoist no further than it, but the package itself, and the regular dependencies
+    /// it nests there (and theirs, and so on), resolve through it to whatever is above it, and a
+    /// loaded `bun.lock` rebinds them by walking up the saved paths. So `package_id` may only be
+    /// placed there if every one of their edges for `name_hash` already resolves to it; this returns
+    /// true if one doesn't.
+    ///
+    /// An unbound optional peer (`package_id` invalid) places nothing a path walk can find. If it
+    /// gets bound during this pass, `Lockfile::resolve` hoists again with the binding known and the
+    /// bound package is checked like any other.
+    fn hoist_root_resolves_elsewhere<const METHOD: BuilderMethod>(
+        hoist_root: Id,
+        package_id: PackageID,
+        name_hash: PackageNameHash,
+        builder: &Builder<'_, METHOD>,
+    ) -> bool {
+        if package_id == invalid_package_id {
+            return false;
+        }
+
+        let trees = builder.list.items_tree();
+        if trees[hoist_root as usize].parent == INVALID_ID {
+            return false;
+        }
+
+        let entry_lists = builder.list.items_dependencies();
+        let deps: &[Dependency] = builder.dependencies;
+        let resolutions: &[PackageID] = &*builder.resolutions;
+        let resolution_lists = builder.resolution_lists;
+
+        let resolves_elsewhere = |pkg_id: PackageID| -> bool {
+            let pkg_deps = resolution_lists[pkg_id as usize];
+            (pkg_deps.begin()..pkg_deps.end()).any(|dep_id| {
+                let dep = &deps[dep_id as usize];
+                dep.name_hash == name_hash
+                    && !dep.behavior.is_bundled()
+                    && resolutions[dep_id as usize] != package_id
+            })
+        };
+
+        let owner = resolutions[trees[hoist_root as usize].dependency_id as usize];
+        if resolves_elsewhere(owner) {
+            return true;
+        }
+
+        // The trees whose contents resolve through `hoist_root`, each with the package whose
+        // node_modules it is. A tree is appended after its parent, so one pass in id order finds
+        // every tree of a regular dependency nested inside one already in the scope.
+        let mut scope: Vec<(Id, PackageID)> = vec![(hoist_root, owner)];
+        for (id, tree) in trees.iter().enumerate().skip(hoist_root as usize + 1) {
+            let Some(&(_, parent_owner)) =
+                scope.iter().find(|(scope_id, _)| *scope_id == tree.parent)
+            else {
+                continue;
+            };
+            if !resolution_lists[parent_owner as usize].contains(tree.dependency_id)
+                || deps[tree.dependency_id as usize].behavior.is_bundled()
+            {
+                continue;
+            }
+            scope.push((id as Id, resolutions[tree.dependency_id as usize]));
+        }
+
+        scope.iter().any(|&(tree_id, tree_owner)| {
+            let own_deps = resolution_lists[tree_owner as usize];
+            trees[tree_id as usize]
+                .dependencies
+                .get(entry_lists[tree_id as usize].as_slice())
+                .iter()
+                .any(|&dep_id| {
+                    let nested = resolutions[dep_id as usize];
+                    nested != invalid_package_id
+                        && own_deps.contains(dep_id)
+                        && !deps[dep_id as usize].behavior.is_bundled()
+                        && resolves_elsewhere(nested)
+                })
+        })
     }
 }
 

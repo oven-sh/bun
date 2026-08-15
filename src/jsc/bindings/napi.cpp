@@ -1723,9 +1723,7 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
-// Node CHECKs this too (node::Buffer::New, V8's SharedArrayBuffer::New). A null
-// data pointer means "detached" to JSC, which then assumes byteLength is 0, so
-// wrapping NULL with a length would be read as `length` bytes at address 0.
+// Node CHECKs this too (node::Buffer::New, V8's SharedArrayBuffer::New).
 static void checkExternalBufferData(const char* function, const void* data, size_t length)
 {
     NAPI_RELEASE_ASSERT(data != nullptr || length == 0, "%s: data is NULL but length is %zu", function, length);
@@ -1775,9 +1773,7 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     auto* structure = globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared);
 
     if (external_data == nullptr) {
-        // byte_length is 0 here. A SharedArrayBuffer cannot be detached, which
-        // is what a null data pointer means to JSC (makeShared() asserts), so
-        // allocate the empty buffer as node_api_create_sharedarraybuffer does.
+        // byte_length is 0. makeShared() asserts !isDetached(), and a null data pointer is what detached means to JSC.
         RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(0, 1);
         NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer, napi_generic_failure);
         arrayBuffer->makeShared();

@@ -3024,11 +3024,24 @@ fn tarball_destination<'a>(
         return (ZStr::from_buf(&dest_buf[..], tarball_name_len - 1), 0);
     } else {
         let (dir_len_trimmed, dir_len_full) = {
-            let tarball_destination_dir = resolve_path::join_abs_string_buf::<
+            let Some(tarball_destination_dir) = resolve_path::join_abs_string_buf_checked::<
                 resolve_path::platform::Auto,
             >(
                 abs_workspace_path, dest_buf, &[pack_destination]
-            );
+            ) else {
+                Output::err_generic(
+                    "archive destination name too long: \"{}/{}\"",
+                    (
+                        bstr::BStr::new(strings::without_trailing_slash(pack_destination)),
+                        fmt_tarball_filename(
+                            package_name,
+                            package_version,
+                            TarballNameStyle::Normalize,
+                        ),
+                    ),
+                );
+                Global::crash();
+            };
             (
                 strings::without_trailing_slash(tarball_destination_dir).len(),
                 tarball_destination_dir.len(),

@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -395,6 +395,59 @@ describe("flags", () => {
     ]);
 
     expect(async () => await pack(packageDir, bunEnv, "--filename=test.tgz", "--destination=packed")).toThrowError();
+  });
+
+  // PATH_MAX is 4096 on Linux and 1024 on macOS, so this overflows the path buffer on both. Windows'
+  // path buffer is larger than any command line, so the overflow cannot be reached there.
+  describe.skipIf(isWindows)("--destination longer than PATH_MAX", () => {
+    const longName = Buffer.alloc(5000, "d").toString();
+    const packageJson = JSON.stringify({ name: "pack-long-dest", version: "1.0.0" });
+    const expectedError = `error: archive destination name too long: "${longName}/pack-long-dest-1.0.0.tgz"\n`;
+
+    async function packWithDestination(dir: string, destination: string, ...args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "pm", "pack", ...args, `--destination=${destination}`],
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: bunEnv,
+      });
+      return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    }
+
+    test.concurrent("is reported as an error", async () => {
+      await using dir = tempDir("pack-long-destination", { "package.json": packageJson });
+
+      const [out, err, exitCode] = await packWithDestination(dir, longName);
+
+      expect(err).toContain(expectedError);
+      expect(out).not.toContain(".tgz");
+      expect(exitCode).toBe(1);
+      expect(await exists(join(dir, "pack-long-dest-1.0.0.tgz"))).toBeFalse();
+    });
+
+    test.concurrent("is reported as an error with --dry-run", async () => {
+      await using dir = tempDir("pack-long-destination-dry-run", { "package.json": packageJson });
+
+      const [out, err, exitCode] = await packWithDestination(dir, `${longName}/`, "--dry-run");
+
+      expect(err).toContain(expectedError);
+      expect(out).not.toContain(".tgz");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("packs when the path normalizes to one that fits", async () => {
+      await using dir = tempDir("pack-long-destination-normalized", { "package.json": packageJson });
+
+      // `<5000 bytes>/..` resolves back to the package directory.
+      const { out } = await pack(dir, bunEnv, `--destination=${longName}/..`);
+
+      expect(out).toContain(join(dir, "pack-long-dest-1.0.0.tgz"));
+      expect(readTarball(join(dir, "pack-long-dest-1.0.0.tgz")).entries).toMatchObject([
+        { "pathname": "package/package.json" },
+      ]);
+    });
   });
 
   test("--ignore-scripts", async () => {

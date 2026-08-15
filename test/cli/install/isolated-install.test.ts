@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
+import { mkdir, readlink, realpath, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { dirname, join } from "path";
@@ -1169,14 +1169,18 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
 
 test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
   // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
-  // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
-  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
-  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
-  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
-  // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
-  // That silently changed the runtime dependency tree on the second install
-  // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
-  // warm install.
+  // no-deps@1.0.1 (exact pin via one-dep, hoisted to the root of the saved
+  // tree since one-dep sorts first) and no-deps@1.1.0 (exact pin via the
+  // aliased normal-dep-and-dev-dep@1.0.1, nested). Both candidates are exact
+  // pins so both exist no matter which manifest lands first; a `^1.0.0` range
+  // in their place dedupes onto the 1.0.1 pin whenever the pin resolves
+  // before it, which silently removed the second candidate from the graph.
+  // The fresh resolve binds the peer edge to the highest satisfying version
+  // (1.1.0) in its deferred-peer phase; reloading bun.lock used to re-derive
+  // the edge from the saved tree paths instead, rebinding it to the hoisted
+  // 1.0.1. That silently changed the runtime dependency tree on the second
+  // install and re-keyed the isolated store entry (`+<peer hash>` suffix) on
+  // every warm install.
   const { packageJson, packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
@@ -1187,8 +1191,8 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
       name: "stable-ranged-peers",
       dependencies: {
         "peer-deps-fixed": "1.0.0",
-        "normal-dep-and-dev-dep": "1.0.0",
-        "two-range-deps": "1.0.0",
+        "one-dep": "1.0.0",
+        "pins-no-deps-1-1-0": "npm:normal-dep-and-dev-dep@1.0.1",
       },
     }),
   );
@@ -1212,6 +1216,67 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   expect(await file(join(bunDir, entryName, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
     version: "1.1.0",
   });
+});
+
+test("wildcard peer dependency resolution is stable across installs from bun.lock", async () => {
+  // `peer-deps` has a peer on `no-deps@*` and the root does not provide
+  // no-deps itself. Two exact pins put two candidates in the graph no matter
+  // which manifest lands first: no-deps@1.0.1 via one-dep (hoisted to the
+  // root of the saved tree, since one-dep sorts first) and no-deps@2.0.0 via
+  // one-fixed-dep (nested). The fresh resolve binds the peer to the highest
+  // candidate, and loading bun.lock must make the same choice. `*` peers used
+  // to be exempt from version binding on load and fell back to the saved
+  // tree's path walk, which lands on the hoisted 1.0.1: the install that
+  // wrote bun.lock wired peer-deps to 2.0.0, and every install driven by the
+  // identical bun.lock (the next plain `bun install`, CI's --frozen-lockfile)
+  // re-pointed it to 1.0.1 through a second peer-deps store entry.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "stable-wildcard-peers",
+      dependencies: {
+        "peer-deps": "1.0.0",
+        "one-dep": "1.0.0",
+        "one-fixed-dep": "2.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const lockfile = join(packageDir, "bun.lock");
+  const peerDepsEntries = async () => (await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps@"));
+  const linkedNoDeps = async () => {
+    // what `require("no-deps")` inside peer-deps resolves to: the no-deps
+    // link in whichever store entry node_modules/peer-deps points at
+    const entryDir = dirname(dirname(await realpath(join(packageDir, "node_modules", "peer-deps"))));
+    return (await file(join(entryDir, "node_modules", "no-deps", "package.json")).json()).version;
+  };
+
+  const freshEntries = await peerDepsEntries();
+  expect(freshEntries).toHaveLength(1);
+  expect(await linkedNoDeps()).toBe("2.0.0");
+  const savedLockfile = await file(lockfile).text();
+
+  // plain reinstall on top of the existing node_modules, driven by bun.lock
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect(await file(lockfile).text()).toBe(savedLockfile);
+  expect(await peerDepsEntries()).toEqual(freshEntries);
+  expect(await linkedNoDeps()).toBe("2.0.0");
+
+  // cold install from the committed bun.lock, the CI shape
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(bunEnv, packageDir, { frozenLockfile: true });
+
+  expect(await file(lockfile).text()).toBe(savedLockfile);
+  expect(await peerDepsEntries()).toEqual(freshEntries);
+  expect(await linkedNoDeps()).toBe("2.0.0");
 });
 
 test("aliased peer dependency binds to its real package across installs from bun.lock", async () => {

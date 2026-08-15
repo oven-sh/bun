@@ -2089,12 +2089,12 @@ fn get_or_put_resolved_package_with_find_result(
     // fallback so only an exact `eql(find_result)` can bind here; everything
     // else falls through to the `is_peer && !install_peer` defer below and is
     // resolved deterministically by phase 2's descending-index scan in
-    // `get_or_put_resolved_package`. `*` is left alone — it expresses no
-    // version preference, and the "peer *" hoisting test depends on it
-    // deduping to whatever sibling pin exists rather than the manifest floor.
-    let suppress_peer_satisfies = behavior.is_peer()
-        && !install_peer
-        && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
+    // `get_or_put_resolved_package`. `*` peers are deferred too: bun.lock
+    // rebinds every deferred peer with that same scan on load
+    // (`deferred_peer_range` in bun.lock.rs), so binding one here to
+    // whichever sibling pin had landed first made the first reinstall
+    // re-point it and re-key its isolated store entry.
+    let suppress_peer_satisfies = behavior.is_peer() && !install_peer;
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update || suppress_peer_satisfies {

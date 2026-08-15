@@ -3899,7 +3899,10 @@ describe("hoisting", async () => {
           "uses-a-dep-10": "1.0.0",
           "peer-a-dep-star": "1.0.0",
         },
-        expected: "1.0.1",
+        // `*` binds to the highest candidate in the graph, like the ranges
+        // above, and peer-a-dep-star sorts first so its choice is what gets
+        // hoisted. (The previous expectation, "1.0.1", was a substring of this.)
+        expected: "1.0.10",
       },
       {
         situation: "peer * and peer 1.0.2",

@@ -3299,12 +3299,15 @@ pub(crate) fn parse_into_binary_lockfile(
 }
 
 /// The catalog-resolved range of a peer edge the fresh resolver defers to its second phase
-/// (`install_peer`) and binds by version there. Two exemptions, matching
+/// (`install_peer`) and binds by version there. One exemption, matching
 /// `enqueue_dependency_with_main_and_success_fn`: optional peers return
 /// before the deferred phase and are bound to the hoisted-tree sibling by
-/// `process_subtree` instead, and `*` peers express no version preference
-/// and bind to whatever sibling pin existed first. Both of those are
-/// exactly what the printed tree's path walk reproduces, so they keep it.
+/// `process_subtree` instead, which is exactly what the printed tree's path
+/// walk reproduces, so they keep it. `*` peers are deferred like any other
+/// range (`suppress_peer_satisfies` in `get_or_put_resolved_package_with_find_result`),
+/// so they are rebound by version here as well; the path walk would land on
+/// whichever version the tree hoisted next to the dependent, which is not
+/// necessarily the one the deferred phase picked.
 fn deferred_peer_range<'a>(
     dep: &'a Dependency,
     catalogs: &'a CatalogMap,
@@ -3313,11 +3316,7 @@ fn deferred_peer_range<'a>(
     if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() {
         return None;
     }
-    let range = catalogs.resolve_range(string_buf, dep);
-    if range.tag == DependencyVersionTag::Npm && range.npm().version.is_star() {
-        return None;
-    }
-    Some(range)
+    Some(catalogs.resolve_range(string_buf, dep))
 }
 
 /// Resolve a peer dependency edge the way the fresh resolver's

@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -2545,4 +2545,83 @@ it("no socket close handler runs after the 'exit' event", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
+});
+
+// process.constrainedMemory() and navigator.hardwareConcurrency come from the
+// cgroup the process is in: its path is read from /proc/self/cgroup and the
+// limits from /sys/fs/cgroup/<path>/{memory.max,cpu.max}. Both locations can be
+// faked without privileges wherever unprivileged user namespaces are enabled:
+// inside a user+mount namespace, bind-mount a file of ours over the shell's
+// /proc/<pid>/cgroup and a directory of ours over /sys/fs/cgroup, then exec bun
+// from that shell so it keeps the pid whose cgroup file was replaced. (It has to
+// be the shell's $$: /proc/self inside `mount` would be mount's own pid.)
+// 256 MiB and 1 cpu are below any host's resources, so the expected output is
+// the same on every machine.
+const fakeCgroupLimits = { "memory.max": "268435456\n", "cpu.max": "100000 100000\n" };
+const nestedFakeCgroupLimits = { a: { b: fakeCgroupLimits } };
+const fakeCgroupLimitsReport = { stdout: "268435456 1\n", stderr: "", exitCode: 0 };
+const unshare = isLinux ? which("unshare") : null;
+
+function fakeCgroupsCmd(dir) {
+  return [
+    unshare,
+    "-U",
+    "-r",
+    "-m",
+    "sh",
+    "-c",
+    'mount --bind "$1" /proc/$$/cgroup && mount --bind "$2" /sys/fs/cgroup && ' +
+      'exec "$3" -e "console.log(process.constrainedMemory(), navigator.hardwareConcurrency)"',
+    "sh",
+    join(dir, "cgroup"),
+    join(dir, "sys"),
+    bunExe(),
+  ];
+}
+
+async function reportLimitsWithFakeCgroups(procSelfCgroup, sysFsCgroup) {
+  using dir = tempDir("fake-cgroup", { cgroup: procSelfCgroup, sys: sysFsCgroup });
+  await using proc = Bun.spawn({ cmd: fakeCgroupsCmd(String(dir)), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// Run the plain cgroup v2 layout up front. Its exit code only says whether the
+// namespace and both mounts worked and bun ran (the mounts are chained with &&
+// and the script bun runs always exits 0), and that is all that gates the
+// block; what bun printed is asserted by the first test, so a wrong answer
+// fails instead of skipping. The nested path makes sure the answer can only
+// have come from the faked /proc/<pid>/cgroup, not from the real one.
+const fakeCgroupsProbe = (() => {
+  if (unshare === null) return null;
+  using dir = tempDir("fake-cgroup", { cgroup: "0::/a/b\n", sys: nestedFakeCgroupLimits });
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: fakeCgroupsCmd(String(dir)),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+})();
+
+describe.skipIf(fakeCgroupsProbe?.exitCode !== 0)("cgroup limits read through /proc/self/cgroup", () => {
+  it("0:: line only, as container runtimes produce it", () => {
+    expect(fakeCgroupsProbe).toEqual(fakeCgroupLimitsReport);
+  });
+
+  // A cgroup v1 hierarchy mounted with only a name (cgroupfs-mount,
+  // docker-in-docker and LXC hosts do this) coexists with cgroup v2 and is
+  // listed before the "0::" line. Detection used to require "0::" at the very
+  // start of the file and otherwise reported the host's RAM and core count.
+  it.concurrent("named cgroup v1 hierarchy listed before the 0:: line", async () => {
+    expect(await reportLimitsWithFakeCgroups("1:name=systemd:/\n0::/\n", fakeCgroupLimits)).toEqual(
+      fakeCgroupLimitsReport,
+    );
+  });
+
+  it.concurrent("named cgroup v1 hierarchy listed before a nested 0:: path", async () => {
+    expect(await reportLimitsWithFakeCgroups("1:name=systemd:/\n0::/a/b\n", nestedFakeCgroupLimits)).toEqual(
+      fakeCgroupLimitsReport,
+    );
+  });
 });

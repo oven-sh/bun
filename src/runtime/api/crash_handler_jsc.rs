@@ -221,18 +221,9 @@ pub(crate) mod js_bindings {
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
     }
 
-    /// Snapshot the currently-installed `sa_sigaction` for each CPU-fault
-    /// signal. Returned as `{ SIGSEGV, SIGBUS, SIGILL, SIGFPE }` with hex
-    /// strings so JS can compare exact addresses across snapshots without
-    /// f64 rounding.
-    ///
-    /// Used to verify that JSC's `jscSignalHandler` — which handles VMTraps'
-    /// HLT-breakpoint SIGSEGV on DFG/FTL code — survives the CLI sync-spawn
-    /// signal-forwarding scope (`SignalForwarding` in `src/spawn/process.rs`).
-    /// The forwarding set excludes these signals by construction, so the
-    /// handlers must be identical before and after; a regression here means
-    /// something in that scope reinstalled a fault handler with `oldact=NULL`
-    /// and VMTraps will route its next HLT to the wrong place.
+    /// Current `sa_sigaction` of each CPU-fault signal, as hex strings (a u64
+    /// address does not round-trip through a JS number). Test-only; see
+    /// test/js/bun/spawn/sync-spawn-preserves-jsc-signal-handlers.test.ts.
     #[bun_jsc::host_fn]
     fn js_get_fault_signal_handlers(
         global: &JSGlobalObject,
@@ -240,16 +231,9 @@ pub(crate) mod js_bindings {
     ) -> JsResult<JSValue> {
         #[cfg(unix)]
         {
-            // Query via libc rather than duplicating the per-libc struct
-            // layout (`sa_flags` offset differs across glibc/musl/Darwin) in
-            // the JS caller. `sa_handler` / `sa_sigaction` are a union at
-            // offset 0 everywhere we ship, but going through libc keeps this
-            // honest.
             fn handler(sig: libc::c_int) -> usize {
-                // Zeroed sigaction is a valid query buffer; `act=NULL` is the
-                // documented "read current disposition" form.
                 let mut current: libc::sigaction = bun_core::ffi::zeroed();
-                // SAFETY: out-pointer to stack-local, act=NULL.
+                // SAFETY: act=NULL only reads the disposition into the stack-local out-pointer.
                 if unsafe { libc::sigaction(sig, core::ptr::null(), &raw mut current) } != 0 {
                     return 0;
                 }
@@ -262,9 +246,6 @@ pub(crate) mod js_bindings {
                 ("SIGILL", libc::SIGILL),
                 ("SIGFPE", libc::SIGFPE),
             ] {
-                // Hex string: 64-bit addresses survive the trip through JS
-                // without losing precision, and equal strings ⇔ equal
-                // pointers.
                 let mut s = BunString::create_format(format_args!("{:x}", handler(sig)));
                 obj.put(global, name, s.transfer_to_js(global)?);
             }

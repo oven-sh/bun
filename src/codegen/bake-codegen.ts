@@ -56,11 +56,7 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          // The minified CSS starts with `*{box-sizing:...}`; pre-#30679
-          // codegen buns reject that before the `define` auto-quote fallback
-          // can treat it as a string. Quote it explicitly (as `side` already
-          // is) so building from source doesn't depend on the bootstrap bun's
-          // lexer behaviour.
+          // Quoted explicitly (like `side`): bootstrap buns older than #30679 can't auto-quote a value starting with `*`.
           OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {

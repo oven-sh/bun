@@ -2855,24 +2855,10 @@ mod spawn_process_body {
         /// RAII guard around `Bun__registerSignalsForForwarding`: registers on
         /// construction, unregisters on drop.
         ///
-        /// The forwarding set (SIGINT/TERM/HUP/QUIT/ABRT/… — see
-        /// `FOR_EACH_SIGNAL` in c-bindings.cpp) does *not* include the
-        /// CPU-fault signals SIGSEGV/SIGBUS/SIGILL/SIGFPE, and
-        /// `Bun__unregisterSignalsForForwarding` restores every signal it
-        /// touched from `previous_actions[]`. So the fault-signal dispositions
-        /// are unchanged across this scope.
-        ///
-        /// An older version additionally called `crash_handler::reset_on_posix()`
-        /// here, which reinstalled Bun's crash handler on the fault signals
-        /// with `oldact=NULL`. That overwrote JSC's `jscSignalHandler`
-        /// (installed after `crash_handler::init()` by
-        /// `WTF::SignalHandlers::finalize()`) and broke signal-based VMTraps:
-        /// the HLT breakpoint JSC patches into DFG/FTL invalidation points to
-        /// interrupt the mutator for STW GC / `Worker.terminate()` / watchdog
-        /// would deliver SIGSEGV straight to Bun's crash reporter instead of
-        /// being recognised and jettisoned. `jscSignalHandler` already chains
-        /// unhandled faults to whatever was installed before it (our crash
-        /// handler), so there is nothing to restore here.
+        /// Must not touch SIGSEGV/SIGBUS/SIGILL/SIGFPE: JSC layers its VMTraps
+        /// handler over ours at init and chains real faults back to us, so
+        /// reinstalling the crash handler here breaks JIT interruption. See
+        /// test/js/bun/spawn/sync-spawn-preserves-jsc-signal-handlers.test.ts.
         #[cfg(unix)]
         struct SignalForwarding;
         #[cfg(unix)]

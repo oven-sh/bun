@@ -74,7 +74,7 @@ describe("bun exec", () => {
   // Like getopt(3), the message names the one byte that was rejected, wherever
   // it sits in a cluster of short flags. An unknown --long option is rejected
   // at its second `-`, so it is reported as `-` (what BSD getopt prints too).
-  describe("illegal option names the rejected flag", () => {
+  describe.concurrent("illegal option names the rejected flag", () => {
     // prettier-ignore
     const programs: [program: string, cases: [args: string, rejected: string][]][] = [
       ["cat",   [["-z", "z"], ["-zb", "z"],                 ["--bogus", "-"]]],
@@ -86,15 +86,15 @@ describe("bun exec", () => {
       ["mv",    [["-z", "z"], ["-fz", "z"], ["-zf", "z"],   ["--bogus", "-"]]],
     ];
     for (const [program, cases] of programs) {
-      const script = cases.map(([args]) => `${program} ${args}`).join("; ");
-      const stderr = cases.map(([, rejected]) => `${program}: illegal option -- ${rejected}\n`).join("");
-      TestBuilder.command`${BUN} exec ${script}`
-        // cat and cp are builtins only on Windows unless this flag is set.
-        .env({ ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" })
-        .exitCode(1)
-        .stderr(stderr)
-        .stdout("")
-        .runAsTest(program);
+      for (const [args, rejected] of cases) {
+        TestBuilder.command`${BUN} exec ${`${program} ${args}`}`
+          // cat and cp are builtins only on Windows unless this flag is set.
+          .env({ ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" })
+          .exitCode(1)
+          .stderr(`${program}: illegal option -- ${rejected}\n`)
+          .stdout("")
+          .runAsTest(`${program} ${args}`);
+      }
     }
   });
 

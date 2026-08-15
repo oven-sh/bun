@@ -449,12 +449,11 @@ impl Linker {
                         if strings::starts_with(import_record.path.text, b"node:") {
                             // if a module is not found here, it is not found at
                             // all so we can just disable it
-                            had_resolve_errors = Self::when_module_not_found::<IS_BUN>(
+                            had_resolve_errors = Self::when_builtin_not_found::<IS_BUN>(
                                 self.log_mut(),
-                                target,
                                 import_record,
                                 source,
-                            )?;
+                            );
 
                             if had_resolve_errors {
                                 return Err(crate::Error::ResolveMessage);
@@ -528,14 +527,21 @@ impl Linker {
         Ok(())
     }
 
-    // Takes the disjoint pieces explicitly rather than `&mut self` plus
-    // overlapping sub-borrows of `result`.
-    fn when_module_not_found<const IS_BUN: bool>(
+    /// `import_record` is a `node:` specifier that is not in the builtin table.
+    /// Returns whether an error was logged.
+    ///
+    /// The message is the one the runtime resolve hook produces for the same
+    /// specifier (`ResolveMessage::fmt`, Node's `ERR_UNKNOWN_BUILTIN_MODULE`
+    /// text); files transpiled off the JS thread skip this linker and get
+    /// theirs from the hook, so the two have to agree.
+    ///
+    /// Takes the disjoint pieces explicitly rather than `&mut self` plus
+    /// overlapping sub-borrows of `result`.
+    fn when_builtin_not_found<const IS_BUN: bool>(
         log: &mut Log,
-        target: BundleTarget,
         import_record: &mut ImportRecord,
         source: &bun_ast::Source,
-    ) -> crate::Result<bool> {
+    ) -> bool {
         if import_record
             .flags
             .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
@@ -544,7 +550,7 @@ impl Linker {
             import_record
                 .flags
                 .insert(ImportRecordFlags::WAS_UNRESOLVED);
-            return Ok(false);
+            return false;
         }
 
         if IS_BUN {
@@ -553,52 +559,22 @@ impl Linker {
                 || import_record.kind == ImportKind::RequireResolve
                 || import_record.kind == ImportKind::Dynamic
             {
-                return Ok(false);
+                return false;
             }
         }
 
-        if !import_record.path.text.is_empty() && resolver::is_package_path(import_record.path.text)
-        {
-            if target == BundleTarget::Browser && options::is_node_builtin(import_record.path.text)
-            {
-                log.add_resolve_error(
-                    Some(source),
-                    import_record.range,
-                    format_args!(
-                        "Could not resolve: \"{}\". Try setting --target=\"node\"",
-                        bstr::BStr::new(import_record.path.text)
-                    ),
-                    import_record.path.text,
-                    import_record.kind,
-                    bun_ast::Error::ModuleNotFound,
-                );
-            } else {
-                log.add_resolve_error(
-                    Some(source),
-                    import_record.range,
-                    format_args!(
-                        "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                        bstr::BStr::new(import_record.path.text)
-                    ),
-                    import_record.path.text,
-                    import_record.kind,
-                    bun_ast::Error::ModuleNotFound,
-                );
-            }
-        } else {
-            log.add_resolve_error(
-                Some(source),
-                import_record.range,
-                format_args!(
-                    "Could not resolve: \"{}\"",
-                    bstr::BStr::new(import_record.path.text)
-                ),
-                import_record.path.text,
-                import_record.kind,
-                bun_ast::Error::ModuleNotFound,
-            );
-        }
-        Ok(true)
+        log.add_resolve_error(
+            Some(source),
+            import_record.range,
+            format_args!(
+                "No such built-in module: {}",
+                bstr::BStr::new(import_record.path.text)
+            ),
+            import_record.path.text,
+            import_record.kind,
+            bun_ast::Error::ModuleNotFound,
+        );
+        true
     }
 
     pub(crate) fn generate_import_path(

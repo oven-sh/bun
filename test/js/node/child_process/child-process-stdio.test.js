@@ -1,7 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { execSync, spawn } from "node:child_process";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { execSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
+import { closeSync, openSync, readFileSync } from "node:fs";
+import { connect, createServer } from "node:net";
+import { join } from "node:path";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -164,5 +167,137 @@ describe("child.stdin", () => {
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
     });
+  });
+});
+
+// Node shares the descriptor of any stdio entry that has a numeric `fd`
+// property (lib/internal/child_process.js, getValidStdio). Its own
+// test-listen-fd-* tests rely on that to hand `server._handle` to a child as
+// fd 3; in Bun that handle is the Bun.listen() Listener, which exposes `fd`.
+// Socket descriptors cannot be inherited as stdio on Windows (same as Node),
+// so the socket cases are POSIX only.
+describe("stdio entries carrying a file descriptor", () => {
+  async function listeningServer(onConnection) {
+    const server = createServer(onConnection);
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    return { server, port: server.address().port };
+  }
+
+  it.skipIf(isWindows)("a listening server's handle is inherited by the child as that fd", async () => {
+    const { server, port } = await listeningServer(conn => conn.end("hello from parent"));
+    let child;
+    try {
+      child = spawn(
+        bunExe(),
+        [
+          "-e",
+          `require("net").createServer(c => c.end("hello from child")).listen({ fd: 3 }, () => console.log("listening"));`,
+        ],
+        { env: bunEnv, stdio: ["ignore", "pipe", "inherit", server._handle] },
+      );
+      // Like Node, a shared descriptor gets no stream in child.stdio.
+      expect(child.stdio[3]).toBeNull();
+
+      // Close the parent's copy so the child's inherited descriptor is the only
+      // thing keeping the port open.
+      const closed = once(server, "close");
+      server.close();
+      await closed;
+
+      let out = "";
+      await new Promise((resolve, reject) => {
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", chunk => {
+          out += chunk;
+          if (out.includes("listening")) resolve();
+        });
+        child.once("error", reject);
+        child.once("exit", (code, signal) =>
+          reject(new Error(`child exited (${code ?? signal}) before listening: ${out}`)),
+        );
+      });
+
+      const reply = await new Promise((resolve, reject) => {
+        const socket = connect({ port, host: "127.0.0.1" });
+        let data = "";
+        socket.setEncoding("utf8");
+        socket.on("data", chunk => (data += chunk));
+        socket.once("end", () => resolve(data));
+        socket.once("error", reject);
+      });
+      expect(reply).toBe("hello from child");
+    } finally {
+      child?.kill();
+      server.close();
+    }
+  });
+
+  it.skipIf(isWindows)("spawnSync shares listening and connected socket handles with the child", async () => {
+    // The server leaves the connection open so the client's handle is still
+    // live while the child is spawned.
+    const { server, port } = await listeningServer(() => {});
+    const client = connect({ port, host: "127.0.0.1" });
+    try {
+      await once(client, "connect");
+      const { stdout, status } = spawnSync(
+        bunExe(),
+        [
+          "-e",
+          `const { fstatSync } = require("fs"); console.log(JSON.stringify([3, 4].map(fd => fstatSync(fd).isSocket())));`,
+        ],
+        {
+          env: bunEnv,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "inherit", server._handle, client._handle],
+        },
+      );
+      expect(stdout).toBe("[true,true]\n");
+      expect(status).toBe(0);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  it("an object with a numeric fd property is used as that fd", () => {
+    using dir = tempDir("stdio-fd-object", {});
+    const file = join(String(dir), "stdout.txt");
+    const fd = openSync(file, "w");
+    let status;
+    try {
+      ({ status } = spawnSync(bunExe(), ["-e", `console.log("written through { fd }")`], {
+        env: bunEnv,
+        stdio: ["ignore", { fd }, "inherit"],
+      }));
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file, "utf8")).toBe("written through { fd }\n");
+    expect(status).toBe(0);
+  });
+
+  it.each([
+    ["an object without an fd", {}],
+    ["an object whose fd is not a number", { fd: "3" }],
+  ])("%s is still rejected before anything is spawned", (_label, entry) => {
+    const options = { env: bunEnv, stdio: ["ignore", "ignore", "ignore", entry] };
+    expect(() => spawn(bunExe(), ["-e", "0"], options)).toThrow(/stdio/);
+    expect(() => spawnSync(bunExe(), ["-e", "0"], options)).toThrow(/stdio/);
+  });
+
+  it("a net.Server itself is rejected; only its handle carries the fd", async () => {
+    // Node throws for a server as well (it is not a stream); what its tests
+    // pass is server._handle, as above.
+    const { server } = await listeningServer(() => {});
+    try {
+      const options = { env: bunEnv, stdio: ["ignore", "ignore", "ignore", server] };
+      expect(() => spawn(bunExe(), ["-e", "0"], options)).toThrow(/stdio/);
+      expect(() => spawnSync(bunExe(), ["-e", "0"], options)).toThrow(/stdio/);
+    } finally {
+      server.close();
+    }
   });
 });

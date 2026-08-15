@@ -613,6 +613,21 @@ impl CompileC {
         &mut self,
         global_this: &JSGlobalObject,
     ) -> crate::Result<NonNull<TCC::State>> {
+        // Without the bundled headers even `#include <stddef.h>` fails, so
+        // failing to stage them is the compile error; reporting it here gives
+        // the cause instead of TinyCC's later "include file not found".
+        let compiler_rt = match CompilerRT::dirs() {
+            Ok(dirs) => dirs,
+            Err(err) => {
+                global_this.throw(format_args!(
+                    "cc() could not write its bundled C headers to the temporary directory \"{}\": {}. Set $BUN_TMPDIR to a writable directory.",
+                    BStr::new(Fs::RealFS::tmpdir_path()),
+                    err,
+                ));
+                return Err(crate::Error::JSError);
+            }
+        };
+
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
@@ -647,14 +662,8 @@ impl CompileC {
         // we hold the only reference for the rest of this function.
         let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
 
-        if let Some(compiler_rt_dir) = CompilerRT::dir() {
-            if state.add_sys_include_path(compiler_rt_dir).is_err() {
-                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
-            }
-        }
-
-        if let Some(node_dir) = CompilerRT::node_dir() {
-            if state.add_sys_include_path(node_dir).is_err() {
+        for include_dir in [&compiler_rt.dir, &compiler_rt.node_dir] {
+            if state.add_sys_include_path(include_dir).is_err() {
                 bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
             }
         }
@@ -2259,10 +2268,18 @@ use super::abi_type::ABIType;
 
 struct CompilerRT;
 
+/// Where the headers `cc()` bundles were staged for this process.
+struct CompilerRtDirs {
+    /// `CompilerRtSources::SOURCES`
+    dir: ZBox,
+    /// `CompilerRtSources::NODE_HEADERS`
+    node_dir: ZBox,
+}
+
 // Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + leak.
-static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
-static COMPILER_RT_NODE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+// `static mut` + leak. A failure is kept too: staging is attempted once per
+// process and every `cc()` call reports the same error.
+static COMPILER_RT_DIRS: OnceLock<bun_sys::Maybe<CompilerRtDirs>> = OnceLock::new();
 
 struct CompilerRtSources;
 impl CompilerRtSources {
@@ -2290,54 +2307,55 @@ impl CompilerRtSources {
     ];
 }
 
-static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
-
 impl CompilerRT {
-    fn create_compiler_rt_dir() {
-        // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
-        // yet expose an inherent `tmpdir()`; reuse the crate-local
-        // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
-        use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
-            return;
-        };
+    /// The staged headers, or the error that stopped them from being staged.
+    fn dirs() -> Result<&'static CompilerRtDirs, &'static bun_sys::Error> {
+        COMPILER_RT_DIRS
+            .get_or_init(Self::create_compiler_rt_dir)
+            .as_ref()
+    }
+
+    fn create_compiler_rt_dir() -> bun_sys::Maybe<CompilerRtDirs> {
+        let tmpdir = bun_sys::Dir::open(Fs::RealFS::tmpdir_path())?;
 
         // Prefer the reusable per-user directory; if it cannot be safely
         // populated, fall back to a freshly created, randomly named one.
         #[cfg(unix)]
         if let Some(bun_cc) = Self::open_owned_compiler_rt_dir(&tmpdir)
-            && Self::populate_compiler_rt_dir(&bun_cc)
+            && let Ok(dirs) = Self::populate_compiler_rt_dir(&bun_cc)
         {
-            return;
+            return Ok(dirs);
         }
-        for _ in 0..8 {
-            let Some(name) = Self::fresh_compiler_rt_dir_name() else {
-                return;
-            };
+        let bun_cc = Self::create_fresh_compiler_rt_dir(&tmpdir)?;
+        Self::populate_compiler_rt_dir(&bun_cc)
+    }
+
+    /// Create and open a private directory with a random name under `tmpdir`,
+    /// drawing another name when the first ones are taken.
+    fn create_fresh_compiler_rt_dir(tmpdir: &bun_sys::Dir) -> bun_sys::Maybe<bun_sys::Dir> {
+        let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
+        let mut attempts_left = 8;
+        loop {
+            let name = Self::fresh_compiler_rt_dir_name();
+            attempts_left -= 1;
             match bun_sys::mkdirat(tmpdir.fd(), name.as_zstr(), 0o700) {
-                Ok(()) => {}
-                Err(err) if err.get_errno() == bun_sys::E::EEXIST => continue,
-                Err(_) => return,
+                Ok(()) => return tmpdir.open_at_with(name.as_bytes(), dir_flags),
+                Err(err) if err.get_errno() == bun_sys::E::EEXIST && attempts_left > 0 => {}
+                Err(err) => return Err(err),
             }
-            let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
-            let Ok(dir) = tmpdir.open_at_with(name.as_bytes(), dir_flags) else {
-                return;
-            };
-            let _ = Self::populate_compiler_rt_dir(&dir);
-            return;
         }
     }
 
     /// Random name for a freshly created header directory. The Windows shape
     /// keeps the leading characters and the extension random, so a generated
     /// short (8.3) alias of the directory is random as well.
-    fn fresh_compiler_rt_dir_name() -> Option<ZBox> {
+    fn fresh_compiler_rt_dir_name() -> ZBox {
         #[cfg(unix)]
         {
             let mut name_buf = PathBuffer::uninit();
             let name = Fs::FileSystem::tmpname(b"bun-cc", &mut name_buf.0, bun_core::fast_random())
-                .ok()?;
-            Some(ZBox::from_bytes(name.as_bytes()))
+                .expect("unreachable");
+            ZBox::from_bytes(name.as_bytes())
         }
         #[cfg(windows)]
         {
@@ -2348,51 +2366,40 @@ impl CompilerRT {
                 bun_fmt::truncated_hash32(bun_core::fast_random()),
                 bun_fmt::truncated_hash32(bun_core::fast_random()),
             )
-            .ok()?;
-            Some(ZBox::from_vec(name))
+            .expect("unreachable");
+            ZBox::from_vec(name)
         }
     }
 
-    /// Stage every header into `bun_cc` and publish its path; returns false
-    /// (leaving nothing published) if any entry could not be written -- e.g.
-    /// a pre-planted symlinked entry refused by the no-follow write.
-    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bool {
+    /// Stage every header into `bun_cc`. Fails on the first entry that could
+    /// not be written -- e.g. a pre-planted symlinked entry refused by the
+    /// no-follow write.
+    fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bun_sys::Maybe<CompilerRtDirs> {
         for (name, source) in CompilerRtSources::SOURCES {
-            if !Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source) {
-                return false;
-            }
+            Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source)?;
         }
-        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
-        else {
-            return false;
-        };
+        let node = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())?;
         for (name, source) in CompilerRtSources::NODE_HEADERS {
-            if !Self::write_compiler_rt_file(&node_dir, name.as_bytes(), source) {
-                return false;
-            }
+            Self::write_compiler_rt_file(&node, name.as_bytes(), source)?;
         }
 
         let mut path_buf = PathBuffer::uninit();
-        let Ok(path) = bun_sys::get_fd_path(bun_cc.fd(), &mut path_buf) else {
-            return false;
-        };
         // `ZBox::from_bytes` panics on OOM.
-        let path = ZBox::from_bytes(&*path);
-        let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) else {
-            return false;
-        };
-        let node_path = ZBox::from_bytes(&*node_path);
-        let _ = COMPILER_RT_DIR.set(path);
-        let _ = COMPILER_RT_NODE_DIR.set(node_path);
-        true
+        let dir = ZBox::from_bytes(bun_cc.get_fd_path(&mut path_buf)?);
+        let node_dir = ZBox::from_bytes(node.get_fd_path(&mut path_buf)?);
+        Ok(CompilerRtDirs { dir, node_dir })
     }
 
     /// Write one staged header without following a pre-planted symlinked
     /// entry inside the header directory.
-    fn write_compiler_rt_file(dir: &bun_sys::Dir, name: &[u8], source: &[u8]) -> bool {
+    fn write_compiler_rt_file(
+        dir: &bun_sys::Dir,
+        name: &[u8],
+        source: &[u8],
+    ) -> bun_sys::Maybe<()> {
         #[cfg(unix)]
         {
-            let Ok(file) = dir.open_file(
+            dir.open_file(
                 name,
                 bun_sys::O::WRONLY
                     | bun_sys::O::CREAT
@@ -2400,15 +2407,13 @@ impl CompilerRT {
                     | bun_sys::O::CLOEXEC
                     | bun_sys::O::NOFOLLOW,
                 0o644,
-            ) else {
-                return false;
-            };
-            file.write_all(source).is_ok()
+            )?
+            .write_all(source)
         }
         #[cfg(windows)]
         {
             let name_z = ZBox::from_bytes(name);
-            bun_sys::File::write_file(dir.fd(), name_z.as_zstr(), source).is_ok()
+            bun_sys::File::write_file(dir.fd(), name_z.as_zstr(), source)
         }
     }
 
@@ -2440,22 +2445,6 @@ impl CompilerRT {
             return None;
         }
         Some(dir)
-    }
-
-    pub(crate) fn dir() -> Option<&'static ZStr> {
-        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
-        COMPILER_RT_DIR
-            .get()
-            .map(|b| b.as_zstr())
-            .filter(|d| !d.is_empty())
-    }
-
-    pub(crate) fn node_dir() -> Option<&'static ZStr> {
-        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
-        COMPILER_RT_NODE_DIR
-            .get()
-            .map(|b| b.as_zstr())
-            .filter(|d| !d.is_empty())
     }
 
     #[inline(never)]

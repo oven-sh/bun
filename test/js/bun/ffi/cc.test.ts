@@ -1307,3 +1307,41 @@ describe.concurrent("disabling cc()", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Fails before TinyCC is created, so unlike the tests above this also runs under ASAN.
+describe("compiler runtime header directory that cannot be created", () => {
+  it("cc() throws the error that stopped the headers from being staged", async () => {
+    using dir = tempDir("bun-ffi-cc-rt-dir-missing-tmpdir", {
+      "add.c": /* c */ `
+        #include <stdbool.h>
+        int add(int a, int b) {
+          return a + b + (int)true - 1;
+        }
+      `,
+      "fixture.js": /* js */ `
+        import { cc } from "bun:ffi";
+        cc({ source: "add.c", symbols: { add: { args: ["int", "int"], returns: "int" } } });
+      `,
+    });
+    const missingTmpdir = path.join(String(dir), "missing");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: { ...bunEnv, BUN_TMPDIR: missingTmpdir },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Previously the failure to create the directory was ignored and TinyCC
+    // went on to report "include file 'stdbool.h' not found" for add.c.
+    expect(stderr).toContain(
+      `cc() could not write its bundled C headers to the temporary directory "${missingTmpdir}": ENOENT`,
+    );
+    expect(stderr).toContain("Set $BUN_TMPDIR to a writable directory.");
+    expect(stderr).not.toContain("include file");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});

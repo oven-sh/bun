@@ -256,16 +256,16 @@ On a terminal, `.js`/`.mjs`/`.cjs`/`.jsx`/`.ts`/`.tsx`/`.css`/`.json` files are 
 
 Piped or with `NO_COLOR`, the output is a plain unified patch of the real file contents (so `bun pm diff a b > changes.patch` applies), and `--raw` turns the re-print off on a terminal too.
 
-| Flag                  | Description                                                              |
-| --------------------- | ------------------------------------------------------------------------ |
-| `--raw`, `--unformatted` | Compare bytes as-is; skip the JS/CSS/JSON re-print                    |
-| `--minify`            | Also fold equivalent syntax (`!0`/`true`, quote style, redundant parens) so only meaning is compared |
-| `--unminify`          | Rename short locals in lockstep in every JS file, not just ones that look minified |
-| `-w`, `--ignore-space` | Treat files that differ only in whitespace as unchanged (`whitespace only`) |
-| `--stat`              | One line per file with a change count and bar instead of the hunks       |
-| `--name-only`         | Only list the files that differ, marked `A`dded / `M`odified / `D`eleted |
-| `-U <n>`, `--unified` | Lines of context around each change (default 3)                          |
-| `--diff <spec>`       | npm-compatible way to name a side; may be given twice                    |
+| Flag                     | Description                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `--raw`, `--unformatted` | Compare bytes as-is; skip the JS/CSS/JSON re-print                                                   |
+| `--minify`               | Also fold equivalent syntax (`!0`/`true`, quote style, redundant parens) so only meaning is compared |
+| `--unminify`             | Rename short locals in lockstep in every JS file, not just ones that look minified                   |
+| `-w`, `--ignore-space`   | Treat files that differ only in whitespace as unchanged (`whitespace only`)                          |
+| `--stat`                 | One line per file with a change count and bar instead of the hunks                                   |
+| `--name-only`            | Only list the files that differ, marked `A`dded / `M`odified / `D`eleted                             |
+| `-U <n>`, `--unified`    | Lines of context around each change (default 3)                                                      |
+| `--diff <spec>`          | npm-compatible way to name a side; may be given twice                                                |
 
 With one name and no version, the left side is the version this project's `bun.lock` resolved and the right side is `latest`, so `bun pm diff <pkg>` answers "what would updating this pull in?". Registry, scope and auth settings come from `bunfig.toml` / `.npmrc` as for `bun install`; outside a project only registry specs and absolute or `./` paths are accepted.
 

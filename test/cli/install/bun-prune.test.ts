@@ -871,7 +871,8 @@ test.concurrent(
     `);
     expect(dryRun.exitCode).toBe(0);
 
-    const { stdout, exitCode } = await prune(dir, "--linker", "hoisted");
+    // bun.lock records workspace folders relative to the root; prune chdirs there first, so running it from inside a workspace resolves them the same way.
+    const { stdout, exitCode } = await prune({ dir, cwd: join(dir, "packages", "a") }, "--linker", "hoisted");
     expect(out(stdout)).toMatchInlineSnapshot(`
       "bun prune <version> (<revision>)
 

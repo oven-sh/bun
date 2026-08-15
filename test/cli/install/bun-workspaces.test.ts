@@ -270,6 +270,8 @@ describe("workspace member package.json without a name", () => {
   const patterns = {
     glob: ["packages/*"],
     listed: ["packages/pkg1", "packages/fixture"],
+    // The fixture matches three times; it must still be warned about once.
+    overlapping: ["packages/fixture", "packages/*", "packages/**"],
   };
 
   for (const [kind, workspaces] of Object.entries(patterns)) {

@@ -58,7 +58,14 @@ impl WorkspaceMap {
             Scanned::Nameless {
                 declares_dependencies,
             } => {
-                if declares_dependencies {
+                // Overlapping patterns match a directory more than once; named
+                // members collapse through `insert`, this list has to on its own.
+                if declares_dependencies
+                    && !self
+                        .skipped_with_dependencies
+                        .iter()
+                        .any(|dir| **dir == *relative_dir)
+                {
                     self.skipped_with_dependencies.push(relative_dir.into());
                 }
                 None

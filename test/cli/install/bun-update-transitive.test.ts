@@ -678,6 +678,39 @@ test.concurrent("a member's parked edge holds its transitive siblings under a ro
   expect(check.exitCode).toBe(0);
 });
 
+// pkg1's `^1.0.0` sits on leaf@1.0.0 only; it must not hold parent-b's `>=2.0.0` edge on the
+// separate leaf@2.0.0 instance, which is free to move to 3.0.0.
+test.concurrent("a member's parked row does not hold wants on another instance of its package", async () => {
+  using server = await serveRegistry({
+    "parent-a": { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    "parent-b": { "1.0.0": { dependencies: { leaf: ">=2.0.0" } } },
+    leaf: { "1.0.0": {}, "2.0.0": {}, "3.0.0": {} },
+  });
+  const dependents = { "parent-a": "1.0.0", "parent-b": "1.0.0" };
+  using tmp = tempDir("update-member-other-instance-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { ...dependents, leaf: "2.0.0" } }),
+    "packages/pkg1/package.json": stringify({ name: "pkg1", dependencies: { leaf: "^1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  await install(dir);
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.0.0"]);
+  await reinstall(dir, { name: "root", workspaces: ["packages/*"], dependencies: dependents });
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "2.0.0"]);
+
+  const { stderr, exitCode } = await run(dir, "update");
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0", "3.0.0"]);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+});
+
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.
 test.concurrent("hoisted: a bare update removes the nested copy whose row it collapsed", async () => {
   const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });

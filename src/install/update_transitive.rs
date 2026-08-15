@@ -1318,6 +1318,8 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
     struct DirectRow {
         dep_id: DependencyID,
         inst: u32,
+        /// Slot of the instance the row currently resolves to, `u32::MAX` when unresolved or unplanned.
+        res_slot: u32,
         catalog: bool,
     }
     let mut followers: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
@@ -1365,6 +1367,10 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
                     _ => continue,
                 };
                 let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
+                let res_slot = slot_of
+                    .get(resolutions[row] as usize)
+                    .copied()
+                    .unwrap_or(u32::MAX);
                 for (i, inst) in instances.iter().enumerate() {
                     if name_hashes[inst.pkg_id as usize] == row_hash
                         && names.eql(pkg_names[inst.pkg_id as usize], buf, buf)
@@ -1372,6 +1378,7 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
                         direct_rows.push(DirectRow {
                             dep_id: row as DependencyID,
                             inst: i as u32,
+                            res_slot,
                             catalog: deps[row].version.tag == DependencyVersionTag::Catalog,
                         });
                     }
@@ -1411,8 +1418,10 @@ fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> I
             named_row_in_scope(manager, row.dep_id)
         };
         if !reresolves {
-            // The row keeps its locked resolution; only the redirect can carry it.
-            followers[row.inst as usize].push(row.dep_id);
+            // The row keeps its locked resolution, so it sits on exactly that instance; only the redirect can carry it.
+            if row.inst == row.res_slot {
+                followers[row.inst as usize].push(row.dep_id);
+            }
             continue;
         }
         // Mirrors `latest_for_target`; named rows reach plan_edges via the --latest-only path.

@@ -304,6 +304,22 @@ pub fn from_errno(errno: i32) -> SystemErrno {
     SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
 }
 
+impl SystemErrno {
+    /// The OS error behind a `std::io::Error`; `None` if it is not an OS error or its code has no `SystemErrno`.
+    pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
+        let code = err.raw_os_error()?;
+        #[cfg(windows)]
+        {
+            // A Win32 code: the `u32` entry point maps it, `i64` would read it as an errno discriminant.
+            SystemErrno::init(code as u32)
+        }
+        #[cfg(not(windows))]
+        {
+            SystemErrno::init(i64::from(code))
+        }
+    }
+}
+
 #[cfg(not(windows))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).
@@ -501,6 +517,32 @@ mod errno_name_tests {
             assert_eq!(win32_errno_name(2), None);
             assert_eq!(win32_errno_name(u32::MAX), None);
         }
+    }
+
+    #[test]
+    fn io_error_to_errno() {
+        // Deliberately not EAGAIN, which is what the callers fall back to.
+        #[cfg(not(windows))]
+        assert_eq!(
+            SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(libc::ENOMEM)),
+            Some(SystemErrno::ENOMEM)
+        );
+        #[cfg(windows)]
+        {
+            // Win32 ERROR_NOT_ENOUGH_MEMORY and ERROR_ACCESS_DENIED; read as errno values, 8 and 5 would be ENOEXEC and EIO.
+            assert_eq!(
+                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(8)),
+                Some(SystemErrno::ENOMEM)
+            );
+            assert_eq!(
+                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(5)),
+                Some(SystemErrno::EPERM)
+            );
+        }
+        assert_eq!(
+            SystemErrno::from_io_error(&std::io::Error::other("not from the OS")),
+            None
+        );
     }
 
     #[test]

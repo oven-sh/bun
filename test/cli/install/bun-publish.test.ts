@@ -807,6 +807,78 @@ describe("--dry-run", async () => {
   });
 });
 
+describe.concurrent("tarball path", () => {
+  // --dry-run stops before the first request, so credentials in the registry url are enough
+  // for the auth check and the closed port guarantees nothing is contacted.
+  const dryRunEnv = { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" };
+
+  function packageDir(dirName: string, packageName: string) {
+    return tempDir(dirName, { "package.json": JSON.stringify({ name: packageName, version: "1.0.0" }) });
+  }
+
+  // The tarball path is resolved against the package directory (`${dir}/${tarballPath}`) into a
+  // buffer of MAX_PATH_BYTES (src/bun_core/util.rs): 4096 bytes on Linux, 1024 on macOS and, on
+  // Windows, the longest possible command line (32767 UTF-16 units) at three UTF-8 bytes per unit.
+  const PATH_BUFFER_BYTES = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+
+  // So on Windows the resolved path only gets that long when it is made of three byte characters.
+  // That goes for the directory too: the argument shares the command line with bun.exe and the
+  // other arguments, and every byte the directory contributes is one the argument does not need.
+  // 150 characters keep the directory within MAX_PATH (260 units), the longest a process can be
+  // started in, and leave about 140 units of the command line for the path of bun.exe.
+  const FILLER = isWindows ? "\u4e00" : "d";
+  const TOO_LONG_DIR = isWindows ? Buffer.alloc(150 * 3, FILLER).toString() : "publish-tarball-path-too-long";
+
+  function nameOfBytes(bytes: number) {
+    const remainder = bytes % Buffer.byteLength(FILLER);
+    return Buffer.alloc(bytes - remainder, FILLER).toString() + Buffer.alloc(remainder, "d").toString();
+  }
+
+  function nameResolvingTo(resolvedBytes: number, dir: string) {
+    return nameOfBytes(resolvedBytes - Buffer.byteLength(dir) - 1);
+  }
+
+  async function expectTooLong(tarballPathFor: (dir: string) => string) {
+    using dir = packageDir(TOO_LONG_DIR, "publish-tarball-path-too-long");
+    const tarballPath = tarballPathFor(String(dir));
+    if (isWindows) {
+      // CreateProcess takes command lines of up to 32767 units, terminating NUL included.
+      expect(`"${bunExe()}" publish ${tarballPath} --dry-run\0`.length).toBeLessThanOrEqual(32767);
+    }
+
+    const { err, exitCode } = await publish(dryRunEnv, String(dir), tarballPath, "--dry-run");
+
+    expect(err).toContain(`ENAMETOOLONG: File name too long: failed to read tarball: '${tarballPath}'`);
+    expect(exitCode).toBe(1);
+  }
+
+  test("one byte longer than the path buffer once resolved fails with ENAMETOOLONG", () =>
+    expectTooLong(dir => nameResolvingTo(PATH_BUFFER_BYTES + 1, dir)));
+
+  // Neither of these works on Windows: an argument longer than the whole buffer does not fit in a
+  // command line, and a path that fills the buffer exactly is refused by the open rather than the
+  // join, which on Windows currently reports it as ENOSYS (it takes ENAMETOOLONG's number from the
+  // C runtime, where it is a different one than in bun's errno table).
+  test.skipIf(isWindows).each([
+    ["longer than the path buffer", () => nameOfBytes(5000)],
+    // Leaves no room for the terminating NUL.
+    ["as long as the path buffer once resolved", (dir: string) => nameResolvingTo(PATH_BUFFER_BYTES, dir)],
+  ])("%s fails with ENAMETOOLONG", (_, tarballPathFor) => expectTooLong(tarballPathFor));
+
+  // What has to fit the buffer is the resolved path, not the argument as written.
+  test("that only fits the path buffer once resolved is read", async () => {
+    using dir = packageDir("publish-tarball-path-resolved", "publish-tarball-path-resolved");
+    await pack(String(dir), env);
+    const tarballPath = Buffer.alloc(5000, "x/../").toString() + "publish-tarball-path-resolved-1.0.0.tgz";
+
+    const { out, err, exitCode } = await publish(dryRunEnv, String(dir), tarballPath, "--dry-run");
+
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + publish-tarball-path-resolved@1.0.0 (dry-run)");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("lifecycle scripts", async () => {
   const script = `const fs = require("fs");
     fs.writeFileSync(process.argv[2] + ".txt", \`

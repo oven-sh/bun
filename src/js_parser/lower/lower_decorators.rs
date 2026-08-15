@@ -123,8 +123,7 @@ fn class_copy(c: &G::Class) -> G::Class {
     }
 }
 
-/// Whether the class body defines a static member keyed `name` (`static get
-/// name()`, `static name = ...`), which replaces the constructor's own `name`.
+/// `static name`, `static get name()`, ...: the class replaces its own `.name`.
 fn defines_static_name(props: &[Property]) -> bool {
     props.iter().any(|prop| {
         prop.flags.contains(Flags::Property::IsStatic)
@@ -2412,14 +2411,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             new_properties = merged;
         }
 
-        // `_class = class {}` would infer the name "_class", so restore the one
-        // the source position inferred. It is set with `__name` instead of by
-        // naming the class binding: the bundler renames a binding that collides
-        // with the enclosing scope (`const Bar = class Bar2 {}`), and a binding
-        // would shadow the outer `Bar` inside the class body. The block goes
-        // first so static initializers left in the body observe the name. A body
-        // with its own static `name` gets no block: static methods and accessors
-        // are installed before any static block runs, so it would overwrite them.
+        // `_class = class {}` would be named "_class". A string literal, unlike a
+        // class binding, survives bundler renaming and shadows nothing in the body;
+        // the block goes first so static initializers already see the name.
         if expr_class_is_anonymous && !defines_static_name(&new_properties) {
             let this_e = p.new_expr(E::This {}, loc);
             let name_e = p.new_expr(

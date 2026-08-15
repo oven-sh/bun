@@ -266,7 +266,7 @@ pub struct RareData {
     /// owns the data, no sidecar `Mutex<()>`).
     pub(crate) listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
 
-    pub(crate) pipe_read_scratch: bun_event_loop::PipeReadScratch,
+    pub pipe_read_scratch: bun_event_loop::PipeReadScratch,
 
     /// `node:http2` PADDED DATA scratch; see [`Self::take_h2_padded_frame_buffer`].
     h2_padded_frame_buffer: Option<Box<H2PaddedFrameBuffer>>,
@@ -654,9 +654,6 @@ impl RareData {
     }
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
-    pub fn pipe_read_scratch(&self) -> &bun_event_loop::PipeReadScratch {
-        &self.pipe_read_scratch
-    }
 
     /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather
     /// than borrowed: the socket write it feeds can re-enter JS and reach this path

@@ -7122,9 +7122,9 @@ impl NodeFS {
         // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
         let mut scratch = match self.vm {
-            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM); nothing else touches the scratch while the guard lives.
+            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM), which outlives this call.
             Some(vm) if flavor == Flavor::Sync => unsafe {
-                (*vm.as_ptr()).rare_data().pipe_read_scratch().claim()
+                (*(*vm.as_ptr()).rare_data_ptr()).pipe_read_scratch.claim()
             },
             _ => None,
         };

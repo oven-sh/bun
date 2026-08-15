@@ -655,4 +655,63 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  // The receiving side adopts a net.Server handle with listen({ fd }), which
+  // completes synchronously. Emitting the 'message' from that server's
+  // 'listening' event instead (a timer in node:net) delivered the handle after
+  // every plain message decoded in the meantime, and under load after the
+  // child's 'exit' as well.
+  test.concurrent("a net.Server handle is delivered in send order, ahead of the messages sent after it", async () => {
+    using dir = tempDir("ipc-handle-same-turn", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js');
+const order = [];
+let code = null;
+function maybeFinish() {
+  if (order.length === 3 && code !== null) console.log(JSON.stringify({ order, code }));
+}
+function record(event) {
+  order.push(event);
+  if (order.length === 3) {
+    if (child.connected) child.disconnect();
+    maybeFinish();
+  }
+}
+child.on('message', (m, handle) => {
+  if (handle) {
+    handle.close();
+    record('handle:' + m);
+    return;
+  }
+  record(m);
+  setImmediate(() => record('immediate'));
+});
+child.on('exit', exitCode => {
+  code = exitCode;
+  maybeFinish();
+});
+`,
+      "child.js": `
+const net = require('node:net');
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  process.send('srv', server, () => server.close());
+  process.send('after-handle');
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { order: ["handle:srv", "after-handle", "immediate"], code: 0 },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

@@ -55,9 +55,15 @@ export function parseHandle(target, serialized, fd) {
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
-      server.listen({ fd, exclusive: true }, () => {
+      server.listen({ fd, exclusive: true });
+      // An exclusive listen on an fd adopts it synchronously, but net.Server
+      // announces 'listening' from a timer. Emitting from there would deliver
+      // this message after everything decoded behind it, including the
+      // sender's exit. If the adoption failed, the server reports the error
+      // itself and the message is dropped, as in node.
+      if (server._handle) {
         emit(target, serialized.msg, server);
-      });
+      }
       return;
     }
     case "net.Socket": {

@@ -1318,9 +1318,8 @@ unsafe extern "C" {
     ) -> *mut JSPromise;
 }
 
-/// Inverse of the key spelling in `resolve_disk_key`, for the fetch hook to read
-/// the file. Must stay a plain Win32 path: the module loader cuts specifiers at
-/// the first `?`, so a `\\?\` prefixed one was read as `\\`.
+/// Inverse of `resolve_disk_key`'s key spelling. Never a `\\?\` path: the module
+/// loader cuts specifiers at the first `?`, which is how this used to read `\\`.
 #[unsafe(no_mangle)]
 extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     #[cfg(not(windows))]
@@ -1346,20 +1345,16 @@ fn key_path_to_disk_path(key_path: &[u8]) -> &[u8] {
     }
 }
 
-/// Drive (`C:\a`, `C:/a`) or UNC (`\\server\share\a`) path, as opposed to a
-/// bundle output path like `/_bun/abc123.js`.
+/// Drive or UNC path, as opposed to a bundle output path like `/_bun/abc123.js`.
 #[cfg(windows)]
 fn is_disk_path(path: &[u8]) -> bool {
     resolve_path::windows_volume_name_len(path).0 > 0 && bun_paths::is_absolute(path)
 }
 
-/// Keys are posix-style paths (`bake:/_bun/abc123.js`), but a file imported from
-/// outside the bundle is keyed by its disk path, which the fetch hook reads from
-/// disk. A Windows disk path on either side is resolved here like
-/// `path.win32.resolve(dirname(referrer), specifier)` and spelled the way `file:`
-/// URLs spell it: `bake:/C:/a/b.mjs`, `bake://server/share/b.mjs`. The loader
-/// resolves the returned key once more (referrer `bake:/`), so both spellings
-/// have to come back out of here unchanged. `None` when neither side is on disk.
+/// A file outside the bundle is keyed by its disk path, spelled like a `file:`
+/// URL path: `bake:/C:/a/b.mjs`, `bake://server/share/b.mjs`. The loader resolves
+/// the returned key once more (referrer `bake:/`), so both spellings must come
+/// back out of here unchanged. `None` when neither side is a disk path.
 #[cfg(windows)]
 fn resolve_disk_key(
     global: &JSGlobalObject,

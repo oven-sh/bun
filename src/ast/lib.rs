@@ -2310,6 +2310,8 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     Cow::Owned(v)
 }
 
+/// Aborts past `i32::MAX`: parsers keep their positions in range by rejecting
+/// longer sources up front ([`Source::check_parseable_len`]).
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
     Loc {
@@ -2557,6 +2559,11 @@ impl LineColumnTracker {
     }
 }
 
+/// The source is longer than [`Source::MAX_PARSEABLE_LEN`]; the error has
+/// already been logged by [`Source::check_parseable_len`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTooLarge;
+
 impl Source {
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
@@ -2564,6 +2571,27 @@ impl Source {
     #[inline]
     pub fn contents(&self) -> &[u8] {
         &self.contents
+    }
+
+    /// The longest source a parser accepts: positions are recorded as [`Loc`]s
+    /// (`i32` byte offsets), so [`usize2loc`] aborts on any position past this.
+    pub const MAX_PARSEABLE_LEN: usize = i32::MAX as usize;
+
+    /// Every parser that records positions calls this before reading the
+    /// source, whichever way the source reached it (file loader, bundler
+    /// plugin, JS API). `what` names the input in the error, e.g.
+    /// "TOML document". The error carries no position: locating one would
+    /// scan the oversized source.
+    pub fn check_parseable_len(&self, log: &mut Log, what: &str) -> Result<(), SourceTooLarge> {
+        if self.contents.len() <= Self::MAX_PARSEABLE_LEN {
+            return Ok(());
+        }
+        log.add_error_fmt(
+            Some(self),
+            Loc::EMPTY,
+            format_args!("{what} is too large to parse (2 GiB maximum)"),
+        );
+        Err(SourceTooLarge)
     }
 
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {

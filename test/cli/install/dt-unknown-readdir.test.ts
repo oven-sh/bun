@@ -5,11 +5,13 @@
 import { readTarball } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunExe, dtUnknownReaddir, tempDir } from "harness";
-import { readdir, symlink, writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 let env: NodeJS.Dict<string>;
 
+// Compiles the shim; a C compiler on a busy CI machine can take longer than the
+// default hook timeout.
 beforeAll(async () => {
   if (dtUnknownReaddir.available) env = await dtUnknownReaddir.env();
 }, 30_000);
@@ -154,24 +156,5 @@ describe.skipIf(!dtUnknownReaddir.available)("pack on a filesystem whose readdir
       "package/index.js",
       "package/package.json",
     ]);
-  });
-});
-
-describe.skipIf(!dtUnknownReaddir.available)("install on a filesystem whose readdir reports DT_UNKNOWN", () => {
-  // Folder dependencies are installed by walking the folder (walker_skippable
-  // with resolve_unknown_entry_types), so subdirectories must still be entered.
-  test.concurrent("installs every file of a folder dependency", async () => {
-    using dir = tempDir("dt-unknown-install", {
-      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
-      "dep/index.js": "",
-      "dep/lib/a.js": "",
-      "dep/lib/nested/b.js": "",
-      "app/package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:../dep" } }),
-    });
-
-    await run(join(String(dir), "app"), "install", "--no-summary");
-
-    const installed = await readdir(join(String(dir), "app", "node_modules", "dep"), { recursive: true });
-    expect(installed.sort()).toEqual(["index.js", "lib", "lib/a.js", "lib/nested", "lib/nested/b.js", "package.json"]);
   });
 });

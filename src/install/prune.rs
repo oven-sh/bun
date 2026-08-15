@@ -1343,17 +1343,24 @@ fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
     }
 }
 
+fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
+    if kind != EntryKind::Unknown {
+        return kind;
+    }
+    lstat_kind(dir, name)
+}
+
 fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
-    iter.resolve_unknown_entry_types = true;
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if name.first() == Some(&b'.') {
             continue;
         }
-        if entry.kind == EntryKind::Directory || entry.kind == EntryKind::SymLink {
-            out.push((name.into(), entry.kind));
+        let kind = entry_kind(dir, name, entry.kind);
+        if kind == EntryKind::Directory || kind == EntryKind::SymLink {
+            out.push((name.into(), kind));
         }
     }
     out
@@ -1773,10 +1780,9 @@ fn prune_bins(dir: &Dir) {
     };
     let mut dangling: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
-    iter.resolve_unknown_entry_types = true;
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
-        if entry.kind == EntryKind::SymLink && is_dangling(&bin, name) {
+        if entry_kind(&bin, name, entry.kind) == EntryKind::SymLink && is_dangling(&bin, name) {
             dangling.push(name.into());
         }
     }

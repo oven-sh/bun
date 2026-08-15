@@ -1553,11 +1553,8 @@ impl CommandLineReporter {
         Output::print_start_end(bun::start_time(), bun::time::nano_timestamp());
     }
 
-    /// Snapshots are otherwise only written back when the next file opens its
-    /// own `.snap` or when the whole run ends, so a bail exit has to flush them
-    /// itself: the open `.snap` was created (and, under `--update-snapshots`,
-    /// truncated) when it was opened and would be left empty on disk, and
-    /// pending inline snapshots would be dropped.
+    /// Like the JUnit report, called on the bail exits: snapshots are otherwise only written
+    /// when the run ends, and under `--update-snapshots` the open `.snap` is already truncated.
     pub(crate) fn write_snapshots_before_bail(&mut self) {
         if let Err(err) = self.jest.snapshots.write_inline_snapshots() {
             Output::err(err, "Failed to write inline snapshots", ());

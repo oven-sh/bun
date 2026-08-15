@@ -1523,6 +1523,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 && !this.lockfile.packages.items_resolution()[declarer as usize]
                     .tag
                     .is_local_package()
+                && !this.lockfile.has_equal_root_dependency(dependency)
             {
                 if dependency.behavior.is_required() {
                     reject_local_tarball_of_remote_package(this, declarer, dependency);
@@ -1682,14 +1683,21 @@ fn reject_local_tarball_of_remote_package(
 ) {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages = this.lockfile.packages.slice();
-    this.log_mut().add_error_fmt(
+    let name = bstr::BStr::new(dependency.name.slice(buf));
+    let literal = bstr::BStr::new(dependency.version.literal.slice(buf));
+    let declarer_name = bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf));
+    this.log_mut().add_range_error_fmt_with_notes(
         None,
-        bun_ast::Loc::EMPTY,
+        bun_ast::Range::NONE,
+        Box::new([bun_ast::range_data(
+            None,
+            bun_ast::Range::NONE,
+            bun_ast::alloc_print(format_args!(
+                "add \"{name}\": \"{literal}\" to the root package.json to install that tarball for {declarer_name} as well",
+            )),
+        )]),
         format_args!(
-            "refusing to resolve \"{}@{}\" declared by {}@{}: local tarball dependencies are only allowed in the package.json files of this project",
-            bstr::BStr::new(dependency.name.slice(buf)),
-            bstr::BStr::new(dependency.version.literal.slice(buf)),
-            bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
+            "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
             packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
         ),
     );

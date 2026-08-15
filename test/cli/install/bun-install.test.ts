@@ -10043,11 +10043,17 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
   }
 
   // <root>/project depends on `bar@0.0.2` from the dummy registry, whose manifest
-  // for it carries `barManifest`. Returns the URLs the registry gets asked for.
-  async function writeRegistryProject(ctx: TestContext, root: string, barManifest: object, rootExtra: object = {}) {
+  // for it carries `barManifest`, plus whatever `root` adds to its package.json.
+  // Returns the URLs the registry gets asked for.
+  async function writeRegistryProject(
+    ctx: TestContext,
+    root: string,
+    barManifest: object,
+    { dependencies = {}, ...rootExtra }: { dependencies?: Record<string, string>; [field: string]: unknown } = {},
+  ) {
     const urls: string[] = [];
     setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.2": barManifest }));
-    await write(join(root, "project", "package.json"), rootPackageJson({ bar: "0.0.2" }, rootExtra));
+    await write(join(root, "project", "package.json"), rootPackageJson({ bar: "0.0.2", ...dependencies }, rootExtra));
     await write(join(root, "project", "bunfig.toml"), `[install]\nregistry = "${ctx.registry_url}"\n`);
     return urls;
   }
@@ -10079,14 +10085,18 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     return { err, out, exitCode };
   }
 
-  // `declarer` is how bun prints the package declaring the tarball.
+  // What bun prints for an edge it refuses. The declaring package is always named
+  // `bar` here; `declarer` is how bun prints it, which depends on where it came from.
   function refusal(name: string, spec: string, declarer: string) {
-    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`;
+    return [
+      `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`,
+      `note: add "${name}": "${spec}" to the root package.json to install that tarball for bar as well`,
+    ];
   }
 
   // The rest of stderr is progress output ("Resolving dependencies", ...).
-  function errorLines(stderr: string) {
-    return stderr.split(/\r?\n/).filter(line => line.startsWith("error:"));
+  function diagnostics(stderr: string) {
+    return stderr.split(/\r?\n/).filter(line => line.startsWith("error:") || line.startsWith("note:"));
   }
 
   async function expectRejected(root: string, declarer: string) {
@@ -10094,12 +10104,12 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
     const rejected = Object.entries(declaredTarballs(root));
     const expected = [
-      ...rejected.map(([name, spec]) => refusal(name, spec, declarer)),
+      ...rejected.flatMap(([name, spec]) => refusal(name, spec, declarer)),
       ...rejected.map(([name, spec]) => `error: ${name}@${spec} failed to resolve`),
     ];
     // The dependencies are reported in the declaring package's dependency order,
     // which differs between a registry manifest and a package.json.
-    expect(errorLines(err).sort()).toEqual(expected.sort());
+    expect(diagnostics(err).sort()).toEqual(expected.sort());
     expect(err).not.toContain("Saved lockfile");
     expect(out).not.toContain("installed");
     expect(await exists(join(root, "project", "node_modules"))).toBe(false);
@@ -10160,12 +10170,73 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
       await cp(planted, join(root, "project", "inside.tgz"));
 
       const { err, exitCode } = await install(root);
-      expect(errorLines(err)).toEqual([refusal("inside", "file:./inside.tgz", "bar@0.0.2")]);
+      expect(diagnostics(err)).toEqual(refusal("inside", "file:./inside.tgz", "bar@0.0.2"));
       expect(await exists(join(root, "project", "node_modules", "inside"))).toBe(false);
       expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
       expect(exitCode).toBe(1);
     });
   });
+
+  // The remedy the note describes: a tarball the root package.json itself depends
+  // on, under the same name, is the project's own, so a registry package asking
+  // for that exact dependency gets it too.
+  it("installs the one the root package.json declares as well", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("root-declared-local-tarball-of-registry-dep", {});
+      const root = String(dir);
+      await writeRegistryProject(
+        ctx,
+        root,
+        { dependencies: { inside: "file:./inside.tgz" } },
+        { dependencies: { inside: "file:./inside.tgz" } },
+      );
+      await cp(planted, join(root, "project", "inside.tgz"));
+
+      const { err, out, exitCode } = await install(root);
+      expect(diagnostics(err)).toEqual([]);
+      expect(out).toContain("2 packages installed");
+      expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual([".bin", "bar", "inside"]);
+      expect(await file(join(root, "project", "node_modules", "inside", "package.json")).json()).toEqual(
+        plantedManifest,
+      );
+      const lockfile = await file(join(root, "project", "bun.lock")).text();
+      expect(lockfile).toContain('"inside": ["baz@./inside.tgz"');
+      expect(lockfile).not.toContain('"bar/inside"');
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Only the identical dependency counts: neither the name nor the path alone.
+  for (const [what, rootDependencies] of [
+    ["another tarball under the same name", { inside: "file:./vendored.tgz" }],
+    ["the same tarball under another name", { vendored: "file:./inside.tgz" }],
+  ] as const) {
+    it(`still rejects it when the root package.json declares ${what}`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        using dir = tempDir("similar-root-local-tarball-of-registry-dep", {});
+        const root = String(dir);
+        await writeRegistryProject(
+          ctx,
+          root,
+          { dependencies: { inside: "file:./inside.tgz" } },
+          { dependencies: rootDependencies },
+        );
+        await Promise.all([
+          cp(planted, join(root, "project", "inside.tgz")),
+          cp(planted, join(root, "project", "vendored.tgz")),
+        ]);
+
+        const { err, exitCode } = await install(root);
+        expect(diagnostics(err)).toEqual([
+          ...refusal("inside", "file:./inside.tgz", "bar@0.0.2"),
+          "error: inside@file:./inside.tgz failed to resolve",
+        ]);
+        expect(await exists(join(root, "project", "node_modules"))).toBe(false);
+        expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+        expect(exitCode).toBe(1);
+      });
+    });
+  }
 
   it("leaves the one a registry package declares as optional uninstalled", async () => {
     await withContext(defaultOpts, async ctx => {

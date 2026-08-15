@@ -8,7 +8,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{RunCommand, ScriptEnv};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -29,13 +29,8 @@ struct ScriptConfig {
     // parsed `PackageJSON` (which owns the file bytes) drops.
     deps: Vec<Box<[u8]>>,
 
-    // $PATH must be set per script because it contains
-    // node_modules/.bin
-    // ../node_modules/.bin
-    // ../../node_modules/.bin
-    // and so forth, in addition to the user's $PATH.
-    #[allow(non_snake_case)]
-    PATH: Box<[u8]>,
+    /// This package's `$PATH` and this script's `npm_*` vars, layered over the run's shared env.
+    env: ScriptEnv,
     elide_count: Option<usize>,
 }
 
@@ -102,36 +97,22 @@ impl<'a> ProcessHandle<'a> {
             core::ptr::null(),
         ];
         handle.start_time = Some(Instant::now());
-        let spawned: spawn::SpawnProcessResult = 'brk: {
-            // Get the envp with the PATH configured
-            // There's probably a more optimal way to do this where you have a Vec shared
-            // instead of creating a new one for each process
-            let env_ptr = state.env;
-            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
-            let env = unsafe { &mut *env_ptr };
-            // Copy to owned — `original_path` borrows env.map which is
-            // mutated by put() below.
-            let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
-            let _ = env.map.put(b"PATH", &handle.config.PATH);
-            // Restores PATH unconditionally at block exit (success OR error).
-            // Keep the guard armed for the whole block so `?` early-returns also
-            // restore.
-            scopeguard::defer! {
-                // SAFETY: env_ptr valid for the run loop lifetime (see above).
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
-            }
-            // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
-            let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
+        let spawned: spawn::SpawnProcessResult = {
+            // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env);
+            // this is the only borrow of it while `create_envp` runs.
+            let envp = handle
+                .config
+                .env
+                .create_envp(unsafe { &mut (*state.env).map })?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
             // with argv[0] non-null; valid for this call.
-            break 'brk unsafe {
+            unsafe {
                 spawn::spawn_process(
                     &handle.options,
                     argv.as_ptr(),
                     envp.as_ptr().cast::<*const c_char>(),
                 )
-            }??;
-            // `_guard` drops here (or on `?` above), restoring PATH.
+            }??
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
@@ -326,10 +307,8 @@ struct State<'a> {
     pretty_output: bool,
     shell_bin: &'static ZStr, // intentionally leaked (process exits)
     aborted: bool,
-    // Raw `*mut` — process-lifetime singleton owned
-    // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
-    // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
-    // own raw-ptr field. Reborrow `&mut *env` at use sites.
+    // Process-lifetime loader owned by the Transpiler; `ProcessHandle::start` mutates it per
+    // spawn, so it is reborrowed `&mut` at use sites rather than held as `&'a`/`&'a mut`.
     env: *mut bun_dotenv::Loader,
 }
 
@@ -764,7 +743,7 @@ pub(crate) fn run_scripts_with_filter(
 ) -> crate::Result<core::convert::Infallible> {
     // Never returns normally; Result<Infallible, _> keeps `?` support.
     // Own the slice — `ctx` is reborrowed `&mut` for
-    // `configure_env_for_run` below while `script_name` is still live.
+    // `configure_env_for_multi_script_run` below while `script_name` is still live.
     let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {
         ctx.positionals[1].clone()
     } else if ctx.positionals.len() > 0 {
@@ -790,8 +769,8 @@ pub(crate) fn run_scripts_with_filter(
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
-    // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
+    RunCommand::configure_env_for_multi_script_run(&mut *ctx, &mut this_transpiler)?;
+    // SAFETY: configure_env_for_multi_script_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
     let selected = FilterArg::select_packages(
@@ -816,6 +795,7 @@ pub(crate) fn run_scripts_with_filter(
             path,
             run_in_bun,
         )?;
+        let package_env = ScriptEnv::new(&path_var, Some(&pkgjson));
 
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
             .iter()
@@ -876,7 +856,7 @@ pub(crate) fn run_scripts_with_filter(
                 script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
                 combined,
                 deps,
-                PATH: Box::<[u8]>::from(&path_var[..]),
+                env: package_env.with_script(name, original_content),
                 elide_count: ctx.bundler_options.elide_lines,
             });
         }

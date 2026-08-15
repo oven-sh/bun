@@ -71,6 +71,74 @@ impl NpmArgs {
     const PACKAGE_VERSION: &'static [u8] = b"npm_package_version";
 }
 
+/// Vars `--filter` / `--parallel` set per script on top of the env map the whole run shares.
+#[derive(Clone)]
+pub(crate) struct ScriptEnv {
+    vars: Vec<(Box<[u8]>, Box<[u8]>)>,
+}
+
+impl ScriptEnv {
+    pub(crate) fn new(path: &[u8], package_json: Option<&PackageJSON>) -> Self {
+        let mut env = Self { vars: Vec::new() };
+        env.set(b"PATH", path);
+        if let Some(package_json) = package_json {
+            env.set(b"npm_package_json", package_json.source.path.text);
+            // A missing name/version stays inherited, as in `configure_env_for_run` and npm.
+            if !package_json.name.is_empty() {
+                env.set(NpmArgs::PACKAGE_NAME, &package_json.name);
+            }
+            if !package_json.version.is_empty() {
+                env.set(NpmArgs::PACKAGE_VERSION, &package_json.version);
+            }
+            if let Some(config) = package_json.config.as_deref() {
+                for (key, value) in config.iter() {
+                    env.vars.push((
+                        strings::concat(&[b"npm_package_config_", &key[..]]),
+                        Box::from(*value),
+                    ));
+                }
+            }
+        }
+        env
+    }
+
+    /// `script` is the package.json body verbatim: that is what `npm_lifecycle_script` carries.
+    pub(crate) fn with_script(&self, name: &[u8], script: &[u8]) -> Self {
+        let mut env = self.clone();
+        env.set(b"npm_lifecycle_event", name);
+        env.set(b"npm_lifecycle_script", script);
+        env
+    }
+
+    fn set(&mut self, key: &[u8], value: &[u8]) {
+        self.vars.push((Box::from(key), Box::from(value)));
+    }
+
+    /// Envp of `map` plus these vars; `map` is restored so they do not reach the next spawn.
+    pub(crate) fn create_envp(
+        &self,
+        map: &mut DotEnv::Map,
+    ) -> Result<DotEnv::NullDelimitedEnvMap, bun_alloc::AllocError> {
+        let previous: Vec<(&[u8], Option<Box<[u8]>>)> = self
+            .vars
+            .iter()
+            .map(|(key, _)| (&key[..], map.get(key).map(Box::from)))
+            .collect();
+        let envp = self
+            .vars
+            .iter()
+            .try_for_each(|(key, value)| map.put(key, value))
+            .and_then(|()| map.create_null_delimited_env_map());
+        for (key, value) in &previous {
+            match value {
+                Some(value) => map.put(key, value)?,
+                None => map.remove(key),
+            }
+        }
+        envp
+    }
+}
+
 /// Runtime knobs `Command::start` passes through to select the per-tag exec
 /// behavior.
 #[derive(Clone, Copy)]
@@ -544,7 +612,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+        Self::configure_env_for_run_impl(
+            ctx,
+            this_transpiler,
+            env,
+            log_errors,
+            store_root_fd,
+            true,
+            true,
+        )
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -565,7 +641,25 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             log_errors,
             store_root_fd,
             false,
+            true,
         )
+    }
+
+    /// [`Self::configure_env_for_run`] for `--filter` / `--parallel`, whose scripts span packages:
+    /// the cwd package's `npm_package_*` vars are not seeded; each [`ScriptEnv`] brings its own.
+    pub(crate) fn configure_env_for_multi_script_run(
+        ctx: &mut ContextData,
+        this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+    ) -> crate::Result<()> {
+        Self::configure_env_for_run_impl(ctx, this_transpiler, None, true, false, true, false)?;
+        // SAFETY: `configure_env_for_run_impl` returned `Ok`, so the slot is initialized.
+        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        // Same value `exec` exports for `bun run <script>`.
+        this_transpiler
+            .env_mut()
+            .map
+            .put(b"npm_command", b"run-script")?;
+        Ok(())
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
@@ -590,6 +684,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
+        seed_cwd_package: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
@@ -732,7 +827,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        if let Some(package_json) = root_dir_info.enclosing_package_json {
+        if seed_cwd_package && let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {
                 if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
                     env_loader

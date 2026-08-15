@@ -717,6 +717,94 @@ describe("bun", () => {
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
   });
+
+  test("each script gets the npm_* env of its own package and script", async () => {
+    const printEnv = `${bunExe()} print-env.js`;
+    const printEnvJs = `
+      const { npm_package_name, npm_package_version, npm_package_json, npm_package_config_port, npm_lifecycle_event, npm_lifecycle_script, npm_command } = process.env;
+      console.log(JSON.stringify({ npm_package_name, npm_package_version, npm_package_json, npm_package_config_port, npm_lifecycle_event, npm_lifecycle_script, npm_command }));
+    `;
+    using dir = tempDir("filter-npm-env", {
+      packages: {
+        a: {
+          "print-env.js": printEnvJs,
+          "package.json": JSON.stringify({
+            name: "pkg-a",
+            version: "1.0.0",
+            config: { port: "8080" },
+            scripts: { prepresent: printEnv, present: printEnv },
+          }),
+        },
+        b: {
+          "print-env.js": printEnvJs,
+          "package.json": JSON.stringify({ name: "pkg-b", version: "2.0.0", scripts: { present: printEnv } }),
+        },
+      },
+      // None of the root's values may show up in the packages' scripts.
+      "package.json": JSON.stringify({
+        name: "root",
+        version: "0.0.1",
+        config: { port: "3000" },
+        workspaces: ["packages/*"],
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      cwd: dir,
+      env: {
+        ...bunEnv,
+        // What the environment looks like when a root package.json script
+        // invokes `bun run --filter`. Every value must be replaced per package.
+        npm_package_name: "outer",
+        npm_package_version: "0.0.0-outer",
+        npm_package_json: "outer/package.json",
+        npm_lifecycle_event: "outer",
+        npm_lifecycle_script: "outer",
+        npm_command: "outer",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Output lines look like `pkg-a present: {...}`; the packages run concurrently.
+    const envs = stdout
+      .split("\n")
+      .map(line => line.match(/\{.*\}/)?.[0])
+      .filter(json => json !== undefined)
+      .map(json => JSON.parse(json))
+      .map(env => ({ ...env, npm_package_json: env.npm_package_json.replaceAll("\\", "/") }))
+      .sort((x, y) =>
+        `${x.npm_package_name} ${x.npm_lifecycle_event}` < `${y.npm_package_name} ${y.npm_lifecycle_event}` ? -1 : 1,
+      );
+    const packageJson = (pkg: string) => join(String(dir), "packages", pkg, "package.json").replaceAll("\\", "/");
+    const pkgA = {
+      npm_package_name: "pkg-a",
+      npm_package_version: "1.0.0",
+      npm_package_json: packageJson("a"),
+      npm_package_config_port: "8080",
+      npm_lifecycle_script: printEnv,
+      npm_command: "run-script",
+    };
+    expect({ envs, stderr, exitCode }).toEqual({
+      envs: [
+        { ...pkgA, npm_lifecycle_event: "prepresent" },
+        { ...pkgA, npm_lifecycle_event: "present" },
+        {
+          npm_package_name: "pkg-b",
+          npm_package_version: "2.0.0",
+          npm_package_json: packageJson("b"),
+          // No "config" here, so neither the root's nor pkg-a's npm_package_config_port may show up.
+          npm_lifecycle_event: "present",
+          npm_lifecycle_script: printEnv,
+          npm_command: "run-script",
+        },
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("selectors", () => {

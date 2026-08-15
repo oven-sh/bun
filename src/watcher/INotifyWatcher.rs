@@ -5,12 +5,15 @@ use core::ffi::c_int;
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use bun_core::{ZStr, env_var, output as Output};
+use bun_core::{ZStr, output as Output};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
-use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    MAX_COALESCE_ITERATIONS, MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher,
+    coalesce_interval_ns, coalesce_timespec,
+};
 use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
@@ -54,27 +57,9 @@ pub struct INotifyWatcher {
     read_ptr: Option<ReadPtr>,
 
     pub(crate) watch_count: AtomicU32,
-    /// After the first `read()` returns events, the watcher repeatedly
-    /// `ppoll`s with this timeout and drains any further events that
-    /// arrive before it expires. Editors commonly generate several
-    /// inotify events for a single logical save (truncate+write, or
-    /// write+rename, plus matching events on the parent-directory
-    /// watch), often spread across a few milliseconds. If those events
-    /// land in separate `read()` cycles the consumer sees multiple
-    /// `on_file_update` calls for one save and, in `--hot` mode,
-    /// re-evaluates the entry point once per burst.
-    ///
-    /// Nanoseconds. Overridable via `BUN_INOTIFY_COALESCE_INTERVAL`.
-    pub(crate) coalesce_interval: isize,
+    /// See [`coalesce_interval_ns`].
+    pub(crate) coalesce_interval: u64,
 }
-
-pub const DEFAULT_COALESCE_INTERVAL_NS: isize = 10_000_000; // 10ms
-/// Safety cap on drain iterations so a file written to faster than the
-/// coalesce interval cannot hold the watch loop indefinitely. In the
-/// common case the loop exits on the first `ppoll` that sees no new
-/// data (one `coalesce_interval` after the final event in a burst);
-/// this bound only bites when writes never stop.
-const MAX_COALESCE_ITERATIONS: u32 = 32;
 
 impl Default for INotifyWatcher {
     fn default() -> Self {
@@ -85,7 +70,7 @@ impl Default for INotifyWatcher {
             eventlist_ptrs: [core::ptr::null(); max_count],
             read_ptr: None,
             watch_count: AtomicU32::new(0),
-            coalesce_interval: DEFAULT_COALESCE_INTERVAL_NS,
+            coalesce_interval: 0,
         }
     }
 }
@@ -215,10 +200,7 @@ impl INotifyWatcher {
         Ok(Self {
             fd,
             loaded: true,
-            coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
-                .get()
-                .and_then(|v| isize::try_from(v).ok())
-                .unwrap_or(DEFAULT_COALESCE_INTERVAL_NS),
+            coalesce_interval: coalesce_interval_ns(),
             ..Self::default()
         })
     }
@@ -264,24 +246,9 @@ impl INotifyWatcher {
                             return Ok(&[]);
                         }
 
-                        // IN_MODIFY is very noisy. Editors typically emit
-                        // several events per save (truncate+write,
-                        // write+rename, plus the parent-directory watch),
-                        // often a few ms apart. Keep draining until the fd
-                        // goes quiet for `coalesce_interval` so a single
-                        // save becomes a single `on_file_update` call.
-                        //
-                        // The loop exits as soon as (a) `ppoll` times out
-                        // with no new data, (b) we've accumulated enough
-                        // bytes that the parse loop below would set
-                        // `read_ptr` anyway (more than `max_count`
-                        // minimum-size events), or (c) the iteration cap is
-                        // hit. (b) and (c) keep a file that is written to
-                        // continuously from starving the watch loop while
-                        // still letting an ordinary save burst — a few
-                        // dozen events over a few ms — collapse into one
-                        // cycle.
-                        const NS_PER_S: isize = 1_000_000_000;
+                        // Drain until quiet. Past `max_count` events the parse
+                        // loop below would leave a `read_ptr` anyway, so stop there.
+                        let timespec = coalesce_timespec(self.coalesce_interval);
                         let mut iterations: u32 = 0;
                         while read_len < size_of::<Event>() * max_count
                             && iterations < MAX_COALESCE_ITERATIONS
@@ -296,14 +263,6 @@ impl INotifyWatcher {
                                 events: (libc::POLLIN | libc::POLLERR) as _,
                                 revents: 0,
                             }];
-                            // POSIX requires tv_nsec < 10^9; split so a
-                            // user-supplied interval ≥ 1 s doesn't make
-                            // `ppoll` fail with EINVAL (which we treat as
-                            // "quiet" and would disable coalescing).
-                            let timespec = libc::timespec {
-                                tv_sec: (self.coalesce_interval / NS_PER_S) as _,
-                                tv_nsec: (self.coalesce_interval % NS_PER_S) as _,
-                            };
                             // SAFETY: fds and timespec are valid stack locals; sigmask is null.
                             let poll_n = unsafe {
                                 system::ppoll(

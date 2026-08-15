@@ -343,26 +343,15 @@ it(
   timeout,
 );
 
-// Intel macOS CI runners stretch `sleepSync(2)` well past the 10 ms
-// coalesce window (timer coalescing + scheduler load), so the burst
-// below splits into several watch-loop cycles there. The reported bug
-// (#13511) was Windows + Linux; arm64 macOS lanes pass this test.
+// Intel macOS runners stretch `sleepSync(2)` past the 10 ms coalesce window,
+// splitting the burst; the bug (#13511) was reported on Linux and Windows.
 it.skipIf(isIntelMacOS)(
   "coalesces a burst of writes into a single reload",
   async () => {
     // https://github.com/oven-sh/bun/issues/13511
     //
-    // A single editor save typically generates several filesystem events a
-    // few milliseconds apart (truncate+write, write+rename, and matching
-    // events on the parent-directory watch). Previously the watcher's
-    // coalesce window was 0.1 ms and only performed one extra read, so most
-    // of those events landed in separate watch-loop cycles and `--hot`
-    // re-evaluated the entry point once per cycle — the user saw their
-    // script's output repeated for one save.
-    //
-    // Use a dedicated empty directory rather than `cwd` (which `beforeEach`
-    // populates with the whole fixture set) so the directory watch only
-    // ever sees events for the one file under test.
+    // A fresh directory (not `cwd`, which holds the whole fixture set) so the
+    // directory watch only sees the file under test.
     const dir = tmpdirSync();
     const root = join(dir, "coalesce.js");
     // `globalThis.count` survives a hot reload, so it counts evaluations.
@@ -399,23 +388,9 @@ setInterval(() => {}, 1e6);
 
     while (evals.length < 1) await Bun.sleep(1);
 
-    // Simulate a noisy editor save: a burst of writes spread over a few
-    // milliseconds. Each `write()` on the open fd emits an `IN_MODIFY` on
-    // both the file watch and the parent-directory watch — the same
-    // shape as a real editor's truncate/write/fsync/rename sequence. The
-    // `sleepSync` gaps yield the CPU so the child's watcher thread
-    // actually observes the events mid-burst rather than all at once,
-    // which is what the pre-fix 0.1 ms coalesce window relied on; they
-    // stay well inside the new 10 ms window so the whole burst still
-    // collapses into one `onFileUpdate`.
-    //
-    // Without the hash dedup in `Task.append`, the many directory-watch
-    // events (all naming the same file) also overflow the task's
-    // fixed-size hash buffer and flush mid-`onFileUpdate`, which on a
-    // slow (debug/ASAN) build lets the JS thread start a reload while
-    // the watcher is still appending — the `while` loop in `Task.run`
-    // then turns the later increments into a second reload for the
-    // same save.
+    // An editor-save-shaped burst: each write emits an event on the file and
+    // directory watches, and the 2 ms gaps let the watcher thread observe
+    // them mid-burst while staying inside the 10 ms coalesce window.
     {
       const fd = openSync(root, "a");
       try {
@@ -429,15 +404,13 @@ setInterval(() => {}, 1e6);
     }
 
     while (evals.length < 2) await Bun.sleep(1);
-    // Let any spurious extra reloads from this burst surface. Has to
-    // outlive the watcher's coalesce window; 200 ms matches the settle
-    // used by the "random file" test below.
+    // Give any extra reloads time to surface (same settle as the "random
+    // file" test below).
     await Bun.sleep(200);
 
     runner.kill();
 
-    // One initial evaluation + one reload for the whole burst. Before
-    // the fix the burst above produced several reloads on Linux.
+    // The initial evaluation plus one reload for the whole burst.
     expect({ evals }).toEqual({ evals: [1, 2] });
   },
   timeout,
@@ -711,14 +684,9 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error('${counter}');`,
     writeFull(0);
     await using runner = spawn({
       cmd: [bunExe(), "--smol", "--hot", "run", hotRunnerRoot],
-      // This test needs the self-write's watcher event to be dispatched
-      // promptly so it lands in the reject→report window; the default
-      // 10 ms coalesce would delay it until after the error is already
-      // reported and the race under test never opens. `0` makes the
-      // drain loop non-blocking (poll once, process what's there),
-      // which is the closest analogue to the pre-coalesce-loop behaviour
-      // this test was tuned against. Honoured by all three watcher
-      // backends despite the Linux-centric name.
+      // The race under test needs the self-write's event dispatched before
+      // the rejection is reported; the default 10 ms coalesce window would
+      // close it.
       env: { ...bunEnv, BUN_INOTIFY_COALESCE_INTERVAL: "0" },
       cwd,
       stdout: "ignore",

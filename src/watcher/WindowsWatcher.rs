@@ -3,7 +3,10 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    MAX_COALESCE_ITERATIONS, Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher,
+    coalesce_interval_ns,
+};
 use bun_core::strings;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_paths::{PathBuffer, WPathBuffer};
@@ -22,22 +25,9 @@ pub struct WindowsWatcher {
     pub(crate) watcher: DirWatcher,
     pub(crate) buf: PathBuffer,
     pub(crate) base_idx: usize,
-    /// See `INotifyWatcher::coalesce_interval` for rationale. Honours the
-    /// same env var (despite its Linux-centric name) so tests can pin the
-    /// window uniformly across platforms. Milliseconds, because that's
-    /// what `GetQueuedCompletionStatus` takes; note Windows' default
-    /// timer resolution is ~15.6 ms, so small non-zero values round up
-    /// to roughly that in practice.
+    /// [`coalesce_interval_ns`] in the milliseconds `GetQueuedCompletionStatus` takes.
     pub(crate) coalesce_interval_ms: w::DWORD,
 }
-
-const DEFAULT_COALESCE_INTERVAL_MS: w::DWORD = 10;
-/// See `INotifyWatcher::MAX_COALESCE_ITERATIONS` for rationale. Kept in
-/// step with the other backends so the same save burst collapses into
-/// one cycle everywhere; `ReadDirectoryChangesW` batches all buffered
-/// notifications per completion, so in practice far fewer iterations
-/// are consumed than on inotify/kqueue.
-const MAX_COALESCE_ITERATIONS: u32 = 32;
 
 impl Default for WindowsWatcher {
     fn default() -> Self {
@@ -50,7 +40,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
-            coalesce_interval_ms: DEFAULT_COALESCE_INTERVAL_MS,
+            coalesce_interval_ms: 0,
         }
     }
 }
@@ -309,20 +299,10 @@ impl WindowsWatcher {
             root.len()
         };
 
-        // Env var is in nanoseconds; convert to the millisecond
-        // granularity `GetQueuedCompletionStatus` expects. Round up so
-        // a sub-millisecond override (e.g. the 0.1 ms a test might pin
-        // for the other backends) becomes 1 ms rather than truncating
-        // to 0 and disabling the wait; an explicit `0` still means
-        // "don't wait".
-        self.coalesce_interval_ms = match bun_core::env_var::BUN_INOTIFY_COALESCE_INTERVAL.get() {
-            Some(0) => 0,
-            Some(ns) => ns
-                .div_ceil(1_000_000)
-                .try_into()
-                .unwrap_or(DEFAULT_COALESCE_INTERVAL_MS),
-            None => DEFAULT_COALESCE_INTERVAL_MS,
-        };
+        // Round up so a sub-millisecond override still waits; an interval too
+        // large for a DWORD is as good as infinite.
+        self.coalesce_interval_ms =
+            w::DWORD::try_from(coalesce_interval_ns().div_ceil(1_000_000)).unwrap_or(w::INFINITE);
 
         // disarm the cleanup scopeguards on success
         scopeguard::ScopeGuard::into_inner(iocp_guard);
@@ -330,10 +310,7 @@ impl WindowsWatcher {
         Ok(())
     }
 
-    /// `timeout_ms` is passed straight to `GetQueuedCompletionStatus`:
-    /// `w::INFINITE` for the first blocking wait, then
-    /// `coalesce_interval_ms` to sweep up trailing events from the
-    /// same logical save.
+    /// Waits up to `timeout_ms` (a `GetQueuedCompletionStatus` timeout) for events.
     fn next(&mut self, timeout_ms: w::DWORD) -> bun_sys::Result<Option<EventIterator>> {
         if let Err(err) = self.watcher.prepare() {
             bun_core::scoped_log!(watcher, "prepare() returned error");
@@ -430,7 +407,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let mut event_id: usize = 0;
 
-    // first wait has infinite timeout - we're waiting for the next event and don't want to spin
+    // Block for the first batch, then keep sweeping until quiet (see
+    // `coalesce_interval_ns`); `<=` because the blocking wait is iteration zero.
     let mut timeout_ms: w::DWORD = w::INFINITE;
     let mut iterations: u32 = 0;
     while iterations <= MAX_COALESCE_ITERATIONS {
@@ -438,11 +416,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             Some(it) => it,
             None => break,
         };
-        // After the first (infinite) wait, briefly wait for trailing
-        // events from a single editor save — Windows typically produces
-        // several `Modified` notifications a few ms apart — so they
-        // coalesce into a single `on_file_update` instead of `--hot`
-        // re-evaluating the entry point once per notification.
         timeout_ms = this.platform.coalesce_interval_ms;
         iterations += 1;
         bun_core::scoped_log!(

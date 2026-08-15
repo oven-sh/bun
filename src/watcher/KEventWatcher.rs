@@ -1,27 +1,19 @@
-use bun_core::{env_var, output as Output};
+use bun_core::output as Output;
 use bun_sys::Fd;
 
-use crate::watcher_impl::{Op, WatchEvent, Watcher};
+use crate::watcher_impl::{
+    MAX_COALESCE_ITERATIONS, Op, WatchEvent, Watcher, coalesce_interval_ns, coalesce_timespec,
+};
 
 pub(crate) type Platform = KEventWatcher;
 
 pub struct KEventWatcher {
     pub(crate) fd: Fd,
-    /// See `INotifyWatcher::coalesce_interval` for rationale. Honours the
-    /// same env var (despite its Linux-centric name) so tests can pin the
-    /// window uniformly across platforms.
-    pub(crate) coalesce_interval_ns: isize,
+    /// See [`coalesce_interval_ns`].
+    pub(crate) coalesce_interval: u64,
 }
 
 const CHANGELIST_COUNT: usize = 128;
-const DEFAULT_COALESCE_INTERVAL_NS: isize = 10_000_000; // 10ms
-/// `kevent()` returns as soon as one event is ready rather than waiting
-/// the full timeout, so a burst of N writes a few ms apart consumes ~N
-/// drain iterations. Keep this in step with
-/// `INotifyWatcher::MAX_COALESCE_ITERATIONS` so the same save burst
-/// collapses into one cycle on both backends; the quiet-timeout `break`
-/// still terminates the common case after one idle interval.
-const MAX_COALESCE_ITERATIONS: u32 = 32;
 
 impl KEventWatcher {
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
@@ -29,13 +21,9 @@ impl KEventWatcher {
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
         }
-        let coalesce_interval_ns = env_var::BUN_INOTIFY_COALESCE_INTERVAL
-            .get()
-            .and_then(|v| isize::try_from(v).ok())
-            .unwrap_or(DEFAULT_COALESCE_INTERVAL_NS);
         Ok(Self {
             fd,
-            coalesce_interval_ns,
+            coalesce_interval: coalesce_interval_ns(),
         })
     }
 
@@ -77,27 +65,11 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let mut count = bun_sys::kevent(fd, &[], &mut changelist, None)?;
 
-    // A single editor save typically produces several kevents a few ms
-    // apart (e.g. NOTE_WRITE on the file plus NOTE_WRITE on its parent
-    // directory, or the rename/create pair from an atomic save). Keep
-    // draining until the queue stays quiet for `coalesce_interval_ns`
-    // so one save becomes one `on_file_update` call instead of several,
-    // which in `--hot` mode would otherwise re-evaluate the entry point
-    // once per burst.
-    //
-    // POSIX requires tv_nsec < 10^9; split so a user-supplied interval
-    // >= 1 s doesn't make `kevent` fail with EINVAL.
-    const NS_PER_S: isize = 1_000_000_000;
-    let interval = this.platform.coalesce_interval_ns;
-    let ts = libc::timespec {
-        tv_sec: (interval / NS_PER_S) as _,
-        tv_nsec: (interval % NS_PER_S) as _,
-    };
+    // Drain until quiet.
+    let ts = coalesce_timespec(this.platform.coalesce_interval);
     let mut iterations: u32 = 0;
     while count > 0 && count < CHANGELIST_COUNT && iterations < MAX_COALESCE_ITERATIONS {
-        // A failed drain poll must not discard the events already read;
-        // if the kqueue is really broken the next cycle's blocking
-        // `kevent` above reports it.
+        // Don't let a failed drain poll discard the events already read.
         match bun_sys::kevent(fd, &[], &mut changelist[count..], Some(&ts)) {
             Ok(0) | Err(_) => break,
             Ok(extra) => count += extra,

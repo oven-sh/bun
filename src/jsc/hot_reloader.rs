@@ -540,13 +540,9 @@ where
     }
 
     pub(crate) fn append(&mut self, id: u32) {
-        // A single logical save routinely surfaces here many times
-        // (truncate+write × file-watch × dir-watch, all carrying the
-        // same path hash). Without this dedup the fixed-size buffer
-        // fills and `enqueue()` fires mid-`on_file_update`, which lets
-        // the JS thread start a reload while the watcher thread is
-        // still appending — and the `while` loop in `run()` then turns
-        // the later increments into a second reload for the same save.
+        // One save delivers the same hash many times; letting duplicates fill
+        // the buffer triggers the mid-update `enqueue` below, i.e. a second
+        // reload for the same save.
         if self.hashes[..self.count as usize].contains(&id) {
             return;
         }

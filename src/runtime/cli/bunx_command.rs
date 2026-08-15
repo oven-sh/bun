@@ -156,8 +156,6 @@ impl Options {
                     }
                     opts.specified_package = Some(package_value);
                 } else if positional == b"--minimum-release-age" {
-                    // Spaced form: `--minimum-release-age <N>`.
-                    // Stored verbatim; `bun add` re-parses and validates.
                     i += 1;
                     if i >= argv.len() || argv[i].as_bytes().is_empty() {
                         Output::err_generic(
@@ -1489,8 +1487,6 @@ impl BunxCommand {
             args.append(b"--silent").expect("unreachable"); // upper bound is known
         }
 
-        // `min_age_combined` was built above (before `args`); append its slice
-        // when the flag was set. `bun add` re-parses and validates the value.
         if opts.minimum_release_age.is_some() {
             args.append(min_age_combined.as_slice())
                 .expect("unreachable"); // upper bound is known
@@ -1668,9 +1664,7 @@ impl BunxCommand {
                 bunx_cache_dir,
                 result_package_name,
                 false,
-                // Post-install — the freshly installed cache was resolved
-                // under the active age filter (or its absence), no need to
-                // force stale here.
+                // force_stale: freshly installed, already resolved under the gate.
                 false,
             ) {
                 if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {

@@ -143,7 +143,7 @@ The following `FFIType` values are supported.
 | u8            | `uint8_t`             | `uint8_t`                       |
 | u16           | `uint16_t`            | `uint16_t`                      |
 | u32           | `uint32_t`            | `uint32_t`                      |
-| u64           | `uint64_t`            | `uint64_t`                      |
+| u64           | `uint64_t`            | `uint64_t`, `usize`             |
 | u64_fast      | `uint64_t`            |                                 |
 | f32           | `float`               | `float`                         |
 | f64           | `double`              | `double`                        |
@@ -318,7 +318,7 @@ const {
   },
 });
 
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
+const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, 0, Number(length))), {
   returns: "bool",
   args: ["ptr", "usize"],
 });
@@ -344,7 +344,7 @@ When you're done with a `JSCallback`, call `close()` to free the memory.
 Thread-safe callbacks can be invoked from **any thread** — including threads spawned by your native library that Bun is not otherwise aware of. The engine copies the C arguments on the calling thread and marshals the invocation onto the JavaScript thread. There it converts the arguments (64-bit integers and pointers arrive as exact BigInts) and runs your function. Because the invocation is asynchronous from C's point of view, the value returned to the C caller is unspecified. You may declare a non-`void` `returns` (the example below uses `"bool"`), but the C side must treat a thread-safe callback as returning `void` and ignore its return value.
 
 ```ts
-const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, length)), {
+const searchIterator = new JSCallback((ptr, length) => /hello/.test(new CString(ptr, 0, Number(length))), {
   returns: "bool",
   args: ["ptr", "usize"],
   threadsafe: true, // Optional. Defaults to `false`
@@ -382,7 +382,7 @@ Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_progr
 
 <Accordion title="How does a 64 bit pointer fit in a JavaScript number?">
 
-64-bit processors support up to [52 bits of addressable space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors). [JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 53 bits of usable space, which leaves about 11 bits of extra space.
+64-bit processors support up to [52 bits of addressable space](https://en.wikipedia.org/wiki/64-bit_computing#Limits_of_processors). [JavaScript numbers](https://en.wikipedia.org/wiki/Double-precision_floating-point_format#IEEE_754_double-precision_binary_floating-point_format:_binary64) support 53 bits of usable space, which leaves 1 bit of extra space.
 
 **Why not `BigInt`?** `BigInt` is slower. JavaScript engines allocate `BigInt`s separately, so they can't fit into a regular JavaScript value. If you pass a `BigInt` to a function, Bun converts it to a `number`.
 

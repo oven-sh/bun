@@ -2288,7 +2288,7 @@ where
         // and set_routes would swap the context onto the node:http handler
         // instantiation under those already-sized allocations, so the node
         // request path would construct and index past them.
-        if !self.config.on_node_http_request.is_empty()
+        if self.config.is_node_http_server
             && self.config.on_node_http_request != new_config.on_node_http_request
         {
             super::wrap_handler_slot(
@@ -2395,7 +2395,8 @@ where
             server_config::FromJSOptions {
                 allow_bake_config: false,
                 is_fetch_required: true,
-                has_user_routes: !self.user_routes.is_empty(),
+                previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
+                previous_routes: !self.user_routes.is_empty(),
             },
         )?;
         if global.has_exception() {
@@ -2970,10 +2971,7 @@ where
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
-            match &user_route.route.method {
-                server_config::RouteMethod::Any => None,
-                server_config::RouteMethod::Specific(m) => Some(*m),
-            },
+            user_route.route.method.specific(),
         ) else {
             return;
         };

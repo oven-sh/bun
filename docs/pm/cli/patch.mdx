@@ -42,7 +42,7 @@ If you skip it, you might end up editing the package globally in the cache.
 
 #### Step 2. Test your changes locally
 
-`bun patch <pkg>` makes it safe to edit `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](/pm/global-cache). It works by re-creating an unlinked clone of the package in `node_modules/` and diffing it against the original package in the Global Cache.
+`bun patch <pkg>` makes it safe to edit `<pkg>` in `node_modules/` directly, while preserving the integrity of Bun's [Global Cache](/pm/global-cache). It works by re-creating an unlinked clone of the package in `node_modules/`. `bun patch --commit <pkg>` then diffs that clone against the original package in the Global Cache.
 
 #### Step 3. Commit your changes
 

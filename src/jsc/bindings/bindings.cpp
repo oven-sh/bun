@@ -3482,14 +3482,14 @@ bool JSC__JSValue__asArrayBuffer(
     }
     out->_value = JSValue::encode(value);
     out->ptr = static_cast<char*>(data);
+    out->pinned = false;
     return true;
 }
 
-// Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// its storage cannot move or be freed while a native borrower holds a slice
-// into it. SharedArrayBuffer is never detachable and never moves, so it is left
-// unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
-// impl.
+// Pin/unpin the storage behind a JSArrayBuffer or JSArrayBufferView so it
+// cannot move or be freed while a native borrower holds a slice into it.
+// SharedArrayBuffer is never detachable and never moves, so it is left
+// unpinned rather than rejected. Returns false if `value` has no storage.
 //
 // A pin does not make detaching fail, it makes it copy. `pin()` clears
 // `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
@@ -3499,54 +3499,69 @@ bool JSC__JSValue__asArrayBuffer(
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// That departs from ES2024, where transfer() must detach or throw, and from
-// Node, which detaches. It is deliberate: the borrow stays zero-copy in the
-// common case and memory-safe in every case, at the cost of a transfer that
-// silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
-// Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
-static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
+// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
+// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
+// an ArrayBuffer just to pin it registers the bytes with the heap a second
+// time and, because ArrayBuffers are only reclaimed by full collections,
+// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
+// pressure. Such a view cannot be detached without JS first touching
+// `.buffer`; if it does so mid-op the new ArrayBuffer is unpinned and a
+// `transfer()` moves (does not free) the storage — the same window Node has.
+// The caller keeps the returned kind and only calls unpin for `Pinned`; a
+// held view is kept alive by the caller's own root, and nothing here needs
+// undoing for it.
+enum class PinKind : uint8_t { None = 0,
+    Pinned = 1,
+    Held = 2 };
+static PinKind pinStorage(JSC::JSValue value)
 {
+    JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        return jb->impl();
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
-        return view->possiblySharedBuffer();
-    return nullptr;
-}
-CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
-{
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        if (!buf->isShared())
-            buf->pin();
-        return true;
+        buf = jb->impl();
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached())
+            return PinKind::None;
+        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray)
+            return PinKind::Held;
+        buf = view->possiblySharedBuffer();
     }
-    return false;
+    if (!buf)
+        return PinKind::None;
+    if (!buf->isShared())
+        buf->pin();
+    return PinKind::Pinned;
 }
+CPP_DECL uint8_t JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
+{
+    return static_cast<uint8_t>(pinStorage(JSC::JSValue::decode(v)));
+}
+// Only for a value `pinStorage` answered `Pinned` for: that buffer still exists (pinned buffers are not detached).
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        if (!buf->isShared())
-            buf->unpin();
-    }
+    auto value = JSC::JSValue::decode(v);
+    JSC::ArrayBuffer* buf = nullptr;
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        buf = jb->impl();
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value); view && view->hasArrayBuffer())
+        buf = view->possiblySharedBuffer();
+    if (buf && !buf->isShared())
+        buf->unpin();
 }
 
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data
 // (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode either already has a real
-// ArrayBuffer or, for `OversizeTypedArray`, is ADOPTED in-place by
-// `slowDownAndWasteMemory()` (`ArrayBuffer::createAdopted` — wraps the
-// existing fastMalloc pointer; zero byte copy, just a wrapper + butterfly
-// alloc), so `possiblySharedBuffer()` + `pin()` is the right and cheap thing.
-// Oversize MUST be pinned: once adopted (which JS can trigger via `.buffer`
-// at any moment) it becomes detachable, and a `transfer()` would free the
-// storage the worker is reading.
+// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
+// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
 //
 //   0  Detached/null — nothing to read.
 //   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
 //      should dupe `out_ptr[0..out_len]`; no unpin.
-//   2  Everything else — `pin()`ed via `possiblySharedBuffer()`; caller
-//      MUST `unpinArrayBuffer(v)` when done.
+//   2  Pinned an existing ArrayBuffer; caller MUST `unpinArrayBuffer(v)`
+//      when done.
+//   3  Held: a bufferless OversizeTypedArray; nothing to unpin, caller roots
+//      the value for the duration as it already does for 2.
 //
 // `out_ptr`/`out_len` describe the VIEW's byte range (offset+length).
 CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
@@ -3559,18 +3574,11 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
             *out_len = view->byteLength();
             return 1;
         }
-        // Oversize/Wasteful/DataView: possiblySharedBuffer() is either a
-        // getter or an in-place adopt (Oversize → createAdopted) — never a
-        // byte copy past this point. vector() is read AFTER because adoption
-        // can in principle repoint m_vector (it doesn't today, but the API
-        // contract allows it).
-        auto* buf = view->possiblySharedBuffer();
-        if (!buf) return 0;
-        if (!buf->isShared())
-            buf->pin();
+        auto kind = pinStorage(view);
+        if (kind == PinKind::None) return 0;
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
-        return 2;
+        return kind == PinKind::Held ? 3 : 2;
     }
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         auto* buf = jb->impl();
@@ -5966,15 +5974,12 @@ extern "C" void WebCore__AbortSignal__decrementPendingActivity(WebCore::AbortSig
     abortSignal->decrementPendingActivityCount();
 }
 
-extern "C" WebCore::AbortSignal* WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
+extern "C" void WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
 {
-
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->signalAbort(
         globalObject,
         static_cast<WebCore::CommonAbortReason>(reason));
-    ;
-    return arg0;
 }
 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__reasonIfAborted(WebCore::AbortSignal* signal, JSC::JSGlobalObject* globalObject, CommonAbortReason* reason)
@@ -6952,7 +6957,12 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
     size_t prefixLen)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // The Rust caller (repl.rs) has no exception scope, so nothing may escape.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto clearAndEncode = [&](JSC::JSValue v) {
+        scope.clearException();
+        return JSC::JSValue::encode(v);
+    };
 
     JSC::JSValue target = JSC::JSValue::decode(targetValue);
     if (!target || target.isUndefined() || target.isNull()) {
@@ -6961,7 +6971,8 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
 
     if (!target.isObject()) {
         JSObject* boxed = target.toObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+        if (scope.exception()) [[unlikely]]
+            return clearAndEncode(JSC::jsUndefined());
         target = boxed;
     }
 
@@ -6969,46 +6980,58 @@ extern "C" JSC::EncodedJSValue Bun__REPL__getCompletions(
         ? WTF::String::fromUTF8(std::span { prefixPtr, prefixLen })
         : WTF::String();
 
+    // getPropertyNames already walks (and dedups) the prototype chain, throwing past maximumPrototypeChainDepth.
     JSC::JSObject* object = target.getObject();
     JSC::PropertyNameArrayBuilder propertyNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
     object->getPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Include);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     JSC::JSArray* completions = JSC::constructEmptyArray(globalObject, nullptr, 0);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+    if (scope.exception()) [[unlikely]]
+        return clearAndEncode(JSC::jsUndefined());
 
     unsigned completionIndex = 0;
     for (const auto& propertyName : propertyNames) {
         WTF::String name = propertyName.string();
         if (prefix.isEmpty() || name.startsWith(prefix)) {
             completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-            RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+            if (scope.exception()) [[unlikely]]
+                return clearAndEncode(JSC::jsUndefined());
         }
-    }
-
-    // Also check the prototype chain
-    JSC::JSValue proto = object->getPrototype(globalObject);
-    RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-    while (proto && proto.isObject()) {
-        JSC::JSObject* protoObj = proto.getObject();
-        JSC::PropertyNameArrayBuilder protoNames(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-        protoObj->getPropertyNames(globalObject, protoNames, DontEnumPropertiesMode::Include);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-
-        for (const auto& propertyName : protoNames) {
-            WTF::String name = propertyName.string();
-            if (prefix.isEmpty() || name.startsWith(prefix)) {
-                completions->putDirectIndex(globalObject, completionIndex++, JSC::jsString(vm, name));
-                RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
-            }
-        }
-
-        proto = protoObj->getPrototype(globalObject);
-        RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(completions));
     }
 
     return JSC::JSValue::encode(completions);
+}
+
+// One `base.name` step of a completion chain: ordinary property semantics (primitives boxed, prototype chain, getters run), UTF-8 name; a miss or a throwing getter yields undefined.
+extern "C" JSC::EncodedJSValue Bun__REPL__getProperty(
+    JSC::JSGlobalObject* globalObject,
+    JSC::EncodedJSValue baseValue,
+    const unsigned char* namePtr,
+    size_t nameLen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // As in Bun__REPL__getCompletions: the Rust caller has no exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSValue base = JSC::JSValue::decode(baseValue);
+    WTF::String name = WTF::String::fromUTF8(std::span { namePtr, nameLen });
+    if (!base || base.isUndefinedOrNull() || name.isNull())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSObject* object = base.toObject(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+
+    JSC::JSValue result = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, name));
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    return JSC::JSValue::encode(result ? result : JSC::jsUndefined());
 }
 
 // Format a value for REPL output using util.inspect style

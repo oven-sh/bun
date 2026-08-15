@@ -62,6 +62,8 @@ describe("input types", () => {
 
   test("options must be an object; compact must be a boolean", () => {
     expect(() => XML.parse("<a/>", 1 as any)).toThrow(TypeError);
+    // A function is not read as options: the position is reserved for a reviver.
+    expect(() => XML.parse("<a/>", ((k: string, v: unknown) => v) as any)).toThrow(TypeError);
     expect(() => XML.parse("<a/>", { compact: "no" } as any)).toThrow(TypeError);
     expect(XML.parse("<a/>", null as any)).toEqual({ a: "" });
     expect(XML.parse("<a/>", {})).toEqual({ a: "" });
@@ -86,21 +88,49 @@ describe("compact shape", () => {
     expect(Object.keys(result.r)).toEqual(["a", "b", "c"]);
   });
 
-  test("attributes come first, then children, then #text", () => {
-    const result = XML.parse(`<r z="1"><b/>t<a/></r>`) as any;
-    expect(Object.keys(result.r)).toEqual(["@z", "b", "a", "#text"]);
+  test("attributes come first, then children and #text in order of first appearance", () => {
+    const result = XML.parse(`<r z="1"><b/>t<a/>u</r>`) as any;
+    expect(Object.keys(result.r)).toEqual(["@z", "b", "#text", "a"]);
+    expect(result.r["#text"]).toBe("tu");
+    expect(Object.keys((XML.parse(`<r>t<a/></r>`) as any).r)).toEqual(["#text", "a"]);
   });
 
-  test("text is trimmed of XML whitespace at the ends only, and concatenated across children", () => {
-    expect(XML.parse(`<a>\r\n\t x  y \n</a>`)).toEqual({ a: "x  y" });
-    // U+00A0 and other Unicode spaces are not XML whitespace.
-    expect(XML.parse(`<a> x </a>`)).toEqual({ a: " x " });
-    expect(XML.parse(`<p>Hello <b>big</b> world</p>`)).toEqual({ p: { b: "big", "#text": "Hello  world" } });
+  test("character data is exact; only whitespace-only runs around child elements are layout", () => {
+    // A leaf is its text as written (line ends normalized to \n).
+    expect(XML.parse(`<a>\r\n\t x  y \n</a>`)).toEqual({ a: "\n\t x  y \n" });
+    expect(XML.parse(`<a>   </a>`)).toEqual({ a: "   " });
+    expect(XML.parse(`<a>&#32;x<![CDATA[ ]]></a>`)).toEqual({ a: " x " });
+    expect(XML.parse(`<a>\u00a0x\u2028</a>`)).toEqual({ a: "\u00a0x\u2028" });
+    // Between child elements, whitespace-only text is dropped and the rest kept exactly.
     expect(XML.parse(`<a> <b/> </a>`)).toEqual({ a: { b: "" } });
+    expect(XML.parse(`<a>\n  <b> v </b>\n</a>`)).toEqual({ a: { b: " v " } });
+    expect(XML.parse(`<p>Hello <b>big</b> world</p>`)).toEqual({ p: { "#text": "Hello  world", b: "big" } });
+    expect(XML.parse(`<r>\n  <a/>\n  tail\n</r>`)).toEqual({ r: { a: "", "#text": "\n  tail\n" } });
+    // Attributes change the structure, never the text: without child elements every run is kept.
+    expect(XML.parse(`<e a="1">\n</e>`)).toEqual({ e: { "@a": "1", "#text": "\n" } });
+    expect(XML.parse(`<e a="1"> v </e>`)).toEqual({ e: { "@a": "1", "#text": " v " } });
+    expect(XML.parse(`<e a="1"> <!--c--> </e>`)).toEqual({ e: { "@a": "1", "#text": "  " } });
+    // The compact text of an element is always the tree's text children joined.
+    for (const doc of [
+      `<a> x <b/> y </a>`,
+      `<a>\n <b/>\n</a>`,
+      `<a z="1">\n</a>`,
+      `<a>\t</a>`,
+      `<a>1<!--c-->2<![CDATA[ 3 ]]>&amp;</a>`,
+    ]) {
+      const tree = XML.parse(doc, { compact: false });
+      const joined = tree.children
+        .filter(
+          c => typeof c === "string" && !(tree.children.some(k => typeof k === "object" && "name" in k) && !c.trim()),
+        )
+        .join("");
+      const compact = (XML.parse(doc) as any).a;
+      expect(typeof compact === "string" ? compact : (compact["#text"] ?? "")).toBe(joined);
+    }
   });
 
   test("CDATA and references are just text", () => {
-    expect(XML.parse(`<a><![CDATA[ <not markup> & ]]></a>`)).toEqual({ a: "<not markup> &" });
+    expect(XML.parse(`<a><![CDATA[ <not markup> & ]]></a>`)).toEqual({ a: " <not markup> & " });
     expect(XML.parse(`<a>&lt;&#65;&#x42;<![CDATA[]]>&amp;</a>`)).toEqual({ a: "<AB&" });
   });
 
@@ -108,6 +138,8 @@ describe("compact shape", () => {
     expect(
       XML.parse(`<?xml version="1.0"?><!--c--><?pi data?><a><!--c-->x<?pi?>y<!--c--></a><!--c--><?pi z?>`),
     ).toEqual({ a: "xy" });
+    // Text on either side of one is a single run.
+    expect(XML.parse(`<a> <!--c--> <b/></a>`)).toEqual({ a: { b: "" } });
   });
 
   test("nothing is coerced: numbers, booleans and null-ish stay strings", () => {
@@ -157,11 +189,27 @@ describe("node shape", () => {
       attributes: {},
       children: ["\n  ", { name: "b", attributes: {}, children: [" x "] }, "\n"],
     });
-    expect(XML.parse(`<a>x<!--c--><![CDATA[y]]>&amp;<?p?>z</a>`, nodes)).toEqual({
+    expect(XML.parse(`<a>x<![CDATA[y]]>&amp;&#122;</a>`, nodes)).toEqual({
       name: "a",
       attributes: {},
       children: ["xy&z"],
     });
+  });
+
+  test("comments and processing instructions inside the root are children; outside it they are not", () => {
+    expect(XML.parse(`<!--p--><?p q?><a>x<!--c-->y<?t?><?t d a="1" ?>z</a><!--e--><?e?>`, nodes)).toEqual({
+      name: "a",
+      attributes: {},
+      children: ["x", { comment: "c" }, "y", { target: "t", data: "" }, { target: "t", data: 'd a="1" ' }, "z"],
+    });
+    // Line ends inside them are normalized like everywhere else in the document.
+    expect(XML.parse(`<a><!--l1\r\nl2\r--><?p l1\r\nl2?></a>`, nodes).children).toEqual([
+      { comment: "l1\nl2\n" },
+      { target: "p", data: "l1\nl2" },
+    ]);
+    expect(XML.parse(`<!DOCTYPE a [<!ENTITY e "<!--in entity-->">]><a>&e;</a>`, nodes).children).toEqual([
+      { comment: "in entity" },
+    ]);
   });
 
   test("attribute order is document order, defaults appended", () => {
@@ -210,7 +258,7 @@ describe("well-formedness", () => {
     expect(syntaxError("<a><!-- \x0c --></a>").message).toContain("Invalid character");
     expect(syntaxError("<a>￾</a>").message).toBe("XML Parse error: Invalid character in XML: '￾' (U+FFFE)");
     expect(syntaxError("<a>￿</a>").message).toContain("U+FFFF");
-    expect(XML.parse("<a>\t\n\r �\u{10ffff}</a>")).toEqual({ a: "�\u{10ffff}" });
+    expect(XML.parse("<a>\t\n\r �\u{10ffff}</a>")).toEqual({ a: "\t\n\n �\u{10ffff}" });
     // Bytes must be valid UTF-8; lone surrogates cannot be encoded.
     expect(syntaxError(Buffer.from([0x3c, 0x61, 0x3e, 0xff, 0x3c, 0x2f, 0x61, 0x3e])).message).toBe(
       "XML Parse error: Invalid UTF-8",
@@ -230,7 +278,7 @@ describe("well-formedness", () => {
   });
 
   test("character references must name a Char", () => {
-    expect(XML.parse("<a>&#65;&#x1F600;&#0000009;</a>")).toEqual({ a: "A\u{1F600}" });
+    expect(XML.parse("<a>&#65;&#x1F600;&#0000009;</a>")).toEqual({ a: "A\u{1F600}\t" });
     for (const ref of [
       "&#0;",
       "&#x0;",
@@ -452,7 +500,7 @@ describe("document type declaration", () => {
       <!ENTITY markup "<b>bold</b> &plain;">
       <!ENTITY nl "line&#10;break">
     ]><d a="[&plain;] [&nl;]">&markup; &markup;</d>`;
-    expect(XML.parse(doc)).toEqual({ d: { "@a": "[text] [line break]", b: ["bold", "bold"], "#text": "text  text" } });
+    expect(XML.parse(doc)).toEqual({ d: { "@a": "[text] [line break]", b: ["bold", "bold"], "#text": " text  text" } });
     expect(XML.parse(doc, nodes).children).toEqual([
       { name: "b", attributes: {}, children: ["bold"] },
       " text ",
@@ -731,6 +779,7 @@ describe("XML.stringify", () => {
     );
     // Children and text are written in key order; attributes always land on the start tag.
     expect(XML.stringify({ a: { "#text": "t", b: "1", "@z": "last" } })).toBe(`<a z="last">t<b>1</b></a>`);
+    expect(XML.stringify({ a: { b: "1", "#text": "t" } })).toBe(`<a><b>1</b>t</a>`);
     // Skipped values, and arrays holding only skipped values, are not content.
     expect(XML.stringify({ a: { b: undefined, c: () => {}, d: Symbol("s"), e: "kept" } })).toBe("<a><e>kept</e></a>");
     expect(XML.stringify({ a: { b: [] } })).toBe("<a/>");
@@ -767,7 +816,10 @@ describe("XML.stringify", () => {
     }
     expect(XML.stringify(new El("i", ["x"]))).toBe("<i>x</i>");
     // ...inside children any object is a node.
-    expect(() => XML.stringify({ name: "a", children: [{ foo: "bar" }] } as any)).toThrow("with a string name");
+    expect(() => XML.stringify({ name: "a", children: [{ foo: "bar" }] } as any)).toThrow("element children must be");
+    expect(() => XML.stringify({ name: "a", children: [{ comment: undefined }] } as any)).toThrow(
+      "element children must be",
+    );
     expect(() => XML.stringify({ name: "a", children: "text" } as any)).toThrow("children must be an array");
     expect(() => XML.stringify({ name: "a", children: [], attributes: [] } as any)).toThrow(
       "attributes must be an object",
@@ -776,6 +828,33 @@ describe("XML.stringify", () => {
     expect(() => XML.stringify({ name: "a", children: [], attributes: { x: {} } } as any)).toThrow(
       "an attribute value must be",
     );
+  });
+
+  test("comment and processing-instruction children", () => {
+    expect(
+      XML.stringify({
+        name: "a",
+        children: [{ comment: " c " }, "t", { target: "pi", data: "x y" }, { target: "p", data: "" }, { target: "q" }],
+      } as any),
+    ).toBe(`<a><!-- c -->t<?pi x y?><?p?><?q?></a>`);
+    // They are indented like elements; only text keeps content inline.
+    expect(XML.stringify({ name: "a", children: [{ comment: "c" }, { name: "b" }] }, null, 2)).toBe(
+      `<a>\n  <!--c-->\n  <b/>\n</a>`,
+    );
+    expect(() => XML.stringify({ name: "a", children: [{ comment: "a--b" }] })).toThrow("cannot contain '--'");
+    expect(() => XML.stringify({ name: "a", children: [{ comment: "a-" }] })).toThrow("or end with '-'");
+    expect(() => XML.stringify({ name: "a", children: [{ comment: "\x01" }] })).toThrow("U+0001");
+    expect(() => XML.stringify({ name: "a", children: [{ comment: 1 }] } as any)).toThrow("must be a string");
+    expect(() => XML.stringify({ name: "a", children: [{ target: "p", data: "?>" }] })).toThrow("cannot contain '?>'");
+    expect(() => XML.stringify({ name: "a", children: [{ target: "XmL", data: "" }] })).toThrow("reserved");
+    expect(() => XML.stringify({ name: "a", children: [{ target: "1p", data: "" }] })).toThrow("is not a valid XML");
+    expect(() => XML.stringify({ name: "a", children: [{ target: "p", data: 1 }] } as any)).toThrow("must be a string");
+    expect(XML.stringify({ name: "a", children: [{ target: "xml-stylesheet", data: 'href="s.css"' }] })).toBe(
+      `<a><?xml-stylesheet href="s.css"?></a>`,
+    );
+    // A `name` makes it an element; other keys are ignored. Without one, `comment` and `target` together are an error.
+    expect(XML.stringify({ name: "a", children: [{ name: "b", comment: "c" }] } as any)).toBe(`<a><b/></a>`);
+    expect(() => XML.stringify({ name: "a", children: [{ comment: "c", target: "p" }] } as any)).toThrow("both");
   });
 
   test("escaping keeps the document well-formed and round-trippable", () => {
@@ -867,6 +946,8 @@ describe("XML.stringify", () => {
     // Whitespace-only text children still count as text: the tree round-trips exactly.
     const spaced = XML.parse(`<a>\n  <b/>\n</a>`, nodes);
     expect(XML.stringify(spaced, null, 4)).toBe(`<a>\n  <b/>\n</a>`);
+    // Compact values keep their text exactly too, so leaf padding survives a round trip.
+    expect(XML.parse(XML.stringify({ a: { v: "  x  ", w: "   " } }, null, 2))).toEqual({ a: { v: "  x  ", w: "   " } });
   });
 
   test("parse(stringify(x)) round-trips both shapes", () => {
@@ -875,6 +956,7 @@ describe("XML.stringify", () => {
       `<a x="1" y="">t</a>`,
       `<r><a>1</a><b><c d="1"><e/></c></b><a>2</a></r>`,
       `<p>Hello <b>big</b> <i>w</i>orld!</p>`,
+      `<r>\n  <k>  </k>\n  <v> pad </v>\n  <e a="1">\n  </e><!-- c --><?p d?>\n</r>`,
       `<d a="1&#10;2&#9;3&#13;4  5">x&#13;y]]&gt;z&lt;&amp;</d>`,
       `<!DOCTYPE d [<!ENTITY e "<i>e</i>"><!ATTLIST d z NMTOKENS " a b ">]><d>&e;&e;<__proto__/></d>`,
       `<s:Envelope xmlns:s="urn:s"><s:Body 日本="語"/></s:Envelope>`,

@@ -2138,11 +2138,11 @@ impl NodeHTTPResponse {
                 let pinned_value = if is_buffer && input_value.is_cell() {
                     match input_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.resizable && !ab.shared => {
-                            input_value.unpin_array_buffer();
+                            ab.unpin();
                             None
                         }
-                        Some(_) => Some(input_value),
-                        None => Some(JSValue::ZERO),
+                        Some(ab) if ab.pinned => Some(input_value),
+                        Some(_) | None => Some(JSValue::ZERO),
                     }
                 } else {
                     Some(JSValue::ZERO)

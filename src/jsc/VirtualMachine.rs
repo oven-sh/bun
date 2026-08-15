@@ -1131,6 +1131,17 @@ impl VirtualMachine {
         self.rare_data.as_mut().unwrap()
     }
 
+    /// Raw projection to the lazily-allocated `RareData`, for callers holding a borrow into it across re-entry (never forms `&mut RareData`).
+    pub fn rare_data_ptr(&mut self) -> *mut RareData {
+        if self.rare_data.is_none() {
+            self.rare_data();
+        }
+        match &mut self.rare_data {
+            Some(rd) => &raw mut **rd,
+            None => unreachable!(),
+        }
+    }
+
     pub(crate) fn is_main_thread(&self) -> bool {
         self.worker.is_none()
     }
@@ -2250,9 +2261,7 @@ bun_io::link_impl_EventLoopCtx! {
             vm.after_event_loop_callback = cb;
             vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
         },
-        pipe_read_buffer() => {
-            core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
-        },
+        pipe_read_scratch() => &raw const *(*vm_from_owner(this.cast()).rare_data_ptr()).pipe_read_scratch,
     }
 }
 

@@ -485,7 +485,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return 0;
         }
 
-        self.buffer_payload(data).expect("unreachable");
+        bun_core::handle_oom(self.buffer_payload(data));
         if frame_complete {
             self.receive_body_remain.set(0);
             if is_final {
@@ -502,9 +502,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         kind: Opcode,
         is_final: bool,
     ) -> usize {
-        if !data.is_empty() && self.buffer_payload(data).is_err() {
-            self.terminate(ErrorCode::Closed);
-            return 0;
+        if !data.is_empty() {
+            bun_core::handle_oom(self.buffer_payload(data));
         }
 
         if data.len() == left_in_fragment {
@@ -1000,9 +999,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let Ok(writable) = send_buffer.writable_with_size(frame_size) else {
-                return false;
-            };
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(frame_size));
             Copy::copy_compressed(
                 &self.global_this,
                 &mut writable[..frame_size],
@@ -1027,9 +1024,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let writable = send_buffer
-                .writable_with_size(write_len)
-                .expect("unreachable");
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(write_len));
             bytes.copy(
                 &self.global_this,
                 &mut writable[..write_len],

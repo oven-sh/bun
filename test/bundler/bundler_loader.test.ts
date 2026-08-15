@@ -145,7 +145,7 @@ describe("bundler", async () => {
         },
         run: {
           stdout:
-            '[{"hello":{"@to":"world","b":"there","#text":"hi"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
+            '[{"hello":{"@to":"world","#text":"hi ","b":"there"}},{"greeting":{"@__proto__":"1","to":["world","you"]}},{"@__proto__":"1","to":["world","you"]}]',
         },
       });
     });

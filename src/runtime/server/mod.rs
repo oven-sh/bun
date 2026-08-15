@@ -1181,10 +1181,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
-            match &user_route.route.method {
-                server_config::RouteMethod::Any => None,
-                server_config::RouteMethod::Specific(m) => Some(*m),
-            },
+            user_route.route.method.specific(),
         ) else {
             return;
         };
@@ -1613,7 +1610,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests.get() == 0
             && !self.has_listener()
             && !self.has_active_web_sockets()
-            && (!self.config.on_node_http_request.is_empty() || !self.has_active_connections())
+            && (self.config.is_node_http_server || !self.has_active_connections())
     }
 
     /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and
@@ -1765,7 +1762,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `closeIdleConnections()`), and a connection whose response
             // completes after `close()` stays keep-alive until its timeout
             // reaps it — verified against Node v26.
-            if self.config.on_node_http_request.is_empty() {
+            if !self.config.is_node_http_server {
                 if let Some(app) = self.app {
                     self.deinit_running.set(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -2734,10 +2731,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // If onNodeHTTPRequest is configured, it might be needed for Node.js
-        // compatibility layer for specific Node API routes, even if it's not
-        // the main "/*" handler.
-        if has_node_http {
+        // Idempotent, so re-running set_routes on reload() is fine.
+        if self.config.is_node_http_server {
             ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
         }
 
@@ -2985,7 +2980,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
 
-        if !this_ref.config.on_node_http_request.is_empty() {
+        if this_ref.config.is_node_http_server {
             // SAFETY: `this` is the live boxed server from `init()`; no other
             // borrow is live — `&mut` scoped to this call.
             unsafe { (*this).set_using_custom_expect_handler(true) };

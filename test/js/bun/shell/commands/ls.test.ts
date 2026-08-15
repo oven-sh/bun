@@ -3,6 +3,8 @@ import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { isPosix, tempDir, tempDirWithFiles } from "harness";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
+// Root bypasses directory mode bits, so chmod 000 cannot produce EACCES for it.
+const isRoot = process.getuid?.() === 0;
 
 const fileExists = async (path: string): Promise<boolean> =>
   $`ls -d ${path}`.then(o => o.stdout.toString() === `${path}\n`);
@@ -301,7 +303,7 @@ describe.concurrent("bunshell ls", () => {
         .run();
     });
 
-    test.if(isPosix)("permission denied directory", async () => {
+    test.if(isPosix && !isRoot)("permission denied directory", async () => {
       await using tempdir = tempDir("ls-permission", {});
       await $`mkdir restricted; chmod 000 restricted`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls restricted`
@@ -312,7 +314,7 @@ describe.concurrent("bunshell ls", () => {
       await $`chmod 755 restricted`.quiet().throws(true).cwd(tempdir); // cleanup
     });
 
-    test.if(isPosix)("permission denied directory recursive", async () => {
+    test.if(isPosix && !isRoot)("permission denied directory recursive", async () => {
       await using tempdir = tempDir("ls-permission-recursive", {});
       // Create 3-level deep directory structure with 3+ items per level
       await $`mkdir -p level1/level2/level3; 

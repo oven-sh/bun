@@ -139,8 +139,7 @@ impl<'a> Entry<'a> {
         version.starts_with(b"npm:")
     }
 
-    /// One of the entry's `name@<range>` specs asked a registry for it (`link:` and path entries
-    /// have a `version` line too). Alias entries are only named from their tarball URL.
+    /// A spec asked a registry for this entry; alias entries are only named from their tarball URL.
     pub(crate) fn is_registry_entry(&self) -> bool {
         let mut asked_by_range = false;
         for spec in &self.specs {

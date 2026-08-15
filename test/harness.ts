@@ -515,15 +515,20 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
   if (isWindows || process.getuid!() !== 0) return options;
 
   const NOBODY = 65534;
-  fs.chownSync(dir, NOBODY, NOBODY);
-  for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
-    fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
-  }
-  for (let parent = dirname(dir); parent !== dirname(parent); parent = dirname(parent)) {
-    const mode = fs.statSync(parent).mode & 0o7777;
-    if (mode & 0o001) continue;
-    fs.chmodSync(parent, mode | 0o001);
-    restoreModes.push([parent, mode]);
+  try {
+    fs.chownSync(dir, NOBODY, NOBODY);
+    for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+      fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
+    }
+    for (let parent = dirname(dir); parent !== dirname(parent); parent = dirname(parent)) {
+      const mode = fs.statSync(parent).mode & 0o7777;
+      if (mode & 0o001) continue;
+      fs.chmodSync(parent, mode | 0o001);
+      restoreModes.push([parent, mode]);
+    }
+  } catch (e) {
+    options[Symbol.dispose]();
+    throw e;
   }
   options.uid = NOBODY;
   options.gid = NOBODY;

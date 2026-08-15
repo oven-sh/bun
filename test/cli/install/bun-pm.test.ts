@@ -976,11 +976,7 @@ describe.skipIf(isWindows)("read-only package.json", () => {
       }),
     });
     const unprivileged = unprivilegedSpawnOptions(String(dir));
-    const [, err, exitCode] = await run(String(dir), unprivileged, "install");
-    expect(err).toContain("Saved lockfile");
-    expect(exitCode).toBe(0);
-    await chmod(join(String(dir), "package.json"), 0o444);
-    return {
+    const project = {
       dir: String(dir),
       run: (...args: string[]) => run(String(dir), unprivileged, ...args),
       [Symbol.dispose]() {
@@ -988,6 +984,16 @@ describe.skipIf(isWindows)("read-only package.json", () => {
         dir[Symbol.dispose]();
       },
     };
+    try {
+      const [, err, exitCode] = await project.run("install");
+      expect(err).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+      await chmod(join(project.dir, "package.json"), 0o444);
+    } catch (e) {
+      project[Symbol.dispose]();
+      throw e;
+    }
+    return project;
   }
 
   test("commands that only read package.json work", async () => {

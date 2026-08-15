@@ -34,6 +34,26 @@
  * interrupted (ctrl-c, network drop, OOM), no partial file claims to be
  * complete. Next build retries from scratch.
  *
+ * ## Publishing into a shared cache
+ *
+ * Extracted trees (`fetchPrebuilt`, `tryPrefetchExtracted`, and the macOS SDK
+ * in macos-sdk.ts) land in `cfg.cacheDir`, which local builds share across
+ * every checkout on the machine (and, when it is a mount, across containers).
+ * Builds that all found an entry missing fetch it at the same time, and by the
+ * time the slower ones are ready to publish, the fastest has published and
+ * every build that looked since is compiling and linking against its tree.
+ *
+ * So each fetch extracts into scratch of its own and publishes it with a
+ * single rename (`publishTree`). A rename cannot replace a non-empty
+ * directory on any platform, so the first publisher claims the path and each
+ * later one finds the published tree in the way, recognizes it by its stamp
+ * and discards its own copy. The published tree is never removed or
+ * re-published: removing it is thousands of unlinks (WebKit) during which the
+ * compiles and links reading it fail, and re-publishing identical content
+ * moves every lib and header mtime forward, which makes ninja rebuild
+ * everything downstream in every build sharing the cache. Only a tree with
+ * some other content (a different identity at the same path) is replaced.
+ *
  * ## Streaming to disk
  *
  * Response body is piped to the temp file via `pipeline()` rather than
@@ -113,10 +133,9 @@ export function prefetchPathForUrl(url: string, dir = prefetchDir): string | und
 export async function tryPrefetchExtracted(dest: string, stampFile: string, expected: string): Promise<boolean> {
   if (prefetchDir === undefined) return false;
   const src = resolve(prefetchDir, "extracted", basename(dest));
-  const stamp = resolve(src, stampFile);
-  if (!existsSync(stamp) || readFileSync(stamp, "utf8").trim() !== expected) return false;
+  if (readStamp(resolve(src, stampFile)) !== expected) return false;
   console.log(`using prefetch cache: ${src}`);
-  // Stage-then-rename so an interrupted copy doesn't leave a stamped-but-
+  // Stage-then-publish so an interrupted copy doesn't leave a stamped-but-
   // incomplete tree at dest (same publish discipline as fetchPrebuilt).
   const staging = `${dest}.${process.pid}.prefetch`;
   await rm(staging, { recursive: true, force: true });
@@ -127,8 +146,7 @@ export async function tryPrefetchExtracted(dest: string, stampFile: string, expe
     // read-only. Restore u+w on the copy so a future version bump can
     // `rm -rf dest` (force only suppresses ENOENT, not EACCES on a 555 dir).
     await chmodRecursiveWritable(staging);
-    await rm(dest, { recursive: true, force: true });
-    await rename(staging, dest);
+    await publishTree(staging, dest, () => readStamp(resolve(dest, stampFile)) === expected);
   } finally {
     // Best-effort: staging may still have 555 dirs if chmod failed partway.
     await chmodRecursiveWritable(staging).catch(() => {});
@@ -145,6 +163,48 @@ async function chmodRecursiveWritable(root: string): Promise<void> {
   await chmod(root, st.mode | 0o200);
   if (!st.isDirectory()) return;
   for (const e of await readdir(root)) await chmodRecursiveWritable(resolve(root, e));
+}
+
+/** Contents of an identity stamp file, or undefined when there is no such file (or no such tree). */
+function readStamp(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw err;
+  }
+}
+
+/**
+ * Move the complete tree at `from` to `dest`. See "Publishing into a shared
+ * cache" above.
+ *
+ * `isPublished()` reports whether what is at `dest` right now is already the
+ * tree `from` would publish (for prebuilts: its stamp matches). It is only
+ * consulted once a rename has found something at `dest`.
+ *
+ * Returns false, leaving both `dest` and `from` untouched, when a concurrent
+ * publisher got there first; the caller removes `from` with the rest of its
+ * scratch. Returns true once `from` has been renamed to `dest`.
+ */
+export async function publishTree(from: string, dest: string, isPublished: () => boolean): Promise<boolean> {
+  try {
+    await rename(from, dest);
+    return true;
+  } catch {
+    if (isPublished()) return false;
+  }
+  // Whatever is there is not what we are publishing (a stale identity at the
+  // same path, or something that is not a tree at all): replace it.
+  await rm(dest, { recursive: true, force: true });
+  try {
+    await rename(from, dest);
+    return true;
+  } catch (err) {
+    if (isPublished()) return false;
+    throw err;
+  }
 }
 
 /** Retry schedule for one download. Sizing rationale: "Retry behavior" above. */
@@ -368,12 +428,12 @@ export async function fetchPrebuilt(
   const stampPath = resolve(dest, ".identity");
 
   // ─── Short-circuit: already at this identity? ───
-  if (existsSync(stampPath)) {
-    const existing = readFileSync(stampPath, "utf8").trim();
-    if (existing === identity) {
-      console.log(`up to date`);
-      return; // restat no-op
-    }
+  const existing = readStamp(stampPath);
+  if (existing === identity) {
+    console.log(`up to date`);
+    return; // restat no-op
+  }
+  if (existing !== undefined) {
     console.log(`identity changed (was ${existing.slice(0, 16)}, now ${identity.slice(0, 16)}), re-fetching`);
   }
 
@@ -415,30 +475,19 @@ export async function fetchPrebuilt(
     const hoistFrom = entries.length === 1 ? resolve(stagingDir, entries[0]!) : stagingDir;
 
     // ─── Post-extract cleanup + stamp (inside staging) ───
-    // Done BEFORE publish so the rename below is the single step that makes
-    // a complete, stamped tree visible at dest.
+    // Done BEFORE publish so the rename in publishTree is the single step
+    // that makes a complete, stamped tree visible at dest.
     for (const p of rmPaths) {
       await rm(resolve(hoistFrom, p), { recursive: true, force: true });
     }
     await writeFile(resolve(hoistFrom, ".identity"), identity + "\n");
 
     // ─── Publish ───
-    // Directory rename can't overwrite on any platform, so rm first. If a
-    // concurrent fetch won the race, our rename fails — treat a matching
-    // stamp at dest as success.
-    try {
-      await rm(dest, { recursive: true, force: true });
-      await rename(hoistFrom, dest);
-    } catch (err) {
-      const landed = existsSync(stampPath) ? readFileSync(stampPath, "utf8").trim() : undefined;
-      if (landed === identity) {
-        console.log(`up to date (concurrent fetch won)`);
-        return;
-      }
-      throw err;
+    if (await publishTree(hoistFrom, dest, () => readStamp(stampPath) === identity)) {
+      console.log(`extracted to ${dest}`);
+    } else {
+      console.log(`up to date (concurrent fetch won)`);
     }
-
-    console.log(`extracted to ${dest}`);
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
     await rm(tarballPath, { force: true });

@@ -897,7 +897,6 @@ impl Value {
 
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
-                reader.context.high_water_mark = estimated_size as blob::SizeType;
                 reader
                     .context
                     .size_hint
@@ -1536,7 +1535,6 @@ impl Value {
 
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {
-                reader.context.high_water_mark = estimated_size as blob::SizeType;
                 reader
                     .context
                     .size_hint

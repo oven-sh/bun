@@ -73,6 +73,8 @@ pub enum Start {
     },
     FileSink(FileSinkOptions),
     Ready,
+    /// `on_pull` hands back `Owned` chunks; the adapter skips its pull view.
+    ReadyOwned,
     OwnedAndDone(Vec<u8>),
 }
 
@@ -98,7 +100,7 @@ pub enum StartTag {
 impl Start {
     pub fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Start::Empty | Start::Ready => Ok(JSValue::UNDEFINED),
+            Start::Empty | Start::Ready | Start::ReadyOwned => Ok(JSValue::UNDEFINED),
             Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
             Start::OwnedAndDone(list) => {

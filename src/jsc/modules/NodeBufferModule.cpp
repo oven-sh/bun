@@ -2,6 +2,7 @@
 
 #include "BunClientData.h"
 #include "ErrorCode.h"
+#include "helpers.h"
 #include "JSBufferEncodingType.h"
 #include "JSDOMExceptionHandling.h"
 #include "wtf/SIMDUTF.h"
@@ -66,7 +67,7 @@ static void transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEnco
     case TranscodeEncoding::Utf8: {
         // WHATWG-style replacement decode (each maximal ill-formed
         // subsequence becomes one U+FFFD), via WTF's implementation.
-        auto decoded = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(input.data()), input.size() });
+        auto decoded = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(input.data()), input.size() });
         units.grow(decoded.length());
         if (decoded.is8Bit())
             (void)simdutf::convert_latin1_to_utf16le(reinterpret_cast<const char*>(decoded.span8().data()), decoded.length(), units.begin());

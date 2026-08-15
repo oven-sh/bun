@@ -52,7 +52,8 @@ enum StaticElementKind {
     Block,
     FieldOrAccessor,
     /// Undecorated public static field moved out of the body of a class that
-    /// has class decorators (index into `relocated_static_fields`).
+    /// has class decorators (index into `relocated_static_fields`); see
+    /// `can_leave_class_body`.
     PlainField,
 }
 
@@ -144,7 +145,8 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
 
 /// `static x = 1` / `static x;` with no decorators. When the class itself is
 /// decorated these are initialized after the class decorators run (on whatever
-/// class they returned), so they cannot stay in the class body.
+/// class they returned), so they are moved out of the class body, provided
+/// `can_leave_class_body` holds for the initializer.
 #[inline]
 fn is_plain_static_field(prop: &Property) -> bool {
     prop.kind == PropertyKind::Normal
@@ -158,6 +160,63 @@ fn is_plain_static_field(prop: &Property) -> bool {
 #[inline]
 fn has_private_key(prop: &Property) -> bool {
     matches!(prop.key, Some(key) if matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_)))
+}
+
+/// Whether an undecorated static field initializer or computed key may be
+/// printed outside the class body. Accepts only the shapes `rewrite_expr`
+/// walks completely, so every `this` in them gets redirected, and none of
+/// the syntax that only means something inside the body: `super`,
+/// `new.target`, `#names`, and anything creating a function or class, whose
+/// parameters, keys and heritage the rewriter does not visit. Everything else
+/// stays in the class body and keeps behaving as it did before.
+fn can_leave_class_body(expr: &Expr) -> bool {
+    use js_ast::ExprData as D;
+    match &expr.data {
+        D::EThis(_)
+        | D::EIdentifier(_)
+        | D::EImportIdentifier(_)
+        | D::EString(_)
+        | D::ENumber(_)
+        | D::EBigInt(_)
+        | D::EBoolean(_)
+        | D::ENull(_)
+        | D::EUndefined(_)
+        | D::ERegExp(_)
+        | D::EInlinedEnum(_)
+        | D::ERequireString(_)
+        | D::ERequireResolveString(_)
+        | D::EImportMeta(_)
+        | D::EMissing(_) => true,
+        D::EBinary(e) => can_leave_class_body(&e.left) && can_leave_class_body(&e.right),
+        D::ECall(e) => {
+            can_leave_class_body(&e.target) && e.args.slice().iter().all(can_leave_class_body)
+        }
+        D::ENew(e) => {
+            can_leave_class_body(&e.target) && e.args.slice().iter().all(can_leave_class_body)
+        }
+        D::EIndex(e) => can_leave_class_body(&e.target) && can_leave_class_body(&e.index),
+        D::EDot(e) => can_leave_class_body(&e.target),
+        D::ESpread(e) => can_leave_class_body(&e.value),
+        D::EUnary(e) => can_leave_class_body(&e.value),
+        D::EIf(e) => {
+            can_leave_class_body(&e.test)
+                && can_leave_class_body(&e.yes)
+                && can_leave_class_body(&e.no)
+        }
+        D::EArray(e) => e.items.slice().iter().all(can_leave_class_body),
+        D::EObject(e) => e.properties.slice().iter().all(|prop| {
+            !prop.flags.contains(Flags::Property::IsComputed)
+                && prop.initializer.is_none()
+                && prop.value.is_some_and(|value| can_leave_class_body(&value))
+        }),
+        D::ETemplate(e) => {
+            e.tag.is_none_or(|tag| can_leave_class_body(&tag))
+                && e.parts()
+                    .iter()
+                    .all(|part| can_leave_class_body(&part.value))
+        }
+        _ => false,
+    }
 }
 
 /// Whether a class statement with class decorators gets a binding of its own
@@ -1250,11 +1309,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
-        // Relocated initializers are printed outside the class body, where a
-        // `#name` access would be a syntax error, so a class with private
-        // members keeps its static fields in place.
-        let has_private_members = class.properties.slice().iter().any(has_private_key);
-        let relocate_static_fields = class_decorators_len > 0 && !has_private_members;
+        // Relocating a static field moves its key's evaluation ahead of the
+        // class, so to keep the keys in source order every computed key in the
+        // class is pre-evaluated along with it (Phase 2), which all of them
+        // must be able to take.
+        let relocate_static_fields = class_decorators_len > 0
+            && class.properties.slice().iter().all(|prop| {
+                !prop.flags.contains(Flags::Property::IsComputed)
+                    || prop.key.is_none_or(|key| can_leave_class_body(&key))
+            });
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
         if is_expr {
@@ -1349,8 +1412,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             if prop.flags.contains(Flags::Property::IsComputed)
                 && prop.key.is_some()
-                && (prop.ts_decorators.len_u32() > 0
-                    || (relocate_static_fields && is_plain_static_field(prop)))
+                && (prop.ts_decorators.len_u32() > 0 || relocate_static_fields)
             {
                 computed_key_counter += 1;
                 let key_name: &'a [u8] = if computed_key_counter == 1 {
@@ -1762,7 +1824,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     continue;
                 }
-                if relocate_static_fields && is_plain_static_field(prop) {
+                if relocate_static_fields
+                    && is_plain_static_field(prop)
+                    && prop
+                        .initializer
+                        .is_none_or(|init| can_leave_class_body(&init))
+                {
                     static_element_order.push(StaticElement {
                         kind: StaticElementKind::PlainField,
                         index: relocated_static_fields.len(),
@@ -2573,7 +2640,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // `static { _Foo = this }`: static initializers left in the body (see
-        // `relocate_static_fields`) read the binding while the class is still
+        // `can_leave_class_body`) read the binding while the class is still
         // being defined, before the suffix can assign it.
         if inner_binding_used {
             let this_e = p.new_expr(E::This {}, class_name_loc);

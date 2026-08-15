@@ -194,22 +194,96 @@ describe("ES Decorators", () => {
         @wrap class Foo {
           static [key("first")] = 1;
           @methodDec() method() {}
+          [key("instance field")] = 0;
           static [key("second")] = 2;
+          [key("instance method")]() {}
           static 0 = "zero";
           static "quoted key" = "quoted";
         }
-        console.log(JSON.stringify([log, Object.keys(Foo), Foo.first, Foo.second, Foo[0], Foo["quoted key"]]));
+        console.log(JSON.stringify([
+          log,
+          Object.keys(Foo),
+          Object.keys(new Foo()),
+          typeof Foo.prototype["instance method"],
+          Foo.first,
+          Foo.second,
+          Foo[0],
+          Foo["quoted key"],
+        ]));
       `);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual([
-        ["first", "decorator expression", "second", "decorator applied"],
+        ["first", "decorator expression", "instance field", "second", "instance method", "decorator applied"],
         // "tag" is Wrapped's own static field; the relocated fields follow it.
         ["0", "tag", "first", "second", "quoted key"],
+        ["instance field"],
+        "function",
         1,
         2,
         "zero",
         "quoted",
       ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("initializers that only work inside the class body stay there", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let original;
+        function wrap(cls, ctx) {
+          original = cls;
+          return class Wrapped extends cls {};
+        }
+        class Base {
+          static defaults = { limit: 10 };
+        }
+        @wrap class Foo extends Base {
+          static fromSuper = { ...super.defaults, limit: 20 };
+          static newTarget = new.target;
+          static thisInParameter = (value = this) => value;
+          static thisInComputedKey = { [this.name]: true };
+          static relocated = { limit: 30, tags: ["a", \`b\${1}\`], self: Foo };
+          static instance = new Foo();
+        }
+        const own = name => (Object.hasOwn(Foo, name) ? "replacement" : Object.hasOwn(original, name) ? "original" : "none");
+        console.log(JSON.stringify({
+          fromSuper: [own("fromSuper"), Foo.fromSuper],
+          newTarget: [own("newTarget"), typeof Foo.newTarget],
+          thisInParameter: [own("thisInParameter"), Foo.thisInParameter() === original],
+          thisInComputedKey: [own("thisInComputedKey"), Foo.thisInComputedKey],
+          relocated: [own("relocated"), Foo.relocated.limit, Foo.relocated.tags, Foo.relocated.self === Foo],
+          instance: [own("instance"), Foo.instance instanceof Foo],
+        }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        fromSuper: ["original", { limit: 20 }],
+        newTarget: ["original", "undefined"],
+        thisInParameter: ["original", true],
+        thisInComputedKey: ["original", { Foo: true }],
+        relocated: ["replacement", 30, ["a", "b1"], true],
+        instance: ["replacement", true],
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a computed key that cannot be pre-evaluated keeps every static field in place", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        let original;
+        function wrap(cls, ctx) {
+          original = cls;
+          return class Wrapped extends cls {};
+        }
+        const log = [];
+        const key = name => (log.push(name), name);
+        @wrap class Foo {
+          static [key("first")] = 1;
+          [key("instance")] = 2;
+          static [(() => key("second"))()] = 3;
+        }
+        console.log(JSON.stringify([log, Object.keys(Foo), Object.keys(original)]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([["first", "instance", "second"], [], ["first", "second"]]);
       expect(exitCode).toBe(0);
     });
 
@@ -261,7 +335,7 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("element decorator expressions see the TDZ, then the decorated class", async () => {
+    test("heritage, element decorator and computed key expressions see the TDZ, then the decorated class", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         ${wrap}
         const captured = [];
@@ -271,42 +345,66 @@ describe("ES Decorators", () => {
           captured.push({ fn, threw });
           return () => {};
         }
-        @wrap class Foo {
+        class Base {}
+        @wrap class Foo extends (capture(() => Foo), Base) {
           @(capture(() => Foo)) method() {}
           @(capture(() => Foo)) static [(capture(() => Foo), "computed")]() {}
         }
-        console.log(JSON.stringify(captured.map(({ fn, threw }) => [threw, tag(fn())])));
+        // Relocating Bar's static field pre-evaluates every computed key, so
+        // the undecorated method's key still observes the TDZ too.
+        let undecoratedKey = "did not throw";
+        try {
+          @wrap class Bar {
+            [String(Bar)]() {}
+            static field = 1;
+          }
+        } catch (e) {
+          undecoratedKey = e.constructor.name;
+        }
+        console.log(JSON.stringify({
+          captured: captured.map(({ fn, threw }) => [threw, tag(fn())]),
+          undecoratedKey,
+        }));
       `);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual([
-        ["ReferenceError", "wrapped"],
-        ["ReferenceError", "wrapped"],
-        ["ReferenceError", "wrapped"],
-      ]);
+      expect(JSON.parse(stdout)).toEqual({
+        captured: [
+          ["ReferenceError", "wrapped"],
+          ["ReferenceError", "wrapped"],
+          ["ReferenceError", "wrapped"],
+          ["ReferenceError", "wrapped"],
+        ],
+        undecoratedKey: "ReferenceError",
+      });
       expect(exitCode).toBe(0);
     });
 
-    test("class with instance private members: body sees the replacement, static fields stay in the body", async () => {
-      // Static initializers may use the private names, which only exist inside
-      // the body, so they are not relocated; they still observe the class
-      // (as written) through its name.
+    test("class with instance private members: initializers using them stay in the body", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
-        ${wrap}
+        let original;
+        function wrap(cls, ctx) {
+          original = cls;
+          return class Wrapped extends cls {};
+        }
         @wrap class Foo {
           #secret = 42;
           static create() { return new Foo(); }
           static peek = foo => foo.#secret;
+          static hasSecret = #secret in Foo;
           static self = Foo;
         }
         console.log(JSON.stringify([
-          tag(Foo),
-          tag(Foo.create().constructor),
+          Foo.create() instanceof Foo,
           Foo.peek(Foo.create()),
-          typeof Foo.self,
+          Foo.hasSecret,
+          Object.hasOwn(original, "peek"),
+          Object.hasOwn(original, "hasSecret"),
+          Object.hasOwn(Foo, "self"),
+          Foo.self === Foo,
         ]));
       `);
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(["wrapped", "wrapped", 42, "function"]);
+      expect(JSON.parse(stdout)).toEqual([true, 42, false, true, true, true, true]);
       expect(exitCode).toBe(0);
     });
 
@@ -360,12 +458,14 @@ describe("ES Decorators", () => {
           export function wrap(cls, ctx) {
             return class Wrapped extends cls {};
           }
+          export const marker = Symbol("marker");
         `,
         "named.js": `
-          import { wrap } from "./wrap.js";
+          import { wrap, marker } from "./wrap.js";
           @wrap export class Named {
             static create() { return new Named(); }
             static self = Named;
+            static fromImport = [marker];
           }
         `,
         "default.js": `

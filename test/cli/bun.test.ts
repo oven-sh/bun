@@ -161,7 +161,8 @@ describe("bun", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
         expect(stderr).toContain("Unknown or unsupported shell");
         expect(exitCode).toBe(1);
       }

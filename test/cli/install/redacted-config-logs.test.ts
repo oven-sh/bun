@@ -141,6 +141,108 @@ test("bunfig password value is masked in config error output", async () => {
   expect(coloredExit).toBe(1);
 });
 
+// The config loaders split user:password@ off a registry URL, but a token
+// written as a path segment stays part of it, and these messages echo that
+// URL (or the manifest / tarball URL built from it) when no request can be
+// made out of it. None of the cases below sends a request.
+describe.concurrent("bun install masks the configured registry URL in the messages that echo it", () => {
+  const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+  const packageJson = (deps: Record<string, Record<string, string>>) => JSON.stringify({ name: "app", ...deps });
+
+  const cases: {
+    title: string;
+    registry: string;
+    files: Record<string, string>;
+    expected: string;
+    exitCode: number;
+  }[] = [
+    {
+      title: "registry URL that is not a valid base URL (dependency)",
+      registry: `http://ex ample.org/${token}/`,
+      files: { "package.json": packageJson({ dependencies: { notapackage: "1.0.0" } }) },
+      expected: `error: Failed to join registry "http://ex ample.org/***/" and package "notapackage" URLs\n`,
+      exitCode: 1,
+    },
+    {
+      title: "registry URL that is not a valid base URL (optional dependency)",
+      registry: `http://ex ample.org/${token}/`,
+      files: { "package.json": packageJson({ optionalDependencies: { notapackage: "1.0.0" } }) },
+      expected: `warn: Failed to join registry "http://ex ample.org/***/" and package "notapackage" URLs\n`,
+      exitCode: 0,
+    },
+    // The alias makes ".." the name the manifest is requested for. It joins to
+    // the registry's parent directory, so the manifest URL no longer contains
+    // the token segment; the registry URL printed next to it does.
+    {
+      title: "manifest URL outside the registry directory (dependency)",
+      registry: `http://127.0.0.1:1/${token}/`,
+      files: { "package.json": packageJson({ dependencies: { innocent: "npm:..@1.0.0" } }) },
+      expected: `error: Invalid package name "..": manifest URL "http://127.0.0.1:1/" is not on registry "http://127.0.0.1:1/***/"\n`,
+      exitCode: 1,
+    },
+    {
+      title: "manifest URL outside the registry directory (optional dependency)",
+      registry: `http://127.0.0.1:1/${token}/`,
+      files: { "package.json": packageJson({ optionalDependencies: { innocent: "npm:..@1.0.0" } }) },
+      expected: `warn: Invalid package name "..": manifest URL "http://127.0.0.1:1/" is not on registry "http://127.0.0.1:1/***/"\n`,
+      exitCode: 0,
+    },
+    {
+      title: "registry URL with a non-http scheme (dependency)",
+      registry: `htp://127.0.0.1:1/${token}/`,
+      files: { "package.json": packageJson({ dependencies: { notapackage: "1.0.0" } }) },
+      expected: `error: Registry URL must be http:// or https://\nReceived: "htp://127.0.0.1:1/***/notapackage"\n`,
+      exitCode: 1,
+    },
+    {
+      title: "registry URL with a non-http scheme (optional dependency)",
+      registry: `htp://127.0.0.1:1/${token}/`,
+      files: { "package.json": packageJson({ optionalDependencies: { notapackage: "1.0.0" } }) },
+      expected: `warn: Registry URL must be http:// or https://\nReceived: "htp://127.0.0.1:1/***/notapackage"\n`,
+      exitCode: 0,
+    },
+    {
+      title: "tarball URL built from a registry URL with a non-http scheme",
+      registry: `htp://127.0.0.1:1/${token}/`,
+      files: {
+        "package.json": packageJson({ dependencies: { pkg: "1.0.0" } }),
+        // An empty URL in bun.lock stands for the configured registry's
+        // default tarball location, so no manifest is fetched first.
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "app", dependencies: { pkg: "1.0.0" } } },
+          packages: { pkg: ["pkg@1.0.0", "", {}, ""] },
+        }),
+      },
+      expected: `error: Expected tarball URL to start with https:// or http://, got "htp://127.0.0.1:1/***/pkg/-/pkg-1.0.0.tgz" while fetching package "pkg"\n`,
+      exitCode: 1,
+    },
+  ];
+
+  for (const { title, registry, files, expected, exitCode } of cases) {
+    test(title, async () => {
+      using dir = tempDir("redacted-registry-token", {
+        ...files,
+        "bunfig.toml": `[install]\nregistry = ${JSON.stringify(registry)}\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(err).toContain(expected);
+      expect(err).not.toContain(token);
+      expect(out).not.toContain(token);
+      expect(exited).toBe(exitCode);
+    });
+  }
+});
+
 describe.concurrent("redact", async () => {
   const tests = [
     {

@@ -17,8 +17,7 @@ macro_rules! impl_get_errno_libc {
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    // Checked: an errno the enum does not declare (a kernel or
-                    // libc newer than the table) collapses to EIO.
+                    // An errno the enum does not declare collapses to EIO.
                     $crate::from_errno($crate::posix::errno())
                 } else {
                     $crate::E::SUCCESS
@@ -278,21 +277,12 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
 }
 
 impl SystemErrno {
-    /// Discriminant → variant for a value the caller already knows is
-    /// declared (a table index, or an `E` discriminant on Windows, where the
-    /// two enums share one discriminant set). OS-supplied codes go through
-    /// [`from_errno`] / [`SystemErrno::init`] instead, which report unknown
-    /// codes rather than panicking.
+    /// Variant for a discriminant known to be declared; panics on any other.
     ///
-    /// `from_repr` (`strum::FromRepr`) is the exhaustive match over the
-    /// declared variants, which is what makes this a real check on Windows
-    /// too, where the enum is sparse (dense `0..=137` plus isolated `UV_E*`
-    /// discriminants around 3000-4095, see windows_errno.rs) and `n < MAX`
-    /// would be the wrong test.
-    ///
-    /// # Panics
-    /// If `n` is not a declared discriminant. This is a safe fn, so the check
-    /// is not a `debug_assert!`.
+    /// OS-reported codes go through [`from_errno`] / [`SystemErrno::init`] instead.
+    /// On Windows the enum is **sparse** (dense `0..=137` plus isolated `UV_E*`
+    /// discriminants in the ~3000-4095 range — see windows_errno.rs), so the
+    /// check is `from_repr`'s match over the declared variants, not `n < MAX`.
     #[inline]
     pub const fn from_raw(n: u16) -> SystemErrno {
         match Self::from_repr(n) {
@@ -489,9 +479,7 @@ mod errno_name_tests {
         assert_eq!(system_errno_name(97), Some("EINTEGRITY"));
     }
 
-    /// Every declared variant survives a `from_raw` round trip, and on POSIX
-    /// the declared set is exactly `0..MAX`, which is the range check `init`
-    /// (and through it `from_errno` / `e_from_negated`) relies on.
+    /// On POSIX the declared set being exactly `0..MAX` is what `init`'s range check relies on.
     #[test]
     fn from_raw_round_trips_every_declared_discriminant() {
         use enum_map::Enum;
@@ -508,10 +496,7 @@ mod errno_name_tests {
         }
     }
 
-    /// `from_raw` is a safe fn, so an undeclared discriminant has to panic in
-    /// every build rather than produce an invalid enum value. One past the
-    /// dense head is undeclared on every platform (the Windows `UV_*` tail
-    /// starts around 3000).
+    /// One past the dense head is undeclared everywhere (the Windows `UV_*` tail starts near 3000).
     #[test]
     #[should_panic(expected = "not a declared errno discriminant")]
     fn from_raw_rejects_one_past_the_dense_head() {
@@ -524,15 +509,11 @@ mod errno_name_tests {
         let _ = SystemErrno::from_raw(u16::MAX);
     }
 
-    /// The OS can report an errno the table does not declare (a kernel or
-    /// libc newer than the enum); `get_errno` must collapse it to EIO instead
-    /// of building an invalid `E` out of it.
     #[cfg(not(windows))]
     #[test]
     fn get_errno_collapses_undeclared_libc_errno_to_eio() {
         let set_errno = |value: core::ffi::c_int| {
-            // SAFETY: `errno_ptr()` is the calling thread's own errno slot,
-            // valid for the life of the thread.
+            // SAFETY: the calling thread's own errno slot, valid for the life of the thread.
             unsafe { *bun_core::ffi::errno_ptr() = value };
         };
         set_errno(i32::from(SystemErrno::MAX));
@@ -544,8 +525,7 @@ mod errno_name_tests {
         assert_eq!(get_errno(0i32), SystemErrno::SUCCESS);
     }
 
-    /// Raw Linux syscalls return `-errno` in the result itself; the kernel's
-    /// window for that is `-4095..=-1`, wider than the enum.
+    /// The kernel reports `-errno` in the result itself, anywhere in `-4095..=-1`.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[test]
     fn get_errno_collapses_undeclared_raw_syscall_errno_to_eio() {
@@ -559,16 +539,13 @@ mod errno_name_tests {
             get_errno(failed_with(libc::ENOENT as isize)),
             SystemErrno::ENOENT
         );
-        // Outside the window the value is a successful result (a length, an
-        // mmap address), not an errno.
+        // Anything outside that window is a successful result (a length, an address).
         assert_eq!(get_errno(0usize), SystemErrno::SUCCESS);
         assert_eq!(get_errno(42usize), SystemErrno::SUCCESS);
         assert_eq!(get_errno(failed_with(4096)), SystemErrno::SUCCESS);
     }
 
-    /// `SystemErrno::to_e` and `bun_sys::Error::resolve_system_errno` convert
-    /// between the two Windows enums by discriminant through `from_raw`, so
-    /// the two must declare exactly the same discriminants.
+    /// `to_e` and `bun_sys::Error::resolve_system_errno` convert between the enums by discriminant.
     #[cfg(windows)]
     #[test]
     fn e_and_system_errno_declare_the_same_discriminants() {

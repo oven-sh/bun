@@ -242,13 +242,7 @@ pub enum E {
 }} // ← UV_* tail appended by `for_each_uv_errno!`
 
 impl E {
-    /// Discriminant → variant for a value known to be declared (the
-    /// `SystemErrno` → `E` hop in `to_e`). Untrusted input goes through
-    /// [`try_from_raw`]. Same shape as `SystemErrno::from_raw`: a safe fn,
-    /// so the check is real in every build.
-    ///
-    /// # Panics
-    /// If `n` is not a declared discriminant.
+    /// Variant for a declared discriminant; panics otherwise. Untrusted input: [`try_from_raw`].
     #[inline]
     pub(crate) const fn from_raw(n: u16) -> Self {
         match Self::from_repr(n) {

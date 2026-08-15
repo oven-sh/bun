@@ -247,8 +247,7 @@ mod darwin_impl {
         if status >= 0 {
             return Ok(());
         }
-        // ULF_NO_ERRNO: kernel returns `-errno` directly; a code outside the
-        // enum lands in the `_` arm instead of being cast unchecked.
+        // ULF_NO_ERRNO: the kernel returns `-errno` directly.
         match bun_sys::e_from_negated(status) {
             // Wait was interrupted by the OS or other spurious signalling.
             c::E::EINTR => Ok(()),

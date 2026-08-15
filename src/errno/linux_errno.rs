@@ -193,8 +193,7 @@ impl GetErrno for usize {
         // `as` between same-width usize/isize is a bit-reinterpretation
         let signed = self as isize;
         if signed > -4096 && signed < 0 {
-            // The kernel's `-errno` range (1..4096) is wider than the enum
-            // (`MAX`), so the code is validated; unknown ones collapse to EIO.
+            // The kernel's range is wider than the enum; undeclared codes collapse to EIO.
             crate::from_errno((-signed) as i32)
         } else {
             E::SUCCESS

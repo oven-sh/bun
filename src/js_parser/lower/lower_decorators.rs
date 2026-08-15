@@ -1155,9 +1155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_ref = class.class_name.as_ref().unwrap().ref_;
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
-        // A statement only carries `name_from_context` ("default") when it is an
-        // anonymous `export default class {}` that the visitor named after the
-        // module's default-export symbol.
+        // Statements only carry a name when they are an anonymous `export default class`.
         let class_is_anonymous =
             expr_class_is_anonymous || (!is_expr && name_from_context.is_some());
         // Decided before Phase 2 replaces decorated computed keys with temporaries.

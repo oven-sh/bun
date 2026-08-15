@@ -1847,7 +1847,7 @@ impl<'a> PackageInstaller<'a> {
                             );
                         }
 
-                        // One declared by an npm manifest (`Package::from_npm`) is verbatim,
+                        // One declared by a registry, git or tarball package is verbatim,
                         // i.e. relative to the declaring package, which installs at
                         // `dirname(node_modules.path)` because transitive folders never hoist.
                         let dir_name = {

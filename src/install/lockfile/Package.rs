@@ -1843,7 +1843,14 @@ impl Package<u64> {
         }
 
         match dependency_version.tag {
-            dependency::version::Tag::Folder => {
+            // Only a manifest that lives in the project can have its `file:` paths
+            // rebased onto the top-level dir. A git/tarball package is parsed out of
+            // the cache: its paths stay relative to the package, as `Package::from_npm`
+            // stores them, and the installer resolves them against the installed copy
+            // of the declaring package.
+            dependency::version::Tag::Folder
+                if features.is_main || features.is_workspace || features.is_folder =>
+            {
                 let folder = *dependency_version.folder();
                 let mut folder_buf = PathBuffer::uninit();
                 let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(

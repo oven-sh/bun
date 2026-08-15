@@ -2500,6 +2500,44 @@ impl<'a> Formatter<'a> {
         result
     }
 
+    /// jest surrounds a snapshot value that spans several lines with a newline on each side
+    /// (jest-snapshot's `addExtraLineBreaks`). The other arms of `print_as` write those
+    /// newlines themselves because a non-empty object or array always spans several lines;
+    /// whether an element does depends on its props and children (`<div />` and
+    /// `<div>text</div>` fit on one line), so a top-level element is rendered into a buffer
+    /// first and wrapped afterwards.
+    fn print_jsx<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+        &mut self,
+        writer: &mut W,
+        value: JSValue,
+        js_type: JSType,
+    ) -> JsResult<()> {
+        if self.indent != 0 {
+            return self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, js_type);
+        }
+
+        let mut rendered: Vec<u8> = Vec::new();
+        let result = self.print_as::<Vec<u8>, { Tag::JSX }, ENABLE_ANSI_COLORS>(
+            &mut rendered,
+            value,
+            js_type,
+        );
+
+        let multiline = strings::contains_char(&rendered, b'\n');
+        let mut writer = WrappedWriter::new(writer);
+        if multiline {
+            writer.write_all(b"\n");
+        }
+        writer.write_all(&rendered);
+        if multiline {
+            writer.write_all(b"\n");
+        }
+        if writer.failed {
+            self.failed = true;
+        }
+        result
+    }
+
     pub(crate) fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,
@@ -2579,9 +2617,7 @@ impl<'a> Formatter<'a> {
             }
             Tag::NativeCode => self
                 .print_as::<W, { Tag::NativeCode }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
-            Tag::JSX => {
-                self.print_as::<W, { Tag::JSX }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
-            }
+            Tag::JSX => self.print_jsx::<W, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::Event => {
                 self.print_as::<W, { Tag::Event }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }

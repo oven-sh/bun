@@ -104,7 +104,7 @@ describe.each(variants)("GitHub tarball integrity ($variant extraction)", ({ var
             GITHUB_API_URL: server.url.origin,
             BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
           },
-          stdout: "pipe",
+          stdout: "ignore",
           stderr: "pipe",
         });
         const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

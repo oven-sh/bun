@@ -5185,16 +5185,12 @@ void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
     (*arg0).setExecutionForbidden();
 }
 
-// These may be called concurrently from another thread.
+// These may be called concurrently from another thread — or from the VM's own thread inside a host call,
+// API lock held: VMTraps::fireTrap is CONCURRENT_SAFE and needs no lock either way (releasing the API lock
+// here would run JSLock's microtask checkpoint mid-host-call).
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
-    JSC::VM& vm = *arg0;
-    bool didEnter = vm.currentThreadIsHoldingAPILock();
-    if (didEnter)
-        vm.apiLock().unlock();
-    vm.notifyNeedTermination();
-    if (didEnter)
-        vm.apiLock().lock();
+    arg0->notifyNeedTermination();
 }
 void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
 {

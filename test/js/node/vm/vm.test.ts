@@ -1605,8 +1605,8 @@ test.concurrent("a vm timeout that never fires leaves nothing behind either", as
   expect(exitCode).toBe(0);
 });
 
-// The next three run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
-// a child: a regression then fails that child (spawn timeout) instead of hanging this file.
+// The following tests run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run
+// in a child: a regression then fails that child (spawn timeout) instead of hanging this file.
 // As in Node: microtasks a script left on an afterEvaluate context when its synchronous part timed out run
 // at the next evaluation's checkpoint, under that run's timeout (never unbounded); a checkpoint that is
 // itself cut short discards the rest; the context stays usable throughout.

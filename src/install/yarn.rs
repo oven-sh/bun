@@ -129,6 +129,16 @@ impl<'a> Entry<'a> {
         })
     }
 
+    /// The name that, together with `version`, decides which entries become one package: the
+    /// repository for a git entry (its spec name is whatever the dependent chose to call it),
+    /// otherwise the package name. Consolidation and the package-id pass must agree on this.
+    pub(crate) fn dedupe_name(&self) -> &[u8] {
+        match &self.git_repo_name {
+            Some(repo_name) if !self.has_direct_url_spec() => repo_name,
+            _ => self.name,
+        }
+    }
+
     pub(crate) fn get_name_from_spec(spec: &[u8]) -> &[u8] {
         let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
             &spec[1..spec.len() - 1]
@@ -488,9 +498,11 @@ impl<'a> YarnLock<'a> {
         if new_entry.specs.is_empty() {
             return Ok(());
         }
+        let dedupe_name = new_entry.dedupe_name();
 
         for existing_entry in self.entries.iter_mut() {
-            if new_entry.name == existing_entry.name && new_entry.version == existing_entry.version
+            if dedupe_name == existing_entry.dedupe_name()
+                && new_entry.version == existing_entry.version
             {
                 let old_len = existing_entry.specs.len();
                 let mut combined_specs: Vec<&'a [u8]> =
@@ -825,10 +837,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut next_package_id: PackageID = 1; // 0 is root
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let name: &[u8] = match &entry.git_repo_name {
-            Some(repo_name) if !entry.has_direct_url_spec() => repo_name,
-            _ => entry.name,
-        };
+        let name: &[u8] = entry.dedupe_name();
         let version = entry.version;
 
         if let Some(existing) = package_versions.get(name).cloned() {

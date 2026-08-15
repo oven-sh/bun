@@ -492,13 +492,14 @@ impl Tag {
             return Tag::get(value.get_proxy_target(), global_this);
         }
 
-        // Is this a react element? Same set of `$$typeof` symbols as the console
-        // formatter (`ConsoleObject.rs`): React 19 renamed `react.element` to
-        // `react.transitional.element`.
+        // Is this a react element? Keep the list in sync with `ConsoleObject.rs`.
         if js_type.is_object() && js_type != JSType::ProxyObject {
             if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
-                const REACT_ELEMENT_SYMBOLS: [&[u8]; 3] =
-                    [b"react.element", b"react.transitional.element", b"react.fragment"];
+                const REACT_ELEMENT_SYMBOLS: [&[u8]; 3] = [
+                    b"react.element",              // React 18 and below
+                    b"react.transitional.element", // React 19
+                    b"react.fragment",
+                ];
 
                 for symbol_key in REACT_ELEMENT_SYMBOLS {
                     let mut symbol_key = ZigString::init(symbol_key);

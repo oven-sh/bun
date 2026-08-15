@@ -3384,14 +3384,18 @@ mod line_column_tracker_tests {
     #[test]
     fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
         let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
+        // Every lookup below re-scans from an earlier line, so cost grows with
+        // the square of the statement count; under Miri 4 statements still
+        // interleave forward and backward jumps across lines at ~1/9 the work.
+        let statements: usize = if cfg!(miri) { 4 } else { 12 };
         let mut contents = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..statements {
             contents.extend_from_slice(statement);
         }
         let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents.as_slice());
 
         let mut offsets = Vec::new();
-        for statement_index in 0..12usize {
+        for statement_index in 0..statements {
             let start = statement_index * statement.len();
             let first_binding = start + 15;
             offsets.push(start + statement.len() - 6);

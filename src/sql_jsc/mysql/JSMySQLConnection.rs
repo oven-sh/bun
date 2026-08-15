@@ -638,7 +638,8 @@ impl JSMySQLConnection {
             }
             S::Connected | S::Disconnected | S::Failed => {
                 let queries = this.get_queries_array();
-                this.connection_mut().clean_queue_and_close(None, queries);
+                this.connection_mut()
+                    .clean_queue_and_close(None, queries, uws::CloseCode::Normal);
             }
         }
         Ok(JSValue::UNDEFINED)
@@ -707,7 +708,8 @@ impl JSMySQLConnection {
             // `_ref` has not yet dropped, so `*p` is still live; `ParentRef`
             // yields a fresh `&Self` per access (R-2: every callee is `&self`).
             let queries = p.get_queries_array();
-            p.connection_mut().clean_queue_and_close(Some(value), queries);
+            p.connection_mut()
+                .clean_queue_and_close(Some(value), queries, uws::CloseCode::Failure);
             p.update_reference_type();
         }
         self.stop_timers();

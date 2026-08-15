@@ -291,15 +291,17 @@ impl MySQLConnection {
         }
     }
 
-    pub(crate) fn close(&mut self) {
-        self.socket.close(uws::CloseKind::Normal);
+    pub(crate) fn close(&mut self, code: uws::CloseCode) {
+        self.socket.close(code);
         self.write_buffer = OffsetByteList::default();
     }
 
+    /// `fail_with_js_value` passes `Failure`, the one code a TLS socket never defers (see `CloseCode`).
     pub(crate) fn clean_queue_and_close(
         &mut self,
         js_reason: Option<JSValue>,
         js_queries_array: JSValue,
+        code: uws::CloseCode,
     ) {
         // cleanup requests
         self.queue.clean(
@@ -311,7 +313,7 @@ impl MySQLConnection {
             },
         );
 
-        self.close();
+        self.close(code);
     }
 
     pub(crate) fn cleanup(&mut self) {

@@ -18,6 +18,8 @@
 
 import { SQL } from "bun";
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tls } from "harness";
+import path from "node:path";
 import { neverAnsweringServer } from "./wire-frames";
 
 const drivers = [
@@ -101,3 +103,50 @@ test("pool scans tolerate unassigned connection slots during pool start", async 
     server.close();
   }
 });
+
+// When the client itself gives up on a connection (connection timeout, protocol
+// violation, forced close while still connecting, ...) it has to close the
+// socket without waiting for the peer. Over TLS the graceful close both drivers
+// used to issue from fail() sends a close_notify and keeps the socket open until
+// the peer answers it, which a peer that has stopped responding never does: the
+// failure was reported, but the socket stayed open and, with it, the process
+// stayed alive. The fixture runs both drivers against mocks that complete the
+// TLS handshake and then stop responding, and has to exit by itself once each
+// client has reported the failure and each mock has seen its connection close.
+//
+// Test timeout: the fixture is a second debug build doing four TLS handshakes,
+// and without the fix it only ends when it runs into the spawn timeout.
+test("a TLS connection the client gives up on is closed at once even though the peer stopped responding", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "sql-tls-peer-stopped-responding.fixture.ts")],
+    env: { ...bunEnv, MOCK_TLS_KEY: tls.key, MOCK_TLS_CERT: tls.cert },
+    stdout: "pipe",
+    stderr: "pipe",
+    // Without the fix the fixture never exits; this turns that into a failure
+    // that shows which lines never got printed.
+    timeout: 20_000,
+  });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: stdout.trim().split(/\r?\n/).sort(),
+    exitCode: proc.exitCode,
+    signalCode: proc.signalCode,
+    stderr,
+  }).toEqual({
+    stdout: [
+      "mysql close: rejected with ERR_MYSQL_CONNECTION_CLOSED",
+      "mysql close: the mock saw the connection close",
+      "mysql unexpected: rejected with ERR_MYSQL_UNEXPECTED_PACKET",
+      "mysql unexpected: the mock saw the connection close",
+      "postgres close: rejected with ERR_POSTGRES_CONNECTION_CLOSED",
+      "postgres close: the mock saw the connection close",
+      "postgres unexpected: rejected with ERR_POSTGRES_UNEXPECTED_MESSAGE",
+      "postgres unexpected: the mock saw the connection close",
+    ],
+    exitCode: 0,
+    signalCode: null,
+    // not asserted; included so that whatever the fixture died of shows up
+    // in the diff
+    stderr: expect.any(String),
+  });
+}, 30_000);

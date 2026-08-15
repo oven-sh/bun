@@ -3319,8 +3319,7 @@ mod draft {
         }
     }
 
-    /// `suppress_core_dumps_if_necessary` for the C++ test hooks that crash on
-    /// purpose (`failICUAllocationForTesting` in `bun_icu_memory.cpp`).
+    /// `suppress_core_dumps_if_necessary` for C++ test hooks that crash on purpose.
     #[unsafe(no_mangle)]
     extern "C" fn CrashHandler__suppressCoreDumps() {
         suppress_core_dumps_if_necessary();

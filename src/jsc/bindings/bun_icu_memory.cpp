@@ -1,15 +1,11 @@
-// ICU reports a failed allocation through a UErrorCode when it can, but its
-// copy constructors and assignment operators have nowhere to report one, so a
-// null from malloc inside udat_clone / ucal_clone / ubrk_clone (which JSC's
-// Intl.DateTimeFormat and Intl.Segmenter call per format/segment) either
-// segfaults inside ICU or yields a formatter that silently produces wrong
-// output. Routing ICU's heap through these wrappers turns every such failure
-// into Bun's regular out-of-memory crash report instead.
+// ICU's copy constructors and clone() have no UErrorCode to report a failed
+// allocation through, so a null from malloc inside udat_format/udat_clone/
+// ucal_clone/ubrk_clone segfaults inside ICU or yields a formatter that prints
+// the wrong thing. These wrappers turn it into Bun's out-of-memory report.
 //
-// The wrappers call the same malloc/realloc/free ICU uses by default
-// (cmemory.cpp), so anything ICU allocated before JSCInitialize installed them
-// is still freed by the matching function. ICU serves zero-byte requests
-// itself and only calls out for non-zero sizes, so a null here is a failure.
+// They call the same malloc/realloc/free ICU defaults to (cmemory.cpp), so the
+// install point does not matter, and ICU serves zero-byte requests itself, so
+// a null here is always a failure.
 
 #include "root.h"
 #include "bun_icu_memory.h"
@@ -26,8 +22,7 @@ extern "C" void CrashHandler__suppressCoreDumps();
 
 namespace Bun {
 
-// Negative when disarmed; otherwise how many more allocations succeed before
-// one is failed.
+// Negative while disarmed.
 static std::atomic<int64_t> s_allocationsUntilInjectedFailure { -1 };
 
 static bool shouldInjectFailure()
@@ -68,8 +63,7 @@ void installICUMemoryFunctions()
 
 void failICUAllocationForTesting(size_t skip)
 {
-    // The crash this arms is intended, like the crash_handler test hooks'; the
-    // core-dump-collecting CI lanes must not treat its core as a failure.
+    // Intended crash: keep the coredump-collecting CI lanes from flagging it.
     CrashHandler__suppressCoreDumps();
     s_allocationsUntilInjectedFailure.store(static_cast<int64_t>(skip), std::memory_order_relaxed);
 }
@@ -78,8 +72,7 @@ void failICUAllocationForTesting(size_t skip)
 
 #else
 
-// macOS links the SDK's libicucore, which every framework in the process
-// shares, so its allocator is left alone.
+// macOS uses the system libicucore, shared with every framework in the process.
 namespace Bun {
 
 void installICUMemoryFunctions()

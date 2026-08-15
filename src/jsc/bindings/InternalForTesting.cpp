@@ -125,10 +125,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGl
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
 }
 
-// Arms the ICU heap hook (bun_icu_memory.cpp): after `skip` more ICU
-// allocations succeed, the next one fails the way a null from malloc would,
-// so the calling process ends in Bun's out-of-memory report. Tests call this
-// in a child process right before the Intl operation they want to fail.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_failICUAllocation, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();

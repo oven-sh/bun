@@ -692,11 +692,9 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
 );
 
 /**
- * Makes the ICU allocation after the next `skip` (default 0) fail, exactly as
- * if malloc had returned null inside ICU. The process then dies with Bun's
- * out-of-memory report, so only call this in a child process, right before
- * the Intl operation that should hit it. No-op on macOS, which uses the
- * system ICU.
+ * Fails the ICU allocation after the next `skip` (default 0) ones, which kills
+ * the process with Bun's out-of-memory report: call it in a child process right
+ * before the Intl operation that should die. No-op on macOS (system ICU).
  */
 export const failICUAllocationForTesting: (skip?: number) => void = $newCppFunction(
   "InternalForTesting.cpp",

@@ -140,17 +140,12 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   });
 });
 
-// ICU can only report a failed allocation when the failing call has a status
-// out-parameter. The clones that udat_format, udat_clone, ucal_clone and
-// ubrk_clone perform internally have none, so a null from malloc there used to
-// segfault inside ICU or hand back a formatter that prints the wrong thing.
-// Bun owns ICU's heap functions (src/jsc/bindings/bun_icu_memory.cpp), so a
-// failed ICU allocation now ends in the ordinary out-of-memory report.
-//
-// Each Intl object is built before the failure is armed so that it is the
-// per-call work, where those clones live, that loses an allocation; which of
-// its allocations fails (the first or the second) must not matter. macOS uses
-// the system ICU, whose allocator Bun leaves alone.
+// The clones inside udat_format, udat_clone, ucal_clone and ubrk_clone cannot
+// report a failed allocation, so a null from malloc there used to segfault in
+// ICU or produce wrong output; src/jsc/bindings/bun_icu_memory.cpp turns it
+// into the out-of-memory report. Each Intl object is built before arming so the
+// per-call work (where the clones are) is what loses an allocation, and which
+// one (first or second) must not matter. macOS uses the system ICU, unhooked.
 describe.skipIf(isMacOS)("an allocation failure inside ICU is reported as out of memory", () => {
   const operations = [
     [

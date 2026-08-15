@@ -4,6 +4,7 @@
  *  `bunx vitest test/js/bun/test/mock-fn.test.js`
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/mock-fn.test.js`
  */
+import { runInNewContext } from "node:vm";
 import test_interop from "./test-interop.js";
 var { isBun, describe, test, it, expect, jest, vi, mock, spyOn } = await test_interop();
 
@@ -964,6 +965,17 @@ describe("mock()", () => {
         expect(fn.mock.instances[0]).toBeUndefined();
         expect(fn.mock.instances[1]).toBe(obj);
         expect(fn.mock.instances[2]).toBe(instance);
+      });
+
+      test("falls back to Object.prototype of newTarget's realm when its prototype is not an object", () => {
+        const fn = jest.fn();
+        const { NewTarget, otherObjectPrototype } = runInNewContext(
+          "({ NewTarget: function NewTarget() {}, otherObjectPrototype: Object.prototype })",
+        );
+        expect(otherObjectPrototype).not.toBe(Object.prototype);
+        NewTarget.prototype = null;
+        const instance = Reflect.construct(fn, [], NewTarget);
+        expect(Object.getPrototypeOf(instance)).toBe(otherObjectPrototype);
       });
     }
   });

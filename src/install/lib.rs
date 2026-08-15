@@ -991,7 +991,7 @@ pub(crate) fn initialize_mini_store() {
     });
 }
 
-// MOVE_DOWN: identity/sentinel scalar aliases live in `bun_install_types::resolver_hooks`
+// MOVE_DOWN: the id types and their sentinels live in `bun_install_types::resolver_hooks`
 // (single canonical definition shared with `bun_resolver`). Re-exported here so existing
 // `bun_install::PackageID` / `INVALID_PACKAGE_ID` / etc. paths continue to resolve.
 pub use bun_install_types::{

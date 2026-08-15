@@ -2209,6 +2209,9 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     pub(crate) tokens: bun_alloc::ArenaVec<'bump, Token>,
     pub(crate) delimit_quote: bool,
     pub(crate) in_subshell: Option<SubShellKind>,
+    /// Set between `[[` and its `]]`. Outside of a conditional, `]]` is
+    /// ordinary text (`echo [[x]]`).
+    pub(crate) in_cond_expr: bool,
     pub(crate) subshell_depth: u32,
     pub(crate) errors: bun_alloc::ArenaVec<'bump, LexError>,
 
@@ -2243,6 +2246,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             j: 0,
             delimit_quote: false,
             in_subshell: None,
+            in_cond_expr: false,
             subshell_depth: 0,
             string_refs: strings_to_escape,
             jsobjs_len,
@@ -2285,6 +2289,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 bun_alloc::ArenaVec::new_in(bump),
             ),
             in_subshell: Some(kind),
+            in_cond_expr: false,
             subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
             j: self.j,
@@ -2447,30 +2452,20 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 }
                                 let state = self.make_snapshot();
                                 let _ = self.eat();
-                                'do_backtrack: {
-                                    let p2 = match self.peek() {
-                                        Some(p2) => p2,
-                                        None => {
-                                            self.break_word(true)?;
-                                            self.tokens.push(Token::DoubleBracketClose);
-                                            fell_through = true;
-                                            break 'escaped;
-                                        }
-                                    };
-                                    if p2.escaped {
-                                        break 'do_backtrack;
+                                let is_token = match self.peek() {
+                                    None => true,
+                                    Some(p2) => {
+                                        !p2.escaped
+                                            && matches!(
+                                                u8::try_from(p2.char),
+                                                Ok(b' ' | b'\r' | b'\n' | b'\t')
+                                            )
                                     }
-                                    match p2.char {
-                                        c2 if c2 == u32::from(b' ')
-                                            || c2 == u32::from(b'\r')
-                                            || c2 == u32::from(b'\n')
-                                            || c2 == u32::from(b'\t') =>
-                                        {
-                                            self.break_word(true)?;
-                                            self.tokens.push(Token::DoubleBracketOpen);
-                                        }
-                                        _ => break 'do_backtrack,
-                                    }
+                                };
+                                if is_token {
+                                    self.break_word(true)?;
+                                    self.tokens.push(Token::DoubleBracketOpen);
+                                    self.in_cond_expr = true;
                                     fell_through = true;
                                     break 'escaped;
                                 }
@@ -2482,6 +2477,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b']' as usize));
                             if self.chars.state == CharState::Single
                                 || self.chars.state == CharState::Double
+                                || !self.in_cond_expr
                             {
                                 break 'escaped;
                             }
@@ -2491,37 +2487,26 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 }
                                 let state = self.make_snapshot();
                                 let _ = self.eat();
-                                'do_backtrack: {
-                                    let p2 = match self.peek() {
-                                        Some(p2) => p2,
-                                        None => {
-                                            self.break_word(true)?;
-                                            self.tokens.push(Token::DoubleBracketClose);
-                                            fell_through = true;
-                                            break 'escaped;
+                                // `]]` closes the conditional only as a whole word, i.e.
+                                // when what follows would end a word anyway.
+                                let is_token = match self.peek() {
+                                    None => true,
+                                    Some(p2) if p2.escaped => false,
+                                    Some(p2) => match u8::try_from(p2.char) {
+                                        Ok(
+                                            b' ' | b'\r' | b'\n' | b'\t' | b';' | b'&' | b'|'
+                                            | b'>' | b'<' | b'(' | b')',
+                                        ) => true,
+                                        Ok(b'`') => {
+                                            self.in_subshell == Some(SubShellKind::Backtick)
                                         }
-                                    };
-                                    if p2.escaped {
-                                        break 'do_backtrack;
-                                    }
-                                    match p2.char {
-                                        c2 if matches!(
-                                            u8::try_from(c2),
-                                            Ok(b' '
-                                                | b'\r'
-                                                | b'\n'
-                                                | b'\t'
-                                                | b';'
-                                                | b'&'
-                                                | b'|'
-                                                | b'>')
-                                        ) =>
-                                        {
-                                            self.break_word(true)?;
-                                            self.tokens.push(Token::DoubleBracketClose);
-                                        }
-                                        _ => break 'do_backtrack,
-                                    }
+                                        _ => false,
+                                    },
+                                };
+                                if is_token {
+                                    self.break_word(true)?;
+                                    self.tokens.push(Token::DoubleBracketClose);
+                                    self.in_cond_expr = false;
                                     fell_through = true;
                                     break 'escaped;
                                 }

@@ -2393,6 +2393,27 @@ describe("condexprs", () => {
   TestBuilder.command`LOL=; [[ $LOl == $LOL ]] && echo yes!`.stdout("yes!\n").runAsTest("== empty");
   TestBuilder.command`LOL=; [[ $LOl != $LOL ]] && echo yes!`.exitCode(1).runAsTest("!= empty");
 
+  // The `$([[ ... ]])` and backtick forms are covered at the token level in
+  // lex.test.ts; running them also depends on how the substitution is closed (#38479).
+  describe("]] directly before the ) of a subshell", () => {
+    TestBuilder.command`([[ -n x ]]) && echo yes!`.stdout("yes!\n").runAsTest("unary operator");
+    TestBuilder.command`([[ foo == bar ]]) || echo no`.stdout("no\n").runAsTest("binary operator");
+  });
+
+  describe("]] outside of a conditional is an ordinary word", () => {
+    TestBuilder.command`echo ]]`.stdout("]]\n").runAsTest("on its own");
+    TestBuilder.command`echo [[x]] a]]`.stdout("[[x]] a]]\n").runAsTest("at the end of a word");
+    TestBuilder.command`[[ -n x ]] && echo ]]`.stdout("]]\n").runAsTest("after a conditional");
+    TestBuilder.command`echo $(echo [[x]])`.stdout("[[x]]\n").runAsTest("right before the ) of a command substitution");
+    TestBuilder.command`[[ $(echo ]] ) == "]]" ]] && echo yes!`
+      .stdout("yes!\n")
+      .runAsTest("inside a command substitution that is inside a conditional");
+  });
+
+  TestBuilder.command`[[`
+    .error("Expected a conditional expression operand, but got: EOF")
+    .runAsTest("[[ at end of input");
+
   describe.todo("ported from GNU bash", () => {
     TestBuilder.command`
     [[ foo > bar && $PWD -ef . ]]

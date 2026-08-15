@@ -1029,6 +1029,29 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     });
   });
 
+  test("username and _password lines for the tarball host are sent to it as basic auth", async () => {
+    using cdn = mockRegistry(basic("cdn-user", "cdn-pass"));
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
+    using dir = tempDir("npmrc-url-auth-tarball-host-basic", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/:username=cdn-user`,
+        `//${cdn.host}/:_password=${Buffer.from("cdn-pass").toString("base64")}`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect({ registry: registry.requests, cdn: cdn.requests, exitCode }).toEqual({
+      registry: [{ path: manifestPath, auth: "Bearer registry-token" }],
+      cdn: [{ path: tarballPath, auth: basic("cdn-user", "cdn-pass") }],
+      exitCode: 0,
+    });
+  });
+
   test("the line with the deepest path covering the tarball url wins; other paths on the host do not apply", async () => {
     using cdn = mockRegistry("Bearer deep-token");
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });

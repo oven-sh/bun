@@ -17,22 +17,23 @@ use crate::bunfig::Bunfig;
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 
+/// `$XDG_CONFIG_HOME/.bunfig.toml` when that file exists, otherwise
+/// `$HOME/.bunfig.toml` (same rule as the user-level `.npmrc` in
+/// `PackageManager::init`). Many desktops and CI runners export
+/// `XDG_CONFIG_HOME` without ever putting a bunfig there.
 fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     let paths: [&[u8]; 1] = [b".bunfig.toml"];
 
-    if let Some(data_dir) = env_var::XDG_CONFIG_HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            data_dir, &mut **buf, &paths,
-        ));
-    }
+    let xdg_dir = env_var::XDG_CONFIG_HOME.get_not_empty().filter(|xdg_dir| {
+        bun_sys::exists_z(resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            xdg_dir, &mut **buf, &paths,
+        ))
+    });
+    let dir = xdg_dir.or_else(|| env_var::HOME.get_not_empty())?;
 
-    if let Some(home_dir) = env_var::HOME.get() {
-        return Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
-            home_dir, &mut **buf, &paths,
-        ));
-    }
-
-    None
+    Some(resolve_path::join_abs_string_buf_z::<platform::Auto>(
+        dir, &mut **buf, &paths,
+    ))
 }
 
 fn load_bunfig(

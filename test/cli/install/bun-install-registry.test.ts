@@ -1,13 +1,14 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, mkdirSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
   bunEnv as env,
   isFlaky,
+  isLinux,
   isMacOS,
   isWindows,
   mergeWindowEnvs,
@@ -9770,16 +9771,20 @@ describe("manifest conditional requests", () => {
   const etag = '"no-deps-manifest-v1"';
   const lastModified = "Wed, 21 Oct 2015 07:28:00 GMT";
 
-  function startRegistry(validators: { etag?: string; lastModified?: string }) {
+  /** `served` is read on every request, so a test can change what the registry serves between installs. */
+  function startRegistry(served: { etag?: string; lastModified?: string; versions?: string[] }) {
     const requests: ManifestRequest[] = [];
-    let tarballRequests = 0;
+    const tarballRequests: string[] = [];
     const server = Bun.serve({
       port: 0,
       fetch(req) {
         const { pathname } = new URL(req.url);
-        if (pathname === "/no-deps/-/no-deps-1.0.0.tgz") {
-          tarballRequests++;
-          return new Response(file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz")));
+        const tarball = pathname.match(/^\/no-deps\/-\/no-deps-(.+)\.tgz$/);
+        if (tarball) {
+          tarballRequests.push(tarball[1]);
+          return new Response(
+            file(join(import.meta.dir, "registry", "packages", "no-deps", `no-deps-${tarball[1]}.tgz`)),
+          );
         }
         if (pathname !== "/no-deps") {
           return new Response("unexpected", { status: 404 });
@@ -9793,34 +9798,38 @@ describe("manifest conditional requests", () => {
         };
         requests.push(entry);
         const notModified =
-          (validators.etag !== undefined && entry.ifNoneMatch === validators.etag) ||
-          (validators.etag === undefined &&
-            validators.lastModified !== undefined &&
-            entry.ifModifiedSince === validators.lastModified);
+          (served.etag !== undefined && entry.ifNoneMatch === served.etag) ||
+          (served.etag === undefined &&
+            served.lastModified !== undefined &&
+            entry.ifModifiedSince === served.lastModified);
         if (notModified) {
           entry.status = 304;
           return new Response(null, { status: 304 });
         }
         const headers: Record<string, string> = {};
-        if (validators.etag !== undefined) headers["ETag"] = validators.etag;
-        if (validators.lastModified !== undefined) headers["Last-Modified"] = validators.lastModified;
+        if (served.etag !== undefined) headers["ETag"] = served.etag;
+        if (served.lastModified !== undefined) headers["Last-Modified"] = served.lastModified;
+        const versions = served.versions ?? ["1.0.0"];
         return Response.json(
           {
             name: "no-deps",
-            "dist-tags": { latest: "1.0.0" },
-            versions: {
-              "1.0.0": {
-                name: "no-deps",
-                version: "1.0.0",
-                dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz` },
-              },
-            },
+            "dist-tags": { latest: versions.at(-1) },
+            versions: Object.fromEntries(
+              versions.map(version => [
+                version,
+                {
+                  name: "no-deps",
+                  version,
+                  dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-${version}.tgz` },
+                },
+              ]),
+            ),
           },
           { headers },
         );
       },
     });
-    return { server, requests, tarballRequests: () => tarballRequests };
+    return { server, requests, tarballRequests };
   }
 
   let registryPort = 0;
@@ -9840,12 +9849,18 @@ describe("manifest conditional requests", () => {
     ]);
   }
 
-  async function install(...args: string[]) {
+  /** Without a lockfile, the next install has to resolve no-deps again (from the manifest cache or the registry). */
+  async function clean() {
     await Promise.all([
       rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
       rm(join(packageDir, "bun.lock"), { force: true }),
       rm(join(packageDir, "bun.lockb"), { force: true }),
     ]);
+  }
+
+  /** Runs `bun install` from scratch and checks that it installed `no-deps@${version}`. */
+  async function install(version: string, ...args: string[]) {
+    await clean();
     await using proc = spawn({
       cmd: [bunExe(), "install", ...args],
       cwd: packageDir,
@@ -9855,17 +9870,17 @@ describe("manifest conditional requests", () => {
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
-    expect(out).toContain("+ no-deps@1.0.0");
+    expect(out).toContain(`+ no-deps@${version}`);
     expect(exitCode).toBe(0);
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toStrictEqual({
       name: "no-deps",
-      version: "1.0.0",
+      version,
     });
     const npmPackages = (Object.values(parseLockfile(packageDir).packages) as any[]).filter(
       pkg => pkg.resolution.tag === "npm",
     );
     expect(npmPackages.map(pkg => [pkg.name, pkg.resolution.resolved])).toStrictEqual([
-      ["no-deps", `http://localhost:${registryPort}/no-deps/-/no-deps-1.0.0.tgz`],
+      ["no-deps", `http://localhost:${registryPort}/no-deps/-/no-deps-${version}.tgz`],
     ]);
   }
 
@@ -9877,34 +9892,42 @@ describe("manifest conditional requests", () => {
     using _ = server;
     await setup(server.port);
 
-    await install();
-    await install("--force");
+    await install("1.0.0");
+    await install("1.0.0", "--force");
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 304 },
     ]);
-    expect(tarballRequests()).toBe(1);
+    expect(tarballRequests).toStrictEqual(["1.0.0"]);
 
-    await install();
+    // Whether or not the --force install got to rewrite the cache entry before it
+    // exited (nothing waits for that write), a fresh manifest is on disk.
+    await install("1.0.0");
     expect(requests).toHaveLength(2);
-    expect(tarballRequests()).toBe(1);
+    expect(tarballRequests).toStrictEqual(["1.0.0"]);
   });
 
-  test("a changed etag returns 200 and the new etag is cached", async () => {
-    const validators = { etag };
-    const { server, requests } = startRegistry(validators);
+  test("a changed etag returns 200 and the new manifest and etag are cached", async () => {
+    const served = { etag, versions: ["1.0.0"] };
+    const { server, requests, tarballRequests } = startRegistry(served);
     using _ = server;
     await setup(server.port);
 
-    await install();
-    validators.etag = '"no-deps-manifest-v2"';
-    await install("--force");
-    await install("--force");
+    await install("1.0.0");
+
+    // The registry's manifest changes because a version was published. Installing it
+    // downloads a tarball after the manifest arrived, which is what gives the rewrite
+    // of the cache entry (nothing waits for it) time to land before the install exits.
+    served.versions.push("1.0.1");
+    served.etag = '"no-deps-manifest-v2"';
+    await install("1.0.1", "--force");
+    await install("1.0.1", "--force");
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: etag, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: '"no-deps-manifest-v2"', ifModifiedSince: null, status: 304 },
     ]);
+    expect(tarballRequests).toStrictEqual(["1.0.0", "1.0.1"]);
   });
 
   test("If-Modified-Since is sent when the registry only provided Last-Modified", async () => {
@@ -9912,13 +9935,13 @@ describe("manifest conditional requests", () => {
     using _ = server;
     await setup(server.port);
 
-    await install();
-    await install("--force");
+    await install("1.0.0");
+    await install("1.0.0", "--force");
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: lastModified, status: 304 },
     ]);
-    expect(tarballRequests()).toBe(1);
+    expect(tarballRequests).toStrictEqual(["1.0.0"]);
   });
 
   test("no validators means every --force install refetches unconditionally", async () => {
@@ -9926,11 +9949,71 @@ describe("manifest conditional requests", () => {
     using _ = server;
     await setup(server.port);
 
-    await install();
-    await install("--force");
+    await install("1.0.0");
+    await install("1.0.0", "--force");
     expect(requests).toStrictEqual([
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
       { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
+    ]);
+  });
+
+  // The 304 makes the install rewrite the cache entry from a thread pool task that nothing
+  // waits for, so the install can exit at any point of the rewrite. On Linux the rewrite used
+  // to unlink the entry and link the new file in its place, so an install exiting in between
+  // deleted the entry, and another install reading the cache in between missed it. The poll
+  // below is that other reader. Linux only: the other platforms rename the new file into place.
+  test.skipIf(!isLinux)("rewriting a cached manifest never leaves the cache without the entry", async () => {
+    const { server, requests } = startRegistry({ etag });
+    using _ = server;
+    await setup(server.port);
+    await install("1.0.0");
+
+    const cacheDir = join(packageDir, ".bun-cache");
+    const manifestFiles = (await readdirSorted(cacheDir)).filter(name => name.endsWith(".npm"));
+    expect(manifestFiles).toHaveLength(1);
+    const manifestPath = join(cacheDir, manifestFiles[0]);
+
+    const forcedInstalls = 10;
+    for (let i = 0; i < forcedInstalls; i++) {
+      await clean();
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--force"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      let running = true;
+      const exited = proc.exited.finally(() => {
+        running = false;
+      });
+      let timesMissing = 0;
+      while (running) {
+        for (let poll = 0; poll < 512; poll++) {
+          if (!existsSync(manifestPath)) timesMissing++;
+        }
+        // Gives the event loop a turn to notice the exit between batches of polls.
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("+ no-deps@1.0.0");
+      expect(exitCode).toBe(0);
+      expect({ install: i, timesMissing, presentAfterExit: existsSync(manifestPath) }).toStrictEqual({
+        install: i,
+        timesMissing: 0,
+        presentAfterExit: true,
+      });
+    }
+    expect(requests).toStrictEqual([
+      { accept, authorization, ifNoneMatch: null, ifModifiedSince: null, status: 200 },
+      ...Array.from({ length: forcedInstalls }, () => ({
+        accept,
+        authorization,
+        ifNoneMatch: etag,
+        ifModifiedSince: null,
+        status: 304,
+      })),
     ]);
   });
 });

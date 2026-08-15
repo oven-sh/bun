@@ -1174,14 +1174,17 @@ pub mod package_manifest {
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_using_o_tmpfile {
-                // Attempt #1.
-                if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_err() {
-                    // Attempt #2: the file may already exist. Let's unlink and try again.
-                    let _ = bun_sys::unlinkat(cache_dir, outpath);
-                    bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath)?;
-                    // There is no attempt #3. This is a cache, so it's not essential.
+                match bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath) {
+                    Ok(()) => return Ok(()),
+                    // linkat() cannot replace the existing entry, and unlinking it first
+                    // is not an option: nothing waits for this task (see `save_async`), so
+                    // exiting in between would leave the cache without an entry. Give the
+                    // file a temporary name and rename it over the entry below instead.
+                    Err(err) if err.get_errno() == bun_sys::Errno::EEXIST => {
+                        bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
+                    }
+                    Err(err) => return Err(err.into()),
                 }
-                return Ok(());
             }
 
             #[cfg(not(windows))]

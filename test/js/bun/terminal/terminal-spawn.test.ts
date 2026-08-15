@@ -272,27 +272,29 @@ describe("Bun.Terminal subprocess integration", () => {
     let output = "";
     const { promise, resolve, reject } = Promise.withResolvers<string>();
 
-    await using terminal = new Bun.Terminal({
-      ...size,
-      data(_term, chunk: Uint8Array) {
-        output += new TextDecoder().decode(chunk);
-        // Match the whole token: ConPTY's own escape sequences contain "]" too.
-        const seen = output.match(/\[\d+x\d+\]/);
-        if (seen) resolve(seen[0]);
-      },
-      exit() {
-        reject(new Error("terminal exited before reporting a size; output=" + JSON.stringify(output)));
-      },
-    });
-
+    // Inline terminal: the subprocess owns it, so once the child exits the reader
+    // sees EOF (after any output) and `exit` fires. A terminal created up front and
+    // passed in stays open after the child exits, and `exit` would never run.
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "process.stdout.write('[' + process.stdout.columns + 'x' + process.stdout.rows + ']')"],
       env: bunEnv,
-      terminal,
+      terminal: {
+        ...size,
+        data(_term, chunk: Uint8Array) {
+          output += new TextDecoder().decode(chunk);
+          // Match the whole token: ConPTY's own escape sequences contain "]" too.
+          const seen = output.match(/\[\d+x\d+\]/);
+          if (seen) resolve(seen[0]);
+        },
+        exit() {
+          reject(new Error("terminal closed before reporting a size; output=" + JSON.stringify(output)));
+        },
+      },
     });
 
     const seen = await promise;
     await proc.exited;
+    proc.terminal!.close();
     return seen;
   }
 

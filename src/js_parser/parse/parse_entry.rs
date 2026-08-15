@@ -313,6 +313,7 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
+        source.check_parseable_len(log, "File")?;
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;

@@ -503,13 +503,17 @@ impl CpPendingDirs {
     }
 
     /// Writes the next directory's NUL-terminated src/dest paths into the
-    /// buffers and returns their lengths.
+    /// buffers and their lengths into `src_len`/`dest_len`; false once empty.
     fn pop_into(
         &mut self,
         src_buf: &mut OSPathBuffer,
+        src_len: &mut PathInt,
         dest_buf: &mut OSPathBuffer,
-    ) -> Option<(PathInt, PathInt)> {
-        let dir = self.dirs.pop()?;
+        dest_len: &mut PathInt,
+    ) -> bool {
+        let Some(dir) = self.dirs.pop() else {
+            return false;
+        };
         let name = &self.names[dir.name_start as usize..];
         let sd = dir.parent_src_len as usize;
         let dd = dir.parent_dest_len as usize;
@@ -519,12 +523,10 @@ impl CpPendingDirs {
         dest_buf[dd] = paths::SEP as OSPathChar;
         dest_buf[dd + 1..dd + 1 + name.len()].copy_from_slice(name);
         dest_buf[dd + 1 + name.len()] = 0;
-        let lens = (
-            (sd + 1 + name.len()) as PathInt,
-            (dd + 1 + name.len()) as PathInt,
-        );
+        *src_len = (sd + 1 + name.len()) as PathInt;
+        *dest_len = (dd + 1 + name.len()) as PathInt;
         self.names.truncate(dir.name_start as usize);
-        Some(lens)
+        true
     }
 }
 
@@ -1991,9 +1993,8 @@ mod _async_tasks {
                     dest_dir_len,
                     &mut pending,
                 )?;
-                match pending.pop_into(src_buf, dest_buf) {
-                    Some((sd, dd)) => (src_dir_len, dest_dir_len) = (sd, dd),
-                    None => return Ok(()),
+                if !pending.pop_into(src_buf, &mut src_dir_len, dest_buf, &mut dest_dir_len) {
+                    return Ok(());
                 }
             }
         }
@@ -8373,9 +8374,8 @@ impl NodeFS {
                 args,
                 &mut pending,
             )?;
-            match pending.pop_into(src_buf, dest_buf) {
-                Some((sd, dd)) => (src_dir_len, dest_dir_len) = (sd, dd),
-                None => return Ok(()),
+            if !pending.pop_into(src_buf, &mut src_dir_len, dest_buf, &mut dest_dir_len) {
+                return Ok(());
             }
         }
     }

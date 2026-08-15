@@ -1459,7 +1459,7 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                // Decided from the entry's text: on the root `request.version` is bound to the member's path.
+                // Not the bound row: an unchanged resolution keeps the old lockfile row and its previous literal.
                 resolution::Tag::Workspace => match dependency::Tag::infer(e_string.data.slice()) {
                     dependency::Tag::Workspace => e_string.data.slice(),
                     _ => b"workspace:*",

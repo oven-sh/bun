@@ -633,13 +633,17 @@ describe.concurrent("bun add", () => {
     await expectInSync(dir, ["", PKG1, PKG2]);
   });
 
-  test("bun add <workspace>@workspace:~ replaces the existing entry", async () => {
-    const dir = await setup(MONOREPO({}, { dependencies: { pkg1: "workspace:*" } }));
-    await run(dir, "add", "pkg1@workspace:~");
-    expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: "workspace:~" });
-    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ pkg1: "workspace:~" });
-    await expectInSync(dir, ["", PKG1]);
-  });
+  // The member resolves the same as before, so the install keeps bun.lock's old row; the entry must still take the new spelling.
+  test.each(["workspace:*", "1.0.0"])(
+    "bun add <workspace>@workspace:~ replaces an existing %s entry",
+    async existing => {
+      const dir = await setup(MONOREPO({}, { dependencies: { pkg1: existing } }));
+      await run(dir, "add", "pkg1@workspace:~");
+      expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: "workspace:~" });
+      expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ pkg1: "workspace:~" });
+      await expectInSync(dir, ["", PKG1]);
+    },
+  );
 
   test("bun add <workspace>@workspace:^ rewrites an entry listed in devDependencies in place", async () => {
     const dir = await setup(MONOREPO({}, { devDependencies: { pkg1: "workspace:*" } }));

@@ -1851,19 +1851,10 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     use bun_jsc::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
-    // NOTE: reshaped for borrowck — capture the raw env loader pointer
-    // before `rare_data()` takes the long-lived `&mut` of `vm`.
-    let env_ptr = vm.transpiler.env;
-    let rare = vm.rare_data();
-    if let Some(v) = rare.s3_default_client.get() {
+    if let Some(v) = vm.rare_data().s3_default_client.get() {
         return Ok(v);
     }
-    // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
-    // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
-    // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
-    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
-    // from `rare_data` storage.
-    let env_creds = crate::webcore::fetch::s3_credentials_from_env(unsafe { &mut *env_ptr });
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(global_this);
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -1887,7 +1878,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
-    rare.s3_default_client = StrongOptional::create(js_client, global_this);
+    vm.rare_data().s3_default_client = StrongOptional::create(js_client, global_this);
     Ok(js_client)
 }
 

@@ -97,6 +97,8 @@ pub struct GcpConfig {
     pub https_proxy: Option<Box<[u8]>>,
     pub no_proxy: Option<Box<[u8]>>,
     pub reject_unauthorized: bool,
+    /// Set by VM teardown to abandon in-flight network waits.
+    pub cancel: std::sync::Arc<core::sync::atomic::AtomicBool>,
 }
 
 fn owned(v: Option<Vec<u8>>) -> Option<Box<[u8]>> {
@@ -134,9 +136,10 @@ impl GcpConfig {
                 .map_or(3000, |secs| (secs * 1000.0).clamp(50.0, 120_000.0) as u32),
             quota_project: owned(env.get(b"GOOGLE_CLOUD_QUOTA_PROJECT")),
             universe_domain: owned(env.get(b"GOOGLE_CLOUD_UNIVERSE_DOMAIN")),
-            https_proxy: owned(env.get(b"https_proxy").or_else(|| env.get(b"HTTPS_PROXY"))),
-            no_proxy: owned(env.get(b"no_proxy").or_else(|| env.get(b"NO_PROXY"))),
+            https_proxy: owned(env.get_proxy_var(b"https_proxy", b"HTTPS_PROXY")),
+            no_proxy: owned(env.get_proxy_var(b"no_proxy", b"NO_PROXY")),
             reject_unauthorized: global.bun_vm().get_tls_reject_unauthorized(),
+            cancel: Default::default(),
         }
     }
 
@@ -394,6 +397,7 @@ fn post_token_endpoint(
         follow_redirects: false,
         proxy: cfg.proxy_for(token_uri),
         reject_unauthorized: cfg.reject_unauthorized,
+        cancel: Some(&cfg.cancel),
     })
     .map_err(|e| fail!("{what}: request to {} failed: {e}", BStr::new(token_uri)))?;
     if res.status != 200 {
@@ -596,6 +600,7 @@ fn from_metadata(
             follow_redirects: false,
             proxy: None,
             reject_unauthorized: cfg.reject_unauthorized,
+            cancel: Some(&cfg.cancel),
         }) {
             Ok(r) if r.status >= 500 && attempt < 2 => {
                 res = Some(r);
@@ -705,6 +710,7 @@ fn from_metadata(
             follow_redirects: false,
             proxy: None,
             reject_unauthorized: cfg.reject_unauthorized,
+            cancel: Some(&cfg.cancel),
         })
         .ok()
         .filter(|r| r.status == 200)

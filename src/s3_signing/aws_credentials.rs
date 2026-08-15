@@ -16,7 +16,6 @@ pub enum CredentialsSource {
     Sso,
     Container,
     Imds,
-    Function,
 }
 
 impl CredentialsSource {
@@ -31,7 +30,6 @@ impl CredentialsSource {
             Self::Sso => "sso",
             Self::Container => "container",
             Self::Imds => "imds",
-            Self::Function => "function",
         }
     }
 }

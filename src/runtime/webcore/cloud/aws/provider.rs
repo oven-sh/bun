@@ -197,6 +197,20 @@ impl JobContext for ResolveJob {
     type OffThread = Off;
     type Js = JsSide;
 
+    const CANCELLABLE: bool = true;
+
+    /// VM teardown: make in-flight credential HTTP waits give up promptly.
+    unsafe fn cancel(off: *mut Off) {
+        // SAFETY: `off` is live (fn contract); only the atomic is touched,
+        // concurrently with the resolver thread reading it.
+        unsafe {
+            (*off)
+                .cfg
+                .cancel
+                .store(true, core::sync::atomic::Ordering::Relaxed)
+        };
+    }
+
     fn run(off: &mut Off, done: Completion<Self>) -> Option<Completion<Self>> {
         // Resolution blocks on network round-trips whose DNS lookups are
         // themselves serviced by the work pool, so wait on a short-lived

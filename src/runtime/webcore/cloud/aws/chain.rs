@@ -695,6 +695,7 @@ impl<'c> Resolver<'c> {
             follow_redirects: false,
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
+            cancel: Some(&self.cfg.cancel),
         })
         .map_err(|e| {
             fail!(
@@ -766,6 +767,7 @@ impl<'c> Resolver<'c> {
             follow_redirects: false,
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
+            cancel: Some(&self.cfg.cancel),
         })
         .map_err(|e| {
             fail!(
@@ -1015,6 +1017,7 @@ impl<'c> Resolver<'c> {
             follow_redirects: false,
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
+            cancel: Some(&self.cfg.cancel),
         })
         .map_err(|e| {
             fail!(
@@ -1119,6 +1122,7 @@ impl<'c> Resolver<'c> {
             follow_redirects: false,
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
+            cancel: Some(&self.cfg.cancel),
         })
         .map_err(|e| {
             fail!(
@@ -1246,6 +1250,7 @@ impl<'c> Resolver<'c> {
                 follow_redirects: false,
                 proxy: None,
                 reject_unauthorized: self.cfg.reject_unauthorized,
+                cancel: Some(&self.cfg.cancel),
             }) {
                 Ok(res) if res.status == 200 => {
                     return parse_json_credentials(
@@ -1326,6 +1331,7 @@ impl<'c> Resolver<'c> {
             follow_redirects: false,
             proxy: None,
             reject_unauthorized: self.cfg.reject_unauthorized,
+            cancel: Some(&self.cfg.cancel),
         }) {
             Ok(res) if res.status == 200 => {
                 let t = strings::trim(&res.body, b" \t\r\n");
@@ -1388,6 +1394,7 @@ impl<'c> Resolver<'c> {
                     follow_redirects: false,
                     proxy: None,
                     reject_unauthorized: self.cfg.reject_unauthorized,
+                    cancel: Some(&self.cfg.cancel),
                 }) {
                     Ok(res) if res.status >= 500 => {
                         last = Some(fail!(

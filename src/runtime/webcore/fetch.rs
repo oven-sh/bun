@@ -102,13 +102,14 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
 /// the call site here in T6.
-pub(crate) fn s3_credentials_from_env(
-    loader: &mut bun_dotenv::Loader,
-) -> bun_s3_signing::S3Credentials {
+pub(crate) fn s3_credentials_from_env(global: &JSGlobalObject) -> bun_s3_signing::S3Credentials {
     // As in the AWS SDKs, `AWS_PROFILE` selects a profile even when
     // `AWS_ACCESS_KEY_ID`-style variables are also exported; Bun's own
     // `S3_*` variables stay explicit configuration and always apply.
-    let profile_selected = loader.get(b"AWS_PROFILE").is_some_and(|p| !p.is_empty())
+    let loader = global.bun_vm().as_mut().transpiler.env_mut();
+    let profile_selected = crate::webcore::cloud::env::Env::new(global)
+        .get(b"AWS_PROFILE")
+        .is_some_and(|p| !p.is_empty())
         && loader.get(b"S3_ACCESS_KEY_ID").is_none_or(<[u8]>::is_empty);
     let env = loader.get_s3_credentials();
     let mut credentials = bun_s3_signing::S3Credentials::new_value(
@@ -722,6 +723,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             ),
         );
     }
+    if gcp_auth.is_some() && url.is_s3() {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("fetch(): gcp authentication does not apply to s3:// URLs"),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
     if aws_sign.is_some() && gcp_auth.is_some() {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -737,7 +750,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // Credentials for `s3://` URLs: env, then the `s3` option bag.
     let mut s3_credentials: Option<s3::S3CredentialsWithOptions> = if url.is_s3() {
-        let env_creds = s3_credentials_from_env(global_this.bun_vm().as_mut().transpiler.env_mut());
+        let env_creds = s3_credentials_from_env(global_this);
         let mut credentials_with_options = s3::S3CredentialsWithOptions {
             credentials: env_creds,
             options: Default::default(),
@@ -1185,7 +1198,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         // A signature is bound to the host and path it was computed for, so a
         // signed request cannot meaningfully follow a redirect (the SDKs never
         // do). Surface the 3xx unless the caller asked for something else.
-        if aws_sign.is_some() && request.is_none() {
+        if aws_sign.is_some() {
             break 'extract_redirect_type FetchRedirect::Manual;
         }
         break 'extract_redirect_type redirect_type;

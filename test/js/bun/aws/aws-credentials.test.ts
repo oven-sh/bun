@@ -517,6 +517,22 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a hung credential endpoint does not hold up process exit", async () => {
+    using hung = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+    const started = Date.now();
+    const { stdout, exitCode } = await run(
+      `
+        Bun.aws.credentials().then(() => console.log("resolved?"), () => console.log("rejected?"));
+        setTimeout(() => { console.log("exiting"); process.exit(0); }, 50);
+      `,
+      { AWS_CONTAINER_CREDENTIALS_FULL_URI: `http://127.0.0.1:${hung.port}/`, AWS_METADATA_SERVICE_TIMEOUT: "60" },
+    );
+    expect(stdout.trim()).toBe("exiting");
+    expect(exitCode).toBe(0);
+    // Far below the 60s x 3 attempts the request would otherwise wait.
+    expect(Date.now() - started).toBeLessThan(20_000);
+  });
+
   test("an unreachable IMDS is 'not configured', not an error", async () => {
     // Port 9 (discard) on loopback refuses connections immediately.
     const result = await creds({

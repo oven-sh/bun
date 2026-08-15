@@ -241,9 +241,7 @@ fn construct_s3_file_internal_store(
 ) -> JsResult<Blob> {
     // get credentials from env — `Transpiler::env_mut` is the safe accessor
     // for the process-singleton dotenv loader (set during init).
-    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
-        global.bun_vm().as_mut().transpiler.env_mut(),
-    );
+    let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(global);
     construct_s3_file_with_s3_credentials(global, path, options, &existing_credentials)
 }
 

@@ -56,6 +56,8 @@ pub struct ChainConfig {
 
     /// Snapshot for `credential_process` children.
     pub env_map: bun_sys::EnvMap,
+    /// Set by VM teardown to abandon in-flight network waits.
+    pub cancel: std::sync::Arc<core::sync::atomic::AtomicBool>,
     /// Only the env source is consulted (used by tests and `credential_source = Environment`).
     pub skip_env: bool,
 }
@@ -123,11 +125,12 @@ impl ChainConfig {
             sts_regional_endpoints_legacy: env
                 .get(b"AWS_STS_REGIONAL_ENDPOINTS")
                 .is_some_and(|m| m.eq_ignore_ascii_case(b"legacy")),
-            https_proxy: owned(env.get(b"https_proxy").or_else(|| env.get(b"HTTPS_PROXY"))),
-            http_proxy: owned(env.get(b"http_proxy").or_else(|| env.get(b"HTTP_PROXY"))),
-            no_proxy: owned(env.get(b"no_proxy").or_else(|| env.get(b"NO_PROXY"))),
+            https_proxy: owned(env.get_proxy_var(b"https_proxy", b"HTTPS_PROXY")),
+            http_proxy: owned(env.get_proxy_var(b"http_proxy", b"HTTP_PROXY")),
+            no_proxy: owned(env.get_proxy_var(b"no_proxy", b"NO_PROXY")),
             reject_unauthorized,
             env_map,
+            cancel: Default::default(),
             skip_env: false,
         }
     }

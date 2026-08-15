@@ -53,6 +53,16 @@ impl<'a> Env<'a> {
         }
     }
 
+    /// `lower` then `upper`, treating an empty or `""`/`''` value as unset —
+    /// the same rules `fetch()` applies to `http(s)_proxy` (CI images often
+    /// export `https_proxy=""` as a default).
+    pub fn get_proxy_var(&self, lower: &[u8], upper: &[u8]) -> Option<Vec<u8>> {
+        let emptyish = |v: &[u8]| v.is_empty() || v == b"\"\"" || v == b"''";
+        self.get(lower)
+            .filter(|v| !emptyish(v))
+            .or_else(|| self.get(upper).filter(|v| !emptyish(v)))
+    }
+
     /// Every string-valued entry, for `credential_process` children.
     pub fn to_map(&self) -> bun_sys::EnvMap {
         let vm = self.global.bun_vm().as_mut();

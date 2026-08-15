@@ -118,14 +118,20 @@ impl<V: Expiring> SingleFlightCache<V> {
             return Ok(Arc::clone(v));
         }
         if let Some((e, at)) = &st.last_error {
-            if now < at + NEGATIVE_TTL && st.cached.is_none() {
-                return Err(Arc::clone(e));
+            if now < at + NEGATIVE_TTL {
+                // A resolution just failed: do not retry yet. Serve the old
+                // value if it is still usable, else the error.
+                return match st.cached.as_ref().filter(|v| Self::is_usable(v, now)) {
+                    Some(v) => Ok(Arc::clone(v)),
+                    None => Err(Arc::clone(e)),
+                };
             }
         }
         if st.resolving {
             while st.resolving {
                 self.cv.wait_guarded(&mut st);
             }
+            let now = now_secs();
             return match (&st.cached, &st.last_error) {
                 (Some(v), _) if Self::is_usable(v, now) => Ok(Arc::clone(v)),
                 (_, Some((e, _))) => Err(Arc::clone(e)),
@@ -143,16 +149,17 @@ impl<V: Expiring> SingleFlightCache<V> {
 
         let mut st = self.state.lock();
         st.resolving = false;
+        let now = now_secs();
         let out = match result {
             Ok(v) => {
                 let v = Arc::new(v);
                 st.cached = Some(Arc::clone(&v));
-                st.resolved_at = now_secs();
+                st.resolved_at = now;
                 Ok(v)
             }
             Err(e) => {
                 let e = Arc::new(e);
-                st.last_error = Some((Arc::clone(&e), now_secs()));
+                st.last_error = Some((Arc::clone(&e), now));
                 match &st.cached {
                     Some(v) if Self::is_usable(v, now) => Ok(Arc::clone(v)),
                     _ => {

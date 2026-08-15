@@ -185,7 +185,7 @@ When your production service needs to let users upload files to your server, it'
 
 To let users upload directly to S3, presign URLs for S3 files. Presigning generates a URL with a signature that lets a user upload that specific file to S3, without exposing your credentials or granting them unnecessary access to your bucket.
 
-By default, Bun generates a `GET` URL that expires in 24 hours.
+By default, Bun generates a `GET` URL that expires in 24 hours. Presigning is synchronous and purely local when keys are configured; with [ambient credentials](#ambient-credentials-profiles-sso-iam-roles) the first call resolves them (blocking once), so servers that only presign may want to `await Bun.aws.credentials()` at startup.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { s3 } from "bun";

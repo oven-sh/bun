@@ -69,8 +69,6 @@ pub struct SignedRequest {
     /// Signed (and so must be sent) only when `send_content_sha256`.
     pub content_sha256: Box<[u8]>,
     pub send_content_sha256: bool,
-    /// The `;`-joined lowercase signed header list, for diagnostics/tests.
-    pub signed_headers: Box<[u8]>,
 }
 
 pub struct PresignedUrl {
@@ -682,7 +680,6 @@ pub fn sign(creds: &Credentials<'_>, req: &Request<'_>) -> Result<SignedRequest,
         amz_date,
         content_sha256: payload,
         send_content_sha256: s3,
-        signed_headers: headers.names.into_boxed_slice(),
     })
 }
 
@@ -702,8 +699,10 @@ pub fn presign(
         .s3_path_semantics
         .unwrap_or_else(|| is_s3_service(req.scope.service));
     let amz_date = req.datetime.unwrap_or_else(amz_datetime_now);
-    // S3 ignores the body for presigned URLs; other services hash it.
-    let payload: Box<[u8]> = if s3 && matches!(req.payload, Payload::Bytes(b) if b.is_empty()) {
+    // S3 verifies query-authenticated requests against the literal
+    // UNSIGNED-PAYLOAD (the URL cannot carry a body hash); other services
+    // hash the body.
+    let payload: Box<[u8]> = if s3 {
         Box::from(UNSIGNED_PAYLOAD)
     } else {
         payload_hash(req.payload)

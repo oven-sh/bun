@@ -281,6 +281,37 @@ describe("fetch(url, { aws })", () => {
     await expect(fetch(echo.url, { aws: true, signal: ac.signal } as any)).rejects.toThrow(/aborted/i);
   });
 
+  test("signQuery to S3 with a body signs UNSIGNED-PAYLOAD (what S3 verifies)", async () => {
+    const hit = await signedFetch("/bucket/key", {
+      method: "PUT",
+      body: "hello",
+      aws: { accessKeyId, secretAccessKey, service: "s3", region: "us-east-1", signQuery: true, date: datetime },
+    });
+    expect(hit.body).toBe("hello");
+    expect(hit.headers.authorization).toBeUndefined();
+    const { expected, actual } = referencePresignCheck(hit.url, {
+      method: "PUT",
+      service: "s3",
+      region: "us-east-1",
+      secretAccessKey,
+    });
+    expect(actual).toBe(expected);
+  });
+
+  test("signed requests do not follow redirects by default", async () => {
+    using redirector = Bun.serve({
+      port: 0,
+      fetch: () => new Response(null, { status: 307, headers: { location: echo.url.href } }),
+    });
+    const base = { accessKeyId, secretAccessKey, service: "s3", region: "us-east-1" };
+    const res = await fetch(redirector.url, { aws: base } as any);
+    expect(res.status).toBe(307);
+    const viaRequest = await fetch(new Request(redirector.url), { aws: base } as any);
+    expect(viaRequest.status).toBe(307);
+    const followed = await fetch(redirector.url, { aws: base, redirect: "follow" } as any);
+    expect(followed.status).toBe(200);
+  });
+
   test("Request objects and the init-object form work too", async () => {
     const req = new Request(new URL("/from-request", echo.url), { method: "DELETE" });
     const hit: Echo = await (

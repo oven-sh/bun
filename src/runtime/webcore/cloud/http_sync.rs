@@ -3,7 +3,7 @@
 //! work-pool thread (or, for synchronous `presign`, the JS thread); never
 //! follows redirects for link-local metadata endpoints.
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use bun_core::MutableString;
@@ -25,6 +25,8 @@ pub struct Request<'a> {
     /// `https_proxy` to tunnel through, already filtered for `NO_PROXY`.
     pub proxy: Option<&'a [u8]>,
     pub reject_unauthorized: bool,
+    /// Set from another thread (VM teardown) to abandon the request early.
+    pub cancel: Option<&'a AtomicBool>,
 }
 
 pub struct Response {
@@ -45,6 +47,7 @@ impl Response {
 #[derive(Debug)]
 pub enum Error {
     Timeout,
+    Cancelled,
     Http(bun_http::Error),
     NoResponse,
 }
@@ -53,6 +56,7 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Error::Timeout => f.write_str("request timed out"),
+            Error::Cancelled => f.write_str("cancelled"),
             Error::Http(e) => write!(f, "{}", bstr::BStr::new(e.name().as_bytes())),
             Error::NoResponse => f.write_str("connection closed without a response"),
         }
@@ -134,6 +138,12 @@ pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
     );
     let async_http_id = http.async_http_id;
 
+    if req.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+        http.clear_data();
+        // SAFETY: never scheduled; sole owner.
+        drop(unsafe { bun_core::heap::take(channel) });
+        return Err(Error::Cancelled);
+    }
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
     // SAFETY (thread door): `channel`/`http` hold no VM or JS state, and this
@@ -144,6 +154,7 @@ pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
 
     let deadline = std::time::Instant::now() + Duration::from_millis(u64::from(req.timeout_ms));
     let mut aborted = false;
+    let mut cancelled = false;
     // SAFETY: `channel` is live until `heap::take` below; the HTTP thread only
     // touches it inside `on_result`, whose last action is the notify.
     let result = unsafe {
@@ -154,7 +165,10 @@ pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
                 break r;
             }
             let now = std::time::Instant::now();
-            if now >= deadline {
+            if !cancelled && req.cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+                cancelled = true;
+            }
+            if now >= deadline || cancelled {
                 if !aborted {
                     aborted = true;
                     signals.aborted.store(true, Ordering::Relaxed);
@@ -164,7 +178,8 @@ pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
                 // it so the channel/request/headers outlive every access.
                 ch.cv.wait_guarded(&mut g);
             } else {
-                let remaining = deadline - now;
+                // Wake at least every 250ms to notice cancellation.
+                let remaining = (deadline - now).min(Duration::from_millis(250));
                 let _ = ch.cv.timed_wait_guarded(
                     &mut g,
                     remaining.as_nanos().min(u128::from(u64::MAX)) as u64,
@@ -176,6 +191,9 @@ pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
     let channel = unsafe { bun_core::heap::take(channel) };
     http.clear_data();
 
+    if cancelled {
+        return Err(Error::Cancelled);
+    }
     if aborted {
         return Err(Error::Timeout);
     }

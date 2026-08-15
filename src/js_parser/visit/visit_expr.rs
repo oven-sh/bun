@@ -1705,32 +1705,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if let Some(value) = &mut property.value {
-                // Propagate name from property key for decorated anonymous class expressions
-                // e.g., { Foo: @dec class {} } should give the class .name = "Foo"
-                if in_.assign_target == js_ast::AssignTarget::None
-                    && matches!(value.data, Data::EClass(..))
-                    && value
-                        .data
-                        .e_class()
-                        .unwrap()
-                        .should_lower_standard_decorators
-                    && value
-                        .data
-                        .e_class()
-                        .expect("infallible: variant checked")
-                        .class_name
-                        .is_none()
-                    && let Some(key) = property.key
-                    && matches!(key.data, Data::EString(..))
-                {
-                    let key_str = key.data.e_string().expect("infallible: variant checked");
-                    // While E.rs has duplicate impls (E0034), reach the bytes directly
-                    // — class-name keys are parser-produced (UTF-8, no rope).
-                    p.decorator_class_name = if !key_str.is_utf16 {
-                        Some(key_str.data.slice())
-                    } else {
-                        None
-                    };
+                // { Foo: @dec class {} } gives the class .name = "Foo"
+                if in_.assign_target == js_ast::AssignTarget::None {
+                    p.decorator_class_name = p.decorator_class_name_from_key(property.key, value);
                 }
                 p.visit_expr_in_out(
                     value,

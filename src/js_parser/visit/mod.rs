@@ -771,6 +771,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.stmts_to_single_stmt(stmt.loc, stmts.into_bump_slice_mut())
     }
 
+    /// The `.name` that `key` gives an anonymous class value; lowering the class would lose it.
+    pub(crate) fn decorator_class_name_from_key(
+        &self,
+        key: Option<Expr>,
+        value: &Expr,
+    ) -> Option<&'a [u8]> {
+        let ExprData::EClass(class) = value.data else {
+            return None;
+        };
+        if class.class_name.is_some() || !class.should_lower_standard_decorators {
+            return None;
+        }
+        match key?.unwrap_inlined().data {
+            // `slice` flattens ropes and transcodes UTF-16; `data` alone does not.
+            ExprData::EString(mut str_) => Some(str_.slice(self.arena)),
+            ExprData::ENumber(num) => num.to_string(self.arena).map(|s| s.slice()),
+            ExprData::EBigInt(bigint) if !E::BigInt::has_radix(&bigint.value) => {
+                Some(bigint.value.slice())
+            }
+            ExprData::EPrivateIdentifier(private) => Some(self.load_name_from_ref(private.ref_)),
+            _ => None,
+        }
+    }
+
     pub(crate) fn visit_class(
         &mut self,
         name_scope_loc: bun_ast::Loc,
@@ -953,23 +977,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.value {
+                    let was_anon = val.is_anonymous_named();
+                    let prev_dcn = self.decorator_class_name;
+                    self.decorator_class_name =
+                        self.decorator_class_name_from_key(property.key, &val);
+                    self.visit_expr(property.value.as_mut().unwrap());
+                    self.decorator_class_name = prev_dcn;
                     if let Some(name) = name_to_keep {
-                        let was_anon = val.is_anonymous_named();
-                        let prev_dcn = self.decorator_class_name;
-                        if let ExprData::EClass(e_class) = &val.data {
-                            if e_class.class_name.is_none()
-                                && e_class.should_lower_standard_decorators
-                            {
-                                self.decorator_class_name = Some(name);
-                            }
-                        }
-                        let mut visited = val;
-                        self.visit_expr(&mut visited);
-                        property.value =
-                            Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
-                        self.decorator_class_name = prev_dcn;
-                    } else {
-                        self.visit_expr(property.value.as_mut().unwrap());
+                        property.value = Some(self.maybe_keep_expr_symbol_name(
+                            property.value.expect("unreachable"),
+                            name,
+                            was_anon,
+                        ));
                     }
 
                     if Self::IS_TYPESCRIPT_ENABLED {
@@ -984,24 +1003,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if let Some(val) = property.initializer {
-                    // if (property.flags.is_static and )
+                    let was_anon = val.is_anonymous_named();
+                    let prev_dcn = self.decorator_class_name;
+                    self.decorator_class_name =
+                        self.decorator_class_name_from_key(property.key, &val);
+                    self.visit_expr(property.initializer.as_mut().unwrap());
+                    self.decorator_class_name = prev_dcn;
                     if let Some(name) = name_to_keep {
-                        let was_anon = val.is_anonymous_named();
-                        let prev_dcn2 = self.decorator_class_name;
-                        if let ExprData::EClass(e_class) = &val.data {
-                            if e_class.class_name.is_none()
-                                && e_class.should_lower_standard_decorators
-                            {
-                                self.decorator_class_name = Some(name);
-                            }
-                        }
-                        let mut visited = val;
-                        self.visit_expr(&mut visited);
-                        property.initializer =
-                            Some(self.maybe_keep_expr_symbol_name(visited, name, was_anon));
-                        self.decorator_class_name = prev_dcn2;
-                    } else {
-                        self.visit_expr(property.initializer.as_mut().unwrap());
+                        property.initializer = Some(self.maybe_keep_expr_symbol_name(
+                            property.initializer.expect("unreachable"),
+                            name,
+                            was_anon,
+                        ));
                     }
                 }
 

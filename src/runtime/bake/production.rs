@@ -1318,11 +1318,9 @@ unsafe extern "C" {
     ) -> *mut JSPromise;
 }
 
-/// Called by `bakeModuleLoaderFetch` with the path of a key that missed the
-/// module map, before handing it to the regular module loader to read from
-/// disk. Undoes the key spelling described on `resolve_disk_key`. The result
-/// has to be a plain Win32 path: the loader cuts a specifier at the first `?`
-/// (query string), so a `\\?\` prefixed one would be read as `\\`.
+/// Inverse of the key spelling in `resolve_disk_key`, for the fetch hook to read
+/// the file. Must stay a plain Win32 path: the module loader cuts specifiers at
+/// the first `?`, so a `\\?\` prefixed one was read as `\\`.
 #[unsafe(no_mangle)]
 extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     #[cfg(not(windows))]
@@ -1339,9 +1337,7 @@ extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
     }
 }
 
-/// `/C:/a/b.mjs` -> `C:/a/b.mjs`. UNC keys (`//server/share/b.mjs`) already are
-/// Windows paths and bundle output keys (`/_bun/abc123.js`) have no volume, so
-/// both come back unchanged.
+/// `/C:/a/b.mjs` -> `C:/a/b.mjs`; anything else is returned as is.
 #[cfg(windows)]
 fn key_path_to_disk_path(key_path: &[u8]) -> &[u8] {
     match key_path.strip_prefix(b"/") {
@@ -1350,28 +1346,20 @@ fn key_path_to_disk_path(key_path: &[u8]) -> &[u8] {
     }
 }
 
-/// A fully qualified Windows path (`C:\a`, `C:/a`, `\\server\share\a`), as
-/// opposed to a path inside the bundle's output namespace (`/_bun/abc123.js`).
+/// Drive (`C:\a`, `C:/a`) or UNC (`\\server\share\a`) path, as opposed to a
+/// bundle output path like `/_bun/abc123.js`.
 #[cfg(windows)]
 fn is_disk_path(path: &[u8]) -> bool {
     resolve_path::windows_volume_name_len(path).0 > 0 && bun_paths::is_absolute(path)
 }
 
-/// A module key is `bake:` plus a posix-style absolute path: the output path for
-/// a bundled file (`bake:/_bun/abc123.js`), or the disk path for a file the
-/// bundler never saw (`import(join(import.meta.dir, "x.mjs"))` while rendering),
-/// which the fetch hook reads from disk after the key misses the module map.
-/// The posix join in [`BakeProdResolve`] cannot resolve against a Windows disk
-/// path, so when the referrer or the specifier is one, resolution happens here
-/// with Windows semantics and the result is spelled the way `file:` URLs spell
-/// it: `C:\a\b.mjs` is keyed `bake:/C:/a/b.mjs`, `\\server\share\b.mjs` is
-/// keyed `bake://server/share/b.mjs`. The module loader resolves the returned
-/// key once more (with `bake:/` as the referrer), so both spellings must come
-/// back out of this function unchanged. [`key_path_to_disk_path`] is the inverse.
-///
-/// `None` when neither side is a disk path. A result too long for a path buffer
-/// cannot name a file: that throws and returns a dead string, like the package
-/// path check in `BakeProdResolve`.
+/// Keys are posix-style paths (`bake:/_bun/abc123.js`), but a file imported from
+/// outside the bundle is keyed by its disk path, which the fetch hook reads from
+/// disk. A Windows disk path on either side is resolved here like
+/// `path.win32.resolve(dirname(referrer), specifier)` and spelled the way `file:`
+/// URLs spell it: `bake:/C:/a/b.mjs`, `bake://server/share/b.mjs`. The loader
+/// resolves the returned key once more (referrer `bake:/`), so both spellings
+/// have to come back out of here unchanged. `None` when neither side is on disk.
 #[cfg(windows)]
 fn resolve_disk_key(
     global: &JSGlobalObject,
@@ -1384,8 +1372,6 @@ fn resolve_disk_key(
         return None;
     }
 
-    // When only the specifier is on disk, `dir` is a bundle path; the join
-    // ignores it because the specifier brings its own volume and root.
     let dir = bun_paths::Dirname::dirname(referrer).unwrap_or(referrer);
     let mut buf = bun_paths::path_buffer_pool::get();
     let Some(resolved) = resolve_path::join_abs_string_buf_checked::<platform::Windows>(
@@ -1403,11 +1389,13 @@ fn resolve_disk_key(
     let resolved = &mut buf[..resolved_len];
     resolve_path::slashes_to_posix_in_place(resolved);
 
-    // A UNC path already starts with the separator that keeps the key under
-    // `bake:/`; a drive path needs one added.
-    let root = if resolved.starts_with(b"/") { "" } else { "/" };
+    let slash = if strings::starts_with_windows_drive_letter(resolved) {
+        "/"
+    } else {
+        ""
+    };
     Some(BunString::create_format(format_args!(
-        "bake:{root}{}",
+        "bake:{slash}{}",
         BStr::new(resolved)
     )))
 }

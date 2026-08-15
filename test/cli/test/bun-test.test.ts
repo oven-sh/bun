@@ -4,6 +4,18 @@ import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tempDirWithFiles, 
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
+// The environment the sanitizer lane (scripts/runner.node.mjs) runs test files under, which their
+// bunEnv children inherit. This file is exempted in test/no-validate-leaksan.txt, so the children
+// that need it get it explicitly. Under it, an exit that skips the VM teardown leaves the objects
+// the bun:test finalizers own allocated, and LeakSanitizer aborts the process (exit 134) in place
+// of the exit code the run meant to return.
+const leakCheckEnv = {
+  ...bunEnv,
+  BUN_DESTRUCT_VM_ON_EXIT: "1",
+  ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+  LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "../../leaksan.supp")}`,
+};
+
 describe("bun test", () => {
   test("running a non-existent absolute file path is a 1 exit code", () => {
     const spawn = Bun.spawnSync({
@@ -359,24 +371,15 @@ describe("bun test", () => {
       expect(stderr).not.toContain("test #4");
     });
 
-    // The sanitizer lane (scripts/runner.node.mjs) runs every child with this environment. Bailing
-    // out has to exit through the same VM teardown as the end of a normal run; a bare exit leaves
-    // the objects the bun:test finalizers own allocated, and LeakSanitizer then aborts the process
-    // (exit 134) instead of it exiting 1.
+    // Bailing out has to exit through the same VM teardown as the end of a normal run (see
+    // leakCheckEnv), not through a bare exit.
     describe.concurrent.skipIf(!isASAN)("exits cleanly under LeakSanitizer", () => {
-      const env = {
-        ...bunEnv,
-        BUN_DESTRUCT_VM_ON_EXIT: "1",
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
-        LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${join(import.meta.dir, "../../leaksan.supp")}`,
-      };
-
       /** Runs `bun test --bail` and returns what the test files logged to stdout. */
       async function runUntilBail(files: Record<string, string>, ...args: string[]): Promise<string[]> {
         using dir = tempDir("bun-test-bail-leak-check", files);
         await using proc = Bun.spawn({
           cmd: [bunExe(), "test", "--bail", ...args],
-          env,
+          env: leakCheckEnv,
           cwd: String(dir),
           stdout: "pipe",
           stderr: "pipe",
@@ -481,6 +484,41 @@ describe("bun test", () => {
       });
     });
   });
+
+  // Without --bail a failing run exits through the end of the run (and, under --parallel, through
+  // the worker's exit path). Printing the failure is what allocates the source map entry the bail
+  // exit used to leak, so these pin down that both paths tear the VM down too.
+  describe.concurrent.skipIf(!isASAN)("a failing run exits 1 cleanly under LeakSanitizer", () => {
+    test.each([
+      ["serial", []],
+      ["--parallel", ["--parallel=2"]],
+    ])("%s", async (_, args) => {
+      using dir = tempDir("bun-test-fail-leak-check", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          test("fails", () => expect(1).toBe(2));
+        `,
+        "b.test.ts": `
+          import { test, expect } from "bun:test";
+          test("passes", () => expect(1).toBe(1));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args],
+        env: leakCheckEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // A --parallel worker aborting does not change the coordinator's exit code; the workers'
+      // stderr is inherited, so the report check is what covers the worker exit path.
+      expect(stderr).not.toContain("LeakSanitizer");
+      expect(stderr).toContain("Ran 2 tests across 2 files.");
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+    });
+  });
+
   describe("--timeout", () => {
     test("must provide a number timeout", () => {
       const stderr = runTest({

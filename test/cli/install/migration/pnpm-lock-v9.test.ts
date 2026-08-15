@@ -2851,6 +2851,8 @@ snapshots:
       ["install", ["install"]],
       ["install --lockfile-only", ["install", "--lockfile-only"]],
       ["pm migrate", ["pm", "migrate"]],
+      // pm migrate saves bun.lock whatever install flags are passed, so package.json has to follow it.
+      ["pm migrate --dry-run", ["pm", "migrate", "--dry-run"]],
     ])("bun %s writes the edited package.json together with bun.lock", async (_, args) => {
       using dir = tempDir("pnpm-v9-package-json-written", files);
 

@@ -58,26 +58,35 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
-/// Queues the root package.json a pnpm migration edited in memory (`pnpm::update_package_json_after_migration`).
-/// Called only where the migrated lockfile is saved, so a load that is not saved (`--frozen-lockfile`, `--dry-run`,
-/// `bun outdated`, ...) leaves the file untouched.
-pub(crate) fn record_migrated_root(manager: &mut PackageManager) {
-    if manager.migrated_package_json_moves.is_empty()
-        || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
-    {
-        return;
+/// The root package.json a pnpm migration edited in memory (`pnpm::update_package_json_after_migration`), announced
+/// once; `None` when the load did not touch it. Only the places that save the migrated lockfile ask for it, so a load
+/// that is never saved (`--frozen-lockfile`, `--dry-run`, `bun outdated`, ...) leaves the file alone.
+fn take_migrated_root(manager: &mut PackageManager) -> Option<WorkspaceTarget> {
+    if manager.migrated_package_json_moves.is_empty() {
+        return None;
     }
     let moved = core::mem::take(&mut manager.migrated_package_json_moves);
     if !manager.options.log_level.is_silent() {
         bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
     }
-    record(manager, root_target(), false);
+    Some(root_target())
 }
 
-/// For the commands that save the lockfile without going through `install_with_manager` (`bun pm migrate`, `bun pm trust`).
-pub fn write_migrated_root(manager: &mut PackageManager) -> Result<(), crate::Error> {
-    record_migrated_root(manager);
-    flush(manager)
+/// `install_with_manager`: written by `flush` along with the command's other package.json edits.
+pub(crate) fn record_migrated_root(manager: &mut PackageManager) {
+    if let Some(root) = take_migrated_root(manager) {
+        record(manager, root, false);
+    }
+}
+
+/// `bun pm migrate` and `bun pm trust` save the lockfile without consulting `--dry-run` / `--no-save`, so the
+/// package.json that belongs with it is written the same way instead of through `flush`, which those flags disable.
+pub fn write_migrated_root(manager: &mut PackageManager) {
+    if let Some(root) = take_migrated_root(manager) {
+        if !write_target(manager, &root) {
+            Global::exit(1);
+        }
+    }
 }
 
 /// Phase 1 (before bun.lock is saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them.

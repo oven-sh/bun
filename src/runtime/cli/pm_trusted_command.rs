@@ -538,7 +538,7 @@ impl TrustCommand {
         // migration made to it have to be written first (the migrated lockfile is saved below).
         // SAFETY: `pm_raw` singleton; `load_lockfile` only borrows the boxed lockfile, which this
         // does not touch.
-        unsafe { package_json_write_back::write_migrated_root(&mut *pm_raw)? };
+        unsafe { package_json_write_back::write_migrated_root(&mut *pm_raw) };
 
         // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
         // (the original `pm.root_package_json_file` is replaced with INVALID so

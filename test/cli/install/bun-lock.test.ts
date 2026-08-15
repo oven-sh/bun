@@ -1384,6 +1384,7 @@ it("an optional peer is rebound when another version of its package takes the sl
 // bundling package's node_modules, but `host/shared` in bun.lock is also what
 // host's own `shared` edge resolves to when the lockfile is loaded again, and
 // likewise for anything nested under host that resolves shared from the root.
+// https://github.com/oven-sh/bun/issues/29263
 it("a bundled dependency's dependency does not take a slot the bundling package resolves through", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },

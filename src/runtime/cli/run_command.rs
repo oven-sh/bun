@@ -2950,12 +2950,51 @@ impl RunCommand {
             joined.to_vec().into_boxed_slice()
         };
 
+        let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
+
+        // Node.js resolves symlinks on the main entry point by default
+        // (`resolveMainPath` → `toRealPath`), so a `node_modules/.bin/tool`
+        // symlink runs with module resolution anchored at the real package
+        // directory. Honor the same `--preserve-symlinks-main` /
+        // NODE_PRESERVE_SYMLINKS_MAIN opt-out. `process.argv[1]` becomes the
+        // real path too, consistent with how `bun <symlink>` already behaves
+        // (Node.js keeps the symlink spelling there — a pre-existing,
+        // bun-wide divergence).
+        let entry: Box<[u8]> = 'entry: {
+            if ctx.runtime_options.preserve_symlinks_main
+                || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                    .get()
+                    .unwrap_or(false)
+            {
+                break 'entry normalized;
+            }
+            if normalized.len() >= MAX_PATH_BYTES {
+                break 'entry normalized;
+            }
+            let mut open_buf = PathBuffer::uninit();
+            open_buf[..normalized.len()].copy_from_slice(&normalized);
+            open_buf[normalized.len()] = 0;
+            // SAFETY: the NUL is written above; `open_buf[..len]` is init.
+            let open_z = bun_core::ZStr::from_buf(&open_buf[..], normalized.len());
+            // An unopenable path keeps the user's spelling for the
+            // "Failed to run script" error below.
+            let Ok(fd) = bun_sys::open(open_z, bun_sys::O::RDONLY, 0) else {
+                break 'entry normalized;
+            };
+            let mut real_buf = PathBuffer::uninit();
+            let real = bun_sys::get_fd_path(fd, &mut real_buf);
+            let _ = bun_sys::close(fd);
+            match real {
+                Ok(p) => p.to_vec().into_boxed_slice(),
+                Err(_) => normalized,
+            }
+        };
+
         // This arm calls `Run::boot`
         // directly — NOT `boot_and_handle_error` — so it (a) does not call
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
-        let basename: Box<[u8]> = paths::basename(&normalized).to_vec().into_boxed_slice();
-        if let Err(err) = Self::boot(ctx, normalized, None) {
+        if let Err(err) = Self::boot(ctx, entry, None) {
             Self::exec_as_if_node_boot_failed(ctx, &basename, err);
         }
         Ok(())

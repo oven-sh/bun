@@ -914,13 +914,6 @@ impl TransformTask {
         // The job drops this `TransformTask` (running its `Drop`: transpiler
         // deref etc.) right after `then` returns.
         if self.log.has_any() || self.err.is_some() {
-            // `run()` may have populated the outputs before the diagnostic is
-            // noticed here; `finish()` won't run, so release their refs.
-            self.output_code.deref();
-            self.output_code = BunString::empty();
-            self.output_map.deref();
-            self.output_map = BunString::empty();
-
             let error_value: JsResult<JSValue> = 'brk: {
                 if let Some(err) = &self.err {
                     if !self.log.has_any() {
@@ -958,21 +951,26 @@ impl TransformTask {
             return promise.settle(global, self.output_code.transfer_to_js(global));
         }
 
-        let code_js = match self.output_code.transfer_to_js(global) {
-            Ok(v) => v,
-            Err(e) => {
-                // The map was never transferred; release its ref.
-                self.output_map.deref();
-                self.output_map = BunString::empty();
-                return promise.settle(global, Err(e));
-            }
-        };
-        let result = self.output_map.transfer_to_js(global).and_then(|map_js| {
+        let code_js = self.output_code.transfer_to_js(global);
+        let output_map = &mut self.output_map;
+        let result = code_js.and_then(|code_js| {
+            let map_js = output_map.transfer_to_js(global)?;
             let code_key = ZigString::static_(b"code");
             let map_key = ZigString::static_(b"map");
             JSValue::create_object2(global, &code_key, &map_key, code_js, map_js)
         });
         promise.settle(global, result)
+    }
+}
+
+// `output_code` / `output_map` hold +1 `WTFStringImpl` refs from `clone_utf8`
+// that only `transfer_to_js` releases (it marks the string `Dead`, making this
+// `deref` a no-op). Covers every path that skips `finish()`: the reject branch
+// in `then()`, a failed `transfer_to_js`, and a task dropped without running.
+impl Drop for TransformTask {
+    fn drop(&mut self) {
+        self.output_code.deref();
+        self.output_map.deref();
     }
 }
 

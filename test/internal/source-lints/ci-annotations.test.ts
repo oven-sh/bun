@@ -159,6 +159,107 @@ describe("rustc diagnostics", () => {
   });
 });
 
+// `::error file=..,line=..,col=..,title=..::message` lines: what `bun test`
+// prints for a failure when GITHUB_ACTIONS is set (property values escape
+// `%` `\r` `\n` `:` `,` as %25 %0D %0A %3A %2C; the message only escapes the
+// first three), and what workflow steps print by hand (`echo "::error::msg"`).
+describe("GitHub Actions workflow commands", () => {
+  test("a bun test failure becomes an annotation titled by its title= property", () => {
+    const line =
+      "::error file=test/odd%2Cname%25.test.ts,line=3,col=5,title=error: ENOENT%3A no such file%2C open '100%25'" +
+      '::Expected: "::1"%0A      at f (test/odd,name%.test.ts:3:5)';
+
+    const { annotations, content } = parseAnnotations(["before", line, "after"].join("\n"));
+    expect(annotations).toEqual([
+      {
+        source: undefined,
+        level: "error",
+        title: "error: ENOENT: no such file, open '100%'",
+        filename: "test/odd,name%.test.ts",
+        line: 3,
+        column: 5,
+        // The message runs from the first `::` after the properties, so a `::`
+        // inside it stays in the body instead of being taken for the separator.
+        content: 'Expected: "::1"\n      at f (test/odd,name%.test.ts:3:5)',
+        metadata: {},
+      },
+    ]);
+    expect(content).toBe("before\nafter");
+  });
+
+  test("title= is optional: the level names the annotation", () => {
+    expect(parseAnnotations("::error file=app.js,line=1::Missing semicolon").annotations).toEqual([
+      {
+        level: "error",
+        title: "error",
+        filename: "app.js",
+        line: 1,
+        column: undefined,
+        content: "Missing semicolon",
+        metadata: {},
+      },
+    ]);
+  });
+
+  test("the whole property list is optional", () => {
+    expect(parseAnnotations("::warning::Prettier failed\n::notice::100%25 done%0Asecond line").annotations).toEqual([
+      { level: "warning", title: "warning", content: "Prettier failed", metadata: {} },
+      { level: "notice", title: "notice", content: "100% done\nsecond line", metadata: {} },
+    ]);
+  });
+
+  test("a property value may contain '=' and the message may be empty", () => {
+    // bun test's timeout line.
+    expect(parseAnnotations('::error title=error: Test "a = b" timed out after 5000ms::').annotations).toEqual([
+      {
+        level: "error",
+        title: 'error: Test "a = b" timed out after 5000ms',
+        filename: undefined,
+        line: undefined,
+        column: undefined,
+        content: "",
+        metadata: {},
+      },
+    ]);
+  });
+
+  test("a bare workflow command line does not cost the build its compiler annotations", () => {
+    // ci.ts parses the whole captured output of a failed build in one call and
+    // falls back to a single generic annotation if that call throws.
+    const clang = ["src/jsc/bindings/Foo.cpp:12:5: error: use of undeclared identifier 'bar'", "1 error generated."];
+    const { annotations } = parseAnnotations([...clang, "::error::ninja failed"].join("\n"));
+    expect(annotations.map(({ source, title, content }) => ({ source, title, content }))).toEqual([
+      { source: "clang", title: "clang error", content: clang.join("\n") },
+      { source: undefined, title: "error", content: "ninja failed" },
+    ]);
+  });
+
+  test("escapes are decoded in one pass, and %3A/%2C only where they are escapes", () => {
+    expect(parseAnnotations("::error title=a%3Ab%2Cc%25 %250A::x%3Ay%2Cz%25 %250A").annotations).toEqual([
+      {
+        level: "error",
+        // "%250A" is an escaped literal "%0A", not a newline.
+        title: "a:b,c% %0A",
+        // The message is not delimited by `:` or `,`, so writers leave them raw
+        // there and a literal "%3A" in a message is data.
+        content: "x%3Ay%2Cz% %0A",
+        metadata: {},
+      },
+    ]);
+  });
+
+  test("other commands and non-commands are not annotations", () => {
+    const output = [
+      "::group::build",
+      "::set-output name=x::1",
+      "::error file=a.ts", // no closing `::`
+      "::errors::not a command",
+      "::endgroup::",
+    ].join("\n");
+    expect(parseAnnotations(output).annotations).toEqual([]);
+  });
+});
+
 describe("other sources", () => {
   test("CMake messages are attributed to the innermost call-stack frame with a single-spaced body", () => {
     const message = [

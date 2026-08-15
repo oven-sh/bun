@@ -969,55 +969,28 @@ pub mod bv2_impl {
                     })
                 }
 
-                /// A relative (or bare) `specifier` imported by `source_file`.
+                /// A relative (or bare) `specifier` imported by `source_file`. An importer or a
+                /// joined path that does not fit in a path buffer is not in the map.
                 fn lookup_import(
                     &self,
                     source_file: &[u8],
                     specifier: &[u8],
                 ) -> Option<(&[u8], &[u8])> {
-                    // `source_file` may itself be relative (Windows stores bundler paths cwd-relative).
-                    let mut abs_source_buf = bun_paths::path_buffer_pool::get();
-                    let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
-                        source_file
-                    } else {
-                        bun_resolver::fs::FileSystem::get()
-                            .abs_buf(&[source_file], &mut *abs_source_buf)
-                    };
-
-                    // Filesystem paths may use backslashes on Windows.
-                    let mut source_file_buf = bun_paths::path_buffer_pool::get();
-                    let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
-                        abs_source_file,
-                        &mut **source_file_buf,
-                    );
-
-                    let source_dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(
-                        normalized_source_file,
-                    );
-                    // Empty `dirname`: fall back to the drive root, "/", or the cwd.
-                    let effective_source_dir: &[u8] = if source_dir.is_empty() {
-                        if normalized_source_file.len() >= 3
-                            && normalized_source_file[1] == b':'
-                            && normalized_source_file[2] == b'/'
-                        {
-                            &normalized_source_file[0..3] // "C:/"
-                        } else if !normalized_source_file.is_empty()
-                            && normalized_source_file[0] == b'/'
-                        {
-                            b"/"
-                        } else {
-                            bun_resolver::fs::FileSystem::get().top_level_dir
-                        }
-                    } else {
-                        source_dir
-                    };
-                    // `.loose` preserves drive letters; an overlong join means no match.
+                    // `source_file` may be cwd-relative (Windows stores bundler paths that way).
+                    let mut importer_buf = bun_paths::path_buffer_pool::get();
+                    let importer = Self::canonical(source_file, &mut **importer_buf)?;
+                    let source_dir = bun_paths::dirname(importer)?;
+                    // `.loose` preserves drive letters.
                     let mut buf = bun_paths::path_buffer_pool::get();
-                    let joined =
-                        bun_paths::resolve_path::join_abs_string_buf_checked::<
-                            bun_paths::platform::Loose,
-                        >(effective_source_dir, &mut **buf, &[specifier])?;
-                    self.lookup(joined)
+                    let len = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                        bun_paths::platform::Loose,
+                    >(source_dir, &mut **buf, &[specifier])?
+                    .len();
+                    let joined = &mut buf[..len];
+                    bun_paths::resolve_path::dangerously_convert_path_to_posix_in_place::<u8>(
+                        joined,
+                    );
+                    self.entry(joined)
                 }
             }
 

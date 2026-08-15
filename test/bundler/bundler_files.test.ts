@@ -637,6 +637,38 @@ describe("bundler files option", () => {
       });
     });
 
+    // These imports do not spell out the file, so the disk resolver picks the
+    // file and the key has to match the path it comes back with.
+    test.concurrent("keys override files the resolver finds for extensionless and package imports", async () => {
+      using dir = tempDir("bundler-files-relative-override-resolved", {
+        "src/index.ts": `
+          import { config } from "./config";
+          import { util } from "util-lib";
+          console.log(config, util);
+        `,
+        "src/config.ts": `export const config = "config from disk";`,
+        "node_modules/util-lib/package.json": JSON.stringify({ name: "util-lib", main: "index.js" }),
+        "node_modules/util-lib/index.js": `export const util = "util from disk";`,
+        "build.ts": `
+          const options = {
+            entrypoints: ["./src/index.ts"],
+            files: {
+              "./src/config.ts": 'export const config = "config from memory";',
+              "./node_modules/util-lib/index.js": 'export const util = "util from memory";',
+            },
+          };
+          ${report(["config from disk", "config from memory", "util from disk", "util from memory"])}
+        `,
+      });
+
+      const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+      expect({ stderr, exitCode, stdout }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        stdout: JSON.stringify({ success: true, logs: [], found: ["config from memory", "util from memory"] }),
+      });
+    });
+
     // An entrypoint spelled one way and keyed another still resolves to the
     // same in-memory file, and in-memory files keyed relative to the cwd can
     // import each other. Nothing here exists on disk.
@@ -823,5 +855,44 @@ describe("bundler files option", () => {
         stdout: JSON.stringify({ success: false, logs: ['ResolveMessage: Could not resolve: "./<long>.js"'] }),
       });
     });
+
+    // A plugin can give a module any path it likes. One that does not fit in a
+    // path buffer cannot be joined with the module's imports, so `files` stays
+    // out of the way and the import fails to resolve as it would without it.
+    test.concurrent(
+      "an importer with a path longer than the platform allows is a resolve error, not a crash",
+      async () => {
+        using dir = tempDir("bundler-files-importer-too-long", {
+          "entry.js": `import "long";`,
+          "build.ts": `
+          const results = [];
+          for (const long of [${JSON.stringify(longerThanAnyPath)}, ${JSON.stringify("/" + longerThanAnyPath)}]) {
+            const result = await Bun.build({
+              entrypoints: ["./entry.js"],
+              files: { "./lib.js": "" },
+              plugins: [{
+                name: "long",
+                setup(build) {
+                  build.onResolve({ filter: /^long$/ }, () => ({ path: long, namespace: "long" }));
+                  build.onLoad({ filter: /./, namespace: "long" }, () => ({ contents: 'import "./lib.js";', loader: "js" }));
+                },
+              }],
+              throw: false,
+            });
+            results.push({ success: result.success, logs: result.logs.map(log => String(log).replaceAll(long, "<long>")) });
+          }
+          console.log(JSON.stringify(results));
+        `,
+        });
+
+        const { stdout, stderr, exitCode } = await bunRun(`${dir}/build.ts`);
+        const unresolved = { success: false, logs: ['ResolveMessage: Could not resolve: "./lib.js"'] };
+        expect({ stderr, exitCode, stdout }).toEqual({
+          stderr: "",
+          exitCode: 0,
+          stdout: JSON.stringify([unresolved, unresolved]),
+        });
+      },
+    );
   });
 });

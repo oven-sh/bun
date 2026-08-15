@@ -1603,7 +1603,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return p.parse_type_script_import_equals_stmt(
                             Some(loc),
                             opts,
-                            None,
+                            stmt.default_name.unwrap().loc,
                             default_name,
                         );
                     }

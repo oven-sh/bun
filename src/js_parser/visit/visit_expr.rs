@@ -219,7 +219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     location: bun_ast::Location::init_or_null(
                         Some(p.source),
-                        js_lexer::range_of_identifier(p.source, result.declare_loc.unwrap()),
+                        js_lexer::range_of_identifier(p.source, result.declare_loc),
                     ),
                     ..Default::default()
                 }]);

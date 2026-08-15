@@ -599,6 +599,17 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
+  test.concurrent("assigning to an import-equals binding is an error that points at the declaration", async () => {
+    const dir = tempDirWithFiles("import-equals-assign", {
+      "index.ts": "namespace Bar { export const x = 1 }\nimport foo = Bar;\nfoo = 1;\n",
+    });
+    const x = await Bun.build({ entrypoints: [join(dir, "index.ts")], throw: false });
+    expect(x.success).toBe(false);
+    expect(x.logs[0].message).toBe('Cannot assign to "foo" because it is a constant');
+    expect(x.logs[0].notes[0].message).toBe('The symbol "foo" was declared a constant here:');
+    expect(x.logs[0].notes[0].position).toMatchObject({ line: 2, column: 8 });
+  });
+
   test.concurrent("a spread in a parenthesized expression is reported at the spread", async () => {
     const dir = tempDirWithFiles("spread-in-parens", { "index.js": "(1, ...a);\n" });
     const x = await Bun.build({ entrypoints: [join(dir, "index.js")], throw: false });

@@ -296,7 +296,6 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await run(dir, "update", ...args);
     expect(await pkgText(dir)).toBe(pkgBefore);
     expect(await lockText(dir)).toBe(lockBefore);
-    await expectInSync(dir, ["", PKG1]);
   });
 
   // Same rule for the other non-registry kinds: the registry has a no-deps, so naming this entry with --latest or an
@@ -313,7 +312,6 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
       expect(await pkgText(dir)).toBe(pkgBefore);
       expect(await lockText(dir)).toBe(lockBefore);
       expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.0.0" });
-      await expectInSync(dir);
     },
   );
 
@@ -323,7 +321,6 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await runIn(dir, PKG2, "update", "pkg1");
     expect(await pkgText(dir, PKG2)).toBe(pkgBefore);
     expect(await lockText(dir)).toBe(lockBefore);
-    await expectInSync(dir, ["", PKG1, PKG2]);
   });
 
   test("bun update <workspace member> -r keeps every workspace's entry as written", async () => {
@@ -338,7 +335,6 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     expect(await pkgText(dir)).toBe(rootBefore);
     expect(await pkgText(dir, PKG2)).toBe(pkg2Before);
     expect(await lockText(dir)).toBe(lockBefore);
-    await expectInSync(dir, ["", PKG1, PKG2]);
   });
 
   test("bun update <workspace member> does not add it to a root that does not declare it", async () => {

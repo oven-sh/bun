@@ -799,6 +799,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         this.log_mut()
                     .add_error_fmt(
@@ -819,6 +821,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
@@ -1636,6 +1640,27 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         _ => Ok(()),
     }
+}
+
+/// A peer that nothing in the tree provides and that no published version
+/// satisfies stays unresolved; unlike a regular dependency it does not fail
+/// the install. bun.lock then records the edge without a package
+/// (`may_stay_unresolved` in bun.lock.rs).
+#[cold]
+#[inline(never)]
+fn warn_unmet_peer_dependency(
+    this: &PackageManager,
+    name: SemverString,
+    version: &dependency::Version,
+) {
+    bun_ast::add_warning_pretty!(
+        this.log_mut(),
+        None,
+        bun_ast::Loc::EMPTY,
+        "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
+        bstr::BStr::new(this.lockfile.str(&version.literal)),
+        bstr::BStr::new(this.lockfile.str(&name)),
+    );
 }
 
 /// Allocate and initialise an `.extract` Task for an npm tarball.
@@ -2567,7 +2592,10 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    if behavior.is_peer() {
+                    // Deferred to the peer pass, as in `get_or_put_resolved_package_with_find_result`.
+                    // Not from the peer pass itself: the caller takes `Ok(None)` to mean the
+                    // manifest is not loaded yet and would reload it from the cache forever.
+                    if behavior.is_peer() && !install_peer {
                         return Ok(None);
                     }
 

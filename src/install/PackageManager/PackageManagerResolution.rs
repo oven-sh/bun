@@ -325,8 +325,9 @@ impl PackageManager {
                     continue;
                 }
 
-                // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
-                //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
+                // A peer that nothing provides stays unresolved (at most a
+                // warning, see `warn_unmet_peer_dependency`), and bun.lock
+                // records it that way (`may_stay_unresolved` in bun.lock.rs).
                 if failed_dep.behavior.is_peer() {
                     continue;
                 }

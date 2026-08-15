@@ -3085,7 +3085,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
                 else {
-                    if dep.behavior.contains(Behavior::OPTIONAL) {
+                    if may_stay_unresolved(dep) {
                         continue;
                     }
                     dependency_resolution_failure(
@@ -3170,7 +3170,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             .or_else(|| pkg_map.get(dep_name))
                             .copied()
                     }) else {
-                        if dep.behavior.contains(Behavior::OPTIONAL) {
+                        if may_stay_unresolved(dep) {
                             continue;
                         }
                         dependency_resolution_failure(
@@ -3259,7 +3259,7 @@ pub(crate) fn parse_into_binary_lockfile(
                                 return Err(ParseError::InvalidPackageKey);
                             }
                             Err(ResolveError::Unresolvable) => {
-                                if dep.behavior.contains(Behavior::OPTIONAL) {
+                                if may_stay_unresolved(dep) {
                                     continue 'deps;
                                 }
                                 dependency_resolution_failure(
@@ -3456,6 +3456,14 @@ fn map_dep_to_pkg(
             };
         }
     }
+}
+
+/// Edges a fresh install itself leaves unresolved, so a lockfile bun wrote can
+/// list them without a package entry: optional dependencies, and peers that
+/// nothing in the tree provided and no published version satisfied (see
+/// `warn_unmet_peer_dependency` in `PackageManagerEnqueue.rs`).
+fn may_stay_unresolved(dep: &Dependency) -> bool {
+    dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }
 
 fn dependency_resolution_failure(

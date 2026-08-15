@@ -200,8 +200,7 @@ impl ExtractTarball {
         };
         let basename: &[u8] =
             if strings::has_prefix(name, b"https://") || strings::has_prefix(name, b"http://") {
-                // The URL is the placeholder name `bun add <url>` gives a dependency until
-                // its package.json has been read; the basename only labels the temp dir.
+                // A URL name is the placeholder `bun add <url>` uses until package.json is read.
                 let mut tmp = name;
                 if let Some(i) = strings::index_of_any(tmp, b"?#") {
                     tmp = &tmp[0..i];

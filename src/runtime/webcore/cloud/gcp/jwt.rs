@@ -162,7 +162,7 @@ fn rs256(private_key_pem: &[u8], message: &[u8]) -> Result<Vec<u8>, &'static str
 /// The `exp` claim of a compact JWT, without verifying it (we only need to
 /// know when to refresh a token Google handed us).
 pub fn unverified_exp(jwt: &[u8]) -> Option<u64> {
-    let mut parts = jwt.split(|b| *b == b'.');
+    let mut parts = bun_core::strings::split(jwt, b".");
     let _header = parts.next()?;
     let payload = parts.next()?;
     parts.next()?;

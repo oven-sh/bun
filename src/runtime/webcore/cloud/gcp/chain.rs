@@ -166,19 +166,9 @@ impl GcpConfig {
             return None;
         }
         let proxy = self.https_proxy.as_deref()?;
-        let host = parsed.hostname;
         if let Some(no_proxy) = self.no_proxy.as_deref() {
-            for entry in no_proxy.split(|b| *b == b',') {
-                let entry = strings::trim(entry, b" \t.");
-                if entry == b"*"
-                    || host.eq_ignore_ascii_case(entry)
-                    || (host.len() > entry.len()
-                        && !entry.is_empty()
-                        && host[host.len() - entry.len()..].eq_ignore_ascii_case(entry)
-                        && host[host.len() - entry.len() - 1] == b'.')
-                {
-                    return None;
-                }
+            if bun_http::no_proxy_matches(no_proxy, parsed.hostname, parsed.host) {
+                return None;
             }
         }
         Some(proxy)

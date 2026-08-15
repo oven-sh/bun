@@ -28,8 +28,10 @@ pub fn now_secs() -> u64 {
 struct State<V> {
     cached: Option<Arc<V>>,
     resolving: bool,
-    /// Outcome of the resolution that just finished, for callers that joined it.
-    last_error: Option<Arc<ProviderError>>,
+    /// Outcome of the last failed resolution and when it happened; served to
+    /// callers that joined it, and for `NEGATIVE_TTL` afterwards so a burst of
+    /// synchronous callers does not re-run a failing chain back to back.
+    last_error: Option<(Arc<ProviderError>, u64)>,
 }
 
 pub struct SingleFlightCache<V> {
@@ -42,6 +44,8 @@ pub struct SingleFlightCache<V> {
 /// Credentials this close to expiry are treated as expired (clock skew /
 /// request latency margin).
 const EXPIRY_MARGIN: u64 = 5;
+/// A failure is remembered (and returned without retrying) for this long.
+const NEGATIVE_TTL: u64 = 3;
 
 impl<V: Expiring> SingleFlightCache<V> {
     pub const fn new(refresh_window: u64) -> Self {
@@ -103,13 +107,18 @@ impl<V: Expiring> SingleFlightCache<V> {
         if let Some(v) = st.cached.as_ref().filter(|v| self.is_fresh(v, now)) {
             return Ok(Arc::clone(v));
         }
+        if let Some((e, at)) = &st.last_error {
+            if now < at + NEGATIVE_TTL && st.cached.is_none() {
+                return Err(Arc::clone(e));
+            }
+        }
         if st.resolving {
             while st.resolving {
                 self.cv.wait_guarded(&mut st);
             }
             return match (&st.cached, &st.last_error) {
                 (Some(v), _) if Self::is_usable(v, now) => Ok(Arc::clone(v)),
-                (_, Some(e)) => Err(Arc::clone(e)),
+                (_, Some((e, _))) => Err(Arc::clone(e)),
                 _ => Err(Arc::new(ProviderError::new(
                     "ERR_CREDENTIALS_UNAVAILABLE",
                     b"credential resolution was abandoned".to_vec(),
@@ -132,7 +141,7 @@ impl<V: Expiring> SingleFlightCache<V> {
             }
             Err(e) => {
                 let e = Arc::new(e);
-                st.last_error = Some(Arc::clone(&e));
+                st.last_error = Some((Arc::clone(&e), now_secs()));
                 match &st.cached {
                     Some(v) if Self::is_usable(v, now) => Ok(Arc::clone(v)),
                     _ => {

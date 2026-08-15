@@ -81,7 +81,7 @@ pub fn scopes_from_js(global: &JSGlobalObject, options: Option<JSValue>) -> JsRe
         }
         let s = bun_core::OwnedString::new(bun_core::String::from_js(item, global)?);
         let utf8 = s.to_utf8();
-        for scope in utf8.slice().split(|c| *c == b' ' || *c == b',') {
+        for scope in bun_core::strings::split_any(utf8.slice(), b" ,") {
             if scope.is_empty() {
                 continue;
             }
@@ -165,7 +165,7 @@ impl GcpFetchOptions {
     }
 
     pub fn needs_resolution(&self) -> bool {
-        self.provider.cached_fresh().is_none()
+        self.provider.cached_usable().is_none()
     }
 }
 

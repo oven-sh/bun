@@ -604,6 +604,28 @@ pub(crate) fn get_presign_url_from(
     }
     let path = s3.path();
 
+    // Ambient credentials: resolve here (blocking, once) so a failure carries
+    // the chain's explanation rather than a generic "missing credentials".
+    if credentials_with_options
+        .credentials
+        .needs_credentials_resolution()
+        && let Some(provider) = &credentials_with_options.credentials.provider
+        && let Err(err) = provider.resolve_blocking()
+    {
+        return Err(global.throw_value(s3::s3_error_to_js(
+            &s3::Error::S3Error {
+                code: if err.code == "ERR_AWS_MISSING_CREDENTIALS" {
+                    b"ERR_S3_MISSING_CREDENTIALS"
+                } else {
+                    err.code.as_bytes()
+                },
+                message: &err.message,
+            },
+            global,
+            Some(path),
+        )));
+    }
+
     let result = match credentials_with_options.credentials.sign_request::<false>(
         &bun_s3_signing::SignOptions {
             path,

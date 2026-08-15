@@ -690,6 +690,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
         break 'extract_gcp None;
     };
+    if aws_sign.is_some() && url.is_s3() {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!(
+                "fetch(): use the s3 option (not aws) to configure credentials for s3:// URLs"
+            ),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
     if aws_sign.is_some() && gcp_auth.is_some() {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -743,8 +757,29 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         None
     };
 
-    // Ambient AWS credentials (profile / SSO / container / IMDS) resolve off
-    // the JS thread; once they are cached, run this same call again.
+    // Ambient credentials (profile / SSO / container / metadata) resolve off
+    // the JS thread; once they are cached, run this same call again. A signal
+    // that is already aborted skips this so the rejection stays synchronous.
+    let credentials_ready = credentials_ready
+        || 'aborted: {
+            for obj in [
+                options_object.unwrap_or_default(),
+                request_init_object.unwrap_or_default(),
+            ] {
+                if !obj.is_empty()
+                    && let Some(sig) = obj.get(global_this, "signal")?
+                    && let Some(sig) = AbortSignal::from_js(sig)
+                {
+                    break 'aborted bun_opaque::opaque_deref(sig).aborted();
+                }
+            }
+            if let Some(req) = request_mut!()
+                && let Some(sig) = req.abort_signal()
+            {
+                break 'aborted sig.aborted();
+            }
+            false
+        };
     if !credentials_ready && let Some(gcp) = gcp_auth.as_ref().filter(|g| g.needs_resolution()) {
         drop(s3_credentials.take());
         let promise = jsc::JSPromiseStrong::init(global_this);
@@ -1938,7 +1973,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            if proxy.is_none()
+                && compress.is_none()
+                && aws_sign.is_none()
+                && http::SendFile::is_eligible(&url)
+            {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,
@@ -2072,7 +2111,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if let Some(gcp) = &gcp_auth {
         let token =
-            match gcp.provider.cached_usable() {
+            match gcp.provider.usable_refreshing_ahead(global_this) {
                 Some(t) => Ok(t),
                 // Not fresh in cache and this is already the second pass (or a
                 // synchronous caller raced us): resolve on this thread.

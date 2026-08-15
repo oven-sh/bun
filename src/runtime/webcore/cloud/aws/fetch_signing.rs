@@ -93,7 +93,7 @@ pub fn sign_fetch_request(
     let req = sigv4::Request {
         method: method.as_str().as_bytes(),
         host,
-        path: url.path,
+        path: url.raw_pathname(),
         query,
         headers: &pairs,
         payload,

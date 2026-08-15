@@ -177,7 +177,8 @@ fn days_from_civil(y: u64, m: u64, d: u64) -> Option<u64> {
 }
 
 /// Best-effort `(service, region)` from an endpoint hostname. Either part is
-/// `None` when it cannot be told from the name.
+/// `None` when it cannot be told from the name. `service` is the SigV4
+/// *signing name*, which for a few services differs from the hostname label.
 pub fn infer_service_region(host: &[u8]) -> (Option<Box<[u8]>>, Option<Box<[u8]>>) {
     let host = match strings::last_index_of_char(host, b':') {
         Some(i) if !host.starts_with(b"[") || host[..i].ends_with(b"]") => &host[..i],
@@ -185,20 +186,21 @@ pub fn infer_service_region(host: &[u8]) -> (Option<Box<[u8]>>, Option<Box<[u8]>
     };
     let host = strings::trim(host, b".");
     let own = |s: &[u8]| Some(Box::<[u8]>::from(s));
+    let labels_of = |s| -> Vec<&[u8]> { strings::split(s, b".").collect() };
 
     if host.ends_with(b".r2.cloudflarestorage.com") {
         return (own(b"s3"), own(b"auto"));
     }
-    if host.ends_with(b".backblazeb2.com") {
+    if let Some(stem) = host.strip_suffix(b".backblazeb2.com".as_slice()) {
         // s3.<region>.backblazeb2.com
-        let mut parts = host.rsplit(|b| *b == b'.').skip(2);
-        return (own(b"s3"), parts.next().and_then(own));
+        let labels = labels_of(stem);
+        return (own(b"s3"), labels.get(1).copied().and_then(own));
     }
     if let Some(stem) = host.strip_suffix(b".on.aws".as_slice()) {
         // <id>.lambda-url.<region>.on.aws
-        let mut parts = stem.rsplit(|b| *b == b'.');
-        let region = parts.next();
-        if parts.next() == Some(b"lambda-url") {
+        let labels = labels_of(stem);
+        let region = labels.last().copied().filter(|r| looks_like_region(r));
+        if labels.len() >= 2 && labels[labels.len() - 2] == b"lambda-url" {
             return (own(b"lambda"), region.and_then(own));
         }
         return (None, region.and_then(own));
@@ -210,65 +212,76 @@ pub fn infer_service_region(host: &[u8]) -> (Option<Box<[u8]>>, Option<Box<[u8]>
     } else {
         return (None, None);
     };
-    // Right-to-left: [region?] [dualstack|fips|vpce...]* service [prefix...]
-    let mut parts: Vec<&[u8]> = stem.split(|b| *b == b'.').collect();
-    let mut region: Option<&[u8]> = None;
-    if let Some(last) = parts.last().copied() {
-        if looks_like_region(last) {
-            region = Some(last);
-            parts.pop();
-        }
-    }
-    while matches!(
-        parts.last().copied(),
-        Some(b"dualstack" | b"vpce" | b"api" | b"data")
-    ) && parts.len() > 1
+
+    // <prefix…>.<service>.<region>[.dualstack|.fips|.vpce].amazonaws.com
+    // <prefix…>.<region>.<service>.amazonaws.com   (es, aoss, older s3-website)
+    // <service>.amazonaws.com                       (global: iam, sts, s3, cloudfront…)
+    let mut labels = labels_of(stem);
+    while labels.len() > 1
+        && matches!(
+            labels.last().copied(),
+            Some(b"dualstack" | b"vpce" | b"fips" | b"api" | b"amazonaws")
+        )
     {
-        // `bucket.vpce-xx.s3.us-east-1.vpce.amazonaws.com`, `s3.dualstack.us-east-1…`
-        // — but keep `api`/`data` when they are the only label (e.g. `api.ecr` handled below).
-        let last = parts.last().copied().unwrap();
-        if (last == b"api" || last == b"data") && parts.len() >= 2 {
-            // `api.ecr.<region>` → service ecr; `data.iot.<region>` → iotdata
-            break;
-        }
-        parts.pop();
+        labels.pop();
     }
-    let Some(mut service) = parts.pop() else {
-        return (None, region.and_then(own));
+    let Some(&last) = labels.last() else {
+        return (None, None);
     };
-    if service == b"api" || service == b"data" {
-        // `<prefix>.api.aws`-style never reaches here; this is `x.api` leftover.
-        if let Some(prev) = parts.pop() {
-            service = prev;
+    let is_modifier = |l: &[u8]| matches!(l, b"dualstack" | b"vpce" | b"fips");
+    let (mut service, mut region): (&[u8], Option<&[u8]>) = if looks_like_region(last) {
+        labels.pop();
+        while labels.len() > 1 && labels.last().is_some_and(|l| is_modifier(l)) {
+            labels.pop();
         }
-    }
-    let mut service_owned: Vec<u8> = service.to_vec();
-    // Legacy `s3-us-west-2`, `s3-external-1`, `s3-accelerate`, `s3-website-…`
-    if service_owned.starts_with(b"s3-") || service == b"s3" {
-        if region.is_none() {
-            let tail = &service[if service.len() > 3 { 3 } else { service.len() }..];
-            if looks_like_region(tail) {
-                region = Some(tail);
+        match labels.pop() {
+            Some(svc) => (svc, Some(last)),
+            None => return (None, own(last)),
+        }
+    } else {
+        labels.pop();
+        // Region may sit *before* the service label (`domain.eu-west-1.es`).
+        let r = labels.iter().rev().copied().find(|l| looks_like_region(l));
+        if r.is_some() {
+            // Whatever precedes the region is a resource name, not a prefix.
+            labels.clear();
+        }
+        (last, r)
+    };
+    let prefix = labels.last().copied();
+
+    // Legacy S3 spellings: s3-us-west-2, s3-external-1, s3-accelerate,
+    // s3-website-us-east-1, s3-control. (But s3-outposts / s3-object-lambda
+    // are real signing names.)
+    if let Some(tail) = service.strip_prefix(b"s3-".as_slice()) {
+        if looks_like_region(tail) {
+            region = region.or(Some(tail));
+            service = b"s3";
+        } else if let Some(r) = tail.strip_prefix(b"website-".as_slice()) {
+            if looks_like_region(r) {
+                region = region.or(Some(r));
             }
+            service = b"s3";
+        } else if matches!(tail, b"accelerate" | b"control" | b"website")
+            || tail.starts_with(b"external-")
+        {
+            service = b"s3";
         }
-        service_owned = b"s3".to_vec();
-    } else if let Some(base) = service.strip_suffix(b"-fips".as_slice()) {
-        service_owned = base.to_vec();
     }
-    let service_owned: Vec<u8> = match service_owned.as_slice() {
-        b"email" => b"ses".to_vec(),
-        b"queue" => b"sqs".to_vec(),
-        b"iotdata" | b"data-ats" => b"iotdata".to_vec(),
-        b"streams" if parts.last().copied().is_some() => {
-            // `streams.dynamodb.<region>` → dynamodb
-            parts.pop().unwrap().to_vec()
-        }
-        _ => service_owned,
+    let service: &[u8] = match service.strip_suffix(b"-fips".as_slice()).unwrap_or(service) {
+        b"email" => b"ses",
+        b"queue" => b"sqs",
+        b"bedrock-runtime" | b"bedrock-agent" | b"bedrock-agent-runtime" => b"bedrock",
+        b"iot" if prefix.is_some_and(|p| p.starts_with(b"data")) => b"iotdata",
+        b"appsync-api" | b"appsync-realtime-api" => b"appsync",
+        b"execute-api" => b"execute-api",
+        other => other,
     };
-    let region = region.unwrap_or(b"us-east-1");
     (
-        Some(service_owned.into_boxed_slice()),
-        Some(Box::from(region)),
+        own(service),
+        // No region label on an amazonaws.com host means a global endpoint,
+        // which signs as us-east-1.
+        Some(Box::from(region.unwrap_or(b"us-east-1"))),
     )
 }
 
@@ -354,7 +367,7 @@ fn canonical_uri(out: &mut Vec<u8>, path: &[u8], s3: bool) {
     // Normalise `.`/`..`/`//` per RFC 3986 remove_dot_segments, then encode
     // each (already once-encoded) segment again.
     let mut segments: Vec<&[u8]> = Vec::new();
-    for seg in path.split(|b| *b == b'/') {
+    for seg in strings::split(path, b"/") {
         match seg {
             b"" | b"." => {}
             b".." => {
@@ -381,7 +394,7 @@ fn canonical_uri(out: &mut Vec<u8>, path: &[u8], s3: bool) {
 /// Sorted, re-encoded `name=value` pairs; a stale `X-Amz-Signature` is dropped.
 fn canonical_query(out: &mut Vec<u8>, query: &[u8], extra: &[(Vec<u8>, Vec<u8>)]) {
     let mut pairs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    for part in query.split(|b| *b == b'&') {
+    for part in strings::split(query, b"&") {
         if part.is_empty() {
             continue;
         }
@@ -938,7 +951,7 @@ mod tests {
         );
         assert_eq!(
             t("bedrock-runtime.us-east-1.amazonaws.com"),
-            (Some("bedrock-runtime".into()), Some("us-east-1".into()))
+            (Some("bedrock".into()), Some("us-east-1".into()))
         );
         assert_eq!(
             t("kms-fips.us-gov-west-1.amazonaws.com"),
@@ -949,5 +962,49 @@ mod tests {
             (Some("dynamodb".into()), Some("cn-north-1".into()))
         );
         assert_eq!(t("localhost:9000"), (None, None));
+        assert_eq!(
+            t("vpce-0a1b-xyz.sqs.us-west-2.vpce.amazonaws.com"),
+            (Some("sqs".into()), Some("us-west-2".into()))
+        );
+        assert_eq!(
+            t("bucket.vpce-xx.s3.us-east-1.vpce.amazonaws.com"),
+            (Some("s3".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("my-domain.eu-west-1.es.amazonaws.com"),
+            (Some("es".into()), Some("eu-west-1".into()))
+        );
+        assert_eq!(
+            t("abc.eu-west-1.aoss.amazonaws.com"),
+            (Some("aoss".into()), Some("eu-west-1".into()))
+        );
+        assert_eq!(
+            t("data-ats.iot.us-east-1.amazonaws.com"),
+            (Some("iotdata".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("runtime.sagemaker.us-east-1.amazonaws.com"),
+            (Some("sagemaker".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("api.ecr.us-east-1.amazonaws.com"),
+            (Some("ecr".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("streams.dynamodb.us-east-1.amazonaws.com"),
+            (Some("dynamodb".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("bucket.s3-website-us-east-1.amazonaws.com"),
+            (Some("s3".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("s3-outposts.us-east-1.amazonaws.com"),
+            (Some("s3-outposts".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("s3.eu-west-2.backblazeb2.com"),
+            (Some("s3".into()), Some("eu-west-2".into()))
+        );
     }
 }

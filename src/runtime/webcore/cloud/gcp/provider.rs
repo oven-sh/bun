@@ -1,12 +1,12 @@
-//! Process-wide cache of Google tokens keyed by what was asked for (scopes /
-//! audience), resolved on the work pool.
+//! Per-JS-thread cache of Google tokens keyed by what was asked for (scopes
+//! / audience), resolved on the work pool with JS-side waiter fan-out.
 
+use core::cell::RefCell;
 use std::sync::Arc;
 
 use bun_jsc::job::{Completion, Job, JobContext, JsAffine, JsThread};
 use bun_jsc::{JSGlobalObject, JsResult};
 use bun_s3_signing::ProviderError;
-use bun_threading::Guarded;
 
 use super::chain::{self, GcpConfig, Token, TokenRequest};
 use crate::webcore::cloud::cache::SingleFlightCache;
@@ -42,37 +42,88 @@ impl TokenProvider {
         self.cache
             .get_or_resolve(|| chain::resolve(cfg, &self.request))
     }
+
+    /// Usable now; if it is inside the refresh window a background refresh
+    /// is started so later requests do not have to wait.
+    pub fn usable_refreshing_ahead(
+        self: &Arc<Self>,
+        global: &JSGlobalObject,
+    ) -> Option<Arc<Token>> {
+        let t = self.cache.usable()?;
+        if self.cache.fresh().is_none() {
+            start(global, self, None);
+        }
+        Some(t)
+    }
+
+    fn key(&self) -> usize {
+        std::ptr::from_ref(self) as usize
+    }
 }
 
-static REGISTRY: Guarded<Vec<Arc<TokenProvider>>> = Guarded::new(Vec::new());
+thread_local! {
+    static REGISTRY: RefCell<Vec<Arc<TokenProvider>>> = const { RefCell::new(Vec::new()) };
+    static PENDING: RefCell<Vec<Pending>> = const { RefCell::new(Vec::new()) };
+}
+
+struct Pending {
+    key: usize,
+    waiters: Vec<Continuation>,
+}
 
 pub fn provider_for(request: TokenRequest) -> Arc<TokenProvider> {
-    let mut reg = REGISTRY.lock();
-    if let Some(p) = reg.iter().find(|p| p.request == request) {
-        return Arc::clone(p);
-    }
-    let p = Arc::new(TokenProvider {
-        request,
-        cache: SingleFlightCache::new(REFRESH_WINDOW_SECONDS),
-    });
-    reg.push(Arc::clone(&p));
-    p
+    REGISTRY.with_borrow_mut(|reg| {
+        if let Some(p) = reg.iter().find(|p| p.request == request) {
+            return Arc::clone(p);
+        }
+        let p = Arc::new(TokenProvider {
+            request,
+            cache: SingleFlightCache::new(REFRESH_WINDOW_SECONDS),
+        });
+        reg.push(Arc::clone(&p));
+        p
+    })
 }
 
 // ── async resolution ──────────────────────────────────────────────────────
 
 pub type Continuation = Box<dyn FnOnce(TokenResult) -> JsResult<()>>;
 
-struct JsSide(Option<Continuation>);
-// SAFETY: created, called and dropped on the owning JS thread only (Job contract).
+fn cancelled() -> Arc<ProviderError> {
+    Arc::new(ProviderError::new(
+        "ERR_GCP_MISSING_CREDENTIALS",
+        b"token resolution was cancelled because the VM is shutting down".to_vec(),
+    ))
+}
+
+fn take_waiters(key: usize) -> Vec<Continuation> {
+    PENDING.with_borrow_mut(|p| match p.iter().position(|e| e.key == key) {
+        Some(i) => p.swap_remove(i).waiters,
+        None => Vec::new(),
+    })
+}
+
+fn run_waiters(waiters: Vec<Continuation>, result: &TokenResult) -> JsResult<()> {
+    let mut first_err = Ok(());
+    for w in waiters {
+        let r = w(result.clone());
+        if first_err.is_ok() {
+            first_err = r;
+        }
+    }
+    first_err
+}
+
+struct JsSide {
+    key: usize,
+    live: bool,
+}
+// SAFETY: created, used and dropped on the owning JS thread only (Job contract).
 unsafe impl JsAffine for JsSide {}
 impl Drop for JsSide {
     fn drop(&mut self) {
-        if let Some(f) = self.0.take() {
-            let _ = f(Err(Arc::new(ProviderError::new(
-                "ERR_GCP_MISSING_CREDENTIALS",
-                b"token resolution was cancelled because the VM is shutting down".to_vec(),
-            ))));
+        if self.live {
+            let _ = run_waiters(take_waiters(self.key), &Err(cancelled()));
         }
     }
 }
@@ -82,8 +133,6 @@ struct Off {
     cfg: GcpConfig,
     result: Option<TokenResult>,
 }
-// SAFETY: plain owned data.
-unsafe impl Send for Off {}
 
 struct ResolveJob;
 
@@ -97,16 +146,40 @@ impl JobContext for ResolveJob {
     }
 
     fn then(off: Off, mut js: JsSide, _cx: &JsThread<'_>) -> JsResult<()> {
-        let result = off.result.unwrap_or_else(|| {
-            Err(Arc::new(ProviderError::new(
-                "ERR_GCP_MISSING_CREDENTIALS",
-                b"token resolution was cancelled".to_vec(),
-            )))
-        });
-        match js.0.take() {
-            Some(f) => f(result),
-            None => Ok(()),
+        js.live = false;
+        let result = off.result.unwrap_or_else(|| Err(cancelled()));
+        run_waiters(take_waiters(js.key), &result)
+    }
+}
+
+/// Register `then` (if any) as a waiter and schedule the job unless one is
+/// already in flight for this provider on this thread.
+fn start(global: &JSGlobalObject, provider: &Arc<TokenProvider>, then: Option<Continuation>) {
+    let key = provider.key();
+    let first = PENDING.with_borrow_mut(|p| match p.iter_mut().find(|e| e.key == key) {
+        Some(entry) => {
+            entry.waiters.extend(then);
+            false
         }
+        None => {
+            p.push(Pending {
+                key,
+                waiters: then.into_iter().collect(),
+            });
+            true
+        }
+    });
+    if first {
+        let cx = global.js_thread();
+        Job::<ResolveJob>::schedule(
+            &cx,
+            Off {
+                provider: Arc::clone(provider),
+                cfg: GcpConfig::capture(global),
+                result: None,
+            },
+            JsSide { key, live: true },
+        );
     }
 }
 
@@ -118,16 +191,6 @@ pub fn resolve_async(
     if let Some(t) = provider.cached_fresh() {
         return then(Ok(t));
     }
-    let cx = global.js_thread();
-    let cfg = GcpConfig::capture(global);
-    Job::<ResolveJob>::schedule(
-        &cx,
-        Off {
-            provider: Arc::clone(provider),
-            cfg,
-            result: None,
-        },
-        JsSide(Some(then)),
-    );
+    start(global, provider, Some(then));
     Ok(())
 }

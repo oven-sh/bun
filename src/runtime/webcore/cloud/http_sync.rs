@@ -136,6 +136,10 @@ pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
 
     let mut batch = bun_threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
+    // SAFETY (thread door): `channel`/`http` hold no VM or JS state, and this
+    // function does not return until the HTTP thread's single callback has
+    // fired, so nothing outlives the caller (a `bun_jsc::Job` body holding a
+    // Ticket, or the JS thread itself).
     bun_http::HTTPThread::schedule(batch);
 
     let deadline = std::time::Instant::now() + Duration::from_millis(u64::from(req.timeout_ms));

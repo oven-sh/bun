@@ -1,5 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "path";
 import { referencePresignCheck, referenceSign, sha256Hex } from "./sigv4-reference";
 
 // In-process tests: every request carries explicit credentials so nothing
@@ -116,7 +118,7 @@ describe("fetch(url, { aws })", () => {
       ["sqs.us-east-2.amazonaws.com", "sqs", "us-east-2"],
       ["my-bucket.s3.ap-southeast-1.amazonaws.com", "s3", "ap-southeast-1"],
       ["iam.amazonaws.com", "iam", "us-east-1"],
-      ["bedrock-runtime.eu-central-1.amazonaws.com", "bedrock-runtime", "eu-central-1"],
+      ["bedrock-runtime.eu-central-1.amazonaws.com", "bedrock", "eu-central-1"], // signing name differs from the host label
       ["abc123.execute-api.us-west-1.amazonaws.com", "execute-api", "us-west-1"],
       ["xyz.lambda-url.eu-west-1.on.aws", "lambda", "eu-west-1"],
     ];
@@ -218,6 +220,65 @@ describe("fetch(url, { aws })", () => {
       secretAccessKey,
     });
     expect(actual).toBe(expected);
+  });
+
+  test("one-character path segments survive (canonical URI must not collapse to /)", async () => {
+    for (const path of ["/a", "/a/", "/a/b", "/ab"]) {
+      const hit = await signedFetch(path, {
+        aws: { accessKeyId, secretAccessKey, service: "s3", region: "us-east-1", date: datetime },
+      });
+      expect(new URL(hit.url).pathname).toBe(path);
+      expect(hit.headers.authorization).toBe(
+        referenceSign({
+          method: "GET",
+          url: new URL(path, echo.url).href,
+          service: "s3",
+          region: "us-east-1",
+          accessKeyId,
+          secretAccessKey,
+          datetime,
+          unsignedPayload: false,
+        }).authorization,
+      );
+    }
+    expect(new URL(Bun.aws.presign("https://bkt.s3.amazonaws.com/a", { accessKeyId, secretAccessKey })).pathname).toBe(
+      "/a",
+    );
+  });
+
+  test("aws is rejected for s3:// URLs (use the s3 option)", async () => {
+    await expect(fetch("s3://bucket/key", { aws: { accessKeyId, secretAccessKey } } as any)).rejects.toThrow(
+      /use the s3 option/,
+    );
+  });
+
+  test("a large file body is hashed, not sent via sendfile", async () => {
+    using dir = tempDir("aws-sendfile", { "big.bin": Buffer.alloc(256 * 1024, "x").toString() });
+    const hit = await signedFetch("/upload", {
+      method: "PUT",
+      body: Bun.file(join(dir, "big.bin")),
+      aws: { accessKeyId, secretAccessKey, service: "execute-api", region: "us-east-1", date: datetime },
+    });
+    expect(hit.body.length).toBe(256 * 1024);
+    expect(hit.headers.authorization).toBe(
+      referenceSign({
+        method: "PUT",
+        url: new URL("/upload", echo.url).href,
+        headers: { "content-type": hit.headers["content-type"] },
+        body: Buffer.alloc(256 * 1024, "x").toString(),
+        service: "execute-api",
+        region: "us-east-1",
+        accessKeyId,
+        secretAccessKey,
+        datetime,
+      }).authorization,
+    );
+  });
+
+  test("a pre-aborted signal rejects immediately, before any credential lookup", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    await expect(fetch(echo.url, { aws: true, signal: ac.signal } as any)).rejects.toThrow(/aborted/i);
   });
 
   test("Request objects and the init-object form work too", async () => {

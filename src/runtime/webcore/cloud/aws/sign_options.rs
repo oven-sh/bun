@@ -49,11 +49,14 @@ impl AwsSignOptions {
             .or_else(|| env.get(b"AWS_DEFAULT_REGION"))
             .filter(|s| !s.is_empty())
             .map(Vec::into_boxed_slice);
+        // As in the SDKs, `AWS_PROFILE` means "use that profile", even if key
+        // variables are also exported.
+        let has_env_profile = env.get(b"AWS_PROFILE").is_some_and(|p| !p.is_empty());
         let env_static = match (
             env.get(b"AWS_ACCESS_KEY_ID"),
             env.get(b"AWS_SECRET_ACCESS_KEY"),
         ) {
-            (Some(a), Some(s)) if !a.is_empty() && !s.is_empty() => {
+            (Some(a), Some(s)) if !a.is_empty() && !s.is_empty() && !has_env_profile => {
                 Some(Arc::new(AwsCredentials {
                     access_key_id: a.into_boxed_slice(),
                     secret_access_key: s.into_boxed_slice(),
@@ -215,7 +218,7 @@ impl AwsSignOptions {
     }
 
     pub fn needs_credentials_resolution(&self) -> bool {
-        self.provider().is_some_and(|p| p.needs_refresh())
+        self.provider().is_some_and(|p| p.needs_resolution())
     }
 
     /// Cached / static credentials, resolving synchronously as a last resort.

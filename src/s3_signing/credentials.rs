@@ -263,7 +263,8 @@ impl S3Credentials {
     /// True when signing would have to wait on the provider (nothing static,
     /// nothing cached). Asynchronous callers resolve first in that case.
     pub fn needs_credentials_resolution(&self) -> bool {
-        !self.has_static_credentials() && self.provider.as_ref().is_some_and(|p| p.needs_refresh())
+        !self.has_static_credentials()
+            && self.provider.as_ref().is_some_and(|p| p.needs_resolution())
     }
 
     pub fn estimated_size(&self) -> usize {

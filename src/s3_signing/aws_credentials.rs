@@ -125,9 +125,11 @@ pub trait CredentialsProvider: Send + Sync {
     /// inside the refresh window).
     fn cached(&self) -> Option<Arc<AwsCredentials>>;
 
-    /// Nothing usable is cached, or what is cached is inside the refresh
-    /// window. Asynchronous callers resolve ahead of signing when this is set.
-    fn needs_refresh(&self) -> bool;
+    /// Nothing usable is cached, so signing now would block on I/O;
+    /// asynchronous callers resolve first when this is set. Implementations
+    /// may use this as the cue to refresh soon-to-expire credentials in the
+    /// background.
+    fn needs_resolution(&self) -> bool;
 
     /// Resolve, doing whatever I/O is needed on the calling thread. Returns
     /// cached credentials without I/O when they are still usable. Used by

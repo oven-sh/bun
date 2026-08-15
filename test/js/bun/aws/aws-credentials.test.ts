@@ -272,12 +272,25 @@ describe.concurrent("Bun.aws.credentials", () => {
       region: "us-west-2",
       source: "profile",
     });
-    // …and so does the option, which beats env keys
+    // …and so does the option. A selected profile beats exported keys (as in the SDKs).
     expect(
       await creds(
         { HOME: dir, USERPROFILE: dir, AWS_ACCESS_KEY_ID: "AKIAENV", AWS_SECRET_ACCESS_KEY: "x" },
         `{ profile: "other" }`,
       ),
+    ).toMatchObject({ accessKeyId: "AKIAOTHER", source: "profile" });
+    expect(
+      await creds({
+        HOME: dir,
+        USERPROFILE: dir,
+        AWS_PROFILE: "other",
+        AWS_ACCESS_KEY_ID: "AKIAENV",
+        AWS_SECRET_ACCESS_KEY: "x",
+      }),
+    ).toMatchObject({ accessKeyId: "AKIAOTHER", source: "profile" });
+    // without a profile selection, env keys win over [default]
+    expect(
+      await creds({ HOME: dir, USERPROFILE: dir, AWS_ACCESS_KEY_ID: "AKIAENV", AWS_SECRET_ACCESS_KEY: "x" }),
     ).toMatchObject({ accessKeyId: "AKIAENV", source: "env" });
     // an explicitly named profile that does not exist is an error, not a fallthrough
     const missing = await creds({ HOME: dir, USERPROFILE: dir }, `{ profile: "nope" }`);
@@ -447,6 +460,62 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(mine[2].headers["x-aws-ec2-metadata-token"]).toBe("IMDS-TOKEN");
   });
 
+  test("IMDSv1 fallback when the IMDSv2 token request gets no answer (container hop limit)", async () => {
+    const seen: string[] = [];
+    using hung = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        seen.push(`${req.method} ${path} token=${req.headers.get("x-aws-ec2-metadata-token") ?? ""}`);
+        if (req.method === "PUT") return new Promise<Response>(() => {}); // never answers
+        if (path.endsWith("/security-credentials/")) return new Response("role");
+        return Response.json({
+          Code: "Success",
+          AccessKeyId: "ASIAV1",
+          SecretAccessKey: "s",
+          Token: "t",
+          Expiration: "2099-01-01T00:00:00Z",
+        });
+      },
+    });
+    const result = await creds({
+      AWS_EC2_METADATA_DISABLED: undefined,
+      AWS_EC2_METADATA_SERVICE_ENDPOINT: hung.url.href,
+      AWS_METADATA_SERVICE_TIMEOUT: "0.3",
+    });
+    expect(result).toMatchObject({ accessKeyId: "ASIAV1", source: "imds" });
+    expect(seen).toEqual([
+      "PUT /latest/api/token token=",
+      "GET /latest/meta-data/iam/security-credentials/ token=",
+      "GET /latest/meta-data/iam/security-credentials/role token=",
+    ]);
+    // …unless v1 is disabled
+    const disabled = await creds({
+      AWS_EC2_METADATA_DISABLED: undefined,
+      AWS_EC2_METADATA_SERVICE_ENDPOINT: hung.url.href,
+      AWS_METADATA_SERVICE_TIMEOUT: "0.3",
+      AWS_EC2_METADATA_V1_DISABLED: "true",
+    });
+    expect(disabled.error.code).toBe("ERR_AWS_MISSING_CREDENTIALS");
+  });
+
+  test("workers with their own env resolve their own credentials", async () => {
+    const { stdout, exitCode } = await run(
+      `
+        const main = await Bun.aws.credentials();
+        const worker = new Worker("data:text/javascript," + encodeURIComponent('self.postMessage((await Bun.aws.credentials()).accessKeyId)'), {
+          env: { ...process.env, AWS_ACCESS_KEY_ID: "AKIAWORKER", AWS_SECRET_ACCESS_KEY: "w" },
+        });
+        const fromWorker = await new Promise(resolve => (worker.onmessage = e => resolve(e.data)));
+        worker.terminate();
+        console.log(main.accessKeyId, fromWorker, (await Bun.aws.credentials()).accessKeyId);
+      `,
+      { AWS_ACCESS_KEY_ID: "AKIAMAIN", AWS_SECRET_ACCESS_KEY: "m" },
+    );
+    expect(stdout.trim()).toBe("AKIAMAIN AKIAWORKER AKIAMAIN");
+    expect(exitCode).toBe(0);
+  });
+
   test("an unreachable IMDS is 'not configured', not an error", async () => {
     // Port 9 (discard) on loopback refuses connections immediately.
     const result = await creds({
@@ -608,14 +677,14 @@ describe("S3Client with ambient credentials", () => {
       `
         import { s3 } from "bun";
         try { await s3.file("a").text(); } catch (e) { console.log(e.code, e.message.includes("AWS_EC2_METADATA_DISABLED")); }
-        try { s3.file("a").presign(); } catch (e) { console.log(e.code); }
+        try { s3.file("a").presign(); } catch (e) { console.log(e.code, e.message.includes("AWS_EC2_METADATA_DISABLED")); }
         const r = await fetch("s3://bucket/a"); // fetch resolves per WHATWG: rejection, not throw
       `.replace("const r = await", "try { await") + `} catch (e) { console.log(e.code); }`,
       { S3_ENDPOINT: s3.url.href, S3_BUCKET: "bucket" },
     );
     expect(stdout.trim().split("\n")).toEqual([
       "ERR_S3_MISSING_CREDENTIALS true",
-      "ERR_S3_MISSING_CREDENTIALS",
+      "ERR_S3_MISSING_CREDENTIALS true",
       "ERR_S3_MISSING_CREDENTIALS",
     ]);
     expect(exitCode).toBe(0);

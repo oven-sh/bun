@@ -206,29 +206,8 @@ impl ChainConfig {
             self.http_proxy.as_deref()
         }?;
         if let Some(no_proxy) = self.no_proxy.as_deref() {
-            for entry in no_proxy.split(|b| *b == b',') {
-                let mut entry = strings::trim(entry, b" \t");
-                if entry.is_empty() {
-                    continue;
-                }
-                if entry == b"*" {
-                    return None;
-                }
-                if let Some(rest) = entry.strip_prefix(b".".as_slice()) {
-                    entry = rest;
-                }
-                // Strip a port from the entry for hostname comparison.
-                let entry_host = match strings::index_of_char_usize(entry, b':') {
-                    Some(i) if !entry.starts_with(b"[") => &entry[..i],
-                    _ => entry,
-                };
-                if host.eq_ignore_ascii_case(entry_host)
-                    || (host.len() > entry_host.len()
-                        && host[host.len() - entry_host.len()..].eq_ignore_ascii_case(entry_host)
-                        && host[host.len() - entry_host.len() - 1] == b'.')
-                {
-                    return None;
-                }
+            if bun_http::no_proxy_matches(no_proxy, parsed.hostname, parsed.host) {
+                return None;
             }
         }
         Some(proxy)

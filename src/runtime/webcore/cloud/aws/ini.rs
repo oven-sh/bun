@@ -29,7 +29,7 @@ impl IniFile {
     pub fn parse(contents: &[u8], is_config: bool) -> IniFile {
         let mut file = IniFile::default();
         let mut current: Option<usize> = None;
-        for raw_line in contents.split(|b| *b == b'\n') {
+        for raw_line in strings::split(contents, b"\n") {
             let line = strings::trim(raw_line, b" \t\r");
             if line.is_empty() || line[0] == b'#' || line[0] == b';' {
                 continue;

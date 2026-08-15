@@ -176,7 +176,7 @@ fn presign(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         &sigv4::Request {
             method: method.as_str().as_bytes(),
             host: url.host,
-            path: url.path,
+            path: url.raw_pathname(),
             query,
             headers: &[],
             payload: if opts.unsigned_payload || sigv4::is_s3_service(&service) {

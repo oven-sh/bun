@@ -188,29 +188,38 @@ impl<'c> Resolver<'c> {
     // ── 1. environment ────────────────────────────────────────────────────
 
     fn from_env(&mut self) -> Outcome {
-        if self.cfg.skip_env {
+        if self.cfg.profile_is_explicit() {
+            self.note(format_args!(
+                "environment (skipped because a profile is selected)"
+            ));
             return Ok(None);
         }
-        match (&self.cfg.access_key_id, &self.cfg.secret_access_key) {
-            (Some(akid), Some(secret)) => {
-                let mut c = creds(
-                    akid.clone(),
-                    secret.clone(),
-                    self.cfg.session_token.clone(),
-                    None,
-                    self.cfg.account_id.clone(),
-                    CredentialsSource::Env,
-                );
-                c.region.clone_from(&self.cfg.region);
-                Ok(Some(c))
-            }
-            _ => {
+        match self.env_static() {
+            Some(c) => Ok(Some(c)),
+            None => {
                 self.note(format_args!(
                     "environment (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set)"
                 ));
                 Ok(None)
             }
         }
+    }
+
+    fn env_static(&self) -> Option<AwsCredentials> {
+        let (Some(akid), Some(secret)) = (&self.cfg.access_key_id, &self.cfg.secret_access_key)
+        else {
+            return None;
+        };
+        let mut c = creds(
+            akid.clone(),
+            secret.clone(),
+            self.cfg.session_token.clone(),
+            None,
+            self.cfg.account_id.clone(),
+            CredentialsSource::Env,
+        );
+        c.region.clone_from(&self.cfg.region);
+        Some(c)
     }
 
     // ── 2. shared config / credentials files ──────────────────────────────
@@ -374,7 +383,7 @@ impl<'c> Resolver<'c> {
             } else {
                 let cs = p.credential_source.as_deref().unwrap();
                 let got = if cs.eq_ignore_ascii_case(b"Environment") {
-                    self.from_env()?
+                    self.env_static()
                 } else if cs.eq_ignore_ascii_case(b"Ec2InstanceMetadata") {
                     self.from_imds()?
                 } else if cs.eq_ignore_ascii_case(b"EcsContainer") {
@@ -643,7 +652,7 @@ impl<'c> Resolver<'c> {
             &sigv4::Request {
                 method: b"POST",
                 host,
-                path: parsed.path,
+                path: parsed.raw_pathname(),
                 query: b"",
                 headers: &[(
                     b"content-type",
@@ -1306,6 +1315,7 @@ impl<'c> Resolver<'c> {
         // IMDSv2 session token.
         let token_url = join("/latest/api/token");
         let mut token: Option<Vec<u8>> = None;
+        let mut token_put_error: Option<http_sync::Error> = None;
         match http_sync::fetch(&http_sync::Request {
             method: Method::PUT,
             url: &token_url,
@@ -1342,17 +1352,28 @@ impl<'c> Resolver<'c> {
                 ));
             }
             Err(e) => {
-                self.note(format_args!(
-                    "EC2 instance metadata ({} is unreachable: {e})",
-                    BStr::new(&base)
-                ));
-                return Ok(None);
+                // No answer to the token PUT: either not on EC2, or IMDSv2's
+                // response cannot reach us (container with hop limit 1). Try
+                // one IMDSv1 GET before giving up, like the SDKs do.
+                if self.cfg.imds_v1_disabled {
+                    self.note(format_args!(
+                        "EC2 instance metadata ({} is unreachable: {e})",
+                        BStr::new(&base)
+                    ));
+                    return Ok(None);
+                }
+                token_put_error = Some(e);
             }
         }
 
         let token_header: Vec<(&[u8], &[u8])> = match &token {
             Some(t) => vec![(b"x-aws-ec2-metadata-token".as_slice(), t.as_slice())],
             None => vec![],
+        };
+        let attempts = if token_put_error.is_some() {
+            1
+        } else {
+            attempts
         };
         let get = |url: &[u8]| -> Result<http_sync::Response, ProviderError> {
             let mut last = None;
@@ -1387,7 +1408,24 @@ impl<'c> Resolver<'c> {
         };
 
         let role_url = join("/latest/meta-data/iam/security-credentials/");
-        let res = get(&role_url)?;
+        let res = match (get(&role_url), &token_put_error) {
+            (Ok(res), _) => res,
+            (Err(_), Some(e)) => {
+                self.note(format_args!(
+                    "EC2 instance metadata ({} is unreachable: {e})",
+                    BStr::new(&base)
+                ));
+                return Ok(None);
+            }
+            (Err(e), None) => return Err(e),
+        };
+        if res.status == 401
+            && let Some(e) = &token_put_error
+        {
+            return Err(fail!(
+                "EC2 instance metadata requires IMDSv2 but the session token request got no response ({e}); if this is a container, raise the instance's metadata hop limit to 2"
+            ));
+        }
         if res.status == 404 {
             self.note(format_args!(
                 "EC2 instance metadata (no IAM role is attached to this instance)"
@@ -1402,9 +1440,7 @@ impl<'c> Resolver<'c> {
                 snippet(&res.body)
             ));
         }
-        let role = res
-            .body
-            .split(|b| *b == b'\n')
+        let role = strings::split(&res.body, b"\n")
             .map(|l| strings::trim(l, b" \t\r"))
             .find(|l| !l.is_empty())
             .map(<[u8]>::to_vec);
@@ -1437,11 +1473,12 @@ impl<'c> Resolver<'c> {
 
 fn is_ipv4_loopback(host: &[u8]) -> bool {
     // 127.0.0.0/8
-    let mut parts = host.split(|b| *b == b'.');
-    let first = parts.next();
-    first == Some(b"127")
-        && parts.clone().count() == 3
-        && parts.all(|p| !p.is_empty() && p.len() <= 3 && p.iter().all(u8::is_ascii_digit))
+    let parts: Vec<&[u8]> = strings::split(host, b".").collect();
+    parts.len() == 4
+        && parts[0] == b"127"
+        && parts[1..]
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 3 && p.iter().all(u8::is_ascii_digit))
 }
 
 /// `{AccessKeyId, SecretAccessKey, Token, Expiration, AccountId, Code?}`

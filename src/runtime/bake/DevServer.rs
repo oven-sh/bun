@@ -4027,8 +4027,8 @@ pub(super) fn finalize_bundle(
                 // and `code()` only reads.
                 unsafe { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
                 None,
-                false,
-                false,
+                bundler::chunk::ReferencePathStyle::ImporterRelative,
+                bundler::chunk::SourceMapShiftTracking::Disabled,
             )?
         };
 

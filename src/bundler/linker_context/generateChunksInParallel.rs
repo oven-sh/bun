@@ -17,6 +17,7 @@ use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
 use crate::cheap_prefix_normalizer;
+use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
 
@@ -667,8 +668,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 &chunks[ci],
                 chunks,
                 &mut ds,
-                false,
-                sourcemap_option != SourceMapOption::None,
+                ReferencePathStyle::ImporterRelative,
+                SourceMapShiftTracking::for_source_map(sourcemap_option),
                 &scc,
             )?;
             chunks[ci].intermediate_output = intermediate_output;
@@ -899,19 +900,25 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     &chunks[chunk_index_in_chunks_list],
                     chunks,
                     &mut display_size,
-                    false,
-                    false,
+                    ReferencePathStyle::ImporterRelative,
+                    SourceMapShiftTracking::Disabled,
                     standalone_chunk_contents.as_deref().unwrap(),
                 )?
             } else {
-                let force_abs = c.resolver().opts.compile
+                let reference_path_style = if c.resolver().opts.compile
                     && !chunks[chunk_index_in_chunks_list]
                         .flags
-                        .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
-                let enable_sm = chunks[chunk_index_in_chunks_list]
-                    .content
-                    .sourcemap(c.options.source_maps)
-                    != SourceMapOption::None;
+                        .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+                {
+                    ReferencePathStyle::OutdirRelative
+                } else {
+                    ReferencePathStyle::ImporterRelative
+                };
+                let shift_tracking = SourceMapShiftTracking::for_source_map(
+                    chunks[chunk_index_in_chunks_list]
+                        .content
+                        .sourcemap(c.options.source_maps),
+                );
                 intermediate_output.code(
                     None,
                     c.parse_graph(),
@@ -920,8 +927,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     &chunks[chunk_index_in_chunks_list],
                     chunks,
                     &mut display_size,
-                    force_abs,
-                    enable_sm,
+                    reference_path_style,
+                    shift_tracking,
                 )?
             };
             // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);

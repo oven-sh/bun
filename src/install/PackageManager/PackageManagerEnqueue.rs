@@ -1965,13 +1965,10 @@ fn enqueue_local_tarball(
     unsafe { &raw mut (*task).threadpool_task }
 }
 
-/// A local tarball path is relative to the package.json that wrote it. When that is a
-/// workspace or a `file:` folder package, returns its directory relative to the top-level
-/// dir. `None` means the top-level dir itself: the root wrote the path, either as its own
-/// dependency or as an override / resolutions / catalog entry substituted for whatever the
-/// declaring package asked for (those only exist in the root package.json, so the declared
-/// specifier is then not this path), or the declaring package was extracted from the cache
-/// and has no directory in the project.
+/// The directory `path` is relative to when that is not the top-level dir: the workspace or
+/// `file:` folder package whose package.json wrote it. An edge whose own specifier is not
+/// `path` got it from the root's overrides / resolutions / catalogs, so it stays relative
+/// to the top-level dir.
 fn local_tarball_base_dir<'a>(
     lockfile: &'a Lockfile::Lockfile,
     dependency_id: DependencyID,

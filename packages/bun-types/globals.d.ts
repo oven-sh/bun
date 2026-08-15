@@ -124,7 +124,58 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
 /**
  * A WebSocket client implementation.
  */
-interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {}
+interface WebSocket extends Bun.__internal.LibEmptyOrBunWebSocket {
+  addEventListener(
+    type: "close",
+    listener: (this: WebSocket, ev: CloseEvent) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: "error",
+    listener: (this: WebSocket, ev: ErrorEvent) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: "message",
+    listener: (this: WebSocket, ev: MessageEvent) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: "open",
+    listener: (this: WebSocket, ev: Event) => any,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  addEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | AddEventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: "close",
+    listener: (this: WebSocket, ev: CloseEvent) => any,
+    options?: boolean | Bun.EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: "error",
+    listener: (this: WebSocket, ev: ErrorEvent) => any,
+    options?: boolean | Bun.EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: "message",
+    listener: (this: WebSocket, ev: MessageEvent) => any,
+    options?: boolean | Bun.EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: "open",
+    listener: (this: WebSocket, ev: Event) => any,
+    options?: boolean | Bun.EventListenerOptions,
+  ): void;
+  removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    options?: boolean | Bun.EventListenerOptions,
+  ): void;
+}
 /**
  * A WebSocket client implementation.
  */

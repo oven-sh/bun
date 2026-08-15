@@ -474,16 +474,88 @@ describe("Bun.Terminal", () => {
       expect(terminal.inputFlags).toBe(0);
     });
 
+    test.skipIf(isWindows)("setting flags on a terminal closed while coercing the value is a no-op", () => {
+      const terminal = new Bun.Terminal({});
+
+      terminal.localFlags = {
+        valueOf() {
+          terminal.close();
+          return 0;
+        },
+      } as any;
+
+      expect(terminal.closed).toBe(true);
+    });
+
+    test.skipIf(isWindows)("setting flags throws when the terminal's fd is not a PTY", async () => {
+      // No libc rejects a termios update on a healthy PTY portably, so swap
+      // the PTY master fd out for a regular file behind the terminal's back.
+      // openpty() hands out the lowest free fd, so the master lands on the fd
+      // number the probe just freed. A regular file fails termios ioctls with
+      // ENOTTY on every POSIX kernel; /dev/null would be ENODEV on macOS.
+      const script = `
+        const fs = require("node:fs");
+        // The first terminal may open unrelated fds on the side (openpty is
+        // loaded lazily); construct one up front so the probe below sees a
+        // settled fd table.
+        new Bun.Terminal({}).close();
+        const probe = fs.openSync(process.execPath, "r");
+        fs.closeSync(probe);
+
+        const terminal = new Bun.Terminal({});
+        const flags = terminal.localFlags;
+        fs.closeSync(probe);
+        const replacement = fs.openSync(process.execPath, "r");
+
+        let thrown = null;
+        try {
+          terminal.localFlags = flags;
+        } catch (e) {
+          thrown = { code: e.code, syscall: e.syscall };
+        }
+        console.log(JSON.stringify({
+          swapped: replacement === probe,
+          hadFlagsBeforeSwap: flags !== 0,
+          flagsAfterSwap: terminal.localFlags,
+          closed: terminal.closed,
+          thrown,
+        }));
+        terminal.close();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        swapped: true,
+        hadFlagsBeforeSwap: true,
+        flagsAfterSwap: 0,
+        closed: false,
+        thrown: { code: "ENOTTY", syscall: "ioctl" },
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
       // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
       // matching the reference `@max(0, @min(num, max))` semantics. The kernel
       // may mask some bits per field, so compare NaN against Infinity rather
-      // than a hard-coded constant.
+      // than a hard-coded constant. Both assignments start from the original
+      // flags: re-requesting only the already-masked c_cflag bits is a
+      // tcsetattr that changes nothing, which Debian's and Ubuntu's patched
+      // glibc reports as EINVAL (upstream glibc and other libcs return 0).
       await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
 
       for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {
+        const original = terminal[prop];
         terminal[prop] = Infinity;
         const fromInfinity = terminal[prop];
+        terminal[prop] = original;
         terminal[prop] = NaN;
         const fromNaN = terminal[prop];
         expect({ prop, fromNaN }).toEqual({ prop, fromNaN: fromInfinity });

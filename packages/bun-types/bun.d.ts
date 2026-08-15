@@ -8296,7 +8296,7 @@ declare module "bun" {
      * Terminal input flags (c_iflag from termios).
      * Controls input processing behavior like ICRNL, IXON, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     * Setting is a no-op on a closed terminal and throws if the PTY rejects the new flags.
      */
     inputFlags: number;
 
@@ -8304,7 +8304,7 @@ declare module "bun" {
      * Terminal output flags (c_oflag from termios).
      * Controls output processing behavior like OPOST, ONLCR, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     * Setting is a no-op on a closed terminal and throws if the PTY rejects the new flags.
      */
     outputFlags: number;
 
@@ -8312,7 +8312,7 @@ declare module "bun" {
      * Terminal local flags (c_lflag from termios).
      * Controls local processing like ICANON, ECHO, ISIG, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     * Setting is a no-op on a closed terminal and throws if the PTY rejects the new flags.
      */
     localFlags: number;
 
@@ -8320,7 +8320,7 @@ declare module "bun" {
      * Terminal control flags (c_cflag from termios).
      * Controls hardware characteristics like CSIZE, PARENB, etc.
      * Returns 0 if the terminal is closed.
-     * Setting returns true on success, false on failure.
+     * Setting is a no-op on a closed terminal and throws if the PTY rejects the new flags.
      */
     controlFlags: number;
   }

@@ -1364,7 +1364,7 @@ impl Terminal {
             if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
                 return JSValue::js_number(0.0);
             }
-            let Some(termios_data) = get_termios(self.master_fd.get()) else {
+            let Ok(termios_data) = get_termios(self.master_fd.get()) else {
                 return JSValue::js_number(0.0);
             };
             let raw: u64 = match FIELD {
@@ -1389,13 +1389,14 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
+            let num = value.coerce_f64(global_object)?;
+            // Checked after coercion: a valueOf() may have closed the terminal.
+            let master_fd = self.master_fd.get();
+            if self.flags.get().contains(Flags::CLOSED) || master_fd == Fd::INVALID {
                 return Ok(());
             }
-            let num = value.coerce_f64(global_object)?;
-            let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
-                return Ok(());
-            };
+            let mut termios_data =
+                get_termios(master_fd).map_err(|err| err.throw(global_object))?;
             let max_val: f64 = libc::tcflag_t::MAX as f64;
             // Match Zig's `@max(0, @min(num, max_val))`: apply min first so NaN
             // resolves to max_val (f64::min returns the non-NaN operand), not 0.
@@ -1407,8 +1408,7 @@ impl Terminal {
                 TermiosField::Lflag => termios_data.c_lflag = bits,
                 TermiosField::Cflag => termios_data.c_cflag = bits,
             }
-            let _ = set_termios(self.master_fd.get(), &termios_data);
-            Ok(())
+            set_termios(master_fd, &termios_data).map_err(|err| err.throw(global_object))
         }
     }
 
@@ -1675,14 +1675,14 @@ type Termios = sys::posix::Termios;
 
 /// Get terminal attributes using tcgetattr
 #[cfg(unix)]
-fn get_termios(fd: Fd) -> Option<Termios> {
-    sys::posix::tcgetattr(fd.native()).ok()
+fn get_termios(fd: Fd) -> sys::Result<Termios> {
+    sys::posix::tcgetattr(fd.native())
 }
 
 /// Set terminal attributes using tcsetattr (TCSANOW = immediate)
 #[cfg(unix)]
-fn set_termios(fd: Fd, termios_p: &Termios) -> bool {
-    sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p).is_ok()
+fn set_termios(fd: Fd, termios_p: &Termios) -> sys::Result<()> {
+    sys::posix::tcsetattr(fd.native(), sys::posix::TCSA::Now, termios_p)
 }
 
 impl Terminal {

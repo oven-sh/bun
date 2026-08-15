@@ -119,8 +119,7 @@ impl Value {
     }
 
     /// ASCII output aliases `bytes` (an external string with a no-op free;
-    /// `self` must outlive it), non-ASCII output is transcoded. Both return
-    /// one owned reference: release it with `transferToWTFString()`.
+    /// `self` must outlive it), non-ASCII output is transcoded.
     pub fn to_bun_string_ref(&self) -> BunString {
         match self {
             Value::Noop => BunString::EMPTY,

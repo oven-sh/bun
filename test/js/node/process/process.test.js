@@ -2193,8 +2193,13 @@ it("process.env.TZ changes reach the no-argument Date toLocale*String formatters
          }
          return out;
        }
-       const inContext = (context, lead) => inOrder(lead, name => vm.runInContext("d." + name + "()", context));
-       const context = vm.createContext({ d });
+       // The Date has to be created inside the realm: the method is looked up on
+       // the Date's own prototype and runs against its realm's formatters, so
+       // calling a main-realm Date from inside a context would only exercise the
+       // main realm again.
+       const inContext = (context, lead) =>
+         inOrder(lead, name => vm.runInContext("new Date(ms)." + name + "()", context));
+       const context = vm.createContext({ ms });
        const inShadowRealm = new ShadowRealm().evaluate("(ms, name) => new Date(ms)[name]()");
        let lateContext;
        function snapshot(lead) {
@@ -2209,7 +2214,7 @@ it("process.env.TZ changes reach the no-argument Date toLocale*String formatters
        process.env.TZ = "America/Los_Angeles";
        const la = snapshot(0);
        process.env.TZ = "Asia/Tokyo";
-       lateContext = vm.createContext({ d });
+       lateContext = vm.createContext({ ms });
        const tokyo = snapshot(1);
        delete process.env.TZ;
        const afterDelete = snapshot(2);

@@ -352,27 +352,20 @@ pub mod entry {
         }
     }
 
-    /// Longest resolution text (everything after `name@` in a store key) written
-    /// verbatim, in bytes. Folder paths, tarball URLs and git URLs are as long as
-    /// the user's spec, and the package directory
-    /// `node_modules/.bun/<key>[+<peer hash>]/node_modules/<name>` is the cwd of
-    /// the package's lifecycle scripts, which `CreateProcess` rejects (ENOENT)
-    /// beyond Windows' MAX_PATH (260) even though bun's own file operations
-    /// accept longer paths. The bound limits what the store adds to the project
-    /// path to `34 + 2 * name.len() + 80` bytes (+17 with peers); 80 leaves
-    /// versions and `github+owner+repo+<sha>` (60 to 75 bytes) verbatim. It also
-    /// keeps the directory name itself within NAME_MAX (255) together with the
-    /// `+<peer hash>`, `-<entry hash>` and `.tmp-<hex>` suffixes for names of up
-    /// to 119 bytes.
+    /// Bound on the resolution text (everything after `name@`), which for folder,
+    /// tarball and git dependencies is otherwise as long as the user's spec. The
+    /// package directory is the cwd of its lifecycle scripts, and on Windows
+    /// `CreateProcess` rejects a cwd beyond MAX_PATH (ENOENT) even though bun's
+    /// own file operations accept such paths. 80 leaves versions and
+    /// `github+owner+repo+<sha>` verbatim.
     const MAX_RESOLUTION_LEN: usize = 80;
-    /// A longer resolution is written as at most its first `CUT_RESOLUTION_LEN`
-    /// bytes (backed up to a character boundary) plus `+<16 hex wyhash of all
-    /// the bytes the formatter produced>` (seed 0, the `Bun.hash` variant), so
-    /// it is still at most `MAX_RESOLUTION_LEN` bytes.
+    /// A longer resolution becomes its leading bytes, cut at a character boundary,
+    /// plus `+<16 hex wyhash (seed 0) of the whole text>`: at most
+    /// `MAX_RESOLUTION_LEN` bytes in total.
     const CUT_RESOLUTION_LEN: usize = MAX_RESOLUTION_LEN - "+".len() - 16;
 
-    /// `fmt::Write` sink for a resolution text: keeps its first
-    /// `MAX_RESOLUTION_LEN` bytes plus the length and hash of all of it.
+    /// Keeps the first `MAX_RESOLUTION_LEN` bytes written plus the length and
+    /// hash of everything written.
     struct ResolutionSink {
         buf: [u8; MAX_RESOLUTION_LEN],
         len: usize,

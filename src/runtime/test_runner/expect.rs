@@ -184,12 +184,11 @@ enum SnapshotContextError {
 }
 
 impl SnapshotContextError {
-    /// Judged from the runner state `expect()` captured: once that state no longer resolves to
-    /// a running entry, a captured entry means its test has finished, a concurrent group never
-    /// captures an entry, and the other phases have no test at all.
+    /// For a state captured by `expect()` that no longer resolves to a running entry.
     fn from_phase(phase: &bun_test::RefDataValue) -> Self {
         match phase {
             bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => Self::TestFinished,
+            // `get_current_state_data` records no entry only while a concurrent group runs.
             bun_test::RefDataValue::Execution { entry_data: None, .. } => Self::ConcurrentGroup,
             bun_test::RefDataValue::Start
             | bun_test::RefDataValue::Collection { .. }
@@ -260,8 +259,7 @@ impl Expect {
         parent.bun_test()
     }
 
-    /// Only meaningful once `bun_test()` is None: the file this `expect()` was created in has
-    /// finished (or there was none), so the captured state is all that is left to report from.
+    /// Only valid once `bun_test()` is None; a live file is classified by `get_snapshot_name`.
     fn snapshot_context_error(&self) -> SnapshotContextError {
         match self.parent.as_ref() {
             Some(parent) => SnapshotContextError::from_phase(&parent.phase),
@@ -269,8 +267,7 @@ impl Expect {
         }
     }
 
-    /// Throws unless the test file this `expect()` was created in is still running. The file
-    /// snapshot matchers call this before looking at their arguments.
+    /// Throws unless the test file this `expect()` was created in is still running.
     pub(crate) fn check_snapshot_context(
         &self,
         global_this: &JSGlobalObject,

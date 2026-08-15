@@ -501,13 +501,9 @@ impl Default for Framework {
     }
 }
 
-/// Resolves `fileSystemRouterTypes[index].root` against the project directory
-/// for both `Framework::resolve` implementations. The root is user input of any
-/// length, so the join is checked: a resolved path that does not fit in a
-/// `PathBuffer` cannot name a directory and is reported the same way
-/// `resolve_helper` reports an unresolvable entry point. Every root that
-/// resolves therefore fits in the `PathBuffer` that `DevServer::init` and
-/// `bun build --app` later re-join it into.
+/// Resolves `fileSystemRouterTypes[index].root` for both `Framework::resolve`
+/// implementations. A root that does not fit in a `PathBuffer` cannot name a
+/// directory: it is reported like an unresolvable entry point and `None` is returned.
 pub(crate) fn resolve_router_root(index: usize, root: &[u8]) -> Option<Box<[u8]>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut buf = paths::path_buffer_pool::get();

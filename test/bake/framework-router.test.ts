@@ -139,6 +139,13 @@ describe.concurrent("fileSystemRouterTypes[n].root longer than the path buffer",
   // macOS, ~96 KB on Windows), so the resolved root cannot fit in a path buffer.
   const tooLongRoot = `Buffer.alloc(100_000, "a").toString()`;
   const tooLongRootError = "ENAMETOOLONG: Failed to resolve 'fileSystemRouterTypes[0].root' for framework";
+
+  test("the internal FrameworkRouter constructor throws instead of crashing", () => {
+    const root = Buffer.alloc(100_000, "a").toString();
+    expect(() => new FrameworkRouter({ root, style: "nextjs-pages" })).toThrow(
+      /options\.root resolves to a path longer than \d+ bytes/,
+    );
+  });
   const serverEntryPoint = `
     export function render(req, meta) {
       return meta.pageModule.default(req, meta);

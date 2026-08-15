@@ -321,18 +321,21 @@ it("jsx props are separated no matter where children sits in props", () => {
   expect(Bun.inspect(<x {...{ children: "c" }} a="1" b="2" />)).toBe(`<x a="1" b="2">c</x>`);
   expect(Bun.inspect(<x key="k" {...{ children: "c" }} a="1" b="2" />)).toBe(`<x key="k" a="1" b="2">c</x>`);
   // `children: undefined` is not printed and must not leave a stray space behind.
-  expect(
-    Bun.inspect(
-      <x a="1" b="2">
-        {undefined}
-      </x>,
-    ),
-  ).toBe(`<x a="1" b="2" />`);
+  const undefinedChild = (
+    <x a="1" b="2">
+      {undefined}
+    </x>
+  );
+  expect(Bun.inspect(undefinedChild)).toBe(`<x a="1" b="2" />`);
   // Five props share the tag's line; the rest go one per line.
-  expect(Bun.inspect(<x a="1" b="2" c="3" d="4" e="5" f="6" />)).toBe(`<x a="1" b="2" c="3" d="4" e="5"\n  f="6" />`);
+  const sixProps = <x a="1" b="2" c="3" d="4" e="5" f="6" />;
+  expect(Bun.inspect(sixProps)).toBe(`<x a="1" b="2" c="3" d="4" e="5"\n  f="6" />`);
   expect(Bun.inspect(<x {...{ children: "c" }} a="1" b="2" c="3" d="4" e="5" f="6" />)).toBe(
     `<x a="1" b="2" c="3" d="4" e="5"\n  f="6">c</x>`,
   );
+  // compact mode (also used for console.table cells) never wraps props and uses the same separator logic.
+  expect(Bun.inspect(sixProps, { compact: true })).toBe(`<x a="1" b="2" c="3" d="4" e="5" f="6" />`);
+  expect(Bun.inspect(undefinedChild, { compact: true })).toBe(`<x a="1" b="2" />`);
 });
 
 it("inspect", () => {

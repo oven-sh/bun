@@ -3,7 +3,9 @@
 //! run on any thread.
 
 use bun_core::strings;
-use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, StringJsc as _};
+use bun_jsc::JSGlobalObject;
+
+use crate::webcore::cloud::env::Env;
 
 fn owned(v: Option<Vec<u8>>) -> Option<Box<[u8]>> {
     v.filter(|s| !s.is_empty()).map(Vec::into_boxed_slice)
@@ -11,106 +13,6 @@ fn owned(v: Option<Vec<u8>>) -> Option<Box<[u8]>> {
 
 fn truthy(v: Option<&[u8]>) -> bool {
     matches!(v, Some(s) if s.eq_ignore_ascii_case(b"true") || s == b"1")
-}
-
-/// Reads the live `process.env` object (so `process.env.AWS_PROFILE = "x"`
-/// at runtime is honoured), falling back to the VM's dotenv loader if the
-/// object is unavailable. Getter exceptions are swallowed as "unset".
-pub struct Env<'a> {
-    global: &'a JSGlobalObject,
-    object: Option<JSValue>,
-}
-
-impl<'a> Env<'a> {
-    pub fn new(global: &'a JSGlobalObject) -> Self {
-        let object = global
-            .to_js_value()
-            .get(global, "process")
-            .ok()
-            .flatten()
-            .filter(|p| p.is_object())
-            .and_then(|p| p.get(global, "env").ok().flatten())
-            .filter(|e| e.is_object());
-        if object.is_none() {
-            global.clear_exception_except_termination();
-        }
-        Env { global, object }
-    }
-
-    pub fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        match self.object {
-            Some(obj) => match obj.get(self.global, key) {
-                Ok(Some(v)) if v.is_string() => {
-                    let s = bun_core::OwnedString::new(bun_core::String::from_js(v, self.global).ok()?);
-                    Some(s.to_utf8().slice().to_vec())
-                }
-                Ok(_) => None,
-                Err(_) => {
-                    self.global.clear_exception_except_termination();
-                    None
-                }
-            },
-            None => self
-                .global
-                .bun_vm()
-                .as_mut()
-                .transpiler
-                .env_mut()
-                .get(key)
-                .map(<[u8]>::to_vec),
-        }
-    }
-
-    /// Every string-valued entry, for `credential_process` children.
-    pub fn to_map(&self) -> bun_sys::EnvMap {
-        let vm = self.global.bun_vm().as_mut();
-        let from_loader = || {
-            vm.transpiler
-                .env_mut()
-                .map
-                .std_env_map()
-                .map(|w| w.get().clone())
-                .unwrap_or_default()
-        };
-        let Some(obj) = self.object.and_then(JSValue::get_object) else {
-            return from_loader();
-        };
-        let mut map = bun_sys::EnvMap::default();
-        let Ok(mut iter) = JSPropertyIterator::init(
-            self.global,
-            obj,
-            JSPropertyIteratorOptions::new(true, true),
-        ) else {
-            self.global.clear_exception_except_termination();
-            return from_loader();
-        };
-        loop {
-            match iter.next() {
-                Ok(Some(key)) => {
-                    let value = iter.value;
-                    if !value.is_string() {
-                        continue;
-                    }
-                    let Ok(v) = bun_core::String::from_js(value, self.global) else {
-                        self.global.clear_exception_except_termination();
-                        continue;
-                    };
-                    let v = bun_core::OwnedString::new(v);
-                    #[allow(clippy::disallowed_methods)]
-                    map.insert(
-                        key.to_string(),
-                        String::from_utf8_lossy(v.to_utf8().slice()).into_owned(),
-                    );
-                }
-                Ok(None) => break,
-                Err(_) => {
-                    self.global.clear_exception_except_termination();
-                    break;
-                }
-            }
-        }
-        map
-    }
 }
 
 #[derive(Default)]
@@ -163,12 +65,20 @@ impl ChainConfig {
         let env = Env::new(global);
         let timeout_secs: f64 = env
             .get(b"AWS_METADATA_SERVICE_TIMEOUT")
-            .and_then(|s| core::str::from_utf8(&s).ok().and_then(|s| s.trim().parse().ok()))
+            .and_then(|s| {
+                core::str::from_utf8(&s)
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+            })
             .filter(|v: &f64| v.is_finite() && *v > 0.0)
             .unwrap_or(1.0);
         let attempts: u32 = env
             .get(b"AWS_METADATA_SERVICE_NUM_ATTEMPTS")
-            .and_then(|s| core::str::from_utf8(&s).ok().and_then(|s| s.trim().parse().ok()))
+            .and_then(|s| {
+                core::str::from_utf8(&s)
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+            })
             .filter(|v: &u32| *v > 0)
             .unwrap_or(3);
         let reject_unauthorized = global.bun_vm().get_tls_reject_unauthorized();
@@ -180,7 +90,10 @@ impl ChainConfig {
             secret_access_key: owned(env.get(b"AWS_SECRET_ACCESS_KEY")),
             session_token: owned(env.get(b"AWS_SESSION_TOKEN")),
             account_id: owned(env.get(b"AWS_ACCOUNT_ID")),
-            region: owned(env.get(b"AWS_REGION").or_else(|| env.get(b"AWS_DEFAULT_REGION"))),
+            region: owned(
+                env.get(b"AWS_REGION")
+                    .or_else(|| env.get(b"AWS_DEFAULT_REGION")),
+            ),
             config_file: owned(env.get(b"AWS_CONFIG_FILE")),
             credentials_file: owned(env.get(b"AWS_SHARED_CREDENTIALS_FILE")),
             home: owned(

@@ -189,6 +189,32 @@ where
             writer.write_str("\n")?;
         }
 
+        if !credentials.has_static_credentials()
+            && let Some(provider) = &credentials.provider
+        {
+            // Ambient credentials: show which chain/profile and, once resolved, the source.
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>credentials<d>:<r> \"", ENABLE_ANSI_COLORS))?;
+            match provider.cached() {
+                Some(resolved) => bun_core::write_pretty!(
+                    writer,
+                    ENABLE_ANSI_COLORS,
+                    "<r><b>{}<r> <d>(profile: {}, accessKeyId: {}…)<r>\"",
+                    resolved.source.as_str(),
+                    BStr::new(provider.label()),
+                    BStr::new(&resolved.access_key_id[..resolved.access_key_id.len().min(4)]),
+                )?,
+                None => bun_core::write_pretty!(
+                    writer,
+                    ENABLE_ANSI_COLORS,
+                    "<r><b>auto<r> <d>(profile: {}, not yet resolved)<r>\"",
+                    BStr::new(provider.label()),
+                )?,
+            }
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+        }
+
         if let Some(acl_value) = acl {
             formatter.write_indent(writer)?;
             writer.write_str(pfmt!("<r>acl<d>:<r> \"", ENABLE_ANSI_COLORS))?;

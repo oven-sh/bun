@@ -4,9 +4,11 @@ use bstr::BStr;
 use bun_core::String as BunString;
 use bun_http_jsc::method_jsc;
 use bun_jsc::bun_string_jsc::create_utf8_for_js;
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StringJsc as _};
-use bun_s3_signing::sigv4;
+use bun_jsc::{
+    CallFrame, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StringJsc as _,
+};
 use bun_s3_signing::AwsCredentials;
+use bun_s3_signing::sigv4;
 
 use super::fetch_signing::provider_error_to_js;
 use super::sign_options::AwsSignOptions;
@@ -24,14 +26,22 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
 
 pub fn credentials_to_js(global: &JSGlobalObject, c: &AwsCredentials) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global, 7);
-    obj.put(global, b"accessKeyId".as_slice(), create_utf8_for_js(global, &c.access_key_id)?);
+    obj.put(
+        global,
+        b"accessKeyId".as_slice(),
+        create_utf8_for_js(global, &c.access_key_id)?,
+    );
     obj.put(
         global,
         b"secretAccessKey".as_slice(),
         create_utf8_for_js(global, &c.secret_access_key)?,
     );
     if let Some(t) = c.session_token() {
-        obj.put(global, b"sessionToken".as_slice(), create_utf8_for_js(global, t)?);
+        obj.put(
+            global,
+            b"sessionToken".as_slice(),
+            create_utf8_for_js(global, t)?,
+        );
     }
     if let Some(exp) = c.expiration {
         obj.put(
@@ -44,7 +54,11 @@ pub fn credentials_to_js(global: &JSGlobalObject, c: &AwsCredentials) -> JsResul
         obj.put(global, b"region".as_slice(), create_utf8_for_js(global, r)?);
     }
     if let Some(a) = &c.account_id {
-        obj.put(global, b"accountId".as_slice(), create_utf8_for_js(global, a)?);
+        obj.put(
+            global,
+            b"accountId".as_slice(),
+            create_utf8_for_js(global, a)?,
+        );
     }
     obj.put(
         global,
@@ -116,9 +130,8 @@ fn presign(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let href_utf8 = href.to_utf8();
     let url = bun_url::URL::parse(href_utf8.slice());
     if !(url.is_http() || url.is_https()) || url.host.is_empty() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "presign() expects an http: or https: URL"
-        )));
+        return Err(global
+            .throw_invalid_arguments(format_args!("presign() expects an http: or https: URL")));
     }
 
     let options_value = args.get(1).copied().unwrap_or(JSValue::TRUE);
@@ -128,9 +141,9 @@ fn presign(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         options_value
     };
     let Some(opts) = AwsSignOptions::from_js(global, options_value)? else {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "presign() options must be an object"
-        )));
+        return Err(
+            global.throw_invalid_arguments(format_args!("presign() options must be an object"))
+        );
     };
     let mut method = bun_http::Method::GET;
     if options_value.is_object() {

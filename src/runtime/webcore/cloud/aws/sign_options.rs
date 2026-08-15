@@ -43,25 +43,30 @@ impl AwsSignOptions {
         if value.is_undefined_or_null() || (value.is_boolean() && !value.as_boolean()) {
             return Ok(None);
         }
-        let env = super::config::Env::new(global);
+        let env = crate::webcore::cloud::env::Env::new(global);
         let env_region: Option<Box<[u8]>> = env
             .get(b"AWS_REGION")
             .or_else(|| env.get(b"AWS_DEFAULT_REGION"))
             .filter(|s| !s.is_empty())
             .map(Vec::into_boxed_slice);
-        let env_static = match (env.get(b"AWS_ACCESS_KEY_ID"), env.get(b"AWS_SECRET_ACCESS_KEY")) {
-            (Some(a), Some(s)) if !a.is_empty() && !s.is_empty() => Some(Arc::new(AwsCredentials {
-                access_key_id: a.into_boxed_slice(),
-                secret_access_key: s.into_boxed_slice(),
-                session_token: env
-                    .get(b"AWS_SESSION_TOKEN")
-                    .map(Vec::into_boxed_slice)
-                    .unwrap_or_default(),
-                expiration: None,
-                account_id: None,
-                region: env_region.clone(),
-                source: CredentialsSource::Env,
-            })),
+        let env_static = match (
+            env.get(b"AWS_ACCESS_KEY_ID"),
+            env.get(b"AWS_SECRET_ACCESS_KEY"),
+        ) {
+            (Some(a), Some(s)) if !a.is_empty() && !s.is_empty() => {
+                Some(Arc::new(AwsCredentials {
+                    access_key_id: a.into_boxed_slice(),
+                    secret_access_key: s.into_boxed_slice(),
+                    session_token: env
+                        .get(b"AWS_SESSION_TOKEN")
+                        .map(Vec::into_boxed_slice)
+                        .unwrap_or_default(),
+                    expiration: None,
+                    account_id: None,
+                    region: env_region.clone(),
+                    source: CredentialsSource::Env,
+                }))
+            }
             _ => None,
         };
 
@@ -228,21 +233,18 @@ impl AwsSignOptions {
         host: &[u8],
         creds: &AwsCredentials,
     ) -> Result<(Box<[u8]>, Box<[u8]>), String> {
-        let (inferred_service, inferred_region) = if self.service.is_none() || self.region.is_none() {
+        let (inferred_service, inferred_region) = if self.service.is_none() || self.region.is_none()
+        {
             sigv4::infer_service_region(host)
         } else {
             (None, None)
         };
-        let service = self
-            .service
-            .clone()
-            .or(inferred_service)
-            .ok_or_else(|| {
-                format!(
-                    "cannot tell which AWS service \"{}\" is; pass aws: {{ service: \"...\" }}",
-                    BStr::new(host)
-                )
-            })?;
+        let service = self.service.clone().or(inferred_service).ok_or_else(|| {
+            format!(
+                "cannot tell which AWS service \"{}\" is; pass aws: {{ service: \"...\" }}",
+                BStr::new(host)
+            )
+        })?;
         let region = self
             .region
             .clone()

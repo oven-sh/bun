@@ -219,7 +219,11 @@ pub fn infer_service_region(host: &[u8]) -> (Option<Box<[u8]>>, Option<Box<[u8]>
             parts.pop();
         }
     }
-    while matches!(parts.last().copied(), Some(b"dualstack" | b"vpce" | b"api" | b"data")) && parts.len() > 1 {
+    while matches!(
+        parts.last().copied(),
+        Some(b"dualstack" | b"vpce" | b"api" | b"data")
+    ) && parts.len() > 1
+    {
         // `bucket.vpce-xx.s3.us-east-1.vpce.amazonaws.com`, `s3.dualstack.us-east-1…`
         // — but keep `api`/`data` when they are the only label (e.g. `api.ecr` handled below).
         let last = parts.last().copied().unwrap();
@@ -277,7 +281,8 @@ fn looks_like_region(s: &[u8]) -> bool {
     (2..=3).contains(&dashes)
         && s[..2].iter().all(u8::is_ascii_lowercase)
         && s[2] == b'-'
-        && s.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
+        && s.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
 }
 
 // ─── canonicalisation ──────────────────────────────────────────────────────
@@ -475,7 +480,9 @@ fn canonical_headers(
         ) {
             continue;
         }
-        if strings::index_of_any(value, b"\r\n").is_some() || strings::index_of_any(name, b"\r\n: ").is_some() {
+        if strings::index_of_any(value, b"\r\n").is_some()
+            || strings::index_of_any(name, b"\r\n: ").is_some()
+        {
             return Err(SignError::InvalidHeaderValue);
         }
         let mut v = Vec::with_capacity(value.len());
@@ -511,7 +518,9 @@ fn payload_hash(payload: Payload<'_>) -> Box<[u8]> {
         Payload::Bytes(b) => {
             let mut digest = [0u8; SHA256::DIGEST];
             SHA256::hash(b, &mut digest);
-            format!("{}", hex_lower(&digest)).into_bytes().into_boxed_slice()
+            format!("{}", hex_lower(&digest))
+                .into_bytes()
+                .into_boxed_slice()
         }
     }
 }
@@ -615,7 +624,9 @@ fn string_to_sign(
 /// `x-amz-content-sha256` values to attach.
 pub fn sign(creds: &Credentials<'_>, req: &Request<'_>) -> Result<SignedRequest, SignError> {
     validate(creds, req)?;
-    let s3 = req.s3_path_semantics.unwrap_or_else(|| is_s3_service(req.scope.service));
+    let s3 = req
+        .s3_path_semantics
+        .unwrap_or_else(|| is_s3_service(req.scope.service));
     let amz_date = req.datetime.unwrap_or_else(amz_datetime_now);
     let payload = payload_hash(req.payload);
 
@@ -632,7 +643,9 @@ pub fn sign(creds: &Credentials<'_>, req: &Request<'_>) -> Result<SignedRequest,
         creds.session_token.filter(|t| !t.is_empty()),
         req.headers,
     )?;
-    let sts = string_to_sign(&amz_date, req.scope, req.method, &uri, &query, &headers, &payload);
+    let sts = string_to_sign(
+        &amz_date, req.scope, req.method, &uri, &query, &headers, &payload,
+    );
     let key = signing_key(creds.secret_access_key, &amz_date[..8], req.scope)?;
     let signature = hmac(&key, &sts.value)?;
 
@@ -668,7 +681,9 @@ pub fn presign(
     if expires_in_seconds == 0 || expires_in_seconds > MAX_PRESIGN_EXPIRES {
         return Err(SignError::InvalidExpires);
     }
-    let s3 = req.s3_path_semantics.unwrap_or_else(|| is_s3_service(req.scope.service));
+    let s3 = req
+        .s3_path_semantics
+        .unwrap_or_else(|| is_s3_service(req.scope.service));
     let amz_date = req.datetime.unwrap_or_else(amz_datetime_now);
     // S3 ignores the body for presigned URLs; other services hash it.
     let payload: Box<[u8]> = if s3 && matches!(req.payload, Payload::Bytes(b) if b.is_empty()) {
@@ -697,7 +712,10 @@ pub fn presign(
         (b"X-Amz-Algorithm".to_vec(), b"AWS4-HMAC-SHA256".to_vec()),
         (b"X-Amz-Credential".to_vec(), enc(&credential)),
         (b"X-Amz-Date".to_vec(), amz_date.to_vec()),
-        (b"X-Amz-Expires".to_vec(), expires_in_seconds.to_string().into_bytes()),
+        (
+            b"X-Amz-Expires".to_vec(),
+            expires_in_seconds.to_string().into_bytes(),
+        ),
         (b"X-Amz-SignedHeaders".to_vec(), enc(&headers.names)),
     ];
     if let Some(token) = creds.session_token.filter(|t| !t.is_empty()) {
@@ -708,11 +726,14 @@ pub fn presign(
     let mut query = Vec::with_capacity(req.query.len() + 256);
     canonical_query(&mut query, req.query, &extra);
 
-    let sts = string_to_sign(&amz_date, req.scope, req.method, &uri, &query, &headers, &payload);
+    let sts = string_to_sign(
+        &amz_date, req.scope, req.method, &uri, &query, &headers, &payload,
+    );
     let key = signing_key(creds.secret_access_key, &amz_date[..8], req.scope)?;
     let signature = hmac(&key, &sts.value)?;
 
-    let mut url = Vec::with_capacity(scheme.len() + 3 + req.host.len() + uri.len() + query.len() + 82);
+    let mut url =
+        Vec::with_capacity(scheme.len() + 3 + req.host.len() + uri.len() + query.len() + 82);
     url.extend_from_slice(scheme);
     url.extend_from_slice(b"://");
     url.extend_from_slice(req.host);
@@ -760,7 +781,10 @@ mod tests {
                 query: b"",
                 headers: &[],
                 payload: Payload::Bytes(b""),
-                scope: Scope { service: b"service", region: b"us-east-1" },
+                scope: Scope {
+                    service: b"service",
+                    region: b"us-east-1",
+                },
                 datetime: Some(dt()),
                 s3_path_semantics: None,
             },
@@ -783,13 +807,18 @@ mod tests {
                 query: b"Param2=value2&Param1=value1",
                 headers: &[],
                 payload: Payload::Bytes(b""),
-                scope: Scope { service: b"service", region: b"us-east-1" },
+                scope: Scope {
+                    service: b"service",
+                    region: b"us-east-1",
+                },
                 datetime: Some(dt()),
                 s3_path_semantics: None,
             },
         )
         .unwrap();
-        assert!(r.authorization.ends_with(b"Signature=b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500"));
+        assert!(r.authorization.ends_with(
+            b"Signature=b97d918cfa904a5beff61c982a1b6f458b799221646efd99d3219ec94cdf2500"
+        ));
     }
 
     #[test]
@@ -803,7 +832,10 @@ mod tests {
                 query: b"",
                 headers: &[(b"Content-Type", b"application/x-www-form-urlencoded")],
                 payload: Payload::Bytes(b"Param1=value1"),
-                scope: Scope { service: b"service", region: b"us-east-1" },
+                scope: Scope {
+                    service: b"service",
+                    region: b"us-east-1",
+                },
                 datetime: Some(dt()),
                 s3_path_semantics: None,
             },
@@ -824,22 +856,33 @@ mod tests {
                 query: b"",
                 headers: &[],
                 payload: Payload::Bytes(b""),
-                scope: Scope { service: b"service", region: b"us-east-1" },
+                scope: Scope {
+                    service: b"service",
+                    region: b"us-east-1",
+                },
                 datetime: Some(dt()),
                 s3_path_semantics: None,
             },
         )
         .unwrap();
-        assert!(r.authorization.ends_with(b"Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"));
+        assert!(r.authorization.ends_with(
+            b"Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31"
+        ));
     }
 
     #[test]
     fn iso8601() {
         assert_eq!(parse_iso8601(b"1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(parse_iso8601(b"2015-08-30T12:36:00Z"), Some(1_440_938_160));
-        assert_eq!(parse_iso8601(b"2015-08-30T12:36:00.123Z"), Some(1_440_938_160));
+        assert_eq!(
+            parse_iso8601(b"2015-08-30T12:36:00.123Z"),
+            Some(1_440_938_160)
+        );
         assert_eq!(parse_iso8601(b"20150830T123600Z"), Some(1_440_938_160));
-        assert_eq!(parse_iso8601(b"2015-08-30T14:36:00+02:00"), Some(1_440_938_160));
+        assert_eq!(
+            parse_iso8601(b"2015-08-30T14:36:00+02:00"),
+            Some(1_440_938_160)
+        );
         assert_eq!(amz_datetime(1_440_938_160), *b"20150830T123600Z");
         assert_eq!(parse_iso8601(b"garbage"), None);
     }
@@ -853,19 +896,58 @@ mod tests {
                 r.map(|r| String::from_utf8(r.into_vec()).unwrap()),
             )
         };
-        assert_eq!(t("dynamodb.us-west-2.amazonaws.com"), (Some("dynamodb".into()), Some("us-west-2".into())));
-        assert_eq!(t("sts.amazonaws.com"), (Some("sts".into()), Some("us-east-1".into())));
-        assert_eq!(t("bucket.s3.eu-central-1.amazonaws.com"), (Some("s3".into()), Some("eu-central-1".into())));
-        assert_eq!(t("bucket.s3.amazonaws.com"), (Some("s3".into()), Some("us-east-1".into())));
-        assert_eq!(t("s3-us-west-2.amazonaws.com"), (Some("s3".into()), Some("us-west-2".into())));
-        assert_eq!(t("s3.dualstack.us-east-2.amazonaws.com"), (Some("s3".into()), Some("us-east-2".into())));
-        assert_eq!(t("abc.execute-api.ap-southeast-1.amazonaws.com"), (Some("execute-api".into()), Some("ap-southeast-1".into())));
-        assert_eq!(t("xyz.lambda-url.us-east-1.on.aws"), (Some("lambda".into()), Some("us-east-1".into())));
-        assert_eq!(t("email.us-east-1.amazonaws.com"), (Some("ses".into()), Some("us-east-1".into())));
-        assert_eq!(t("acct.r2.cloudflarestorage.com"), (Some("s3".into()), Some("auto".into())));
-        assert_eq!(t("bedrock-runtime.us-east-1.amazonaws.com"), (Some("bedrock-runtime".into()), Some("us-east-1".into())));
-        assert_eq!(t("kms-fips.us-gov-west-1.amazonaws.com"), (Some("kms".into()), Some("us-gov-west-1".into())));
-        assert_eq!(t("dynamodb.cn-north-1.amazonaws.com.cn"), (Some("dynamodb".into()), Some("cn-north-1".into())));
+        assert_eq!(
+            t("dynamodb.us-west-2.amazonaws.com"),
+            (Some("dynamodb".into()), Some("us-west-2".into()))
+        );
+        assert_eq!(
+            t("sts.amazonaws.com"),
+            (Some("sts".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("bucket.s3.eu-central-1.amazonaws.com"),
+            (Some("s3".into()), Some("eu-central-1".into()))
+        );
+        assert_eq!(
+            t("bucket.s3.amazonaws.com"),
+            (Some("s3".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("s3-us-west-2.amazonaws.com"),
+            (Some("s3".into()), Some("us-west-2".into()))
+        );
+        assert_eq!(
+            t("s3.dualstack.us-east-2.amazonaws.com"),
+            (Some("s3".into()), Some("us-east-2".into()))
+        );
+        assert_eq!(
+            t("abc.execute-api.ap-southeast-1.amazonaws.com"),
+            (Some("execute-api".into()), Some("ap-southeast-1".into()))
+        );
+        assert_eq!(
+            t("xyz.lambda-url.us-east-1.on.aws"),
+            (Some("lambda".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("email.us-east-1.amazonaws.com"),
+            (Some("ses".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("acct.r2.cloudflarestorage.com"),
+            (Some("s3".into()), Some("auto".into()))
+        );
+        assert_eq!(
+            t("bedrock-runtime.us-east-1.amazonaws.com"),
+            (Some("bedrock-runtime".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("kms-fips.us-gov-west-1.amazonaws.com"),
+            (Some("kms".into()), Some("us-gov-west-1".into()))
+        );
+        assert_eq!(
+            t("dynamodb.cn-north-1.amazonaws.com.cn"),
+            (Some("dynamodb".into()), Some("cn-north-1".into()))
+        );
         assert_eq!(t("localhost:9000"), (None, None));
     }
 }

@@ -5116,6 +5116,83 @@ declare module "bun" {
     ): string;
   }
 
+  interface GCPTokenOptions {
+    /**
+     * OAuth scopes for the access token. Bare names expand to
+     * `https://www.googleapis.com/auth/<name>`.
+     * @default ["https://www.googleapis.com/auth/cloud-platform"]
+     */
+    scopes?: string | string[];
+    /** Discard the cached token and fetch a new one. */
+    refresh?: boolean;
+  }
+
+  interface GCPToken {
+    /** The bearer token to put in an `Authorization` header. */
+    token: string;
+    /** When the token expires. Bun refreshes it ~4 minutes before this. */
+    expiration: Date;
+    /**
+     * Where the token came from:
+     * - `"service-account"`: a service-account key file (`GOOGLE_APPLICATION_CREDENTIALS` or the gcloud ADC file)
+     * - `"authorized-user"`: user credentials from `gcloud auth application-default login`
+     * - `"metadata"`: the metadata server (Compute Engine, GKE, Cloud Run, Cloud Functions, App Engine, Cloud Build …)
+     */
+    source: "service-account" | "authorized-user" | "metadata";
+    /** The service account's email, when known. */
+    email?: string;
+    /** `project_id` from the key file or metadata server, when known. */
+    projectId?: string;
+    /** `quota_project_id` from the credentials file, or `GOOGLE_CLOUD_QUOTA_PROJECT`. */
+    quotaProjectId?: string;
+  }
+
+  /**
+   * Google Cloud tokens from Application Default Credentials, without an SDK.
+   *
+   * @example
+   * ```ts
+   * const { token } = await Bun.gcp.accessToken();
+   * const res = await fetch("https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets", {
+   *   headers: { Authorization: `Bearer ${token}` },
+   * });
+   * // or simply
+   * await fetch("https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets", { gcp: true });
+   * ```
+   */
+  namespace gcp {
+    /**
+     * Get an OAuth2 access token using
+     * [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials):
+     *
+     * 1. `GOOGLE_APPLICATION_CREDENTIALS` — a service-account key file or an
+     *    `authorized_user` file
+     * 2. `gcloud auth application-default login`'s file
+     *    (`~/.config/gcloud/application_default_credentials.json`,
+     *    `%APPDATA%\gcloud\…` on Windows, or under `CLOUDSDK_CONFIG`)
+     * 3. The metadata server on Compute Engine, GKE, Cloud Run, Cloud
+     *    Functions, App Engine … (honouring `GCE_METADATA_HOST` and `NO_GCE_CHECK`)
+     *
+     * Tokens are cached per scope set for the whole process and refreshed
+     * shortly before they expire.
+     */
+    function accessToken(options?: GCPTokenOptions): Promise<GCPToken>;
+
+    /**
+     * Get an OpenID Connect **identity** token asserting this workload's
+     * identity to `audience` — what Cloud Run, Cloud Functions and IAP expect
+     * for service-to-service calls. Requires a service account (key file or
+     * metadata server); user credentials cannot mint ID tokens.
+     *
+     * @example
+     * ```ts
+     * const { token } = await Bun.gcp.idToken("https://my-service-abc123.a.run.app");
+     * ```
+     */
+    function idToken(audience: string): Promise<GCPToken>;
+    function idToken(options: { audience: string; refresh?: boolean }): Promise<GCPToken>;
+  }
+
   /**
    * Bun.semver parses and compares version numbers.
    */

@@ -7,7 +7,10 @@ use core::sync::atomic::Ordering;
 use core::time::Duration;
 
 use bun_core::MutableString;
-use bun_http::{AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt, Method};
+use bun_http::{
+    AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
+    Method,
+};
 use bun_picohttp as picohttp;
 use bun_threading::{Condvar, Guarded};
 use bun_url::URL;
@@ -79,7 +82,12 @@ fn on_result(this: *mut Channel, _http: *mut AsyncHTTP<'static>, mut result: HTT
 }
 
 /// Which headers the caller wants copied out of the response.
-const KEPT_HEADERS: &[&[u8]] = &[b"content-type", b"location", b"x-aws-ec2-metadata-token-ttl-seconds", b"metadata-flavor"];
+const KEPT_HEADERS: &[&[u8]] = &[
+    b"content-type",
+    b"location",
+    b"x-aws-ec2-metadata-token-ttl-seconds",
+    b"metadata-flavor",
+];
 
 pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
     bun_http::http_thread::init(&Default::default());
@@ -153,9 +161,10 @@ pub fn fetch(req: &Request<'_>) -> Result<Response, Error> {
                 ch.cv.wait_guarded(&mut g);
             } else {
                 let remaining = deadline - now;
-                let _ = ch
-                    .cv
-                    .timed_wait_guarded(&mut g, remaining.as_nanos().min(u128::from(u64::MAX)) as u64);
+                let _ = ch.cv.timed_wait_guarded(
+                    &mut g,
+                    remaining.as_nanos().min(u128::from(u64::MAX)) as u64,
+                );
             }
         }
     };

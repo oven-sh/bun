@@ -35,6 +35,7 @@
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
+    macro(gcp) \
     macro(hash) \
     macro(inspect) \
     macro(isStandaloneExecutable) \

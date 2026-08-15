@@ -1,0 +1,134 @@
+---
+title: AWS & Google Cloud auth
+description: Call AWS and Google Cloud APIs from Bun with the machine's own credentials — no SDK required
+---
+
+Bun can authenticate requests to AWS and Google Cloud the same way their CLIs and SDKs do: from environment variables, config files, SSO sessions, or the instance / container / pod the code is running on. Credentials are resolved off the JavaScript thread, cached for the whole process, and refreshed shortly before they expire.
+
+```ts
+// SigV4-signed request with whatever credentials this machine has
+const queues = await fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues", { aws: true });
+
+// Bearer token from Application Default Credentials
+const buckets = await fetch("https://storage.googleapis.com/storage/v1/b?project=my-project", { gcp: true });
+```
+
+`Bun.s3`, `new S3Client()` and `fetch("s3://…")` use the AWS chain automatically when no `accessKeyId`/`secretAccessKey` is configured — see [S3 › Credentials](/runtime/s3#credentials).
+
+## AWS
+
+### Where credentials come from
+
+When a request needs AWS credentials and none were passed explicitly, Bun tries, in order:
+
+1. `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (+ `AWS_SESSION_TOKEN`)
+2. The profile named by the `profile` option, `AWS_PROFILE`, or `default`, from `~/.aws/credentials` and `~/.aws/config` (or `AWS_SHARED_CREDENTIALS_FILE` / `AWS_CONFIG_FILE`). A profile may hold static keys, `role_arn` + `source_profile` / `credential_source` (STS `AssumeRole`), `web_identity_token_file`, `credential_process`, or IAM Identity Center settings (`sso_session` / `sso_*`, using the token that `aws sso login` cached).
+3. `AWS_WEB_IDENTITY_TOKEN_FILE` + `AWS_ROLE_ARN` — EKS service-account roles (IRSA)
+4. The container credentials endpoint — `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` or `AWS_CONTAINER_CREDENTIALS_FULL_URI` (+ `AWS_CONTAINER_AUTHORIZATION_TOKEN[_FILE]`), set by ECS, EKS Pod Identity, App Runner, …
+5. EC2 instance metadata (IMDSv2). Honours `AWS_EC2_METADATA_DISABLED`, `AWS_EC2_METADATA_SERVICE_ENDPOINT[_MODE]`, `AWS_EC2_METADATA_V1_DISABLED`, `AWS_METADATA_SERVICE_TIMEOUT` and `AWS_METADATA_SERVICE_NUM_ATTEMPTS`.
+
+A source that isn't configured is skipped. A source that _is_ configured but fails (an expired SSO session, an STS `AccessDenied`, a `credential_process` that exits non-zero) is an error — Bun does not silently fall through to the next one.
+
+Environment variables are read from `process.env` when credentials are resolved, so setting `process.env.AWS_PROFILE` at startup works.
+
+### `Bun.aws.credentials()`
+
+Resolve (or return the cached) credentials. Useful for handing them to another SDK, or just to see what Bun found.
+
+```ts
+const creds = await Bun.aws.credentials();
+// {
+//   accessKeyId: "ASIA…",
+//   secretAccessKey: "…",
+//   sessionToken: "…",          // temporary credentials only
+//   expiration: 2026-01-01T…,   // temporary credentials only
+//   region: "us-east-1",        // if AWS_REGION / the profile set one
+//   accountId: "123456789012",  // if the source reported it
+//   source: "sso",              // "env" | "profile" | "assume-role" | "web-identity" | "process" | "sso" | "container" | "imds"
+// }
+
+await Bun.aws.credentials({ profile: "prod" }); // a specific profile
+await Bun.aws.credentials({ refresh: true }); // ignore the cache
+```
+
+When nothing is found, the promise rejects with `code: "ERR_AWS_MISSING_CREDENTIALS"` and a message listing each source and why it was skipped. A configured source that failed rejects with `code: "ERR_AWS_CREDENTIALS"`.
+
+### `fetch(url, { aws })`
+
+Signs the request with [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html). `true` infers the service and region from `*.amazonaws.com` / `*.on.aws` hostnames and uses ambient credentials; pass an object to override any part.
+
+```ts
+await fetch("https://dynamodb.us-east-1.amazonaws.com/", {
+  method: "POST",
+  aws: true,
+  headers: {
+    "content-type": "application/x-amz-json-1.0",
+    "x-amz-target": "DynamoDB_20120810.GetItem",
+  },
+  body: JSON.stringify({ TableName: "users", Key: { id: { S: "42" } } }),
+});
+
+// API Gateway / Lambda function URL behind IAM auth, custom domain
+await fetch("https://api.example.com/orders", {
+  aws: { service: "execute-api", region: "eu-west-1", profile: "prod" },
+});
+```
+
+| Option                                           | Default                                                       |
+| ------------------------------------------------ | ------------------------------------------------------------- |
+| `service`, `region`                              | inferred from the hostname; region falls back to `AWS_REGION` |
+| `accessKeyId`, `secretAccessKey`, `sessionToken` | ambient credentials                                           |
+| `profile`                                        | `AWS_PROFILE` / `default`                                     |
+| `signQuery`, `expiresIn`                         | `false`, `900` — put the signature in the query string        |
+| `unsignedPayload`                                | `false` — send `UNSIGNED-PAYLOAD` (S3-style services only)    |
+
+Bun adds `Authorization`, `x-amz-date`, `x-amz-security-token` (temporary credentials) and, for S3, `x-amz-content-sha256`; setting those yourself alongside `aws` is an error. `ReadableStream` bodies can only be signed for S3-style services (as `UNSIGNED-PAYLOAD`), since other services need the body's SHA-256 up front.
+
+### `Bun.aws.presign(url, options?)`
+
+Returns a query-string-signed URL — typically an S3 object URL to hand to a browser. Takes the same options as `fetch`'s `aws`, plus `method` (default `"GET"`) and `expiresIn` (seconds, default `900`, max `604800`).
+
+```ts
+const download = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/report.pdf", { expiresIn: 3600 });
+const upload = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/upload.bin", { method: "PUT" });
+```
+
+`presign` is synchronous. If ambient credentials haven't been resolved yet it resolves them once, blocking; `await Bun.aws.credentials()` beforehand to avoid that. For `s3://`-style paths and ACLs, [`S3File.presign()`](/runtime/s3#presigning-urls) is usually more convenient.
+
+## Google Cloud
+
+### Where tokens come from
+
+[Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials), in order:
+
+1. `GOOGLE_APPLICATION_CREDENTIALS` — a service-account key file, or an `authorized_user` file
+2. The file `gcloud auth application-default login` writes: `~/.config/gcloud/application_default_credentials.json` (`%APPDATA%\gcloud\…` on Windows, or under `CLOUDSDK_CONFIG`)
+3. The metadata server on Compute Engine, GKE, Cloud Run, Cloud Functions, App Engine, Cloud Build … (honours `GCE_METADATA_HOST` and `NO_GCE_CHECK`)
+
+Service-account keys are exchanged for tokens with a self-signed RS256 JWT; user credentials use their refresh token. `external_account` (workload identity federation) files are not supported yet.
+
+### `Bun.gcp.accessToken()` / `Bun.gcp.idToken()`
+
+```ts
+const { token, expiration, source } = await Bun.gcp.accessToken();
+// source: "service-account" | "authorized-user" | "metadata"
+// also: email, projectId, quotaProjectId when known
+
+await Bun.gcp.accessToken({ scopes: ["bigquery", "https://www.googleapis.com/auth/pubsub"] });
+// bare scope names expand to https://www.googleapis.com/auth/<name>; the default is cloud-platform
+
+// OIDC identity token for calling Cloud Run / Cloud Functions / IAP
+const { token: idToken } = await Bun.gcp.idToken("https://my-service-abc123.a.run.app");
+```
+
+Tokens are cached per scope set / audience; pass `refresh: true` to force a new one. Failures reject with `code: "ERR_GCP_MISSING_CREDENTIALS"` (nothing configured) or `"ERR_GCP_CREDENTIALS"` (a configured source failed).
+
+### `fetch(url, { gcp })`
+
+```ts
+await fetch("https://pubsub.googleapis.com/v1/projects/my-project/topics", { gcp: true });
+await fetch("https://www.googleapis.com/…", { gcp: { scopes: "devstorage.read_only" } });
+await fetch("https://my-service-abc123.a.run.app/", { gcp: { audience: "https://my-service-abc123.a.run.app" } });
+```
+
+`true` / `{ scopes }` sends `Authorization: Bearer <access token>`; `{ audience }` sends an ID token instead. When the credentials carry a `quota_project_id` (or `GOOGLE_CLOUD_QUOTA_PROJECT` is set), `x-goog-user-project` is added unless you set it yourself.

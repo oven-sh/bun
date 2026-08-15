@@ -26,9 +26,9 @@ use bun_s3_signing::{AwsCredentials, CredentialsSource, ProviderError};
 use bun_sys::{Fd, File};
 
 use super::config::ChainConfig;
-use super::http_sync;
 use super::ini::{IniFile, Profile, SectionKind};
-use super::json;
+use crate::webcore::cloud::http_sync;
+use crate::webcore::cloud::json;
 use crate::webcore::s3::xml_response;
 
 type Outcome = Result<Option<AwsCredentials>, ProviderError>;
@@ -146,20 +146,34 @@ impl<'c> Resolver<'c> {
         let mut visited: Vec<Box<[u8]>> = Vec::new();
         if let Some(mut c) = self.from_profile(&profile, &mut visited, 0)? {
             if c.region.is_none() {
-                c.region = self.profile_region(&profile).or_else(|| self.cfg.region.clone());
+                c.region = self
+                    .profile_region(&profile)
+                    .or_else(|| self.cfg.region.clone());
             }
             return Ok(c);
         }
         if let Some(mut c) = self.from_web_identity_env()? {
-            c.region = self.cfg.region.clone().or_else(|| self.profile_region(&profile));
+            c.region = self
+                .cfg
+                .region
+                .clone()
+                .or_else(|| self.profile_region(&profile));
             return Ok(c);
         }
         if let Some(mut c) = self.from_container()? {
-            c.region = self.cfg.region.clone().or_else(|| self.profile_region(&profile));
+            c.region = self
+                .cfg
+                .region
+                .clone()
+                .or_else(|| self.profile_region(&profile));
             return Ok(c);
         }
         if let Some(mut c) = self.from_imds()? {
-            c.region = self.cfg.region.clone().or_else(|| self.profile_region(&profile));
+            c.region = self
+                .cfg
+                .region
+                .clone()
+                .or_else(|| self.profile_region(&profile));
             return Ok(c);
         }
         Err(err(
@@ -191,7 +205,9 @@ impl<'c> Resolver<'c> {
                 Ok(Some(c))
             }
             _ => {
-                self.note(format_args!("environment (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set)"));
+                self.note(format_args!(
+                    "environment (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY not set)"
+                ));
                 Ok(None)
             }
         }
@@ -232,7 +248,10 @@ impl<'c> Resolver<'c> {
 
     fn from_profile(&mut self, name: &[u8], visited: &mut Vec<Box<[u8]>>, depth: usize) -> Outcome {
         if depth >= MAX_PROFILE_DEPTH {
-            return Err(fail!("profile \"{}\": source_profile chain is too deep", BStr::new(name)));
+            return Err(fail!(
+                "profile \"{}\": source_profile chain is too deep",
+                BStr::new(name)
+            ));
         }
         if visited.iter().any(|v| &**v == name) {
             return Err(fail!(
@@ -378,10 +397,7 @@ impl<'c> Resolver<'c> {
                     }
                 }
             };
-            let region = p
-                .region
-                .clone()
-                .or_else(|| self.cfg.region.clone());
+            let region = p.region.clone().or_else(|| self.cfg.region.clone());
             let mut c = self.assume_role(
                 name,
                 &source,
@@ -430,7 +446,11 @@ impl<'c> Resolver<'c> {
         }
 
         // (e) SSO
-        if p.sso_account_id.is_some() || p.sso_role_name.is_some() || p.sso_session.is_some() || p.sso_start_url.is_some() {
+        if p.sso_account_id.is_some()
+            || p.sso_role_name.is_some()
+            || p.sso_session.is_some()
+            || p.sso_start_url.is_some()
+        {
             let (Some(account_id), Some(role_name)) = (&p.sso_account_id, &p.sso_role_name) else {
                 return Err(fail!(
                     "profile \"{}\": SSO profiles need both sso_account_id and sso_role_name",
@@ -455,7 +475,11 @@ impl<'c> Resolver<'c> {
                         BStr::new(session)
                     ));
                 };
-                (Box::<[u8]>::from(u), Box::<[u8]>::from(r), Some(session.clone()))
+                (
+                    Box::<[u8]>::from(u),
+                    Box::<[u8]>::from(r),
+                    Some(session.clone()),
+                )
             } else {
                 let (Some(u), Some(r)) = (&p.sso_start_url, &p.sso_region) else {
                     return Err(fail!(
@@ -465,7 +489,14 @@ impl<'c> Resolver<'c> {
                 };
                 (u.clone(), r.clone(), None)
             };
-            let mut c = self.from_sso(name, &start_url, &sso_region, session_name.as_deref(), account_id, role_name)?;
+            let mut c = self.from_sso(
+                name,
+                &start_url,
+                &sso_region,
+                session_name.as_deref(),
+                account_id,
+                role_name,
+            )?;
             c.region.clone_from(&p.region);
             return Ok(Some(c));
         }
@@ -482,7 +513,10 @@ impl<'c> Resolver<'c> {
                 BStr::new(name)
             ));
         }
-        self.note(format_args!("profile \"{}\" (has no credential settings)", BStr::new(name)));
+        self.note(format_args!(
+            "profile \"{}\" (has no credential settings)",
+            BStr::new(name)
+        ));
         Ok(None)
     }
 
@@ -503,7 +537,12 @@ impl<'c> Resolver<'c> {
             url.extend_from_slice(b"https://sts.amazonaws.com/");
             return Ok((url, Box::from(b"us-east-1".as_slice())));
         }
-        let _ = write!(&mut url, "https://sts.{}.{}/", BStr::new(region), dns_suffix(region));
+        let _ = write!(
+            &mut url,
+            "https://sts.{}.{}/",
+            BStr::new(region),
+            dns_suffix(region)
+        );
         Ok((url, Box::from(region)))
     }
 
@@ -527,13 +566,20 @@ impl<'c> Resolver<'c> {
             let (code, message) = xml_response::parse(body, |root| {
                 // <ErrorResponse><Error><Code/><Message/></Error></ErrorResponse>
                 let e = root.child(b"Error").unwrap_or(root);
-                (e.child_nonempty_text(b"Code"), e.child_nonempty_text(b"Message"))
+                (
+                    e.child_nonempty_text(b"Code"),
+                    e.child_nonempty_text(b"Message"),
+                )
             })
             .unwrap_or((None, None));
             return Err(fail!(
                 "{what} failed with HTTP {status}: {} {}",
                 BStr::new(code.as_deref().unwrap_or(b"")),
-                BStr::new(message.as_deref().unwrap_or_else(|| &body[..body.len().min(240)])),
+                BStr::new(
+                    message
+                        .as_deref()
+                        .unwrap_or_else(|| &body[..body.len().min(240)])
+                ),
             ));
         }
         let parsed = xml_response::parse(body, |root| {
@@ -547,7 +593,10 @@ impl<'c> Resolver<'c> {
         })
         .flatten();
         let Some((akid, secret, token, expiration)) = parsed else {
-            return Err(fail!("{what} returned an unexpected response: {}", snippet(body)));
+            return Err(fail!(
+                "{what} returned an unexpected response: {}",
+                snippet(body)
+            ));
         };
         Ok(creds(
             akid,
@@ -596,7 +645,10 @@ impl<'c> Resolver<'c> {
                 host,
                 path: parsed.path,
                 query: b"",
-                headers: &[(b"content-type", b"application/x-www-form-urlencoded; charset=utf-8")],
+                headers: &[(
+                    b"content-type",
+                    b"application/x-www-form-urlencoded; charset=utf-8",
+                )],
                 payload: sigv4::Payload::Bytes(&body),
                 scope: sigv4::Scope {
                     service: b"sts",
@@ -606,10 +658,18 @@ impl<'c> Resolver<'c> {
                 s3_path_semantics: Some(false),
             },
         )
-        .map_err(|e| fail!("profile \"{}\": could not sign STS AssumeRole request: {e:?}", BStr::new(profile)))?;
+        .map_err(|e| {
+            fail!(
+                "profile \"{}\": could not sign STS AssumeRole request: {e:?}",
+                BStr::new(profile)
+            )
+        })?;
 
         let mut headers: Vec<(&[u8], &[u8])> = vec![
-            (b"content-type", b"application/x-www-form-urlencoded; charset=utf-8"),
+            (
+                b"content-type",
+                b"application/x-www-form-urlencoded; charset=utf-8",
+            ),
             (b"authorization", &signed.authorization),
             (b"x-amz-date", &signed.amz_date),
             (b"accept", b"application/xml"),
@@ -627,7 +687,13 @@ impl<'c> Resolver<'c> {
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
         })
-        .map_err(|e| fail!("profile \"{}\": STS AssumeRole request to {} failed: {e}", BStr::new(profile), BStr::new(&url)))?;
+        .map_err(|e| {
+            fail!(
+                "profile \"{}\": STS AssumeRole request to {} failed: {e}",
+                BStr::new(profile),
+                BStr::new(&url)
+            )
+        })?;
         self.sts_credentials_from_xml(
             "STS AssumeRole",
             res.status,
@@ -653,7 +719,10 @@ impl<'c> Resolver<'c> {
         })?;
         let token = token.trim_ascii();
         if token.is_empty() {
-            return Err(fail!("web identity token file {} is empty", BStr::new(token_file)));
+            return Err(fail!(
+                "web identity token file {} is empty",
+                BStr::new(token_file)
+            ));
         }
         let (url, _region) = self.sts_endpoint(region)?;
         let default_name = self
@@ -677,7 +746,10 @@ impl<'c> Resolver<'c> {
             method: Method::POST,
             url: &url,
             headers: &[
-                (b"content-type", b"application/x-www-form-urlencoded; charset=utf-8"),
+                (
+                    b"content-type",
+                    b"application/x-www-form-urlencoded; charset=utf-8",
+                ),
                 (b"accept", b"application/xml"),
             ],
             body: &body,
@@ -686,7 +758,12 @@ impl<'c> Resolver<'c> {
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
         })
-        .map_err(|e| fail!("STS AssumeRoleWithWebIdentity request to {} failed: {e}", BStr::new(&url)))?;
+        .map_err(|e| {
+            fail!(
+                "STS AssumeRoleWithWebIdentity request to {} failed: {e}",
+                BStr::new(&url)
+            )
+        })?;
         self.sts_credentials_from_xml(
             "STS AssumeRoleWithWebIdentity",
             res.status,
@@ -715,7 +792,11 @@ impl<'c> Resolver<'c> {
 
     // ── credential_process ────────────────────────────────────────────────
 
-    fn from_process(&self, profile: &[u8], command: &[u8]) -> Result<AwsCredentials, ProviderError> {
+    fn from_process(
+        &self,
+        profile: &[u8],
+        command: &[u8],
+    ) -> Result<AwsCredentials, ProviderError> {
         #[cfg(windows)]
         let argv: [&[u8]; 3] = [b"cmd.exe", b"/C", command];
         #[cfg(not(windows))]
@@ -752,7 +833,8 @@ impl<'c> Resolver<'c> {
                 o.str(b"AccountId"),
             )
         });
-        let Some((version, Some(akid), Some(secret), token, expiration, account_id)) = parsed else {
+        let Some((version, Some(akid), Some(secret), token, expiration, account_id)) = parsed
+        else {
             return Err(fail!(
                 "profile \"{}\": credential_process did not print a JSON object with AccessKeyId and SecretAccessKey",
                 BStr::new(profile)
@@ -781,7 +863,14 @@ impl<'c> Resolver<'c> {
             // The spec requires Expiration alongside temporary credentials;
             // accept it but treat as short-lived so we re-run the process.
         }
-        Ok(creds(akid, secret, token, expiration, account_id, CredentialsSource::Process))
+        Ok(creds(
+            akid,
+            secret,
+            token,
+            expiration,
+            account_id,
+            CredentialsSource::Process,
+        ))
     }
 
     // ── SSO ───────────────────────────────────────────────────────────────
@@ -796,17 +885,29 @@ impl<'c> Resolver<'c> {
         role_name: &[u8],
     ) -> Result<AwsCredentials, ProviderError> {
         if !is_valid_region(sso_region) {
-            return Err(fail!("profile \"{}\": invalid sso_region \"{}\"", BStr::new(profile), BStr::new(sso_region)));
+            return Err(fail!(
+                "profile \"{}\": invalid sso_region \"{}\"",
+                BStr::new(profile),
+                BStr::new(sso_region)
+            ));
         }
         // Token cache: ~/.aws/sso/cache/<sha1(session name | start url)>.json
         let key_input = session_name.unwrap_or(start_url);
         let mut digest = [0u8; bun_sha_hmac::sha::hashers::SHA1::DIGEST];
         bun_sha_hmac::sha::hashers::SHA1::hash(key_input, &mut digest);
         let Some(dir) = self.cfg.sso_cache_dir() else {
-            return Err(fail!("profile \"{}\": cannot locate the SSO token cache (HOME is not set)", BStr::new(profile)));
+            return Err(fail!(
+                "profile \"{}\": cannot locate the SSO token cache (HOME is not set)",
+                BStr::new(profile)
+            ));
         };
         let mut path = dir;
-        let _ = write!(&mut path, "{}{}.json", bun_paths::SEP_STR, bun_core::fmt::hex_lower(&digest));
+        let _ = write!(
+            &mut path,
+            "{}{}.json",
+            bun_paths::SEP_STR,
+            bun_core::fmt::hex_lower(&digest)
+        );
         let login_hint = || -> String {
             match session_name {
                 Some(s) => format!("run `aws sso login --sso-session {}`", BStr::new(s)),
@@ -837,10 +938,19 @@ impl<'c> Resolver<'c> {
             client_secret: o.str(b"clientSecret"),
             registration_expires_at: o.str(b"registrationExpiresAt"),
         }) else {
-            return Err(fail!("profile \"{}\": SSO token cache {} is not valid JSON; {}", BStr::new(profile), BStr::new(&path), login_hint()));
+            return Err(fail!(
+                "profile \"{}\": SSO token cache {} is not valid JSON; {}",
+                BStr::new(profile),
+                BStr::new(&path),
+                login_hint()
+            ));
         };
         let now = now_secs();
-        let expires_at = tok.expires_at.as_deref().and_then(sigv4::parse_iso8601).unwrap_or(0);
+        let expires_at = tok
+            .expires_at
+            .as_deref()
+            .and_then(sigv4::parse_iso8601)
+            .unwrap_or(0);
         let mut access_token = tok.access_token.take();
         if access_token.is_none() || expires_at <= now + 60 {
             // Try a refresh if the cache carries a registered client.
@@ -849,9 +959,12 @@ impl<'c> Resolver<'c> {
                 .as_deref()
                 .and_then(sigv4::parse_iso8601)
                 .is_none_or(|t| t > now);
-            if let (Some(rt), Some(cid), Some(cs), true) =
-                (&tok.refresh_token, &tok.client_id, &tok.client_secret, registration_ok)
-            {
+            if let (Some(rt), Some(cid), Some(cs), true) = (
+                &tok.refresh_token,
+                &tok.client_id,
+                &tok.client_secret,
+                registration_ok,
+            ) {
                 access_token = self.sso_refresh(profile, sso_region, &path, &cache, rt, cid, cs)?;
             } else {
                 return Err(fail!(
@@ -862,7 +975,11 @@ impl<'c> Resolver<'c> {
             }
         }
         let Some(access_token) = access_token else {
-            return Err(fail!("profile \"{}\": SSO token cache has no accessToken; {}", BStr::new(profile), login_hint()));
+            return Err(fail!(
+                "profile \"{}\": SSO token cache has no accessToken; {}",
+                BStr::new(profile),
+                login_hint()
+            ));
         };
 
         let mut url = Vec::with_capacity(128);
@@ -872,7 +989,10 @@ impl<'c> Resolver<'c> {
             BStr::new(sso_region),
             dns_suffix(sso_region)
         );
-        form_encode(&mut url, &[(b"account_id", account_id), (b"role_name", role_name)]);
+        form_encode(
+            &mut url,
+            &[(b"account_id", account_id), (b"role_name", role_name)],
+        );
         let res = http_sync::fetch(&http_sync::Request {
             method: Method::GET,
             url: &url,
@@ -886,7 +1006,12 @@ impl<'c> Resolver<'c> {
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
         })
-        .map_err(|e| fail!("profile \"{}\": SSO GetRoleCredentials request failed: {e}", BStr::new(profile)))?;
+        .map_err(|e| {
+            fail!(
+                "profile \"{}\": SSO GetRoleCredentials request failed: {e}",
+                BStr::new(profile)
+            )
+        })?;
         if res.status == 401 || res.status == 403 {
             return Err(fail!(
                 "profile \"{}\": SSO GetRoleCredentials was rejected (HTTP {}): {}; {}",
@@ -915,13 +1040,19 @@ impl<'c> Resolver<'c> {
         })
         .flatten();
         let Some((akid, secret, token, expiration_ms)) = parsed else {
-            return Err(fail!("profile \"{}\": SSO GetRoleCredentials returned an unexpected response: {}", BStr::new(profile), snippet(&res.body)));
+            return Err(fail!(
+                "profile \"{}\": SSO GetRoleCredentials returned an unexpected response: {}",
+                BStr::new(profile),
+                snippet(&res.body)
+            ));
         };
         Ok(creds(
             akid,
             secret,
             token,
-            expiration_ms.filter(|m| m.is_finite() && *m > 0.0).map(|m| (m / 1000.0) as u64),
+            expiration_ms
+                .filter(|m| m.is_finite() && *m > 0.0)
+                .map(|m| (m / 1000.0) as u64),
             Some(Box::from(account_id)),
             CredentialsSource::Sso,
         ))
@@ -939,7 +1070,12 @@ impl<'c> Resolver<'c> {
         client_secret: &[u8],
     ) -> Result<Option<Box<[u8]>>, ProviderError> {
         let mut url = Vec::with_capacity(64);
-        let _ = write!(&mut url, "https://oidc.{}.{}/token", BStr::new(sso_region), dns_suffix(sso_region));
+        let _ = write!(
+            &mut url,
+            "https://oidc.{}.{}/token",
+            BStr::new(sso_region),
+            dns_suffix(sso_region)
+        );
         let js = |s: &[u8]| -> Vec<u8> {
             let mut out = Vec::with_capacity(s.len() + 2);
             out.push(b'"');
@@ -974,7 +1110,12 @@ impl<'c> Resolver<'c> {
             proxy: self.cfg.proxy_for(&url),
             reject_unauthorized: self.cfg.reject_unauthorized,
         })
-        .map_err(|e| fail!("profile \"{}\": refreshing the SSO token failed: {e}", BStr::new(profile)))?;
+        .map_err(|e| {
+            fail!(
+                "profile \"{}\": refreshing the SSO token failed: {e}",
+                BStr::new(profile)
+            )
+        })?;
         if res.status != 200 {
             return Err(fail!(
                 "profile \"{}\": the cached SSO token has expired and refreshing it failed (HTTP {}); run `aws sso login`",
@@ -983,12 +1124,20 @@ impl<'c> Resolver<'c> {
             ));
         }
         let Some((Some(access_token), expires_in, new_refresh)) = json::parse(&res.body, |o| {
-            (o.str(b"accessToken"), o.number(b"expiresIn"), o.str(b"refreshToken"))
+            (
+                o.str(b"accessToken"),
+                o.number(b"expiresIn"),
+                o.str(b"refreshToken"),
+            )
         }) else {
-            return Err(fail!("profile \"{}\": SSO token refresh returned an unexpected response", BStr::new(profile)));
+            return Err(fail!(
+                "profile \"{}\": SSO token refresh returned an unexpected response",
+                BStr::new(profile)
+            ));
         };
         // Best-effort write-back so other tools see the refreshed token.
-        let expires_at = sigv4::amz_datetime(now_secs() + expires_in.unwrap_or(0.0).max(0.0) as u64);
+        let expires_at =
+            sigv4::amz_datetime(now_secs() + expires_in.unwrap_or(0.0).max(0.0) as u64);
         let iso = format!(
             "{}-{}-{}T{}:{}:{}Z",
             BStr::new(&expires_at[0..4]),
@@ -998,8 +1147,18 @@ impl<'c> Resolver<'c> {
             BStr::new(&expires_at[11..13]),
             BStr::new(&expires_at[13..15]),
         );
-        if let Some(updated) = rewrite_sso_cache(cache_body, &access_token, iso.as_bytes(), new_refresh.as_deref()) {
-            if let Ok(f) = File::openat(Fd::cwd(), cache_path, bun_sys::O::WRONLY | bun_sys::O::TRUNC, 0o600) {
+        if let Some(updated) = rewrite_sso_cache(
+            cache_body,
+            &access_token,
+            iso.as_bytes(),
+            new_refresh.as_deref(),
+        ) {
+            if let Ok(f) = File::openat(
+                Fd::cwd(),
+                cache_path,
+                bun_sys::O::WRONLY | bun_sys::O::TRUNC,
+                0o600,
+            ) {
                 let _ = f.write_all(&updated);
             }
         }
@@ -1057,7 +1216,9 @@ impl<'c> Resolver<'c> {
         };
         if let Some(t) = &token {
             if strings::index_of_any(t, b"\r\n").is_some() {
-                return Err(fail!("AWS_CONTAINER_AUTHORIZATION_TOKEN contains a newline"));
+                return Err(fail!(
+                    "AWS_CONTAINER_AUTHORIZATION_TOKEN contains a newline"
+                ));
             }
         }
         let mut headers: Vec<(&[u8], &[u8])> = vec![(b"accept", b"application/json")];
@@ -1077,7 +1238,12 @@ impl<'c> Resolver<'c> {
                 reject_unauthorized: self.cfg.reject_unauthorized,
             }) {
                 Ok(res) if res.status == 200 => {
-                    return parse_json_credentials("container credentials endpoint", &res.body, CredentialsSource::Container).map(Some);
+                    return parse_json_credentials(
+                        "container credentials endpoint",
+                        &res.body,
+                        CredentialsSource::Container,
+                    )
+                    .map(Some);
                 }
                 Ok(res) if res.status >= 500 => {
                     last_err = Some(fail!(
@@ -1110,7 +1276,9 @@ impl<'c> Resolver<'c> {
 
     fn from_imds(&mut self) -> Outcome {
         if self.cfg.imds_disabled {
-            self.note(format_args!("EC2 instance metadata (AWS_EC2_METADATA_DISABLED is set)"));
+            self.note(format_args!(
+                "EC2 instance metadata (AWS_EC2_METADATA_DISABLED is set)"
+            ));
             return Ok(None);
         }
         let base: Vec<u8> = match &self.cfg.imds_endpoint {
@@ -1151,7 +1319,9 @@ impl<'c> Resolver<'c> {
             Ok(res) if res.status == 200 => {
                 let t = strings::trim(&res.body, b" \t\r\n");
                 if t.is_empty() || strings::index_of_any(t, b"\r\n").is_some() {
-                    return Err(fail!("EC2 instance metadata returned an invalid session token"));
+                    return Err(fail!(
+                        "EC2 instance metadata returned an invalid session token"
+                    ));
                 }
                 token = Some(t.to_vec());
             }
@@ -1244,10 +1414,9 @@ impl<'c> Resolver<'c> {
             ));
             return Ok(None);
         };
-        if !role
-            .iter()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'=' | b',' | b'.' | b'@' | b'_' | b'-'))
-        {
+        if !role.iter().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, b'+' | b'=' | b',' | b'.' | b'@' | b'_' | b'-')
+        }) {
             return Err(fail!("EC2 instance metadata returned an invalid role name"));
         }
         let mut creds_url = role_url;
@@ -1261,7 +1430,8 @@ impl<'c> Resolver<'c> {
                 snippet(&res.body)
             ));
         }
-        parse_json_credentials("EC2 instance metadata", &res.body, CredentialsSource::Imds).map(Some)
+        parse_json_credentials("EC2 instance metadata", &res.body, CredentialsSource::Imds)
+            .map(Some)
     }
 }
 
@@ -1292,7 +1462,10 @@ fn parse_json_credentials(
         )
     });
     let Some((code, akid, secret, token, expiration, account_id, message)) = parsed else {
-        return Err(fail!("{what} returned a response that is not JSON: {}", snippet(body)));
+        return Err(fail!(
+            "{what} returned a response that is not JSON: {}",
+            snippet(body)
+        ));
     };
     if let Some(code) = &code {
         if !code.eq_ignore_ascii_case(b"Success") {
@@ -1304,11 +1477,16 @@ fn parse_json_credentials(
         }
     }
     let (Some(akid), Some(secret)) = (akid, secret) else {
-        return Err(fail!("{what} response is missing AccessKeyId/SecretAccessKey"));
+        return Err(fail!(
+            "{what} response is missing AccessKeyId/SecretAccessKey"
+        ));
     };
     let expiration = match expiration {
         Some(e) => Some(sigv4::parse_iso8601(&e).ok_or_else(|| {
-            fail!("{what} returned an invalid Expiration \"{}\"", BStr::new(&e))
+            fail!(
+                "{what} returned an invalid Expiration \"{}\"",
+                BStr::new(&e)
+            )
         })?),
         None => None,
     };
@@ -1351,7 +1529,9 @@ fn rewrite_sso_cache(
             let value: Option<Box<[u8]>> = match key {
                 b"accessToken" => Some(Box::from(access_token)),
                 b"expiresAt" => Some(Box::from(expires_at_iso)),
-                b"refreshToken" => Some(Box::from(refresh_token.unwrap_or_else(|| prop.value.as_str().unwrap_or(b"")))),
+                b"refreshToken" => Some(Box::from(
+                    refresh_token.unwrap_or_else(|| prop.value.as_str().unwrap_or(b"")),
+                )),
                 _ => prop.value.as_str().map(Box::from),
             };
             // Non-string values (there are none in practice) are dropped

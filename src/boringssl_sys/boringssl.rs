@@ -1131,6 +1131,24 @@ unsafe extern "C" {
         u: *mut c_void,
     ) -> *mut EVP_PKEY;
     pub fn EVP_PKEY_free(pkey: *mut EVP_PKEY);
+    pub fn EVP_PKEY_id(pkey: *const EVP_PKEY) -> c_int;
+    pub fn EVP_PKEY_size(pkey: *const EVP_PKEY) -> c_int;
+
+    // ── EVP one-shot signing (used for RS256 JWTs) ───────────────────────
+    pub fn EVP_DigestSignInit(
+        ctx: *mut EVP_MD_CTX,
+        pctx: *mut *mut EVP_PKEY_CTX,
+        type_: *const EVP_MD,
+        e: *mut ENGINE,
+        pkey: *mut EVP_PKEY,
+    ) -> c_int;
+    pub fn EVP_DigestSign(
+        ctx: *mut EVP_MD_CTX,
+        out_sig: *mut u8,
+        out_sig_len: *mut usize,
+        data: *const u8,
+        data_len: usize,
+    ) -> c_int;
 
     pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 

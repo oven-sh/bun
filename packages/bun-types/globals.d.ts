@@ -2037,6 +2037,27 @@ interface BunFetchRequestInit extends RequestInit {
   aws?: boolean | Bun.AWSSignOptions;
 
   /**
+   * Authenticate the request to a Google Cloud API with
+   * [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials):
+   * adds `Authorization: Bearer <token>` (and `x-goog-user-project` when the
+   * credentials carry a quota project).
+   *
+   * `true` uses an access token for the `cloud-platform` scope. Pass
+   * `{ scopes }` for other scopes, or `{ audience }` to send an OIDC **ID
+   * token** instead (for Cloud Run / Cloud Functions / IAP-protected services).
+   * See {@link Bun.gcp.accessToken} for where the credentials come from.
+   *
+   * Not part of the Fetch API specification.
+   *
+   * @example
+   * ```ts
+   * const res = await fetch("https://storage.googleapis.com/storage/v1/b?project=my-project", { gcp: true });
+   * await fetch("https://my-service-abc123.a.run.app/api", { gcp: { audience: "https://my-service-abc123.a.run.app" } });
+   * ```
+   */
+  gcp?: boolean | Bun.GCPTokenOptions | { audience: string };
+
+  /**
    * Make the request over a Unix socket
    *
    * @example

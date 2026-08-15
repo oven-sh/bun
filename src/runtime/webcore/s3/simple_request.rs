@@ -176,7 +176,12 @@ impl Callback {
         self.fail(code, &err.message, context)
     }
 
-    pub(crate) fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> bun_jsc::JsResult<()> {
+    pub(crate) fn fail(
+        &self,
+        code: &[u8],
+        message: &[u8],
+        context: *mut c_void,
+    ) -> bun_jsc::JsResult<()> {
         let err = S3Error { code, message };
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,

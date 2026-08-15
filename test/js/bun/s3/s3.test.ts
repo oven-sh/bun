@@ -15,8 +15,13 @@ import * as dockerCompose from "../../../docker/index.ts";
 // developer's ~/.aws, a CI agent's instance role) in the no-credentials tests.
 process.env.AWS_EC2_METADATA_DISABLED = "true";
 process.env.AWS_CONFIG_FILE = process.env.AWS_SHARED_CREDENTIALS_FILE = "/dev/null/none";
-for (const k of ["AWS_PROFILE", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_WEB_IDENTITY_TOKEN_FILE"]) delete process.env[k];
-
+for (const k of [
+  "AWS_PROFILE",
+  "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+  "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+  "AWS_WEB_IDENTITY_TOKEN_FILE",
+])
+  delete process.env[k];
 
 const dockerCLI = dockerExe() as string;
 type S3Credentials = S3Options & {

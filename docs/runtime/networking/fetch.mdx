@@ -291,6 +291,17 @@ Only PUT and POST methods support request bodies when using S3. For uploads, Bun
 
 See the [S3](/runtime/s3) documentation.
 
+### AWS- and Google-authenticated requests
+
+`fetch` can sign a request for any AWS API with SigV4, or attach a Google Cloud bearer token, using the machine's ambient credentials:
+
+```ts
+await fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues", { aws: true });
+await fetch("https://storage.googleapis.com/storage/v1/b?project=my-project", { gcp: true });
+```
+
+See [AWS & Google Cloud auth](/runtime/networking/cloud-auth) for the options and where credentials come from.
+
 #### File URLs - `file://`
 
 You can fetch local files using the `file:` protocol:

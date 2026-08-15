@@ -467,6 +467,24 @@ For each option, if the `S3_*` environment variable is not set, Bun falls back t
 
 Bun reads these environment variables from [`.env` files](/runtime/environment-variables) or from the process environment at initialization time (Bun does not use `process.env` for this).
 
+### Ambient credentials (profiles, SSO, IAM roles)
+
+When no access key is configured — neither in options nor in the environment — Bun resolves credentials the way the AWS CLI does: from `~/.aws/credentials` / `~/.aws/config` (static keys, `role_arn` + `source_profile`, `credential_process`, `aws sso login` sessions, `web_identity_token_file`), then `AWS_WEB_IDENTITY_TOKEN_FILE` (EKS), the container credentials endpoint (ECS, EKS Pod Identity), and finally EC2 instance metadata. So on AWS infrastructure with an IAM role attached, this just works:
+
+```ts
+import { s3 } from "bun";
+
+await s3.file("report.csv", { bucket: "my-bucket", region: "us-east-1" }).text();
+```
+
+Pick a profile with `AWS_PROFILE` or the `profile` option (which takes precedence over `AWS_*` key variables):
+
+```ts
+const prod = new S3Client({ profile: "prod", bucket: "my-bucket" });
+```
+
+Resolution happens off the JavaScript thread on first use; the result is cached for the process and refreshed a few minutes before it expires. See [AWS & Google Cloud auth](/runtime/networking/cloud-auth) for the full order, `Bun.aws.credentials()`, and signing arbitrary AWS requests with `fetch`.
+
 Options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials override these defaults. So if you use the same credentials for different buckets, you can set the credentials once in your `.env` file and pass only `bucket: "my-bucket"` to `s3.file()`.
 
 ### `S3Client` objects

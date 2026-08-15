@@ -659,13 +659,49 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             if !obj.is_empty() {
                 if let Some(v) = obj.get(global_this, "aws")? {
                     if !v.is_undefined() {
-                        break 'extract_aws crate::webcore::aws::AwsSignOptions::from_js(global_this, v)?;
+                        break 'extract_aws crate::webcore::aws::AwsSignOptions::from_js(
+                            global_this,
+                            v,
+                        )?;
                     }
                 }
             }
         }
         break 'extract_aws None;
     };
+
+    // "gcp: true | { scopes } | { audience }" — Google bearer token.
+    let gcp_auth: Option<crate::webcore::cloud::gcp::GcpFetchOptions> = 'extract_gcp: {
+        let objects_to_try = [
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
+        ];
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                if let Some(v) = obj.get(global_this, "gcp")? {
+                    if !v.is_undefined() {
+                        break 'extract_gcp crate::webcore::cloud::gcp::GcpFetchOptions::from_js(
+                            global_this,
+                            v,
+                        )?;
+                    }
+                }
+            }
+        }
+        break 'extract_gcp None;
+    };
+    if aws_sign.is_some() && gcp_auth.is_some() {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!("fetch() cannot use both aws and gcp authentication on one request"),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
 
     // Credentials for `s3://` URLs: env, then the `s3` option bag.
     let mut s3_credentials: Option<s3::S3CredentialsWithOptions> = if url.is_s3() {
@@ -709,6 +745,44 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // Ambient AWS credentials (profile / SSO / container / IMDS) resolve off
     // the JS thread; once they are cached, run this same call again.
+    if !credentials_ready && let Some(gcp) = gcp_auth.as_ref().filter(|g| g.needs_resolution()) {
+        drop(s3_credentials.take());
+        let promise = jsc::JSPromiseStrong::init(global_this);
+        let promise_value = promise.value();
+        let protected: Vec<jsc::job::Protected> = arguments
+            .iter()
+            .map(|v| jsc::job::Protected::new(*v))
+            .collect();
+        let global = jsc::GlobalRef::from(global_this);
+        crate::webcore::cloud::gcp::resolve_async(
+            global_this,
+            &gcp.provider,
+            Box::new(move |result| {
+                let global: &JSGlobalObject = &global;
+                let mut promise = promise;
+                if !global.bun_vm().script_allowed() {
+                    return Ok(());
+                }
+                match result {
+                    Err(err) => promise.reject(
+                        global,
+                        Ok(crate::webcore::aws::fetch_signing::provider_error_to_js(
+                            global, &err,
+                        )),
+                    ),
+                    Ok(_) => {
+                        let argv: Vec<JSValue> = protected.iter().map(|p| p.value()).collect();
+                        let value = reject_on_exception(
+                            global,
+                            fetch_impl::<ALLOW_GET_BODY>(global, &argv, true),
+                        )?;
+                        promise.resolve(global, value)
+                    }
+                }
+            }),
+        )?;
+        return Ok(promise_value);
+    }
     if !credentials_ready {
         let pending: Option<bun_s3_signing::SharedProvider> = aws_sign
             .as_ref()
@@ -730,8 +804,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let is_s3 = url.is_s3();
             let promise = jsc::JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
-            let protected: Vec<jsc::job::Protected> =
-                arguments.iter().map(|v| jsc::job::Protected::new(*v)).collect();
+            let protected: Vec<jsc::job::Protected> = arguments
+                .iter()
+                .map(|v| jsc::job::Protected::new(*v))
+                .collect();
             let global = jsc::GlobalRef::from(global_this);
             crate::webcore::aws::resolve_shared_async(
                 global_this,
@@ -760,7 +836,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         ),
                         Err(err) => promise.reject(
                             global,
-                            Ok(crate::webcore::aws::fetch_signing::provider_error_to_js(global, &err)),
+                            Ok(crate::webcore::aws::fetch_signing::provider_error_to_js(
+                                global, &err,
+                            )),
                         ),
                         Ok(_) => {
                             let argv: Vec<JSValue> = protected.iter().map(|p| p.value()).collect();
@@ -1990,6 +2068,58 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     } else {
         compress = None;
+    }
+
+    if let Some(gcp) = &gcp_auth {
+        let token =
+            match gcp.provider.cached_usable() {
+                Some(t) => Ok(t),
+                // Not fresh in cache and this is already the second pass (or a
+                // synchronous caller raced us): resolve on this thread.
+                None => gcp.provider.resolve_with(
+                    &crate::webcore::cloud::gcp::chain::GcpConfig::capture(global_this),
+                ),
+            };
+        match token {
+            Ok(t) => {
+                if headers
+                    .as_ref()
+                    .and_then(|h| h.get(b"authorization"))
+                    .is_some()
+                {
+                    let err = global_this.to_type_error(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!("fetch(): the \"Authorization\" header is generated by gcp authentication; remove it from headers"),
+                    );
+                    body.detach();
+                    return Ok(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err,
+                        ),
+                    );
+                }
+                let h = headers.get_or_insert_with(Headers::default);
+                let mut value = Vec::with_capacity(7 + t.token.len());
+                value.extend_from_slice(b"Bearer ");
+                value.extend_from_slice(&t.token);
+                h.append(b"Authorization", &value);
+                if let Some(q) = &t.quota_project_id {
+                    if h.get(b"x-goog-user-project").is_none() {
+                        h.append(b"x-goog-user-project", q);
+                    }
+                }
+            }
+            Err(err) => {
+                body.detach();
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        crate::webcore::aws::fetch_signing::provider_error_to_js(global_this, &err),
+                    ),
+                );
+            }
+        }
     }
 
     if let Some(aws) = aws_sign.as_ref().filter(|_| !url.is_s3()) {

@@ -1542,7 +1542,12 @@ pub(crate) fn readable_stream(
             Box::new(move |result| {
                 // SAFETY: the wrapper is only freed by a `has_more == false`
                 // callback, which cannot have happened before a task exists.
-                let cancelled = unsafe { (*wrapper).readable_stream_ref.get(&(*wrapper).global).is_none() };
+                let cancelled = unsafe {
+                    (*wrapper)
+                        .readable_stream_ref
+                        .get(&(*wrapper).global)
+                        .is_none()
+                };
                 match result {
                     Err(err) => S3DownloadStreamWrapper::opaque_callback(
                         &MutableString::default(),

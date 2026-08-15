@@ -82,7 +82,10 @@ impl Drop for AwsCredentials {
     fn drop(&mut self) {
         // SAFETY: exclusively borrowed boxed slices; `len` bytes writable.
         unsafe {
-            bun_core::secure_zero(self.secret_access_key.as_mut_ptr(), self.secret_access_key.len());
+            bun_core::secure_zero(
+                self.secret_access_key.as_mut_ptr(),
+                self.secret_access_key.len(),
+            );
             bun_core::secure_zero(self.session_token.as_mut_ptr(), self.session_token.len());
         }
     }

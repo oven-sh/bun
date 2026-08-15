@@ -9,46 +9,28 @@ use bun_jsc::{JSGlobalObject, JsResult};
 use bun_s3_signing::{
     AwsCredentials, CredentialsProvider, ProviderError, ProviderResult, SharedProvider,
 };
-use bun_threading::{Condvar, Guarded};
+use bun_threading::Guarded;
 
 use super::chain;
 use super::config::ChainConfig;
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-struct State {
-    cached: Option<Arc<AwsCredentials>>,
-    resolving: bool,
-    /// Result of the resolution that just finished, for waiters that joined
-    /// it; cleared when the next one starts.
-    last_error: Option<Arc<ProviderError>>,
-}
+use crate::webcore::cloud::cache::SingleFlightCache;
 
 /// The default chain for one profile key (`None` = whatever `AWS_PROFILE`
 /// says at resolution time).
 pub struct DefaultProvider {
     profile: Option<Box<[u8]>>,
     label: Box<[u8]>,
-    state: Guarded<State>,
-    cv: Condvar,
+    cache: SingleFlightCache<AwsCredentials>,
 }
 
 impl DefaultProvider {
     fn new(profile: Option<Box<[u8]>>) -> Self {
         Self {
-            label: profile.clone().unwrap_or_else(|| Box::from(b"default".as_slice())),
+            label: profile
+                .clone()
+                .unwrap_or_else(|| Box::from(b"default".as_slice())),
             profile,
-            state: Guarded::new(State {
-                cached: None,
-                resolving: false,
-                last_error: None,
-            }),
-            cv: Condvar::new(),
+            cache: SingleFlightCache::new(AwsCredentials::REFRESH_WINDOW_SECONDS),
         }
     }
 
@@ -58,69 +40,16 @@ impl DefaultProvider {
 
     /// Cached and outside the refresh window.
     pub fn cached_fresh(&self) -> Option<Arc<AwsCredentials>> {
-        let st = self.state.lock();
-        let now = now_secs();
-        st.cached.as_ref().filter(|c| c.is_fresh_at(now)).cloned()
+        self.cache.fresh()
     }
 
     pub fn forget(&self) {
-        let mut st = self.state.lock();
-        st.cached = None;
-        st.last_error = None;
+        self.cache.forget()
     }
 
     /// Resolve with `cfg`, or join a resolution already in flight.
     pub fn resolve_with(&self, cfg: &ChainConfig) -> ProviderResult {
-        let mut st = self.state.lock();
-        let now = now_secs();
-        if let Some(c) = &st.cached {
-            if c.is_fresh_at(now) {
-                return Ok(Arc::clone(c));
-            }
-        }
-        if st.resolving {
-            while st.resolving {
-                self.cv.wait_guarded(&mut st);
-            }
-            return match (&st.cached, &st.last_error) {
-                (Some(c), _) if c.expiration.is_none_or(|e| e > now + 5) => Ok(Arc::clone(c)),
-                (_, Some(e)) => Err(Arc::clone(e)),
-                _ => Err(Arc::new(ProviderError::new(
-                    "ERR_AWS_MISSING_CREDENTIALS",
-                    b"credential resolution was abandoned".to_vec(),
-                ))),
-            };
-        }
-        st.resolving = true;
-        st.last_error = None;
-        drop(st);
-
-        let result = chain::resolve(cfg);
-
-        let mut st = self.state.lock();
-        st.resolving = false;
-        let out = match result {
-            Ok(c) => {
-                let c = Arc::new(c);
-                st.cached = Some(Arc::clone(&c));
-                Ok(c)
-            }
-            Err(e) => {
-                let e = Arc::new(e);
-                st.last_error = Some(Arc::clone(&e));
-                // Keep serving not-yet-expired credentials if a refresh fails.
-                match &st.cached {
-                    Some(c) if c.expiration.is_none_or(|exp| exp > now + 5) => Ok(Arc::clone(c)),
-                    _ => {
-                        st.cached = None;
-                        Err(e)
-                    }
-                }
-            }
-        };
-        drop(st);
-        self.cv.notify_all();
-        out
+        self.cache.get_or_resolve(|| chain::resolve(cfg))
     }
 }
 
@@ -128,16 +57,11 @@ impl CredentialsProvider for DefaultProvider {
     /// Whatever is cached and not past expiry, even if inside the refresh
     /// window — requests keep being served while a refresh is in flight.
     fn cached(&self) -> Option<Arc<AwsCredentials>> {
-        let st = self.state.lock();
-        let now = now_secs();
-        st.cached
-            .as_ref()
-            .filter(|c| c.expiration.is_none_or(|e| e > now + 5))
-            .cloned()
+        self.cache.usable()
     }
 
     fn needs_refresh(&self) -> bool {
-        self.cached_fresh().is_none()
+        self.cache.fresh().is_none()
     }
 
     fn resolve_blocking(&self) -> ProviderResult {

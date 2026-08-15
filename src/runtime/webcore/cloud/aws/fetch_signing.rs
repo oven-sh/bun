@@ -4,8 +4,8 @@ use bun_http::Headers;
 use bun_http::Method;
 use bun_http_types::ETag::HeaderEntryColumns as _;
 use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
-use bun_s3_signing::sigv4;
 use bun_s3_signing::ProviderError;
+use bun_s3_signing::sigv4;
 use bun_url::URL;
 
 use super::sign_options::AwsSignOptions;
@@ -25,7 +25,12 @@ pub enum Signed {
 }
 
 /// Header names the caller must not set alongside `aws` (we generate them).
-const RESERVED: &[&[u8]] = &[b"authorization", b"x-amz-date", b"x-amz-content-sha256", b"x-amz-security-token"];
+const RESERVED: &[&[u8]] = &[
+    b"authorization",
+    b"x-amz-date",
+    b"x-amz-content-sha256",
+    b"x-amz-security-token",
+];
 
 pub fn sign_fetch_request(
     opts: &AwsSignOptions,
@@ -39,7 +44,10 @@ pub fn sign_fetch_request(
         .map_err(|m| format!("{}", bstr::BStr::new(&m)))?;
 
     // Sign the Host the HTTP client will send: the user's override, else the URL's.
-    let user_host = headers.as_ref().and_then(|h| h.get(b"host")).map(<[u8]>::to_vec);
+    let user_host = headers
+        .as_ref()
+        .and_then(|h| h.get(b"host"))
+        .map(<[u8]>::to_vec);
     let host: &[u8] = user_host.as_deref().unwrap_or(url.host);
     let (service, region) = opts.scope_for(host, &creds)?;
     let s3 = sigv4::is_s3_service(&service);
@@ -99,14 +107,19 @@ pub fn sign_fetch_request(
     let sig_creds = creds.sigv4();
 
     if opts.sign_query {
-        let scheme = if url.is_https() { b"https".as_slice() } else { b"http".as_slice() };
+        let scheme = if url.is_https() {
+            b"https".as_slice()
+        } else {
+            b"http".as_slice()
+        };
         let signed = sigv4::presign(&sig_creds, &req, scheme, opts.expires_in)
             .map_err(|e| format!("could not presign request: {e:?}"))?;
         drop(pairs);
         return Ok(Signed::Url(signed.url));
     }
 
-    let signed = sigv4::sign(&sig_creds, &req).map_err(|e| format!("could not sign request: {e:?}"))?;
+    let signed =
+        sigv4::sign(&sig_creds, &req).map_err(|e| format!("could not sign request: {e:?}"))?;
     drop(pairs);
     let h = headers.get_or_insert_with(Headers::default);
     h.append(b"Authorization", &signed.authorization);

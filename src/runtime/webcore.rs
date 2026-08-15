@@ -346,8 +346,9 @@ pub mod s3 {
     pub use multipart::MultiPartUpload;
 }
 
-#[path = "webcore/aws/mod.rs"]
-pub mod aws;
+#[path = "webcore/cloud/mod.rs"]
+pub mod cloud;
+pub use cloud::aws;
 
 #[path = "webcore/streams.rs"]
 pub mod streams;

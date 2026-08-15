@@ -325,7 +325,8 @@ impl<'a> Transpiler<'a> {
                 from.options.for_worker(),
             )
         };
-        let resolver_opts = resolver_bundle_options_subset(&options);
+        let resolver_opts =
+            resolver_bundle_options_subset(&options, from.resolver.opts.jsx.clone());
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
         // SAFETY: see fn doc — `Resolver::for_worker` widens
         // `standalone_module_graph` / `env_loader` lifetimes.
@@ -611,8 +612,13 @@ impl<'a> Transpiler<'a> {
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
+    ///
+    /// `jsx` is kept, not re-projected: by now `configure_linker` /
+    /// `run_env_loader` have merged the cwd tsconfig.json into `options.jsx`
+    /// (see `resolver_bundle_options_subset`).
     pub fn sync_resolver_opts(&mut self) {
-        self.resolver.opts = resolver_bundle_options_subset(&self.options);
+        let jsx = core::mem::take(&mut self.resolver.opts.jsx);
+        self.resolver.opts = resolver_bundle_options_subset(&self.options, jsx);
     }
 
     /// Print the loaded environment variables to stdout as 2-space-indented
@@ -1048,6 +1054,11 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
 ///
+/// `jsx` is not taken from `src`: `configure_linker` / `run_env_loader` merge
+/// the cwd tsconfig.json into `src.jsx`, while the resolver merges each file's
+/// own tsconfig over `opts.jsx`, so the base it gets must stay the user's
+/// configuration (`options.jsx` as built by `from_api`).
+///
 /// This projection can be dropped once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type
 /// directly.
@@ -1061,6 +1072,7 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 #[inline(never)]
 fn resolver_bundle_options_subset(
     src: &options::BundleOptions<'_>,
+    jsx: crate::options_impl::jsx::Pragma,
 ) -> resolver::options::BundleOptions {
     use resolver::options as ropts;
 
@@ -1070,8 +1082,7 @@ fn resolver_bundle_options_subset(
             options::PackagesOption::External => ropts::Packages::External,
             options::PackagesOption::Bundle => ropts::Packages::Bundle,
         },
-        // D042: same nominal type on both sides.
-        jsx: src.jsx.clone(),
+        jsx,
         // Spec `options.ResolveFileExtensions` — clone all four owned slices so
         // the resolver honours user `--extension-order` and the per-target
         // `.node` augmentation `from_api` applied.
@@ -1274,7 +1285,8 @@ impl<'a> Transpiler<'a> {
         // crate's `options::BundleOptions<'a>`. Project the fields the resolver
         // reads; the rest stay at `Default` until MOVE_DOWN to
         // `bun_options_types` unifies the two (resolver/lib.rs:2773 note).
-        let resolver_opts = resolver_bundle_options_subset(&bundle_options);
+        let resolver_opts =
+            resolver_bundle_options_subset(&bundle_options, bundle_options.jsx.clone());
 
         let outbase = bundle_options.output_dir.clone();
         let resolve_results = Box::new(ResolveResults::default());

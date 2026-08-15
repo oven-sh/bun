@@ -207,6 +207,8 @@ pub struct Framework {
 pub struct BundleOptions {
     pub target: Target,
     pub packages: Packages,
+    /// The user's JSX configuration with no tsconfig.json applied: `Result::jsx`
+    /// is the resolved file's own enclosing tsconfig merged over this.
     pub jsx: jsx::Pragma,
     pub extension_order: ExtensionOrder,
     pub conditions: Conditions,

@@ -1567,6 +1567,7 @@ impl<'a> Transpiler<'a> {
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
+                    lower_toml_datetimes: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;

@@ -90,7 +90,7 @@ fn creds(
 }
 
 /// `sts`, `portal.sso`, `oidc` hosts by partition.
-fn dns_suffix(region: &[u8]) -> &'static str {
+pub fn dns_suffix(region: &[u8]) -> &'static str {
     if region.starts_with(b"cn-") {
         "amazonaws.com.cn"
     } else if region.starts_with(b"us-iso-") {

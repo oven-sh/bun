@@ -1,7 +1,6 @@
 //! Per-JS-thread cache of Google tokens keyed by what was asked for (scopes
 //! / audience), resolved on the work pool with JS-side waiter fan-out.
 
-use core::cell::RefCell;
 use std::sync::Arc;
 
 use bun_jsc::job::{Completion, Job, JobContext, JsAffine, JsThread};
@@ -61,9 +60,15 @@ impl TokenProvider {
     }
 }
 
-thread_local! {
-    static REGISTRY: RefCell<Vec<Arc<TokenProvider>>> = const { RefCell::new(Vec::new()) };
-    static PENDING: RefCell<Vec<Pending>> = const { RefCell::new(Vec::new()) };
+/// This VM's token providers and in-flight resolutions.
+#[derive(Default)]
+pub(crate) struct State {
+    registry: Vec<Arc<TokenProvider>>,
+    pending: Vec<Pending>,
+}
+
+fn state() -> &'static mut State {
+    &mut crate::webcore::cloud::PerVm::get(bun_jsc::virtual_machine::VirtualMachine::get()).gcp
 }
 
 struct Pending {
@@ -72,17 +77,16 @@ struct Pending {
 }
 
 pub fn provider_for(request: TokenRequest) -> Arc<TokenProvider> {
-    REGISTRY.with_borrow_mut(|reg| {
-        if let Some(p) = reg.iter().find(|p| p.request == request) {
-            return Arc::clone(p);
-        }
-        let p = Arc::new(TokenProvider {
-            request,
-            cache: SingleFlightCache::new(REFRESH_WINDOW_SECONDS),
-        });
-        reg.push(Arc::clone(&p));
-        p
-    })
+    let reg = &mut state().registry;
+    if let Some(p) = reg.iter().find(|p| p.request == request) {
+        return Arc::clone(p);
+    }
+    let p = Arc::new(TokenProvider {
+        request,
+        cache: SingleFlightCache::new(REFRESH_WINDOW_SECONDS),
+    });
+    reg.push(Arc::clone(&p));
+    p
 }
 
 // ── async resolution ──────────────────────────────────────────────────────
@@ -97,10 +101,11 @@ fn cancelled() -> Arc<ProviderError> {
 }
 
 fn take_waiters(key: usize) -> Vec<Continuation> {
-    PENDING.with_borrow_mut(|p| match p.iter().position(|e| e.key == key) {
+    let p = &mut state().pending;
+    match p.iter().position(|e| e.key == key) {
         Some(i) => p.swap_remove(i).waiters,
         None => Vec::new(),
-    })
+    }
 }
 
 fn run_waiters(waiters: Vec<Continuation>, result: &TokenResult) -> JsResult<()> {
@@ -197,19 +202,22 @@ impl JobContext for ResolveJob {
 /// already in flight for this provider on this thread.
 fn start(global: &JSGlobalObject, provider: &Arc<TokenProvider>, then: Option<Continuation>) {
     let key = provider.key();
-    let first = PENDING.with_borrow_mut(|p| match p.iter_mut().find(|e| e.key == key) {
-        Some(entry) => {
-            entry.waiters.extend(then);
-            false
+    let first = {
+        let p = &mut state().pending;
+        match p.iter_mut().find(|e| e.key == key) {
+            Some(entry) => {
+                entry.waiters.extend(then);
+                false
+            }
+            None => {
+                p.push(Pending {
+                    key,
+                    waiters: then.into_iter().collect(),
+                });
+                true
+            }
         }
-        None => {
-            p.push(Pending {
-                key,
-                waiters: then.into_iter().collect(),
-            });
-            true
-        }
-    });
+    };
     if first {
         let cx = global.js_thread();
         Job::<ResolveJob>::schedule(

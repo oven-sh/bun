@@ -2002,64 +2002,6 @@ interface BunFetchRequestInit extends RequestInit {
   s3?: Bun.S3Options;
 
   /**
-   * Sign the request with [AWS Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html)
-   * so it can be sent straight to an AWS (or AWS-compatible) API.
-   *
-   * `true` infers the service and region from the hostname and uses ambient
-   * credentials (environment variables, `~/.aws`, SSO, container / instance
-   * metadata — see {@link Bun.aws.credentials}). Pass an object to override
-   * any of those.
-   *
-   * The `Authorization`, `x-amz-date`, `x-amz-content-sha256` and (for
-   * temporary credentials) `x-amz-security-token` headers are added for you.
-   * Because a signature is bound to the URL it was computed for, signed
-   * requests default to `redirect: "manual"`.
-   *
-   * Not part of the Fetch API specification.
-   *
-   * @example
-   * ```ts
-   * const res = await fetch("https://dynamodb.us-east-1.amazonaws.com/", {
-   *   method: "POST",
-   *   aws: true,
-   *   headers: {
-   *     "content-type": "application/x-amz-json-1.0",
-   *     "x-amz-target": "DynamoDB_20120810.ListTables",
-   *   },
-   *   body: JSON.stringify({}),
-   * });
-   * ```
-   *
-   * @example
-   * ```ts
-   * // A Lambda function URL with IAM auth, using a named profile
-   * await fetch("https://abc123.lambda-url.eu-west-1.on.aws/", { aws: { profile: "prod" } });
-   * ```
-   */
-  aws?: boolean | Bun.AWSSignOptions;
-
-  /**
-   * Authenticate the request to a Google Cloud API with
-   * [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials):
-   * adds `Authorization: Bearer <token>` (and `x-goog-user-project` when the
-   * credentials carry a quota project).
-   *
-   * `true` uses an access token for the `cloud-platform` scope. Pass
-   * `{ scopes }` for other scopes, or `{ audience }` to send an OIDC **ID
-   * token** instead (for Cloud Run / Cloud Functions / IAP-protected services).
-   * See {@link Bun.gcp.accessToken} for where the credentials come from.
-   *
-   * Not part of the Fetch API specification.
-   *
-   * @example
-   * ```ts
-   * const res = await fetch("https://storage.googleapis.com/storage/v1/b?project=my-project", { gcp: true });
-   * await fetch("https://my-service-abc123.a.run.app/api", { gcp: { audience: "https://my-service-abc123.a.run.app" } });
-   * ```
-   */
-  gcp?: boolean | Bun.GCPTokenOptions | { audience: string };
-
-  /**
    * Make the request over a Unix socket
    *
    * @example

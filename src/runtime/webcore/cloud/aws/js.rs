@@ -18,10 +18,17 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
         global,
         &[
+            ("fetch", __jsc_host_aws_fetch, 2),
             ("credentials", __jsc_host_credentials, 1),
             ("presign", __jsc_host_presign, 2),
         ],
     )
+}
+
+/// `Bun.aws.fetch(input, { service?, region?, profile?, ..., ...RequestInit })`
+#[bun_jsc::host_fn]
+fn aws_fetch(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    crate::webcore::fetch::fetch_with_auth(global, frame, crate::webcore::fetch::FetchAuth::Aws)
 }
 
 pub fn credentials_to_js(global: &JSGlobalObject, c: &AwsCredentials) -> JsResult<JSValue> {

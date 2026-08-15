@@ -91,7 +91,7 @@ impl AwsSignOptions {
         }
         if !value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
-                "aws must be true or an object like {{ service, region, accessKeyId, secretAccessKey }}"
+                "expected an options object like {{ service, region, accessKeyId, secretAccessKey }}"
             )));
         }
 
@@ -126,13 +126,13 @@ impl AwsSignOptions {
             }
             (Some(_), None) | (None, Some(_)) => {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "aws.accessKeyId and aws.secretAccessKey must be given together"
+                    "accessKeyId and secretAccessKey must be given together"
                 )));
             }
             (None, None) => {
                 if session_token.is_some() {
                     return Err(global.throw_invalid_arguments(format_args!(
-                        "aws.sessionToken requires aws.accessKeyId and aws.secretAccessKey"
+                        "sessionToken requires accessKeyId and secretAccessKey"
                     )));
                 }
             }
@@ -144,7 +144,7 @@ impl AwsSignOptions {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
             {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "aws.service \"{}\" is not a valid AWS service name",
+                    "service \"{}\" is not a valid AWS service name",
                     BStr::new(s)
                 )));
             }
@@ -157,7 +157,7 @@ impl AwsSignOptions {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'*'))
             {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "aws.region \"{}\" is not a valid AWS region",
+                    "region \"{}\" is not a valid AWS region",
                     BStr::new(r)
                 )));
             }
@@ -183,7 +183,7 @@ impl AwsSignOptions {
             }
             out.expires_in = n as u32;
         }
-        if let Some(d) = get_truthy_string_utf8(value, global, b"date", false)? {
+        if let Some(d) = get_truthy_string_utf8(value, global, b"signingDate", false)? {
             // Accept an `x-amz-date`-formatted string for reproducible signatures.
             let d = d.slice();
             if d.len() == 16 && sigv4::parse_iso8601(d).is_some() {
@@ -192,10 +192,10 @@ impl AwsSignOptions {
                 out.datetime = Some(buf);
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "aws.date must look like 20250101T000000Z"
+                    "signingDate must look like 20250101T000000Z"
                 )));
             }
-        } else if let Some(v) = value.get_truthy(global, "date")? {
+        } else if let Some(v) = value.get_truthy(global, "signingDate")? {
             if v.is_number() || v.is_date() {
                 let ms = if v.is_number() {
                     v.as_number()
@@ -208,6 +208,67 @@ impl AwsSignOptions {
             }
         }
         Ok(Some(out))
+    }
+
+    /// `https://{service}.{region}.amazonaws.com` (or the partition /
+    /// global-service equivalent) for `Bun.aws.fetch("/path", { service })`.
+    pub fn default_endpoint(&self) -> Result<Vec<u8>, EndpointError> {
+        let Some(service) = self.service.as_deref() else {
+            return Err(EndpointError::NoService);
+        };
+        // Endpoint host label, where it differs from the signing name.
+        let host_label: &[u8] = match service {
+            b"ses" => b"email",
+            b"iotdata" => b"data-ats.iot",
+            b"execute-api" | b"lambda" | b"es" | b"aoss" => {
+                return Err(EndpointError::NeedsHost(Box::from(service)));
+            }
+            other => other,
+        };
+        // Services with a single global endpoint (signed as us-east-1).
+        const GLOBAL: &[&[u8]] = &[
+            b"iam",
+            b"cloudfront",
+            b"route53",
+            b"globalaccelerator",
+            b"organizations",
+            b"shield",
+            b"waf",
+            b"importexport",
+            b"networkmanager",
+        ];
+        let region: Option<Box<[u8]>> = if GLOBAL.contains(&service) {
+            None
+        } else {
+            match self.region.clone().or_else(|| self.env_region.clone()) {
+                Some(r) => Some(r),
+                None => match &self.credentials {
+                    Credentials::Static(c) => c.region.clone(),
+                    Credentials::Provider(p) => match p.cached() {
+                        Some(c) => c.region.clone(),
+                        None if p.needs_resolution() => {
+                            return Err(EndpointError::RegionPending(Arc::clone(p)));
+                        }
+                        None => None,
+                    },
+                },
+            }
+            .map(Some)
+            .ok_or(EndpointError::NoRegion)?
+        };
+        let suffix = match region.as_deref() {
+            Some(r) => super::chain::dns_suffix(r),
+            None => "amazonaws.com",
+        };
+        Ok(match region {
+            Some(r) => format!(
+                "https://{}.{}.{suffix}",
+                BStr::new(host_label),
+                BStr::new(&r)
+            ),
+            None => format!("https://{}.{suffix}", BStr::new(host_label)),
+        }
+        .into_bytes())
     }
 
     pub fn provider(&self) -> Option<&SharedProvider> {
@@ -244,7 +305,7 @@ impl AwsSignOptions {
         };
         let service = self.service.clone().or(inferred_service).ok_or_else(|| {
             format!(
-                "cannot tell which AWS service \"{}\" is; pass aws: {{ service: \"...\" }}",
+                "cannot tell which AWS service \"{}\" is; pass service: \"...\"",
                 BStr::new(host)
             )
         })?;
@@ -256,10 +317,36 @@ impl AwsSignOptions {
             .or_else(|| creds.region.clone())
             .ok_or_else(|| {
                 format!(
-                    "cannot tell which AWS region \"{}\" is in; pass aws: {{ region: \"...\" }} or set AWS_REGION",
+                    "cannot tell which AWS region \"{}\" is in; pass region: \"...\" or set AWS_REGION",
                     BStr::new(host)
                 )
             })?;
         Ok((service, region))
+    }
+}
+
+pub enum EndpointError {
+    NoService,
+    NoRegion,
+    NeedsHost(Box<[u8]>),
+    /// The region may come with the credentials, which are not resolved yet.
+    RegionPending(SharedProvider),
+}
+
+impl core::fmt::Display for EndpointError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            EndpointError::NoService => {
+                f.write_str("needs `service` (e.g. \"sqs\") to build a URL from a relative path")
+            }
+            EndpointError::NoRegion | EndpointError::RegionPending(_) => f.write_str(
+                "cannot tell which region to use for a relative path; pass `region` or set AWS_REGION",
+            ),
+            EndpointError::NeedsHost(svc) => write!(
+                f,
+                "\"{}\" endpoints are per-resource; pass the full https:// URL",
+                BStr::new(svc)
+            ),
+        }
     }
 }

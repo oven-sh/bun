@@ -586,7 +586,7 @@ describe.concurrent("Bun.aws.credentials", () => {
       `
         const a = await Bun.aws.credentials();
         const b = await Bun.aws.credentials();
-        await fetch(${JSON.stringify(s3.url.href)}, { aws: { service: "s3", region: "us-east-1" } });
+        await Bun.aws.fetch(${JSON.stringify(s3.url.href)}, { service: "s3", region: "us-east-1" });
         console.log(a.accessKeyId, b.accessKeyId);
       `,
       { AWS_CONTAINER_CREDENTIALS_FULL_URI: `http://127.0.0.1:${server.port}/` },

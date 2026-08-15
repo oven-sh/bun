@@ -7,10 +7,10 @@ Bun can authenticate requests to AWS and Google Cloud the same way their CLIs an
 
 ```ts
 // SigV4-signed request with whatever credentials this machine has
-const queues = await fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues", { aws: true });
+const queues = await Bun.aws.fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues");
 
 // Bearer token from Application Default Credentials
-const buckets = await fetch("https://storage.googleapis.com/storage/v1/b?project=my-project", { gcp: true });
+const buckets = await Bun.gcp.fetch("https://storage.googleapis.com/storage/v1/b?project=my-project");
 ```
 
 `Bun.s3`, `new S3Client()` and `fetch("s3://…")` use the AWS chain automatically when no `accessKeyId`/`secretAccessKey` is configured — see [S3 › Credentials](/runtime/s3#credentials).
@@ -53,14 +53,13 @@ await Bun.aws.credentials({ refresh: true }); // ignore the cache
 
 When nothing is found, the promise rejects with `code: "ERR_AWS_MISSING_CREDENTIALS"` and a message listing each source and why it was skipped. A configured source that failed rejects with `code: "ERR_AWS_CREDENTIALS"`.
 
-### `fetch(url, { aws })`
+### `Bun.aws.fetch(input, init?)`
 
-Signs the request with [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html). `true` infers the service and region from `*.amazonaws.com` / `*.on.aws` hostnames and uses ambient credentials; pass an object to override any part.
+`fetch()`, with the request signed using [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html). `init` accepts everything `fetch` does plus the signing options below; with none, the service and region are inferred from `*.amazonaws.com` / `*.on.aws` hostnames and ambient credentials are used.
 
 ```ts
-await fetch("https://dynamodb.us-east-1.amazonaws.com/", {
+const res = await Bun.aws.fetch("https://dynamodb.us-east-1.amazonaws.com/", {
   method: "POST",
-  aws: true,
   headers: {
     "content-type": "application/x-amz-json-1.0",
     "x-amz-target": "DynamoDB_20120810.GetItem",
@@ -68,27 +67,31 @@ await fetch("https://dynamodb.us-east-1.amazonaws.com/", {
   body: JSON.stringify({ TableName: "users", Key: { id: { S: "42" } } }),
 });
 
-// API Gateway / Lambda function URL behind IAM auth, custom domain
-await fetch("https://api.example.com/orders", {
-  aws: { service: "execute-api", region: "eu-west-1", profile: "prod" },
-});
+// A path-only URL goes to the service's standard endpoint in the resolved
+// region: https://sqs.<region>.amazonaws.com/?Action=ListQueues
+await Bun.aws.fetch("/?Action=ListQueues", { service: "sqs" });
+
+// API Gateway / Lambda function URL behind IAM auth on a custom domain
+await Bun.aws.fetch("https://api.example.com/orders", { service: "execute-api", region: "eu-west-1", profile: "prod" });
 ```
 
-| Option                                           | Default                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------- |
-| `service`, `region`                              | inferred from the hostname; region falls back to `AWS_REGION` |
-| `accessKeyId`, `secretAccessKey`, `sessionToken` | ambient credentials                                           |
-| `profile`                                        | `AWS_PROFILE` / `default`                                     |
-| `signQuery`, `expiresIn`                         | `false`, `900` — put the signature in the query string        |
-| `unsignedPayload`                                | `false` — send `UNSIGNED-PAYLOAD` (S3-style services only)    |
+| Option                                           | Default                                                                                  |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| `service`, `region`                              | inferred from the hostname; region falls back to `AWS_REGION`, then the profile's region |
+| `accessKeyId`, `secretAccessKey`, `sessionToken` | ambient credentials                                                                      |
+| `profile`                                        | `AWS_PROFILE` / `default`                                                                |
+| `signQuery`, `expiresIn`                         | `false`, `900` — put the signature in the query string                                   |
+| `unsignedPayload`                                | `false` — send `UNSIGNED-PAYLOAD` (S3-style services only)                               |
 
-Bun adds `Authorization`, `x-amz-date`, `x-amz-security-token` (temporary credentials) and, for S3, `x-amz-content-sha256`; setting those yourself alongside `aws` is an error. `ReadableStream` bodies can only be signed for S3-style services (as `UNSIGNED-PAYLOAD`), since other services need the body's SHA-256 up front.
+Bun adds `Authorization`, `x-amz-date`, `x-amz-security-token` (temporary credentials) and, for S3, `x-amz-content-sha256`; setting those yourself is an error. `ReadableStream` bodies can only be signed for S3-style services (as `UNSIGNED-PAYLOAD`), since other services need the body's SHA-256 up front.
 
-A signature is only valid for the exact host and path it was computed for, so signed requests default to `redirect: "manual"` — a `307` from S3 pointing at another region comes back as a `307` rather than being followed unsigned. Pass `redirect: "follow"` explicitly if you really want that.
+A signature is only valid for the exact host and path it was computed for, so `redirect` defaults to `"manual"` — a `307` from S3 pointing at another region comes back as a `307` rather than being followed unsigned. Pass `redirect: "follow"` explicitly if you really want that.
+
+For `s3://` URLs keep using `fetch("s3://…", { s3: {...} })` or `Bun.s3`.
 
 ### `Bun.aws.presign(url, options?)`
 
-Returns a query-string-signed URL — typically an S3 object URL to hand to a browser. Takes the same options as `fetch`'s `aws`, plus `method` (default `"GET"`) and `expiresIn` (seconds, default `900`, max `604800`).
+Returns a query-string-signed URL — typically an S3 object URL to hand to a browser. Takes the same signing options as `Bun.aws.fetch`, plus `method` (default `"GET"`) and `expiresIn` (seconds, default `900`, max `604800`).
 
 ```ts
 const download = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/report.pdf", { expiresIn: 3600 });
@@ -125,12 +128,12 @@ const { token: idToken } = await Bun.gcp.idToken("https://my-service-abc123.a.ru
 
 Tokens are cached per scope set / audience; pass `refresh: true` to force a new one. Failures reject with `code: "ERR_GCP_MISSING_CREDENTIALS"` (nothing configured) or `"ERR_GCP_CREDENTIALS"` (a configured source failed).
 
-### `fetch(url, { gcp })`
+### `Bun.gcp.fetch(input, init?)`
 
 ```ts
-await fetch("https://pubsub.googleapis.com/v1/projects/my-project/topics", { gcp: true });
-await fetch("https://www.googleapis.com/…", { gcp: { scopes: "devstorage.read_only" } });
-await fetch("https://my-service-abc123.a.run.app/", { gcp: { audience: "https://my-service-abc123.a.run.app" } });
+await Bun.gcp.fetch("https://pubsub.googleapis.com/v1/projects/my-project/topics");
+await Bun.gcp.fetch("https://storage.googleapis.com/storage/v1/b/my-bucket/o", { scopes: "devstorage.read_only" });
+await Bun.gcp.fetch("https://my-service-abc123.a.run.app/", { audience: "https://my-service-abc123.a.run.app" });
 ```
 
-`true` / `{ scopes }` sends `Authorization: Bearer <access token>`; `{ audience }` sends an ID token instead. When the credentials carry a `quota_project_id` (or `GOOGLE_CLOUD_QUOTA_PROJECT` is set), `x-goog-user-project` is added unless you set it yourself.
+`init` accepts everything `fetch` does plus `scopes` (access token, the default) or `audience` (ID token). Bun sets `Authorization: Bearer <token>`, and `x-goog-user-project` when the credentials carry a `quota_project_id` (or `GOOGLE_CLOUD_QUOTA_PROJECT` is set) unless you set it yourself.

@@ -2,7 +2,6 @@
 //! thread and profile key, plus the glue that runs a resolution on the work
 //! pool and fans the result out to every waiter on the JS thread.
 
-use core::cell::RefCell;
 use std::sync::Arc;
 
 use bun_jsc::job::{Completion, Job, JobContext, JsAffine, JsThread};
@@ -98,12 +97,17 @@ impl CredentialsProvider for DefaultProvider {
     }
 }
 
-// ── registry (per JS thread: a Worker with its own env gets its own) ──────
+// ── registry (per VM: a Worker with its own env gets its own) ─────────────
 
-thread_local! {
-    static REGISTRY: RefCell<Vec<Arc<DefaultProvider>>> = const { RefCell::new(Vec::new()) };
-    /// Resolutions in flight from this thread, and who is waiting on each.
-    static PENDING: RefCell<Vec<Pending>> = const { RefCell::new(Vec::new()) };
+/// This VM's providers (by profile key) and in-flight resolutions.
+#[derive(Default)]
+pub(crate) struct State {
+    registry: Vec<Arc<DefaultProvider>>,
+    pending: Vec<Pending>,
+}
+
+fn state() -> &'static mut State {
+    &mut crate::webcore::cloud::PerVm::get(VirtualMachine::get()).aws
 }
 
 struct Pending {
@@ -113,14 +117,13 @@ struct Pending {
 
 /// The shared provider for `profile` (`None` = default) on this thread.
 pub fn default_provider(profile: Option<&[u8]>) -> Arc<DefaultProvider> {
-    REGISTRY.with_borrow_mut(|reg| {
-        if let Some(p) = reg.iter().find(|p| p.profile() == profile) {
-            return Arc::clone(p);
-        }
-        let p = Arc::new(DefaultProvider::new(profile.map(Box::from)));
-        reg.push(Arc::clone(&p));
-        p
-    })
+    let reg = &mut state().registry;
+    if let Some(p) = reg.iter().find(|p| p.profile() == profile) {
+        return Arc::clone(p);
+    }
+    let p = Arc::new(DefaultProvider::new(profile.map(Box::from)));
+    reg.push(Arc::clone(&p));
+    p
 }
 
 pub fn shared(profile: Option<&[u8]>) -> SharedProvider {
@@ -131,11 +134,11 @@ pub fn shared(profile: Option<&[u8]>) -> SharedProvider {
 /// `DefaultProvider` from this thread's registry, so match by identity.
 pub fn as_default(provider: &SharedProvider) -> Option<Arc<DefaultProvider>> {
     let target = Arc::as_ptr(provider).cast::<()>() as usize;
-    REGISTRY.with_borrow(|reg| {
-        reg.iter()
-            .find(|p| Arc::as_ptr(p).cast::<()>() as usize == target)
-            .cloned()
-    })
+    state()
+        .registry
+        .iter()
+        .find(|p| Arc::as_ptr(p).cast::<()>() as usize == target)
+        .cloned()
 }
 
 // ── async resolution (JS thread → work pool → JS thread) ──────────────────
@@ -153,10 +156,11 @@ fn cancelled() -> Arc<ProviderError> {
 }
 
 fn take_waiters(key: usize) -> Vec<Continuation> {
-    PENDING.with_borrow_mut(|p| match p.iter().position(|e| e.key == key) {
+    let p = &mut state().pending;
+    match p.iter().position(|e| e.key == key) {
         Some(i) => p.swap_remove(i).waiters,
         None => Vec::new(),
-    })
+    }
 }
 
 fn run_waiters(waiters: Vec<Continuation>, result: &ProviderResult) -> JsResult<()> {
@@ -277,19 +281,22 @@ pub fn resolve_async(
         return then(Ok(c));
     }
     let key = provider.key();
-    let first = PENDING.with_borrow_mut(|p| match p.iter_mut().find(|e| e.key == key) {
-        Some(entry) => {
-            entry.waiters.push(then);
-            false
+    let first = {
+        let p = &mut state().pending;
+        match p.iter_mut().find(|e| e.key == key) {
+            Some(entry) => {
+                entry.waiters.push(then);
+                false
+            }
+            None => {
+                p.push(Pending {
+                    key,
+                    waiters: vec![then],
+                });
+                true
+            }
         }
-        None => {
-            p.push(Pending {
-                key,
-                waiters: vec![then],
-            });
-            true
-        }
-    });
+    };
     if first {
         schedule(global, Arc::clone(provider), key);
     }
@@ -300,21 +307,19 @@ pub fn resolve_async(
 /// not already running from this thread.
 fn refresh_ahead(global: &JSGlobalObject, provider: &DefaultProvider) {
     let key = provider.key();
-    let Some(provider) = REGISTRY.with_borrow(|reg| reg.iter().find(|p| p.key() == key).cloned())
-    else {
+    let st = state();
+    let Some(provider) = st.registry.iter().find(|p| p.key() == key).cloned() else {
         return;
     };
-    let first = PENDING.with_borrow_mut(|p| {
-        if p.iter().any(|e| e.key == key) {
-            false
-        } else {
-            p.push(Pending {
-                key,
-                waiters: Vec::new(),
-            });
-            true
-        }
-    });
+    let first = if st.pending.iter().any(|e| e.key == key) {
+        false
+    } else {
+        st.pending.push(Pending {
+            key,
+            waiters: Vec::new(),
+        });
+        true
+    };
     if first {
         schedule(global, provider, key);
     }

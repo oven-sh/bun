@@ -5041,7 +5041,7 @@ declare module "bun" {
      */
     expiresIn?: number;
     /** Sign as of this instant instead of now (mostly useful for tests). */
-    date?: Date | number | string;
+    signingDate?: Date | number | string;
   }
 
   /**
@@ -5049,12 +5049,41 @@ declare module "bun" {
    *
    * @example
    * ```ts
+   * const res = await Bun.aws.fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues");
    * const { accessKeyId, source } = await Bun.aws.credentials();
    * const url = Bun.aws.presign("https://my-bucket.s3.us-east-1.amazonaws.com/report.pdf", { expiresIn: 3600 });
-   * const res = await fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues", { aws: true });
    * ```
    */
   namespace aws {
+    /**
+     * `fetch()`, with the request signed using [AWS Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html)
+     * so it can go straight to an AWS (or AWS-compatible) API.
+     *
+     * `init` takes everything `fetch()` does plus {@link AWSSignOptions}. By
+     * default the service and region are inferred from the hostname and
+     * credentials come from the ambient chain (see {@link credentials}). A
+     * path-only URL is sent to the service's standard endpoint,
+     * `https://{service}.{region}.amazonaws.com`.
+     *
+     * Adds `Authorization`, `x-amz-date`, `x-amz-security-token` (temporary
+     * credentials) and, for S3, `x-amz-content-sha256`. Because a signature is
+     * bound to the exact URL, `redirect` defaults to `"manual"`.
+     *
+     * @example
+     * ```ts
+     * const res = await Bun.aws.fetch("https://dynamodb.us-east-1.amazonaws.com/", {
+     *   method: "POST",
+     *   headers: { "content-type": "application/x-amz-json-1.0", "x-amz-target": "DynamoDB_20120810.ListTables" },
+     *   body: "{}",
+     * });
+     * // relative to the service's endpoint in $AWS_REGION
+     * await Bun.aws.fetch("/?Action=ListQueues", { service: "sqs" });
+     * // Lambda function URL with IAM auth, using a named profile
+     * await Bun.aws.fetch("https://abc123.lambda-url.eu-west-1.on.aws/", { profile: "prod" });
+     * ```
+     */
+    function fetch(input: string | URL | Request, init?: BunFetchRequestInit & AWSSignOptions): Promise<Response>;
+
     /**
      * Resolve AWS credentials using the same default chain as the AWS CLI and SDKs:
      *
@@ -5076,7 +5105,7 @@ declare module "bun" {
      *
      * Results are cached per profile for the whole process and refreshed
      * about five minutes before they expire, so calling this repeatedly is cheap.
-     * `Bun.s3`, `new S3Client()`, `fetch("s3://…")` and `fetch(url, { aws })`
+     * `Bun.s3`, `new S3Client()`, `fetch("s3://…")` and `Bun.aws.fetch()`
      * use this automatically when no explicit keys are given.
      *
      * @param options.profile Profile name; defaults to `AWS_PROFILE` or `"default"`.
@@ -5157,10 +5186,30 @@ declare module "bun" {
    *   headers: { Authorization: `Bearer ${token}` },
    * });
    * // or simply
-   * await fetch("https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets", { gcp: true });
+   * await Bun.gcp.fetch("https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets");
    * ```
    */
   namespace gcp {
+    /**
+     * `fetch()`, authenticated with Application Default Credentials: adds
+     * `Authorization: Bearer <token>` (and `x-goog-user-project` when the
+     * credentials carry a quota project).
+     *
+     * With no options (or `{ scopes }`) an access token is used; with
+     * `{ audience }` an OIDC **ID token** is sent instead — what Cloud Run,
+     * Cloud Functions and IAP expect for service-to-service calls.
+     *
+     * @example
+     * ```ts
+     * await Bun.gcp.fetch("https://storage.googleapis.com/storage/v1/b?project=my-project");
+     * await Bun.gcp.fetch("https://my-service-abc123.a.run.app/api", { audience: "https://my-service-abc123.a.run.app" });
+     * ```
+     */
+    function fetch(
+      input: string | URL | Request,
+      init?: BunFetchRequestInit & (GCPTokenOptions | { audience: string; refresh?: boolean }),
+    ): Promise<Response>;
+
     /**
      * Get an OAuth2 access token using
      * [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials):

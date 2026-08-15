@@ -483,7 +483,7 @@ Pick a profile with `AWS_PROFILE` or the `profile` option (which takes precedenc
 const prod = new S3Client({ profile: "prod", bucket: "my-bucket" });
 ```
 
-Resolution happens off the JavaScript thread on first use; the result is cached for the process and refreshed a few minutes before it expires. See [AWS & Google Cloud auth](/runtime/networking/cloud-auth) for the full order, `Bun.aws.credentials()`, and signing arbitrary AWS requests with `fetch`.
+Resolution happens off the JavaScript thread on first use; the result is cached for the process and refreshed a few minutes before it expires. See [AWS & Google Cloud auth](/runtime/networking/cloud-auth) for the full order, `Bun.aws.credentials()`, and signing arbitrary AWS requests with `Bun.aws.fetch`.
 
 Options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials override these defaults. So if you use the same credentials for different buckets, you can set the credentials once in your `.env` file and pass only `bucket: "my-bucket"` to `s3.file()`.
 

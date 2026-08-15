@@ -14,10 +14,17 @@ pub fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
         global,
         &[
+            ("fetch", __jsc_host_gcp_fetch, 2),
             ("accessToken", __jsc_host_access_token, 1),
             ("idToken", __jsc_host_id_token, 1),
         ],
     )
+}
+
+/// `Bun.gcp.fetch(input, { scopes? | audience?, ...RequestInit })`
+#[bun_jsc::host_fn]
+fn gcp_fetch(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    crate::webcore::fetch::fetch_with_auth(global, frame, crate::webcore::fetch::FetchAuth::Gcp)
 }
 
 pub fn token_to_js(global: &JSGlobalObject, t: &Token) -> JsResult<JSValue> {
@@ -71,7 +78,7 @@ pub fn scopes_from_js(global: &JSGlobalObject, options: Option<JSValue>) -> JsRe
     };
     let bad = || {
         global.throw_invalid_arguments(format_args!(
-            "gcp.scopes must be a scope URL string or an array of them"
+            "scopes must be a scope URL string or an array of them"
         ))
     };
     let mut joined: Vec<u8> = Vec::new();
@@ -142,13 +149,13 @@ impl GcpFetchOptions {
         }
         if !value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
-                "gcp must be true or an object like {{ scopes }} or {{ audience }}"
+                "expected an options object like {{ scopes }} or {{ audience }}"
             )));
         }
         let request = if let Some(aud) = get_truthy_string_utf8(value, global, b"audience", true)? {
             if value.get_truthy(global, "scopes")?.is_some() {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "gcp.audience (an ID token) and gcp.scopes (an access token) are mutually exclusive"
+                    "audience (an ID token) and scopes (an access token) are mutually exclusive"
                 )));
             }
             TokenRequest::Identity {

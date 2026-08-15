@@ -1534,28 +1534,11 @@ fn report_lockfile_load_error(
     if log_level != Options::LogLevel::Silent
         && !crate::migration::reported_unsupported_lockfile_version(cause)
     {
-        match cause.step {
-            lockfile::LoadStep::OpenFile => Output::err(
-                cause.value,
-                "failed to open lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-            lockfile::LoadStep::ParseFile => Output::err(
-                cause.value,
-                "failed to parse lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-            lockfile::LoadStep::ReadFile => Output::err(
-                cause.value,
-                "failed to read lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-            lockfile::LoadStep::Migrating => Output::err(
-                cause.value,
-                "failed to migrate lockfile: '{}'",
-                format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
-            ),
-        }
+        Output::err(
+            cause.value,
+            "failed to {} lockfile: '{}'",
+            (cause.step.verb(), bstr::BStr::new(&cause.lockfile_path)),
+        );
 
         if !manager.options.enable.fail_early() {
             Output::print_errorln("");

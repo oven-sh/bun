@@ -2536,14 +2536,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
-                let list_is_shared = p.nearest_stmt_list_is_shared;
-                let hoisted = match p.nearest_stmt_list_mut() {
-                    Some(stmt_list) if !list_is_shared => {
-                        stmt_list.push(var_decl_stmt);
-                        true
-                    }
-                    _ => false,
-                };
+                let hoisted = !p.nearest_stmt_list_is_shared
+                    && match p.nearest_stmt_list_mut() {
+                        Some(stmt_list) => {
+                            stmt_list.push(var_decl_stmt);
+                            true
+                        }
+                        None => false,
+                    };
                 if !hoisted {
                     let return_stmt = p.s(
                         S::Return {

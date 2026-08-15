@@ -982,11 +982,11 @@ describe("ES Decorators", () => {
     });
   });
 
-  describe("anonymous decorated class as a parameter default value", () => {
+  describe("anonymous decorated class as a binding initializer", () => {
     // The lowering rewrites the class to `_class = class {}`, so the name the
-    // parameter would have given it has to be carried over explicitly, the same
-    // way it is for `const K = class {}` and destructuring defaults. Expected
-    // values match node running the same code with the decorators removed.
+    // binding would have given it has to be carried over explicitly, the same
+    // way it already is for `const K = class {}`. Expected values match node
+    // running the same code with the decorators removed.
     test.concurrent("takes the parameter name in every kind of parameter list", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec() {}
@@ -1004,7 +1004,8 @@ describe("ES Decorators", () => {
           set setter(K = class { @dec m() {} }) { this.fromSetter = K.name; },
         };
         obj.setter = undefined;
-        function destructured({ K = class { @dec m() {} } } = {}) { return K.name; }
+        function objectPattern({ K = class { @dec m() {} } } = {}) { return K.name; }
+        function arrayPattern([K = class { @dec m() {} }] = []) { return K.name; }
         console.log(JSON.stringify({
           declaration: declaration(),
           expression: expression(),
@@ -1015,7 +1016,8 @@ describe("ES Decorators", () => {
           staticMethod: C.staticMethod(),
           objectMethod: obj.method(),
           setter: obj.fromSetter,
-          destructured: destructured(),
+          objectPattern: objectPattern(),
+          arrayPattern: arrayPattern(),
         }));
       `);
       expect(stderr).toBe("");
@@ -1029,8 +1031,24 @@ describe("ES Decorators", () => {
         staticMethod: "K",
         objectMethod: "K",
         setter: "K",
-        destructured: "K",
+        objectPattern: "K",
+        arrayPattern: "K",
       });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("takes the variable name in a for loop declaration", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const names = [];
+        for (const K = class { @dec m() {} }; names.length < 1; ) names.push(K.name);
+        for (let K = class { @dec m() {} }, L = class { accessor x; }; names.length < 3; ) names.push(K.name, L.name);
+        for (var V = class { @dec m() {} }; names.length < 4; ) names.push(V.name);
+        for (const [D = class { @dec m() {} }] = []; names.length < 5; ) names.push(D.name);
+        console.log(JSON.stringify(names));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["K", "K", "L", "V", "D"]);
       expect(exitCode).toBe(0);
     });
 

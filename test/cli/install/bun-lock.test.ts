@@ -814,6 +814,48 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
   expect(await exited).toBe(0);
 });
 
+// --frozen-lockfile compares the tree built from bun.lock with the tree a clean install
+// builds, so an entry nothing depends on (the clean drops it) must not change the
+// outcome, wherever it sits in the file. The comparison used to skip the loaded side's
+// highest package ids once the clean had dropped an entry, so the entries listed after
+// the unused one went missing from the comparison.
+it("--frozen-lockfile accepts a bun.lock with an entry nothing depends on, wherever it is listed", async () => {
+  const noDeps = { "no-deps": ["no-deps@1.0.0", "", {}, ""] };
+  const unused = { "a-dep": ["a-dep@1.0.1", "", {}, ""] };
+  for (const packages of [
+    { ...unused, ...noDeps },
+    { ...noDeps, ...unused },
+  ]) {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
+    const lockfile = JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "foo", dependencies: { "no-deps": "1.0.0" } } },
+      packages,
+    });
+    await write(join(packageDir, "bun.lock"), lockfile);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ order: Object.keys(packages), err, exitCode }).toEqual({
+      order: Object.keys(packages),
+      err: expect.not.stringContaining("lockfile had changes"),
+      exitCode: 0,
+    });
+    expect(out).toContain("no-deps@1.0.0");
+    expect(await exists(join(packageDir, "node_modules", "no-deps", "package.json"))).toBeTrue();
+    expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBeFalse();
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  }
+});
+
 it("escapes quotes and newlines in requested version literals when writing yarn.lock", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

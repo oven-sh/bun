@@ -40,10 +40,18 @@ pub(crate) fn to_match_object(
     }
 
     // handle failure
+    // `.not` only prints the pattern. The positive failure diffs the received object
+    // trimmed to the pattern's properties (jest's `getObjectSubset`), so the properties
+    // `toMatchObject` ignores do not show up as differences.
+    let diff_received = if not {
+        received_object
+    } else {
+        bun_jsc::cpp::Expect__toMatchObjectSubset(global, received_object, property_matchers)?
+    };
     let diff_formatter = DiffFormatter {
         received_string: None,
         expected_string: None,
-        received: Some(received_object),
+        received: Some(diff_received),
         expected: Some(property_matchers),
         global_this: Some(global),
         not,

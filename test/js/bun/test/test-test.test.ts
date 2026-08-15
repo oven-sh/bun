@@ -588,6 +588,306 @@ it("expect().toEqual() on objects with property indices doesn't print undefined"
   expect(err).not.toContain("undefined");
 });
 
+describe("expect().toMatchObject() failure diff", () => {
+  // Runs `code` (which ends in a failing assertion) in a child process and returns the
+  // assertion's message; bunEnv disables colors, so the message is the plain diff.
+  async function failureMessage(code: string): Promise<string> {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { expect } = require("bun:test");
+         let message = "did not fail";
+         try { ${code} } catch (e) { message = e.message; }
+         process.stdout.write(message);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test.concurrent("only shows the properties the pattern mentions", async () => {
+    expect(
+      await failureMessage(`
+        expect({ a: 1, b: 2, c: 3, nested: { x: 1, y: 2 } }).toMatchObject({ a: 2, nested: { x: 1 } });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+      -   "a": 2,
+      +   "a": 1,
+          "nested": {
+            "x": 1,
+          },
+        }
+
+      - Expected  - 1
+      + Received  + 1
+      "
+    `);
+  });
+
+  test.concurrent("diffs a value with its own print form by the properties the pattern mentions", async () => {
+    expect(
+      await failureMessage(`
+        const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "y" } };
+        expect(element).toMatchObject({ props: { id: "x" } });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+          "props": {
+      -     "id": "x",
+      +     "id": "y",
+          },
+        }
+
+      - Expected  - 1
+      + Received  + 1
+      "
+    `);
+  });
+
+  test.concurrent("shows a property the received object lacks as missing", async () => {
+    expect(
+      await failureMessage(`
+        expect({ a: 1, b: 2 }).toMatchObject({ a: 1, z: 3 });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+          "a": 1,
+      -   "z": 3,
+        }
+
+      - Expected  - 1
+      + Received  + 0
+      "
+    `);
+  });
+
+  test.concurrent("trims arrays of the same length element by element", async () => {
+    expect(
+      await failureMessage(`
+        expect([{ a: 1, b: 2 }, { a: 3, b: 4 }]).toMatchObject([{ a: 1 }, { a: 9 }]);
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        [
+          {
+            "a": 1,
+          },
+          {
+      -     "a": 9,
+      +     "a": 3,
+          },
+        ]
+
+      - Expected  - 1
+      + Received  + 1
+      "
+    `);
+  });
+
+  test.concurrent("shows an array of a different length whole", async () => {
+    expect(
+      await failureMessage(`
+        expect({ list: [1, 2, 3], other: 1 }).toMatchObject({ list: [1, 2] });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+          "list": [
+            1,
+            2,
+      +     3,
+          ],
+        }
+
+      - Expected  - 0
+      + Received  + 1
+      "
+    `);
+  });
+
+  test.concurrent("shows a value with its own print form whole when the pattern has one too", async () => {
+    expect(
+      await failureMessage(`
+        expect({ a: 1, when: new Date(0), unrelated: true }).toMatchObject({ a: 2, when: new Date(0) });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+      -   "a": 2,
+      +   "a": 1,
+          "when": 1970-01-01T00:00:00.000Z,
+        }
+
+      - Expected  - 1
+      + Received  + 1
+      "
+    `);
+  });
+
+  test.concurrent("keeps the class name of the received object", async () => {
+    expect(
+      await failureMessage(`
+        class Foo { a = 1; b = 2; }
+        expect(new Foo()).toMatchObject({ a: 2 });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+      - {
+      -   "a": 2,
+      + Foo {
+      +   "a": 1,
+        }
+
+      - Expected  - 2
+      + Received  + 2
+      "
+    `);
+  });
+
+  test.concurrent("shows the value of a property inherited by the received object", async () => {
+    expect(
+      await failureMessage(`
+        class Foo { own = 1; get computed() { return 42; } }
+        expect(new Foo()).toMatchObject({ computed: 43 });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+      - {
+      -   "computed": 43,
+      + Foo {
+      +   "computed": 42,
+        }
+
+      - Expected  - 2
+      + Received  + 2
+      "
+    `);
+  });
+
+  test.concurrent("includes symbol properties", async () => {
+    expect(
+      await failureMessage(`
+        const s = Symbol("s");
+        expect({ [s]: 1, a: 1, b: 2 }).toMatchObject({ [s]: 2 });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+      -   [Symbol(s)]: 2,
+      +   [Symbol(s)]: 1,
+        }
+
+      - Expected  - 1
+      + Received  + 1
+      "
+    `);
+  });
+
+  test.concurrent("shows the whole received object when it has none of the pattern's properties", async () => {
+    expect(
+      await failureMessage(`
+        expect({ exitCode: 1, stderr: "boom" }).toMatchObject({ status: 0 });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+      -   "status": 0,
+      +   "exitCode": 1,
+      +   "stderr": "boom",
+        }
+
+      - Expected  - 1
+      + Received  + 2
+      "
+    `);
+  });
+
+  test.concurrent("trims an object shared by two branches against each branch's pattern", async () => {
+    expect(
+      await failureMessage(`
+        const shared = { x: 1, y: 2, z: 3 };
+        expect({ a: shared, b: shared }).toMatchObject({ a: { x: 2 }, b: { y: 3 } });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+          "a": {
+      -     "x": 2,
+      +     "x": 1,
+          },
+          "b": {
+      -     "y": 3,
+      +     "y": 2,
+          },
+        }
+
+      - Expected  - 2
+      + Received  + 2
+      "
+    `);
+  });
+
+  test.concurrent("handles a cyclic pattern", async () => {
+    expect(
+      await failureMessage(`
+        const received = { a: 1, b: 2 };
+        received.self = received;
+        const pattern = { a: 2 };
+        pattern.self = pattern;
+        expect(received).toMatchObject(pattern);
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).toMatchObject(expected)
+
+        {
+      -   "a": 2,
+      +   "a": 1,
+          "self": [Circular],
+        }
+
+      - Expected  - 1
+      + Received  + 1
+      "
+    `);
+  });
+
+  test.concurrent(".not still prints the pattern", async () => {
+    expect(
+      await failureMessage(`
+        expect({ a: 1, b: 2 }).not.toMatchObject({ a: 1 });
+      `),
+    ).toMatchInlineSnapshot(`
+      "expect(received).not.toMatchObject(expected)
+
+      Expected: not {
+        "a": 1,
+      }
+      "
+    `);
+  });
+});
+
 it("test --preload supports global lifecycle hooks", () => {
   const preloadedPath = join(tmp, "test-fixture-preload-global-lifecycle-hook-preloaded.js");
   const path = join(tmp, "test-fixture-preload-global-lifecycle-hook-test.test.js");

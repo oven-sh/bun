@@ -41,6 +41,31 @@ it("Proxy prototype with throwing get trap does not crash", () => {
   expect(Bun.inspect(obj)).toBe("{\n  foo: 1,\n}");
 });
 
+it("skips a lazy property whose builder throws and keeps walking", async () => {
+  // Same leak as the `get` trap above, without a Proxy: the Bun object's $ and
+  // sql builders throw once Symbol is clobbered, and the next property's builder
+  // must not be entered with that exception still pending.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `globalThis.Symbol = NaN;
+       const lines = Bun.inspect(Bun).split("\\n").map(line => line.trim());
+       const has = key => lines.some(line => line.startsWith(key + ": "));
+       console.log(JSON.stringify({ $: has("$"), sql: has("sql"), Glob: has("Glob"), write: has("write") }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify({ $: false, sql: false, Glob: true, write: true }),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("prototype", () => {
   const prototypes = [
     Request.prototype,

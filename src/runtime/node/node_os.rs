@@ -29,7 +29,7 @@ pub(crate) fn freemem() -> u64 {
 
 // ─── gated: JSC bindings + platform syscall bodies ────────────────────────
 // Every fn body builds JS objects (`JSValue::create_*`, `ZigString::*::to_js`,
-// `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
+// `global.throw_value`) or reaches `bun_sys::posix::sysctl_read*` /
 // `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
 // CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
 

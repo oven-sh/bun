@@ -35,7 +35,7 @@ bun install
 `bun install`:
 
 - **Installs** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun installs `peerDependencies` by default.
-- **Runs** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
+- **Runs** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies unless they are [trusted](/pm/lifecycle).
 - **Writes** a `bun.lock` lockfile to the project root.
 
 ---
@@ -164,11 +164,19 @@ To install in production mode (without `devDependencies`):
 bun install --production
 ```
 
+`--production` implies `--frozen-lockfile`. It only controls what gets installed. `devDependencies` already in `node_modules` from an earlier install stay there. Use [`bun prune --production`](/pm/cli/prune) to remove them.
+
 For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versions specified in the lockfile and does not update it. If your `package.json` disagrees with `bun.lock`, Bun exits with an error.
 
 ```bash terminal icon="terminal"
 bun install --frozen-lockfile
 ```
+
+Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
+
+`--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). If a workspace listed in `bun.lock` is missing its `package.json` on disk, Bun skips it with a `note:` and does not install its exclusive dependencies. If a remaining workspace depends on a skipped one, the install fails.
+
+To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.
 
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
@@ -233,7 +241,7 @@ bun install --linker hoisted
 
 ### Isolated installs
 
-A pnpm-like approach that creates strict dependency isolation to prevent [phantom dependencies](/pm/isolated-installs), packages that can be imported without being declared in `package.json`:
+A pnpm-like approach that creates strict dependency isolation to prevent [phantom dependencies](/pm/isolated-installs), packages you can import without declaring them in `package.json`:
 
 ```bash terminal icon="terminal"
 bun install --linker isolated
@@ -249,7 +257,7 @@ The default linker strategy depends on whether you're starting fresh or have an 
 - **New single-package projects**: `hoisted` (traditional npm behavior)
 - **Existing projects (made pre-v1.3.2)**: `hoisted` (preserves backward compatibility)
 
-The default is controlled by a `configVersion` field in your lockfile. For a detailed explanation, see [isolated installs](/pm/isolated-installs).
+A `configVersion` field in your lockfile controls the default. For a detailed explanation, see [isolated installs](/pm/isolated-installs).
 
 ---
 
@@ -276,12 +284,12 @@ minimumReleaseAgeExcludes = ["@types/node", "typescript"]
 When the minimum age filter is active:
 
 - It only affects new package resolution; existing packages in `bun.lock` remain unchanged
-- All dependencies (direct and transitive) are filtered to meet the age requirement when resolved
-- When versions are blocked by the age gate, a stability check detects rapid bugfix patterns
+- Bun filters all dependencies (direct and transitive) to meet the age requirement when resolving them
+- When the age gate blocks versions, a stability check detects rapid bugfix patterns
   - If multiple versions were published close together just outside your age gate, Bun extends the filter to skip those potentially unstable versions and selects an older, more mature version
   - The check searches up to 7 days past the age gate; if releases are still rapid beyond that, Bun ignores the stability check
   - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
-- Versions without a `time` field are treated as passing the age check (the npm registry should always provide timestamps)
+- Bun treats versions without a `time` field as passing the age check (the npm registry should always provide timestamps)
 
 For more advanced security scanning, including integration with services and custom filtering, see the [Security Scanner API](/pm/security-scanner-api).
 
@@ -296,7 +304,7 @@ On `bun install`, `bun remove`, and `bun add`, Bun looks for `bunfig.toml` in:
 1. `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
 2. `./bunfig.toml`
 
-If both are found, the results are merged together.
+If Bun finds both, it loads both. Keys set in the project's `bunfig.toml` override the same keys in the global file.
 
 Configuring with `bunfig.toml` is optional. These are the default values:
 
@@ -352,7 +360,7 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                     |
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
 
-Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
+Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
 Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. If the semver version has a `build` or a `pre` tag, Bun replaces it with a hash of that value. This reduces the chances of errors from long file paths, but complicates figuring out where a package was installed on disk.
 
@@ -360,7 +368,7 @@ When the `node_modules` folder exists, Bun decides whether to install a package 
 
 When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, Bun downloads and extracts tarballs eagerly while resolving.
 
-When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version` already exists in the expected location within `node_modules`, Bun won’t attempt to download the tarball.
+When a `bun.lock` exists and `package.json` hasn’t changed, Bun downloads missing dependencies lazily. If the package with a matching `name` and `version` already exists in the expected location within `node_modules`, Bun doesn’t attempt to download the tarball.
 
 ## CI/CD
 
@@ -412,7 +420,7 @@ jobs:
 
 ## Platform-specific dependencies?
 
-Bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile won't change between platforms/architectures even if the packages ultimately installed do change.
+Bun stores normalized `cpu` and `os` values from npm in the lockfile, along with the resolved packages. It skips downloading, extracting, and installing packages disabled for the current target at runtime. This means the lockfile doesn't change between platforms/architectures even if the packages ultimately installed do change.
 
 ### `--cpu` and `--os` flags
 
@@ -436,7 +444,7 @@ Bun handles peer dependencies like Yarn: `bun install` installs them automatical
 
 `bun.lock` is Bun’s lockfile format. See [our blog post about the text lockfile](https://bun.com/blog/bun-lock-text-lockfile).
 
-Prior to Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an old lockfile to the new format, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, then delete `bun.lockb`.
+Before Bun 1.2, the lockfile was binary and called `bun.lockb`. To upgrade an old lockfile to the new format, run `bun install --save-text-lockfile --frozen-lockfile --lockfile-only`, then delete `bun.lockb`.
 
 ## Cache
 
@@ -452,7 +460,7 @@ rm -rf ~/.bun/install/cache
 
 For performance, `bun install` uses different system calls to install dependencies depending on the platform. You can force a specific backend with the `--backend` flag.
 
-**`hardlink`** is the default backend on Linux. Benchmarking showed it to be the fastest on Linux.
+**`hardlink`** is the default backend on Linux and Windows. Benchmarking showed it to be the fastest on Linux.
 
 ```bash
 rm -rf node_modules
@@ -466,7 +474,7 @@ rm -rf node_modules
 bun install --backend clonefile
 ```
 
-**`clonefile_each_dir`** is similar to `clonefile`, except it clones each file individually per directory. It is only available on macOS and tends to perform slower than `clonefile`. Unlike `clonefile`, this does not recursively clone subdirectories in one system call.
+**`clonefile_each_dir`** is similar to `clonefile`, except it clones each file individually per directory. It is only available on macOS and tends to perform slower than `clonefile`. Unlike `clonefile`, `clonefile_each_dir` does not recursively clone subdirectories in one system call.
 
 ```bash
 rm -rf node_modules
@@ -480,7 +488,7 @@ rm -rf node_modules
 bun install --backend copyfile
 ```
 
-**`symlink`** is typically only used for `file:` dependencies (and eventually `link:`) internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
+**`symlink`** is typically only used for `file:` dependencies internally. To prevent infinite loops, it skips symlinking the `node_modules` folder.
 
 If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
@@ -494,13 +502,13 @@ node --preserve-symlinks ./my-file.js # https://nodejs.org/api/cli.html#--preser
 ## npm registry metadata
 
 Bun uses a binary format for caching npm registry responses. This loads much faster than JSON and tends to be smaller on disk.
-These files live in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that extra directories don’t need to be created for scoped packages.
+These files live in `~/.bun/install/cache/*.npm`. The filename pattern is `${hash(packageName)}.npm`. It’s a hash so that Bun doesn’t need to create extra directories for scoped packages.
 
 Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes behind the latest package version metadata from npm.
 
 ## pnpm migration
 
-Bun migrates projects from pnpm automatically. When a `pnpm-lock.yaml` file is detected and no `bun.lock` file exists, Bun converts the lockfile to `bun.lock` during installation. The original `pnpm-lock.yaml` file remains unmodified.
+Bun migrates projects from pnpm automatically. When Bun detects a `pnpm-lock.yaml` file and no `bun.lock` file exists, it converts the lockfile to `bun.lock` during installation. The original `pnpm-lock.yaml` file remains unmodified.
 
 ```bash terminal icon="terminal"
 bun install
@@ -512,10 +520,14 @@ The migration process handles:
 
 ### Lockfile Migration
 
-- Converts `pnpm-lock.yaml` to `bun.lock` format
-- Preserves package versions and resolution information
-- Maintains dependency relationships and peer dependencies
-- Handles patched dependencies with integrity hashes
+- Converts `pnpm-lock.yaml` (lockfile versions 7–9, including pnpm 11's multi-document files) to `bun.lock`
+- Preserves resolved versions and integrity hashes
+- Preserves peer dependency ranges and `peerDependenciesMeta`, so the next `bun install` leaves the migrated lockfile unchanged
+- Migrates git, GitHub, tarball URL, `file:`, and `npm:` alias dependencies, including transitive ones
+- Resolves pnpm named registries (`name@registry:version`) via `namedRegistries` in `pnpm-workspace.yaml`
+- Converts injected workspace packages (`dependenciesMeta.*.injected`) to ordinary workspace dependencies
+- Handles patched dependencies, matching pnpm's hash-only `patchedDependencies` entries to the patch files
+- Skips `runtime:` entries (pnpm-managed Node.js versions) with a warning
 
 ### Workspace Configuration
 
@@ -558,7 +570,7 @@ Bun moves the workspace packages list and catalogs to the `workspaces` field in 
 
 ### Catalog Dependencies
 
-Dependencies using pnpm's `catalog:` protocol are preserved:
+Bun preserves dependencies that use pnpm's `catalog:` protocol:
 
 ```json package.json icon="file-json"
 {
@@ -577,11 +589,14 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
 - **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
 
-### Requirements
+### Requirements and limitations
 
 - Requires pnpm lockfile version 7 or higher
 - Workspace packages must have a `name` field in their `package.json`
 - All catalog entries referenced by dependencies must exist in the catalogs definition
+- Every workspace in `pnpm-lock.yaml` must have its `package.json` on disk (in Docker, copy them in before `bun install`)
+- Relative `link:` dependencies and git dependencies with a sub-directory (`resolution.path`) are not supported
+- If migration fails for any of these reasons, Bun prints why and resolves from scratch instead
 
 After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
 

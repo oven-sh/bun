@@ -232,13 +232,11 @@ impl RuntimeTranspilerStore {
         Self::default()
     }
 
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
-    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
-    // a field of `VirtualMachine`). Field-level derefs only.
-    /// VM teardown (JS thread, heap alive, script forbidden, embedded work
-    /// waited for so no job is mid-flight): jobs whose completion will not run —
-    /// queued after the last tick, or posted after `close()` began — release
-    /// their source, log and module promise here instead of running.
+    /// VM teardown (JS thread, heap alive, script forbidden; called on every
+    /// turn of the wait): jobs already handed back whose completion will not
+    /// run release their source, log and module promise here instead. Queued ⇒
+    /// the pool thread's last touch of the slot was the push (its ticket was
+    /// moved out first), so the slot is this thread's again.
     pub fn release_queued_jobs_for_teardown(&mut self) {
         let batch = self.queue.pop_batch();
         let mut iter = batch.iterator();
@@ -247,8 +245,7 @@ impl RuntimeTranspilerStore {
             if job.is_null() {
                 break;
             }
-            // SAFETY: a live job popped from the intrusive queue; this thread
-            // owns it now (its worker-thread part finished before `close()`).
+            // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
                 (*job).promise.deinit();
                 (*job).reset_for_pool();
@@ -257,6 +254,14 @@ impl RuntimeTranspilerStore {
         }
     }
 
+    /// Fulfil every completed job's module promise. This drain is a dispatcher:
+    /// each fulfilment is a JS entry of its own, so what one leaves pending is
+    /// folded here and the drain goes on; the VM's termination ends it, with
+    /// the rest of the batch back on the queue (each still has its own posted
+    /// task, or the teardown release, to pick it up).
+    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
+    // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
+    // a field of `VirtualMachine`). Field-level derefs only.
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
@@ -267,34 +272,44 @@ impl RuntimeTranspilerStore {
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut iter = batch.iterator();
-        let first = iter.next();
-        if first.is_null() {
-            return;
-        }
-        // we run just one job first to see if there are more
-        // SAFETY: `first` is a live job popped from the intrusive queue.
-        if let Err(err) = unsafe { (*first).run_from_js_thread() } {
-            global.report_uncaught_exception_from_error(err);
-        }
-        loop {
-            let job = iter.next();
-            if job.is_null() {
-                break;
+        let mut job = iter.next();
+        let mut first = true;
+        while !job.is_null() {
+            if !first {
+                // if there are more, we need to drain the microtasks from the previous run
+                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+                let drained =
+                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+                if drained.is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
             }
-            // if there are more, we need to drain the microtasks from the previous run
-            // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                .is_err()
-            {
-                return;
-            }
+            first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
-            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
-                global.report_uncaught_exception_from_error(err);
+            let fulfilled = unsafe { (*job).run_from_js_thread() };
+            job = iter.next();
+            if let Err(err) = fulfilled {
+                if crate::task::report_error_or_terminate(global, err).is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
             }
         }
-
         // immediately after this is called, the microtasks will be drained again.
+    }
+
+    /// Put `job` and the rest of a popped batch back: each still has its posted
+    /// task (or the teardown release) to pick it up.
+    fn requeue(
+        &mut self,
+        mut job: *mut TranspilerJob,
+        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
+    ) {
+        while let Some(unrun) = NonNull::new(job) {
+            job = iter.next();
+            self.queue.push(unrun);
+        }
     }
 
     pub fn transpile(
@@ -346,7 +361,7 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
-                loop_handle: global_object.bun_vm().loop_handle(),
+                ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -403,10 +418,10 @@ pub struct TranspilerJob {
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
     pub(crate) vm: *mut VirtualMachine,
-    /// The pool thread runs this job under `loop_handle.borrow()`: the job's
-    /// own slot, the transpiler it copies and the store queue it pushes to are
-    /// all VM-owned, and the VM's teardown waits for the borrow to end.
-    pub(crate) loop_handle: crate::LoopHandle,
+    /// Held from `schedule` until the pool thread has dispatched the job back:
+    /// the job's own slot, the transpiler it copies and the store queue it
+    /// pushes to are all VM-owned, and the VM's teardown waits for the ticket.
+    pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) fetcher: Fetcher,
     pub(crate) poll_ref: KeepAlive,
@@ -514,23 +529,17 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    fn dispatch_to_main_thread(&mut self) {
+    /// Pool thread: hand the slot back. `ticket` was moved out of `self`
+    /// first — the JS thread may reuse the slot the moment it is queued.
+    fn dispatch_to_main_thread(&mut self, ticket: &crate::Ticket) {
         let vm = self.vm;
-        let loop_handle = self.loop_handle.clone();
-        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
+        // SAFETY: the VM outlives the ticket (it owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
-        // Another thread may free `self` at any time after .push, so we cannot use it any more
-        // (the handle was cloned out above for exactly this reason). The VM
-        // waits for embedded work before closing its handle, so this is queued.
-        let crate::vm_handle::Posted::Queued =
-            loop_handle.post_task(ConcurrentTask::create_from(transpiler_store))
-        else {
-            unreachable!("VM handle closed with embedded transpile work outstanding");
-        };
+        ticket.post(ConcurrentTask::create_from(transpiler_store));
     }
 
     fn run_from_js_thread(&mut self) -> JsResult<()> {
@@ -594,9 +603,8 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
-        // The job is a slot inside this VM: counted, so teardown waits for it
-        // (see `VmHandle::embedded_work_scheduled`).
-        self.loop_handle.embedded_work_scheduled();
+        // SAFETY: JS thread; the VM owns the store this slot lives in.
+        self.ticket = Some(unsafe { (*self.vm).ticket() });
         WorkPool::schedule(&raw mut self.work_task);
     }
 
@@ -606,24 +614,23 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live `TranspilerJob` parent.
         let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        // The slot lives inside the VM and the VM waits for us (embedded work),
-        // so it is alive throughout. Transpile only while the VM is still
-        // running; either way hand the job back to the JS thread, which
-        // completes or releases it.
-        // SAFETY: as above.
-        let handle = unsafe { (*this).loop_handle.clone() };
-        if let Some(_vm) = handle.borrow_if_running() {
+        // The slot lives inside the VM, which waits for this ticket, so it is
+        // alive throughout. Transpile only while the VM still runs script;
+        // either way hand the job back to the JS thread, which completes or
+        // releases it.
+        // SAFETY: as above; set in `schedule`.
+        let ticket =
+            unsafe { (*this).ticket.take() }.expect("scheduled transpile job holds a ticket");
+        if ticket.script_allowed() {
             // SAFETY: live slot, exclusively ours until dispatched.
-            unsafe { (*this).run() };
+            unsafe { (*this).run(&ticket) };
         } else {
             // SAFETY: as above.
-            unsafe { (*this).dispatch_to_main_thread() };
+            unsafe { (*this).dispatch_to_main_thread(&ticket) };
         }
-        // Last touch of the slot from this thread was the dispatch.
-        handle.embedded_work_finished();
     }
 
-    fn run(&mut self) {
+    fn run(&mut self, ticket: &crate::Ticket) {
         // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
@@ -645,7 +652,7 @@ impl TranspilerJob {
         scopeguard::defer! {
             // SAFETY: `self` outlives this guard (guard drops before fn return);
             // no other &mut alias is live at drop time.
-            unsafe { (*this_ptr).dispatch_to_main_thread() };
+            unsafe { (*this_ptr).dispatch_to_main_thread(ticket) };
         }
 
         // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).

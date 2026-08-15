@@ -58,7 +58,7 @@ impl ZigStackFrame {
             write!(
                 &mut file,
                 "{}",
-                self.source_url_formatter(root_path, origin, true, false)
+                self.source_url_formatter(root_path, origin, LineColumn::Exclude, false)
             )
             .expect("Vec<u8> write is infallible");
         }
@@ -94,12 +94,12 @@ impl ZigStackFrame {
         &self,
         root_path: &'a [u8],
         origin: Option<&'a ZigURL<'a>>,
-        exclude_line_column: bool,
+        line_column: LineColumn,
         enable_color: bool,
     ) -> SourceURLFormatter<'a> {
         SourceURLFormatter {
             source_url: self.source_url,
-            exclude_line_column,
+            line_column,
             origin,
             root_path,
             position: self.position,
@@ -109,12 +109,19 @@ impl ZigStackFrame {
     }
 }
 
+/// Whether [`SourceURLFormatter`] appends the frame's `:line:column` to the source URL.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum LineColumn {
+    Include,
+    Exclude,
+}
+
 pub struct SourceURLFormatter<'a> {
     pub(crate) source_url: BunString,
     pub(crate) position: ZigStackFramePosition,
     pub(crate) enable_color: bool,
     pub(crate) origin: Option<&'a ZigURL<'a>>,
-    pub(crate) exclude_line_column: bool,
+    pub(crate) line_column: LineColumn,
     pub(crate) remapped: bool,
     pub(crate) root_path: &'a [u8],
 }
@@ -170,7 +177,10 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
         }
 
-        if !self.exclude_line_column && !source_slice.is_empty() && self.position.line.is_valid() {
+        if self.line_column == LineColumn::Include
+            && !source_slice.is_empty()
+            && self.position.line.is_valid()
+        {
             if self.enable_color {
                 f.write_str(Output::pretty_fmt!("<r><d>:", true))?;
             } else {
@@ -182,7 +192,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             f.write_str(Output::pretty_fmt!("<r>", true))?;
         }
 
-        if !self.exclude_line_column {
+        if self.line_column == LineColumn::Include {
             if self.position.line.is_valid() && self.position.column.is_valid() {
                 if self.enable_color {
                     write!(

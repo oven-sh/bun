@@ -23,7 +23,9 @@
 #include <string.h>
 #include <time.h>
 #ifndef WIN32
+#include <fcntl.h>
 #include <sys/ioctl.h>
+#include <unistd.h>
 #endif
 #ifdef __linux__
 #include <netinet/in.h>
@@ -693,16 +695,41 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         msg.msg_iovlen = 1;
                         msg.msg_name = NULL;
                         msg.msg_namelen = 0;
-                        msg.msg_controllen = CMSG_LEN(sizeof(int));
+                        /* CMSG_SPACE (the full aligned buffer), or FreeBSD truncates and drops the fd. */
+                        msg.msg_controllen = sizeof(cmsg_buf);
                         msg.msg_control = cmsg_buf;
 
+                        // Received descriptors must not leak into children we spawn.
+                        #ifdef MSG_CMSG_CLOEXEC
+                        length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags | MSG_CMSG_CLOEXEC);
+                        #else
                         length = bsd_recvmsg(us_poll_fd(&s->p), &msg, recv_flags);
+                        #endif
 
-                        // Extract file descriptor if present
+                        // Extract the file descriptor if present. One per message is the
+                        // protocol; close anything else a peer packed into the buffer.
                         if (length > 0 && msg.msg_controllen > 0) {
-                            struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg);
-                            if (cmsg_ptr && cmsg_ptr->cmsg_level == SOL_SOCKET && cmsg_ptr->cmsg_type == SCM_RIGHTS) {
-                                int fd = *(int *)CMSG_DATA(cmsg_ptr);
+                            int fd = -1;
+                            for (struct cmsghdr *cmsg_ptr = CMSG_FIRSTHDR(&msg); cmsg_ptr; cmsg_ptr = CMSG_NXTHDR(&msg, cmsg_ptr)) {
+                                if (cmsg_ptr->cmsg_level != SOL_SOCKET || cmsg_ptr->cmsg_type != SCM_RIGHTS || cmsg_ptr->cmsg_len < CMSG_LEN(0)) {
+                                    continue;
+                                }
+                                unsigned char *fds = CMSG_DATA(cmsg_ptr);
+                                size_t nfds = (cmsg_ptr->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+                                for (size_t i = 0; i < nfds; i++) {
+                                    int received;
+                                    memcpy(&received, fds + i * sizeof(int), sizeof(int));
+                                    #ifndef MSG_CMSG_CLOEXEC
+                                    fcntl(received, F_SETFD, FD_CLOEXEC);
+                                    #endif
+                                    if (fd == -1) {
+                                        fd = received;
+                                    } else {
+                                        close(received);
+                                    }
+                                }
+                            }
+                            if (fd != -1) {
                                 s = us_dispatch_fd(s, fd);
                                 if (!s || us_socket_is_closed(s)) {
                                     break;
@@ -825,16 +852,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 } while (s);
             }
 
-            /* kqueue reports EV_EOF on the same readable event as a connection's
-             * final data. If the data callback paused the socket mid-burst (stream
-             * backpressure), the read loop above stopped with bytes still queued in
-             * the kernel, and acting on the hint now would end+close the socket and
-             * discard them. Defer it: resuming re-arms the poll and the EOF is
-             * re-reported once the rest has been read. Sockets we already shut down
-             * are exempt (their peer's FIN must still close them promptly below),
-             * as are error-flagged events. */
-            if (eof && s && !error && s->flags.is_paused && !us_socket_is_shut_down(s) &&
-                !us_socket_is_closed(s) && !(hangup && s->read_eof)) {
+            /* The EOF hint (kqueue EV_EOF riding the final data's readable event,
+             * epoll's EPOLLHUP once both directions are down, AFD DISCONNECT on a
+             * shut-down socket) can arrive with the tail of the peer's stream still
+             * queued in the kernel. Acting on it while the socket is paused would
+             * end+close and discard that tail, so defer: resume() re-arms reads and
+             * the read loop drains to recv()==0, which re-derives eof with nothing
+             * left behind it. This includes sockets we already shut down (a client
+             * that end()ed before reading the reply), the case that truncated; once
+             * read_eof is set there is nothing left to drain and deferring would only
+             * lose the close. Error-flagged events keep the error path. */
+            const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
+            if (eof_deferrable && s->flags.is_paused) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
                  * the kernel until resume() re-adds the fd via us_poll_change (end() while paused keeps it parked). */
@@ -844,6 +873,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s->p.state.poll_type = us_internal_poll_type(&s->p);
                 }
 #endif
+                eof = 0;
+            } else if (eof_deferrable && !(events & LIBUS_SOCKET_READABLE) &&
+                       (us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
+                /* Collected while the socket was paused, but an earlier dispatch in
+                 * this batch resumed it: reads are armed again and nothing was read
+                 * here, so let the next poll re-report it together with READABLE and
+                 * the read loop drain it, instead of closing over the unread tail. */
                 eof = 0;
             }
             if(eof && s) {

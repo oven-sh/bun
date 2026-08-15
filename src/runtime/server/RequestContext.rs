@@ -50,17 +50,6 @@ impl AdditionalOnAbortCallback {
 // variant `create()` constructs and gate H3-specific code paths.
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
 
-/// Extract the raw FFI pointer from an `AnyResponse` for C-ABI shims that
-/// take `*mut c_void` (e.g. `FetchHeaders::to_uws_response`, `CookieMap::write`).
-#[inline]
-fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
-    match r {
-        uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
-        uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
-        uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-    }
-}
-
 /// Back-reference to a stack-local "should this RequestContext defer its
 /// deinit until the JS callback returns" flag. The dispatching frame owns the
 /// `Cell<bool>`; `RequestContext` stores a `BackRef` to it (cleared before the
@@ -403,7 +392,7 @@ mod shim {
         cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
         ev: request::EventType,
         g: &JSGlobalObject,
-    ) -> bool {
+    ) -> JsResult<bool> {
         cb.with_mut(|cb| cb.trigger(ev, g))
     }
     #[inline]
@@ -1377,12 +1366,17 @@ where
         }
 
         if let Some(request) = this.request_mut() {
-            if shim::iec_trigger(
+            match shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Timeout,
                 global_this,
             ) {
-                any_js_calls.set(true);
+                Ok(called) => any_js_calls.set(called),
+                // This uWS callback is the landing frame for what it threw.
+                Err(err) => {
+                    any_js_calls.set(true);
+                    crate::dispatch::fold(Err(err));
+                }
             }
         }
     }
@@ -1430,12 +1424,17 @@ where
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            if shim::iec_trigger(
+            match shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Abort,
                 global_this,
             ) {
-                any_js_calls.set(true);
+                Ok(called) => any_js_calls.set(called),
+                // This uWS callback is the landing frame for what it threw.
+                Err(err) => {
+                    any_js_calls.set(true);
+                    crate::dispatch::fold(Err(err));
+                }
             }
             // we can already clean this strong refs
             shim::iec_deinit(&request.internal_event_callback);
@@ -2015,17 +2014,10 @@ where
 
         stream.value.ensure_still_alive();
 
-        // `HTTPServerWritable::res` stores the type-erased uws response handle;
-        // `any_res()` reconstructs the variant from the const generics.
-        let raw_res: *mut c_void = match resp {
-            uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
-            uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
-            uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-        };
-
         let response_stream_box = Box::new(ResponseStreamJSSink::<SSL_ENABLED, HTTP3> {
             sink: ResponseStream::<SSL_ENABLED, HTTP3> {
-                res: Some(raw_res),
+                // `any_res()` recovers the variant from the const generics.
+                res: Some(resp.as_ptr()),
                 buffer: Vec::<u8>::default(),
                 on_first_write: Some(Self::handle_first_stream_write_thunk),
                 ctx: Some(this.as_ctx_ptr().cast::<c_void>()),
@@ -2360,7 +2352,7 @@ where
                         Body::ValueError::AbortReason(jsc::CommonAbortReason::ConnectionClosed);
                     bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
-                    ))?;
+                    ));
                     err.reset();
                     return Ok(true);
                 }
@@ -2419,11 +2411,11 @@ where
         // (`on_s3_size_resolved`) releases the ref taken for the S3 stat.
     }
 
-    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsTerminatedResult<()>`.
+    /// `S3::client::stat` callback shape: `fn(S3StatResult, *mut c_void) -> JsResult<()>`.
     fn on_s3_size_resolved_thunk(
         result: S3::simple_request::S3StatResult<'_>,
         this: *mut c_void,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> JsResult<()> {
         let stat_ref = RequestContextRef::adopt(this.cast::<Self>());
         stat_ref.ctx().on_s3_size_resolved(result);
         Ok(())
@@ -2688,26 +2680,8 @@ where
                 }
                 return;
             } else {
-                // SAFETY: sole `&mut Response` for this cell in scope; the
-                // borrow ends before `render` reborrows the same pointer.
-                let body_value = unsafe { (*response).get_body_value() };
-                body_value.to_blob_if_possible();
-
-                match body_value {
-                    Body::Value::Blob(blob) => {
-                        if shim::blob_needs_to_read_file(blob) {
-                            response_value.protect();
-                            ctx.flags.set_response_protected(true);
-                        }
-                    }
-                    Body::Value::Locked(_) => {
-                        response_value.protect();
-                        ctx.flags.set_response_protected(true);
-                    }
-                    _ => {}
-                }
                 // SAFETY: `response` is the live, rooted cell pointer.
-                unsafe { ctx.render(response) };
+                unsafe { ctx.protect_for_body_and_render(response_value, response) };
             }
             return;
         }
@@ -2766,25 +2740,8 @@ where
                         }
                         return;
                     }
-                    // SAFETY: sole `&mut Response` for this cell in scope; the
-                    // borrow ends before `render` reborrows the same pointer.
-                    let body_value = unsafe { (*response).get_body_value() };
-                    body_value.to_blob_if_possible();
-                    match body_value {
-                        Body::Value::Blob(blob) => {
-                            if shim::blob_needs_to_read_file(blob) {
-                                fulfilled_value.protect();
-                                ctx.flags.set_response_protected(true);
-                            }
-                        }
-                        Body::Value::Locked(_) => {
-                            fulfilled_value.protect();
-                            ctx.flags.set_response_protected(true);
-                        }
-                        _ => {}
-                    }
                     // SAFETY: `response` is the live, rooted cell pointer.
-                    unsafe { ctx.render(response) };
+                    unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
                     return;
                 }
                 jsc::PromiseResult::Rejected(err) => {
@@ -3650,26 +3607,8 @@ where
                             }
                             self.response_jsvalue.set(result);
                             self.flags.set_response_protected(false);
-                            // SAFETY: sole `&mut Response` borrow for this
-                            // cell; it ends before `render` reborrows the
-                            // same pointer.
-                            let body_value = unsafe { (*response).get_body_value() };
-                            body_value.to_blob_if_possible();
-                            match body_value {
-                                Body::Value::Blob(blob) => {
-                                    if shim::blob_needs_to_read_file(blob) {
-                                        result.protect();
-                                        self.flags.set_response_protected(true);
-                                    }
-                                }
-                                Body::Value::Locked(_) => {
-                                    result.protect();
-                                    self.flags.set_response_protected(true);
-                                }
-                                _ => {}
-                            }
                             // SAFETY: as above.
-                            unsafe { self.render(response) };
+                            unsafe { self.protect_for_body_and_render(result, response) };
                             return;
                         }
                     }
@@ -3734,25 +3673,8 @@ where
                 fulfilled_value.ensure_still_alive();
                 ctx.flags.set_response_protected(false);
 
-                // SAFETY: sole `&mut Response` for this cell in scope; the
-                // borrow ends before `render` reborrows the same pointer.
-                let body_value = unsafe { (*response).get_body_value() };
-                body_value.to_blob_if_possible();
-                match body_value {
-                    Body::Value::Blob(blob) => {
-                        if shim::blob_needs_to_read_file(blob) {
-                            fulfilled_value.protect();
-                            ctx.flags.set_response_protected(true);
-                        }
-                    }
-                    Body::Value::Locked(_) => {
-                        fulfilled_value.protect();
-                        ctx.flags.set_response_protected(true);
-                    }
-                    _ => {}
-                }
                 // SAFETY: `response` is the live, rooted cell pointer.
-                unsafe { ctx.render(response) };
+                unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
@@ -3833,7 +3755,7 @@ where
             let r = cookies.write(
                 global_this,
                 Self::RESP_KIND,
-                any_response_as_ptr(self.resp.get().expect("infallible: resp bound")),
+                self.resp.get().expect("infallible: resp bound").as_ptr(),
             );
             // `cookies` drops here, releasing the ref taken in `set_cookies`.
             if r.is_err() {
@@ -3946,7 +3868,7 @@ where
             headers.fast_remove(jsc::HTTPHeaderName::Upgrade);
         }
         if let Some(resp) = self.resp.get() {
-            headers.to_uws_response(Self::RESP_KIND, any_response_as_ptr(resp));
+            headers.to_uws_response(Self::RESP_KIND, resp.as_ptr());
         }
     }
 
@@ -4022,6 +3944,32 @@ where
         self.do_render();
     }
 
+    /// [`Self::render`] for the Response a handler just returned, whose JS
+    /// wrapper `response_value` is already stored in `response_jsvalue`. A
+    /// file or streaming body is still being sent after this frame returns,
+    /// so for those the wrapper is protected first; in-memory bodies leave it
+    /// unprotected (see `response_jsvalue`).
+    ///
+    /// # Safety
+    /// Same contract as [`Self::render`].
+    unsafe fn protect_for_body_and_render(&self, response_value: JSValue, response: *mut Response) {
+        // SAFETY: caller contract: `response` is live. This is the only borrow
+        // of its body, and it ends before `render` reborrows the cell.
+        let body_value = unsafe { (*response).get_body_value() };
+        body_value.to_blob_if_possible();
+        let sent_after_return = match body_value {
+            Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
+            Body::Value::Locked(_) => true,
+            _ => false,
+        };
+        if sent_after_return {
+            response_value.protect();
+            self.flags.set_response_protected(true);
+        }
+        // SAFETY: caller contract.
+        unsafe { self.render(response) };
+    }
+
     pub(crate) fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
         ctx_log!("onBufferedBodyChunk {} {}", chunk.len(), last);
         let pinned = RequestContextRef::pin(this);
@@ -4079,8 +4027,7 @@ where
                     let mut err = Body::ValueError::Message(BunString::static_(
                         "Request body exceeded maxRequestBodySize",
                     ));
-                    // TODO: properly propagate exception upwards
-                    let _ = bytes.on_data(WebCore::streams::Result::Err(
+                    bytes.on_data(WebCore::streams::Result::Err(
                         err.to_stream_error(global_this),
                     ));
                     err.reset();
@@ -4114,8 +4061,7 @@ where
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
-                // TODO: properly propagate exception upwards
-                let _ = bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
+                bytes.on_data(WebCore::streams::Result::Temporary(borrowed));
 
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffer.get().len().saturating_sub(bytes.offset.get());
@@ -4147,8 +4093,7 @@ where
                 );
                 let source = bytes.parent_const();
                 source.producer.set(WebCore::streams::SourceHandle::None);
-                // TODO: properly propagate exception upwards
-                let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
+                bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
             }
 
             return;

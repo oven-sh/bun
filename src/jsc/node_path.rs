@@ -46,7 +46,7 @@ pub struct ThreadSafe<T: Unprotect>(T);
 
 impl<T: Unprotect> ThreadSafe<T> {
     /// Wrap an **already-protected** `T`. Use when the protect was taken
-    /// elsewhere (e.g. inside `from_js_maybe_async(.., is_async=true)`).
+    /// elsewhere (e.g. inside `from_js_maybe_async(.., Flavor::Async, ..)`).
     #[inline]
     pub fn adopt(value: T) -> Self {
         Self(value)
@@ -54,9 +54,9 @@ impl<T: Unprotect> ThreadSafe<T> {
 }
 
 // SAFETY: this is what the type asserts — the JS-backed views inside `T` are
-// GC-protected for as long as it is held, so they may be read from another
-// thread (under that thread's VM borrow); the protection itself is released
-// only on a JS thread (see `Drop`).
+// GC-protected for as long as it is held, so a pool job may read them (under
+// its `Ticket`, which keeps the VM alive); the job comes back to the JS
+// thread, where this is dropped and the protection released.
 unsafe impl<T: Unprotect> Send for ThreadSafe<T> {}
 
 impl<T: Unprotect> core::ops::Deref for ThreadSafe<T> {
@@ -77,8 +77,10 @@ impl<T: Unprotect> core::ops::DerefMut for ThreadSafe<T> {
 impl<T: Unprotect> Drop for ThreadSafe<T> {
     #[inline]
     fn drop(&mut self) {
-        // The protection is engine state: released here on a JS thread, gone
-        // with the heap anywhere else (a pool thread releasing a dead VM's job).
+        // The same argument types serve mini-loop threads (the shell's `cp` via
+        // `ShellAsyncCpTask`, `bun exec`), which have no VM and never protected
+        // anything; only a JS thread has a protection to release. A JS VM's job
+        // always comes back to its own thread to drop this (its VM waits for it).
         if crate::virtual_machine::VirtualMachine::get_or_null().is_some() {
             self.0.unprotect();
         }

@@ -515,9 +515,12 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
  * Output lands **in-tree** as `<dir>/<stem>.generated.rs` (checked in) so
  * plain `cargo check` / rust-analyzer work without `BUN_CODEGEN_DIR` or a
  * per-crate `build.rs`. The `.string-map.ts` is the source of truth; the
- * `.generated.rs` is a deterministic artifact whose drift is caught by
- * `bun run codegen:verify` in CI (format job). `restat = 1` on the codegen
- * rule + `writeIfNotChanged` in the script keep this a no-op when unchanged.
+ * `.generated.rs` is a deterministic artifact. A stale checked-in copy is
+ * regenerated and pushed back to the PR by the autofix workflow
+ * (.github/workflows/format.yml runs `codegen:string-maps` with the
+ * formatters); `bun run codegen:verify` is the local equivalent. `restat = 1`
+ * on the codegen rule + `writeIfNotChanged` in the script keep this a no-op
+ * when unchanged.
  */
 function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-string-map.ts");

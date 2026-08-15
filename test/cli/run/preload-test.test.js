@@ -118,7 +118,7 @@ plugin({
 });
     `;
 
-    test.todo("works from CLI", async () => {
+    test("works from CLI", async () => {
       const preloadDir = join(realpathSync(tmpdir()), "bun-preload-test6");
       mkdirSync(preloadDir, { recursive: true });
       const preloadPath = join(preloadDir, "preload.js");

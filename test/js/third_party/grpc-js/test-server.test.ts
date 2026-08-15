@@ -260,7 +260,7 @@ describe("Server", () => {
       server.forceShutdown();
     });
 
-    it.todo("Should cancel open calls after the grace period ends", done => {
+    it("Should cancel open calls after the grace period ends", done => {
       const call = client.echoBidiStream();
       call.on("error", (error: ServiceError) => {
         assert.strictEqual(error.code, grpc.status.CANCELLED);
@@ -808,8 +808,7 @@ describe("Echo service", () => {
   });
 });
 
-// We dont allow connection injections yet on node:http nor node:http2
-describe.todo("Connection injector", () => {
+describe("Connection injector", () => {
   let tcpServer: net.Server;
   let server: Server;
   let client: ServiceClient;

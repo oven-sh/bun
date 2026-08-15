@@ -4752,7 +4752,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/CharFreqIgnoreComments", {
-    todo: true,
     files: {
       "/a.js": /* js */ `
         export default function(one, two, three, four) {
@@ -5477,7 +5476,6 @@ describe.concurrent("bundler", () => {
     minifySyntax: true,
   });
   itBundled("default/BuiltInNodeModulePrecedence", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log([

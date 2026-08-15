@@ -241,14 +241,20 @@ test.concurrent.skipIf(isWindows)(
       stderr: "pipe",
     });
 
-    // The runner connects tests to the socket only after this line.
+    // The runner connects tests to the socket only after this line. stdout has
+    // to be read incrementally for that, so it is collected by hand; a
+    // coordinator that exits before printing it fails the test right away.
     let stdout = "";
-    const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+    const stderr = coordinator.stderr.text();
+    const { promise: listening, resolve: onListening, reject: onExitedFirst } = Promise.withResolvers<void>();
     const stdoutDrained = (async () => {
       for await (const chunk of coordinator.stdout) {
         stdout += Buffer.from(chunk).toString();
         if (stdout.includes(`COORDINATOR_READY ${socketPath}\n`)) onListening();
       }
+      onExitedFirst(
+        new Error(`coordinator exited before COORDINATOR_READY\nstdout:\n${stdout}\nstderr:\n${await stderr}`),
+      );
     })();
     await listening;
 
@@ -268,6 +274,7 @@ test.concurrent.skipIf(isWindows)(
         }
       });
       socket.on("error", reject);
+      socket.on("close", () => reject(new Error(`coordinator closed the socket without replying; got: ${buffer}`)));
     });
     expect(JSON.parse(reply)).toEqual({ ok: true, info: { host: "127.0.0.1", ports: { 5432: 54321 } } });
 
@@ -282,10 +289,12 @@ test.concurrent.skipIf(isWindows)(
 
     // EOF on stdin is how the coordinator learns the shard is over.
     coordinator.stdin.end();
-    expect(await coordinator.exited).toBe(0);
+    const exitCode = await coordinator.exited;
     await stdoutDrained;
     expect(stdout).toMatch(/^coordinator: docker daemon became reachable after \d+s$/m);
     expect(stdout).toContain("coordinator: postgres_plain ready\n");
+    expect(await stderr).toBe("");
+    expect(exitCode).toBe(0);
     expect(existsSync(socketPath)).toBeFalse();
   },
 );

@@ -572,12 +572,24 @@ fn registry_get(
 #[derive(Default)]
 struct FileChange<'a> {
     path: &'a [u8],
+    highlight: bool,
     old: Option<&'a [u8]>,
     new: Option<&'a [u8]>,
     added: usize,
     removed: usize,
     binary: bool,
     hunks: Vec<u8>,
+}
+
+fn is_js_like(path: &[u8]) -> bool {
+    let ext = match path.iter().rposition(|&b| b == b'.') {
+        Some(i) => &path[i + 1..],
+        None => return false,
+    };
+    matches!(
+        ext,
+        b"js" | b"mjs" | b"cjs" | b"ts" | b"mts" | b"cts" | b"jsx" | b"tsx" | b"json" | b"jsonc"
+    )
 }
 
 fn is_binary(bytes: &[u8]) -> bool {
@@ -594,7 +606,7 @@ fn count_lines(bytes: &[u8]) -> usize {
 
 /// Returns whether anything differed.
 fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
-    let colors = Output::enable_ansi_colors_stdout();
+    let style = Style::detect();
     let mut changes: Vec<FileChange> = Vec::new();
 
     let mut paths: Vec<&[u8]> = left
@@ -613,6 +625,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
         }
         let mut change = FileChange {
             path,
+            highlight: style.pretty && is_js_like(path),
             old,
             new,
             ..Default::default()
@@ -625,37 +638,31 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
         match (old, new) {
             (None, Some(n)) => change.added = count_lines(n),
             (Some(o), None) => change.removed = count_lines(o),
-            (Some(o), Some(n)) => unified_hunks(o, n, flags.context, colors, &mut change),
+            (Some(o), Some(n)) => unified_hunks(o, n, flags.context, style, &mut change),
             (None, None) => unreachable!(),
         }
         if !flags.name_only && !flags.stat && change.hunks.is_empty() {
             // Whole-file add/remove: render every line as +/-.
-            let (sign, body, color) = match (new, old) {
-                (Some(n), _) => (b'+', n, "<green>"),
-                (None, Some(o)) => (b'-', o, "<red>"),
+            let (op, body) = match (new, old) {
+                (Some(n), _) => (Operation::Insert, n),
+                (None, Some(o)) => (Operation::Delete, o),
                 (None, None) => unreachable!(),
             };
             let n = count_lines(body);
-            let _ = write!(
-                &mut change.hunks,
-                "{}",
-                hunk_header(
-                    if new.is_some() {
-                        (0, 0, 1, n)
-                    } else {
-                        (1, n, 0, 0)
-                    },
-                    colors
-                )
-            );
-            for line in Lines(body) {
-                push_line(&mut change.hunks, sign, line, color, colors);
+            let range = if new.is_some() {
+                (0, 0, 1, n)
+            } else {
+                (1, n, 0, 0)
+            };
+            style.hunk_header(&mut change.hunks, range, true);
+            for (i, line) in Lines(body).enumerate() {
+                style.line(&mut change.hunks, op, i + 1, i + 1, line, change.highlight);
             }
         }
         changes.push(change);
     }
 
-    print_summary(left, right, &changes, colors);
+    print_summary(left, right, &changes, style);
     if changes.is_empty() {
         return false;
     }
@@ -694,17 +701,20 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             };
             let (bar_add, bar_del) = ("+".repeat(scale(c.added)), "-".repeat(scale(c.removed)));
             let padded = format!("{:<width$}", BStr::new(c.path), width = path_width);
+            let sep = if style.pretty { "│" } else { "|" };
             if c.binary {
                 pretty!(
-                    " {} <d>|<r> <yellow>bin<r>   {} → {} bytes\n",
+                    " {} <d>{}<r> <yellow>bin<r>   {} → {} bytes\n",
                     padded,
+                    sep,
                     c.old.map_or(0, <[u8]>::len),
                     c.new.map_or(0, <[u8]>::len)
                 );
             } else {
                 pretty!(
-                    " {} <d>|<r> {:>5} <green>{}<r><red>{}<r>\n",
+                    " {} <d>{}<r> {:>5} <green>{}<r><red>{}<r>\n",
                     padded,
+                    sep,
                     c.added + c.removed,
                     bar_add,
                     bar_del
@@ -712,26 +722,31 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             }
             continue;
         }
-        pretty!(
-            "<b>diff --bun a/{} b/{}<r>\n",
+        if style.pretty {
+            style.file_header(c);
+            Output::print(format_args!("{}", BStr::new(&c.hunks)));
+            continue;
+        }
+        Output::print(format_args!(
+            "diff --bun a/{} b/{}\n",
             BStr::new(c.path),
             BStr::new(c.path)
-        );
+        ));
         match (c.old, c.new) {
-            (None, Some(_)) => pretty!("<d>new file<r>\n"),
-            (Some(_), None) => pretty!("<d>deleted file<r>\n"),
+            (None, Some(_)) => Output::print(format_args!("new file\n")),
+            (Some(_), None) => Output::print(format_args!("deleted file\n")),
             _ => {}
         }
         if c.binary {
-            pretty!(
-                "<yellow>Binary files differ<r> <d>({} → {} bytes)<r>\n",
+            Output::print(format_args!(
+                "Binary files differ ({} → {} bytes)\n",
                 c.old.map_or(0, <[u8]>::len),
                 c.new.map_or(0, <[u8]>::len)
-            );
+            ));
             continue;
         }
-        pretty!(
-            "<red>--- {}<r>\n<green>+++ {}<r>\n",
+        Output::print(format_args!(
+            "--- {}\n+++ {}\n",
             if c.old.is_some() {
                 PathLabel(b"a/", c.path)
             } else {
@@ -742,7 +757,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             } else {
                 PathLabel(b"", b"/dev/null")
             }
-        );
+        ));
         Output::print(format_args!("{}", BStr::new(&c.hunks)));
     }
     true
@@ -757,7 +772,7 @@ impl core::fmt::Display for PathLabel<'_> {
 
 /// The header everyone reads first: which versions, how much changed, and the changes worth a second look
 /// (install scripts, binaries, dependency and entry-point changes in package.json).
-fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], _colors: bool) {
+fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: Style) {
     let (mut files_added, mut files_removed, mut files_changed, mut lines_added, mut lines_removed) =
         (0usize, 0usize, 0usize, 0usize, 0usize);
     for c in changes {
@@ -769,24 +784,53 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], _colors:
         lines_added += c.added;
         lines_removed += c.removed;
     }
-    prettyln!(
-        "<b>{}<r> <d>→<r> <b>{}<r>",
-        BStr::new(&left.label),
-        BStr::new(&right.label)
-    );
+    // `react 18.2.0 → 19.0.0` when both sides are the same package, the two labels otherwise.
+    match (split_label(&left.label), split_label(&right.label)) {
+        (Some((ln, lv)), Some((rn, rv))) if style.pretty && ln == rn => prettyln!(
+            "{}<b>{}<r> <red>{}<r> <d>→<r> <green>{}<r>",
+            if style.pretty { "\n" } else { "" },
+            BStr::new(ln),
+            BStr::new(lv),
+            BStr::new(rv)
+        ),
+        _ => prettyln!(
+            "{}<b>{}<r> <d>→<r> <b>{}<r>",
+            if style.pretty { "\n" } else { "" },
+            BStr::new(&left.label),
+            BStr::new(&right.label)
+        ),
+    }
     if changes.is_empty() {
         prettyln!("<d>No differences ({} files)<r>", left.files.len());
         return;
     }
-    prettyln!(
-        "<d>{} file{} changed, {} added, {} removed  (<r><green>+{}<r> <red>-{}<r><d> lines)<r>",
-        files_changed,
-        if files_changed == 1 { "" } else { "s" },
-        files_added,
-        files_removed,
-        lines_added,
-        lines_removed
-    );
+    if style.pretty {
+        let mut line = format!(
+            "<d>{} file{}<r>  <green>+{}<r> <red>-{}<r>",
+            changes.len(),
+            if changes.len() == 1 { "" } else { "s" },
+            lines_added,
+            lines_removed
+        );
+        if files_added > 0 {
+            line.push_str(&format!("  <d>·<r>  <green>{files_added} new<r>"));
+        }
+        if files_removed > 0 {
+            line.push_str(&format!("  <d>·<r>  <red>{files_removed} deleted<r>"));
+        }
+        #[allow(clippy::disallowed_methods)]
+        Output::pretty(format_args!("{line}\n"));
+    } else {
+        prettyln!(
+            "{} file{} changed, {} added, {} removed  (+{} -{} lines)",
+            files_changed,
+            if files_changed == 1 { "" } else { "s" },
+            files_added,
+            files_removed,
+            lines_added,
+            lines_removed
+        );
+    }
 
     let mut notes: Vec<String> = Vec::new();
     package_json_notes(
@@ -816,12 +860,21 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], _colors:
     }
     if !notes.is_empty() {
         prettyln!("");
+        let mark = if style.pretty { "▲" } else { "!" };
         for n in &notes {
             #[allow(clippy::disallowed_methods)]
-            Output::pretty(format_args!("  <yellow>!<r> {}\n", n));
+            Output::pretty(format_args!("  <yellow>{}<r> {}\n", mark, n));
         }
     }
-    prettyln!("");
+    if !style.pretty {
+        prettyln!("");
+    }
+}
+
+/// `name@version` → (name, version), minding a leading scope `@`.
+fn split_label(label: &[u8]) -> Option<(&[u8], &[u8])> {
+    let at = label.iter().rposition(|&b| b == b'@')?;
+    (at > 0).then(|| (&label[..at], &label[at + 1..]))
 }
 
 fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut Vec<String>) {
@@ -1024,37 +1077,155 @@ impl<'a> Iterator for Lines<'a> {
     }
 }
 
-fn hunk_header(
-    (old_start, old_len, new_start, new_len): (usize, usize, usize, usize),
-    colors: bool,
-) -> String {
-    let body = format!(
-        "@@ -{},{} +{},{} @@",
-        old_start, old_len, new_start, new_len
-    );
-    if colors {
-        format!("\x1b[36m{body}\x1b[0m\n")
-    } else {
-        format!("{body}\n")
+/// Plain output is a valid unified patch; a terminal gets a gutter with line numbers instead of `@@` headers.
+#[derive(Clone, Copy)]
+struct Style {
+    pretty: bool,
+    width: usize,
+}
+
+impl Style {
+    fn detect() -> Style {
+        let pretty = Output::enable_ansi_colors_stdout();
+        let width = bun_core::output::File::from(bun_core::Fd::stdout())
+            .winsize()
+            .map_or(80, |w| w.col as usize)
+            .clamp(40, 120);
+        Style { pretty, width }
+    }
+
+    fn hunk_header(
+        self,
+        out: &mut Vec<u8>,
+        (old_start, old_len, new_start, new_len): (usize, usize, usize, usize),
+        first: bool,
+    ) {
+        if self.pretty {
+            if !first {
+                out.extend_from_slice("\x1b[2m    ⋮\x1b[0m\n".as_bytes());
+            }
+        } else {
+            let _ = writeln!(out, "@@ -{old_start},{old_len} +{new_start},{new_len} @@");
+        }
+    }
+
+    fn line(
+        self,
+        out: &mut Vec<u8>,
+        op: Operation,
+        old_no: usize,
+        new_no: usize,
+        text: &[u8],
+        highlight: bool,
+    ) {
+        let sign = match op {
+            Operation::Equal => b' ',
+            Operation::Delete => b'-',
+            Operation::Insert => b'+',
+        };
+        if !self.pretty {
+            out.push(sign);
+            out.extend_from_slice(text);
+            out.push(b'\n');
+            return;
+        }
+        // Changed lines get a tinted background so the foreground is free for syntax colours.
+        let (num, accent, bg) = match op {
+            Operation::Equal => (new_no, "\x1b[2m", ""),
+            Operation::Delete => (old_no, "\x1b[31m", "\x1b[48;5;52m"),
+            Operation::Insert => (new_no, "\x1b[32m", "\x1b[48;5;22m"),
+        };
+        let _ = write!(
+            out,
+            "{accent}{num:>5} \x1b[0m\x1b[2m│\x1b[0m{bg}{accent}\x1b[1m{} \x1b[0m{bg}",
+            sign as char
+        );
+        let start = out.len();
+        let hl = bun_core::fmt::fmt_javascript(
+            text,
+            bun_core::fmt::HighlighterOptions {
+                enable_colors: true,
+                check_for_unhighlighted_write: false,
+                ..Default::default()
+            },
+        );
+        if !highlight || text.len() > 2048 || write!(out, "{hl}").is_err() {
+            out.truncate(start);
+            out.extend_from_slice(text);
+        } else if !bg.is_empty() {
+            // The highlighter resets all attributes between tokens; put the tint back after each reset.
+            let tail = out.split_off(start);
+            for (i, piece) in tail.split(|&b| b == 0x1b).enumerate() {
+                if i > 0 {
+                    out.push(0x1b);
+                }
+                if i > 0 && piece.starts_with(b"[0m") {
+                    out.extend_from_slice(b"[0m");
+                    out.extend_from_slice(bg.as_bytes());
+                    out.extend_from_slice(&piece[3..]);
+                } else {
+                    out.extend_from_slice(piece);
+                }
+            }
+        }
+        // Erase-to-EOL carries the tint to the edge before resetting.
+        out.extend_from_slice(if bg.is_empty() {
+            b"\x1b[0m\n".as_slice()
+        } else {
+            b"\x1b[K\x1b[0m\n".as_slice()
+        });
+    }
+
+    /// `path ─────────────── +3 -1`, sized to the terminal.
+    fn file_header(self, c: &FileChange<'_>) {
+        let badge = match (c.old, c.new, c.binary) {
+            (_, _, true) => format!(
+                "\x1b[33mbinary\x1b[0m \x1b[2m{} → {} bytes\x1b[0m",
+                c.old.map_or(0, <[u8]>::len),
+                c.new.map_or(0, <[u8]>::len)
+            ),
+            (None, Some(_), _) => format!("\x1b[32mnew\x1b[0m \x1b[32m+{}\x1b[0m", c.added),
+            (Some(_), None, _) => format!("\x1b[31mdeleted\x1b[0m \x1b[31m-{}\x1b[0m", c.removed),
+            _ => {
+                let mut s = String::new();
+                if c.added > 0 {
+                    s.push_str(&format!("\x1b[32m+{}\x1b[0m", c.added));
+                }
+                if c.removed > 0 {
+                    if !s.is_empty() {
+                        s.push(' ');
+                    }
+                    s.push_str(&format!("\x1b[31m-{}\x1b[0m", c.removed));
+                }
+                s
+            }
+        };
+        let badge_width = strip_ansi_len(badge.as_bytes());
+        let rule = self
+            .width
+            .saturating_sub(c.path.len() + badge_width + 4)
+            .max(2);
+        Output::print(format_args!(
+            "\n\x1b[1m{}\x1b[0m \x1b[2m{}\x1b[0m {}\n",
+            BStr::new(c.path),
+            "─".repeat(rule),
+            badge
+        ));
     }
 }
 
-fn push_line(out: &mut Vec<u8>, sign: u8, line: &[u8], color: &str, colors: bool) {
-    if colors && !color.is_empty() {
-        let code = match color {
-            "<green>" => "\x1b[32m",
-            "<red>" => "\x1b[31m",
-            _ => "\x1b[2m",
-        };
-        out.extend_from_slice(code.as_bytes());
-        out.push(sign);
-        out.extend_from_slice(line);
-        out.extend_from_slice(b"\x1b[0m\n");
-    } else {
-        out.push(sign);
-        out.extend_from_slice(line);
-        out.push(b'\n');
+fn strip_ansi_len(s: &[u8]) -> usize {
+    let (mut n, mut in_esc) = (0, false);
+    for &b in s {
+        match (in_esc, b) {
+            (false, 0x1b) => in_esc = true,
+            (true, b'm') => in_esc = false,
+            (true, _) => {}
+            // Count UTF-8 scalar starts, not continuation bytes.
+            (false, b) => n += usize::from(b & 0xC0 != 0x80),
+        }
     }
+    n
 }
 
 /// Line diff via diff-match-patch, rendered as unified hunks with `context` lines around each change.
@@ -1062,7 +1233,7 @@ fn unified_hunks(
     old: &[u8],
     new: &[u8],
     context: usize,
-    colors: bool,
+    style: Style,
     change: &mut FileChange<'_>,
 ) {
     let mut dmp = DiffMatchPatch::<usize>::default();
@@ -1089,6 +1260,7 @@ fn unified_hunks(
     // SAFETY-free lifetime note: `d.text` is owned by `diffs`, which lives to the end of this fn; hunks are rendered here.
     let n = ops.len();
     let mut i = 0;
+    let mut first = true;
     let (mut old_line, mut new_line) = (1usize, 1usize);
     while i < n {
         if ops[i].0 == Operation::Equal {
@@ -1140,32 +1312,32 @@ fn unified_hunks(
                 Operation::Insert => new_len += 1,
             }
         }
-        let _ = write!(
+        let old_start = if old_len == 0 {
+            hunk_old_start.saturating_sub(1)
+        } else {
+            hunk_old_start
+        };
+        let new_start = if new_len == 0 {
+            hunk_new_start.saturating_sub(1)
+        } else {
+            hunk_new_start
+        };
+        style.hunk_header(
             &mut change.hunks,
-            "{}",
-            hunk_header(
-                (
-                    if old_len == 0 {
-                        hunk_old_start.saturating_sub(1)
-                    } else {
-                        hunk_old_start
-                    },
-                    old_len,
-                    if new_len == 0 {
-                        hunk_new_start.saturating_sub(1)
-                    } else {
-                        hunk_new_start
-                    },
-                    new_len
-                ),
-                colors
-            )
+            (old_start, old_len, new_start, new_len),
+            first,
         );
+        first = false;
+        let (mut o, mut nn) = (hunk_old_start, hunk_new_start);
         for (op, line) in &ops[start..end] {
+            style.line(&mut change.hunks, *op, o, nn, line, change.highlight);
             match op {
-                Operation::Equal => push_line(&mut change.hunks, b' ', line, "", colors),
-                Operation::Delete => push_line(&mut change.hunks, b'-', line, "<red>", colors),
-                Operation::Insert => push_line(&mut change.hunks, b'+', line, "<green>", colors),
+                Operation::Equal => {
+                    o += 1;
+                    nn += 1;
+                }
+                Operation::Delete => o += 1,
+                Operation::Insert => nn += 1,
             }
         }
         // Advance line counters past this hunk.

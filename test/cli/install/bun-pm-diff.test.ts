@@ -218,6 +218,28 @@ new file
     expect(exitCode).toBe(0);
   });
 
+  test("on a terminal: per-file headers, a line-number gutter, no patch syntax", async () => {
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0"],
+      cwd: String(root),
+      env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [raw, exitCode] = await Promise.all([p.stdout.text(), p.exited]);
+    expect(raw).toContain("\x1b[");
+    const text = raw.replace(/\x1b\[[0-9;]*[mK]/g, "");
+    expect(text).toContain("diffme 1.0.0 → 2.0.0\n");
+    expect(text).toContain("6 files  +10 -6  ·  2 new  ·  1 deleted\n");
+    expect(text).toMatch(/\nREADME\.md ─+ \+1 -1\n/);
+    expect(text).toMatch(/\ngone\.txt ─+ deleted -1\n/);
+    expect(text).toMatch(/\nlogo\.bin ─+ binary 0 → 6 bytes\n/);
+    expect(text).toContain("    5 │  line c\n    6 │- line d\n    6 │+ line d changed\n    7 │  line e\n");
+    expect(text).not.toContain("@@");
+    expect(text).not.toContain("+++");
+    expect(exitCode).toBe(0);
+  });
+
   test("identical sides say so", async () => {
     const { stdout, exitCode } = await diff(["diffme@2.0.0", "2.0.0"]);
     expect(stdout).toBe("diffme@2.0.0 → diffme@2.0.0\nNo differences (5 files)\n");

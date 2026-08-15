@@ -2672,12 +2672,15 @@ it("should not add duplicate package.json entries when installing the same tarba
 // and the URL's basename labels the directory the tarball is extracted into. The query string and
 // fragment used to end up in that label: `?` cannot appear in a directory name on Windows, and a `:`
 // within the first 32 bytes of the label (it is truncated to that) fails the install folder name
-// check on every platform with "Refusing to install package with invalid name".
+// check on every platform with "Refusing to install package with invalid name". A URL without a path
+// has nothing usable left once the query is gone (its basename is the `host:port`), so the label
+// falls back to "package" instead.
 describe("should add a tarball URL with a query string or fragment", () => {
-  const suffixes = [
-    ["query string", "?token=abc"],
-    ["query string containing a colon", "?expires=12:00"],
-    ["fragment containing a colon", "#ref:main"],
+  const paths = [
+    ["query string", "/qs-pkg-1.0.0.tgz?token=abc"],
+    ["query string containing a colon", "/qs-pkg-1.0.0.tgz?expires=12:00"],
+    ["fragment containing a colon", "/qs-pkg-1.0.0.tgz#ref:main"],
+    ["query string on a URL without a path", "/?file=qs-pkg-1.0.0.tgz"],
   ] as const;
 
   let tarball: Uint8Array;
@@ -2737,9 +2740,9 @@ describe("should add a tarball URL with a query string or fragment", () => {
   }
 
   describe.each(["buffered", "streaming"] as const)("%s extraction", mode => {
-    test.each(suffixes)("%s", async (_, suffix) => {
+    test.each(paths)("%s", async (_, path) => {
       await using server = await serveTarball(mode);
-      const url = `${server.origin}/qs-pkg-1.0.0.tgz${suffix}`;
+      const url = `${server.origin}${path}`;
       await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
 
       const { stdout, stderr, exited } = spawn({

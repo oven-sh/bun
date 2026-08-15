@@ -22,12 +22,15 @@ use bun_semver as Semver;
 use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
+use crate::cli::pm_diff_normalize as normalize;
 use crate::test_runner::diff::diff_match_patch::{self, DiffMatchPatch, Operation};
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 
 #[derive(Clone, Copy)]
 pub(crate) struct DiffFlags {
+    /// Compare bytes, not the canonical re-print of JS/CSS/JSON.
+    pub raw: bool,
     pub name_only: bool,
     pub stat: bool,
     pub context: usize,
@@ -569,27 +572,39 @@ fn registry_get(
 
 // ─── diffing & printing ─────────────────────────────────────────────────────
 
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Semantic {
+    #[default]
+    Text,
+    /// Both sides parse and print identically: whitespace/quotes/semicolons only.
+    FormattingOnly,
+    /// Hunks were computed on the canonical re-print (gutter shows original lines when known).
+    Normalized { unminified: bool },
+}
+
 #[derive(Default)]
 struct FileChange<'a> {
     path: &'a [u8],
     highlight: bool,
+    semantic: Semantic,
+    /// New `import`/`require` specifiers and risky-API counts vs the old side, filled when both sides parsed.
+    new_imports: Vec<Vec<u8>>,
+    signal_deltas: Vec<(&'static str, usize)>,
     old: Option<&'a [u8]>,
     new: Option<&'a [u8]>,
     added: usize,
     removed: usize,
     binary: bool,
+    /// `*.js.map`: regenerated on every build, never worth reading.
+    sourcemap: bool,
     hunks: Vec<u8>,
 }
 
 fn is_js_like(path: &[u8]) -> bool {
-    let ext = match path.iter().rposition(|&b| b == b'.') {
-        Some(i) => &path[i + 1..],
-        None => return false,
-    };
     matches!(
-        ext,
-        b"js" | b"mjs" | b"cjs" | b"ts" | b"mts" | b"cts" | b"jsx" | b"tsx" | b"json" | b"jsonc"
-    )
+        normalize::kind_for(path),
+        Some(normalize::Kind::Js(_) | normalize::Kind::Json)
+    ) || path.ends_with(b".jsonc")
 }
 
 fn is_binary(bytes: &[u8]) -> bool {
@@ -631,17 +646,103 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             ..Default::default()
         };
         change.binary = old.is_some_and(is_binary) || new.is_some_and(is_binary);
-        if change.binary {
+        change.sourcemap = strings::ends_with(path, b".map")
+            && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\""));
+        if change.binary || change.sourcemap {
             changes.push(change);
             continue;
         }
-        match (old, new) {
-            (None, Some(n)) => change.added = count_lines(n),
-            (Some(o), None) => change.removed = count_lines(o),
-            (Some(o), Some(n)) => unified_hunks(o, n, flags.context, style, &mut change),
-            (None, None) => unreachable!(),
+        // Canonical re-print: same parser and printer on both sides, so only meaning survives.
+        let (norm_old, norm_new) = if flags.raw {
+            (None, None)
+        } else {
+            (
+                old.and_then(|b| normalize::normalize(path, b)),
+                new.and_then(|b| normalize::normalize(path, b)),
+            )
+        };
+        if let Some(n) = &norm_new {
+            let old_imports: &[Vec<u8>] = norm_old.as_ref().map_or(&[], |o| o.imports.as_slice());
+            for imp in &n.imports {
+                if !old_imports.contains(imp) && !change.new_imports.contains(imp) {
+                    change.new_imports.push(imp.clone());
+                }
+            }
+            let before = norm_old
+                .as_ref()
+                .map_or([0; normalize::SIGNALS.len()], |o| {
+                    normalize::count_signals(&o.text)
+                });
+            let after = normalize::count_signals(&n.text);
+            for (i, (_, label)) in normalize::SIGNALS.iter().enumerate() {
+                if after[i] > before[i] {
+                    change.signal_deltas.push((label, after[i] - before[i]));
+                }
+            }
         }
-        if !flags.name_only && !flags.stat && change.hunks.is_empty() {
+        match (old, new, &norm_old, &norm_new) {
+            // Patch output must apply to the real files, so only the terminal view uses the re-print.
+            (Some(_), Some(_), Some(no), Some(nn)) if style.pretty && no.text == nn.text => {
+                change.semantic = Semantic::FormattingOnly;
+            }
+            (Some(o), Some(n), Some(no), Some(nn)) if style.pretty => {
+                let unminified = no.was_minified || nn.was_minified;
+                change.semantic = Semantic::Normalized { unminified };
+                if unminified {
+                    unified_hunks(
+                        &no.text,
+                        &nn.text,
+                        flags.context,
+                        style,
+                        (None, None),
+                        &mut change,
+                    );
+                    // Minifier name churn: retry with positional names and keep whichever diff is smaller.
+                    if change.added + change.removed > 2 {
+                        if let Some((co, cn)) = normalize::normalize_minified_pair(path, o, n) {
+                            let mut alt = FileChange {
+                                path,
+                                highlight: change.highlight,
+                                ..Default::default()
+                            };
+                            if co.text == cn.text {
+                                alt.semantic = Semantic::FormattingOnly;
+                            } else {
+                                alt.semantic = change.semantic;
+                                unified_hunks(
+                                    &co.text,
+                                    &cn.text,
+                                    flags.context,
+                                    style,
+                                    (None, None),
+                                    &mut alt,
+                                );
+                            }
+                            if alt.added + alt.removed < change.added + change.removed {
+                                change.semantic = alt.semantic;
+                                change.added = alt.added;
+                                change.removed = alt.removed;
+                                change.hunks = alt.hunks;
+                            }
+                        }
+                    }
+                } else {
+                    let maps = (Some(no.line_map.as_slice()), Some(nn.line_map.as_slice()));
+                    unified_hunks(&no.text, &nn.text, flags.context, style, maps, &mut change);
+                }
+            }
+            (None, Some(n), _, _) => change.added = count_lines(n),
+            (Some(o), None, _, _) => change.removed = count_lines(o),
+            (Some(o), Some(n), _, _) => {
+                unified_hunks(o, n, flags.context, style, (None, None), &mut change)
+            }
+            (None, None, _, _) => unreachable!(),
+        }
+        if !flags.name_only
+            && !flags.stat
+            && change.hunks.is_empty()
+            && change.semantic == Semantic::Text
+        {
             // Whole-file add/remove: render every line as +/-.
             let (op, body) = match (new, old) {
                 (Some(n), _) => (Operation::Insert, n),
@@ -656,7 +757,15 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             };
             style.hunk_header(&mut change.hunks, range, true);
             for (i, line) in Lines(body).enumerate() {
-                style.line(&mut change.hunks, op, i + 1, i + 1, line, change.highlight);
+                style.line(
+                    &mut change.hunks,
+                    op,
+                    i + 1,
+                    i + 1,
+                    line,
+                    change.highlight,
+                    None,
+                );
             }
         }
         changes.push(change);
@@ -702,11 +811,12 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             let (bar_add, bar_del) = ("+".repeat(scale(c.added)), "-".repeat(scale(c.removed)));
             let padded = format!("{:<width$}", BStr::new(c.path), width = path_width);
             let sep = if style.pretty { "│" } else { "|" };
-            if c.binary {
+            if c.binary || c.sourcemap {
                 pretty!(
-                    " {} <d>{}<r> <yellow>bin<r>   {} → {} bytes\n",
+                    " {} <d>{}<r> <yellow>{}<r>   {} → {} bytes\n",
                     padded,
                     sep,
+                    if c.sourcemap { "map" } else { "bin" },
                     c.old.map_or(0, <[u8]>::len),
                     c.new.map_or(0, <[u8]>::len)
                 );
@@ -737,9 +847,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             (Some(_), None) => Output::print(format_args!("deleted file\n")),
             _ => {}
         }
-        if c.binary {
+        if c.binary || c.sourcemap {
             Output::print(format_args!(
-                "Binary files differ ({} → {} bytes)\n",
+                "{} files differ ({} → {} bytes)\n",
+                if c.sourcemap { "Source map" } else { "Binary" },
                 c.old.map_or(0, <[u8]>::len),
                 c.new.map_or(0, <[u8]>::len)
             ));
@@ -818,6 +929,13 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
         if files_removed > 0 {
             line.push_str(&format!("  <d>·<r>  <red>{files_removed} deleted<r>"));
         }
+        let formatting_only = changes
+            .iter()
+            .filter(|c| c.semantic == Semantic::FormattingOnly)
+            .count();
+        if formatting_only > 0 {
+            line.push_str(&format!("  <d>·  {formatting_only} formatting only<r>"));
+        }
         #[allow(clippy::disallowed_methods)]
         Output::pretty(format_args!("{line}\n"));
     } else {
@@ -838,6 +956,7 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
         right.files.get(b"package.json".as_slice()),
         &mut notes,
     );
+    ast_notes(changes, &mut notes);
     for c in changes {
         if c.binary && c.old.is_none() {
             notes.push(format!(
@@ -868,6 +987,64 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
     }
     if !style.pretty {
         prettyln!("");
+    }
+}
+
+/// What the parser saw that a reviewer would want to know: new imports of consequential builtins, other new
+/// module specifiers, and growth in risky API use — aggregated across files so a 40-file package stays readable.
+fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>) {
+    let mut builtins: Vec<(Vec<u8>, &[u8])> = Vec::new();
+    let mut packages: Vec<Vec<u8>> = Vec::new();
+    for c in changes {
+        for imp in &c.new_imports {
+            if normalize::notable_builtin(imp) {
+                if !builtins.iter().any(|(b, _)| b == imp) {
+                    builtins.push((imp.clone(), c.path));
+                }
+            } else if !imp.starts_with(b".") && !imp.starts_with(b"/") && !packages.contains(imp) {
+                packages.push(imp.clone());
+            }
+        }
+    }
+    for (b, path) in &builtins {
+        notes.push(format!(
+            "now imports <b><magenta>{}<r> <d>({})<r>",
+            BStr::new(b),
+            BStr::new(path)
+        ));
+    }
+    if !packages.is_empty() {
+        let shown: Vec<String> = packages
+            .iter()
+            .take(6)
+            .map(|p| format!("<b>{}<r>", BStr::new(p)))
+            .collect();
+        let more = if packages.len() > 6 {
+            format!(" <d>… and {} more<r>", packages.len() - 6)
+        } else {
+            String::new()
+        };
+        notes.push(format!("new module imports: {}{}", shown.join(", "), more));
+    }
+    let mut totals: Vec<(&'static str, usize, &[u8])> = Vec::new();
+    for c in changes {
+        for &(label, n) in &c.signal_deltas {
+            match totals.iter_mut().find(|(l, _, _)| *l == label) {
+                Some(t) => t.1 += n,
+                None => totals.push((label, n, c.path)),
+            }
+        }
+    }
+    for (label, n, first_path) in totals {
+        // URLs churn in license headers and doc strings; only call out the sharper tools.
+        if label.ends_with("URL") && n < 3 {
+            continue;
+        }
+        notes.push(format!(
+            "<b>+{n}<r> {label} <d>({}{})<r>",
+            BStr::new(first_path),
+            if n > 1 { ", …" } else { "" }
+        ));
     }
 }
 
@@ -1109,6 +1286,9 @@ impl Style {
         }
     }
 
+    /// `emph` is the byte range that differs from this line's -/+ partner; it gets a stronger tint and, on lines
+    /// wider than the terminal, the shared prefix before it is elided so the change is on screen.
+    #[allow(clippy::too_many_arguments)]
     fn line(
         self,
         out: &mut Vec<u8>,
@@ -1117,6 +1297,7 @@ impl Style {
         new_no: usize,
         text: &[u8],
         highlight: bool,
+        emph: Option<(usize, usize)>,
     ) {
         let sign = match op {
             Operation::Equal => b' ',
@@ -1130,16 +1311,66 @@ impl Style {
             return;
         }
         // Changed lines get a tinted background so the foreground is free for syntax colours.
-        let (num, accent, bg) = match op {
-            Operation::Equal => (new_no, "\x1b[2m", ""),
-            Operation::Delete => (old_no, "\x1b[31m", "\x1b[48;5;52m"),
-            Operation::Insert => (new_no, "\x1b[32m", "\x1b[48;5;22m"),
+        let (num, accent, bg, strong) = match op {
+            Operation::Equal => (new_no, "\x1b[2m", "", ""),
+            Operation::Delete => (old_no, "\x1b[31m", "\x1b[48;5;52m", "\x1b[48;5;88m"),
+            Operation::Insert => (new_no, "\x1b[32m", "\x1b[48;5;22m", "\x1b[48;5;28m"),
         };
         let _ = write!(
             out,
             "{accent}{num:>5} \x1b[0m\x1b[2m│\x1b[0m{bg}{accent}\x1b[1m{} \x1b[0m{bg}",
             sign as char
         );
+        let budget = self.width.saturating_sub(9);
+        match emph {
+            Some((lo, hi)) if lo < hi || text.len() > budget => {
+                let mut prefix = &text[..lo];
+                // Keep ~24 columns of lead-in; drop the rest of a long shared prefix.
+                if text.len() > budget && lo > 32 {
+                    let mut cut = lo - 24;
+                    // Land the cut between tokens rather than mid-identifier when one is near.
+                    let ident = |b: u8| {
+                        b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b & 0x80 != 0
+                    };
+                    for _ in 0..16 {
+                        if cut == 0 || !ident(text[cut - 1]) || !ident(text[cut]) {
+                            break;
+                        }
+                        cut -= 1;
+                    }
+                    out.extend_from_slice("\x1b[2m…\x1b[22m".as_bytes());
+                    out.extend_from_slice(bg.as_bytes());
+                    prefix = &text[cut..lo];
+                }
+                self.segment(out, prefix, highlight, bg);
+                out.extend_from_slice(strong.as_bytes());
+                self.segment(out, &text[lo..hi], highlight, strong);
+                out.extend_from_slice(bg.as_bytes());
+                self.segment(out, &text[hi..], highlight, bg);
+            }
+            _ if op == Operation::Equal && text.len() > budget && budget > 16 => {
+                // Context nobody will read to the end: one screen line is enough.
+                let mut cut = budget - 1;
+                while cut > 0 && text[cut] & 0xC0 == 0x80 {
+                    cut -= 1;
+                }
+                self.segment(out, &text[..cut], highlight, bg);
+                out.extend_from_slice("\x1b[2m…\x1b[0m".as_bytes());
+            }
+            _ => self.segment(out, text, highlight, bg),
+        }
+        // Erase-to-EOL carries the tint to the edge before resetting.
+        out.extend_from_slice(if bg.is_empty() {
+            b"\x1b[0m\n".as_slice()
+        } else {
+            b"\x1b[K\x1b[0m\n".as_slice()
+        });
+    }
+
+    fn segment(self, out: &mut Vec<u8>, text: &[u8], highlight: bool, bg: &str) {
+        if text.is_empty() {
+            return;
+        }
         let start = out.len();
         let hl = bun_core::fmt::fmt_javascript(
             text,
@@ -1149,7 +1380,7 @@ impl Style {
                 ..Default::default()
             },
         );
-        if !highlight || text.len() > 2048 || write!(out, "{hl}").is_err() {
+        if !highlight || text.len() > 4096 || write!(out, "{hl}").is_err() {
             out.truncate(start);
             out.extend_from_slice(text);
         } else if !bg.is_empty() {
@@ -1168,17 +1399,23 @@ impl Style {
                 }
             }
         }
-        // Erase-to-EOL carries the tint to the edge before resetting.
-        out.extend_from_slice(if bg.is_empty() {
-            b"\x1b[0m\n".as_slice()
-        } else {
-            b"\x1b[K\x1b[0m\n".as_slice()
-        });
     }
 
     /// `path ─────────────── +3 -1`, sized to the terminal.
     fn file_header(self, c: &FileChange<'_>) {
+        let note = match c.semantic {
+            Semantic::Text => "",
+            Semantic::FormattingOnly => "\x1b[2mformatting only\x1b[0m",
+            Semantic::Normalized { unminified: true } => "\x1b[35munminified\x1b[0m ",
+            Semantic::Normalized { unminified: false } => "\x1b[2mnormalized\x1b[0m ",
+        };
         let badge = match (c.old, c.new, c.binary) {
+            _ if c.semantic == Semantic::FormattingOnly => note.to_string(),
+            _ if c.sourcemap => format!(
+                "\x1b[2msource map {} → {} bytes\x1b[0m",
+                c.old.map_or(0, <[u8]>::len),
+                c.new.map_or(0, <[u8]>::len)
+            ),
             (_, _, true) => format!(
                 "\x1b[33mbinary\x1b[0m \x1b[2m{} → {} bytes\x1b[0m",
                 c.old.map_or(0, <[u8]>::len),
@@ -1187,7 +1424,7 @@ impl Style {
             (None, Some(_), _) => format!("\x1b[32mnew\x1b[0m \x1b[32m+{}\x1b[0m", c.added),
             (Some(_), None, _) => format!("\x1b[31mdeleted\x1b[0m \x1b[31m-{}\x1b[0m", c.removed),
             _ => {
-                let mut s = String::new();
+                let mut s = String::from(note);
                 if c.added > 0 {
                     s.push_str(&format!("\x1b[32m+{}\x1b[0m", c.added));
                 }
@@ -1228,14 +1465,60 @@ fn strip_ansi_len(s: &[u8]) -> usize {
     n
 }
 
+/// For a `-` line immediately followed by exactly one `+` line (or vice versa), the byte range where they differ.
+fn pair_emphasis(ops: &[(Operation, &[u8])], k: usize) -> Option<(usize, usize)> {
+    let (op, text) = ops[k];
+    let partner = match op {
+        Operation::Delete
+            if k + 1 < ops.len()
+                && ops[k + 1].0 == Operation::Insert
+                && ops.get(k + 2).is_none_or(|o| o.0 != Operation::Insert)
+                && (k == 0 || ops[k - 1].0 != Operation::Delete) =>
+        {
+            ops[k + 1].1
+        }
+        Operation::Insert
+            if k > 0
+                && ops[k - 1].0 == Operation::Delete
+                && ops.get(k + 1).is_none_or(|o| o.0 != Operation::Insert)
+                && (k < 2 || ops[k - 2].0 != Operation::Delete) =>
+        {
+            ops[k - 1].1
+        }
+        _ => return None,
+    };
+    let mut lo = text.iter().zip(partner).take_while(|(a, b)| a == b).count();
+    let max_suffix = text.len().min(partner.len()) - lo;
+    let suffix = text
+        .iter()
+        .rev()
+        .zip(partner.iter().rev())
+        .take(max_suffix)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let mut hi = text.len() - suffix;
+    while lo > 0 && text.get(lo).is_some_and(|b| b & 0xC0 == 0x80) {
+        lo -= 1;
+    }
+    while hi < text.len() && text[hi] & 0xC0 == 0x80 {
+        hi += 1;
+    }
+    Some((lo, hi))
+}
+
 /// Line diff via diff-match-patch, rendered as unified hunks with `context` lines around each change.
 fn unified_hunks(
     old: &[u8],
     new: &[u8],
     context: usize,
     style: Style,
+    (old_map, new_map): (Option<&[u32]>, Option<&[u32]>),
     change: &mut FileChange<'_>,
 ) {
+    let map = |m: Option<&[u32]>, line: usize| {
+        m.and_then(|m| m.get(line.wrapping_sub(1)))
+            .map_or(line, |&l| l as usize)
+    };
     let mut dmp = DiffMatchPatch::<usize>::default();
     dmp.config.diff_timeout = 1000;
     let l2c = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(old, new));
@@ -1329,8 +1612,17 @@ fn unified_hunks(
         );
         first = false;
         let (mut o, mut nn) = (hunk_old_start, hunk_new_start);
-        for (op, line) in &ops[start..end] {
-            style.line(&mut change.hunks, *op, o, nn, line, change.highlight);
+        for (k, (op, line)) in ops[start..end].iter().enumerate() {
+            let emph = pair_emphasis(&ops[start..end], k);
+            style.line(
+                &mut change.hunks,
+                *op,
+                map(old_map, o),
+                map(new_map, nn),
+                line,
+                change.highlight,
+                emph,
+            );
             match op {
                 Operation::Equal => {
                     o += 1;

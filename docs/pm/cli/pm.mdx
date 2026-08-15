@@ -248,8 +248,17 @@ diff --bun a/index.js b/index.js
 ...
 ```
 
+On a terminal, `.js`/`.mjs`/`.cjs`/`.jsx`/`.ts`/`.tsx`/`.css`/`.json` files are parsed and re-printed in one canonical style before diffing, so the view shows changes in meaning rather than in bytes:
+
+- A release that only re-ran a formatter shows each file as `formatting only` with no hunks.
+- Minified bundles are un-minified, and the short names two builds' minifiers handed out differently are renamed in lockstep, so `dist/*.min.js` diffs down to the lines that actually changed instead of one enormous `-`/`+` pair.
+- The summary calls out what a reviewer looks for first: new `install`/`postinstall` scripts, dependency and entry-point changes, a file that newly imports `child_process`/`fs`/`net`/`http`/`vm`/…, new package imports, and growth in `eval()` / `new Function()` / `process.env` / `fetch()` use. `*.map` files are summarised as regenerated rather than shown.
+
+Piped or with `NO_COLOR`, the output is a plain unified patch of the real file contents (so `bun pm diff a b > changes.patch` applies), and `--raw` turns the re-print off on a terminal too.
+
 | Flag                  | Description                                                              |
 | --------------------- | ------------------------------------------------------------------------ |
+| `--raw`               | Compare bytes as-is; skip the JS/CSS/JSON re-print                       |
 | `--stat`              | One line per file with a change count and bar instead of the hunks       |
 | `--name-only`         | Only list the files that differ, marked `A`dded / `M`odified / `D`eleted |
 | `-U <n>`, `--unified` | Lines of context around each change (default 3)                          |

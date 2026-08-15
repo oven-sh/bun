@@ -263,3 +263,86 @@ new file
     expect(many.exitCode).toBe(1);
   });
 });
+
+// The terminal view re-prints JS/CSS/JSON through Bun's parser and printer before diffing, so only changes in
+// meaning survive. These run folder-against-folder; no registry involved.
+describe("bun pm diff (canonical re-print)", () => {
+  async function pretty(files: Record<string, string | Record<string, string>>, args: string[] = []) {
+    using dir = tempDir("pm-diff-ast", files);
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [raw, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    return { text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode };
+  }
+  const changedLines = (text: string) => text.split("\n").filter(l => /^ +\d+ │[-+] /.test(l));
+
+  test("a reformat-only release collapses to 'formatting only'", async () => {
+    const { text, exitCode } = await pretty({
+      "a/package.json": `{"name":"x","version":"1.0.0"}`,
+      "b/package.json": `{\n  "name": "x",\n  "version": "1.0.0"\n}\n`,
+      "a/index.js": `'use strict';\nmodule.exports = function add(a, b) { return a + b; };\n`,
+      "b/index.js": `"use strict"\n\nmodule.exports = function add(a, b) {\n\treturn a + b\n}\n`,
+      "a/style.css": `.a{color:red;margin:0 auto}`,
+      "b/style.css": `.a {\n  color: red;\n  margin: 0 auto;\n}\n`,
+    });
+    expect(text).toMatch(/\nindex\.js ─+ formatting only\n/);
+    expect(text).toMatch(/\npackage\.json ─+ formatting only\n/);
+    expect(text).toMatch(/\nstyle\.css ─+ formatting only\n/);
+    expect(text).toContain("3 formatting only");
+    expect(changedLines(text)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("two minified builds with different mangled names diff down to the real change", async () => {
+    // Same program, names handed out differently by the "minifier", plus one genuine edit (* 2 → * 3) and one
+    // inserted helper in b. Long enough on one line to count as minified.
+    const body = (n: Record<string, string>, mul: string, extra = "") =>
+      `!function(){${extra}function ${n.add}(${n.x},${n.y}){return ${n.x}+${n.y}}function ${n.inc}(${n.x}){return ${n.add}(${n.x},1)*${mul}}` +
+      `function ${n.pad1}(${n.x}){return String(${n.x}).padStart(8," ")}function ${n.pad2}(${n.x}){return String(${n.x}).padEnd(8," ")}` +
+      `function ${n.clamp}(${n.x},${n.y},${n.z}){return ${n.x}<${n.y}?${n.y}:${n.x}>${n.z}?${n.z}:${n.x}}` +
+      `function ${n.sum}(${n.x}){for(var ${n.y}=0,${n.z}=0;${n.z}<${n.x}.length;${n.z}++)${n.y}+=${n.x}[${n.z}];return ${n.y}}` +
+      `module.exports={add:${n.add},inc:${n.inc},padStart:${n.pad1},padEnd:${n.pad2},clamp:${n.clamp},sum:${n.sum}}}();\n`;
+    const v1 = body({ add: "a", inc: "b", pad1: "c", pad2: "d", clamp: "e", sum: "f", x: "n", y: "t", z: "r" }, "2");
+    const v2 = body(
+      { add: "t", inc: "n", pad1: "r", pad2: "e", clamp: "u", sum: "o", x: "a", y: "b", z: "c" },
+      "3",
+      `function i(a){return a==null}`,
+    );
+    expect(v1.length).toBeGreaterThan(256);
+    const { text, exitCode } = await pretty({ "a/dist/x.min.js": v1, "b/dist/x.min.js": v2 });
+    expect(text).toMatch(/\ndist\/x\.min\.js ─+ unminified \+4 -1\n/);
+    const changed = changedLines(text).map(l => l.replace(/^ +\d+ │/, ""));
+    expect(changed.filter(l => l.startsWith("-"))).toEqual(["-     return b(a1, 1) * 2;"]);
+    expect(changed.filter(l => l.startsWith("+"))).toEqual([
+      "+   function a(a1) {",
+      "+     return a1 == null;",
+      "+   }",
+      "+     return b(a1, 1) * 3;",
+    ]);
+    // --raw turns all of that off: one giant line each way.
+    const raw = await pretty({ "a/dist/x.min.js": v1, "b/dist/x.min.js": v2 }, ["--raw"]);
+    expect(raw.text).toMatch(/\ndist\/x\.min\.js ─+ \+1 -1\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("summary calls out new builtin imports, risky APIs, and skips source maps", async () => {
+    const { text, exitCode } = await pretty({
+      "a/index.js": `const path = require("path");\nmodule.exports = p => path.basename(p);\n`,
+      "b/index.js":
+        `const path = require("path");\nconst cp = require("child_process");\nconst leftPad = require("left-pad");\n` +
+        `module.exports = p => { cp.exec("echo " + p); return eval(leftPad(path.basename(p))); };\n`,
+      "a/index.js.map": `{"version":3,"mappings":"AAAA"}`,
+      "b/index.js.map": `{"version":3,"mappings":"AACA;AAAA"}`,
+    });
+    expect(text).toContain("▲ now imports child_process (index.js)\n");
+    expect(text).toContain("▲ new module imports: left-pad\n");
+    expect(text).toContain("▲ +1 eval() (index.js)\n");
+    expect(text).toMatch(/\nindex\.js\.map ─+ source map 31 → 36 bytes\n/);
+    expect(exitCode).toBe(0);
+  });
+});

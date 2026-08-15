@@ -199,6 +199,9 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
             "--diff <STR>...                        A package spec or path to compare (bun pm diff; may be given twice)"
         ),
         clap::param!(
+            "--raw                                  Compare file bytes as-is; skip the JS/CSS/JSON re-print (bun pm diff)"
+        ),
+        clap::param!(
             "--name-only                            Only list the files that differ (bun pm diff)"
         ),
         clap::param!(
@@ -565,6 +568,7 @@ pub struct CommandLineArguments {
     // `bun pm diff` options
     pub diff_args: Vec<&'static [u8]>,
     pub diff_name_only: bool,
+    pub diff_raw: bool,
     pub diff_stat: bool,
     pub diff_context: Option<usize>,
 
@@ -656,6 +660,7 @@ impl Default for CommandLineArguments {
             long: false,
             diff_args: Vec::new(),
             diff_name_only: false,
+            diff_raw: false,
             diff_stat: false,
             diff_context: None,
 
@@ -1750,6 +1755,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.long = args.flag(b"--long");
             cli.diff_args = args.options(b"--diff").to_vec();
             cli.diff_name_only = args.flag(b"--name-only");
+            cli.diff_raw = args.flag(b"--raw");
             cli.diff_stat = args.flag(b"--stat");
             if let Some(n) = args.option(b"--unified") {
                 cli.diff_context = strings::parse_int::<usize>(n, 10).ok();

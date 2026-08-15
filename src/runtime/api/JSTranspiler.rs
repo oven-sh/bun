@@ -635,12 +635,10 @@ impl Config {
 pub(crate) struct TransformTask {
     pub input_code: ThreadIsolated<StringOrBuffer<'static>>,
     pub output_code: BunString,
-    /// Populated when `source_map != None` — a v3 JSON map string. Empty
-    /// otherwise. For `.inline`, the map is embedded in `output_code`
-    /// already and this field stays empty.
+    /// v3 JSON map for `.external` / `.linked`; empty otherwise
+    /// (`.inline` embeds the map in `output_code`).
     pub output_map: BunString,
-    /// Copied from the owning `JSTranspiler.Config` at task-create time so
-    /// the background thread doesn't race with config mutation.
+    /// Sourcemap mode snapshotted from the config at task creation.
     pub source_map: api::SourceMapMode,
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
     pub log: bun_ast::Log,
@@ -1263,11 +1261,8 @@ impl JSTranspiler {
         macro_js_ctx: MacroJSCtx,
     ) -> Option<ParseResult<'static>> {
         let config = self.config.get();
-        // Use the per-call loader (when provided) for the virtual source
-        // name, matching `TransformTask::run()`'s use of the override.
-        // The name ends up in `source.path.text` and flows into the v3
-        // map's `sources` array and the `//# sourceMappingURL=<name>.map`
-        // footer, so sync and async must agree on it for the same input.
+        // Use the per-call loader for the virtual source name so the sync and
+        // async paths emit the same map `sources` / footer for the same input.
         let name = loader.unwrap_or(config.default_loader).stdin_name();
 
         // In REPL mode, wrap potential object literals in parentheses
@@ -1667,9 +1662,7 @@ fn build_transform_result(
             Ok(out.to_js(global))
         }
         api::SourceMapMode::Inline => {
-            // Append `//# sourceMappingURL=data:application/json;base64,<map>`
-            // to the printed code. We reuse the printer's buffer so the
-            // footer lives alongside the code for the final string copy.
+            // Append the inline footer to the printer's buffer before the final copy.
             append_inline_source_map(&mut buffer_writer.buffer, capture.json.list.as_slice());
 
             let mut out = JscZigString::init(buffer_writer.buffer.list.as_slice());
@@ -1677,9 +1670,7 @@ fn build_transform_result(
             Ok(out.to_js(global))
         }
         api::SourceMapMode::Linked => {
-            // Append a `//# sourceMappingURL=<source>.map` comment so the
-            // emitted code references a sibling `.map` file the caller is
-            // expected to write.
+            // Reference a sibling `.map` file the caller is expected to write.
             let mut map_name_buf = [0u8; 32];
             let map_name = source_map_url_for(source_path, &mut map_name_buf);
             bun_core::handle_oom(buffer_writer.buffer.append(b"\n//# sourceMappingURL="));
@@ -1705,11 +1696,8 @@ fn build_transform_result(
 pub struct SourceMapCapture {
     /// v3 JSON map filled in by `on_source_map_chunk`.
     pub json: bun_core::MutableString,
-    /// `true` when the transpiler is targeting `bun`, which flips the
-    /// printer's sourcemap builder into the packed `InternalSourceMap`
-    /// format (see `getSourceMapBuilder` in js_printer). In that case
-    /// we must re-encode the chunk buffer from internal → VLQ before
-    /// emitting the v3 JSON map.
+    /// `target: "bun"` makes the printer emit packed `InternalSourceMap`
+    /// chunks instead of VLQ; those are re-encoded before JSON emission.
     pub is_internal_format: bool,
 }
 
@@ -1721,14 +1709,10 @@ impl SourceMapCapture {
         }
     }
 
-    /// Emit a valid but empty v3 map for `source` — used when there is
-    /// no AST to print (e.g. `parse_result.empty`) but the caller still
-    /// asked for a source map. Matches the JSON shape
-    /// `print_source_map_contents` produces for a zero-mapping chunk.
+    /// Emit a valid empty v3 map for `source` (no AST to print).
     pub fn write_empty(&mut self, source: &bun_ast::Source) -> Result<(), bun_sourcemap::Error> {
         let empty_chunk = bun_sourcemap::Chunk::init_empty();
-        // An empty chunk's buffer is zero-length in either format, so
-        // `print_source_map_contents` works regardless of `is_internal_format`.
+        // A zero-length buffer is valid in either chunk format.
         empty_chunk.print_source_map_contents::<false>(source, &mut self.json, true)
     }
 }
@@ -1740,11 +1724,7 @@ impl JSPrinter::OnSourceMapChunk for SourceMapCapture {
         source: &bun_ast::Source,
     ) -> JSPrinter::Result<()> {
         if self.is_internal_format {
-            // `target: "bun"` routes through the printer's
-            // `is_bun_platform=true` path which stores mappings as Bun's
-            // packed binary format in `chunk.buffer` instead of VLQ.
-            // `print_source_map_contents_from_internal` re-encodes to
-            // VLQ before emitting JSON so the result is a valid v3 map.
+            // Re-encode the packed internal chunk to VLQ first.
             chunk.print_source_map_contents_from_internal::<false>(source, &mut self.json, true)
         } else {
             chunk.print_source_map_contents::<false>(source, &mut self.json, true)
@@ -1753,14 +1733,9 @@ impl JSPrinter::OnSourceMapChunk for SourceMapCapture {
     }
 }
 
-/// Derive a `<source>.map` filename for the `sourceMappingURL` comment.
-/// `source_path` is the virtual file name we gave the parser (e.g.
-/// `input.ts`); we just append `.map` — the caller knows what to do with
-/// it. Falls back to `input.map` if we're handed an empty path.
-///
-/// `source_path` is always `Loader::stdin_name()` (longest: `input.json5`),
-/// so the output never exceeds 15 bytes — callers pass a small fixed buffer,
-/// not a `PathBuffer`.
+/// Append `.map` to the virtual source name (`input.ts` → `input.ts.map`,
+/// empty → `input.map`). The name is always `Loader::stdin_name()` (max 11
+/// bytes), so callers pass a small fixed buffer.
 fn source_map_url_for<'buf>(source_path: &[u8], buf: &'buf mut [u8]) -> &'buf [u8] {
     let base: &[u8] = if source_path.is_empty() {
         b"input"
@@ -1775,13 +1750,9 @@ fn source_map_url_for<'buf>(source_path: &[u8], buf: &'buf mut [u8]) -> &'buf [u
     &buf[..total]
 }
 
-/// Append `\n//# sourceMappingURL=data:application/json;base64,<base64>\n`
-/// to `buf`. Shared by the sync and async transform paths. The trailing
-/// newline matches both the `.linked` branch in this file and
-/// `Bun.build`'s inline emitter (src/bundler/linker_context/
-/// generateChunksInParallel), so two inline outputs can be safely
-/// concatenated without the second one being swallowed by the line
-/// comment.
+/// Append `\n//# sourceMappingURL=data:application/json;base64,<map>\n`.
+/// The trailing newline matches `Bun.build`'s inline emitter so concatenated
+/// outputs aren't swallowed by the line comment.
 fn append_inline_source_map(buf: &mut bun_core::MutableString, map_json: &[u8]) {
     const PREFIX: &[u8] = b"\n//# sourceMappingURL=data:application/json;base64,";
     let encode_len = bun_core::base64::encode_len(map_json);

@@ -2293,6 +2293,19 @@ test.concurrent("rewriting the root's and a member's entries together moves both
   await frozen(dir);
 });
 
+// Rewriting only the root's entry installs what it asks for; the member's unchanged `^1.0.0` is deduped onto the root's copy,
+// the same as when a root dependency moves past it (the tree warns about neither yet, so stderr is not asserted).
+test.concurrent("rewriting only the root's entry installs its copy for the unchanged member too", async () => {
+  const dir = await sharedPeer(peerRoot("^1.0.0"), ["pkg1", "^1.0.0"]);
+  await write(join(dir, "package.json"), stringify(peerRoot("^2.0.0")));
+  const stderr = await install(dir);
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect((await lock(dir)).workspaces["packages/pkg1"].peerDependencies).toStrictEqual({ "no-deps": "^1.0.0" });
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  await frozen(dir);
+});
+
 // With no root entry, pkg2's copy is not forced on pkg1: each member ends up with the copy its own entry asks for.
 test.concurrent(
   "a member's rewritten entry gets its own copy next to a sibling's when the root declares nothing",

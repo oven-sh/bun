@@ -534,10 +534,9 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
-/// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
-/// the running sequence's result so bun:test reports skip/todo instead of pass.
-/// `done`'s bound `DoneCallback` names the sequence it was created for, so a late
-/// call after the watchdog moved on cannot mark the currently-running one.
+/// node:test `t.skip()`/`t.todo()` at runtime: marks the sequence the bound
+/// `DoneCallback` was created for as skip/todo, rejecting late calls whose
+/// sequence already finished.
 pub(crate) fn js_node_test_mark_result(
     _global: &JSGlobalObject,
     callframe: &CallFrame,

@@ -2487,9 +2487,7 @@ impl<'a> Resolver<'a> {
         self.bust_dir_cache_and_parent(joined)
     }
 
-    /// `path` comes from the import specifier, so it may end in a separator
-    /// (`./hello/`) or contain doubled ones (`/a//hello`, whose dirname is `/a/`);
-    /// cache keys never end in one (see `assert_valid_cache_key`).
+    /// `path` is user-written: it (`./a/`) or its dirname (`/a//b`) may end in a separator.
     fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         let dir = strings::without_trailing_slash_windows_path(bun_paths::dirname_platform(

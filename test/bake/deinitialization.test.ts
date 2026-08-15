@@ -72,5 +72,4 @@ test("dev server deinitializes itself when its initialization fails", async () =
   // Under ASAN, LeakSanitizer turns anything the failed servers left behind
   // into a non-zero exit here.
   expect(exitCode).toBe(0);
-  // The child's LeakSanitizer pass at exit alone takes a few seconds under ASAN.
-}, 30_000);
+});

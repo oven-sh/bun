@@ -355,9 +355,23 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     // absolute offsets (see the fn doc comment above).
     let mut out_lines: Vec<&[u8]> = Vec::with_capacity(lines_count);
     let mut src_cursor: usize = 0;
+    // Set by a part carrying the "\ No newline at end of file" pragma.
+    // Applied once at the very end (not inline) because more unchanged tail
+    // may still be appended to `out_lines` after this part is processed —
+    // popping/pushing immediately would touch the wrong element.
+    let mut trailing_newline: Option<bool> = None;
 
     for hunk in &patch.hunks {
-        let hunk_start = hunk.header.original.start.saturating_sub(1) as usize;
+        // A hunk whose original range is empty (pure insertion, e.g.
+        // `@@ -2,0 +3 @@`) uses a different anchor than a non-empty range:
+        // `start` is the line *after which* to insert, not a 1-based line to
+        // convert to a 0-based index. `@@ -0,0 +1,3 @@` (insert into an
+        // empty file) falls out of the same rule for free (start=0 → index 0).
+        let hunk_start = if hunk.header.original.len == 0 {
+            hunk.header.original.start as usize
+        } else {
+            hunk.header.original.start.saturating_sub(1) as usize
+        };
 
         // Hunks must be in order and non-overlapping against the original file.
         if hunk_start < src_cursor || hunk_start > lines.len() {
@@ -399,14 +413,14 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
                     } else if part.no_newline_at_end_of_file {
                         // Deleting the line carrying the "no newline at EOF"
                         // pragma means the file now ends with a newline.
-                        out_lines.push(b"");
+                        trailing_newline = Some(true);
                     }
                     src_cursor += part.lines.len();
                 }
                 PartType::Insertion => {
                     out_lines.extend_from_slice(&part.lines);
                     if part.no_newline_at_end_of_file {
-                        let _ = out_lines.pop();
+                        trailing_newline = Some(false);
                     }
                 }
             }
@@ -415,6 +429,18 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
     // Everything after the last hunk is unchanged.
     out_lines.extend_from_slice(&lines[src_cursor..]);
+
+    // Apply the deferred no-newline-at-EOF pragma now that every line —
+    // including the unchanged tail above — is in its final position.
+    if let Some(has_trailing_newline) = trailing_newline {
+        let ends_with_empty = matches!(out_lines.last(), Some(l) if l.is_empty());
+        if has_trailing_newline && !ends_with_empty {
+            out_lines.push(b"");
+        } else if !has_trailing_newline && ends_with_empty {
+            let _ = out_lines.pop();
+        }
+    }
+
     let lines = out_lines;
 
     let file_fd = match sys::openat(

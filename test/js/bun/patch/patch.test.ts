@@ -588,6 +588,68 @@ line10
 
       expect(await $`cat ${join(afolder, "file.txt")}`.cwd(tempdir).text()).toBe(bfile);
     });
+
+    test("insertion-only hunk (zero-length original range) in the middle of a file", async () => {
+      // `@@ -2,0 +3 @@` anchors differently than a non-empty range: `start`
+      // is the original line *after which* to insert, not a 1-based line to
+      // convert to a 0-based index (see #38879 review discussion).
+      const afile = `line1
+line2
+line3
+line4
+line5
+`;
+      const bfile = `line1
+line2
+NEW
+line3
+line4
+line5
+`;
+
+      await using tempdir = tempDir("patch-test", {
+        "a/file.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      const patchfile = ["diff --git a/file.txt b/file.txt", "--- a/file.txt", "+++ b/file.txt", "@@ -2,0 +3 @@", "+NEW", ""].join(
+        "\n",
+      );
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "file.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
+
+    test("insertion at EOF whose added line has no trailing newline", async () => {
+      // Regression: the insertion's own last-pushed line must not be popped
+      // to represent the "no newline at EOF" pragma — only the tail's
+      // trailing empty sentinel (if any) should be. Popping immediately
+      // (before the unchanged tail is appended) silently drops the inserted
+      // content instead.
+      const afile = `line1
+line2
+`;
+
+      await using tempdir = tempDir("patch-test", {
+        "a/file.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      const patchfile = [
+        "diff --git a/file.txt b/file.txt",
+        "--- a/file.txt",
+        "+++ b/file.txt",
+        "@@ -2,0 +3 @@",
+        "+line3",
+        "\\ No newline at end of file",
+        "",
+      ].join("\n");
+
+      await apply(patchfile, afolder);
+
+      expect(await $`cat ${join(afolder, "file.txt")}`.cwd(tempdir).text()).toBe("line1\nline2\nline3");
+    });
   });
 
   describe("No newline at end of file", () => {
@@ -738,6 +800,9 @@ line10
         stderr: "",
         exitCode: 0,
       });
+
+      // The rejected hunk must not have partially written the file.
+      expect(await Bun.file(`${dir}/target.txt`).text()).toBe("only line\n");
     });
   });
 });

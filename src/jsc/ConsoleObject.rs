@@ -5250,8 +5250,6 @@ pub mod formatter {
                             matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
 
                         if print_children && !self.single_line {
-                            // Empty children (`""` or `[]`) break out of this block and
-                            // fall through to the self-closing ` />` below.
                             'print_children: {
                                 match tag.tag.tag() {
                                     Tag::String => {

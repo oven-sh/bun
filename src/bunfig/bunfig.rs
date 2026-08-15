@@ -1193,9 +1193,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
-        // Credentials written into `url` (`https://user:pass@host/`,
-        // `https://:token@host/`) are split out exactly as for the string form;
-        // userinfo left in the URL is never sent.
+        // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
         let mut registry = match obj.get(b"url") {
             Some(url) => {
                 self.expect_string(&url)?;
@@ -1209,10 +1207,8 @@ impl<'a> Parser<'a> {
         let password = obj.get(b"password");
         let token = obj.get(b"token");
 
-        // The URL's credentials only apply when the object configures none of
-        // its own; the keys replace them as a set. `Scope::from_api` sends a
-        // token in preference to a username/password pair, so a `:token@` left
-        // in the URL must not survive next to `username`/`password` keys.
+        // Keys replace the URL's credentials as a set: `Scope::from_api` prefers a
+        // token, so a `:token@` from the URL would outrank username/password keys.
         if username.is_some() || password.is_some() || token.is_some() {
             registry = api::NpmRegistry {
                 url: registry.url,

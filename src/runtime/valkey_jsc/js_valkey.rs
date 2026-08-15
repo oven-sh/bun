@@ -1470,12 +1470,6 @@ impl JSValkeyClient {
 
         let _guard = self.ref_scope();
 
-        // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
-        // Taken before the TLS-context check so the `tls_ctx_failed` branch's
-        // `on_valkey_close()` has a ref to consume instead of over-releasing.
-        // Forgotten on success (the socket adopts it).
-        let socket_ref = self.ref_scope();
-
         let is_tls = self.client.get().tls != valkey::TLS::None;
         let vm = self.client.get().vm.as_mut();
         let loop_ = vm.uws_loop();
@@ -1512,11 +1506,11 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
-            // `on_valkey_close()` consumes the socket ref; hand it over so it
-            // isn't released twice.
-            socket_ref.forget();
-            self.client_mut().on_valkey_close()?;
-            self.client_mut().status = valkey::Status::Disconnected;
+            // Reported like a dial that fails asynchronously: Connecting keeps
+            // the wrapper and the event loop until the deferred close runs.
+            self.client_mut().status = valkey::Status::Connecting;
+            self.update_poll_ref();
+            self.close_without_socket_next_tick();
             return Ok(());
         }
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
@@ -1544,6 +1538,9 @@ impl JSValkeyClient {
         // `owner_ptr` opaquely (no overlapping write).
         let owner_ptr: *mut JSValkeyClient = std::ptr::from_ref::<JSValkeyClient>(self).cast_mut();
         let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
+        // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
+        // Forgotten once there is a socket to own it.
+        let socket_ref = self.ref_scope();
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
         // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
@@ -2065,7 +2062,7 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             // Script-free bookkeeping; do it.
             DeferredClose::Socket => task.run(),
             // The VM is going away: `on_close()` would run `onclose`, so only
-            // give back what `reconnect()` and the enqueue took.
+            // give back what the dial and the enqueue took.
             DeferredClose::WithoutSocket => {
                 // SAFETY: as in `run`.
                 let _enqueue_ref = unsafe { ScopedRef::adopt(task.ctx) };

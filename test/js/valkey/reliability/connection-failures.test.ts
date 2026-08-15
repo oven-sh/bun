@@ -628,6 +628,53 @@ describe("Valkey: Recovering After fail()", () => {
     },
   );
 
+  test("a connect() issued from onclose after the TLS context cannot be built dials again from the event loop", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Neither key nor cert parses, so no attempt ever gets as far as a socket.
+        const client = new Bun.RedisClient("rediss://127.0.0.1:1", {
+          tls: { key: "not a key", cert: "not a cert" },
+          autoReconnect: false,
+        });
+        const attempts = [];
+        const done = Promise.withResolvers();
+        let closes = 0, depth = 0, nested = false;
+        client.onclose = () => {
+          closes += 1;
+          nested ||= depth > 0;
+          depth += 1;
+          if (closes < 3) attempts.push(client.connect());
+          else done.resolve();
+          depth -= 1;
+        };
+        attempts.push(client.connect());
+        const closesInsideConnect = closes;
+        await done.promise;
+        const outcomes = await Promise.all(attempts.map(p => p.then(() => "connected", err => err.code)));
+        console.log(JSON.stringify({ closesInsideConnect, nested, closes, outcomes, connected: client.connected }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        closesInsideConnect: 0,
+        nested: false,
+        closes: 3,
+        outcomes: ["ERR_REDIS_CONNECTION_CLOSED", "ERR_REDIS_CONNECTION_CLOSED", "ERR_REDIS_CONNECTION_CLOSED"],
+        connected: false,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("a connect() issued from onclose is not fed the replies left over from the failed connection", async () => {
     // With a database in the URL, HELLO and SELECT are written together, so a
     // server that rejects HELLO delivers both error replies in one read.

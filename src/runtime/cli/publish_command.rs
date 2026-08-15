@@ -134,9 +134,6 @@ pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
-    ///
-    /// `original_cwd` is the directory the command was run from. `PackageManager::init` has
-    /// already chdir'd to the package root, which may be an ancestor of it.
     pub(crate) fn from_tarball_path(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,

@@ -413,8 +413,6 @@ public:
         Bun__TestScope__Describe2__bunTestCatch,
         Bun__HTMLRewriter__onHandlerResolve,
         Bun__HTMLRewriter__onHandlerReject,
-        Bun__onResolveEntryPointResult,
-        Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
         Bun__FileStreamWrapper__onRejectRequestStream,
@@ -438,7 +436,7 @@ public:
         Bun__HTMLRewriter__onResolveInputStream,
         Bun__HTMLRewriter__onRejectInputStream,
     };
-    static constexpr size_t promiseFunctionsSize = 48;
+    static constexpr size_t promiseFunctionsSize = 46;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 

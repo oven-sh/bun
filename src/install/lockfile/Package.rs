@@ -126,9 +126,7 @@ fn invalid_trusted_dependencies(
     crate::Error::InvalidPackageJSON
 }
 
-/// The root's and every workspace member's `trustedDependencies` accumulate in
-/// one set. Declaring the field at all (even `[]`) turns the default trusted
-/// list off, so the set becomes `Some` as soon as the field exists.
+/// A declared `trustedDependencies` (even `[]`) replaces the default list, so the set becomes `Some` as soon as the field exists.
 pub(crate) fn parse_append_trusted_dependencies(
     trusted_dependencies: &mut Option<TrustedDependenciesSet>,
     log: &mut bun_ast::Log,

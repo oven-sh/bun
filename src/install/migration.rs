@@ -193,12 +193,7 @@ fn finish_migration<'a>(
     LoadResult::Ok(ok)
 }
 
-/// No other package manager's lockfile carries `trustedDependencies`, so a
-/// migrated lockfile takes the root's and every workspace member's list from
-/// package.json, exactly as `Package::parse_with_json` does on a fresh
-/// `bun install`. `bun pm migrate` writes the result as-is, and a frozen
-/// install never rewrites it, so a list left out here stays out for
-/// `bun pm untrusted` / `bun pm trust` too.
+/// Other lockfiles have no `trustedDependencies`; read the root's and the members' from package.json like `Package::parse_with_json` does, since `bun pm migrate` saves this lockfile as-is.
 fn record_trusted_dependencies(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,

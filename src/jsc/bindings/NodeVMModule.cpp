@@ -100,25 +100,23 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // exception-check validator is satisfied before the TOP scope
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
-            if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-                // The VM itself is being stopped; not ours to consume. Propagate the termination.
-                if (!vm.hasPendingTerminationException())
-                    vm.throwTerminationException();
-                return {};
-            }
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+                bool sigint = getSigintReceived();
+                if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle) || (!sigint && timeout == 0)) {
+                    // Not a termination this evaluation requested; propagate it untouched.
+                    if (!vm.hasPendingTerminationException())
+                        vm.throwTerminationException();
+                    return {};
+                }
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-                if (getSigintReceived()) {
-                    DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-                    vm.clearHasTerminationRequest();
+                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+                vm.clearHasTerminationRequest();
+                if (sigint) {
                     setSigintReceived(false);
                     throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-                } else if (timeout != 0) {
-                    DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-                    vm.clearHasTerminationRequest();
+                } else {
                     throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
                 }
-                // Otherwise the termination isn't ours; leave it pending so it propagates.
                 return {};
             }
         }
@@ -249,25 +247,24 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // termination one is converted to ERR_SCRIPT_EXECUTION_* here. Observe it
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
-    if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-        // The VM itself is being stopped; not ours to consume. Propagate the termination.
-        if (!vm.hasPendingTerminationException())
-            vm.throwTerminationException();
-        return {};
-    }
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+        bool sigint = getSigintReceived();
+        if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle) || (!sigint && timeout == 0)) {
+            // Not a termination this evaluation requested; propagate it untouched
+            // (and don't record it as the module's evaluation error below).
+            if (!vm.hasPendingTerminationException())
+                vm.throwTerminationException();
+            return {};
+        }
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-        if (getSigintReceived()) {
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-            vm.clearHasTerminationRequest();
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+        vm.clearHasTerminationRequest();
+        if (sigint) {
             setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-            vm.clearHasTerminationRequest();
+        } else {
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
         }
-        // Otherwise the termination isn't ours; leave it pending so it propagates.
     } else {
         setSigintReceived(false);
     }

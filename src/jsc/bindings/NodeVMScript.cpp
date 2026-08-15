@@ -309,34 +309,30 @@ void NodeVMScript::destroy(JSCell* cell)
 
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
-    if (vm.hasTerminationRequest()) {
-        // The whole VM is being stopped (worker terminate()/exit): that
-        // termination is not ours to consume. The caller rethrows what
-        // evaluate() caught like any other exception.
-        if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle))
-            return false;
-        vm.drainMicrotasksForGlobalObject(globalObject);
-        // The termination may have fired inside an afterEvaluate microtask
-        // checkpoint, leaving the termination exception pending; clear it so
-        // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        auto clearPendingTermination = [&] {
-            if (vm.hasPendingTerminationException())
-                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-            vm.clearHasTerminationRequest();
-        };
-        if (script->getSigintReceived()) {
-            clearPendingTermination();
-            script->setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout) {
-            clearPendingTermination();
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        }
-        // Otherwise the termination isn't ours; leave it pending so it propagates.
-        return true;
-    }
+    if (!vm.hasTerminationRequest())
+        return false;
 
-    return false;
+    // Only a termination this script requested (its own SIGINT/timeout) is ours
+    // to convert; anything else (worker stop, an enclosing watchdog) stays
+    // pending and the caller rethrows it like any other exception.
+    bool sigint = script->getSigintReceived();
+    if (!Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle) || (!sigint && !timeout))
+        return false;
+
+    vm.drainMicrotasksForGlobalObject(globalObject);
+    // The termination may have fired inside an afterEvaluate microtask
+    // checkpoint, leaving the termination exception pending; clear it so
+    // the ERR_SCRIPT_EXECUTION_* error below replaces it.
+    if (vm.hasPendingTerminationException())
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    vm.clearHasTerminationRequest();
+    if (sigint) {
+        script->setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    } else {
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
+    }
+    return true;
 }
 
 void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeout)

@@ -3047,10 +3047,7 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-// What JSC__VM__clearExecutionTimeLimit parks the watchdog at. Watchdog's
-// already-dispatched timer can't be cancelled and asserts hasTimeLimit() when
-// it fires, so "cleared" is a finite limit that never elapses rather than
-// Watchdog::noTimeLimit.
+// Finite, not noTimeLimit: an in-flight Watchdog timer asserts hasTimeLimit() when it fires.
 static constexpr WTF::Seconds idleExecutionTimeLimit { static_cast<double>(INT32_MAX) };
 
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
@@ -5097,10 +5094,7 @@ void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& watchdog = vm->ensureWatchdog();
-    // Watchdog::enteredVM() normally runs from VMEntryScope setup, so a watchdog
-    // created while JS is already on the stack must be entered by hand. With no
-    // entry scope the next one enters it; entering here instead would make
-    // VMTraps::handleTraps deref a null vm.entryScope on a stale check.
+    // VMEntryScope enters the watchdog itself; a scopeless enteredVM() makes VMTraps deref a null entryScope.
     if (vm->entryScope)
         watchdog.enteredVM();
     watchdog.setTimeLimit(WTF::Seconds { limit });

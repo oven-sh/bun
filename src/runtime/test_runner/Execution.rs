@@ -1078,9 +1078,8 @@ fn step_sequence_one(
     }
 }
 
-/// Skipped under test.concurrent(): the auto-killer is process-global and would
-/// take out other in-flight tests' children too.
 fn kill_dangling_processes(group_sequence_count: usize, global_this: &JSGlobalObject) {
+    // The auto-killer is process-global; under test.concurrent() it would hit other tests' children.
     if group_sequence_count != 1 {
         return;
     }

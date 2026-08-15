@@ -1155,11 +1155,8 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
 
-        // The event-loop timer above can't fire while the callback spins
-        // synchronously; JSC's watchdog throws a TerminationException at the
-        // next safepoint instead, which the Err arm below clears and
-        // evaluate_timeout() reports. The grace keeps it from racing the
-        // event-loop timer for callbacks that do yield.
+        // JSC's watchdog catches callbacks that never yield back to the event-loop timer above.
+        // The grace lets callbacks that do yield be timed by that timer instead of racing it.
         const WATCHDOG_GRACE_SECONDS: f64 = 1.0;
         let watchdog_armed = !timeout.eql(&Timespec::EPOCH);
         if watchdog_armed {

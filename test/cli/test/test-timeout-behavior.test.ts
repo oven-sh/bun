@@ -76,7 +76,12 @@ test.concurrent("synchronous infinite loop inside node:vm without {timeout} is i
       test("spins inside runInThisContext", () => {
         vm.runInThisContext("while (true);");
       });
-      test("runs after the timed-out test", () => {});
+      test("spins inside SourceTextModule.evaluate", async () => {
+        const mod = new vm.SourceTextModule("while (true);");
+        await mod.link(() => {});
+        await mod.evaluate();
+      });
+      test("runs after the timed-out tests", () => {});
     `,
   });
 
@@ -92,8 +97,9 @@ test.concurrent("synchronous infinite loop inside node:vm without {timeout} is i
   const combined = stdout + stderr;
 
   expect(combined).toContain("(fail) spins inside runInThisContext");
-  expect(combined).toContain("timed out after 500ms");
-  expect(combined).toContain("(pass) runs after the timed-out test");
+  expect(combined).toContain("(fail) spins inside SourceTextModule.evaluate");
+  expect(combined.match(/timed out after 500ms/g)).toHaveLength(2);
+  expect(combined).toContain("(pass) runs after the timed-out tests");
   expect(exitCode).toBe(1);
 });
 

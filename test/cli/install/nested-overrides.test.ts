@@ -1293,8 +1293,28 @@ describe.concurrent("lockfile", () => {
   // An overrides change re-resolves every row naming a previously or newly overridden package. By then the root's
   // rows from bun.lock have been replaced by freshly parsed ones and belong to no package; they must not be
   // re-resolved as well: a range that is no longer in package.json would add a package the current row then dedupes
-  // onto, and a file: path outside the project is only accepted on a row the root (or a workspace) owns.
+  // onto, and a file: path outside the project is only accepted on a row the root (or a workspace) owns. The
+  // root's current rows also have to be resolved before everybody else's, as on a fresh install, since a row
+  // resolved later dedupes onto a same-major package an earlier one added.
   describe.concurrent("removing a flat rule re-resolves only the root's current rows", () => {
+    test("the root's row resolves before a dependency's row of the same name", async () => {
+      const deps = { "no-deps": "^1.0.0", "one-dep": "1.0.0" }; // one-dep@1.0.0 depends on no-deps@1.0.1
+      const [dir, fresh] = await Promise.all([
+        project({ dependencies: deps, overrides: { "no-deps": "2.0.0" } }),
+        project({ dependencies: deps }),
+      ]);
+      await Promise.all([installOk(dir), installOk(fresh)]);
+      expect(await lock(dir)).toContain("no-deps@2.0.0");
+
+      await write(join(dir, "package.json"), JSON.stringify({ name: "nested-overrides", dependencies: deps }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+      expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
+      // Same packages as installing this package.json from scratch.
+      expect(await lock(dir)).toBe(await lock(fresh));
+    });
+
     test("a range changed in the same edit resolves on its own", async () => {
       const dir = await project({ dependencies: { "no-deps": "~1.0.0" }, overrides: { "no-deps": "2.0.0" } });
       await installOk(dir);

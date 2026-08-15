@@ -1371,6 +1371,14 @@ describe("peer dependencies", () => {
       const dir = await installedAlone(packageJson("1.0.0"));
       expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
     });
+
+    // Selected both as an overridden name and as a catalog: row; one pass handles both.
+    test.concurrent("declared through the catalog while an override of the same name changes too", async () => {
+      const packageJson = (range: string) =>
+        rootWithPeer("catalog:", { overrides: { "no-deps": range }, workspaces: { catalog: { "no-deps": range } } });
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
+    });
   });
 
   // pnpm: deps-installer/test/catalogs.ts "frozen lockfile error is thrown if catalog config changes"

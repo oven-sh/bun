@@ -1,7 +1,6 @@
 use core::sync::atomic::Ordering;
 
 use bun_collections::DynamicBitSet;
-use bun_collections::bit_set::Range;
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -524,26 +523,26 @@ pub fn install_with_manager(
                         pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
                     }
 
-                    if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
+                    if invalidates_rows {
+                        let catalogs_changed = manager.summary.catalogs_changed;
+                        let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
+                        if catalogs_changed {
+                            manager
+                                .lockfile
+                                .overrides
+                                .append_catalog_valued_name_hashes(&mut catalog_overridden);
+                            catalog_overridden.sort_unstable();
+                            catalog_overridden.dedup();
+                        }
+                        // `all_name_hashes` is empty unless the overrides changed.
                         reresolve_owned_rows(manager, &pinned_rows, |dependency| {
                             all_name_hashes.binary_search(&dependency.name_hash).is_ok()
-                        })?;
-                    }
-
-                    if manager.summary.catalogs_changed {
-                        let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
-                        manager
-                            .lockfile
-                            .overrides
-                            .append_catalog_valued_name_hashes(&mut catalog_overridden);
-                        catalog_overridden.sort_unstable();
-                        catalog_overridden.dedup();
-                        reresolve_owned_rows(manager, &pinned_rows, |dependency| {
-                            dependency.version.tag == DependencyVersionTag::Catalog
+                                || (catalogs_changed
+                                    && dependency.version.tag == DependencyVersionTag::Catalog)
                                 || catalog_overridden
                                     .binary_search(&dependency.name_hash)
                                     .is_ok()
-                        })?;
+                        });
                     }
 
                     // Split this into two passes because the below may allocate memory or invalidate pointers
@@ -1534,7 +1533,7 @@ fn report_lockfile_load_error(
     Ok(())
 }
 
-/// Returns the rows the plan re-resolved so the overrides/catalogs invalidation loops that follow leave them pinned; only tracked when those loops will run.
+/// Returns the rows the plan re-resolved so the overrides/catalogs invalidation pass that follows leaves them pinned; only tracked when that pass will run.
 fn enqueue_transitive(
     manager: &mut PackageManager,
     transitive: &TransitiveUpdate,
@@ -1547,50 +1546,40 @@ fn enqueue_transitive(
     transitive.enqueue_tracked(manager)
 }
 
-/// Re-resolves every row `selects` that a package still owns; the rows the differ orphaned (the root's list from the loaded lockfile) resolve as nobody's, and `pinned_rows` were just resolved by the update plan.
+/// Re-resolves the rows `selects`, walking each package's current dependency list in package order. The root's
+/// list (just rebuilt by the differ) goes first because a later row dedupes onto what an earlier one appended
+/// (`Lockfile::get_package_id`); the root's loaded rows, now in no list, would resolve as nobody's and are not
+/// walked, nor are `pinned_rows`, which the update plan just resolved. A workspace the add/update pass is about
+/// to re-read still holds its loaded list here and is walked like any other package.
 fn reresolve_owned_rows(
     manager: &mut PackageManager,
     pinned_rows: &DynamicBitSet,
     selects: impl Fn(&Dependency) -> bool,
-) -> crate::Result<()> {
-    let owned_rows = {
-        let lockfile = &*manager.lockfile;
-        let mut owned = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len())?;
-        for slice in lockfile.packages.items_dependencies() {
-            if slice.len == 0 {
+) {
+    // Resolving appends packages and rows; only the lists present now are walked.
+    let lists: Vec<lockfile::DependencySlice> =
+        manager.lockfile.packages.items_dependencies().to_vec();
+    for list in lists {
+        for dep_id in list.begin()..list.end() {
+            if pinned_rows.is_set_allow_out_of_bound(dep_id as usize, false) {
                 continue;
             }
-            owned.set_range_value(
-                Range {
-                    start: slice.begin() as usize,
-                    end: slice.end() as usize,
-                },
-                true,
-            );
-        }
-        owned
-    };
-    // Resolving appends rows; the bitset's length bounds the walk to the rows that existed when it was built.
-    for dep_id in 0..owned_rows.bit_length() {
-        if !owned_rows.is_set(dep_id) || pinned_rows.is_set_allow_out_of_bound(dep_id, false) {
-            continue;
-        }
-        let dependency = manager.lockfile.buffers.dependencies[dep_id].clone();
-        if !selects(&dependency) {
-            continue;
-        }
-        manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
-        if let Err(err) = enqueue_dependency_with_main(
-            manager,
-            dep_id as DependencyID,
-            &dependency,
-            invalid_package_id,
-            false,
-        ) {
-            add_dependency_error(manager, &dependency, err);
+            let dependency = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
+            if !selects(&dependency) {
+                continue;
+            }
+            manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
+            if let Err(err) = enqueue_dependency_with_main(
+                manager,
+                dep_id,
+                &dependency,
+                invalid_package_id,
+                false,
+            ) {
+                add_dependency_error(manager, &dependency, err);
+            }
         }
     }
-    Ok(())
 }
 
 #[derive(Default)]

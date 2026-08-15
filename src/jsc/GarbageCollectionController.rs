@@ -14,7 +14,7 @@ const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: JsCell<EventLoopTimer>,
-    /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
+    /// Sampled on every repeating-timer fire and also written by external `perform_gc()` callers, so a fire compares against whichever happened last; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: Cell<usize>,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: Cell<u8>,
     /// Full collections requested by the current idle transition (0 = not in reduction mode). Capped at 2, the same convergence rule as V8's `MemoryReducer`.

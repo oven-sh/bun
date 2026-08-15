@@ -20,8 +20,8 @@ use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption}
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
-use bun_core::String as BunString;
 use bun_core::{Global, Output};
+use bun_core::{OwnedString, String as BunString};
 use bun_dotenv as dotenv;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -332,8 +332,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
     };
 
-    let config_entry_point_string =
-        BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
+    let config_entry_point_string = OwnedString::new(BunString::clone_utf8(
+        config_entry_point.path_const().unwrap().text,
+    ));
 
     let Some(config_promise) =
         JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
@@ -657,7 +658,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // Client files go to disk.
     // Server files get loaded in memory.
     // Populate indexes in `entry_points` to be looked up during prerendering
-    let mut module_keys: Vec<BunString> = vec![BunString::dead(); entry_points.files.count()];
+    let mut module_keys: Vec<OwnedString> = (0..entry_points.files.count())
+        .map(|_| OwnedString::new(BunString::dead()))
+        .collect();
     let mut output_module_map: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     let mut source_maps: StringArrayHashMap<OutputFileIndex> = StringArrayHashMap::default();
     {
@@ -748,7 +751,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                                         BStr::new(without_prefix)
                                     ));
                                     str.to_thread_safe();
-                                    module_keys[entry_point_index as usize] = str;
+                                    module_keys[entry_point_index as usize] = OwnedString::new(str);
                                 }
                             }
 
@@ -825,15 +828,14 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
     for (i, router_type) in router.types.iter().enumerate() {
         if let Some(client_file) = router_type.client_file {
-            let str = BunString::create_format(format_args!(
+            let mut url = BunString::create_format(format_args!(
                 "{}{}",
                 BStr::new(public_path),
                 BStr::new(&pt.output_file(client_file).dest_path),
-            ))
-            .to_js(global)
-            .map_err(js_err)?;
+            ));
+            let url = jsc::bun_string_jsc::transfer_to_js(&mut url, global).map_err(js_err)?;
             client_entry_urls
-                .put_index(global, u32::try_from(i).expect("int cast"), str)
+                .put_index(global, u32::try_from(i).expect("int cast"), url)
                 .map_err(js_err)?;
         } else {
             client_entry_urls
@@ -928,15 +930,15 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         debug_assert!(output_file.dest_path[0] != b'.');
         // CSS chunks must be in contiguous order!!
         debug_assert!(output_file.loader.is_css());
+        let mut url = BunString::create_format(format_args!(
+            "{}{}",
+            BStr::new(public_path),
+            BStr::new(&output_file.dest_path),
+        ));
         css_chunk_js_strings.push(
-            BunString::create_format(format_args!(
-                "{}{}",
-                BStr::new(public_path),
-                BStr::new(&output_file.dest_path),
-            ))
-            .to_js(global)
-            .map_err(js_err)?
-            .protected(),
+            jsc::bun_string_jsc::transfer_to_js(&mut url, global)
+                .map_err(js_err)?
+                .protected(),
         );
     }
 
@@ -1104,12 +1106,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         }
 
         // Init the items
-        let pattern_string = BunString::clone_utf8(pattern.slice());
+        let mut pattern_string = BunString::clone_utf8(pattern.slice());
         route_patterns
             .put_index(
                 global,
                 u32::try_from(nav_index).expect("int cast"),
-                pattern_string.to_js(global).map_err(js_err)?,
+                jsc::bun_string_jsc::transfer_to_js(&mut pattern_string, global).map_err(js_err)?,
             )
             .map_err(js_err)?;
 
@@ -1448,7 +1450,7 @@ pub struct PerThread {
     pub(crate) entry_points: EntryPointMap,
     pub(crate) bundled_outputs: Vec<OutputFile>,
     /// Indexed by entry point index (OpaqueFileId)
-    pub(crate) module_keys: Vec<BunString>,
+    pub(crate) module_keys: Vec<OwnedString>,
     /// Unordered
     pub(crate) module_map: StringArrayHashMap<OutputFileIndex>,
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
@@ -1513,7 +1515,7 @@ impl PerThread {
         vm: *mut VirtualMachine,
         entry_points: EntryPointMap,
         bundled_outputs: Vec<OutputFile>,
-        module_keys: Vec<BunString>,
+        module_keys: Vec<OwnedString>,
         module_map: StringArrayHashMap<OutputFileIndex>,
         source_maps: StringArrayHashMap<OutputFileIndex>,
     ) -> crate::Result<PerThread> {

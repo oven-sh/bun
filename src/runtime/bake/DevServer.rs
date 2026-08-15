@@ -5560,6 +5560,8 @@ impl DevServer {
 mod c {
     use super::*;
 
+    /// `code` must carry its own reference (`clone_utf8`/`clone_latin1`); the
+    /// C++ side releases it.
     pub(super) fn bake_load_server_hmr_patch(
         global: &JSGlobalObject,
         code: BunString,
@@ -5570,6 +5572,7 @@ mod c {
         jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code))
     }
 
+    /// Same ownership of `code` as `bake_load_server_hmr_patch`.
     pub(super) fn bake_load_server_hmr_patch_with_source_map(
         global: &JSGlobalObject,
         code: BunString,

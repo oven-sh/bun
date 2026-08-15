@@ -595,14 +595,16 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
-  // BakeProdResolve and BakeProdLoad (production.rs) return BunStrings that own
-  // a reference to their WTF string. BakeGlobalObject.cpp's module loader hooks
-  // used to read them with toWTFString(), which adds a second reference instead
-  // of taking over that one, so every import edge resolved and every chunk
-  // loaded while prerendering leaked its string. Only LeakSanitizer can see
-  // that, and only with Malloc=1: WTF strings otherwise live in bmalloc, which
-  // LSan does not track.
-  describe.skipIf(!isASAN || isWindows)("module loader releases the strings production.rs hands it", () => {
+  // Every BunString production.rs creates (module keys from BakeProdResolve,
+  // chunk sources from BakeProdLoad, the config path, route patterns, client
+  // entry URLs) carries a reference that exactly one consumer has to release:
+  // transferToWTFString() in BakeGlobalObject.cpp, transfer_to_js()/OwnedString
+  // in production.rs. The build used to read them with toWTFString()/to_js(),
+  // which take a reference of their own and leave that one behind, so every
+  // import edge resolved and every chunk loaded while prerendering leaked its
+  // string. Only LeakSanitizer can see that, and only with Malloc=1: WTF strings
+  // otherwise live in bmalloc, which LSan does not track.
+  describe.skipIf(!isASAN || isWindows)("strings created for the build are released", () => {
     // Both pages statically import one shared chunk and dynamically import
     // another, so the same "bake:/..." keys are resolved more than once through
     // bakeModuleLoaderResolve (static imports) and bakeModuleLoaderImportModule
@@ -638,45 +640,49 @@ export default async function AboutPage() {
           Malloc: "1",
           ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1",
           // With Malloc=1 about 20 bmalloc frames sit between malloc and the
-          // production.rs function that allocated the string; keep it in view.
-          LSAN_OPTIONS: "malloc_context_size=40",
+          // code that created the string; keep that code in view. log_threads
+          // makes the leak check announce itself even when it finds nothing.
+          LSAN_OPTIONS: "malloc_context_size=40:log_threads=1",
         })
         .quiet()
         .throws(false);
-      return stderr.toString();
+      const output = stderr.toString();
+      expect(output).toContain("Processing thread");
+      return output;
     }
 
     // LSan prints one record per allocation site: "Direct leak of N byte(s) in
     // M object(s) allocated from:" followed by "#k 0x... in <function> <file>"
     // frames. `bun build --app` still leaks unrelated process-lifetime bundler
     // state, so neither the report as a whole nor the exit code LSan forces
-    // means anything here; only the records allocated inside the two
-    // production.rs functions do. Each is reduced to its Bake frames so a
-    // failure reads as a stack.
-    const allocatedByProductionRs = /\bBakeProd(?:Resolve|Load)\b/;
-    function leakedBakeStrings(stderr: string): string[] {
+    // means anything here. Every BunString is created through bun_core::String
+    // and the BunString__* exports of BunString.cpp, so the records with those
+    // on the stack are exactly the strings this build created and never
+    // released. Each is reduced to the two frames above the string machinery,
+    // so a failure reads as "who created it".
+    const stringMachinery = /\bBunString__\w+|bun_core::string::/;
+    function leakedBunStrings(stderr: string): string[] {
       return stderr
         .split(/^(?=(?:Direct|Indirect) leak of )/m)
-        .filter(record => allocatedByProductionRs.test(record))
+        .filter(record => stringMachinery.test(record))
         .map(record => {
-          const [header, ...frames] = record.split("\n");
-          const bakeFrames = frames
-            .filter(frame => allocatedByProductionRs.test(frame) || frame.includes("BakeGlobalObject.cpp"))
-            .map(frame =>
-              frame
-                .trim()
-                .replace(/^#\d+ 0x[0-9a-f]+ in /, "")
-                .replace(/\(.*\) /, "() "),
-            );
-          return [header, ...bakeFrames].join("\n");
+          const [header, ...lines] = record.split("\n");
+          const frames = lines.map(line => line.trim().replace(/^#\d+ 0x[0-9a-f]+ in /, ""));
+          const created = frames.findIndex(frame => stringMachinery.test(frame));
+          const creators = frames
+            .slice(created)
+            .filter(frame => !stringMachinery.test(frame))
+            .slice(0, 2)
+            .map(frame => frame.replace(/\(.*\) /, "() ").replace(/ \S*\/src\//, " src/"));
+          return [header, ...creators].join("\n");
         });
     }
 
     test.concurrent(
-      "module keys resolved for static imports and import()",
+      "after a successful build",
       async () => {
         const dir = await tempDirWithBakeDeps(
-          "bake-production-resolve-leak",
+          "bake-production-string-leaks",
           app(`return <div>{"about " + lazy}<Shared page="about" /></div>;`),
         );
 
@@ -687,23 +693,24 @@ export default async function AboutPage() {
         const aboutHtml = await Bun.file(path.join(dir, "dist", "about", "index.html")).text();
         expect(indexHtml).toContain("<div>index lazy<p>shared from index</p></div>");
         expect(aboutHtml).toContain("<div>about lazy<p>shared from about</p></div>");
-        expect(leakedBakeStrings(stderr)).toEqual([]);
+        expect(leakedBunStrings(stderr)).toEqual([]);
       },
       // LSan symbolizes every record through llvm-symbolizer, which is slow
       // against the debug binary.
       60_000,
     );
 
-    // The module registry keeps its own reference to each chunk source for as
-    // long as the VM lives, and a successful build exits without tearing its
-    // VM down, which hides the BakeProdLoad leak. A failing build exits through
-    // the VM's exit path, so under BUN_DESTRUCT_VM_ON_EXIT the registry lets go
-    // and only the leaked reference is left holding each source.
+    // A successful build exits without tearing its VM down, and the VM's module
+    // registry and JS strings keep most of these strings reachable (the chunk
+    // sources BakeProdLoad returns, the config path, the client entry URL), so
+    // a leaked reference to them goes unreported above. A failing build exits
+    // through the VM's exit path, so under BUN_DESTRUCT_VM_ON_EXIT the VM lets
+    // go of them and only a leaked reference would be left holding them.
     test.concurrent(
-      "chunk sources loaded for the modules, once a failed build tears the VM down",
+      "after a failed build tears the VM down",
       async () => {
         const dir = await tempDirWithBakeDeps(
-          "bake-production-load-leak",
+          "bake-production-string-leaks-teardown",
           app(`throw new Error("about page failed to render");`),
         );
 
@@ -711,7 +718,7 @@ export default async function AboutPage() {
 
         // The build got as far as loading and running the page modules.
         expect(stderr).toContain("about page failed to render");
-        expect(leakedBakeStrings(stderr)).toEqual([]);
+        expect(leakedBunStrings(stderr)).toEqual([]);
       },
       60_000,
     );

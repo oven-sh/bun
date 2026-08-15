@@ -167,12 +167,9 @@ impl Drop for MemoryAccessor {
     }
 }
 
-/// Protection flags of the committed, accessible page containing `address`.
-/// `None` for free/reserved pages and for committed pages that would still
-/// fault on access: "not MEM_FREE" is not enough to make a read safe, since
-/// MEM_RESERVE has no backing and MEM_COMMIT pages can be PAGE_NOACCESS or
-/// PAGE_GUARD (the stack guard page after EXCEPTION_STACK_OVERFLOW is exactly
-/// this).
+/// Protection of the page at `address`, or `None` if touching it would fault:
+/// MEM_RESERVE has no backing, and a committed page can still be PAGE_NOACCESS
+/// or PAGE_GUARD (the stack guard page after a stack overflow).
 #[cfg(windows)]
 fn accessible_page_protection(address: usize) -> Option<u32> {
     use bun_windows_sys::kernel32::{
@@ -194,9 +191,8 @@ fn accessible_page_protection(address: usize) -> Option<u32> {
         .then_some(mbi.Protect)
 }
 
-/// Whether `address` points into mapped code: an image `.text` section or a
-/// JIT/FFI allocation. Return addresses always do; the stack slots a derailed
-/// walk would otherwise report (JSValues, heap pointers, counters) never do.
+/// Return addresses are always in mapped code (image `.text`, the JIT pool, FFI
+/// trampolines); the stack slots a derailed walk would report never are.
 #[cfg(windows)]
 fn is_executable_memory(address: usize) -> bool {
     use bun_windows_sys::kernel32::{
@@ -371,13 +367,11 @@ fn context_pc_sp(ctx: &bun_windows_sys::CONTEXT) -> (u64, u64) {
     }
 }
 
-/// Step out of a leaf function (no unwind info because it never touches the
-/// stack): the return address is still where the call left it, `[Rsp]` on x64
-/// and `Lr` on ARM64 (`bl` pushes nothing, so `Sp` is correctly left alone).
-/// Only frame 0 can be a leaf; a return address never points into a function
-/// that makes no calls. Declines, leaving `ctx` untouched, when the slot does
-/// not hold a code address: the faulting code is then offlineasm (see
-/// [`unwind_frame_pointer`]) and the slot is scratch.
+/// A leaf has no unwind info and its return address is still where the call
+/// left it: `[Rsp]`, or `Lr` on ARM64 (`bl` pushes nothing). Only frame 0 can
+/// be a leaf, since a return address never points into a function that makes
+/// no calls. Declines when the slot is not a code address: the faulting code
+/// is then offlineasm (`unwind_frame_pointer`) and the slot is scratch.
 #[cfg(windows)]
 fn unwind_leaf(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAccessor) -> bool {
     #[cfg(target_arch = "x86_64")]
@@ -406,18 +400,13 @@ fn unwind_leaf(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAccessor) -> b
     }
 }
 
-/// Step out of a frame that has no unwind info and is not a leaf. In bun that
-/// is JSC's offlineasm code (the LLInt opcode handlers and the `vmEntryTo*`
-/// trampolines carry no `.seh_*` directives, and for a PC inside the image
-/// `RtlLookupFunctionEntry` consults only its static `.pdata`) and tinycc's
-/// `bun:ffi` trampolines. Both keep the frame-pointer register (`rbp`/`x29`)
-/// on a frame whose first two slots are the caller's frame pointer and the
-/// return address: the `CallFrame` layout, which is also what the unwind info
-/// JSC registers for its JIT pool describes (`registerJITUnwindInfo` in
-/// WebKit's `ExecutableAllocator.cpp`). The Rtl unwinder restores that
-/// register when it steps out of a compiled frame, so it holds the right frame
-/// here however many C++ and JIT frames sat above. A frame pointer below the
-/// stack pointer, or with unreadable slots, holds something else: stop.
+/// No unwind info and not a leaf: in bun that is JSC's offlineasm (LLInt and
+/// the `vmEntryTo*` trampolines; it is emitted without unwind info, and the
+/// dynamic tables JSC registers cannot cover in-image code) or a tinycc
+/// `bun:ffi` trampoline. Both keep `rbp`/`x29` on a frame whose first two
+/// slots are the caller's frame pointer and the return address, the layout
+/// JSC's JIT-pool unwind info describes too (`registerJITUnwindInfo`), and
+/// `RtlVirtualUnwind` restores that register across the compiled frames above.
 #[cfg(windows)]
 fn unwind_frame_pointer(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAccessor) -> bool {
     #[cfg(target_arch = "x86_64")]
@@ -463,13 +452,12 @@ fn unwind_frame_pointer(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAcces
 /// Windows: `fp` is the `*const CONTEXT` the VEH received (`EXCEPTION_POINTERS
 /// ::ContextRecord`). The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
 /// seeded from that context, so it starts at the fault frame and the handler's
-/// own frames are never in the chain. Compiled code always has unwind info and
-/// JSC registers it for the JIT pool; the frames that lack it are JSC's
+/// own frames are never in the chain. The frames without unwind info are JSC's
 /// offlineasm (LLInt, `vmEntryToJavaScript`), which every JS-initiated crash
-/// passes through, and those are stepped over via the frame pointer
-/// ([`unwind_frame_pointer`]). A pure frame-pointer walk is still not an
-/// option: the prebuilt C++ does not maintain one, and it is the Rtl unwinder
-/// stepping through those frames that keeps the frame-pointer register valid.
+/// passes through; those are stepped via the frame pointer instead
+/// (`unwind_frame_pointer`). A frame-pointer walk on its own would still
+/// derail: the prebuilt C++ keeps no frame pointer, and it is `RtlVirtualUnwind`
+/// stepping through those frames that leaves the register valid.
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
@@ -494,11 +482,9 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
         // Pc-only check truncates legitimate stacks: an ARM64 fault at prolog
         // offset 0 (or a .pdata-bearing zero-stack leaf) sets Pc = Lr while
         // leaving Sp unchanged, and directly-recursive frames share a return
-        // Pc. A step that produces a non-code Pc has lost the chain (a smashed
-        // return address, or a fallback applied to a frame it does not fit);
-        // the trace ends at the last frame that was actually recovered rather
-        // than continuing into whatever the stack slots happen to hold. The
-        // `n < out.len()` cap is the ultimate bound.
+        // Pc. A non-code Pc means the chain is lost (smashed return address, or
+        // a fallback that did not fit the frame): stop rather than report stack
+        // slots. The `n < out.len()` cap is the ultimate bound.
         while n < out.len() {
             let (control_pc, control_sp) = context_pc_sp(&ctx);
             let mut image_base: u64 = 0;

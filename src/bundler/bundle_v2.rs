@@ -1091,6 +1091,11 @@ pub mod bv2_impl {
                 /// Links in the bundle's list of requests a plugin currently
                 /// holds (`Graph::outstanding_resolves`); bundle thread only.
                 pub(crate) outstanding: crate::Graph::OutstandingLink<Resolve>,
+                /// Set by whichever side produces the answer — the plugin on the JS thread, or the
+                /// bundle thread failing the request on cancellation; the other side then leaves
+                /// `value` alone (a plugin answer already in flight when the pass is cancelled is
+                /// delivered, not failed and then delivered again).
+                pub answered: core::sync::atomic::AtomicBool,
             }
             impl Default for Resolve {
                 fn default() -> Self {
@@ -1100,6 +1105,7 @@ pub mod bv2_impl {
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     outstanding: Default::default(),
+                    answered: core::sync::atomic::AtomicBool::new(false),
                 }
                 }
             }
@@ -1120,6 +1126,7 @@ pub mod bv2_impl {
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     outstanding: Default::default(),
+                    answered: core::sync::atomic::AtomicBool::new(false),
                 }
                 }
                 /// Hops to the JS thread to call the `onResolve` plugin chain —
@@ -1210,6 +1217,8 @@ pub mod bv2_impl {
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
                 /// Links in `Graph::outstanding_loads`; bundle thread only.
                 pub(crate) outstanding: crate::Graph::OutstandingLink<Load>,
+                /// See `Resolve::answered`.
+                pub answered: core::sync::atomic::AtomicBool,
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
@@ -1230,6 +1239,7 @@ pub mod bv2_impl {
                     deferred: false,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     outstanding: Default::default(),
+                    answered: core::sync::atomic::AtomicBool::new(false),
                 }
                 }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
@@ -2112,6 +2122,11 @@ pub mod bv2_impl {
             while let Some(resolve) = self.graph.outstanding_resolves.pop() {
                 // SAFETY: linked ⇒ arena-live for this pass and held by no one else now.
                 let resolve = unsafe { &mut *resolve };
+                if resolve.answered.swap(true, core::sync::atomic::Ordering::AcqRel) {
+                    // The plugin's answer is already in flight to our queue; it stays counted in
+                    // `pending_items` and is consumed when it arrives.
+                    continue;
+                }
                 resolve.value = jsc_api::JSBundler::ResolveValue::Err(cancelled_msg(
                     &resolve.import_record.source_file,
                 ));
@@ -2120,6 +2135,9 @@ pub mod bv2_impl {
             while let Some(load) = self.graph.outstanding_loads.pop() {
                 // SAFETY: as above.
                 let load = unsafe { &mut *load };
+                if load.answered.swap(true, core::sync::atomic::Ordering::AcqRel) {
+                    continue;
+                }
                 if load.deferred {
                     // Its unit is parked in `deferred_pending`, not `pending_items`.
                     load.deferred = false;

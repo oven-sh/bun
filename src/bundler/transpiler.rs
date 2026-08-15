@@ -456,12 +456,6 @@ impl<'a> Transpiler<'a> {
 
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
-    ///
-    /// Callers rely on every `Err` having been logged here: they drop the entry
-    /// point on `Err`, and the build drivers decide whether to keep going from
-    /// the log alone. An entry point the resolver disabled (mapped to `false` by
-    /// a package.json `"browser"` field, or a Node.js builtin that browser builds
-    /// stub out) has no module to bundle, so it is reported the same way.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => self.reject_disabled_entry_point(r, entry_point),
@@ -540,10 +534,7 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// A resolver result with no usable path is a module the resolver disabled
-    /// (`Result::path` skips disabled paths). Imports of such a module become an
-    /// empty object, but an entry point has nothing to produce, so report it
-    /// like any other entry point that fails to resolve.
+    /// A disabled module (no usable path) imports as `{}`, but an entry point has nothing to emit.
     fn reject_disabled_entry_point(
         &self,
         resolved: resolver::Result,
@@ -553,8 +544,7 @@ impl<'a> Transpiler<'a> {
             return Ok(resolved);
         }
 
-        // The resolver gives builtins it stubs out for the browser the "node"
-        // namespace; everything else disabled comes from a "browser" map.
+        // Stubbed builtins carry the "node" namespace; anything else came from a "browser" map.
         if resolved.path_pair.primary.namespace == b"node" {
             self.log_mut().add_error_fmt(
                 None,

@@ -3911,10 +3911,7 @@ pub mod bv2_impl {
                 // sidestep for the `&mut self` overlap.
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
-                // Entry point errors are reported after the pool drains: the
-                // runtime parse is already scheduled, and tearing the workers
-                // down while one is still setting itself up reads a
-                // half-initialized `Worker` out of `workers_assignments`.
+                // Drain before failing on entry point errors: teardown must not race the runtime parse.
                 this.wait_for_parse();
                 this.dump_pool_stats("parse");
 
@@ -4860,13 +4857,9 @@ pub mod bv2_impl {
                         drop(result.namespace);
                         drop(result.path);
 
-                        // An external entry point has nothing to bundle; the build
-                        // drivers only find out about a dropped entry point from
-                        // the log. Same error as esbuild.
+                        // Same error as esbuild; otherwise the entry point silently vanishes.
                         if resolve.import_record.kind == ImportKind::EntryPointBuild {
-                            // Entry points have no importer (`source_file` is empty);
-                            // the dev server keys the failure by the entry point's
-                            // own path, which is the specifier.
+                            // No importer for entry points; key the failure by the entry point.
                             this.log_for_resolution_failures(
                                 &resolve.import_record.specifier,
                                 resolve.import_record.original_target.bake_graph(),

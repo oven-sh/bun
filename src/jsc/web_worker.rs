@@ -82,9 +82,6 @@ pub struct WebWorker {
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
-    /// Created by node:worker_threads (vs. the Web `Worker` global): gets node's per-thread bootstrap
-    /// and routes its stdout/stderr to the parent thread.
-    is_node_worker: bool,
 
     // ---- Cross-thread ----------------------------------------------------------
     ref_count: bun_ptr::ThreadSafeRefCount<WebWorker>,
@@ -156,7 +153,6 @@ pub enum Status {
 // round-tripped from `create()`; it is only ever handed back to C++.
 unsafe extern "C" {
     safe fn WebWorker__workerGlobalScopeStarted(proxy: *mut c_void, global: &JSGlobalObject);
-    safe fn WebWorker__bootstrapNodeWorker(global: &JSGlobalObject) -> bool;
     safe fn WebWorker__workerGlobalScopeDestroyed(
         proxy: *mut c_void,
         exit_code: i32,
@@ -295,7 +291,6 @@ impl WebWorker {
         exec_argv_len: usize,
         preload_modules_ptr: *const BunString,
         preload_modules_len: usize,
-        is_node_worker: bool,
     ) -> *mut WebWorker {
         jsc::mark_binding();
         log!("[{}] create", this_context_id);
@@ -414,7 +409,6 @@ impl WebWorker {
             } else {
                 name_str.to_owned_slice_z()
             },
-            is_node_worker,
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
             vm_handle: bun_threading::Guarded::new(None),
@@ -608,10 +602,6 @@ impl WebWorker {
     #[inline]
     pub(crate) fn mini(&self) -> bool {
         self.mini
-    }
-
-    pub(crate) fn is_node_worker(&self) -> bool {
-        self.is_node_worker
     }
 
     // =========================================================================
@@ -856,23 +846,6 @@ impl WebWorker {
         // standalone module graph, or `self.unresolved_specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
-        if self.is_node_worker && !WebWorker__bootstrapNodeWorker(vm.global()) {
-            // Terminated while bootstrapping — exit like "terminated while resolving" above — or its
-            // per-thread bootstrap threw, in which case the worker cannot run: report it as its error.
-            if !self.has_requested_terminate() && !vm.global().has_pending_termination_exception() {
-                if let Some(exception) = vm.global().try_take_exception() {
-                    let _ = vm
-                        .as_mut()
-                        .uncaught_exception(vm.global(), exception, false);
-                }
-                if !self.exit_called.load(Ordering::Relaxed) {
-                    vm.as_mut().exit_handler.exit_code = 1;
-                }
-            }
-            self.flush_logs(vm);
-            return self.shutdown();
-        }
-
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
             Ok(p) => p,
             Err(_) => {
@@ -1051,7 +1024,6 @@ impl WebWorker {
             unsafe {
                 let console = core::mem::replace(&mut (*vm_ptr).console, core::ptr::null_mut());
                 if !console.is_null() {
-                    (*console).flush();
                     bun_core::heap::destroy(console);
                 }
                 if let Some(log) = (*vm_ptr).log.take() {

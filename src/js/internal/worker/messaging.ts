@@ -9,6 +9,7 @@
 // `workerMessage` listeners are invoked directly because Bun's process.emit cannot
 // report no-listeners or a throwing listener (see receiveMessageFromWorker).
 
+const { validateNumber } = require("internal/validators");
 const { SafeMap } = require("internal/primordials");
 
 const messageTypes = {
@@ -213,10 +214,7 @@ function handleMessageFromMainThreadGated(message) {
 
 function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void) => void) {
   mainThreadPort = port;
-  // addEventListener, not .on(): this runs in the worker bootstrap, before node:worker_threads has
-  // given MessagePort its EventEmitter methods.
-  mainThreadPort.addEventListener("message", event => handleMessageFromMainThreadGated(event.data));
-  mainThreadPort.start();
+  mainThreadPort.on("message", handleMessageFromMainThreadGated);
 
   // Stored on ZigGlobalObject (WriteBarrier), not on globalThis, so user code
   // can't observe or clobber it. WebWorker__entrySettled calls it once.
@@ -243,7 +241,7 @@ async function postMessageToThread(threadId, value, transferList, timeout) {
   }
 
   if (typeof timeout !== "undefined") {
-    require("internal/validators").validateNumber(timeout, "timeout", 0);
+    validateNumber(timeout, "timeout", 0);
   }
 
   if (threadId === currentThreadId) {

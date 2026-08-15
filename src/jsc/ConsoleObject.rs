@@ -91,13 +91,10 @@ pub struct ConsoleObject {
     stderr_buffer: [u8; 4096],
     stdout_buffer: [u8; 4096],
 
-    error_writer_backing: WriterBacking,
-    writer_backing: WriterBacking,
+    error_writer_backing: Output::QuietWriterAdapter,
+    writer_backing: Output::QuietWriterAdapter,
 
     pub(crate) default_indent: u16,
-
-    /// A node worker's console output goes to its parent, never to a terminal: no colours, as in node.
-    routed_to_parent_worker: bool,
 
     counts: Counter,
 
@@ -126,10 +123,9 @@ impl ConsoleObject {
         let out = out.write(ConsoleObject {
             stderr_buffer: [0; 4096],
             stdout_buffer: [0; 4096],
-            error_writer_backing: WriterBacking::Fd(Output::QuietWriterAdapter::uninit()),
-            writer_backing: WriterBacking::Fd(Output::QuietWriterAdapter::uninit()),
+            error_writer_backing: Output::QuietWriterAdapter::uninit(),
+            writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
-            routed_to_parent_worker: false,
             counts: Counter::default(),
             _pin: core::marker::PhantomPinned,
         });
@@ -139,157 +135,27 @@ impl ConsoleObject {
         // `out.stdout_buffer`, which remain valid for `out`'s lifetime
         // *provided the caller never moves it* (see fn doc).
         unsafe {
-            (*p).error_writer_backing = WriterBacking::Fd(
-                error_writer
-                    .quiet_writer()
-                    .adapt_to_new_api(&mut (*p).stderr_buffer),
-            );
-            (*p).writer_backing = WriterBacking::Fd(
-                writer
-                    .quiet_writer()
-                    .adapt_to_new_api(&mut (*p).stdout_buffer),
-            );
+            (*p).error_writer_backing = error_writer
+                .quiet_writer()
+                .adapt_to_new_api(&mut (*p).stderr_buffer);
+            (*p).writer_backing = writer
+                .quiet_writer()
+                .adapt_to_new_api(&mut (*p).stdout_buffer);
         }
         out
-    }
-
-    /// A node:worker_threads worker's console: what it writes to stdout / stderr goes to the parent
-    /// thread (`worker.stdout` / `worker.stderr`, else the parent's own stdio), not to the fds.
-    pub(crate) fn route_to_parent_worker(
-        &mut self,
-        messaging_proxy: *mut c_void,
-        global: *mut crate::JSGlobalObject,
-    ) {
-        self.routed_to_parent_worker = true;
-        self.error_writer_backing =
-            WriterBacking::Parent(ParentWorkerWriter::new(messaging_proxy, global, 2));
-        self.writer_backing =
-            WriterBacking::Parent(ParentWorkerWriter::new(messaging_proxy, global, 1));
-    }
-
-    /// Whether stdout / stderr output of this console may be coloured.
-    #[inline]
-    pub(crate) fn colors_stdout(&self) -> bool {
-        !self.routed_to_parent_worker && Output::enable_ansi_colors_stdout()
-    }
-    #[inline]
-    pub(crate) fn colors_stderr(&self) -> bool {
-        !self.routed_to_parent_worker && Output::enable_ansi_colors_stderr()
-    }
-
-    /// Hands anything still buffered to the underlying sink.
-    pub(crate) fn flush(&mut self) {
-        let _ = self.writer().flush();
-        let _ = self.error_writer().flush();
     }
 
     /// Returns the buffered stderr writer interface.
     #[inline]
     pub(crate) fn error_writer(&mut self) -> &mut bun_core::io::Writer {
-        self.error_writer_backing.interface()
+        self.error_writer_backing.new_interface()
     }
 
     /// Returns the buffered stdout writer interface.
     #[inline]
     pub(crate) fn writer(&mut self) -> &mut bun_core::io::Writer {
-        self.writer_backing.interface()
+        self.writer_backing.new_interface()
     }
-}
-
-enum WriterBacking {
-    Fd(Output::QuietWriterAdapter),
-    Parent(ParentWorkerWriter),
-}
-
-impl WriterBacking {
-    #[inline]
-    fn interface(&mut self) -> &mut bun_core::io::Writer {
-        match self {
-            WriterBacking::Fd(adapter) => adapter.new_interface(),
-            WriterBacking::Parent(writer) => &mut writer.head,
-        }
-    }
-}
-
-/// `bun_core::io::Writer` whose bytes are posted to the parent thread of this node worker
-/// (WorkerMessagingProxy::postStdioToWorkerObject) on flush, or once 16 KiB have accumulated.
-#[repr(C)]
-struct ParentWorkerWriter {
-    head: bun_core::io::Writer,
-    messaging_proxy: *mut c_void,
-    global: *mut crate::JSGlobalObject,
-    fd: i32,
-    buffered: Vec<u8>,
-}
-
-impl ParentWorkerWriter {
-    const FLUSH_AT: usize = 16 * 1024;
-
-    fn new(messaging_proxy: *mut c_void, global: *mut crate::JSGlobalObject, fd: i32) -> Self {
-        Self {
-            head: bun_core::io::Writer {
-                write_all: Self::write_all,
-                flush: Self::flush,
-            },
-            messaging_proxy,
-            global,
-            fd,
-            buffered: Vec::new(),
-        }
-    }
-
-    /// # Safety
-    /// `writer` is the `head` of a live `ParentWorkerWriter` (repr(C), first field).
-    unsafe fn write_all(
-        writer: *mut bun_core::io::Writer,
-        bytes: &[u8],
-    ) -> bun_core::CrateResult<()> {
-        // SAFETY: fn contract — `head` is the first field of a repr(C) `Self`.
-        let this = unsafe { &mut *writer.cast::<Self>() };
-        this.buffered.extend_from_slice(bytes);
-        if this.buffered.len() >= Self::FLUSH_AT {
-            this.post();
-        }
-        Ok(())
-    }
-
-    /// # Safety
-    /// As for [`Self::write_all`].
-    unsafe fn flush(writer: *mut bun_core::io::Writer) -> bun_core::CrateResult<()> {
-        // SAFETY: fn contract — `head` is the first field of a repr(C) `Self`.
-        unsafe { &mut *writer.cast::<Self>() }.post();
-        Ok(())
-    }
-
-    fn post(&mut self) {
-        if self.buffered.is_empty() {
-            return;
-        }
-        // Take the buffer first: posting may run script (the worker's own stdout stream), which may log again.
-        let bytes = core::mem::take(&mut self.buffered);
-        WebWorker__postStdio(
-            self.messaging_proxy,
-            self.global,
-            self.fd,
-            bytes.as_ptr(),
-            bytes.len(),
-        );
-        if self.buffered.is_empty() {
-            self.buffered = bytes;
-            self.buffered.clear();
-        }
-    }
-}
-
-// TODO: move to *_sys
-unsafe extern "C" {
-    safe fn WebWorker__postStdio(
-        messaging_proxy: *mut c_void,
-        global: *mut crate::JSGlobalObject,
-        fd: i32,
-        bytes: *const u8,
-        len: usize,
-    );
 }
 
 #[repr(u32)]
@@ -551,8 +417,7 @@ fn message_with_type_and_level_(
     }
 
     if message_type == MessageType::Assert && len == 0 {
-        // SAFETY: see [`vm_console`]; read-only probe, no borrow held.
-        let text: &str = if unsafe { (*console).colors_stderr() } {
+        let text: &str = if Output::enable_ansi_colors_stderr() {
             pfmt!("<r><red>Assertion failed<r>\n", true)
         } else {
             "Assertion failed\n"
@@ -567,11 +432,9 @@ fn message_with_type_and_level_(
     }
 
     let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
-        // SAFETY: see [`vm_console`]; read-only probe, no borrow held.
-        unsafe { (*console).colors_stderr() }
+        Output::enable_ansi_colors_stderr()
     } else {
-        // SAFETY: as above.
-        unsafe { (*console).colors_stdout() }
+        Output::enable_ansi_colors_stdout()
     };
 
     // Snapshot before borrowing the writer; `default_indent` is not mutated
@@ -1315,8 +1178,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let _ = VirtualMachine::print_stack_trace(
         adapter.interface(),
         &holder.zig_exception().stack,
-        // SAFETY: see [`vm_console`]; read-only probe.
-        unsafe { (*vm_console(global)).colors_stderr() },
+        Output::enable_ansi_colors_stderr(),
     );
 
     // `ZigStringSlice` frees on `Drop`.
@@ -5934,9 +5796,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
     } + 1;
     *counter.value_ptr = current;
 
-    let colors = this.colors_stdout();
     let writer = this.writer();
-    if colors {
+    if Output::enable_ansi_colors_stdout() {
         let _ = writeln!(
             writer,
             "{}{}{}: {}{}{}",
@@ -6086,8 +5947,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
             return;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
-        // SAFETY: see [`vm_console`]; read-only probe.
-        if unsafe { (*console).colors_stderr() } {
+        if Output::enable_ansi_colors_stderr() {
             let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
             let _ = fmt.format::<false>(tag, &mut writer, arg, global);

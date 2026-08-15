@@ -38,6 +38,7 @@ test("rebuilding a module does not leak the bundle's allocations", async () => {
           "/live-blocks": () => {
             Bun.gc(true);
             const mainHeap = heapStats({ dump: true }).mimallocDump.heaps.find(heap => heap.seq === 0);
+            if (!mainHeap) throw new Error("heapStats dump has no heap with seq 0");
             return new Response(String(mainHeap.pages.reduce((blocks, page) => blocks + page.used, 0)));
           },
         },
@@ -86,15 +87,16 @@ test("rebuilding a module does not leak the bundle's allocations", async () => {
   const origin = `http://localhost:${Number.parseInt(firstLine, 10)}`;
 
   async function get(path: string) {
+    if (exited) throw exited;
     const response = await fetch(origin + path);
     const body = await response.text();
-    expect(response.status).toBe(200);
+    if (response.status !== 200) throw new Error(`GET ${path} responded with ${response.status}:\n${body}`);
     return body;
   }
 
   async function rebuild(revision: number) {
-    // An exit that happened while nothing was waiting is reported here; one
-    // that happens while waiting rejects the waiter.
+    // An exit while nothing was waiting is reported here; one that happens
+    // while waiting rejects the waiter.
     if (exited) throw exited;
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     waiter = { target: reloads + 1, resolve, reject };

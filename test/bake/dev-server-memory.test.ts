@@ -57,6 +57,7 @@ test("rebuilding a module does not leak the bundle's allocations", async () => {
   // The dev server prints "Reloaded in <n>ms" once per completed rebuild.
   let stderr = "";
   let reloads = 0;
+  let exited: Error | undefined;
   let waiter: { target: number; resolve(): void; reject(err: Error): void } | undefined;
   const stderrClosed = (async () => {
     const decoder = new TextDecoder();
@@ -68,14 +69,18 @@ test("rebuilding a module does not leak the bundle's allocations", async () => {
         waiter = undefined;
       }
     }
-    waiter?.reject(new Error(`dev server exited after ${reloads} reloads:\n${stderr}`));
+    exited = new Error(`dev server exited after ${reloads} reloads:\n${stderr}`);
+    waiter?.reject(exited);
   })();
 
   const stdout = proc.stdout.getReader();
   let firstLine = "";
   while (!firstLine.includes("\n")) {
     const { value, done } = await stdout.read();
-    if (done) throw new Error(`dev server exited before printing its port:\n${stderr}`);
+    if (done) {
+      await stderrClosed;
+      throw exited;
+    }
     firstLine += Buffer.from(value).toString();
   }
   const origin = `http://localhost:${Number.parseInt(firstLine, 10)}`;
@@ -88,6 +93,9 @@ test("rebuilding a module does not leak the bundle's allocations", async () => {
   }
 
   async function rebuild(revision: number) {
+    // An exit that happened while nothing was waiting is reported here; one
+    // that happens while waiting rejects the waiter.
+    if (exited) throw exited;
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     waiter = { target: reloads + 1, resolve, reject };
     await Bun.write(join(String(dir), "mod.ts"), moduleSource(revision));

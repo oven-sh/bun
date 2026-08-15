@@ -90,6 +90,41 @@ async function setupTest(): Promise<TestCtx> {
   }
 }
 
+/**
+ * Commits `packageJson` to a fresh repository at `<packageDir>/<name>-repo` and returns a
+ * `git+file://` dependency spec for it.
+ */
+async function createGitDependency(
+  packageDir: string,
+  packageJson: { name: string } & Record<string, unknown>,
+): Promise<string> {
+  const repoDir = join(packageDir, `${packageJson.name}-repo`);
+  const emptyGitConfig = join(packageDir, "empty.gitconfig");
+  await Promise.all([mkdir(repoDir, { recursive: true }), writeFile(emptyGitConfig, "")]);
+  await writeFile(join(repoDir, "package.json"), JSON.stringify(packageJson));
+
+  const gitEnv = {
+    ...baseEnv,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: emptyGitConfig,
+    GIT_AUTHOR_NAME: "bun",
+    GIT_AUTHOR_EMAIL: "bun@example.com",
+    GIT_COMMITTER_NAME: "bun",
+    GIT_COMMITTER_EMAIL: "bun@example.com",
+  };
+  for (const args of [
+    ["init", "-q"],
+    ["add", "."],
+    ["commit", "-q", "-m", "init", "--no-gpg-sign"],
+  ]) {
+    await using proc = spawn({ cmd: ["git", ...args], cwd: repoDir, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed:\n${stderr}`);
+  }
+
+  return `git+${Bun.pathToFileURL(repoDir).href}`;
+}
+
 // The six multi-install tests below are the longest in the file (2-3 serial `bun install`s
 // each, some with cold caches). Declare them first so they start before the ~110 shorter
 // tests and overlap with them instead of forming a serial tail at the end of the run.
@@ -2039,6 +2074,217 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "preinstall.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "install.txt"))).toBeTrue();
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
+    });
+
+    // A git dependency is installed from its checkout, so whatever its `prepare` script builds
+    // with (its devDependencies) has to be installed before the script runs, the way npm does
+    // it. https://github.com/oven-sh/bun/issues/10297
+    describe("git dependency with a prepare script that needs its devDependencies", () => {
+      // `what-bin` writes `what-bin.txt` (containing its own version) into the cwd it runs in.
+      const gitDependency = {
+        name: "needs-dev-deps-to-prepare",
+        version: "1.0.0",
+        devDependencies: { "what-bin": "1.0.0" },
+        scripts: { prepare: "what-bin" },
+      };
+
+      async function installedState(packageDir: string, name: string) {
+        const depDir = join(packageDir, "node_modules", name);
+        return {
+          prepareOutput: (await exists(join(depDir, "what-bin.txt")))
+            ? await file(join(depDir, "what-bin.txt")).text()
+            : null,
+          depDirEntries: (await readdirSorted(depDir)).filter(entry => entry !== ".bun-tag"),
+          hoistedDevDependency: await exists(join(packageDir, "node_modules", "what-bin")),
+          lockfileMentionsDevDependency: (await file(join(packageDir, "bun.lock")).text()).includes("what-bin"),
+        };
+      }
+
+      for (const linker of ["hoisted", "isolated"] as const) {
+        test(`${linker} linker: installs them for the prepare script and removes them afterwards`, async () => {
+          using ctx = await setupTest();
+          const { packageDir, packageJson, env } = ctx;
+          const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+          await verdaccio.writeBunfig(packageDir, { linker });
+
+          const spec = await createGitDependency(packageDir, gitDependency);
+          await writeFile(
+            packageJson,
+            JSON.stringify({
+              name: "foo",
+              version: "1.0.0",
+              dependencies: { [gitDependency.name]: spec },
+              trustedDependencies: [gitDependency.name],
+            }),
+          );
+
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env: testEnv,
+          });
+          const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+          expect(err).not.toContain("error:");
+          expect(err).not.toContain("warn:");
+          expect(out).toContain(`+ ${gitDependency.name}@git+file://`);
+          expect(exitCode).toBe(0);
+
+          expect(await installedState(packageDir, gitDependency.name)).toEqual({
+            prepareOutput: "what-bin@1.0.0",
+            // no `node_modules` from the nested install, and no `bun.lock` written into the checkout
+            depDirEntries: ["package.json", "what-bin.txt"],
+            hoistedDevDependency: false,
+            lockfileMentionsDevDependency: false,
+          });
+        });
+      }
+
+      test("the dependencies bun already nested under the package survive", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        // The project hoists what-bin@1.5.0, so the git dependency's own what-bin@1.0.0 is installed
+        // under node_modules/<name>/node_modules, which is exactly where the nested install writes.
+        const spec = await createGitDependency(packageDir, {
+          name: "has-nested-deps",
+          version: "1.0.0",
+          dependencies: { "what-bin": "1.0.0" },
+          devDependencies: { "no-deps": "1.0.0" },
+          scripts: { prepare: "what-bin" },
+        });
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: { "what-bin": "1.5.0", "has-nested-deps": spec },
+            trustedDependencies: ["has-nested-deps"],
+          }),
+        );
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("warn:");
+        expect(exitCode).toBe(0);
+
+        const depDir = join(packageDir, "node_modules", "has-nested-deps");
+        const nestedVersion = async (dir: string) =>
+          (await file(join(dir, "node_modules", "what-bin", "package.json")).json()).version;
+        expect({
+          prepareOutput: await file(join(depDir, "what-bin.txt")).text(),
+          hoistedWhatBin: await nestedVersion(packageDir),
+          nestedWhatBin: await nestedVersion(depDir),
+          nestedDevDependency: await exists(join(depDir, "node_modules", "no-deps")),
+          depDirEntries: (await readdirSorted(depDir)).filter(entry => entry !== ".bun-tag"),
+        }).toEqual({
+          prepareOutput: "what-bin@1.0.0",
+          hoistedWhatBin: "1.5.0",
+          nestedWhatBin: "1.0.0",
+          nestedDevDependency: false,
+          depDirEntries: ["node_modules", "package.json", "what-bin.txt"],
+        });
+      });
+
+      test("`bun pm trust` installs them too", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        const spec = await createGitDependency(packageDir, gitDependency);
+        await writeFile(
+          packageJson,
+          JSON.stringify({ name: "foo", version: "1.0.0", dependencies: { [gitDependency.name]: spec } }),
+        );
+
+        {
+          await using proc = spawn({
+            cmd: [bunExe(), "install"],
+            cwd: packageDir,
+            stdout: "pipe",
+            stdin: "ignore",
+            stderr: "pipe",
+            env: testEnv,
+          });
+          const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(err).not.toContain("error:");
+          expect(out).toContain("Blocked 1 postinstall");
+          expect(exitCode).toBe(0);
+          expect((await installedState(packageDir, gitDependency.name)).prepareOutput).toBeNull();
+        }
+
+        await using proc = spawn({
+          cmd: [bunExe(), "pm", "trust", gitDependency.name],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(out).toContain("1 script ran across 1 package");
+        expect(exitCode).toBe(0);
+
+        expect(await installedState(packageDir, gitDependency.name)).toEqual({
+          prepareOutput: "what-bin@1.0.0",
+          depDirEntries: ["package.json", "what-bin.txt"],
+          hoistedDevDependency: false,
+          lockfileMentionsDevDependency: false,
+        });
+      });
+
+      test("a failing dependency install fails the install and says why", async () => {
+        using ctx = await setupTest();
+        const { packageDir, packageJson, env } = ctx;
+        const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+        const spec = await createGitDependency(packageDir, {
+          ...gitDependency,
+          name: "dev-dep-does-not-exist",
+          devDependencies: { "this-package-does-not-exist": "1.0.0" },
+        });
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            version: "1.0.0",
+            dependencies: { "dev-dep-does-not-exist": spec },
+            trustedDependencies: ["dev-dep-does-not-exist"],
+          }),
+        );
+
+        await using proc = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        // the nested install's own output comes first, then bun's summary of what it was doing
+        expect(err).toContain("this-package-does-not-exist");
+        expect(err).toContain(
+          'installing the dependencies of "dev-dep-does-not-exist" for its prepare script failed (bun install --ignore-scripts --no-save exited with 1)',
+        );
+        expect(exitCode).toBe(1);
+
+        const depDir = join(packageDir, "node_modules", "dev-dep-does-not-exist");
+        expect((await readdirSorted(depDir)).filter(entry => entry !== ".bun-tag")).toEqual(["package.json"]);
+      });
     });
 
     test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {

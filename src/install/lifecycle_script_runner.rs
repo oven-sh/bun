@@ -14,13 +14,13 @@ use bun_io::heap as io_heap;
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_core::ZStr;
+use bun_paths::AutoAbsPath;
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{
     Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnOptions, Status,
 };
-#[cfg(unix)]
-use bun_sys::Fd;
+use bun_sys::{Fd, FdExt as _};
 // `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
@@ -270,6 +270,10 @@ pub struct LifecycleScriptSubprocess<'a> {
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
+    /// Environment for the `bun install` of a git dependency's own
+    /// dependencies (`Some` iff `scripts.install_dependencies_for_prepare`).
+    pub(crate) install_envp: Option<bun_dotenv::NullDelimitedEnvMap>,
+    pub(crate) prepare_dependencies: PrepareDependencies,
     pub(crate) shell_bin: Option<&'a ZStr>,
 
     pub(crate) has_incremented_alive_count: bool,
@@ -304,6 +308,70 @@ impl<'a> InstallCtx<'a> {
     fn installer_mut(&self) -> &mut Installer<'a> {
         // SAFETY: see fn doc.
         unsafe { &mut *self.installer }
+    }
+}
+
+/// Where a git dependency is in getting its own dependencies installed for
+/// its `prepare` scripts (see `List::install_dependencies_for_prepare`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PrepareDependencies {
+    NotNeeded,
+    /// `bun install` still has to run before the first prepare script.
+    Pending,
+    /// The running subprocess is `bun install`; `current_script_index` is the
+    /// prepare script that runs once it succeeds.
+    Installing(PreviousNodeModules),
+    /// `bun install` succeeded. `cwd/node_modules` is removed again once the
+    /// scripts are done (or failed).
+    Installed(PreviousNodeModules),
+}
+
+/// What `cwd/node_modules` held before the nested `bun install` wrote to it.
+/// With the hoisted linker it can already contain dependencies of the package
+/// that conflict with the versions hoisted above it, and a checkout may commit
+/// one; those have to survive the install.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviousNodeModules {
+    Nothing,
+    /// Renamed to [`PREVIOUS_NODE_MODULES_NAME`] and renamed back afterwards.
+    SetAside,
+    /// Exists but could not be renamed, so the nested install shares it and
+    /// nothing is removed afterwards.
+    Shared,
+}
+
+const PREVIOUS_NODE_MODULES_NAME: &[u8] = b".bun-prepare-node_modules";
+
+/// Arguments of the `bun` spawned for `PrepareDependencies::Installing`.
+/// `--ignore-scripts` because the package's own lifecycle scripts are what this
+/// runner is in the middle of executing; `--no-save` so a checkout without a
+/// lockfile does not get one written into it.
+const INSTALL_DEPENDENCIES_ARGS: [&core::ffi::CStr; 3] =
+    [c"install", c"--ignore-scripts", c"--no-save"];
+/// `INSTALL_DEPENDENCIES_ARGS` as shown in logs and error messages.
+const INSTALL_DEPENDENCIES_COMMAND_LINE: &[u8] = b"bun install --ignore-scripts --no-save";
+
+/// Moves `cwd/node_modules` out of the way of the nested `bun install`.
+fn set_aside_node_modules(cwd: &[u8]) -> PreviousNodeModules {
+    let mut node_modules = AutoAbsPath::init();
+    let _ = node_modules.append(cwd);
+    let _ = node_modules.append(b"node_modules");
+    let mut previous = AutoAbsPath::init();
+    let _ = previous.append(cwd);
+    let _ = previous.append(PREVIOUS_NODE_MODULES_NAME);
+
+    // Left behind by an interrupted run; the rename below would fail on it.
+    let _ = Fd::cwd().delete_tree(previous.slice());
+
+    match bun_sys::renameat(
+        Fd::cwd(),
+        node_modules.slice_z(),
+        Fd::cwd(),
+        previous.slice_z(),
+    ) {
+        Ok(()) => PreviousNodeModules::SetAside,
+        Err(err) if err.get_errno() == bun_sys::E::ENOENT => PreviousNodeModules::Nothing,
+        Err(_) => PreviousNodeModules::Shared,
     }
 }
 
@@ -529,16 +597,53 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*this).current_script_index = next_script_index;
             (*this).has_called_process_exit = false;
 
-            let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
-            replace_package_manager_run(&mut copy_script, original_script)?;
-            copy_script.push(0);
+            let installing_dependencies = (*this).prepare_dependencies
+                == PrepareDependencies::Pending
+                && next_script_index as usize >= ScriptsList::FIRST_PREPARE_INDEX;
 
-            // SAFETY: we just pushed a NUL byte at copy_script[len-1]; slice [..len-1] is the body.
-            let combined_script: &mut ZStr =
-                ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
+            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
+            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
+            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
+            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
+            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
+            // Sized for the longer of the two argvs below (executable, the
+            // install arguments, null).
+            const ARGV_LEN: usize = INSTALL_DEPENDENCIES_ARGS.len() + 2;
+            let mut argv: [*const c_char; ARGV_LEN] = [core::ptr::null(); ARGV_LEN];
+            const _: () = assert!(
+                core::mem::size_of::<[*const c_char; ARGV_LEN]>()
+                    == ARGV_LEN * core::mem::size_of::<usize>()
+            );
+
+            // Owns the script bytes `argv` points into until the spawn below.
+            let mut copy_script: Vec<u8> = Vec::new();
+            let command_line: &[u8] = if installing_dependencies {
+                (*this).prepare_dependencies =
+                    PrepareDependencies::Installing(set_aside_node_modules(cwd));
+                argv[0] = bun_core::self_exe_path()?.as_ptr();
+                for (slot, arg) in argv[1..].iter_mut().zip(INSTALL_DEPENDENCIES_ARGS) {
+                    *slot = arg.as_ptr();
+                }
+                INSTALL_DEPENDENCIES_COMMAND_LINE
+            } else {
+                copy_script.reserve_exact(original_script.len() + 1);
+                replace_package_manager_run(&mut copy_script, original_script)?;
+                copy_script.push(0);
+                let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
+
+                if (*this).shell_bin.is_some() && !cfg!(windows) {
+                    argv[0] = (*this).shell_bin.unwrap().as_ptr();
+                    argv[1] = c"-c".as_ptr();
+                } else {
+                    argv[0] = bun_core::self_exe_path()?.as_ptr();
+                    argv[1] = c"exec".as_ptr();
+                }
+                argv[2] = combined_script.as_ptr();
+                combined_script.as_bytes()
+            };
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
-                Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
+                Output::command(Output::CommandArgv::Single(command_line));
             } else if let Some(scripts_node) = (*manager).scripts_node_mut() {
                 (*manager).set_node_name::<true>(
                     scripts_node,
@@ -558,32 +663,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 "{} - {} $ {}",
                 bstr::BStr::new(&(*this).package_name),
                 bstr::BStr::new((*this).script_name()),
-                bstr::BStr::new(combined_script.as_bytes())
+                bstr::BStr::new(command_line)
             );
 
-            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
-            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
-            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
-            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
-            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
-                [
-                    (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
-                    c"-c".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            } else {
-                [
-                    bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
-                    c"exec".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
+            let envp: *const *const c_char = match &(*this).install_envp {
+                Some(install_envp) if installing_dependencies => install_envp.as_ptr(),
+                _ => (*this).envp.as_ptr(),
             };
-            const _: () = assert!(
-                core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
-            );
 
             // OWNERSHIP:
             // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
@@ -663,10 +749,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
             let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
-                // argv is `[*const c_char; 4]` with trailing null — exactly the
+                // argv is a `[*const c_char; N]` with trailing null — exactly the
                 // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
                 argv.as_mut_ptr().cast(),
-                (*this).envp.as_ptr().cast::<*const c_char>(),
+                envp,
             ) {
                 Ok(Ok(s)) => s,
                 res => {
@@ -857,16 +943,52 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         return;
                     }
                     self.print_output();
-                    bun_core::pretty_errorln!(
-                        "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
-                        bstr::BStr::new(self.script_name()),
-                        bstr::BStr::new(&self.package_name),
-                        exit.code,
-                    );
+                    if matches!(
+                        self.prepare_dependencies,
+                        PrepareDependencies::Installing(_)
+                    ) {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> installing the dependencies of \"<b>{}<r>\" for its <b>{}<r> script failed <d>({} exited with {})<r>",
+                            bstr::BStr::new(&self.package_name),
+                            bstr::BStr::new(self.script_name()),
+                            bstr::BStr::new(INSTALL_DEPENDENCIES_COMMAND_LINE),
+                            exit.code,
+                        );
+                    } else {
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
+                            bstr::BStr::new(self.script_name()),
+                            bstr::BStr::new(&self.package_name),
+                            exit.code,
+                        );
+                    }
+                    self.remove_prepare_dependencies();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
                     Global::exit(exit.code as u32);
+                }
+
+                if let PrepareDependencies::Installing(previous) = self.prepare_dependencies {
+                    self.prepare_dependencies = PrepareDependencies::Installed(previous);
+                    let script_index = self.current_script_index;
+                    self.reset_polls();
+                    // SAFETY: `self` was created by `Self::new` (heap::alloc) and is
+                    // uniquely owned here; it is not touched again on the success
+                    // path before `return` (same contract as the loop below).
+                    if let Err(err) = unsafe {
+                        Self::spawn_next_script(std::ptr::from_mut::<Self>(self), script_index)
+                    } {
+                        Output::err_generic(
+                            "Failed to run script <b>{}<r> due to error <b>{}<r>",
+                            (
+                                bstr::BStr::new(LockfileScripts::NAMES[script_index as usize]),
+                                err.name(),
+                            ),
+                        );
+                        Global::exit(1);
+                    }
+                    return;
                 }
 
                 if !self.foreground
@@ -931,6 +1053,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         return;
                     }
                 }
+
+                self.remove_prepare_dependencies();
 
                 if PackageManager::verbose_install() {
                     bun_core::pretty_errorln!(
@@ -1076,10 +1200,57 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
+    /// Undoes what the nested `bun install` did to `cwd/node_modules`. The
+    /// package's runtime dependencies live in the node_modules above it (or
+    /// next to it in the isolated store), so everything the nested install put
+    /// here would only shadow them with duplicate copies.
+    fn remove_prepare_dependencies(&mut self) {
+        let previous = match self.prepare_dependencies {
+            PrepareDependencies::Installing(previous)
+            | PrepareDependencies::Installed(previous) => previous,
+            PrepareDependencies::NotNeeded | PrepareDependencies::Pending => return,
+        };
+        self.prepare_dependencies = PrepareDependencies::NotNeeded;
+        if previous == PreviousNodeModules::Shared {
+            return;
+        }
+
+        let cwd = self.scripts.cwd.as_bytes();
+        let mut node_modules = AutoAbsPath::init();
+        let _ = node_modules.append(cwd);
+        let _ = node_modules.append(b"node_modules");
+        if let Err(err) = Fd::cwd().delete_tree(node_modules.slice()) {
+            bun_core::warn!(
+                "failed to remove the dependencies installed for the prepare scripts of \"{}\": {}",
+                bstr::BStr::new(&self.package_name),
+                err,
+            );
+        }
+
+        if previous == PreviousNodeModules::SetAside {
+            let mut set_aside = AutoAbsPath::init();
+            let _ = set_aside.append(cwd);
+            let _ = set_aside.append(PREVIOUS_NODE_MODULES_NAME);
+            if let Err(err) = bun_sys::renameat(
+                Fd::cwd(),
+                set_aside.slice_z(),
+                Fd::cwd(),
+                node_modules.slice_z(),
+            ) {
+                bun_core::warn!(
+                    "failed to restore the node_modules of \"{}\" after running its prepare scripts: {}",
+                    bstr::BStr::new(&self.package_name),
+                    err,
+                );
+            }
+        }
+    }
+
     pub(crate) fn spawn_package_scripts(
         manager: &mut PackageManager,
         list: ScriptsList,
         envp: bun_dotenv::NullDelimitedEnvMap,
+        install_envp: Option<bun_dotenv::NullDelimitedEnvMap>,
         shell_bin: Option<&'a ZStr>,
         optional: bool,
         log_level: crate::LogLevel,
@@ -1087,9 +1258,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), crate::Error> {
         let package_name = list.package_name.clone();
+        let prepare_dependencies = if list.install_dependencies_for_prepare {
+            PrepareDependencies::Pending
+        } else {
+            PrepareDependencies::NotNeeded
+        };
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),
             envp,
+            install_envp,
+            prepare_dependencies,
             shell_bin,
             package_name,
             scripts: list,

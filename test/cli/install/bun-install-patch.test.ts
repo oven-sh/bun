@@ -282,24 +282,24 @@ new file mode 100644
     const NOBODY = 65534;
     const asRoot = process.getuid?.() === 0;
     const restoreAncestors: [path: string, mode: number][] = [];
-    if (asRoot) {
-      // CI's runner.node.mjs points TMPDIR at a mode-0700 root-owned mkdtemp
-      // dir, so every ancestor of filedir needs +x for uid 65534 or the child
-      // fails at path resolution before it ever reaches the patch logic.
-      for (let p = dirname(String(filedir)); p !== dirname(p); p = dirname(p)) {
-        const mode = statSync(p).mode & 0o7777;
-        if ((mode & 0o011) !== 0o011) {
-          restoreAncestors.push([p, mode]);
-          chmodSync(p, mode | 0o011);
-        }
-      }
-      // Hand the whole tree to the unprivileged uid so it can write the cache,
-      // staging tree and node_modules.
-      const chown = Bun.spawnSync(["chown", "-R", `${NOBODY}:${NOBODY}`, String(filedir)]);
-      expect(chown.exitCode).toBe(0);
-    }
-
     try {
+      if (asRoot) {
+        // CI's runner.node.mjs points TMPDIR at a mode-0700 root-owned mkdtemp
+        // dir, so every ancestor of filedir needs +x for uid 65534 or the child
+        // fails at path resolution before it ever reaches the patch logic.
+        for (let p = dirname(String(filedir)); p !== dirname(p); p = dirname(p)) {
+          const mode = statSync(p).mode & 0o7777;
+          if ((mode & 0o011) !== 0o011) {
+            restoreAncestors.push([p, mode]);
+            chmodSync(p, mode | 0o011);
+          }
+        }
+        // Hand the whole tree to the unprivileged uid so it can write the cache,
+        // staging tree and node_modules.
+        const chown = Bun.spawnSync(["chown", "-R", `${NOBODY}:${NOBODY}`, String(filedir)]);
+        expect(chown.exitCode).toBe(0);
+      }
+
       await using proc = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: projectDir,

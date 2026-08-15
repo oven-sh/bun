@@ -123,6 +123,17 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
     }
 }
 
+// The abrupt completion was the VM's termination (takeAbruptCompletion left it pending and returned
+// nothing): no error to deliver and no script may run — drop the iterator and the pull promise unsettled
+// and let the termination propagate.
+static void asyncIterStandDown(JSAsyncIteratorSourceOperation* op)
+{
+    op->m_done = true;
+    op->m_running = false;
+    op->m_iterator.clear();
+    op->m_pullPromise.clear();
+}
+
 // The success tail: controller.end(), then iterator.return(), then resolve the pull promise.
 static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
@@ -136,7 +147,10 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
         endResult = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).endPublicName(), noArgs);
         if (scope.exception()) [[unlikely]] {
             JSValue error = takeAbruptCompletion(globalObject, scope);
-            asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+            if (!error) [[unlikely]]
+                asyncIterStandDown(op);
+            else
+                asyncIterFinishWithError(globalObject, op, error);
             return;
         }
     }
@@ -303,7 +317,10 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
 
 abrupt:
     JSValue error = takeAbruptCompletion(globalObject, scope);
-    asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+    if (!error) [[unlikely]]
+        asyncIterStandDown(op);
+    else
+        asyncIterFinishWithError(globalObject, op, error);
     return NextStep::Finished;
 }
 
@@ -345,7 +362,10 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
             }
             if (scope.exception()) [[unlikely]] {
                 JSValue error = takeAbruptCompletion(globalObject, scope);
-                asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+                if (!error) [[unlikely]]
+                    asyncIterStandDown(op);
+                else
+                    asyncIterFinishWithError(globalObject, op, error);
                 return;
             }
         }
@@ -359,7 +379,10 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
             nextPromise = promiseResolvedWith(globalObject, nextResult);
             if (scope.exception()) [[unlikely]] {
                 JSValue error = takeAbruptCompletion(globalObject, scope);
-                asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+                if (!error) [[unlikely]]
+                    asyncIterStandDown(op);
+                else
+                    asyncIterFinishWithError(globalObject, op, error);
                 return;
             }
         }

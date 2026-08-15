@@ -1046,3 +1046,50 @@ test(
   },
   timeout,
 );
+
+// A worker terminated while async-iterable bodies are being driven (a `Bun.serve` handler returning
+// `new Response(asyncGenerator())`, a `fetch()` with an async-iterable request body): the pump met the
+// termination as the abrupt completion of `iterator.next()` and went on to notify the iterator —
+// `iterator.throw(undefined)` and error-code lookups with the TerminationException pending — walking
+// objects mid-teardown (JSC "object->structure() == this" assert). It now stands down instead.
+test(
+  "terminate() while async-iterable Response/request bodies are being pumped",
+  async () => {
+    const workers = slow ? 10 : 30;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const T = f => { try { const x = f(); if (x && x.then) x.then(()=>{},()=>{}); } catch {} };" +
+          "async function* gen() { for (;;) { await Bun.sleep(Math.random() * 2); yield new TextEncoder().encode('chunk'); } }" +
+          "const s = Bun.serve({ port: 0, fetch: () => new Response(gen()) });" +
+          "setInterval(() => { T(() => fetch(s.url).then(r => r.body.getReader().read())); T(() => fetch(s.url, { method: 'POST', body: gen(), duplex: 'half' }).then(r => r.text())); }, 1);" +
+          "parentPort.postMessage('go');";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            await new Promise(r => w.once("message", r));
+            await Bun.sleep(10 + (i % 6) * 5);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

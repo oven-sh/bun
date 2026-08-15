@@ -659,8 +659,7 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
-/// The highway kernels take `i32` dimensions; every decoder and `do_resize`
-/// stay below that, so this is a backstop.
+/// Backstop for the kernels' `i32` dimensions; decoders and `do_resize` stay far below.
 #[inline]
 fn kernel_dimension(v: u32) -> Result<i32, Error> {
     i32::try_from(v).map_err(|_| Error::TooManyPixels)

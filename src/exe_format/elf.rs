@@ -287,8 +287,7 @@ impl ElfFile {
         // (zero-initialized statics), corrupting the process.
         let move_src_start = old_rw_file_end;
         let move_src_end = self.data.len();
-        // Rejected: p_filesz > p_memsz (the payload would land inside the
-        // segment) and a section header table that is not part of the tail.
+        // The first means p_filesz > p_memsz; the shdr table has to be in the moved tail.
         if new_file_offset < move_src_start || old_shdrs.start < move_src_start {
             return Err(ElfError::InvalidElfFile);
         }
@@ -423,8 +422,7 @@ impl ElfFile {
 const PHDR_SIZE: usize = size_of::<Elf64_Phdr>();
 const SHDR_SIZE: usize = size_of::<Elf64_Shdr>();
 
-/// `offset..offset + len` as claimed by a template's headers, or `InvalidElfFile`
-/// if it overflows or runs past the end of `data`.
+/// `offset..offset + len` from a template's headers, bounds-checked against `data`.
 fn file_range(data: &[u8], offset: u64, len: u64) -> Result<Range<usize>, ElfError> {
     let start = to_usize(offset)?;
     let end = start

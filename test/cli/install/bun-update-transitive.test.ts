@@ -611,7 +611,9 @@ test.concurrent("a direct edge that moves away does not hold its transitive sibl
   expect(lockfile.split(`"leaf": "1.0.0"`)).toHaveLength(2);
   await write(join(dir, "bun.lock"), lockfile.replace(`"leaf": "1.0.0"`, `"leaf": "^1.0.0 || ^3.0.0"`));
 
-  const { stderr, exitCode } = await run(dir, "update");
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  // The summary prints one row per name; the direct move wins the slot.
+  expect(movedRows(stdout)).toStrictEqual([movedRow("leaf", "1.0.0", "3.0.0")]);
   expectCleanStderr(stderr);
   expect(await lockedVersions(dir, "leaf")).toStrictEqual(["2.0.0", "3.0.0"]);
   expect(exitCode).toBe(0);

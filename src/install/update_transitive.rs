@@ -1322,6 +1322,7 @@ fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> InstanceEd
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let pkg_names = lockfile.packages.items_name();
+    let name_hashes = lockfile.packages.items_name_hash();
     let dep_slices = lockfile.packages.items_dependencies();
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -1354,8 +1355,11 @@ fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> InstanceEd
                 DependencyVersionTag::DistTag => version.dist_tag().name,
                 _ => continue,
             };
+            let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
             for (i, inst) in instances.iter().enumerate() {
-                if names.eql(pkg_names[inst.pkg_id as usize], buf, buf) {
+                if name_hashes[inst.pkg_id as usize] == row_hash
+                    && names.eql(pkg_names[inst.pkg_id as usize], buf, buf)
+                {
                     direct[i].push(row as DependencyID);
                 }
             }

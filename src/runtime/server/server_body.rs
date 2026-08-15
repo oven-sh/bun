@@ -2971,10 +2971,7 @@ where
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
-            match &user_route.route.method {
-                server_config::RouteMethod::Any => None,
-                server_config::RouteMethod::Specific(m) => Some(*m),
-            },
+            user_route.route.method.specific(),
         ) else {
             return;
         };

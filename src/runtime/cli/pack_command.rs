@@ -1446,7 +1446,7 @@ fn get_bundled_deps(
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum BinType {
+pub(crate) enum BinType {
     File,
     Dir,
 }
@@ -1463,13 +1463,9 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
 
     if let Some(bin) = json.as_property(b"bin") {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                bin_str,
-                &mut path_buf,
-            );
-            if !bin_path_escapes_root(normalized) {
+            if let Some(subpath) = bin_subpath(bin_str, BinType::File, &mut path_buf) {
                 bins.push(BinInfo {
-                    path: ZBox::from_bytes(normalized),
+                    path: ZBox::from_bytes(subpath),
                     ty: BinType::File,
                 });
             }
@@ -1484,16 +1480,16 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
-                        let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                            bin_str,
-                            &mut path_buf,
-                        );
+                        let Some(subpath) = bin_subpath(bin_str, BinType::File, &mut path_buf)
+                        else {
+                            continue;
+                        };
                         let already_listed = bins.iter().any(|existing| {
-                            strings::eql_long(existing.path.as_bytes(), normalized, true)
+                            strings::eql_long(existing.path.as_bytes(), subpath, true)
                         });
-                        if !already_listed && !bin_path_escapes_root(normalized) {
+                        if !already_listed {
                             bins.push(BinInfo {
-                                path: ZBox::from_bytes(normalized),
+                                path: ZBox::from_bytes(subpath),
                                 ty: BinType::File,
                             });
                         }
@@ -1509,15 +1505,9 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-                    let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                        bin_str,
-                        &mut path_buf,
-                    );
-                    let normalized = strings::without_trailing_slash(normalized);
-                    let is_package_root = normalized.is_empty() || normalized == b".";
-                    if !is_package_root && !bin_path_escapes_root(normalized) {
+                    if let Some(subpath) = bin_subpath(bin_str, BinType::Dir, &mut path_buf) {
                         bins.push(BinInfo {
-                            path: ZBox::from_bytes(normalized),
+                            path: ZBox::from_bytes(subpath),
                             ty: BinType::Dir,
                         });
                     }
@@ -1527,6 +1517,27 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     }
 
     Ok(bins)
+}
+
+/// The package subpath named by a `bin` value (`File`) or by `directories.bin`
+/// (`Dir`), in the form the tree walks and `is_package_bin` compare against
+/// entry subpaths. `None` when there is nothing to pack from it: the package
+/// root, a path outside the package, a file spelled as a directory, or the root
+/// package.json, which is always archived separately.
+pub(crate) fn bin_subpath<'a>(value: &[u8], ty: BinType, buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    let normalized: &'a [u8] =
+        resolve_path::normalize_buf::<resolve_path::platform::Posix>(value, buf);
+    let subpath = match ty {
+        BinType::Dir => strings::without_trailing_slash(normalized),
+        BinType::File if normalized.ends_with(b"/") || normalized == b"package.json" => {
+            return None;
+        }
+        BinType::File => normalized,
+    };
+    if subpath.is_empty() || subpath == b"." || bin_path_escapes_root(subpath) {
+        return None;
+    }
+    Some(subpath)
 }
 
 fn bin_path_escapes_root(p: &[u8]) -> bool {

@@ -1207,6 +1207,51 @@ describe("readme", () => {
   });
 });
 
+// The manifest's "bin" is derived from "directories.bin" with the same rule the
+// tarball uses, so it only ever lists bins that the tarball ships.
+describe('"directories.bin" in the published manifest', () => {
+  test.each([
+    ["bins/", { "a.js": "bins/a.js" }],
+    // The package root is not a bin directory.
+    ["", undefined],
+    [".", undefined],
+  ])("%p", async (bin, expected) => {
+    let captured: any = null;
+    using mock = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.method === "PUT") captured = await req.json();
+        return new Response("OK", { status: 200 });
+      },
+    });
+
+    const packageDir = tmpdirSync();
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `http://localhost:${mock.port}`, token: "unused" },
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "bin-dir-pkg", version: "1.0.0", directories: { bin } }),
+      ),
+      write(join(packageDir, "index.js"), "module.exports = 1;"),
+      write(join(packageDir, "bins", "a.js"), "#!/usr/bin/env node\n"),
+    ]);
+
+    const { err, exitCode } = await publish(env, packageDir);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    expect(captured.versions["1.0.0"].bin).toEqual(expected);
+  });
+});
+
 test("dist.tarball in the published manifest does not include userinfo from the registry url", async () => {
   let captured: any = null;
   using mock = Bun.serve({

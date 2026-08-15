@@ -1761,16 +1761,12 @@ impl PublishCommand {
                     return Ok(());
                 };
                 let mut bin_props: Vec<G::Property> = Vec::new();
-                let normalized_bin_dir = bun_core::ZBox::from_bytes(
-                    strings::without_trailing_slash(strings::without_prefix(
-                        normalize_buf::<path::platform::Posix>(bin_dir_str, &mut *path_buf),
-                        b"./",
-                    )),
-                );
-
-                if normalized_bin_dir.is_empty() {
+                let Some(bin_dir_subpath) =
+                    pack::bin_subpath(bin_dir_str, pack::BinType::Dir, &mut *path_buf)
+                else {
                     return Ok(());
-                }
+                };
+                let normalized_bin_dir = bun_core::ZBox::from_bytes(bin_dir_subpath);
 
                 let bin_dir = match bun_sys::openat(
                     workspace_root,

@@ -1673,6 +1673,65 @@ describe("bins", () => {
     expect(out).toContain("Total files: 2");
   });
 
+  // None of these name a file that can be packed as a bin: the package root, a
+  // file spelled as a directory, a directory, and the root package.json (which
+  // is always in the tarball). The package packs as if "bin" were absent.
+  test.each(["", ".", "cli.js/", "lib/", "package.json"])('"bin" of %p is ignored', async bin => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-not-a-file",
+          version: "1.0.0",
+          bin,
+        }),
+      ),
+      write(join(packageDir, "cli.js"), "console.log('cli')"),
+      write(join(packageDir, "lib", "a.js"), "console.log('a')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-not-a-file-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/cli.js", executable: false },
+      { pathname: "package/lib/a.js", executable: false },
+    ]);
+  });
+
+  test("ignored entries of a bin object do not affect the others", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bins-partly-ignored",
+          version: "1.0.0",
+          bin: {
+            "dir": "lib/",
+            "cli": "cli.js",
+            "pkg": "package.json",
+          },
+        }),
+      ),
+      write(join(packageDir, "cli.js"), "console.log('cli')"),
+      write(join(packageDir, "lib", "a.js"), "console.log('a')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bins-partly-ignored-1.0.0.tgz"));
+    expect(
+      tarball.entries.map(entry => ({ pathname: entry.pathname, executable: (entry.perm & 0o111) !== 0 })),
+    ).toEqual([
+      { pathname: "package/package.json", executable: false },
+      { pathname: "package/cli.js", executable: true },
+      { pathname: "package/lib/a.js", executable: false },
+    ]);
+  });
+
   // The bin directory is packed by its own walk, and the walk over the rest of
   // the package has to skip it. Each `files` value below routes that skip
   // through a different walk.

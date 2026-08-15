@@ -170,16 +170,6 @@ pub(crate) struct Stringifier;
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
 
-    pub(crate) fn save_from_binary(
-        lockfile: &mut BinaryLockfile,
-        load_result: &LoadResult,
-        options: &PackageManagerOptions,
-        writer: &mut Writer,
-    ) -> Result<(), WriteError> {
-        // bun.handleOom → drop wrapper; allocation aborts on OOM in Rust.
-        Self::save_from_binary_inner(lockfile, load_result, options, writer)
-    }
-
     /// Pick the `lockfileVersion` to stamp. A lockfile loaded from disk keeps
     /// the version it already carried — re-saving never silently upgrades an
     /// existing `bun.lock` to a newer format. `text_lockfile_version` holds the
@@ -253,7 +243,7 @@ impl Stringifier {
                         // No supported integrity: only v2-clean if the tarball
                         // URL is under the *default* registry, the one case the
                         // writer normalizes to `""` (see the npm URL
-                        // serialization in `save_from_binary_inner`). An empty
+                        // serialization in `save_from_binary`). An empty
                         // URL never sets the parser's `npm_url_needs_integrity`,
                         // so that round-trips for any reader. A URL under a
                         // configured-but-not-default scope is written verbatim,
@@ -286,7 +276,7 @@ impl Stringifier {
         if has_scoped { Version::V3 } else { Version::V2 }
     }
 
-    fn save_from_binary_inner(
+    pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
         options: &PackageManagerOptions,

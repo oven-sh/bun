@@ -1671,20 +1671,21 @@ impl Expect {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        Self::with_caller_sequence(global_this, |sequence| {
+        Self::with_caller_sequence(global_this, "expect.hasAssertions()", |sequence| {
             if !matches!(sequence.expect_assertions, ExpectAssertions::Exact(_)) {
                 sequence.expect_assertions = ExpectAssertions::AtLeastOne;
             }
         })
     }
 
-    /// Runs `f` on the sequence an `expect.assertions()`-style call made right now applies to.
+    /// Runs `f` on the sequence a call of `matcher_name` made right now applies to.
     fn with_caller_sequence(
         global_this: &JSGlobalObject,
+        matcher_name: &str,
         f: impl FnOnce(&mut super::execution::ExecutionSequence),
     ) -> JsResult<JSValue> {
         let Some(caller) = bun_test::caller_ref(global_this) else {
-            return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
+            return Err(global_this.throw(format_args!("{matcher_name} must be called within a test")));
         };
         // `RefPtr` has no Drop; release the `+1` from `caller_ref` on every exit path.
         let caller = scopeguard::guard(caller, |caller| caller.deref());
@@ -1693,7 +1694,7 @@ impl Expect {
             .as_ref()
             .and_then(|buntest_strong| caller.phase.sequence(buntest_strong.get()));
         let Some(sequence) = sequence else {
-            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
+            return Err(global_this.throw(format_args!("{matcher_name} is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
         f(sequence);
         Ok(JSValue::UNDEFINED)
@@ -1736,7 +1737,7 @@ impl Expect {
 
         let unsigned_expected_assertions: u32 = expected_assertions as u32;
 
-        Self::with_caller_sequence(global_this, |sequence| {
+        Self::with_caller_sequence(global_this, "expect.assertions()", |sequence| {
             sequence.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
         })
     }

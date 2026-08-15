@@ -81,6 +81,7 @@ describe("registered inside an AsyncLocalStorage context", () => {
     });
     it.each([[1, 1, 2]])("it.each with a done parameter: %i + %i = %i", (a, b, e, done) => {
       expect(a + b).toBe(e);
+      expect(storage.getStore()).toBe("registration");
       (done as unknown as () => void)();
     });
     describe.each(["nested"])("describe.each: %s", s => {

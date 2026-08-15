@@ -967,13 +967,13 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
   const rejected = "Snapshot matchers are not supported after the test has finished executing";
   const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
 
-  // `report` logs whether each late matcher wrote or threw, so stdout tells the two apart.
+  // `report` logs whether each late matcher threw, and what, so stdout tells the outcomes apart.
   const prelude = /* ts */ `
     import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
     function report(label: string, matcher: () => void) {
       try {
         matcher();
-        console.log(label + ": wrote a snapshot");
+        console.log(label + ": did not throw");
       } catch (error) {
         console.log(label + ": " + (error as Error).message);
       }
@@ -999,7 +999,8 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
   test.concurrent("a test that timed out", async () => {
     // Same body for both cases, as with test.each. The first case only continues once the second
     // one has started, so it has always timed out by then; the second case then waits for the
-    // first one's late matchers before taking its own snapshots.
+    // first one's late matchers before taking its own snapshots. The inline snapshot is keyed by
+    // its own source location, so it still works late; it must just not count against "second".
     const { stdout, stderr, snap } = await runTestFile(/* ts */ `
       const secondStarted = Promise.withResolvers<void>();
       const firstDone = Promise.withResolvers<void>();
@@ -1013,6 +1014,7 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
               throw new Error(name);
             }).toThrowErrorMatchingSnapshot(),
           );
+          report("late toMatchInlineSnapshot", () => expect("lockfile of " + name).toMatchInlineSnapshot(\`"lockfile of first"\`));
           firstDone.resolve();
           return;
         }
@@ -1032,13 +1034,15 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
         `late with hint: ${rejected}`,
         `late without hint: ${rejected}`,
         `late toThrowErrorMatchingSnapshot: ${rejected}`,
+        "late toMatchInlineSnapshot: did not throw",
         "",
       ].join("\n"),
     );
     expect(stderr).toContain("this test timed out after 1ms");
     expect(stderr).toContain("(pass) migrate > second");
     // Nothing of the first case's under the second case's name, and the second case's own
-    // unhinted snapshot is still number 1.
+    // unhinted snapshot is still number 1 (on the previous behaviour the late calls, the inline
+    // one included, pushed it to number 2).
     expect(snap).toBe(
       header +
         '\nexports[`migrate second: second 1`] = `"lockfile of second"`;\n' +

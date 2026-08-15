@@ -390,11 +390,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// `<displayProtocol>://<displayHost>/<trimmed pathname>/`, or just
-    /// `<displayProtocol>://<displayHost>/` when the pathname is `/`.
-    ///
-    /// Assembled as bytes because `display_host()` is a `Display` impl while
-    /// the other pieces are raw byte slices.
+    /// The URL without its userinfo, ending in exactly one `/`: `http://host/`, `http://host/npm/`.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");

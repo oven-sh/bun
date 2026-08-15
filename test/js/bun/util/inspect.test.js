@@ -678,6 +678,38 @@ it("console.log on a arguments shows list", () => {
   fn(1, [1], fn);
 });
 
+// An arguments object is printed like an array, but unlike an array its `length` can be
+// deleted. The formatter must then treat it as empty instead of probing index after index
+// (it used to see a length of 2^51 - 1). Run it in a child so a regression times this test
+// out instead of hanging the runner.
+it("Bun.inspect treats an arguments object without a length property as empty", async () => {
+  const code = `
+    const element = children => ({ $$typeof: Symbol.for("react.element"), type: "div", props: { children } });
+    const out = (function () {
+      delete arguments.length;
+      return {
+        args: Bun.inspect(arguments),
+        jsxWithArgsChildren: Bun.inspect(element(arguments)),
+        jsxWithEmptyChildren: Bun.inspect(element([])),
+      };
+    })();
+    console.log(JSON.stringify(out));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const out = JSON.parse(stdout);
+  expect(out.args).toBe("[]");
+  // A length-less children object formats exactly like `children: []`, however that is rendered.
+  expect(out.jsxWithArgsChildren).toBe(out.jsxWithEmptyChildren);
+  expect(exitCode).toBe(0);
+});
+
 it("console.log on null prototype", () => {
   expect(Bun.inspect(Object.create(null))).toBe("[Object: null prototype] {}");
 });

@@ -1401,16 +1401,16 @@ impl JSValue {
     pub fn get_index(self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         JSObject::get_index(self, global, i)
     }
+    /// [`Self::get_length_if_property_exists`] as an integer: 0 when there is
+    /// no length (or the Blob's size is unknown), otherwise clamped to i52.
     pub fn get_length(self, global: &JSGlobalObject) -> JsResult<u64> {
-        let len = host_fn::from_js_host_call_generic(global, || {
-            JSC__JSValue__getLengthIfPropertyExistsInternal(self, global)
-        })?;
-        if len == f64::MAX {
-            return Ok(0);
-        }
-        // Clamps to i52 max (2^51 − 1), not MAX_SAFE_INTEGER.
         const I52_MAX: i64 = (1i64 << 51) - 1;
-        Ok(len.clamp(0.0, I52_MAX as f64) as u64)
+        Ok(match self.get_length_if_property_exists(global)? {
+            None => 0,
+            Some(len) if len == Self::UNKNOWN_BLOB_SIZE => 0,
+            // NaN clamps to NaN, which casts to 0.
+            Some(len) => len.clamp(0.0, I52_MAX as f64) as u64,
+        })
     }
     /// Set a property. Key dispatch goes through the [`PutKey`] trait so
     /// callers may pass `&[u8]`, `ZigString`, `&ZigString`, `bun.String`, or
@@ -2879,13 +2879,18 @@ impl JSValue {
     }
 
     // ── Length introspection. ──────────────────────────
-    /// `JSValue.getLengthIfPropertyExistsInternal` — returns `f64::MAX` when
-    /// no `length`-ish property exists. Do not call directly; prefer
-    /// [`JSValue::get_length`].
-    pub fn get_length_if_property_exists_internal(self, global: &JSGlobalObject) -> JsResult<f64> {
-        host_fn::from_js_host_call_generic(global, || {
+    /// Reported by the C++ side for a Blob whose size is not known (unseekable or missing file).
+    const UNKNOWN_BLOB_SIZE: f64 = f64::MAX;
+
+    /// `JSValue.getLengthIfPropertyExistsInternal` — string/array/typed array
+    /// length, Map/Set/Headers/Blob size, or any other object's `length` as a
+    /// number (possibly NaN). `None` when there is no such length, which the
+    /// C++ side reports as `+Infinity` (so `{length: Infinity}` is `None` too).
+    pub fn get_length_if_property_exists(self, global: &JSGlobalObject) -> JsResult<Option<f64>> {
+        let len = host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__getLengthIfPropertyExistsInternal(self, global)
-        })
+        })?;
+        Ok((len != f64::INFINITY).then_some(len))
     }
 
     // ── Path lookup. ───────────────────────────────────

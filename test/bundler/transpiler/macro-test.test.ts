@@ -182,6 +182,26 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// An arguments object is converted to an array expression by walking it up to its length. With
+// `length` deleted it has none and must convert to an empty array; the length used to come back as
+// 2^51 - 1, which sized the array expression at 2^32 - 1 items and walked every index.
+test("macro returning an arguments object without a length property becomes an empty array", async () => {
+  using dir = tempDir("macro-arguments-without-length", {
+    "m.ts": `export function m() {\n  delete arguments.length;\n  return arguments;\n}\n`,
+    "index.ts": `import { m } from "./m.ts" with { type: "macro" };\nconsole.log(JSON.stringify(m()));\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr }).toEqual({ lastLine: "[]", stderr: "" });
+  expect(exitCode).toBe(0);
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

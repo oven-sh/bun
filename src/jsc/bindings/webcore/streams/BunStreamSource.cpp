@@ -413,23 +413,18 @@ static void nativeAdjustChunkSize(JSNativeStreamSourceAdapter* adapter, size_t r
     }
 }
 
-static JSC::JSUint8Array* uint8Subarray(JSGlobalObject* globalObject, JSC::JSUint8Array* view, size_t offset, size_t length)
-{
-    RefPtr<JSC::ArrayBuffer> buffer = view->possiblySharedBuffer();
-    return JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), WTF::move(buffer), view->byteOffset() + offset, length);
-}
-
-// Reuse the pending view only when its BACKING BUFFER is large enough.
+// The pending slab is only ever handed to JS whole, so it is reused as long as it is still big enough; the
+// bytes are written by the source before anything reads them, so it need not be zeroed.
 static JSC::JSUint8Array* nativeGetInternalBuffer(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     const size_t chunkSize = adapter->m_chunkSize;
     if (JSObject* pending = adapter->pendingView()) {
         auto* view = uncheckedDowncast<JSC::JSUint8Array>(pending);
-        if (!view->isDetached() && view->possiblySharedBuffer() && view->possiblySharedBuffer()->byteLength() >= chunkSize)
+        if (!view->isDetached() && view->length() >= chunkSize)
             return view;
     }
-    auto* fresh = JSC::JSUint8Array::create(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), chunkSize);
+    auto* fresh = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), chunkSize);
     RETURN_IF_EXCEPTION(scope, nullptr);
     adapter->setPendingView(vm, fresh);
     return fresh;
@@ -460,12 +455,14 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
             JSC::JSArrayBufferView* toEnqueue = view;
-            if (view->length() - count > 0) {
-                toEnqueue = uint8Subarray(globalObject, view, 0, count);
+            if (count < view->length()) {
+                // A partial fill (pipes, sockets, the tail of a file) is copied out right-sized and the
+                // whole slab is reused for the next pull: no subarray views, and the slab is never adopted
+                // into an ArrayBuffer (which only full collections reclaim). A full fill hands over the slab.
+                auto* chunk = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructure(JSC::TypeUint8, false), count);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto* tail = uint8Subarray(globalObject, view, count, view->length() - count);
-                RETURN_IF_EXCEPTION(scope, {});
-                newView = tail;
+                memcpy(chunk->typedVector(), view->typedVector(), count);
+                toEnqueue = chunk;
             } else
                 newView = jsUndefined();
             if (controller) {

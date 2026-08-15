@@ -3485,11 +3485,10 @@ bool JSC__JSValue__asArrayBuffer(
     return true;
 }
 
-// Pin/unpin the backing ArrayBuffer of a JSArrayBuffer or JSArrayBufferView so
-// its storage cannot move or be freed while a native borrower holds a slice
-// into it. SharedArrayBuffer is never detachable and never moves, so it is left
-// unpinned rather than rejected. Returns false if `value` has no ArrayBuffer
-// impl.
+// Pin/unpin the storage behind a JSArrayBuffer or JSArrayBufferView so it
+// cannot move or be freed while a native borrower holds a slice into it.
+// SharedArrayBuffer is never detachable and never moves, so it is left
+// unpinned rather than rejected. Returns false if `value` has no storage.
 //
 // A pin does not make detaching fail, it makes it copy. `pin()` clears
 // `ArrayBuffer::isDetachable()`, and `ArrayBuffer::transferTo()` answers an
@@ -3499,48 +3498,75 @@ bool JSC__JSValue__asArrayBuffer(
 // `port.postMessage(v, [ab])` each return normally, give the destination an
 // independent copy, and leave `ab` attached; the bytes being read never move.
 //
-// That departs from ES2024, where transfer() must detach or throw, and from
-// Node, which detaches. It is deliberate: the borrow stays zero-copy in the
-// common case and memory-safe in every case, at the cost of a transfer that
-// silently no-ops for as long as a borrowing op (zlib, fs, crypto, shell,
-// Bun.Image, SQL blob binds, ...) happens to be in flight over that buffer.
-static JSC::ArrayBuffer* arrayBufferImpl(JSC::JSValue value)
+// A view with no ArrayBuffer yet (`Buffer.allocUnsafeSlow`, `new Uint8Array(n)`
+// past fastSizeLimit: OversizeTypedArray) is held, not adopted: materializing
+// an ArrayBuffer just to pin it registers the bytes with the heap a second
+// time and, because ArrayBuffers are only reclaimed by full collections,
+// turns every threadpool fs/zlib/crypto op over a fresh Buffer into full-GC
+// pressure. Such a view cannot be detached without JS first touching
+// `.buffer`; if it does so mid-op the new ArrayBuffer is unpinned and a
+// `transfer()` moves (does not free) the storage — the same window Node has.
+// `heldViews()` remembers which pins were holds so the matching unpin never
+// touches a buffer that appeared in between.
+static HashMap<const JSC::JSCell*, unsigned>& heldViews()
 {
+    static thread_local NeverDestroyed<HashMap<const JSC::JSCell*, unsigned>> views;
+    return views.get();
+}
+static bool pinStorage(JSC::JSValue value)
+{
+    JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
-        return jb->impl();
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value))
-        return view->possiblySharedBuffer();
-    return nullptr;
+        buf = jb->impl();
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached())
+            return false;
+        if (!view->hasArrayBuffer() && view->mode() == JSC::OversizeTypedArray) {
+            heldViews().add(view, 0).iterator->value++;
+            return true;
+        }
+        buf = view->possiblySharedBuffer();
+    }
+    if (!buf)
+        return false;
+    if (!buf->isShared())
+        buf->pin();
+    return true;
+}
+static void unpinStorage(JSC::JSValue value)
+{
+    JSC::ArrayBuffer* buf = nullptr;
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value))
+        buf = jb->impl();
+    else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        auto& held = heldViews();
+        auto it = held.find(view);
+        if (it != held.end()) {
+            if (!--it->value)
+                held.remove(it);
+            return;
+        }
+        if (view->hasArrayBuffer())
+            buf = view->possiblySharedBuffer();
+    }
+    if (buf && !buf->isShared())
+        buf->unpin();
 }
 CPP_DECL bool JSC__JSValue__pinArrayBuffer(JSC::EncodedJSValue v)
 {
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        if (!buf->isShared())
-            buf->pin();
-        return true;
-    }
-    return false;
+    return pinStorage(JSC::JSValue::decode(v));
 }
 CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 {
-    if (auto* buf = arrayBufferImpl(JSC::JSValue::decode(v))) {
-        if (!buf->isShared())
-            buf->unpin();
-    }
+    unpinStorage(JSC::JSValue::decode(v));
 }
 
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data
 // (`ArrayBuffer::tryCreate(span())`) — and it's ≤ fastSizeLimit elements, so
-// the caller dupes instead. Every other mode either already has a real
-// ArrayBuffer or, for `OversizeTypedArray`, is ADOPTED in-place by
-// `slowDownAndWasteMemory()` (`ArrayBuffer::createAdopted` — wraps the
-// existing fastMalloc pointer; zero byte copy, just a wrapper + butterfly
-// alloc), so `possiblySharedBuffer()` + `pin()` is the right and cheap thing.
-// Oversize MUST be pinned: once adopted (which JS can trigger via `.buffer`
-// at any moment) it becomes detachable, and a `transfer()` would free the
-// storage the worker is reading.
+// the caller dupes instead. Every other mode goes through `pinStorage` (pin an
+// existing ArrayBuffer, hold an OversizeTypedArray without adopting it).
 //
 //   0  Detached/null — nothing to read.
 //   1  `FastTypedArray` — ≤ fastSizeLimit elements, GC-movable. Caller
@@ -3559,15 +3585,7 @@ CPP_DECL int32_t JSC__JSValue__borrowBytesForOffThread(JSC::EncodedJSValue v, co
             *out_len = view->byteLength();
             return 1;
         }
-        // Oversize/Wasteful/DataView: possiblySharedBuffer() is either a
-        // getter or an in-place adopt (Oversize → createAdopted) — never a
-        // byte copy past this point. vector() is read AFTER because adoption
-        // can in principle repoint m_vector (it doesn't today, but the API
-        // contract allows it).
-        auto* buf = view->possiblySharedBuffer();
-        if (!buf) return 0;
-        if (!buf->isShared())
-            buf->pin();
+        if (!pinStorage(view)) return 0;
         *out_ptr = static_cast<const uint8_t*>(view->vector());
         *out_len = view->byteLength();
         return 2;

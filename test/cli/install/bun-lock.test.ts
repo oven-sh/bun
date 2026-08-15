@@ -482,7 +482,7 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
       "+ optional-native@1.0.0",
       "+ uses-what-bin@1.0.0 (v1.5.0 available)",
       "",
-      "13 packages installed",
+      "12 packages installed",
     ]
   `);
 
@@ -512,7 +512,7 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
       "",
       "+ bundled-1@1.0.0",
       "",
-      "13 packages installed",
+      "12 packages installed",
     ]
   `);
 

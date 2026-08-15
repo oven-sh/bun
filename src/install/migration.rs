@@ -400,6 +400,7 @@ fn migrate_npm_lockfile<'a>(
         workspace_map.as_ref(),
     )?;
     clear_non_registry_platform_constraints(this);
+    this.infer_unrecorded_libc();
     npm_lock::apply_root_overrides(this, manager, log, dir, workspace_map.as_ref(), abs_path)?;
 
     this.resolve(log)?;

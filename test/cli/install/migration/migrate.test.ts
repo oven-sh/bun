@@ -1626,7 +1626,7 @@ describe("package-lock.json migration fixes", () => {
   });
 
   test.concurrent("os, cpu and libc of registry packages are carried into the migrated lockfile", async () => {
-    const optionalDependencies = { a: "1.0.0", b: "1.0.0", c: "1.0.0" };
+    const optionalDependencies = { a: "1.0.0", b: "1.0.0", c: "1.0.0", "d-linux-x64-musl": "1.0.0" };
     using dir = synthetic("npm-migrate-libc", {
       "package.json": JSON.stringify({ name: "platform-fields", optionalDependencies }),
       "package-lock.json": npmLock("platform-fields", {
@@ -1634,14 +1634,17 @@ describe("package-lock.json migration fixes", () => {
         "node_modules/a": { version: "1.0.0", os: ["linux"], cpu: ["x64"], libc: ["glibc"], optional: true },
         "node_modules/b": { version: "1.0.0", os: ["linux"], cpu: ["x64"], libc: ["musl"], optional: true },
         "node_modules/c": { version: "1.0.0", os: ["darwin"], cpu: ["arm64"], optional: true },
+        // npm only records libc when the package declares it; a fresh resolve would take it from the name.
+        "node_modules/d-linux-x64-musl": { version: "1.0.0", os: ["linux"], cpu: ["x64"], optional: true },
       }),
     });
     const { lock } = await migrate(dir);
-    expect({ a: lock.packages.a[2], b: lock.packages.b[2], c: lock.packages.c[2] }).toStrictEqual({
-      a: { os: "linux", cpu: "x64", libc: "glibc" },
-      b: { os: "linux", cpu: "x64", libc: "musl" },
-      c: { os: "darwin", cpu: "arm64" },
-    });
+    expect(Object.keys(optionalDependencies).map(name => lock.packages[name][2])).toStrictEqual([
+      { os: "linux", cpu: "x64", libc: "glibc" },
+      { os: "linux", cpu: "x64", libc: "musl" },
+      { os: "darwin", cpu: "arm64" },
+      { os: "linux", cpu: "x64", libc: "musl" },
+    ]);
     await frozen(dir);
   });
 

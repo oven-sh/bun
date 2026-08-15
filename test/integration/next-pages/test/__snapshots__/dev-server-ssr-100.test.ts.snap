@@ -16574,6 +16574,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 70,
       "integrity": "sha512-OJYkCd5pj/QloBvoEcJ2XiMnlJkRv9idWA/j0ugSuA34gMT6f5b7vOiCQHVRpvStoZUknhl6/UxOXL4OwtdaBw==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@next/swc-linux-arm64-gnu",
       "name_hash": "11020036790013624239",
@@ -16596,6 +16599,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 71,
       "integrity": "sha512-S4J2v+8tT3NIO9u2q+S0G5KdvNDjXfAv06OhfOzNDaBn5rw84DGXWndOEB7d5/x852A20sW1M56vhC/tRVbccQ==",
+      "libc": [
+        "musl",
+      ],
       "man_dir": "",
       "name": "@next/swc-linux-arm64-musl",
       "name_hash": "10617419930187892296",
@@ -16618,6 +16624,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 72,
       "integrity": "sha512-2eEBDkFlMMNQnkTyPBhQOAyn2qMxyG2eE7GPH2WIDGEpEILcBPI/jdSv4t6xupSP+ot/jkfrCShLAa7+ZUPcJQ==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@next/swc-linux-x64-gnu",
       "name_hash": "300847313706189527",
@@ -16640,6 +16649,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 73,
       "integrity": "sha512-oicJwRlyOoZXVlxmIMaTq7f8pN9QNbdes0q2FXfRsPhfCi8n8JmOZJm5oo1pwDaFbnnD421rVU409M3evFbIqg==",
+      "libc": [
+        "musl",
+      ],
       "man_dir": "",
       "name": "@next/swc-linux-x64-musl",
       "name_hash": "2579566733029863568",
@@ -17336,6 +17348,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 108,
       "integrity": "sha512-u92mvlcYtp9MRKmP+ZvMmtPN34+/3lMHlyMj7wXJDeXxuM0Vgzz0+PPJNsro1m3IZPYChIkn944wW8TYgGKFHw==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-arm-gnueabihf",
       "name_hash": "2938949977403728960",
@@ -17358,6 +17373,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 109,
       "integrity": "sha512-cINaoY2z7LVCrfHkIcmvj7osTOtm6VVT16b5oQdS4beibX2SYBwgYLmqhBjA1t51CarSaBuX5YNsWLjsqfW5Cw==",
+      "libc": [
+        "musl",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-arm-musleabihf",
       "name_hash": "4526358956370144196",
@@ -17380,6 +17398,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 110,
       "integrity": "sha512-34gw7PjDGB9JgePJEmhEqBhWvCiiWCuXsL9hYphDF7crW7UgI05gyBAi6MF58uGcMOiOqSJ2ybEeCvHcq0BCmQ==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-arm64-gnu",
       "name_hash": "14938842034211528502",
@@ -17402,6 +17423,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 111,
       "integrity": "sha512-RyMIx6Uf53hhOtJDIamSbTskA99sPHS96wxVE/bJtePJJtpdKGXO1wY90oRdXuYOGOTuqjT8ACccMc4K6QmT3w==",
+      "libc": [
+        "musl",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-arm64-musl",
       "name_hash": "4933383570995711887",
@@ -17424,6 +17448,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 112,
       "integrity": "sha512-D8Vae74A4/a+mZH0FbOkFJL9DSK2R6TFPC9M+jCWYia/q2einCubX10pecpDiTmkJVUH+y8K3BZClycD8nCShA==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-ppc64-gnu",
       "name_hash": "7256389185743388084",
@@ -17444,6 +17471,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 113,
       "integrity": "sha512-frxL4OrzOWVVsOc96+V3aqTIQl1O2TjgExV4EKgRY09AJ9leZpEg8Ak9phadbuX0BA4k8U5qtvMSQQGGmaJqcQ==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-riscv64-gnu",
       "name_hash": "5338701120035082978",
@@ -17464,6 +17494,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 114,
       "integrity": "sha512-mJ5vuDaIZ+l/acv01sHoXfpnyrNKOk/3aDoEdLO/Xtn9HuZlDD6jKxHlkN8ZhWyLJsRBxfv9GYM2utQ1SChKew==",
+      "libc": [
+        "musl",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-riscv64-musl",
       "name_hash": "7968053899993306748",
@@ -17486,6 +17519,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 115,
       "integrity": "sha512-kELo8ebBVtb9sA7rMe1Cph4QHreByhaZ2QEADd9NzIQsYNQpt9UkM9iqr2lhGr5afh885d/cB5QeTXSbZHTYPg==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-s390x-gnu",
       "name_hash": "7561190288529359496",
@@ -17508,6 +17544,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 116,
       "integrity": "sha512-C3ZAHugKgovV5YvAMsxhq0gtXuwESUKc5MhEtjBpLoHPLYM+iuwSj3lflFwK3DPm68660rZ7G8BMcwSro7hD5w==",
+      "libc": [
+        "glibc",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-x64-gnu",
       "name_hash": "6722204009561015900",
@@ -17530,6 +17569,9 @@ exports[`ssr works for 100-ish requests 1`] = `
       "dependencies": [],
       "id": 117,
       "integrity": "sha512-rV0YSoyhK2nZ4vEswT/QwqzqQXw5I6CjoaYMOX0TqBlWhojUf8P94mvI7nuJTeaCkkds3QE4+zS8Ko+GdXuZtA==",
+      "libc": [
+        "musl",
+      ],
       "man_dir": "",
       "name": "@unrs/resolver-binding-linux-x64-musl",
       "name_hash": "15691335847070868084",

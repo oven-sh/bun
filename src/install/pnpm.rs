@@ -1623,9 +1623,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
     }
 
-    // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
+    // pnpm records `os`/`cpu`/`libc` for every `packages:` entry whose manifest
     // declares them, including `file:` folders, tarballs, and git packages.
     crate::migration::clear_non_registry_platform_constraints(lockfile);
+    lockfile.infer_unrecorded_libc();
 
     lockfile.resolve(log)?;
 

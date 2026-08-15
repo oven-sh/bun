@@ -1,6 +1,15 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  libcFamily,
+  normalizeBunSnapshot,
+  runBunInstall,
+  tempDir,
+  VerdaccioRegistry,
+} from "harness";
 import {
   chmodSync,
   closeSync,
@@ -1843,6 +1852,32 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
     expect(await install(dir, flag)).toContain("no changes");
   },
 );
+
+test.concurrent("--libc prunes for another libc; plain prune keeps the variant installed for this one", async () => {
+  // Both declare os/cpu for every CI platform, so only their libc (taken from the name) tells them apart.
+  const dir = await setup({
+    name: "foo",
+    optionalDependencies: { "native-libc-glibc": "1.0.0", "native-libc-musl": "1.0.0" },
+  });
+  const nm = join(dir, "node_modules");
+  const otherLibc = libcFamily === "glibc" ? "musl" : "glibc";
+  const installedVariant = join(nm, `native-libc-${libcFamily}`);
+  expect(existsSync(installedVariant)).toBeTrue();
+  expect(existsSync(join(nm, `native-libc-${otherLibc}`))).toBeFalse();
+
+  const host = await prune(dir);
+  expect(out(host.stdout)).toEndWith(NOTHING(1, 1));
+  expect(host.exitCode).toBe(0);
+  expect(existsSync(installedVariant)).toBeTrue();
+
+  const other = await prune(dir, `--libc=${otherLibc}`);
+  expect(lines(other.stdout)).toStrictEqual([BANNER, "", `- native-libc-${libcFamily}@1.0.0`, REMOVED(1, 1)]);
+  expect(other.exitCode).toBe(0);
+  expect(existsSync(installedVariant)).toBeFalse();
+
+  expect(await install(dir)).toContain(`+ native-libc-${libcFamily}@1.0.0`);
+  expect(existsSync(installedVariant)).toBeTrue();
+});
 
 test.concurrent.each(["hoisted", "isolated"] as Linker[])(
   "%s: an npm: alias is kept under its alias name",

@@ -704,12 +704,13 @@ impl Lockfile {
         })
     }
 
-    /// A lockfile written before `libc` was recorded carries only `os`/`cpu`
-    /// for its platform packages. Give those the libc a fresh resolve would
-    /// record ([`Npm::PackageVersion::libc_for`]) so an existing project stops
-    /// installing the other libc's variant too. This does not make the lockfile
-    /// dirty; the libc is written out whenever it is next saved for another reason.
-    fn infer_unrecorded_libc(&mut self) {
+    /// A bun lockfile written before `libc` was recorded, or a package-lock.json /
+    /// pnpm-lock.yaml for a package that does not declare the field, carries only
+    /// `os`/`cpu` for its platform packages. Give those the libc a fresh resolve
+    /// would record ([`Npm::PackageVersion::libc_for`]) so an existing project
+    /// stops installing the other libc's variant too. This does not make the
+    /// lockfile dirty; the libc is written out whenever it is next saved.
+    pub(crate) fn infer_unrecorded_libc(&mut self) {
         let mut pkgs = self.packages.slice();
         let self::package::PackageColumnsMut {
             name: pkg_names,

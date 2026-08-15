@@ -432,7 +432,7 @@ You can override the target platform for package selection:
 bun install --cpu=x64 --os=linux --libc=musl
 ```
 
-These flags install packages for the specified platform instead of the current system. Use them for cross-platform builds or when preparing deployments for different environments. Each flag can be repeated, and `*` installs the packages for every value.
+These flags install packages for the specified platform instead of the current system. Use them for cross-platform builds or when preparing deployments for different environments. Each flag can be repeated, a value prefixed with `!` excludes that platform (`--libc '!musl'`), and `*` installs the packages for every value.
 
 **Accepted values for `--cpu`**: `arm`, `arm64`, `ia32`, `mips`, `mipsel`, `ppc`, `ppc64`, `s390`, `s390x`, `x32`, `x64`
 

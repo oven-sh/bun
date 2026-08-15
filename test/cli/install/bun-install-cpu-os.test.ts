@@ -704,6 +704,9 @@ describe("libc field and --libc flag", () => {
     expect((await freshInstall("--libc", "*")).exitCode).toBe(0);
     expect(await installed()).toEqual(["dep-any-libc", "dep-glibc", "dep-musl"]);
 
+    expect((await freshInstall("--libc", "glibc", "--libc", "musl")).exitCode).toBe(0);
+    expect(await installed()).toEqual(["dep-any-libc", "dep-glibc", "dep-musl"]);
+
     expect((await freshInstall("--libc", `!${libcFamily}`)).exitCode).toBe(0);
     expect(await installed()).toEqual(["dep-any-libc", `dep-${otherLibc}`]);
   });

@@ -380,12 +380,13 @@ snapshots:
 
   test("carries os, cpu and libc into bun.lock", async () => {
     const integrity = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+    const names = ["pkg-a", "pkg-b", "pkg-c", "pkg-linux-x64-musl"];
     await using tmpDir = tempDir("pnpm-migrate-libc", {
       // Port 1 refuses connections, so the metadata refresh after migrating cannot reach a registry.
       "bunfig.toml": '[install]\nregistry = "http://localhost:1/"\n',
       "package.json": JSON.stringify({
         name: "platform-fields",
-        optionalDependencies: { "pkg-a": "1.0.0", "pkg-b": "1.0.0", "pkg-c": "1.0.0" },
+        optionalDependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])),
       }),
       "pnpm-lock.yaml": `lockfileVersion: '9.0'
 
@@ -393,15 +394,7 @@ importers:
 
   .:
     optionalDependencies:
-      pkg-a:
-        specifier: 1.0.0
-        version: 1.0.0
-      pkg-b:
-        specifier: 1.0.0
-        version: 1.0.0
-      pkg-c:
-        specifier: 1.0.0
-        version: 1.0.0
+${names.map(name => `      ${name}:\n        specifier: 1.0.0\n        version: 1.0.0`).join("\n")}
 
 packages:
 
@@ -422,16 +415,14 @@ packages:
     cpu: [arm64]
     os: [darwin]
 
+  pkg-linux-x64-musl@1.0.0:
+    resolution: {integrity: ${integrity}}
+    cpu: [x64]
+    os: [linux]
+
 snapshots:
 
-  pkg-a@1.0.0:
-    optional: true
-
-  pkg-b@1.0.0:
-    optional: true
-
-  pkg-c@1.0.0:
-    optional: true
+${names.map(name => `  ${name}@1.0.0:\n    optional: true`).join("\n\n")}
 `,
     });
 
@@ -442,17 +433,20 @@ snapshots:
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
     expect(exitCode).toBe(0);
 
     const { packages } = Bun.JSONC.parse(fs.readFileSync(join(tmpDir, "bun.lock"), "utf8")) as {
       packages: Record<string, unknown[]>;
     };
-    expect([packages["pkg-a"][2], packages["pkg-b"][2], packages["pkg-c"][2]]).toEqual([
+    expect(names.map(name => packages[name][2])).toEqual([
       { os: "linux", cpu: "x64", libc: "glibc" },
       { os: "linux", cpu: "x64", libc: "musl" },
       { os: "darwin", cpu: "arm64" },
+      // pnpm only records `libc:` when the package declares it, so this one is taken from the name,
+      // as a fresh resolve would.
+      { os: "linux", cpu: "x64", libc: "musl" },
     ]);
   });
 

@@ -2414,9 +2414,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     JSC::VM& vm = JSC::getVM(globalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
-    // Like node::Buffer::New, only a NULL pointer yields a detached Buffer: JSC defines detached as
-    // data == NULL, so createFromBytes below cannot wrap one. A real pointer with length 0 wraps
-    // normally, and napi_get_buffer_info hands that pointer back as it does in Node.
+    // Only NULL is detached, as in node::Buffer::New; (ptr, 0) wraps ptr like any other pointer.
     if (data == nullptr) {
 
         // TODO: is there a way to create a detached uint8 array?

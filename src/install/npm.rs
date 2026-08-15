@@ -928,8 +928,7 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        // - v0.0.8: bundled_deps_buf holds every name a version lists in bundleDependencies; it used
-        //           to hold only the names matched in the last dependency group parsed
+        // - v0.0.8: fixed bundled dependencies being dropped from all but one dependency group
         const HEADER_BYTES: &'static str =
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
@@ -2370,9 +2369,7 @@ impl PackageManifest {
 
                 let mut package_version: PackageVersion = empty_version;
 
-                // The list holds the names as published. `Package::from_npm`
-                // matches it against the dependencies of every group, so a
-                // name that no group declares is simply never matched.
+                // `Package::from_npm` matches these against the dependencies of every group.
                 package_version.bundled_dependencies = match bundled_dependencies_field(version_obj)
                 {
                     Some(JSON::E::JsonValue::Boolean(true)) => ExternalPackageNameHashList::INVALID,

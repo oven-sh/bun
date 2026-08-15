@@ -1610,6 +1610,13 @@ impl PublishCommand {
         None
     }
 
+    /// `None` when a `bin` value resolves to the package root (`""`, `"."`), which npm drops too.
+    fn bin_target<'a>(value: &[u8], path_buf: &'a mut [u8]) -> Option<&'a ZStr> {
+        let target: &'a ZStr = normalize_buf_z::<path::platform::Posix>(value, path_buf);
+        let is_package_root = target.is_empty() || target.as_bytes() == b".";
+        (!is_package_root).then_some(target)
+    }
+
     fn normalize_bin(
         json: &mut Expr,
         bump: &bun_alloc::Arena,
@@ -1629,31 +1636,26 @@ impl PublishCommand {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
-                    let normalized = strings::without_prefix_comptime_z(
-                        normalize_buf_z::<path::platform::Posix>(
-                            bin_str.string(bump)?,
-                            &mut *path_buf,
-                        ),
-                        b"./",
-                    );
-                    if !bun_sys::exists_at(workspace_root, normalized) {
-                        bun_core::warn!(
-                            "bin '{}' does not exist",
-                            bstr::BStr::new(normalized.as_bytes()),
-                        );
-                    }
+                    if let Some(value) = Self::bin_target(bin_str.string(bump)?, &mut *path_buf) {
+                        if !bun_sys::exists_at(workspace_root, value) {
+                            bun_core::warn!(
+                                "bin '{}' does not exist",
+                                bstr::BStr::new(value.as_bytes()),
+                            );
+                        }
 
-                    bin_props.push(G::Property {
-                        key: Some(Expr::init(
-                            E::String::init(leak!(package_name)),
-                            bun_ast::Loc::EMPTY,
-                        )),
-                        value: Some(Expr::init(
-                            E::String::init(leak!(normalized.as_bytes())),
-                            bun_ast::Loc::EMPTY,
-                        )),
-                        ..Default::default()
-                    });
+                        bin_props.push(G::Property {
+                            key: Some(Expr::init(
+                                E::String::init(leak!(package_name)),
+                                bun_ast::Loc::EMPTY,
+                            )),
+                            value: Some(Expr::init(
+                                E::String::init(leak!(value.as_bytes())),
+                                bun_ast::Loc::EMPTY,
+                            )),
+                            ..Default::default()
+                        });
+                    }
 
                     json.data
                         .e_object_mut()
@@ -1695,32 +1697,17 @@ impl PublishCommand {
                             continue;
                         }
 
-                        let value: Option<bun_core::ZBox> = 'value: {
-                            if let Some(value) = &bin_prop.value {
-                                if let Some(vs) = value.data.as_e_string() {
-                                    if vs.len() != 0 {
-                                        break 'value Some(bun_core::ZBox::from_bytes(
-                                            strings::without_prefix_comptime_z(
-                                                // replace separators
-                                                normalize_buf_z::<path::platform::Posix>(
-                                                    vs.string(bump)?,
-                                                    &mut *path_buf,
-                                                ),
-                                                b"./",
-                                            )
-                                            .as_bytes(),
-                                        ));
-                                    }
-                                }
-                            }
-                            None
-                        };
-                        let Some(value) = value else { continue };
-                        if value.is_empty() {
+                        let Some(value) =
+                            bin_prop.value.as_ref().and_then(|v| v.data.as_e_string())
+                        else {
                             continue;
-                        }
+                        };
+                        let Some(value) = Self::bin_target(value.string(bump)?, &mut *path_buf)
+                        else {
+                            continue;
+                        };
 
-                        if !bun_sys::exists_at(workspace_root, &value) {
+                        if !bun_sys::exists_at(workspace_root, value) {
                             bun_core::warn!(
                                 "bin '{}' does not exist",
                                 bstr::BStr::new(value.as_bytes()),

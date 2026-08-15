@@ -1207,15 +1207,20 @@ describe("readme", () => {
   });
 });
 
-// The manifest's "bin" is derived from "directories.bin" with the same rule the
-// tarball uses, so it only ever lists bins that the tarball ships.
-describe('"directories.bin" in the published manifest', () => {
+// The manifest "bin" that reaches the registry. A value that resolves to the
+// package root is dropped, as npm does; other values are kept as written (npm
+// keeps "lib/" and "package.json" as well), and "directories.bin" is expanded
+// with the same rule the tarball uses.
+describe("bin in the published manifest", () => {
   test.each([
-    ["bins/", { "a.js": "bins/a.js" }],
-    // The package root is not a bin directory.
-    ["", undefined],
-    [".", undefined],
-  ])("%p", async (bin, expected) => {
+    [{ bin: "cli.js" }, { "bin-pkg": "cli.js" }],
+    [{ bin: "" }, {}],
+    [{ bin: "." }, {}],
+    [{ bin: { x: "lib/", y: "./cli.js", z: "", w: "." } }, { x: "lib/", y: "cli.js" }],
+    [{ directories: { bin: "bins/" } }, { "a.js": "bins/a.js" }],
+    [{ directories: { bin: "" } }, undefined],
+    [{ directories: { bin: "." } }, undefined],
+  ])("%j", async (fields, expected) => {
     let captured: any = null;
     using mock = Bun.serve({
       port: 0,
@@ -1236,11 +1241,9 @@ describe('"directories.bin" in the published manifest', () => {
           },
         }),
       ),
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({ name: "bin-dir-pkg", version: "1.0.0", directories: { bin } }),
-      ),
-      write(join(packageDir, "index.js"), "module.exports = 1;"),
+      write(join(packageDir, "package.json"), JSON.stringify({ name: "bin-pkg", version: "1.0.0", ...fields })),
+      write(join(packageDir, "cli.js"), "#!/usr/bin/env node\n"),
+      write(join(packageDir, "lib", "a.js"), "module.exports = 1;"),
       write(join(packageDir, "bins", "a.js"), "#!/usr/bin/env node\n"),
     ]);
 

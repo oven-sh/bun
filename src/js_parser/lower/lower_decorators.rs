@@ -123,8 +123,7 @@ fn class_copy(c: &G::Class) -> G::Class {
     }
 }
 
-/// A static method or accessor keyed `name` is installed before any static block runs.
-/// (A `static name` field is initialized after them and replaces the name by itself.)
+/// Installed before static blocks run; a `static name` field instead wins on its own.
 fn defines_static_name_method(props: &[Property]) -> bool {
     props.iter().any(|prop| {
         prop.flags.contains(Flags::Property::IsStatic)

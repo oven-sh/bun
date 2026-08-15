@@ -3510,7 +3510,9 @@ bool JSC__JSValue__asArrayBuffer(
 // The caller keeps the returned kind and only calls unpin for `Pinned`; a
 // held view is kept alive by the caller's own root, and nothing here needs
 // undoing for it.
-enum class PinKind : uint8_t { None = 0, Pinned = 1, Held = 2 };
+enum class PinKind : uint8_t { None = 0,
+    Pinned = 1,
+    Held = 2 };
 static PinKind pinStorage(JSC::JSValue value)
 {
     JSC::ArrayBuffer* buf = nullptr;

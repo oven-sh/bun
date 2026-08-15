@@ -320,6 +320,53 @@ it("fd_pwrite/fd_pread return EOVERFLOW before touching the file or guest memory
   expect(wasi.wasiImport.fd_close(fd)).toBe(WASI_ESUCCESS);
 });
 
+it("path_open/fd_seek return EOVERFLOW for an out-of-bounds output pointer before opening or seeking", () => {
+  using dir = tempDir("wasi-open-seek-oob", {
+    "exists.txt": "0123456789",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const END = wasi.memory.buffer.byteLength;
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_O_CREAT = 1 << 0;
+  const WASI_WHENCE_SET = 0;
+  const WASI_RIGHT_FD_READ = BigInt(2);
+  const WASI_RIGHT_FD_SEEK = BigInt(4);
+  const WASI_RIGHT_FD_TELL = BigInt(32);
+  const rights = WASI_RIGHT_FD_READ | WASI_RIGHT_FD_SEEK | WASI_RIGHT_FD_TELL;
+  const preopenFd = 3;
+  const pathPtr = 1024;
+  const fdPtr = 2048;
+  const offsetPtr = 4096;
+  const open = (name, oflags, outPtr) => {
+    const len = memory.write(name, pathPtr);
+    return wasi.wasiImport.path_open(preopenFd, 0, pathPtr, len, oflags, rights, BigInt(0), 0, outPtr);
+  };
+  const tell = fd => {
+    expect(wasi.wasiImport.fd_tell(fd, offsetPtr)).toBe(WASI_ESUCCESS);
+    return view.getBigUint64(offsetPtr, true);
+  };
+
+  const fdsBefore = [...wasi.FD_MAP.keys()];
+  expect(open("exists.txt", 0, END + 1000)).toBe(WASI_EOVERFLOW);
+  expect(open("exists.txt", 0, END - 3)).toBe(WASI_EOVERFLOW);
+  expect(open("created.txt", WASI_O_CREAT, END + 1000)).toBe(WASI_EOVERFLOW);
+  expect([...wasi.FD_MAP.keys()]).toEqual(fdsBefore);
+  expect(fs.existsSync(path.join(String(dir), "created.txt"))).toBe(false);
+
+  expect(open("exists.txt", 0, fdPtr)).toBe(WASI_ESUCCESS);
+  const fd = view.getUint32(fdPtr, true);
+  expect(wasi.wasiImport.fd_seek(fd, BigInt(5), WASI_WHENCE_SET, END + 1000)).toBe(WASI_EOVERFLOW);
+  expect(wasi.wasiImport.fd_seek(fd, BigInt(5), WASI_WHENCE_SET, END - 7)).toBe(WASI_EOVERFLOW);
+  expect(tell(fd)).toBe(BigInt(0));
+  expect(wasi.wasiImport.fd_seek(fd, BigInt(5), WASI_WHENCE_SET, END - 8)).toBe(WASI_ESUCCESS);
+  expect(view.getBigUint64(END - 8, true)).toBe(BigInt(5));
+  expect(tell(fd)).toBe(BigInt(5));
+  expect(wasi.wasiImport.fd_close(fd)).toBe(WASI_ESUCCESS);
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

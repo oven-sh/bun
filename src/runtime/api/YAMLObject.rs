@@ -39,21 +39,13 @@ fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
 
     let mut stringifier = Stringifier::init(global, space_value)?;
 
-    if let Err(err) = stringifier.find_anchors_and_aliases(global, value, ValueOrigin::Root) {
-        return match err {
-            StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
-            StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
-        };
-    }
+    stringifier
+        .find_anchors_and_aliases(global, value, ValueOrigin::Root)
+        .map_err(|err| err.to_js_error(global))?;
 
-    if let Err(err) = stringifier.stringify(global, value) {
-        return match err {
-            StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
-            StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
-        };
-    }
+    stringifier
+        .stringify(global, value)
+        .map_err(|err| err.to_js_error(global))?;
 
     stringifier.builder.to_string(global)
 }
@@ -172,6 +164,20 @@ impl From<JsError> for StringifyError {
         match e {
             JsError::OutOfMemory => StringifyError::OutOfMemory,
             JsError::Thrown => StringifyError::JsError,
+        }
+    }
+}
+
+impl StringifyError {
+    /// `OutOfMemory` and `JsError` are already JS-shaped (the host-fn wrapper
+    /// throws the former, the latter's exception is pending); only
+    /// `StackOverflow` still has to be thrown here.
+    #[cold]
+    fn to_js_error(self, global: &JSGlobalObject) -> JsError {
+        match self {
+            StringifyError::OutOfMemory => JsError::OutOfMemory,
+            StringifyError::JsError => JsError::Thrown,
+            StringifyError::StackOverflow => global.throw_stack_overflow(),
         }
     }
 }

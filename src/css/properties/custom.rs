@@ -15,7 +15,7 @@ use crate::printer::Printer;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
-use css_values::color::{ColorFallbackKind, CssColor, RGBA};
+use css_values::color::{ColorFallbackKind, CssColor};
 use css_values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentReference, Ident, IdentFns,
 };
@@ -650,16 +650,11 @@ impl TokenList {
                 }
                 Token::UnrestrictedHash(h) | Token::IdHash(h) => {
                     'brk: {
-                        let Some((r, g, b, a)) = css_parser::color::parse_hash_color(h) else {
+                        let Some(rgba) = css_parser::color::parse_hash_color(h) else {
                             tokens.push(TokenOrValue::Token(Token::UnrestrictedHash(*h)));
                             break 'brk;
                         };
-                        tokens.push(TokenOrValue::Color(CssColor::Rgba(RGBA::from_floats(
-                            r as f32 / 255.0,
-                            g as f32 / 255.0,
-                            b as f32 / 255.0,
-                            a,
-                        ))));
+                        tokens.push(TokenOrValue::Color(CssColor::Rgba(rgba)));
                     }
                     last_is_delim = false;
                     last_is_whitespace = false;

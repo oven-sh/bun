@@ -405,10 +405,10 @@ impl CssColor {
 
         match token {
             css::Token::UnrestrictedHash(v) | css::Token::IdHash(v) => {
-                let Some((r, g, b, a)) = css::color::parse_hash_color(v) else {
+                let Some(rgba) = css::color::parse_hash_color(v) else {
                     return Err(location.new_unexpected_token_error(token));
                 };
-                Ok(CssColor::Rgba(RGBA::new(r, g, b, a)))
+                Ok(CssColor::Rgba(rgba))
             }
             css::Token::Ident(value) => crate::match_ignore_ascii_case! { value, {
                 b"currentcolor" => Ok(CssColor::CurrentColor),

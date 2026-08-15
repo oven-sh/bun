@@ -2366,6 +2366,54 @@ snapshots:
     });
   });
 
+  // The manifests fetched right after a migration only backfill bins and os/cpu, so one the registry does not serve is a warning whichever group the package is in; what fails the install is a required package's own tarball.
+  describe("manifests fetched after the migration", () => {
+    const lockfile = (group: string) => `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    ${group}:
+      no-deps:
+        specifier: 1.0.1
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`;
+
+    test.concurrent.each([
+      ["optionalDependencies", "warn", 0],
+      ["dependencies", "error", 1],
+    ])(
+      "installing when the registry no longer serves the %s entry: the manifest line is a warning, the tarball line says %s",
+      async (group, tarballSeverity, expectedExitCode) => {
+        using registry = Bun.serve({ port: 0, fetch: () => new Response("gone", { status: 404 }) });
+        using dir = tempDir("pnpm-v9-manifest-gone", {
+          "package.json": JSON.stringify({ name: "manifest-gone", [group]: { "no-deps": "1.0.1" } }),
+          "bunfig.toml": `[install]\nregistry = "${registry.url.href}"\n`,
+          "pnpm-lock.yaml": lockfile(group),
+        });
+
+        const { stdout, stderr, exitCode } = await run(String(dir), "install");
+
+        expect(stdout).toStartWith("bun install v");
+        expect(stderr.split("\n").filter(line => line.startsWith("warn:") || line.startsWith("error:"))).toStrictEqual([
+          `warn: GET ${registry.url.origin}/no-deps - 404`,
+          `${tarballSeverity}: GET ${registry.url.origin}/no-deps/-/no-deps-1.0.1.tgz - 404`,
+        ]);
+        expect(existsSync(join(String(dir), "bun.lock"))).toBe(expectedExitCode === 0);
+        expect(exitCode).toBe(expectedExitCode);
+      },
+    );
+  });
+
   describe("git sub-directory dependencies", () => {
     // pnpm/pnpm#8243: `repo#commit&path:sub/dir` has no bun equivalent; refuse instead of installing the repo root
     test.concurrent("type: git resolution with path: is rejected naming the package", async () => {

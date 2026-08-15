@@ -1544,12 +1544,10 @@ macro_rules! declare_scope {
 #[macro_export]
 macro_rules! scoped_log {
     ($scope:path, $fmt:expr $(, $arg:expr)* $(,)?) => {
-        // Gate on `env::ENABLE_LOGS` (the build's `logs` option, passed as
-        // `--cfg=bun_logs` by scripts/build/rust.ts) so builds without it
-        // dead-strip the body. Not `IS_DEBUG`: `release-assertions` and
-        // `--logs=on` carry logs in a non-Debug build, `--logs=off` drops them
-        // from a Debug one. Do NOT gate on a Cargo feature: there is no
-        // `debug_logs` feature and §Forbidden bans silent no-ops.
+        // Gate on `env::ENABLE_LOGS` (the build's `logs` option, which the
+        // `--logs` / `release-assertions` configs set independently of
+        // `IS_DEBUG`) so builds without logs dead-strip the body. Do NOT gate
+        // on a Cargo feature: there is none and §Forbidden bans silent no-ops.
         if $crate::env::ENABLE_LOGS && $scope.is_visible() {
             const __NL: &str = $crate::output::_needs_nl($crate::pretty_fmt!($fmt, false));
             // Branch on ANSI *before* `format_args!` so each `$arg` evaluates
@@ -2594,10 +2592,8 @@ fn init_scoped_debug_writer_at_startup() {
 }
 
 fn scoped_writer() -> QuietWriter {
-    // All callers are already gated on `Environment::ENABLE_LOGS`; this is a
-    // Debug-build self-check (release-asan enables `debug_assertions` with
-    // `ENABLE_LOGS == false`, so keying on `debug_assertions` would turn it
-    // into a guaranteed abort there).
+    // Callers are gated on `ENABLE_LOGS`; this self-check is `bun_debug`, not
+    // `debug_assertions`, which release-asan enables with logs off.
     #[cfg(bun_debug)]
     if !Environment::ENABLE_LOGS {
         unreachable!("scopedWriter() should only be called when logs are enabled");

@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
@@ -2234,6 +2234,61 @@ describe("long store entry names", () => {
       name: "non-ascii",
       version: "1.0.0",
     });
+  });
+
+  test("a local tarball and a folder in a deep directory install when their paths are longer than NAME_MAX", async () => {
+    // Every directory on the way is short; only the resolution, which is the
+    // whole relative path (257 bytes here), would make the entry name longer
+    // than NAME_MAX. Unbounded, the install fails with ENAMETOOLONG.
+    const segment = Buffer.alloc(85, "d").toString();
+    const deep = `${segment}/${segment}/${segment}`;
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${deep}/bar-0.0.2.tgz`]: readFileSync(join(import.meta.dir, "bar-0.0.2.tgz")),
+        [`${deep}/pkg/package.json`]: JSON.stringify({ name: "folder-pkg", version: "1.0.0" }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-deep-local-tarball-and-folder",
+        dependencies: {
+          "bar": `file:./${deep}/bar-0.0.2.tgz`,
+          "folder-pkg": `file:./${deep}/pkg`,
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const tarballEntry = storeEntryName("bar", `.+${deep.replaceAll("/", "+")}+bar-0.0.2.tgz`);
+    const folderEntry = storeEntryName("folder-pkg", `file+${deep.replaceAll("/", "+")}+pkg`);
+    expect(tarballEntry).toMatch(/^bar@\.\+d{61}\+[0-9a-f]{16}$/);
+    expect(folderEntry).toMatch(/^folder-pkg@file\+d{58}\+[0-9a-f]{16}$/);
+    const expectedEntries = [tarballEntry, folderEntry].sort();
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    expect(
+      await Promise.all([
+        readlink(join(packageDir, "node_modules", "bar")),
+        readlink(join(packageDir, "node_modules", "folder-pkg")),
+        // The `.bun/node_modules` fallback directory links to the cut name too.
+        readlink(join(bunDir, "node_modules", "bar")),
+        file(join(packageDir, "node_modules", "bar", "package.json")).json(),
+        file(join(packageDir, "node_modules", "folder-pkg", "package.json")).json(),
+      ]),
+    ).toEqual([
+      join(".bun", tarballEntry, "node_modules", "bar"),
+      join(".bun", folderEntry, "node_modules", "folder-pkg"),
+      join("..", tarballEntry, "node_modules", "bar"),
+      { name: "bar", version: "0.0.2" },
+      { name: "folder-pkg", version: "1.0.0" },
+    ]);
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
   });
 
   test("a tarball URL longer than NAME_MAX installs, also into the global store", async () => {

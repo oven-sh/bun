@@ -487,11 +487,11 @@ mod draft {
     use bun_core::output::enable_ansi_colors_stderr;
 
     /// On POSIX this is `libc::abort()` (async-signal-safe).
-    /// On Windows this is *not* UCRT `abort()` — it is
+    /// On Windows this is *not* UCRT `abort()`; it is
     /// `if (Debug) breakpoint(); kernel32.ExitProcess(3);`. UCRT `abort()` would
     /// raise SIGABRT (which `init` routes back into `crash_handler`, see
     /// `handle_abort_windows`), or without that hook `__fastfail()` and possibly
-    /// pop a Watson/WER dialog — none of which we want here.
+    /// pop a Watson/WER dialog. None of that is wanted here.
     #[inline(always)]
     fn abort() -> ! {
         #[cfg(windows)]

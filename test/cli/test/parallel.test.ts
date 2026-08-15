@@ -294,8 +294,8 @@ test.skipIf(isWindows)(
 );
 
 // Windows delivers no signals: a native fault that bypasses Bun's crash
-// handler (__fastfail — UCRT abort(), Rust aborts in addons, /GS checks)
-// terminates the worker with the raw NTSTATUS as its exit code. The
+// handler (__fastfail: Rust aborts, /GS checks, abort() in an addon's own
+// CRT) terminates the worker with the raw NTSTATUS as its exit code. The
 // coordinator must recognize that as a crash and abort the run like the
 // fatal-signal path above, not narrow 0xC0000409 to "exit code 9" and carry
 // on as if the test had called process.exit(9).

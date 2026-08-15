@@ -200,8 +200,6 @@ pub enum Error {
     LockfileValidationFailedInvalidPackageScripts,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
-    #[error("DependencyLoop")]
-    DependencyLoop,
     #[error("NotSupported")]
     NotSupported,
     #[error("Unexpected")]
@@ -371,7 +369,6 @@ impl Error {
                 "Lockfile validation failed: invalid package scripts"
             }
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
-            Self::DependencyLoop => "DependencyLoop",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
             Self::NotSameFileSystem => "NotSameFileSystem",
@@ -431,7 +428,6 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
         use crate::lockfile_real::tree::SubtreeError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
         }
     }
 }
@@ -452,7 +448,6 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
         use crate::pnpm::MigratePnpmLockfileError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
             _ => Self::InvalidLockfile,
         }
     }

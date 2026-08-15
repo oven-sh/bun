@@ -748,7 +748,7 @@ const config = { ...defaultConfig, ...userConfig };
 
 #### Serving static assets in an HTTP server
 
-Use `static` routes in `Bun.serve()` for efficient static file serving:
+Use static routes in `Bun.serve()` for efficient static file serving:
 
 ```ts server.ts icon="/icons/typescript.svg"
 import favicon from "./favicon.ico" with { type: "file" };
@@ -757,7 +757,7 @@ import styles from "./styles.css" with { type: "file" };
 import { file, serve } from "bun";
 
 serve({
-  static: {
+  routes: {
     "/favicon.ico": file(favicon),
     "/logo.png": file(logo),
     "/styles.css": file(styles),
@@ -875,7 +875,7 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
-You can also embed individual files the old way, by adding them as extra entry points. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
+You can also embed individual files via the `with { type: "file" }` import attribute or by adding them as extra entry points. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
 
 ```ts
 import icon from "./public/assets/icon.png" with { type: "file" };
@@ -921,7 +921,7 @@ Each item in `Bun.embeddedFiles` is a `Blob` with a `name` property:
 embeddedFiles: ReadonlyArray<Blob>;
 ```
 
-Use it to serve every embedded asset through `static` routes:
+Use it to serve every embedded asset through static routes:
 
 ```ts server.ts icon="/icons/typescript.svg"
 import "./public/favicon.ico" with { type: "file" };
@@ -930,15 +930,16 @@ import "./public/styles.css" with { type: "file" };
 import { embeddedFiles, serve } from "bun";
 
 // Build static routes from all embedded files
-const staticRoutes: Record<string, Blob> = {};
+const staticRoutes: Record<string, Response> = {};
 for (const blob of embeddedFiles) {
   // Remove hash from filename: "icon-a1b2c3d4.png" -> "icon.png"
-  const name = blob.name.replace(/-[a-f0-9]+\./, ".");
-  staticRoutes[`/${name}`] = blob;
+  const name = blob.name.replace(/-[a-z0-9]+\./, ".");
+  // embeddedFiles are plain Blobs, which routes does not accept directly
+  staticRoutes[`/${name}`] = new Response(blob);
 }
 
 serve({
-  static: staticRoutes,
+  routes: staticRoutes,
   fetch(req) {
     return new Response("Not found", { status: 404 });
   },
@@ -1080,7 +1081,7 @@ codesign --deep --force -vvvv --sign "XXXXXXXXXX" ./myapp
 
 We recommend including an `entitlements.plist` file with JIT permissions.
 
-```xml icon="xml" title="info.plist"
+```xml icon="xml" title="entitlements.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1238,6 +1239,7 @@ interface CompileBuildOptions {
   outfile?: string; // Output executable path
   assets?: string[]; // Files/directories to embed under import.meta.dir
   execArgv?: string[]; // Runtime arguments (process.execArgv)
+  executablePath?: string; // Bun executable to use instead of downloading one for target
   autoloadTsconfig?: boolean; // Load tsconfig.json (default: false)
   autoloadPackageJson?: boolean; // Load package.json (default: false)
   autoloadDotenv?: boolean; // Load .env files (default: true)
@@ -1282,6 +1284,7 @@ type CompileTarget =
   | "bun-linux-x64-modern"
   | "bun-linux-arm64"
   | "bun-linux-x64-musl"
+  | "bun-linux-x64-baseline-musl"
   | "bun-linux-arm64-musl"
   | "bun-windows-x64"
   | "bun-windows-x64-baseline"

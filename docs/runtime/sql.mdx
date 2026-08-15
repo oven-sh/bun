@@ -1079,13 +1079,13 @@ Queries still use the "extended" protocol, but run as [unnamed prepared statemen
 - Parameter binding is still safe against SQL injection
 - The server parses and plans each query from scratch
 - Queries are not [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
+- Only one command per query is supported (unless you use `sql``.simple()`)
 
 You might want to use `prepare: false` when:
 
 - Using PGBouncer in transaction mode (though since PGBouncer 1.21.0, protocol-level named prepared statements are supported when configured properly)
 - Debugging query execution plans
 - Working with dynamic SQL where query plans need to be regenerated frequently
-- Only one command per query is supported (unless you use `sql``.simple()`)
 
 Disabling prepared statements can slow down queries that run frequently with different parameters, since the server parses and plans each one from scratch.
 
@@ -1238,7 +1238,7 @@ try {
 
 ## Numbers and BigInt
 
-Bun returns numbers that exceed the range of a 53-bit integer as strings:
+Bun returns PostgreSQL `bigint` (`int8`) values, and MySQL `BIGINT` values outside the 32-bit range, as strings:
 
 ```ts
 import { sql } from "bun";
@@ -1271,7 +1271,6 @@ console.log(typeof x, x); // "bigint" 9223372036854777n
 
 Things we haven't finished yet:
 
-- Connection preloading with the `--db-preconnect` Bun CLI flag
 - Column name transforms (for example, `snake_case` to `camelCase`). This is mostly blocked on a unicode-aware implementation of changing the case in C++ using WebKit's `WTF::String`.
 - Column type transforms
 
@@ -1287,7 +1286,7 @@ MySQL supports multiple authentication plugins, which the client negotiates auto
 - **`caching_sha2_password`** - Default in MySQL 8.0+, more secure with RSA key exchange
 - **`sha256_password`** - SHA-256 based authentication
 
-The client automatically handles authentication plugin switching when the server requests it, including secure password exchange over non-SSL connections.
+The client automatically handles authentication plugin switching when the server requests it.
 
 #### Prepared Statements & Performance
 
@@ -1356,7 +1355,7 @@ Bun converts MySQL types to JavaScript types:
 | YEAR                                    | number                   |                                                                                                  |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                  |
 | TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                  |
-| TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | string                   | BLOB types are aliases for the TEXT types                                                        |
+| TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | Buffer                   | Same wire types as TEXT; Bun returns a Buffer when the column uses the binary character set      |
 | JSON                                    | object/array             | Automatically parsed                                                                             |
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
 | GEOMETRY                                | string                   | Geometry data                                                                                    |

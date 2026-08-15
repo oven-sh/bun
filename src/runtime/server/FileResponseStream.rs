@@ -605,7 +605,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| {
         let _guard = bun_ptr::ScopedRef::<Self>::new(this);
-        (*this).on_read_chunk(chunk, state)
+        (*this).on_read_chunk(&chunk, state)
     };
     on_reader_done  = |this| {
         let _guard = bun_ptr::ScopedRef::<Self>::new(this);

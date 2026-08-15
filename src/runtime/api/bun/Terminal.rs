@@ -2045,8 +2045,12 @@ impl BufferedReaderParent for Terminal {
         bun_io::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
-    unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
-        Self::from_parent_ptr(this).on_read_chunk(chunk, has_more)
+    unsafe fn on_read_chunk(
+        this: *mut Self,
+        chunk: bun_io::Chunk<'_>,
+        has_more: ReadState,
+    ) -> bool {
+        Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
     }
     unsafe fn on_reader_done(this: *mut Self) {
         Self::from_parent_ptr(this).on_reader_done();

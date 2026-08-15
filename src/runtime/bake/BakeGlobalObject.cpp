@@ -8,6 +8,9 @@
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSSourceCode.h"
 
+// These (and BakeProdLoad below) return a BunString whose reference the caller
+// owns: consume it with transferToWTFString(), which releases it. toWTFString()
+// takes a second reference and leaks the one we were handed.
 extern "C" BunString BakeProdResolve(JSC::JSGlobalObject*, BunString a, BunString b);
 extern "C" BunString BakeToWindowsPath(BunString a);
 
@@ -45,7 +48,7 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
         BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 
-        return JSC::importModule(global, JSC::Identifier::fromString(vm, result.toWTFString()),
+        return JSC::importModule(global, JSC::Identifier::fromString(vm, result.transferToWTFString()),
             JSC::Identifier(), WTF::move(parameters), nullptr);
     }
 
@@ -71,7 +74,7 @@ JSC::Identifier bakeModuleLoaderResolve(JSC::JSGlobalObject* jsGlobal,
             BunString result = BakeProdResolve(global, Bun::toString(referrer.getString(global)), Bun::toString(keyString));
             RETURN_IF_EXCEPTION(scope, vm.propertyNames->emptyIdentifier);
 
-            return JSC::Identifier::fromString(vm, result.toWTFString(BunString::ZeroCopy));
+            return JSC::Identifier::fromString(vm, result.transferToWTFString());
         }
     }
 
@@ -137,7 +140,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
                     globalObject,
-                    source.toWTFString(),
+                    source.transferToWTFString(),
                     origin,
                     WTF::move(moduleKey),
                     WTF::TextPosition(),
@@ -159,7 +162,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
             // it, because `moduleLoaderFetch(...)` may read the path from disk
             // and so we need to give a Windows path to it.
             auto temp = BakeToWindowsPath(Bun::toString(bakePrefixRemoved));
-            bakePrefixRemoved = temp.toWTFString();
+            bakePrefixRemoved = temp.transferToWTFString();
 #endif
             JSString* bakePrefixRemovedString = jsNontrivialString(vm, bakePrefixRemoved);
             JSValue bakePrefixRemovedJsvalue = bakePrefixRemovedString;

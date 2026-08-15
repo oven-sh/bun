@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -593,5 +593,127 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  // BakeProdResolve and BakeProdLoad (production.rs) return BunStrings that own
+  // a reference to their WTF string. BakeGlobalObject.cpp's module loader hooks
+  // used to read them with toWTFString(), which adds a second reference instead
+  // of taking over that one, so every import edge resolved and every chunk
+  // loaded while prerendering leaked its string. Only LeakSanitizer can see
+  // that, and only with Malloc=1: WTF strings otherwise live in bmalloc, which
+  // LSan does not track.
+  describe.skipIf(!isASAN || isWindows)("module loader releases the strings production.rs hands it", () => {
+    // Both pages statically import one shared chunk and dynamically import
+    // another, so the same "bake:/..." keys are resolved more than once through
+    // bakeModuleLoaderResolve (static imports) and bakeModuleLoaderImportModule
+    // (import()). Only a repeat resolution leaks a string LSan can report: the
+    // first one's string becomes the interned module key, which the atom table
+    // still points at.
+    const app = (aboutPageBody: string) => ({
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "components/Shared.tsx": `export function Shared({ page }: { page: string }) {
+  return <p>{"shared from " + page}</p>;
+}`,
+      "components/lazy.ts": `export const lazy = "lazy";`,
+      "pages/index.tsx": `import { Shared } from "../components/Shared";
+
+export default async function IndexPage() {
+  const { lazy } = await import("../components/lazy");
+  return <div>{"index " + lazy}<Shared page="index" /></div>;
+}`,
+      "pages/about.tsx": `import { Shared } from "../components/Shared";
+
+export default async function AboutPage() {
+  const { lazy } = await import("../components/lazy");
+  ${aboutPageBody}
+}`,
+    });
+
+    async function buildUnderLeakSanitizer(dir: string, env: Record<string, string> = {}): Promise<string> {
+      const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env({
+          ...bunEnv,
+          ...env,
+          Malloc: "1",
+          ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1",
+          // With Malloc=1 about 20 bmalloc frames sit between malloc and the
+          // production.rs function that allocated the string; keep it in view.
+          LSAN_OPTIONS: "malloc_context_size=40",
+        })
+        .quiet()
+        .throws(false);
+      return stderr.toString();
+    }
+
+    // LSan prints one record per allocation site: "Direct leak of N byte(s) in
+    // M object(s) allocated from:" followed by "#k 0x... in <function> <file>"
+    // frames. `bun build --app` still leaks unrelated process-lifetime bundler
+    // state, so neither the report as a whole nor the exit code LSan forces
+    // means anything here; only the records allocated inside the two
+    // production.rs functions do. Each is reduced to its Bake frames so a
+    // failure reads as a stack.
+    const allocatedByProductionRs = /\bBakeProd(?:Resolve|Load)\b/;
+    function leakedBakeStrings(stderr: string): string[] {
+      return stderr
+        .split(/^(?=(?:Direct|Indirect) leak of )/m)
+        .filter(record => allocatedByProductionRs.test(record))
+        .map(record => {
+          const [header, ...frames] = record.split("\n");
+          const bakeFrames = frames
+            .filter(frame => allocatedByProductionRs.test(frame) || frame.includes("BakeGlobalObject.cpp"))
+            .map(frame =>
+              frame
+                .trim()
+                .replace(/^#\d+ 0x[0-9a-f]+ in /, "")
+                .replace(/\(.*\) /, "() "),
+            );
+          return [header, ...bakeFrames].join("\n");
+        });
+    }
+
+    test.concurrent(
+      "module keys resolved for static imports and import()",
+      async () => {
+        const dir = await tempDirWithBakeDeps(
+          "bake-production-resolve-leak",
+          app(`return <div>{"about " + lazy}<Shared page="about" /></div>;`),
+        );
+
+        const stderr = await buildUnderLeakSanitizer(dir);
+
+        // Both pages rendered, so every import above was resolved and loaded.
+        const indexHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
+        const aboutHtml = await Bun.file(path.join(dir, "dist", "about", "index.html")).text();
+        expect(indexHtml).toContain("<div>index lazy<p>shared from index</p></div>");
+        expect(aboutHtml).toContain("<div>about lazy<p>shared from about</p></div>");
+        expect(leakedBakeStrings(stderr)).toEqual([]);
+      },
+      // LSan symbolizes every record through llvm-symbolizer, which is slow
+      // against the debug binary.
+      60_000,
+    );
+
+    // The module registry keeps its own reference to each chunk source for as
+    // long as the VM lives, and a successful build exits without tearing its
+    // VM down, which hides the BakeProdLoad leak. A failing build exits through
+    // the VM's exit path, so under BUN_DESTRUCT_VM_ON_EXIT the registry lets go
+    // and only the leaked reference is left holding each source.
+    test.concurrent(
+      "chunk sources loaded for the modules, once a failed build tears the VM down",
+      async () => {
+        const dir = await tempDirWithBakeDeps(
+          "bake-production-load-leak",
+          app(`throw new Error("about page failed to render");`),
+        );
+
+        const stderr = await buildUnderLeakSanitizer(dir, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+
+        // The build got as far as loading and running the page modules.
+        expect(stderr).toContain("about page failed to render");
+        expect(leakedBakeStrings(stderr)).toEqual([]);
+      },
+      60_000,
+    );
   });
 });

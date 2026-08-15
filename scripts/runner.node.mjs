@@ -62,6 +62,7 @@ import {
   isMacOS,
   isWindows,
   isX64,
+  killOnExit,
   markBuildkiteStepReported,
   printEnvironment,
   reportAnnotationToBuildKite,
@@ -559,7 +560,7 @@ async function runTests() {
       env: { ...process.env, BUN_DOCKER_COORDINATOR_SOCKET: coordinatorSocket },
     });
     coordinator.on("error", err => console.warn("docker coordinator spawn failed:", err.message));
-    process.once("exit", () => coordinator.kill());
+    killOnExit(coordinator);
 
     // Don't point tests at the socket until it's actually listening; if the
     // coordinator never gets there, tests use the direct-compose fallback.
@@ -794,7 +795,6 @@ async function runTests() {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
       console.log("run in", cwd);
-      let exiting = false;
 
       const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {
         stdio: ["ignore", "pipe", "inherit"],
@@ -802,17 +802,15 @@ async function runTests() {
         env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: "1" },
       });
       server.unref();
+      // kill()'s SIGTERM is deliberate: on Linux `bun run` stays alive as the
+      // parent of the ci-remap-server script and forwards SIGTERM to it, while
+      // SIGKILL would stop at the wrapper and leave the script, which holds our
+      // inherited stderr open, running.
+      killOnExit(server);
       server.on("error", errorResolve);
       server.on("exit", (code, signal) => {
-        if (!exiting && (code !== 0 || signal !== null)) errorResolve(signal ? signal : "code " + code);
+        if (code !== 0 || signal !== null) errorResolve(signal ? signal : "code " + code);
       });
-      function onBeforeExit() {
-        exiting = true;
-        server.off("error");
-        server.off("exit");
-        server.kill?.();
-      }
-      process.once("beforeExit", onBeforeExit);
       const lines = createInterface(server.stdout);
       lines.on("line", line => {
         portResolve({ port: parseInt(line) });
@@ -820,7 +818,6 @@ async function runTests() {
 
       const result = await Promise.race([portPromise, errorPromise.catch(e => e), setTimeoutPromise(5000, "timeout")]);
       if (typeof result?.port != "number") {
-        process.off("beforeExit", onBeforeExit);
         server.kill?.();
         console.warn("ci-remap server did not start:", result);
       } else {

@@ -441,6 +441,17 @@ export function spawnSyncSafe(command, options = {}) {
 }
 
 /**
+ * Kills `child` when this process exits. The hook is "exit", which fires for
+ * process.exit() (how the runner leaves on every path, its signal handlers
+ * included) and for an uncaught exception; "beforeExit" fires for neither, so
+ * a helper process hooked on it outlives the runner.
+ * @param {import("node:child_process").ChildProcess} child
+ */
+export function killOnExit(child) {
+  process.once("exit", () => child.kill());
+}
+
+/**
  * @param {number} exitCode
  * @returns {string | undefined}
  */

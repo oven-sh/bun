@@ -46,8 +46,8 @@ describe("bun exec", () => {
     // prettier-ignore
     const programs = [
       // ["cat",    1, "", ""],
-      ["touch",  1, "touch: illegal option -- help\n", ""],
-      ["mkdir",  1, "mkdir: illegal option -- help\n", ""],
+      ["touch",  1, "touch: illegal option -- -\n", ""],
+      ["mkdir",  1, "mkdir: illegal option -- -\n", ""],
       // ["cd",     1, "cd: no such file or directory: --help\n", ""],
       ["echo",   0, "", "--help\n"],
       ["pwd",    1, "pwd: too many arguments\n", ""],
@@ -68,6 +68,33 @@ describe("bun exec", () => {
         .stderr(stderr)
         .stdout(stdout)
         .runAsTest(item);
+    }
+  });
+
+  // Like getopt(3), the message names the one byte that was rejected, wherever
+  // it sits in a cluster of short flags. An unknown --long option is rejected
+  // at its second `-`, so it is reported as `-` (what BSD getopt prints too).
+  describe("illegal option names the rejected flag", () => {
+    // prettier-ignore
+    const programs: [program: string, cases: [args: string, rejected: string][]][] = [
+      ["cat",   [["-z", "z"], ["-zb", "z"],                 ["--bogus", "-"]]],
+      ["touch", [["-z", "z"], ["-za", "z"],                 ["--bogus", "-"]]],
+      ["mkdir", [["-z", "z"], ["-pz", "z"], ["-zp", "z"],   ["--bogus", "-"]]],
+      ["cp",    [["-z", "z"], ["-zR", "z"],                 ["--bogus", "-"]]],
+      ["ls",    [["-z", "z"], ["-az", "z"], ["-za", "z"],   ["--bogus", "-"]]],
+      ["rm",    [["-z", "z"], ["-rz", "z"], ["-zr", "z"],   ["--bogus", "-"]]],
+      ["mv",    [["-z", "z"], ["-fz", "z"], ["-zf", "z"],   ["--bogus", "-"]]],
+    ];
+    for (const [program, cases] of programs) {
+      const script = cases.map(([args]) => `${program} ${args}`).join("; ");
+      const stderr = cases.map(([, rejected]) => `${program}: illegal option -- ${rejected}\n`).join("");
+      TestBuilder.command`${BUN} exec ${script}`
+        // cat and cp are builtins only on Windows unless this flag is set.
+        .env({ ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" })
+        .exitCode(1)
+        .stderr(stderr)
+        .stdout("")
+        .runAsTest(program);
     }
   });
 

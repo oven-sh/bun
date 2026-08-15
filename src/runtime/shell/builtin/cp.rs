@@ -809,7 +809,7 @@ impl FlagParser for Opts {
                 Some(ParseFlagResult::ContinueParsing)
             }
             b'n' => Some(ParseFlagResult::ContinueParsing),
-            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
+            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..=i])),
         }
     }
 }

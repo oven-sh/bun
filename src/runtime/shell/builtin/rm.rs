@@ -92,8 +92,10 @@ pub enum PromptBehaviour {
 enum RmParseFlag {
     ContinueParsing,
     Done,
+    /// Unknown `--long` option.
     IllegalOption,
-    IllegalOptionWithFlag,
+    /// Unknown short option: the rejected byte.
+    IllegalOptionWithFlag(u8),
 }
 
 impl Rm {
@@ -248,7 +250,7 @@ impl Rm {
                                 b"rm: illegal option -- -\n",
                             );
                         }
-                        RmParseFlag::IllegalOptionWithFlag => {
+                        RmParseFlag::IllegalOptionWithFlag(ch) => {
                             if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
                                 Self::state_mut(interp, cmd).state = RmState::ParseOpts {
                                     idx,
@@ -258,10 +260,7 @@ impl Rm {
                                 return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
                                     child,
                                     Some(Kind::Rm),
-                                    format_args!(
-                                        "illegal option -- {}\n",
-                                        bstr::BStr::new(&arg[1..])
-                                    ),
+                                    format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
                                     safeguard,
                                 );
                             }
@@ -269,7 +268,7 @@ impl Rm {
                                 interp,
                                 cmd,
                                 Some(Kind::Rm),
-                                format_args!("illegal option -- {}\n", bstr::BStr::new(&arg[1..])),
+                                format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
                             )
                             .to_vec();
                             let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
@@ -532,7 +531,7 @@ impl Rm {
                 b'd' => opts.remove_empty_dirs = true,
                 b'i' => opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 },
                 b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
-                _ => return RmParseFlag::IllegalOptionWithFlag,
+                _ => return RmParseFlag::IllegalOptionWithFlag(ch),
             }
         }
         RmParseFlag::ContinueParsing

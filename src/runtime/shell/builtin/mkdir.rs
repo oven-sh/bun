@@ -454,9 +454,7 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 None
             }
-            _ => Some(ParseFlagResult::IllegalOption(
-                &raw const smallflags[1 + i..],
-            )),
+            _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..=i])),
         }
     }
 }

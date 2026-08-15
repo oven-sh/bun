@@ -2348,6 +2348,11 @@ pub trait FlagParser {
     /// Handle a `--long` flag. Return `None` to fall through to short parsing.
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult>;
     /// Handle one byte of a `-abc` cluster. Return `None` to keep iterating.
+    ///
+    /// `smallflags` is the argument minus its leading `-` and `ch == smallflags[i]`.
+    /// An unknown byte is reported as `IllegalOption(&raw const smallflags[i..=i])`:
+    /// the message names that one byte, as getopt(3) does, and the slice borrows
+    /// argv, which outlives the error (see [`ParseError::opt`]).
     fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult>;
 }
 

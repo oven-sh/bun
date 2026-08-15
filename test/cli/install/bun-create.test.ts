@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, mergeWindowEnvs, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
@@ -535,11 +535,15 @@ async function createFromTemplate(
   await using proc = spawn({
     cmd: [bunExe(), "create", "tmpl", dest, "--no-git"],
     cwd: String(root),
-    env: {
-      ...env,
-      PATH: `${join(String(root), "bin")}${delimiter}${env.PATH ?? process.env.PATH ?? ""}`,
-      BUN_CREATE_DIR: join(String(root), "bun-create"),
-    },
+    // Windows spells the inherited variable `Path`; merging keeps a single
+    // PATH entry instead of handing the child both spellings.
+    env: mergeWindowEnvs([
+      env,
+      {
+        PATH: `${join(String(root), "bin")}${delimiter}${process.env.PATH ?? ""}`,
+        BUN_CREATE_DIR: join(String(root), "bun-create"),
+      },
+    ]),
     stdout: "pipe",
     stderr: "pipe",
   });

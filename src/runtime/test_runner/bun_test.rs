@@ -52,11 +52,38 @@ fn strong_create(value: JSValue) -> Strong {
     Strong::create(value, global)
 }
 
+/// A callback handed to `test()`, `describe()` or a hook runs later, from the
+/// runner, and like any other deferred callback it keeps the async context
+/// (AsyncLocalStorage) it was registered under. Applied where the callback is
+/// stored rather than when the arguments are parsed: registration still needs
+/// the function itself (its `length` decides whether it takes `done`, `.each`
+/// binds arguments to it), and the wrapper is not a function.
+pub(crate) fn keep_registration_async_context(callback: JSValue) -> JSValue {
+    // Same per-thread global as `strong_create`: `ExecutionEntry::create` has none in scope.
+    callback.with_async_context_if_needed(VirtualMachine::get().global())
+}
+
 pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     let runner = Jest::runner()?;
     runner.bun_test_root.clone_active_file()
 }
 
+/// Where an `expect()`-family call made by the JS running right now belongs:
+/// the entry the runner is executing, unless the caller is the remainder of an
+/// invocation the runner already abandoned (see AsyncContextRef.rs), in which
+/// case it is that invocation, so that what it does late is rejected instead
+/// of being charged to the entry that is running now. `None` outside `bun test`.
+/// Returns an owned `+1`.
+pub(crate) fn caller_ref(global: &JSGlobalObject) -> Option<RefDataPtr> {
+    if let Some(abandoned) = AsyncContextRef::abandoned_caller(global) {
+        return Some(abandoned);
+    }
+    let buntest_strong = clone_active_strong()?;
+    let state = buntest_strong.get().get_current_state_data();
+    Some(BunTest::ref_(&buntest_strong, state))
+}
+
+pub use super::async_context_ref::AsyncContextRef;
 pub use super::done_callback::DoneCallback;
 
 pub mod js_fns {
@@ -736,6 +763,7 @@ impl BunTest {
         bun_ptr::IntrusiveRc::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
+            abandoned: core::cell::Cell::new(false),
             ref_count: bun_ptr::RefCount::init(),
         })
     }
@@ -1511,6 +1539,11 @@ impl fmt::Display for RefDataValue {
 pub struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
+    /// Set when `phase` is an invocation the runner moved on from while its
+    /// callback was still running (timed out, or failed by an unhandled error
+    /// while awaiting). Only ever set on the `RefData` an `AsyncContextRef`
+    /// carries; read by [`caller_ref`].
+    pub(crate) abandoned: core::cell::Cell<bool>,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
 // `*RefData` crosses FFI (`as_promise_ptr`), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
@@ -1943,9 +1976,9 @@ impl ExecutionEntry {
                 ScopeMode::Skip => None,
                 ScopeMode::Todo => {
                     let run_todo = Jest::runner().is_some_and(|runner| runner.run_todo);
-                    if run_todo { Some(strong_create(c)) } else { None }
+                    if run_todo { Some(strong_create(keep_registration_async_context(c))) } else { None }
                 }
-                _ => Some(strong_create(c)),
+                _ => Some(strong_create(keep_registration_async_context(c))),
             };
         }
         entry

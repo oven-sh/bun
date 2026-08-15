@@ -188,7 +188,10 @@ impl Expect {
         let Some(parent) = self.parent.as_ref() else { return }; // not in bun:test
         let Some(buntest_strong) = parent.bun_test() else { return }; // the test file this expect() call was for is no longer
         let buntest = buntest_strong.get();
-        if let Some(sequence) = parent.phase.sequence(buntest) {
+        // An abandoned invocation's sequence has already been reported (and may be
+        // running a retry by now); its late expect() calls only count towards the total.
+        let sequence = if parent.abandoned.get() { None } else { parent.phase.sequence(buntest) };
+        if let Some(sequence) = sequence {
             // found active sequence
             sequence.expect_call_count = sequence.expect_call_count.saturating_add(1);
         } else {
@@ -621,12 +624,26 @@ impl Expect {
 
     pub(crate) fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
+        if parent.abandoned.get() {
+            // The runner gave up on the test this expect() belongs to (see
+            // AsyncContextRef.rs); whatever entry is running now is not it.
+            return Err(crate::Error::TestNotActive);
+        }
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
-        let execution_entry = parent
-            .phase
-            .entry(buntest)
-            .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
+        let execution_entry = match &parent.phase {
+            // `entry()` is None once the runner has advanced past the entry that was
+            // running when this expect() was created.
+            bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => {
+                parent.phase.entry(buntest).ok_or(crate::Error::TestNotActive)?
+            }
+            bun_test::RefDataValue::Execution { entry_data: None, .. } => {
+                return Err(crate::Error::SnapshotInConcurrentGroup);
+            }
+            bun_test::RefDataValue::Start
+            | bun_test::RefDataValue::Collection { .. }
+            | bun_test::RefDataValue::Done => return Err(crate::Error::NoTest),
+        };
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
@@ -707,22 +724,13 @@ impl Expect {
             }
         }
 
-        let active_execution_entry_ref = if let Some(buntest_strong_) = bun_test::clone_active_strong() {
-            let buntest_strong = buntest_strong_;
-            let state = buntest_strong.get().get_current_state_data();
-            Some(bun_test::BunTest::ref_(&buntest_strong, state))
-        } else {
-            None
-        };
-        // The ref
-        // moves into `Expect` below and `to_js()` is infallible, so there is no
-        // error path between ref creation and the wrapper taking ownership; from
-        // then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
-
+        // The ref moves into `Expect` below and `to_js()` is infallible, so there
+        // is no error path between ref creation and the wrapper taking ownership;
+        // from then on `Expect::finalize` derefs `parent` (RefDataPtr has no Drop).
         let expect = Expect {
             flags: Cell::new(Flags::default()),
             custom_label,
-            parent: active_execution_entry_ref,
+            parent: bun_test::caller_ref(global_this),
         };
         // `JsClass::to_js` boxes `self` and hands the pointer to `${T}__create`.
         let expect_js_value = expect.to_js(global_this);
@@ -1212,6 +1220,20 @@ impl Expect {
         let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
+                // Attribution errors first: the test file this expect() belongs to
+                // may already be gone.
+                match err {
+                    crate::Error::SnapshotInConcurrentGroup => {
+                        return Err(global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests")));
+                    }
+                    crate::Error::TestNotActive => {
+                        return Err(global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing")));
+                    }
+                    crate::Error::NoTest => {
+                        return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
+                    }
+                    _ => {}
+                }
                 let Some(buntest_strong) = this.bun_test() else {
                     return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
                 };
@@ -1246,12 +1268,6 @@ impl Expect {
                                 bstr::BStr::new(&pretty_value),
                             ))
                         }
-                    }
-                    crate::Error::SnapshotInConcurrentGroup => {
-                        global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests"))
-                    }
-                    crate::Error::TestNotActive => {
-                        global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);
@@ -1660,18 +1676,32 @@ impl Expect {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        Self::with_caller_sequence(global_this, |sequence| {
+            if !matches!(sequence.expect_assertions, ExpectAssertions::Exact(_)) {
+                sequence.expect_assertions = ExpectAssertions::AtLeastOne;
+            }
+        })
+    }
+
+    /// Runs `f` on the sequence that `expect.assertions()` / `expect.hasAssertions()`,
+    /// called by the JS running right now, applies to.
+    fn with_caller_sequence(
+        global_this: &JSGlobalObject,
+        f: impl FnOnce(&mut super::execution::ExecutionSequence),
+    ) -> JsResult<JSValue> {
+        let Some(caller) = bun_test::caller_ref(global_this) else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
         };
-        let buntest = buntest_strong.get();
-        let state_data = buntest.get_current_state_data();
-        let Some(execution) = state_data.sequence(buntest) else {
+        // `RefPtr` has no Drop; release the `+1` from `caller_ref` on every exit path.
+        let caller = scopeguard::guard(caller, |caller| caller.deref());
+        let buntest_strong = if caller.abandoned.get() { None } else { caller.bun_test() };
+        let sequence = buntest_strong
+            .as_ref()
+            .and_then(|buntest_strong| caller.phase.sequence(buntest_strong.get()));
+        let Some(sequence) = sequence else {
             return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         };
-        if !matches!(execution.expect_assertions, ExpectAssertions::Exact(_)) {
-            execution.expect_assertions = ExpectAssertions::AtLeastOne;
-        }
-
+        f(sequence);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -1712,17 +1742,9 @@ impl Expect {
 
         let unsigned_expected_assertions: u32 = expected_assertions as u32;
 
-        let Some(buntest_strong) = bun_test::clone_active_strong() else {
-            return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
-        };
-        let buntest = buntest_strong.get();
-        let state_data = buntest.get_current_state_data();
-        let Some(execution) = state_data.sequence(buntest) else {
-            return Err(global_this.throw(format_args!("expect.assertions() is not supported in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
-        };
-        execution.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
-
-        Ok(JSValue::UNDEFINED)
+        Self::with_caller_sequence(global_this, |sequence| {
+            sequence.expect_assertions = ExpectAssertions::Exact(unsigned_expected_assertions);
+        })
     }
 
 

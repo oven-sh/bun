@@ -141,7 +141,7 @@ impl Collection {
             // `self.active_scope` in `step()` and mutated through).
             self.current_scope_callback_queue.push(QueuedDescribe {
                 active_scope: self.active_scope,
-                callback: DeprecatedStrong::init(cb),
+                callback: DeprecatedStrong::init(bun_test::keep_registration_async_context(cb)),
                 new_scope: NonNull::from(new_scope),
             });
         }

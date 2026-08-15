@@ -120,19 +120,21 @@ impl Snapshots {
     pub(crate) fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
-        // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
-        // owned `snapshot_name` (same bytes as the interned key) instead.
+        let count = self.increment_count(&snapshot_name)?;
+        Ok((snapshot_name, count))
+    }
+
+    fn increment_count(&mut self, snapshot_name: &[u8]) -> Result<usize, Error> {
         let gop = self
             .counts
-            .get_or_put(&snapshot_name)
+            .get_or_put(snapshot_name)
             .map_err(Error::from)?;
         if gop.found_existing {
             *gop.value_ptr += 1;
         } else {
             *gop.value_ptr = 1;
         }
-        let count = *gop.value_ptr;
-        Ok((snapshot_name, count))
+        Ok(*gop.value_ptr)
     }
 
     pub(crate) fn get_or_put(
@@ -141,9 +143,16 @@ impl Snapshots {
         target_value: &[u8],
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
+        self.total += 1;
+        // Resolve the name before touching the file system: an expect() that no
+        // longer belongs to a running test must not create the snapshot directory
+        // or file. The count is taken after `get_snapshot_file`, which resets the
+        // counts when it switches to this test file's snapshot file.
+        let name = expect.get_snapshot_name(hint)?;
+
         let buntest_strong = expect
             .bun_test()
-            .ok_or(crate::Error::SnapshotFailed)?;
+            .ok_or(crate::Error::TestNotActive)?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
@@ -160,7 +169,7 @@ impl Snapshots {
             }
         }
 
-        let (name, counter) = self.add_count(expect, hint)?;
+        let counter = self.increment_count(&name)?;
 
         let mut counter_string_buf = [0u8; 32];
         let counter_string = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);

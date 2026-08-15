@@ -664,10 +664,12 @@ pub(crate) fn parse_arguments(
     };
     let (description, callback, options) = (items.description, items.callback, items.options);
 
+    // The function itself; it picks up the async context it was registered under
+    // when it is stored (`bun_test::keep_registration_async_context`).
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
+        Some(callback)
     } else {
         let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));

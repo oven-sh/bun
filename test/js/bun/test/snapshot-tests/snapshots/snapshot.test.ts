@@ -1,7 +1,8 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -957,4 +958,198 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
+});
+
+// When the runner gives up on a test or hook that is still running (it timed out, or an unhandled
+// error failed it while it was awaiting), its body keeps running while the next test executes. The
+// snapshot matchers it calls from then on must be rejected, not written under the next test's name.
+describe("snapshot matchers called after the runner gave up on the test", () => {
+  const rejected = "Snapshot matchers are not supported after the test has finished executing";
+  const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+
+  // `report` logs whether each late matcher wrote or threw, so stdout tells the two apart.
+  const prelude = /* ts */ `
+    import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+    function report(label: string, matcher: () => void) {
+      try {
+        matcher();
+        console.log(label + ": wrote a snapshot");
+      } catch (error) {
+        console.log(label + ": " + (error as Error).message);
+      }
+    }
+  `;
+
+  async function runTestFile(source: string) {
+    using dir = tempDir("snapshot-after-runner-moved-on", { "late.test.ts": prelude + source });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "late.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const snapPath = join(String(dir), "__snapshots__", "late.test.ts.snap");
+    const snap = existsSync(snapPath) ? readFileSync(snapPath, "utf8") : null;
+    // stdout starts with the "bun test vX.Y.Z (sha)" banner; the rest is what the test file logged.
+    return { stdout: stdout.replace(/^bun test v.*\n/, ""), stderr, exitCode, snap };
+  }
+
+  test.concurrent("a test that timed out", async () => {
+    // Same body for both cases, as with test.each. The first case only continues once the second
+    // one has started, so it has always timed out by then; the second case then waits for the
+    // first one's late matchers before taking its own snapshots.
+    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+      const secondStarted = Promise.withResolvers<void>();
+      const firstDone = Promise.withResolvers<void>();
+      async function migrate(name: string) {
+        if (name === "first") {
+          await secondStarted.promise;
+          report("late with hint", () => expect("lockfile of " + name).toMatchSnapshot(name));
+          report("late without hint", () => expect("lockfile of " + name).toMatchSnapshot());
+          report("late toThrowErrorMatchingSnapshot", () =>
+            expect(() => {
+              throw new Error(name);
+            }).toThrowErrorMatchingSnapshot(),
+          );
+          firstDone.resolve();
+          return;
+        }
+        secondStarted.resolve();
+        await firstDone.promise;
+        expect("lockfile of " + name).toMatchSnapshot(name);
+        expect("lockfile of " + name).toMatchSnapshot();
+      }
+      describe("migrate", () => {
+        test("first", () => migrate("first"), 1);
+        test("second", () => migrate("second"));
+      });
+    `);
+
+    expect(stdout).toBe(
+      [
+        `late with hint: ${rejected}`,
+        `late without hint: ${rejected}`,
+        `late toThrowErrorMatchingSnapshot: ${rejected}`,
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toContain("this test timed out after 1ms");
+    expect(stderr).toContain("(pass) migrate > second");
+    // Nothing of the first case's under the second case's name, and the second case's own
+    // unhinted snapshot is still number 1.
+    expect(snap).toBe(
+      header +
+        '\nexports[`migrate second: second 1`] = `"lockfile of second"`;\n' +
+        '\nexports[`migrate second 1`] = `"lockfile of second"`;\n',
+    );
+  });
+
+  test.concurrent("a hook that timed out", async () => {
+    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+      const secondStarted = Promise.withResolvers<void>();
+      const hookDone = Promise.withResolvers<void>();
+      let hookRuns = 0;
+      beforeEach(async () => {
+        if (hookRuns++ > 0) return;
+        await secondStarted.promise;
+        report("late from the hook", () => expect("from the hook").toMatchSnapshot("hook"));
+        hookDone.resolve();
+      }, 1);
+      test("first", () => {});
+      test("second", async () => {
+        secondStarted.resolve();
+        await hookDone.promise;
+        expect("from second").toMatchSnapshot();
+      });
+    `);
+
+    expect(stdout).toBe(`late from the hook: ${rejected}\n`);
+    expect(stderr).toContain("(pass) second");
+    expect(snap).toBe(header + '\nexports[`second 1`] = `"from second"`;\n');
+  });
+
+  test.concurrent("a test failed by an unhandled error while it was awaiting", async () => {
+    // The only snapshot matcher in the file is the late one, so nothing at all should be written:
+    // not even an empty snapshot file.
+    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+      const secondStarted = Promise.withResolvers<void>();
+      const firstDone = Promise.withResolvers<void>();
+      test("first", async () => {
+        Promise.reject(new Error("failure in the background"));
+        await secondStarted.promise;
+        report("late after the rejection", () => expect("from first").toMatchSnapshot());
+        firstDone.resolve();
+      });
+      test("second", async () => {
+        secondStarted.resolve();
+        await firstDone.promise;
+      });
+    `);
+
+    expect(stdout).toBe(`late after the rejection: ${rejected}\n`);
+    expect(stderr).toContain("failure in the background");
+    expect(stderr).toContain("(pass) second");
+    expect(snap).toBeNull();
+  });
+
+  test.concurrent("an attempt that the runner gave up on, while its retry runs", async () => {
+    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+      const retryStarted = Promise.withResolvers<void>();
+      const firstAttemptDone = Promise.withResolvers<void>();
+      let attempts = 0;
+      test(
+        "retried",
+        async () => {
+          if (attempts++ === 0) {
+            Promise.reject(new Error("first attempt fails in the background"));
+            await retryStarted.promise;
+            report("late from the first attempt", () => expect("from attempt 1").toMatchSnapshot());
+            firstAttemptDone.resolve();
+            return;
+          }
+          retryStarted.resolve();
+          await firstAttemptDone.promise;
+          expect("from attempt 2").toMatchSnapshot();
+        },
+        { retry: 1 },
+      );
+    `);
+
+    expect(stdout).toBe(`late from the first attempt: ${rejected}\n`);
+    expect(stderr).toContain("(pass) retried");
+    // The passing attempt owns "retried 1"; a later run must compare against its value.
+    expect(snap).toBe(header + '\nexports[`retried 1`] = `"from attempt 2"`;\n');
+  });
+
+  test.concurrent("callbacks registered by a finished hook still snapshot under the running test", async () => {
+    // The server's fetch handler was registered by beforeAll, which finished normally, so its
+    // snapshots belong to whichever test is making the request, as before.
+    const { stderr, snap, exitCode } = await runTestFile(/* ts */ `
+      let server: ReturnType<typeof Bun.serve>;
+      beforeAll(() => {
+        server = Bun.serve({
+          port: 0,
+          fetch(request) {
+            expect(new URL(request.url).pathname).toMatchSnapshot("requested path");
+            return new Response("ok");
+          },
+        });
+      });
+      test("one", async () => {
+        expect(await (await fetch(server.url + "one")).text()).toBe("ok");
+      });
+      test("two", async () => {
+        expect(await (await fetch(server.url + "two")).text()).toBe("ok");
+        server.stop(true);
+      });
+    `);
+
+    expect(stderr).toContain(" 2 pass\n");
+    expect(snap).toBe(
+      header + '\nexports[`one: requested path 1`] = `"/one"`;\n' + '\nexports[`two: requested path 1`] = `"/two"`;\n',
+    );
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1,4 +1,5 @@
-import { describe, expect, it } from "bun:test";
+import { beforeEach, describe, expect, it } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const NUMBERS = [
   [1, 1, 2],
@@ -56,4 +57,36 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
+});
+
+// Callbacks registered while an AsyncLocalStorage store is active run with that store. Registration
+// must still look at the function itself: its length decides whether it takes `done`, and `.each`
+// binds the row to it.
+describe("registered inside an AsyncLocalStorage context", () => {
+  const storage = new AsyncLocalStorage<string>();
+  storage.run("registration", () => {
+    beforeEach(() => {
+      expect(storage.getStore()).toBe("registration");
+    });
+    it("a test without a done parameter is not waited on", () => {
+      expect(storage.getStore()).toBe("registration");
+    });
+    it("a test with a done parameter still gets one", done => {
+      expect(storage.getStore()).toBe("registration");
+      done();
+    });
+    it.each(NUMBERS)("it.each: %i + %i = %i", (a, b, e) => {
+      expect(a + b).toBe(e);
+      expect(storage.getStore()).toBe("registration");
+    });
+    it.each([[1, 1, 2]])("it.each with a done parameter: %i + %i = %i", (a, b, e, done) => {
+      expect(a + b).toBe(e);
+      (done as unknown as () => void)();
+    });
+    describe.each(["nested"])("describe.each: %s", s => {
+      it(`keeps the store in ${s} describes`, () => {
+        expect(storage.getStore()).toBe("registration");
+      });
+    });
+  });
 });

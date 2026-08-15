@@ -22,6 +22,11 @@
 // each key is an AsyncLocalStorage object and the value is the associated value. There are a ton of
 // calls to $assert which will verify this invariant (only during bun-debug)
 //
+// The one other key that can appear is bun:test's AsyncContextRef (src/runtime/test_runner/AsyncContextRef.rs),
+// which the test runner adds while a test or hook callback runs; it is stored as both key and value and
+// is only ever looked up from native code, so everything in here just carries it along like any other
+// pair it does not own.
+//
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
@@ -49,7 +54,7 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   $assert(array.length > 0, "AsyncContextData should be undefined if empty, got", Bun.inspect(array, { depth: 1 }));
   for (var i = 0; i < array.length; i += 2) {
     $assert(
-      array[i] instanceof AsyncLocalStorage,
+      array[i] instanceof AsyncLocalStorage || isBunTestAsyncContextRef(array[i]),
       `Odd indexes in AsyncContextData should be an array of AsyncLocalStorage\nIndex %s was %s`,
       i,
       array[i],
@@ -58,12 +63,17 @@ function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<an
   return true;
 }
 
+// Only run during debug. The generated prototype's toStringTag is the class name.
+function isBunTestAsyncContextRef(key: any) {
+  return typeof key === "object" && key !== null && key[Symbol.toStringTag] === "AsyncContextRef";
+}
+
 // Only run during debug
 function debugFormatContextValue(value: ReadonlyArray<any> | undefined) {
   if (value === undefined) return "undefined";
   let str = "{\n";
   for (var i = 0; i < value.length; i += 2) {
-    str += `  ${value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
+    str += `  ${isBunTestAsyncContextRef(value[i]) ? "bun:test" : value[i].__id__}: typeof = ${typeof value[i + 1]}\n`;
   }
   str += "}";
   return str;

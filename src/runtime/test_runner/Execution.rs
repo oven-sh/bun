@@ -45,8 +45,8 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    group_begin, AddedInPhase, AsyncContextRef, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    HandleUncaughtExceptionResult, Order, RefDataPtr, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
 
@@ -167,6 +167,12 @@ pub struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    /// The `RefData` bound into the async context of the callback this sequence
+    /// is executing right now (see AsyncContextRef.rs), so the runner can mark it
+    /// abandoned if it has to move on before that callback completes. Owned
+    /// `+1`, released by `advance_sequence` (or `Drop`, for a file torn down
+    /// mid-callback).
+    pub(crate) executing_ref: Option<RefDataPtr>,
 }
 
 impl ExecutionSequence {
@@ -189,6 +195,22 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            executing_ref: None,
+        }
+    }
+
+    /// The runner is moving on from the callback this sequence is executing
+    /// even though that callback has not completed: whatever the callback still
+    /// does belongs to it, not to the entries that run next.
+    pub(crate) fn abandon_executing_callback(&self) {
+        if let Some(executing_ref) = &self.executing_ref {
+            executing_ref.abandoned.set(true);
+        }
+    }
+
+    fn release_executing_ref(&mut self) {
+        if let Some(executing_ref) = self.executing_ref.take() {
+            executing_ref.deref();
         }
     }
 
@@ -198,6 +220,12 @@ impl ExecutionSequence {
             return unsafe { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
+    }
+}
+
+impl Drop for ExecutionSequence {
+    fn drop(&mut self) {
+        self.release_executing_ref();
     }
 }
 
@@ -509,6 +537,7 @@ impl Execution {
         let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
+        sequence.release_executing_ref();
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
@@ -974,6 +1003,8 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
+            // The callback is still running; it is the runner that is moving on.
+            sequence.abandon_executing_callback();
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
@@ -1012,6 +1043,13 @@ fn step_sequence_one(
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
+        // One RefData per invocation, shared between the sequence (which marks it
+        // abandoned if the runner moves on before the callback completes) and
+        // the async context the callback runs under (how late callers find it).
+        let executing_ref: RefDataPtr = BunTest::ref_(buntest_strong, callback_data.clone());
+        debug_assert!(sequence.executing_ref.is_none());
+        sequence.executing_ref = Some(executing_ref.dupe_ref());
+
         let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
         let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
         let on_stack_cell = &raw const this.on_stack_entry;
@@ -1023,10 +1061,32 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
+        // `sequence` and `this` are not used again below this point: both the
+        // failure branch here and run_test_callback re-enter BunTest.
+        let callback = match AsyncContextRef::bind(global_this, cb.get(), executing_ref) {
+            Ok(bound) => bound,
+            Err(err) => {
+                // Out of memory building the context. Charge it to this entry and
+                // still run the callback unbound, as run_test_callback does when
+                // binding the done callback fails.
+                // SAFETY: `buntest_ptr` is the live per-file BunTest; no `&mut`
+                // derived from it is used after this call (see above).
+                unsafe {
+                    (*buntest_ptr.as_ptr()).on_uncaught_exception(
+                        global_this,
+                        Some(global_this.take_exception(err)),
+                        false,
+                        &callback_data,
+                    );
+                }
+                cb.get()
+            }
+        };
+
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,
-            cb.get(),
+            callback,
             next_item.has_done_parameter,
             callback_data,
             &next_item.timespec,

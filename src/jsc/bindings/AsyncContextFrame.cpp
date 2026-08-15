@@ -1,7 +1,10 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
+#include "ZigGeneratedClasses.h"
 #include "AsyncContextFrame.h"
+#include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/JSArray.h>
 
 #if ASSERT_ENABLED
 #include <JavaScriptCore/IntegrityInlines.h>
@@ -131,3 +134,98 @@ JSValue AsyncContextFrame::profiledCall(JSGlobalObject* global, JSValue function
     return AsyncContextFrame::call(global, functionObject, thisValue, args);
 }
 #undef ASYNCCONTEXTFRAME_CALL_IMPL
+
+// ── bun:test (src/runtime/test_runner/AsyncContextRef.rs) ──────────────────
+//
+// The async context value (AsyncLocalStorage's storage, see node/async_hooks.ts)
+// is an array of [key, value, ...] pairs that promise reactions, timers and
+// native callbacks snapshot and restore. bun:test adds one pair per test or
+// hook invocation, with the invocation's AsyncContextRef as both key and value,
+// so that code still running on behalf of that invocation can be told apart
+// from the entry the runner is executing now.
+
+static bool isAsyncContextRef(JSValue value)
+{
+    return dynamicDowncast<WebCore::JSAsyncContextRef>(value) != nullptr;
+}
+
+// AsyncContextFrame::call only unwraps the wrappers withAsyncContextIfNeeded()
+// creates while a context is installed when tracking is enabled (normally
+// constructing an AsyncLocalStorage enables it). node:vm contexts copy the flag
+// when they are created, so bun test enables it before loading each test file.
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__AsyncContextRef__enableTracking(JSC::JSGlobalObject* globalObject)
+{
+    globalObject->setAsyncContextTrackingEnabled(true);
+}
+
+// Returns `callback` wrapped so that it runs with the context it would have run
+// with anyway (the one it was registered under if it is already wrapped, else
+// the current one) plus the pair (ref, ref). A pair left over from the
+// invocation that registered the callback is dropped, so a context carries at
+// most one ref: the innermost invocation.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__AsyncContextRef__bind(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue callbackValue, JSC::EncodedJSValue refValue)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue callback = JSValue::decode(callbackValue);
+    JSValue ref = JSValue::decode(refValue);
+    ASSERT(isAsyncContextRef(ref));
+
+    JSValue baseContext;
+    if (auto* frame = dynamicDowncast<AsyncContextFrame>(callback)) {
+        baseContext = frame->context.get();
+        callback = frame->callback.get();
+    } else {
+        baseContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    }
+
+    MarkedArgumentBuffer entries;
+    if (auto* base = dynamicDowncast<JSArray>(baseContext)) {
+        unsigned length = base->length();
+        entries.ensureCapacity(length + 2);
+        for (unsigned i = 0; i < length; i += 2) {
+            JSValue key = base->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue value = i + 1 < length ? base->getIndex(globalObject, i + 1) : jsUndefined();
+            RETURN_IF_EXCEPTION(scope, {});
+            if (isAsyncContextRef(key))
+                continue;
+            entries.append(key);
+            entries.append(value);
+        }
+    }
+    entries.append(ref);
+    entries.append(ref);
+    if (entries.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    JSArray* context = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), entries);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Installing a context is what makes wrappers appear (see enableTracking above).
+    globalObject->setAsyncContextTrackingEnabled(true);
+    return JSValue::encode(AsyncContextFrame::create(globalObject, callback, context));
+}
+
+// The AsyncContextRef in the current async context, or undefined when the JS
+// running right now does not descend from a bun:test invocation.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__AsyncContextRef__current(JSC::JSGlobalObject* globalObject)
+{
+    JSValue context = globalObject->m_asyncContextData.get()->getInternalField(0);
+    auto* array = dynamicDowncast<JSArray>(context);
+    if (!array)
+        return JSValue::encode(jsUndefined());
+
+    unsigned length = array->length();
+    for (unsigned i = 0; i < length; i += 2) {
+        if (!array->canGetIndexQuickly(i))
+            continue;
+        JSValue key = array->getIndexQuickly(i);
+        if (isAsyncContextRef(key))
+            return JSValue::encode(key);
+    }
+    return JSValue::encode(jsUndefined());
+}

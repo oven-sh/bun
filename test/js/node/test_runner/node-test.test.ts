@@ -88,6 +88,20 @@ describe("node:test", () => {
     });
   });
 
+  test("should fail tests whose hooks, bodies, or inline suite callbacks fail under --concurrent too", async () => {
+    // node:test reports a failure by passing it to bun:test's done callback,
+    // which used to be attributed as an unhandled error between tests (and the
+    // test itself reported as passing) whenever the test ran in a concurrent group.
+    const { exitCode, stdout, stderr } = await runTests(["07-failing-hooks.js"], {}, ["--concurrent"]);
+    expect(stdout).toContain("SUB_BODY_RAN=false");
+    expect(stderr).not.toContain("Unhandled error between tests");
+    expect(stderr).toContain("0 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("10 fail"),
+    });
+  });
+
   test("should support done callbacks in tests and hooks", async () => {
     const { exitCode, stderr } = await runTests(["10-done-callbacks.js"]);
     expect(stderr).toContain("2 pass");

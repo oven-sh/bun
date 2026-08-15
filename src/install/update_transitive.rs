@@ -1133,7 +1133,7 @@ fn plan_edges(
     if instances.is_empty() {
         return Ok((Vec::new(), Report::default()));
     }
-    let edges_on = edges_on_instances(&manager.lockfile, &instances);
+    let edges_on = edges_on_instances(manager, &instances);
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     let msgs_before = manager.log_mut().msgs.len();
@@ -1215,11 +1215,12 @@ fn plan_edges(
                 (edge, owner)
             })
             .collect();
-        let direct_stays = edges_on.direct[inst_i].iter().any(|&dep_id| {
+        let direct_stays = edges_on.direct[inst_i].iter().any(|&(dep_id, latest)| {
             direct_row_stays(
                 &manager.lockfile,
                 manifest,
                 dep_id,
+                latest,
                 inst.current,
                 min_age,
                 excludes,
@@ -1307,89 +1308,182 @@ fn plan_edges(
     Ok((pins, report))
 }
 
-/// Live rows per planned instance: `followers` resolve to it and move only via the post-resolve redirect; `direct` root/workspace rows are re-resolved by the differ, so they are matched by name.
+/// Live rows per planned instance: `followers` move only via the post-resolve redirect; `direct` rows are the root/workspace rows the differ re-resolves (`true` lands on the `latest` dist-tag), per `should_update`.
 struct InstanceEdges {
     followers: Vec<Vec<DependencyID>>,
-    direct: Vec<Vec<DependencyID>>,
+    direct: Vec<Vec<(DependencyID, bool)>>,
 }
 
-fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> InstanceEdges {
-    let packages_len = lockfile.packages.len();
-    let mut slot_of: Vec<u32> = vec![u32::MAX; packages_len];
-    for (i, inst) in instances.iter().enumerate() {
-        slot_of[inst.pkg_id as usize] = i as u32;
+fn edges_on_instances(manager: &mut PackageManager, instances: &[Instance]) -> InstanceEdges {
+    struct DirectRow {
+        dep_id: DependencyID,
+        inst: u32,
+        catalog: bool,
     }
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let pkg_names = lockfile.packages.items_name();
-    let name_hashes = lockfile.packages.items_name_hash();
-    let dep_slices = lockfile.packages.items_dependencies();
-    let deps = lockfile.buffers.dependencies.as_slice();
-    let resolutions = lockfile.buffers.resolutions.as_slice();
-
     let mut followers: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
-    let mut direct: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
-    for owner in 0..packages_len {
-        let slice = dep_slices[owner];
-        let is_direct = matches!(
-            pkg_res[owner].tag,
-            ResolutionTag::Root | ResolutionTag::Workspace
-        );
-        for row in slice.begin() as usize..slice.end() as usize {
-            if !is_direct {
-                let Some(&slot) = slot_of.get(resolutions[row] as usize) else {
+    let mut direct: Vec<Vec<(DependencyID, bool)>> = vec![Vec::new(); instances.len()];
+    let mut direct_rows: Vec<DirectRow> = Vec::new();
+    {
+        let lockfile: &Lockfile = &manager.lockfile;
+        let packages_len = lockfile.packages.len();
+        let mut slot_of: Vec<u32> = vec![u32::MAX; packages_len];
+        for (i, inst) in instances.iter().enumerate() {
+            slot_of[inst.pkg_id as usize] = i as u32;
+        }
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_res = lockfile.packages.items_resolution();
+        let pkg_names = lockfile.packages.items_name();
+        let name_hashes = lockfile.packages.items_name_hash();
+        let dep_slices = lockfile.packages.items_dependencies();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+
+        for owner in 0..packages_len {
+            let slice = dep_slices[owner];
+            let is_direct = matches!(
+                pkg_res[owner].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            );
+            for row in slice.begin() as usize..slice.end() as usize {
+                if !is_direct {
+                    let Some(&slot) = slot_of.get(resolutions[row] as usize) else {
+                        continue;
+                    };
+                    if slot != u32::MAX {
+                        followers[slot as usize].push(row as DependencyID);
+                    }
+                    continue;
+                }
+                let Some(version) =
+                    dedupe::effective_version(lockfile, row as DependencyID, &deps[row])
+                else {
                     continue;
                 };
-                if slot != u32::MAX {
-                    followers[slot as usize].push(row as DependencyID);
-                }
-                continue;
-            }
-            let Some(version) =
-                dedupe::effective_version(lockfile, row as DependencyID, &deps[row])
-            else {
-                continue;
-            };
-            let names = match version.tag {
-                DependencyVersionTag::Npm => version.npm().name,
-                DependencyVersionTag::DistTag => version.dist_tag().name,
-                _ => continue,
-            };
-            let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
-            for (i, inst) in instances.iter().enumerate() {
-                if name_hashes[inst.pkg_id as usize] == row_hash
-                    && names.eql(pkg_names[inst.pkg_id as usize], buf, buf)
-                {
-                    direct[i].push(row as DependencyID);
+                let names = match version.tag {
+                    DependencyVersionTag::Npm => version.npm().name,
+                    DependencyVersionTag::DistTag => version.dist_tag().name,
+                    _ => continue,
+                };
+                let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
+                for (i, inst) in instances.iter().enumerate() {
+                    if name_hashes[inst.pkg_id as usize] == row_hash
+                        && names.eql(pkg_names[inst.pkg_id as usize], buf, buf)
+                    {
+                        direct_rows.push(DirectRow {
+                            dep_id: row as DependencyID,
+                            inst: i as u32,
+                            catalog: deps[row].version.tag == DependencyVersionTag::Catalog,
+                        });
+                    }
                 }
             }
         }
     }
+
+    let bare = manager.update_requests.is_empty();
+    let has_targets = manager.update_target_workspaces.is_some();
+    let to_latest = manager
+        .options
+        .do_
+        .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST);
+    for row in direct_rows {
+        let in_targets = {
+            let lockfile: &Lockfile = &manager.lockfile;
+            manager
+                .update_target_workspaces
+                .as_deref()
+                .is_some_and(|targets| lockfile.is_dependency_of_workspace_in(targets, row.dep_id))
+        };
+        // Mirrors `should_update`: bare update re-resolves the target workspaces' rows (the cwd
+        // workspace's without -r/--filter) and every catalog row; a named update re-resolves the
+        // in-scope rows naming a requested package.
+        let reresolves = if bare {
+            row.catalog
+                || if has_targets {
+                    in_targets
+                } else {
+                    let this_ptr: *mut PackageManager = manager;
+                    // SAFETY: as in `should_update` — `is_root_dependency` reads
+                    // `manager.root_package_id` and the workspace package.json cache only,
+                    // disjoint from `manager.lockfile`.
+                    unsafe { &*(*this_ptr).lockfile }
+                        .is_root_dependency(unsafe { &mut *this_ptr }, row.dep_id)
+                }
+        } else {
+            named_row_in_scope(manager, row.dep_id)
+        };
+        if !reresolves {
+            // The row keeps its locked resolution; only the redirect can carry it.
+            followers[row.inst as usize].push(row.dep_id);
+            continue;
+        }
+        // Mirrors `latest_for_target`; named rows reach plan_edges via the --latest-only path.
+        let latest =
+            to_latest && (!bare || in_targets) && !overridden_row(&manager.lockfile, row.dep_id);
+        direct[row.inst as usize].push((row.dep_id, latest));
+    }
     InstanceEdges { followers, direct }
 }
 
-/// The differ lands this root/workspace row back on `current` when that is the best release (or dist-tag target) its range allows.
+/// Mirrors `should_update`'s named branch: the row names a requested package and sits in the update scope.
+fn named_row_in_scope(manager: &PackageManager, dep_id: DependencyID) -> bool {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+    let aliased =
+        dedupe::effective_version(lockfile, dep_id, dep).and_then(|version| match version.tag {
+            DependencyVersionTag::Npm => Some(version.npm().name),
+            DependencyVersionTag::DistTag => Some(version.dist_tag().name),
+            _ => None,
+        });
+    let named = manager.is_update_request(dep.name_hash, dep.name.slice(buf))
+        || aliased.is_some_and(|name| {
+            let hash = Semver::string::Builder::string_hash(name.slice(buf));
+            hash != dep.name_hash && manager.is_update_request(hash, name.slice(buf))
+        });
+    named && UpdateScope::of(manager).contains_dependency(lockfile, dep_id)
+}
+
+/// Overridden rows resolve by the override range, never by `latest` (`!version_was_replaced` in `latest_for_target`).
+fn overridden_row(lockfile: &Lockfile, dep_id: DependencyID) -> bool {
+    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+    !dep.behavior.is_workspace()
+        && !(dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
+        && lockfile
+            .overrides
+            .get(lockfile, dep_id, dep.name_hash)
+            .is_some()
+}
+
+/// The differ lands this row back on `current` when that is the release it re-resolves to: the `latest` dist-tag for `--latest` target rows, otherwise the best release the row's range allows.
 fn direct_row_stays(
     lockfile: &Lockfile,
     manifest: &PackageManifest,
     dep_id: DependencyID,
+    latest: bool,
     current: Semver::Version,
     min_age: Option<f64>,
     excludes: Option<&[&[u8]]>,
 ) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let dep = &lockfile.buffers.dependencies[dep_id as usize];
-    let Some(version) = dedupe::effective_version(lockfile, dep_id, dep) else {
-        return false;
-    };
-    let found = match version.tag {
-        DependencyVersionTag::Npm => manifest
-            .find_best_version_with_filter(&version.npm().version, buf, min_age, excludes)
-            .unwrap(),
-        DependencyVersionTag::DistTag => manifest
-            .find_by_dist_tag_with_filter(version.dist_tag().tag.slice(buf), min_age, excludes)
-            .unwrap(),
-        _ => return false,
+    let found = if latest {
+        manifest
+            .find_by_dist_tag_with_filter(b"latest", min_age, excludes)
+            .unwrap()
+    } else {
+        let dep = &lockfile.buffers.dependencies[dep_id as usize];
+        let Some(version) = dedupe::effective_version(lockfile, dep_id, dep) else {
+            return false;
+        };
+        match version.tag {
+            DependencyVersionTag::Npm => manifest
+                .find_best_version_with_filter(&version.npm().version, buf, min_age, excludes)
+                .unwrap(),
+            DependencyVersionTag::DistTag => manifest
+                .find_by_dist_tag_with_filter(version.dist_tag().tag.slice(buf), min_age, excludes)
+                .unwrap(),
+            _ => return false,
+        }
     };
     found.is_some_and(|found| {
         found.version.order(current, &manifest.string_buf, buf) == Ordering::Equal

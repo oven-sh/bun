@@ -449,9 +449,8 @@ describe.concurrent("every module loading path preserves non-ASCII regex/raw tex
 // the last run's acceptance is the match between the two.
 //
 // Each mode runs three probes through two or three rounds of processes, the
-// first of which also generates and persists the bytecode, so these stay out
-// of the concurrent groups and get an explicit timeout: three rounds of a
-// debug build take about as long as the default allows.
+// first of which also generates and persists the bytecode, so these run on
+// their own after the concurrent groups instead of competing with them.
 type CompileCacheMode = "transpiled again" | "served from the transpiler cache" | "warmed";
 describe("NODE_COMPILE_CACHE bytecode is accepted", () => {
   test.each<[string, CompileCacheMode, string, Probe, Probe[]]>([
@@ -483,43 +482,39 @@ describe("NODE_COMPILE_CACHE bytecode is accepted", () => {
       asciiCommentTwin,
       [latin1Comment, nonAsciiComment],
     ],
-  ])(
-    "%s",
-    async (_name, mode, entry, twin, probes) => {
-      async function cacheHits({ files, expected }: Probe) {
-        using dir = tempDir("nonascii-compile-cache", files);
-        const compileCache = { NODE_COMPILE_CACHE: join(String(dir), "compile-cache") };
-        const transpilerCache = transpilerCacheEnv(String(dir));
-        const runs =
-          mode === "transpiled again"
-            ? [compileCache, compileCache]
-            : mode === "served from the transpiler cache"
-              ? [
-                  { ...compileCache, ...transpilerCache },
-                  { ...compileCache, ...transpilerCache },
-                ]
-              : [transpilerCache, { ...compileCache, ...transpilerCache }, { ...compileCache, ...transpilerCache }];
+  ])("%s", async (_name, mode, entry, twin, probes) => {
+    async function cacheHits({ files, expected }: Probe) {
+      using dir = tempDir("nonascii-compile-cache", files);
+      const compileCache = { NODE_COMPILE_CACHE: join(String(dir), "compile-cache") };
+      const transpilerCache = transpilerCacheEnv(String(dir));
+      const runs =
+        mode === "transpiled again"
+          ? [compileCache, compileCache]
+          : mode === "served from the transpiler cache"
+            ? [
+                { ...compileCache, ...transpilerCache },
+                { ...compileCache, ...transpilerCache },
+              ]
+            : [transpilerCache, { ...compileCache, ...transpilerCache }, { ...compileCache, ...transpilerCache }];
 
-        let stderr = "";
-        for (const [i, env] of runs.entries()) {
-          const last = i === runs.length - 1;
-          const result = await runIn(String(dir), [entry], last ? { ...env, BUN_JSC_verboseDiskCache: "1" } : env);
-          if (!last) expect({ stdout: result.stdout, stderr: result.stderr }).toEqual({ stdout: expected, stderr: "" });
-          else expect(result.stdout).toBe(expected);
-          expect(result.exitCode).toBe(0);
-          if (i === 0 && mode !== "transpiled again") expect(cacheEntries(String(dir))).toHaveLength(1);
-          stderr = result.stderr;
-        }
-        return stderr.split("[Disk Cache] Cache hit for sourceCode").length - 1;
+      let stderr = "";
+      for (const [i, env] of runs.entries()) {
+        const last = i === runs.length - 1;
+        const result = await runIn(String(dir), [entry], last ? { ...env, BUN_JSC_verboseDiskCache: "1" } : env);
+        if (!last) expect({ stdout: result.stdout, stderr: result.stderr }).toEqual({ stdout: expected, stderr: "" });
+        else expect(result.stdout).toBe(expected);
+        expect(result.exitCode).toBe(0);
+        if (i === 0 && mode !== "transpiled again") expect(cacheEntries(String(dir))).toHaveLength(1);
+        stderr = result.stderr;
       }
+      return stderr.split("[Disk Cache] Cache hit for sourceCode").length - 1;
+    }
 
-      const [twinHits, ...hits] = await Promise.all([twin, ...probes].map(cacheHits));
-      expect(twinHits).toBeGreaterThanOrEqual(3);
-      // One entry per probe: 8-bit output, then output widened to UTF-16.
-      expect(hits).toEqual([twinHits, twinHits]);
-    },
-    20_000,
-  );
+    const [twinHits, ...hits] = await Promise.all([twin, ...probes].map(cacheHits));
+    expect(twinHits).toBeGreaterThanOrEqual(3);
+    // One entry per probe: 8-bit output, then output widened to UTF-16.
+    expect(hits).toEqual([twinHits, twinHits]);
+  });
 });
 
 // Error positions must still map back to the original source when a module

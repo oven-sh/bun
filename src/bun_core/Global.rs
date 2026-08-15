@@ -436,10 +436,10 @@ macro_rules! mark_binding {
     };
     ($fn_name:expr) => {
         // Opt-in via BUN_DEBUG_JSC=1. The `JSC` scope is owned by bun_core. Gate on
-        // `env::IS_DEBUG` (== `Environment::ENABLE_LOGS`) — never on a Cargo
-        // feature, since `cfg!(feature = ..)` is resolved against the *calling*
-        // crate and would warn (or silently no-op) in crates without it.
-        if $crate::env::IS_DEBUG && $crate::Global::JSC_SCOPE.is_visible() {
+        // `env::ENABLE_LOGS` like `scoped_log!` does, never on a Cargo feature,
+        // since `cfg!(feature = ..)` is resolved against the *calling* crate and
+        // would warn (or silently no-op) in crates without it.
+        if $crate::env::ENABLE_LOGS && $crate::Global::JSC_SCOPE.is_visible() {
             $crate::Global::JSC_SCOPE.log(::core::format_args!(
                 "[JSC] {} ({}:{})\n",
                 $fn_name,

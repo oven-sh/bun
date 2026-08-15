@@ -12,10 +12,12 @@
  * keeps the mtime stable so a reconfigure with the same sha doesn't
  * recompile `bun_core` and its dependents.
  *
- * Target-dependent constants (`ENABLE_TINYCC`, `ENABLE_ASAN`, `ENABLE_LOGS`)
+ * Target-dependent constants (`ENABLE_TINYCC`) and the ones mirroring a
+ * `--cfg` that `rust.ts` passes in RUSTFLAGS (`ENABLE_ASAN`, `ENABLE_LOGS`)
  * stay as `cfg!()` expressions inside the generated file rather than literals
- * so a `cargo check --target <other-triple>` against the same generated file
- * still evaluates them per-target.
+ * so a `cargo check --target <other-triple>`, or a bare `cargo check` / `cargo
+ * miri test` with no RUSTFLAGS at all, against the same generated file still
+ * evaluates them per invocation.
  *
  * Written at configure time alongside `depVersionsHeader.ts` /
  * `cargo-config.ts` — it's a constant manifest, not a build edge.
@@ -61,10 +63,10 @@ export function generateBuildOptionsRs(cfg: Config): string {
     "",
     "// Target/profile-derived — kept as `cfg!()` so cross-target",
     "// `cargo check` evaluates per-triple. Values agree with `Config`:",
-    "// rust.ts sets `--cfg=bun_debug` ⇔ `cfg.debug`, `--cfg=bun_asan` ⇔",
+    "// rust.ts sets `--cfg=bun_logs` ⇔ `cfg.logs`, `--cfg=bun_asan` ⇔",
     "// `cfg.asan`, and `cfg.tinycc`'s default (config.ts) is the negation",
     "// of this predicate.",
-    "pub const ENABLE_LOGS: bool = cfg!(bun_debug);",
+    "pub const ENABLE_LOGS: bool = cfg!(bun_logs);",
     "pub const ENABLE_ASAN: bool = cfg!(bun_asan);",
     "pub const ENABLE_TINYCC: bool = !cfg!(any(",
     `    target_os = "android",`,

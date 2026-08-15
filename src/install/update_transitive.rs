@@ -23,11 +23,18 @@ use crate::{
     PackageManager, PackageNameHash, ResolutionTag, invalid_package_id,
 };
 
+struct DirectRow {
+    name_hash: PackageNameHash,
+    behavior: Behavior,
+    dep_id: DependencyID,
+    resolved: PackageID,
+}
+
 /// Root/workspace dependency rows as loaded from bun.lock, taken before the differ re-enqueues them.
 #[derive(Default)]
 pub struct DirectDependencies {
     owners: Vec<(PackageID, u32, u32)>,
-    rows: Vec<(PackageNameHash, Behavior, PackageID)>,
+    rows: Vec<DirectRow>,
 }
 
 impl DirectDependencies {
@@ -47,12 +54,19 @@ impl DirectDependencies {
                 continue;
             }
             let start = out.rows.len();
+            let first_dep_id = dep_slices[owner].begin();
             out.rows.extend(
                 dep_slices[owner]
                     .get(deps)
                     .iter()
                     .zip(res_slices[owner].get(resolutions))
-                    .map(|(dep, &resolved)| (dep.name_hash, dep.behavior, resolved)),
+                    .enumerate()
+                    .map(|(i, (dep, &resolved))| DirectRow {
+                        name_hash: dep.name_hash,
+                        behavior: dep.behavior,
+                        dep_id: first_dep_id + i as DependencyID,
+                        resolved,
+                    }),
             );
             out.owners.push((
                 owner as PackageID,
@@ -61,6 +75,44 @@ impl DirectDependencies {
             ));
         }
         out
+    }
+
+    /// What the direct rows currently resolving to `pkg_id` move to under their own (post-override/catalog) ranges or dist-tags, per `manifest`.
+    fn targets_of(
+        &self,
+        lockfile: &Lockfile,
+        manifest: &PackageManifest,
+        pkg_id: PackageID,
+        min_age: Option<f64>,
+        excludes: Option<&[&[u8]]>,
+    ) -> Vec<Semver::Version> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let mut targets = Vec::new();
+        for row in self.rows.iter().filter(|row| row.resolved == pkg_id) {
+            let Some(version) =
+                dedupe::effective_version(lockfile, row.dep_id, &deps[row.dep_id as usize])
+            else {
+                continue;
+            };
+            let found = match version.tag {
+                DependencyVersionTag::Npm => manifest
+                    .find_best_version_with_filter(&version.npm().version, buf, min_age, excludes)
+                    .unwrap(),
+                DependencyVersionTag::DistTag => manifest
+                    .find_by_dist_tag_with_filter(
+                        version.dist_tag().tag.slice(buf),
+                        min_age,
+                        excludes,
+                    )
+                    .unwrap(),
+                _ => None,
+            };
+            if let Some(found) = found {
+                targets.push(found.version);
+            }
+        }
+        targets
     }
 
     /// Edges still resolving to the previous package of a direct dependency that moved follow it when their range allows.
@@ -93,8 +145,8 @@ impl DirectDependencies {
                 .iter()
                 .zip(res_slices[owner].get(resolutions));
             for (i, (dep, &new)) in current.enumerate() {
-                let same = |row: &(PackageNameHash, Behavior, PackageID)| {
-                    row.0 == dep.name_hash && row.1 == dep.behavior
+                let same = |row: &DirectRow| {
+                    row.name_hash == dep.name_hash && row.behavior == dep.behavior
                 };
                 let index = if claimed.is_none() && rows.get(i).is_some_and(same) {
                     i
@@ -122,7 +174,7 @@ impl DirectDependencies {
                     taken.set(k);
                     k
                 };
-                let old = rows[index].2;
+                let old = rows[index].resolved;
                 if old == new
                     || (old as usize) >= packages_len
                     || (new as usize) >= packages_len
@@ -417,7 +469,9 @@ pub(crate) fn refresh_children_of(
         }
         edges
     };
-    let (pins, report) = plan_edges(manager, &edges, &DirectDependencies::default())?;
+    // The direct rows are resolved by now, so this also tells the plan which copies they settled on.
+    let direct = DirectDependencies::snapshot(&manager.lockfile);
+    let (pins, report) = plan_edges(manager, &edges, &direct)?;
     register_moved(manager, &report.moved)?;
     let update = TransitiveUpdate { pins, report: None };
     update.enqueue(manager)?;
@@ -977,9 +1031,9 @@ pub(crate) fn plannable_peer_rows(
     let resolutions = lockfile.buffers.resolutions.as_slice();
 
     let mut providers = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
-    for &(_, behavior, resolved) in &direct.rows {
-        if !behavior.is_peer() && (resolved as usize) < packages_len {
-            providers.set(resolved as usize);
+    for row in &direct.rows {
+        if !row.behavior.is_peer() && (row.resolved as usize) < packages_len {
+            providers.set(row.resolved as usize);
         }
     }
     for owner in 0..packages_len {
@@ -1165,10 +1219,22 @@ fn plan_edges(
         };
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
+        // Rows sharing the copy a root/workspace dependency resolves to are not
+        // planned on their own while their range accepts where that dependency
+        // is going: they follow it through `redirect_dependents` (or stay put),
+        // so a `*` row never forks off the project's own `~20` copy.
+        let direct_targets =
+            direct.targets_of(&manager.lockfile, manifest, inst.pkg_id, min_age, excludes);
         let rows_before = report.rows.len();
         for want in &inst.wants {
             let (v, to, later) = if want.version.tag == DependencyVersionTag::Npm {
                 let range = &want.version.npm().version;
+                if direct_targets
+                    .iter()
+                    .any(|&target| range.satisfies(target, buf, manifest_buf))
+                {
+                    continue;
+                }
                 let Some(found) = manifest
                     .find_best_version_with_filter(range, buf, min_age, excludes)
                     .unwrap()

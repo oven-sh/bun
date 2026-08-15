@@ -236,7 +236,7 @@ pub fn install_with_manager(
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
-                if manager.summary.changes_resolutions() {
+                if manager.summary.changes_resolutions() || bare_update {
                     direct_deps_before = DirectDependencies::snapshot(&manager.lockfile);
                 }
 
@@ -595,6 +595,9 @@ pub fn install_with_manager(
     let mut named = NamedUpdates::default();
     if !needs_new_lockfile {
         if named_update {
+            // The rows of a workspace the differ re-parsed are still queued; they are
+            // direct entries, so they go out ahead of the rows the named pass enqueues.
+            manager.drain_dependency_list();
             named = enqueue_named_updates(
                 manager,
                 &direct_deps_before,
@@ -1563,11 +1566,12 @@ fn enqueue_named_updates(
     let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut named = NamedUpdates::default();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
+    let mut rows: Vec<(DependencyID, PackageID)> = Vec::new();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
-        let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
+        let dependency = &manager.lockfile.buffers.dependencies[dependency_i];
         let package_id = manager.lockfile.buffers.resolutions[dependency_i];
-        let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
+        let Some(request) = index_of_named_update(manager, dependency, package_id) else {
             continue;
         };
         if !walkable.is_set(dependency_i) {
@@ -1587,11 +1591,23 @@ fn enqueue_named_updates(
             }
             continue;
         }
-        manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
-        named.moved.push((dependency_i as DependencyID, package_id));
+        rows.push((dependency_i as DependencyID, package_id));
+    }
+
+    // Rows declared by the root or a workspace resolve first, so the rows regular
+    // packages own can land on the copy they move to (see
+    // `get_or_put_resolved_package_with_find_result`), and edges following a
+    // vacated package through `redirect_moved_edges` follow the direct entry.
+    let (direct_rows, transitive_rows): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|&(dependency_i, _)| manager.lockfile.is_workspace_dependency(dependency_i));
+    for (dependency_i, package_id) in direct_rows.into_iter().chain(transitive_rows) {
+        let dependency = manager.lockfile.buffers.dependencies[dependency_i as usize].clone();
+        manager.lockfile.buffers.resolutions[dependency_i as usize] = invalid_package_id;
+        named.moved.push((dependency_i, package_id));
         if let Err(err) = enqueue_dependency_with_main(
             manager,
-            dependency_i as DependencyID,
+            dependency_i,
             &dependency,
             invalid_package_id,
             false,

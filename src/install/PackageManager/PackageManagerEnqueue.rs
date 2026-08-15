@@ -2112,6 +2112,22 @@ fn get_or_put_resolved_package_with_find_result(
         }
     }
 
+    // `bun update <name>` re-resolves every row of the name. A row owned by a
+    // regular package stays on the copy a root/workspace dependency resolves to
+    // whenever its range allows, as a fresh resolution would dedupe it there;
+    // the direct rows themselves (enqueued first) move within their own ranges.
+    if should_update && !behavior.is_peer() && !this.lockfile.is_workspace_dependency(dependency_id)
+    {
+        if let Some(id) = direct_dependency_package_satisfying(this, name_hash, version) {
+            success_fn(this, dependency_id, id);
+            return Ok(Some(ResolvedPackageResult {
+                package: *this.lockfile.packages.get(id as usize),
+                is_first_time: false,
+                task: None,
+            }));
+        }
+    }
+
     // Was this package already allocated? Let's reuse the existing one.
     //
     // Determinism: passing `version` here unconditionally lets a
@@ -2950,6 +2966,27 @@ fn patched_package_satisfying(
                 .contains(&Semver::string::Builder::string_hash(
                     &crate::dedupe::label(lockfile, id),
                 ))
+    })
+}
+
+/// The package of this name that a root or workspace dependency resolves to, if `version` allows it.
+fn direct_dependency_package_satisfying(
+    this: &PackageManager,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<PackageID> {
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
+        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
+        PackageIndexEntry::Ids(ids) => ids.as_slice(),
+    };
+    let pkg_res = lockfile.packages.items_resolution();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    candidates.iter().copied().find(|&id| {
+        let res = &pkg_res[id as usize];
+        res.tag == ResolutionTag::Npm
+            && res.satisfies_dependency_version(version, buf, buf)
+            && lockfile.is_direct_dependency_resolution(id)
     })
 }
 

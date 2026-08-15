@@ -2752,29 +2752,25 @@ pub mod JSZstd {
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let input = buffer.slice();
 
-        // Calculate max compressed size
+        // The output bound is sized by the caller's input, so a failed
+        // allocation is thrown rather than aborting the process.
         let max_size = bun_zstd::compress_bound(input.len());
-        // The zero-fill
-        // here is output-irrelevant (zstd overwrites the prefix it reports).
-        // PERF: use Box::new_uninit_slice — profile if hot.
-        let mut output = vec![0u8; max_size];
-
-        // Perform compression with context
-        let compressed_size = match bun_zstd::compress(&mut output, input, Some(level)) {
-            bun_zstd::Result::Success(size) => size,
-            bun_zstd::Result::Err(err) => {
-                drop(output);
-                return Err(global_this
-                    .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err)))
-                    .throw());
-            }
-        };
-
-        // Resize to actual compressed size
-        if compressed_size < output.len() {
-            output.truncate(compressed_size);
-            output.shrink_to_fit();
+        let mut output: Vec<u8> = Vec::new();
+        if output.try_reserve_exact(max_size).is_err() {
+            return Err(global_this.throw_out_of_memory());
         }
+
+        if let bun_zstd::Result::Err(err) =
+            bun_zstd::compress_append(&mut output, input, Some(level))
+        {
+            drop(output);
+            return Err(global_this
+                .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err)))
+                .throw());
+        }
+
+        // Release the slack between the compressed size and the bound.
+        output.shrink_to_fit();
 
         JSValue::create_buffer(global_this, output.leak())
     }
@@ -2827,33 +2823,22 @@ pub mod JSZstd {
             let input = this.buffer.slice();
 
             if this.is_compress {
+                // Surface OOM as a rejected promise instead of aborting.
                 let max_size = bun_zstd::compress_bound(input.len());
-                // Surface OOM as a rejected promise instead of aborting. The
-                // zero-fill is output-irrelevant (zstd overwrites the prefix it reports).
-                let mut output: Vec<u8> = Vec::new();
-                if output.try_reserve_exact(max_size).is_err() {
+                if this.output.try_reserve_exact(max_size).is_err() {
                     this.error_message = Some(b"Out of memory");
                     return Some(done);
                 }
-                output.resize(max_size, 0);
-                this.output = output;
 
-                this.output = match bun_zstd::compress(&mut this.output, input, Some(this.level)) {
-                    bun_zstd::Result::Success(size) => 'blk: {
-                        if size < this.output.len() {
-                            let mut out = core::mem::take(&mut this.output);
-                            out.truncate(size);
-                            out.shrink_to_fit();
-                            break 'blk out;
-                        }
-                        break 'blk core::mem::take(&mut this.output);
-                    }
-                    bun_zstd::Result::Err(err) => {
-                        this.output = Vec::new();
-                        this.error_message = Some(err);
-                        return Some(done);
-                    }
-                };
+                if let bun_zstd::Result::Err(err) =
+                    bun_zstd::compress_append(&mut this.output, input, Some(this.level))
+                {
+                    this.output = Vec::new();
+                    this.error_message = Some(err);
+                    return Some(done);
+                }
+
+                this.output.shrink_to_fit();
             } else {
                 this.output = match bun_zstd::decompress_alloc(input) {
                     Ok(v) => v,

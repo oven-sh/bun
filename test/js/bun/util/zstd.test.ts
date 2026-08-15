@@ -9,7 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, rss } from "harness";
+import { bunEnv, bunExe, isASAN, rss } from "harness";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -531,5 +531,176 @@ describe.concurrent("Zstandard HTTP compression", () => {
     expect(response.headers.get("Content-Encoding")).toBe("zstd");
     const echoed = await response.text();
     expect(echoed).toBe(testString);
+  });
+});
+
+// The output buffers are sized by the input: the compression bound of the
+// caller's data, or whatever the (possibly hostile) frames decompress to. When
+// that allocation fails the call has to throw, not abort the process. ASAN's
+// per-allocation cap makes the failure deterministic: the JS Buffers are
+// allocated by JSC and are not subject to it, while every native reservation
+// above CAP_MB fails.
+describe.skipIf(!isASAN)("a failed output buffer allocation throws instead of aborting", () => {
+  const MiB = 1024 * 1024;
+  const CAP_MB = 8;
+  const env = {
+    ...bunEnv,
+    // detect_leaks=0: natives owned only by a JSC cell are invisible to
+    // LeakSanitizer's reachability scan and would be reported at exit.
+    ASAN_OPTIONS: [
+      bunEnv.ASAN_OPTIONS,
+      "allocator_may_return_null=1",
+      `max_allocation_size_mb=${CAP_MB}`,
+      "detect_leaks=0",
+    ]
+      .filter(Boolean)
+      .join(":"),
+  };
+
+  // Built here, uncapped; the children only decompress them. Each decompresses
+  // to more than the cap, and each reaches the failing allocation differently:
+  //   knownSize:           the frame header carries the content size and it is
+  //                        under the 16 MiB preallocation limit, so the whole
+  //                        output is allocated up front
+  //   knownSizeAboveLimit: the content size is above that limit, so the output
+  //                        is decompressed in a stream and grown as it fills
+  //   unknownSize:         the header carries no content size (streaming
+  //                        compressor), same growth
+  const frameSizes = { knownSize: 12 * MiB, knownSizeAboveLimit: 32 * MiB, unknownSize: 12 * MiB };
+  let prelude: string;
+  beforeAll(async () => {
+    const frames = {
+      knownSize: zstdCompressSync(Buffer.alloc(frameSizes.knownSize)),
+      knownSizeAboveLimit: zstdCompressSync(Buffer.alloc(frameSizes.knownSizeAboveLimit)),
+      unknownSize: await new Response(
+        new Response(Buffer.alloc(frameSizes.unknownSize)).body!.pipeThrough(new CompressionStream("zstd")),
+      ).bytes(),
+    };
+    // RFC 8878 3.1.1.1.1: bits 7-6 of the Frame_Header_Descriptor are the
+    // Frame_Content_Size_flag; with bit 5 (Single_Segment_flag) also clear the
+    // header has no content size field at all.
+    const headerHasContentSize = Object.fromEntries(
+      Object.entries(frames).map(([name, frame]) => [name, (frame[4] & 0xe0) !== 0]),
+    );
+    expect(headerHasContentSize).toEqual({ knownSize: true, knownSizeAboveLimit: true, unknownSize: false });
+    const decompressedSizes = Object.fromEntries(
+      Object.entries(frames).map(([name, frame]) => [name, zstdDecompressSync(frame).byteLength]),
+    );
+    expect(decompressedSizes).toEqual(frameSizes);
+
+    const framesBase64 = Object.fromEntries(
+      Object.entries(frames).map(([name, frame]) => [name, Buffer.from(frame).toString("base64")]),
+    );
+    prelude = /* js */ `
+      const MiB = 1024 * 1024;
+      const frames = Object.fromEntries(
+        Object.entries(${JSON.stringify(framesBase64)}).map(([name, b64]) => [name, Buffer.from(b64, "base64")]),
+      );
+      // compress_bound(16 MiB) is a little over 16 MiB, twice the cap.
+      const big = Buffer.alloc(${2 * CAP_MB} * MiB);
+      const describeError = e => ({ name: e.name, code: e.code, message: e.message });
+      const results = {};
+    `;
+  });
+
+  async function runChild(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      env,
+      stdout: "pipe",
+      // ASAN prints a warning for every refused allocation; drain it, don't assert on it.
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { results: JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode })), exitCode };
+  }
+
+  const outOfMemory = { name: "RangeError", message: "Out of memory" };
+  const zstdError = (message: string) => ({ name: "Error", code: "ERR_ZSTD", message });
+
+  it.concurrent("zstdCompressSync", async () => {
+    const { results, exitCode } = await runChild(/* js */ `
+      try { results.big = Bun.zstdCompressSync(big).byteLength; } catch (e) { results.big = describeError(e); }
+      results.afterwards = Bun.zstdDecompressSync(Bun.zstdCompressSync("still works")).toString();
+      console.log(JSON.stringify(results));
+    `);
+    expect(results).toEqual({ big: outOfMemory, afterwards: "still works" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("zstdCompress", async () => {
+    const { results, exitCode } = await runChild(/* js */ `
+      results.big = await Bun.zstdCompress(big).then(out => out.byteLength, describeError);
+      results.afterwards = Bun.zstdDecompressSync(await Bun.zstdCompress("still works")).toString();
+      console.log(JSON.stringify(results));
+    `);
+    expect(results).toEqual({ big: zstdError("Out of memory"), afterwards: "still works" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("zstdDecompressSync", async () => {
+    const { results, exitCode } = await runChild(/* js */ `
+      for (const [name, frame] of Object.entries(frames)) {
+        try { results[name] = Bun.zstdDecompressSync(frame).byteLength; } catch (e) { results[name] = describeError(e); }
+      }
+      results.afterwards = Bun.zstdDecompressSync(Bun.zstdCompressSync("still works")).toString();
+      console.log(JSON.stringify(results));
+    `);
+    const error = zstdError("Decompression failed: OutOfMemory");
+    expect(results).toEqual({
+      knownSize: error,
+      knownSizeAboveLimit: error,
+      unknownSize: error,
+      afterwards: "still works",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("zstdDecompress", async () => {
+    const { results, exitCode } = await runChild(/* js */ `
+      for (const [name, frame] of Object.entries(frames)) {
+        results[name] = await Bun.zstdDecompress(frame).then(out => out.byteLength, describeError);
+      }
+      results.afterwards = (await Bun.zstdDecompress(Bun.zstdCompressSync("still works"))).toString();
+      console.log(JSON.stringify(results));
+    `);
+    const error = zstdError("Decompression failed");
+    expect(results).toEqual({
+      knownSize: error,
+      knownSizeAboveLimit: error,
+      unknownSize: error,
+      afterwards: "still works",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // fetch() decodes Content-Encoding: zstd with the streaming decoder, whose
+  // output grows the same way; the body read rejects and the process goes on
+  // serving.
+  it.concurrent("fetch() of a zstd-encoded response", async () => {
+    const { results, exitCode } = await runChild(/* js */ `
+      const bodies = { ...frames, afterwards: Bun.zstdCompressSync("still works") };
+      using server = Bun.serve({
+        port: 0,
+        fetch: req => new Response(bodies[new URL(req.url).pathname.slice(1)], { headers: { "Content-Encoding": "zstd" } }),
+      });
+      for (const name of Object.keys(bodies)) {
+        const response = await fetch(new URL(name, server.url));
+        results[name] = await response.text().then(text => text, describeError);
+      }
+      console.log(JSON.stringify(results));
+    `);
+    const error = {
+      name: "TypeError",
+      code: "OutOfMemory",
+      message: expect.stringMatching(/^OutOfMemory fetching "http:\/\/localhost:\d+\//),
+    };
+    expect(results).toEqual({
+      knownSize: error,
+      knownSizeAboveLimit: error,
+      unknownSize: error,
+      afterwards: "still works",
+    });
+    expect(exitCode).toBe(0);
   });
 });

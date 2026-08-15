@@ -188,6 +188,10 @@ pub enum Result {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZstdError {
+    /// The output buffer could not be allocated or grown. The output is
+    /// sized by the input's (possibly hostile) decompressed size, so this is
+    /// reported to the caller instead of aborting the process.
+    OutOfMemory,
     InvalidZstdData,
     DecompressionFailed,
     ZstdFailedToCreateInstance,
@@ -290,10 +294,35 @@ pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
     Result::Success(result)
 }
 
+/// [`decompress`] into `out`'s spare capacity (append mode). On success
+/// `out.len()` is advanced by the decompressed size. The spare capacity is
+/// the output bound; zstd reports an error when the frames do not fit.
+fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> Result {
+    let spare = out.spare_capacity_mut();
+    // SAFETY: spare/src are valid for their lengths; ZSTD_decompress reads src
+    // and writes into spare.
+    let rc = unsafe {
+        c::ZSTD_decompress(
+            spare.as_mut_ptr().cast::<c_void>(),
+            spare.len(),
+            src.as_ptr().cast::<c_void>(),
+            src.len(),
+        )
+    };
+    if c::ZSTD_isError(rc) != 0 {
+        // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
+        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(rc)) });
+    }
+    // SAFETY: zstd has initialized `rc` bytes at the start of spare.
+    unsafe { bun_core::vec::commit_spare(out, rc) };
+    Result::Success(rc)
+}
+
 /// Decompress data, automatically allocating the output buffer.
 /// Returns owned slice that must be freed by the caller.
 /// Handles both frames with known and unknown content sizes.
 /// For safety, if the reported decompressed size exceeds 16MB, streaming decompression is used instead.
+/// A failed output allocation is reported as [`ZstdError::OutOfMemory`].
 pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> {
     let size = get_decompressed_size(src);
 
@@ -318,14 +347,14 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
     }
 
     // Fast path: size is known and within reasonable limits
-    let mut output = vec![0u8; size];
+    let mut output: Vec<u8> = Vec::new();
+    output
+        .try_reserve_exact(size)
+        .map_err(|_| ZstdError::OutOfMemory)?;
 
-    match decompress(&mut output, src) {
-        Result::Success(actual_size) => {
-            output.truncate(actual_size);
-            Ok(output)
-        }
-        // `output` is freed by Drop above.
+    match decompress_append(&mut output, src) {
+        Result::Success(_) => Ok(output),
+        // `output` is freed by Drop.
         Result::Err(_) => Err(ZstdError::DecompressionFailed),
     }
 }
@@ -423,9 +452,11 @@ impl<'a> ZstdReaderArrayList<'a> {
                 return Err(ZstdError::ZstdDecompressionError);
             }
 
-            // SAFETY: write-only spare; ZSTD_decompressStream initializes the
-            // first `out_buf.pos` bytes.
-            let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
+            if self.list_ptr.try_reserve(4096).is_err() {
+                self.state = State::Error;
+                return Err(ZstdError::OutOfMemory);
+            }
+            let spare = self.list_ptr.spare_capacity_mut();
             let mut in_buf = c::ZSTD_inBuffer {
                 src: next_in.as_ptr().cast::<c_void>(),
                 size: next_in.len(),
@@ -573,7 +604,10 @@ impl StreamingDecoder {
                 return Err(ZstdError::ZstdDecompressionError);
             }
 
-            out.reserve(4096);
+            if out.try_reserve(4096).is_err() {
+                self.state = State::Error;
+                return Err(ZstdError::OutOfMemory);
+            }
             let spare = out.spare_capacity_mut();
             let mut in_buf = c::ZSTD_inBuffer {
                 src: next_in.as_ptr().cast::<c_void>(),

@@ -86,8 +86,7 @@ pub struct Ast<'a> {
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
-    /// Serialized by `bun_js_parser::commonjs_static_exports` for runtime-wrapped
-    /// CommonJS modules, empty otherwise; ends up on `JSCommonJSModule`.
+    /// See `bun_js_parser::commonjs_static_exports`; empty unless the runtime wraps the file as CommonJS.
     pub commonjs_static_exports: StoreStr,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,

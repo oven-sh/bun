@@ -7,7 +7,7 @@ use bun_collections::{HashMap, VecExt};
 
 use crate::lexer as js_lexer;
 use crate::p::P;
-use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, is_eval_or_arguments};
+use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, TempRef, is_eval_or_arguments};
 use bun_ast::g::{DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
@@ -165,12 +165,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.call_runtime(l, name, list)
     }
 
-    /// A generated symbol whose name is meant literally: the binding name of a
-    /// lowered anonymous class (it becomes the class's `.name`), the parameter
-    /// of a synthesized setter, `arguments` in a synthesized constructor. None
-    /// of them is declared in the scope being lowered into, so none of them can
-    /// collide with a declaration there. Temporaries go through `new_temp`.
-    fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
+    /// A generated symbol that is not a binding of the scope being lowered into:
+    /// the parameter of a synthesized setter, `arguments` in a synthesized
+    /// constructor. Everything the lowering declares in that scope is a
+    /// temporary and goes through `new_temp`; the `'static` name and the
+    /// assertion keep the two apart.
+    fn new_fixed_name_sym(&mut self, kind: js_ast::symbol::Kind, name: &'static [u8]) -> Ref {
+        debug_assert!(
+            !name.starts_with(b"_"),
+            "lowering temporaries go through new_temp"
+        );
         let ref_ = self.new_symbol(kind, name);
         VecExt::append(&mut self.current_scope_mut().generated, ref_);
         ref_
@@ -178,34 +182,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// A lowering temporary (`_init`, `_dec`, the `_name` WeakMap of a lowered
     /// member, ...). The lowering declares it with `var` (or `let`, for the
-    /// inner class binding) in the statement list it is lowering into, so it is
-    /// a binding of the nearest scope that stops `var` hoisting, and is
-    /// registered there like any other declaration:
+    /// inner class binding) in the statement list it is lowering into, which
+    /// makes it a binding of the enclosing var-hoisting scope, and it is
+    /// registered there like any other declaration so the bundler's renamers
+    /// rename it (`declare_generated_binding`).
     ///
-    /// - `scope.generated` + `declared_symbols` let the bundler's renamer see
-    ///   it. The renamer only visits `generated` lists of nested scopes; the
-    ///   top level of a file is renamed from `Part.declared_symbols`.
-    /// - Without a renamer (the runtime transpiler, `bun build --no-bundle`),
-    ///   symbols print under their original names, so `base` is only a
-    ///   request: `name_decorator_temps` picks the final, file-unique name
-    ///   once the whole file has been visited.
+    /// Without a renamer (the runtime transpiler, `bun build --no-bundle`),
+    /// symbols print under their original names, so there `base` is only a
+    /// request: `name_decorator_temps` picks the final name once the whole file
+    /// has been visited.
     fn new_temp(&mut self, base: &'a [u8]) -> Ref {
         debug_assert!(
             base.starts_with(b"_"),
             "name_decorator_temps only reserves the file's `_`-prefixed identifiers"
         );
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, base);
-
-        let mut scope = self.current_scope_ref();
-        while !scope.kind_stops_hoisting() {
-            scope = scope.parent.expect("the module scope stops hoisting");
-        }
-        let is_top_level = scope == self.module_scope_ref();
-        VecExt::append(&mut scope.generated, ref_);
-        self.declared_symbols
-            .append(bun_ast::DeclaredSymbol { ref_, is_top_level })
-            .expect("oom");
-
+        let scope = self.var_hoisting_scope();
+        self.declare_generated_binding(scope, ref_);
         if !self.will_use_renamer() {
             self.decorator_temp_refs.push(ref_);
         }
@@ -216,6 +209,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// file has. Runs after the visit pass, because that is when the set of
     /// identifiers the file uses is complete: references to undeclared globals
     /// only get a symbol when the visit reaches them (`find_symbol`).
+    ///
+    /// Every symbol in the file is reserved, not just the ones declared in the
+    /// scope a temporary hoists to: the temporary is read from code nested
+    /// inside that scope (constructors, the generated getters and setters, the
+    /// class's own methods), so a same-named binding in any of those nested
+    /// scopes, such as a method parameter `_value` next to a `#value` field,
+    /// would shadow it there.
     ///
     /// Same convention as the renamer: the first temporary asking for a base
     /// name keeps it, later ones get `base2`, `base3`, ...; names the file
@@ -255,10 +255,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 Some(&last) => {
                     let mut n = last + 1;
-                    let mut candidate = self.bump_name(base, n);
+                    let mut candidate = self.bump_name(base, Some(n));
                     while taken.contains_key(&candidate) {
                         n += 1;
-                        candidate = self.bump_name(base, n);
+                        candidate = self.bump_name(base, Some(n));
                     }
                     taken.insert(base, n);
                     taken.insert(candidate, 1);
@@ -504,14 +504,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Bump-format `{prefix}{n}`.
-    fn bump_name(&self, prefix: &[u8], n: usize) -> &'a [u8] {
+    /// Bump-format `_{prefix}{n}` (or just `_{prefix}` when n is omitted).
+    fn bump_name(&self, prefix: &[u8], n: Option<usize>) -> &'a [u8] {
         let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(prefix);
-        // bumpalo Vec<u8> doesn't impl io::Write; format into a
-        // bump String and copy the bytes.
-        let s = bun_alloc::arena_format!(in self.arena, "{}", n);
-        v.extend_from_slice(s.as_bytes());
+        if let Some(n) = n {
+            // bumpalo Vec<u8> doesn't impl io::Write; format into a
+            // bump String and copy the bytes.
+            let s = bun_alloc::arena_format!(in self.arena, "{}", n);
+            v.extend_from_slice(s.as_bytes());
+        }
         v.into_bump_slice()
     }
 
@@ -884,7 +886,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     (obj_expr, self.new_expr(E::This {}, obj_expr.loc))
                                 }
                                 _ => {
-                                    let tmp_ref = self.generate_temp_ref(Some(b"_obj"));
+                                    // Declared by `drain_capture_temp_decls`: with the
+                                    // class's other temporaries, or at the top of the
+                                    // function body being rewritten.
+                                    let tmp_ref = self.new_temp(b"_obj");
+                                    self.temp_refs_to_declare.push(TempRef {
+                                        r#ref: tmp_ref,
+                                        ..Default::default()
+                                    });
                                     let write = self.assign_to(tmp_ref, obj_expr, expr_loc);
                                     let read = self.use_ref(tmp_ref, expr_loc);
                                     (write, read)
@@ -1253,8 +1262,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(name) = name_from_context
                     && can_be_class_binding_name(name)
                 {
+                    // Not a temporary: this is the class's own binding (it
+                    // becomes `.name`) and lives in the class scope. It goes
+                    // into `generated` only so that the minifier assigns it a
+                    // slot like any other symbol of a nested scope.
+                    let name_ref = p.new_symbol(js_ast::symbol::Kind::Other, name);
+                    VecExt::append(&mut p.current_scope_mut().generated, name_ref);
                     class.class_name = Some(js_ast::LocRef {
-                        ref_: p.new_sym(js_ast::symbol::Kind::Other, name),
+                        ref_: name_ref,
                         loc,
                     });
                 }
@@ -1647,7 +1662,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
 
                     // Setter: set foo(v) { __privateSet(this, _foo, v); }
-                    let setter_param_ref = p.new_sym(js_ast::symbol::Kind::Other, b"v");
+                    let setter_param_ref = p.new_fixed_name_sym(js_ast::symbol::Kind::Other, b"v");
                     let this_e2 = p.new_expr(E::This {}, loc);
                     let wm_e2 = p.use_ref(wm_ref, loc);
                     let v_e = p.use_ref(setter_param_ref, loc);
@@ -2409,7 +2424,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut ctor_stmts = BumpVec::<Stmt>::new_in(bump);
                 if class.extends.is_some() {
                     let target = p.new_expr(E::Super {}, loc);
-                    let args_ref = p.new_sym(js_ast::symbol::Kind::Unbound, arguments_str);
+                    let args_ref =
+                        p.new_fixed_name_sym(js_ast::symbol::Kind::Unbound, arguments_str);
                     let inner = p.new_expr(
                         E::Identifier {
                             ref_: args_ref,

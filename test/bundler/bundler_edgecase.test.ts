@@ -3207,31 +3207,90 @@ describe("bundler", () => {
     },
     run: { stdout: "1 2" },
   });
+  // Constructors read `_init` at construction time, so a class from one file
+  // must not pick up the initializers of a class from a later file.
   itBundled("edgecase/DecoratorLoweringTempsAcrossFiles", {
     files: {
       "/entry.js": /* js */ `
-        import { a } from "./a.js";
+        import { A } from "./a.js";
         import { B } from "./b.js";
-        console.log(a.x, new B().x);
+        console.log(new A().a, new B().b);
       `,
       "/a.js": /* js */ `
-        export class A { accessor x = "a"; }
-        export const a = new A();
+        function double(value, ctx) { return x => x * 2; }
+        export const A = class { @double a = 1; };
       `,
       "/b.js": /* js */ `
-        export class B { accessor x = "b"; }
+        function triple(value, ctx) { return x => x * 3; }
+        export const B = class { @triple b = 1; };
       `,
     },
-    run: { stdout: "a b" },
+    run: { stdout: "2 3" },
+  });
+  // https://github.com/oven-sh/bun/issues/30568
+  itBundled("edgecase/DecoratorLoweringAccessorStorageAcrossFiles", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ComponentA } from "./a.js";
+        import { ComponentB } from "./b.js";
+        console.log(new ComponentA().myData, new ComponentB().myData);
+      `,
+      "/a.js": /* js */ `
+        import { state } from "./decorator.js";
+        export class ComponentA {
+          @state() accessor myData = "A";
+        }
+      `,
+      "/b.js": /* js */ `
+        import { state } from "./decorator.js";
+        export class ComponentB {
+          @state() accessor myData = "B";
+        }
+      `,
+      "/decorator.js": /* js */ `
+        export function state() {
+          return function (target, context) {
+            return {
+              get() { return target.get.call(this); },
+              set(newValue) { target.set.call(this, newValue); },
+            };
+          };
+        }
+      `,
+    },
+    run: { stdout: "A B" },
+  });
+  // The temporary that captures the receiver of a private method call is
+  // declared inside the method (or next to the class, for relocated static
+  // code), and is read where the user's binding of the same name is visible.
+  itBundled("edgecase/DecoratorLoweringReceiverTempVsUserName", {
+    files: {
+      "/entry.js": /* js */ `
+        const _obj = "outer";
+        function dec(value, ctx) { return value; }
+        class A {
+          @dec m() {}
+          #secret() { return "secret"; }
+          static #staticSecret() { return "static secret"; }
+          self() { return this; }
+          static self() { return A; }
+          run() { return [this.self().#secret(), _obj]; }
+          static { console.log(A.self().#staticSecret(), _obj); }
+        }
+        console.log(...new A().run());
+      `,
+    },
+    run: { stdout: "static secret outer\nsecret outer" },
   });
   // A class expression inside a block still declares its temporaries with
   // `var`, so the two blocks' temporaries are bindings of the same scope.
   const decoratorTempsInSiblingBlocks = {
     "/entry.js": /* js */ `
+      function dec(value, ctx) { return value; }
       let A, B;
-      { A = class { accessor x = "a"; }; }
+      { A = class { @dec m() {} accessor x = "a"; }; }
       const a = new A();
-      { B = class { accessor x = "b"; }; }
+      { B = class { @dec m() {} accessor x = "b"; }; }
       console.log(a.x, new B().x);
     `,
   };

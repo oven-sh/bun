@@ -1267,6 +1267,43 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("with a parameter of a method that reads the lowered member", async () => {
+      // The `_value` WeakMap is read inside `set`, where a parameter of the
+      // same name would shadow it, so bindings of nested scopes count too.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        class Store {
+          #value = 0;
+          @dec set(_value) { this.#value = _value; return this; }
+          get() { return this.#value; }
+        }
+        console.log(new Store().set(5).get());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("with a variable named like the temporary that captures a private call receiver", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const _obj = "outer";
+        function dec(value, ctx) { return value; }
+        class A {
+          @dec m() {}
+          #secret() { return "secret"; }
+          static #staticSecret() { return "static secret"; }
+          self() { return this; }
+          static self() { return A; }
+          run() { return [this.self().#secret(), _obj]; }
+          static { console.log(A.self().#staticSecret(), _obj); }
+        }
+        console.log(...new A().run());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("static secret outer\nsecret outer\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("between members of one class", async () => {
       // `accessor x` and `#x` both want a WeakMap named `_x`.
       const { stdout, stderr, exitCode } = await runDecorator(`
@@ -1351,14 +1388,31 @@ describe("ES Decorators", () => {
     test("between class expressions in sibling blocks", async () => {
       // The `var` declarations for both expressions hoist to the same scope.
       const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
         let A, B;
-        { A = class { accessor x = "a"; }; }
+        { A = class { @dec m() {} accessor x = "a"; }; }
         const a = new A();
-        { B = class { accessor x = "b"; }; }
+        { B = class { @dec m() {} accessor x = "b"; }; }
         console.log(a.x, new B().x);
       `);
       expect(stderr).toBe("");
       expect(stdout).toBe("a b\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("between a class expression and one nested in its static initializer", async () => {
+      // https://github.com/oven-sh/bun/issues/31929: both expressions are
+      // lowered into the same scope, and the inner one is evaluated while the
+      // outer one is still using its temporaries.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        const C = class Outer {
+          @dec static s = (class { @dec static x = 42; }).x;
+        };
+        console.log(C.name, C.s);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("Outer 42\n");
       expect(exitCode).toBe(0);
     });
 

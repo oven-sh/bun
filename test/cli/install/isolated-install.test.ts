@@ -1524,6 +1524,83 @@ describe("existing node_modules, missing node_modules/.bun", () => {
   });
 });
 
+describe("switching from isolated to hoisted", () => {
+  test("removes the leftover store and materializes real directories", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "switch-to-hoisted",
+        dependencies: {
+          "no-deps": "1.0.0",
+          "a-dep": "1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBe(true);
+
+    await registry.writeBunfig(packageDir, { linker: "hoisted" });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["a-dep", "no-deps"]);
+    expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBe(false);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    // with the store gone, prune no longer refuses to run
+    await using prune = spawn({
+      cmd: [bunExe(), "prune"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [pruneStderr, pruneExited] = await Promise.all([prune.stderr.text(), prune.exited]);
+    expect(pruneStderr).not.toContain("isolated linker");
+    expect(pruneExited).toBe(0);
+  });
+
+  test("workspace packages get real directories after the switch", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "switch-to-hoisted-workspaces",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    await registry.writeBunfig(packageDir, { linker: "hoisted" });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps", "pkg1"]);
+    expect(lstatSync(join(packageDir, "packages", "pkg1", "node_modules", "no-deps")).isSymbolicLink()).toBe(false);
+    expect(
+      await file(join(packageDir, "packages", "pkg1", "node_modules", "no-deps", "package.json")).json(),
+    ).toMatchObject({
+      name: "no-deps",
+      version: "2.0.0",
+    });
+  });
+});
+
 describe("--linker flag", () => {
   test("can override linker from bunfig", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

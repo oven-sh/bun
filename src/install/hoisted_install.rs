@@ -4,9 +4,10 @@ use core::sync::atomic::Ordering;
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
 use bun_core::strings;
-use bun_core::{Global, Output};
-use bun_paths::SEP;
-use bun_sys::{self as sys, Dir, Fd};
+use bun_core::{Global, Output, fast_random, fmt as bun_fmt};
+use bun_paths::path_options::AssumeOk as _;
+use bun_paths::{AutoRelPath, SEP};
+use bun_sys::{self as sys, Dir, E, Fd, FdExt as _};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
@@ -214,6 +215,21 @@ pub(crate) fn install_hoisted_packages(
             }
         }
     };
+
+    // A `node_modules/.bun` store left behind by a previous isolated-linker
+    // install keeps the top-level symlinks into it resolving, so `verify`
+    // would accept them and neither the symlinks nor the store would ever be
+    // replaced. Delete the store up front so those symlinks dangle, fail
+    // verification, and are reinstalled as real directories. Skipped for
+    // partial installs, which may not revisit every package that links into
+    // the store.
+    if !new_node_modules
+        && install_root_dependencies
+        && workspace_filters.is_empty()
+        && packages_to_install.is_none()
+    {
+        remove_leftover_isolated_store();
+    }
 
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;
@@ -616,4 +632,30 @@ pub(crate) fn install_hoisted_packages(
     }
 
     Ok(summary)
+}
+
+/// Deletes the `node_modules/.bun` store when switching from the isolated
+/// linker to the hoisted linker. The store is renamed aside first so an
+/// interrupted delete cannot leave a partial store that still looks isolated
+/// to `bun prune`.
+fn remove_leftover_isolated_store() {
+    let store_path = bun_paths::path_literal!("node_modules/.bun");
+
+    let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
+    rename_path
+        .append_fmt(format_args!(
+            ".old_modules-{}",
+            bun_fmt::hex_lower(bun_core::bytes_of(&fast_random()))
+        ))
+        .assume_ok();
+
+    match sys::renameat(Fd::cwd(), store_path, Fd::cwd(), rename_path.slice_z()) {
+        Ok(()) => {
+            let _ = Fd::cwd().delete_tree(rename_path.slice_z());
+        }
+        Err(err) if err.get_errno() == E::ENOENT => {}
+        Err(_) => {
+            let _ = Fd::cwd().delete_tree(store_path);
+        }
+    }
 }

@@ -169,7 +169,7 @@ pub(crate) fn compute_chunks(
                 let order_len = order.len() as usize;
                 *css_chunk_entry.value_ptr = Chunk {
                     entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
-                    entry_bits: entry_point_chunk_bits,
+                    entry_bits: entry_point_chunk_bits.clone()?,
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
                         asts: (0..order_len)
@@ -186,6 +186,34 @@ pub(crate) fn compute_chunks(
                     ..Default::default()
                 };
             }
+
+            // An import()ed stylesheet is loaded as a JS module, so it also needs a JS chunk.
+            if this.graph.files.items_entry_point_kind()[source_index as usize]
+                != crate::EntryPoint::Kind::DynamicImport
+            {
+                continue;
+            }
+
+            let css_chunk_index = u32::try_from(css_chunk_entry.index).expect("int cast");
+            let js_chunk_entry = js_chunks.get_or_put(js_chunk_key)?;
+            entry_point_to_js_chunk_idx[entry_id_] =
+                u32::try_from(js_chunk_entry.index).expect("int cast");
+            js_chunks_with_css += 1;
+            *js_chunk_entry.value_ptr = Chunk {
+                entry_point: chunk::EntryPoint::new(source_index, entry_bit, true, false),
+                entry_bits: entry_point_chunk_bits,
+                content: chunk::Content::Javascript(chunk::JavaScriptChunk {
+                    css_chunks: Box::<[u32]>::from(&[css_chunk_index][..]),
+                    ..Default::default()
+                }),
+                output_source_map: SourceMapPieces::init(),
+                flags: make_flags(
+                    false,
+                    could_be_browser_target_from_server_build
+                        && ast_targets[source_index as usize] == Target::Browser,
+                ),
+                ..Default::default()
+            };
 
             continue;
         }
@@ -504,11 +532,10 @@ pub(crate) fn compute_chunks(
     // to look up the path for this chunk to use with the import.
     for (chunk_id, chunk) in chunks.iter_mut().enumerate() {
         if chunk.entry_point.is_entry_point() {
-            // JS entry points that import CSS files generate two chunks, a JS chunk
-            // and a CSS chunk. Don't link the CSS chunk to the JS file since the CSS
-            // chunk is secondary (the JS chunk is primary).
+            // An entry point with both a JS and a CSS chunk is linked to the JS chunk.
             if matches!(chunk.content, chunk::Content::Css(_))
-                && css_asts[chunk.entry_point.source_index() as usize].is_none()
+                && entry_point_to_js_chunk_idx[chunk.entry_point.entry_point_id() as usize]
+                    != u32::MAX
             {
                 continue;
             }

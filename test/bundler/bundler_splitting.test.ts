@@ -290,6 +290,220 @@ describe("bundler", () => {
     },
   });
 
+  // import() of a stylesheet must resolve to the stylesheet's JS exports (the
+  // CSS modules class map), so the stylesheet needs a JS chunk of its own next
+  // to its CSS. Previously the import() was rewritten to the .css output.
+  itBundled("splitting/DynamicImportOfCSSModuleExports", {
+    files: {
+      "/entry.js": `
+        const mod = await import('./styles.module.css');
+        console.log(Object.keys(mod).join(','), mod.foo === mod.default.foo, /^foo_/.test(mod.foo));
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/styles\.module-[a-z0-9]+\.js"\)/);
+      // The entry's own CSS bundle still carries the dynamically imported stylesheet.
+      expect(api.readFile("/out/entry.css")).toContain("color: red");
+
+      const { outputs } = JSON.parse(api.readFile("/metafile.json"));
+      const stylesheetChunks = Object.entries<any>(outputs).filter(
+        ([file, output]) => file.endsWith(".js") && output.entryPoint === "styles.module.css",
+      );
+      expect(stylesheetChunks).toEqual([
+        [
+          expect.stringMatching(/styles\.module-[a-z0-9]+\.js$/),
+          expect.objectContaining({
+            exports: ["default", "foo"],
+            cssBundle: expect.stringMatching(/\.css$/),
+          }),
+        ],
+      ]);
+      const entry = Object.entries<any>(outputs).find(([file]) => file.endsWith("entry.js"))![1];
+      expect(entry.imports.filter((i: { kind: string }) => i.kind === "dynamic-import")).toEqual([
+        { path: stylesheetChunks[0][0], kind: "dynamic-import" },
+      ]);
+      // The chunk declares what it exports. The export clause alone is emitted
+      // when the stylesheet's exports are not kept alive.
+      expect(api.readFile(join("/out", stylesheetChunks[0][0]))).toMatchInlineSnapshot(`
+        "// styles.module.css
+        var foo = "foo_-MSaAA";
+        var styles_module_default = {
+          foo
+        };
+        export {
+          styles_module_default as default,
+          foo
+        };
+        "
+      `);
+    },
+    run: {
+      file: "/out/entry.js",
+      env,
+      stdout: "default,foo true true",
+    },
+  });
+
+  // A stylesheet that one entry point imports statically and another one
+  // import()s: the static importer keeps its own inline copy of the stylesheet's
+  // JS (it does not import the stylesheet's chunk), the dynamic importer loads
+  // the chunk. Liveness is per file, not per chunk, so once the stylesheet is
+  // import()ed somewhere, the static importer's copy carries every export too,
+  // not only the `foo` it uses.
+  itBundled("splitting/StaticAndDynamicImportOfSameCSSModule", {
+    files: {
+      "/static.js": `
+        import { foo } from './styles.module.css';
+        console.log('static', /^foo_/.test(foo));
+      `,
+      "/dynamic.js": `
+        const mod = await import('./styles.module.css');
+        console.log('dynamic', Object.keys(mod).join(','), /^bar_/.test(mod.default.bar));
+      `,
+      "/styles.module.css": `
+        .foo { color: red; }
+        .bar { color: blue; }
+      `,
+    },
+    entryPoints: ["/static.js", "/dynamic.js"],
+    splitting: true,
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      expect(api.readFile("/out/static.js")).toMatchInlineSnapshot(`
+        "// styles.module.css
+        var foo = "foo_-MSaAA";
+        var bar = "bar_-MSaAA";
+        var styles_module_default = {
+          foo,
+          bar
+        };
+
+        // static.js
+        console.log("static", /^foo_/.test(foo));
+        "
+      `);
+      expect(api.readFile("/out/dynamic.js")).toMatch(/import\("\.\/styles\.module-[a-z0-9]+\.js"\)/);
+
+      const { outputs } = JSON.parse(api.readFile("/metafile.json"));
+      const stylesheetChunks = Object.keys(outputs).filter(
+        file => file.endsWith(".js") && outputs[file].entryPoint === "styles.module.css",
+      );
+      expect(stylesheetChunks).toEqual([expect.stringMatching(/styles\.module-[a-z0-9]+\.js$/)]);
+      const importsOf = (name: string): { path: string; kind: string }[] =>
+        outputs[Object.keys(outputs).find(file => file.endsWith(name))!].imports;
+      expect(importsOf("dynamic.js")).toContainEqual({ path: stylesheetChunks[0], kind: "dynamic-import" });
+      expect(importsOf("static.js").map(i => i.path)).not.toContain(stylesheetChunks[0]);
+    },
+    run: [
+      {
+        file: "/out/static.js",
+        env,
+        stdout: "static true",
+      },
+      {
+        file: "/out/dynamic.js",
+        env,
+        stdout: "dynamic bar,default,foo true",
+      },
+    ],
+  });
+
+  // A stylesheet that is both a user-specified entry point and import()ed only
+  // gets its CSS output (entry point kinds are exclusive), so the import() is
+  // still rewritten to the .css output (or, with --css-chunking, to whatever
+  // chunk is at index 0) instead of a JS chunk exporting the class map.
+  itBundled("splitting/DynamicImportOfUserSpecifiedCSSEntryPoint", {
+    todo: true,
+    files: {
+      "/entry.js": `
+        const mod = await import('./styles.module.css');
+        console.log(Object.keys(mod).join(','), /^foo_/.test(mod.foo));
+      `,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    splitting: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toMatch(/import\("\.\/styles\.module[^"]*\.js"\)/);
+    },
+    run: {
+      file: "/out/entry.js",
+      env,
+      stdout: "default,foo true",
+    },
+  });
+
+  // A stylesheet the user passes as an entry point still only produces CSS.
+  itBundled("splitting/UserSpecifiedCSSEntryPointHasNoJSChunk", {
+    files: {
+      "/entry.js": `console.log('entry')`,
+      "/styles.module.css": `.foo { color: red; }`,
+    },
+    entryPoints: ["/entry.js", "/styles.module.css"],
+    splitting: true,
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      const { outputs } = JSON.parse(api.readFile("/metafile.json"));
+      const stylesheetOutputs = Object.entries<any>(outputs)
+        .filter(([, output]) => output.entryPoint === "styles.module.css")
+        .map(([file]) => file.slice(file.lastIndexOf("/") + 1));
+      expect(stylesheetOutputs).toEqual(["styles.module.css"]);
+    },
+  });
+
+  // With --css-chunking the import()ed stylesheet shares its CSS chunk with the
+  // importing entry point. The import() must still point at the stylesheet's JS
+  // chunk (it used to be rewritten to the importing entry point's own chunk).
+  test("splitting/DynamicImportOfCSSModuleWithCSSChunking", async () => {
+    using dir = tempDir("splitting-css-chunking-dynamic-import", {
+      "entry.js": `
+        import './styles.module.css';
+        import('./styles.module.css').then(mod => console.log(Object.keys(mod).join(','), /^foo_/.test(mod.default.foo)));
+      `,
+      "styles.module.css": `.foo { color: red; }`,
+    });
+    const root = String(dir);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--css-chunking", "--outdir", "out", "./entry.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildErr).toBe("");
+    expect(buildOut).toContain("entry.js");
+    expect(buildExit).toBe(0);
+
+    const outputs = readdirSync(join(root, "out")).sort();
+    expect(outputs.filter(file => file.endsWith(".css"))).toEqual(["entry.css"]);
+    expect(outputs.filter(file => file.endsWith(".js"))).toEqual([
+      "entry.js",
+      expect.stringMatching(/^styles\.module-[a-z0-9]+\.js$/),
+    ]);
+    expect(readFileSync(join(root, "out", "entry.js"), "utf8")).toMatch(/import\("\.\/styles\.module-[a-z0-9]+\.js"\)/);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(root, "out", "entry.js")],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(runErr).toBe("");
+    expect(runOut).toBe("default,foo true\n");
+    expect(runExit).toBe(0);
+  });
+
   itBundled("splitting/CircularDynamicImportsWithCSS", {
     files: {
       "/entry.js": `

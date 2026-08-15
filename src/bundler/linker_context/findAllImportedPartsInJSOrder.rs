@@ -46,16 +46,28 @@ pub(crate) fn find_imported_parts_in_js_order(
     chunk_index: u32,
 ) -> Result<(), crate::Error> {
     let mut chunk_order_array: Vec<Order> =
-        Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
+        Vec::with_capacity(chunk.files_with_parts_in_chunk.count() + 1);
     {
         let distances = this.graph.files.items_distance_from_entry_point();
         let stable_source_indices = this.graph.stable_source_indices.slice();
-        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+        let mut push = |source_index: IndexInt| {
             chunk_order_array.push(Order {
                 source_index,
                 distance: distances[source_index as usize],
                 tie_breaker: stable_source_indices[source_index as usize],
             });
+        };
+        for &source_index in chunk.files_with_parts_in_chunk.keys() {
+            push(source_index);
+        }
+
+        // CSS files are never in `files_with_parts_in_chunk` (each importing chunk prints its
+        // own copy, see `visit`), so the chunk of an import()ed stylesheet visits it directly.
+        let entry_point = chunk.entry_point;
+        if entry_point.is_entry_point()
+            && this.graph.ast.items_css()[entry_point.source_index() as usize].is_some()
+        {
+            push(entry_point.source_index());
         }
     }
 

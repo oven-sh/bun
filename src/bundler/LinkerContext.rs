@@ -2745,7 +2745,11 @@ impl<'a> LinkerContext<'a> {
                     }
                 }
             }
-            return;
+
+            // An import()ed stylesheet has its own JS chunk; walk its parts like an entry point's.
+            if ctx.entry_point_kinds[source_index as usize] != EntryPoint::Kind::DynamicImport {
+                return;
+            }
         }
 
         // HTML files can reference non-JS/CSS assets (favicons, images, etc.)

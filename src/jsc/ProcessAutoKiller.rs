@@ -12,8 +12,7 @@ pub struct ProcessAutoKiller {
     pub(crate) processes: ArrayHashMap<*mut Process, u32>,
     pub enabled: bool,
     pub(crate) ever_enabled: bool,
-    /// Stored per process as the map value. The test runner begins one per execution group
-    /// (a test with its beforeEach/afterEach hooks, or one beforeAll/afterAll).
+    /// Map value of each tracked process; the test runner begins a new one per execution group.
     scope: u32,
 }
 

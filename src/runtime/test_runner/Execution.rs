@@ -1079,8 +1079,7 @@ fn step_sequence_one(
     }
 }
 
-/// Kills what the timed-out group spawned (its auto_killer scope). Skipped for test.concurrent()
-/// groups, whose sequences all share one scope, so this could kill other still-running tests' children.
+/// Skipped for test.concurrent() groups: their tests share one scope, so this would hit other tests' children.
 fn kill_dangling_processes(group_sequence_count: usize, global_this: &JSGlobalObject) {
     if group_sequence_count != 1 {
         return;

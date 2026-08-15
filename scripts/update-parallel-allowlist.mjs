@@ -178,7 +178,7 @@ const out = {
     builds_scanned: builds.length,
     build_range: [Math.min(...builds), Math.max(...builds)],
     fast_ms: FAST_MS,
-    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named and cli/install tests (shared bin/cache dirs) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
+    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
     stats: { dirs: dirs.length, files: eligibleFiles, excluded: excludeFiles.length },
   },
   dirs,

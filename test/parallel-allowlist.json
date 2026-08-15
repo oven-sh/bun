@@ -1,11 +1,11 @@
 {
   "_meta": {
-    "generated_at": "2026-08-15T23:19:54.586Z",
+    "generated_at": "2026-08-15T23:33:35.178Z",
     "generated_by": "scripts/update-parallel-allowlist.mjs",
     "builds_scanned": 300,
     "build_range": [97649, 97948],
     "fast_ms": 15000,
-    "rule": "a bun test file qualifies when its slowest lane median in expected-durations.json is <= 15000ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named and cli/install tests (shared bin/cache dirs) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles",
+    "rule": "a bun test file qualifies when its slowest lane median in expected-durations.json is <= 15000ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles",
     "stats": {
       "dirs": 285,
       "files": 1694,

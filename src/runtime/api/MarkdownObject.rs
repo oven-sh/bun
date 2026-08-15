@@ -5,7 +5,7 @@ use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
     RangeErrorOptions,
 };
-use bun_paths::{self as paths, PathBuffer};
+use bun_paths::{self as paths};
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
@@ -166,7 +166,7 @@ pub(crate) fn render_to_ansi(
     };
     // cwd storage outlives the `&[u8]` slice stored in
     // `theme.image_base_dir`, which is read until render returns.
-    let mut cwd_abs_buf = PathBuffer::uninit();
+    let mut cwd_abs_buf = paths::path_buffer_pool::get();
     let mut cwd_owned: Vec<u8> = Vec::new();
     let mut cwd_abs_len: usize = 0;
     let mut cwd_is_owned = false;
@@ -207,7 +207,7 @@ pub(crate) fn render_to_ansi(
                         cwd_owned = cwd_bytes.to_vec();
                         cwd_is_owned = true;
                     } else {
-                        let mut proc_cwd_buf = PathBuffer::uninit();
+                        let mut proc_cwd_buf = paths::path_buffer_pool::get();
                         // _checked: even a short relative cwd can overflow
                         // once joined with a long process cwd.
                         if let Ok(proc_cwd) = bun_core::getcwd(&mut proc_cwd_buf) {

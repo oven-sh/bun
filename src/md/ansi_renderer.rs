@@ -2697,7 +2697,7 @@ fn resolve_local_image_path(src: &[u8], base_dir: Option<&[u8]>) -> Option<Box<[
     };
     // Checked join: an over-long base + src falls back to alt-text
     // instead of panicking on the fixed-size path buffer.
-    let mut join_buf = bun_paths::PathBuffer::uninit();
+    let mut join_buf = bun_paths::path_buffer_pool::get();
     let joined = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
         base,
         &mut join_buf[..],
@@ -2814,7 +2814,7 @@ fn read_png_dims(abs_path: &[u8]) -> Option<PngDims> {
     if abs_path.is_empty() || abs_path.len() >= bun_paths::MAX_PATH_BYTES {
         return None;
     }
-    let mut zbuf = bun_paths::PathBuffer::uninit();
+    let mut zbuf = bun_paths::path_buffer_pool::get();
     let path_z = bun_paths::resolve_path::z(abs_path, &mut zbuf);
     let file = match bun_sys::File::open(path_z, bun_sys::O::RDONLY, 0) {
         Ok(f) => f,

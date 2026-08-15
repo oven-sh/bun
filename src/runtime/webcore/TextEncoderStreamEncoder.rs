@@ -170,8 +170,11 @@ impl TextEncoderStreamEncoder {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
-        // SAFETY: simdutf writes initialized bytes into the spare capacity and returns the
-        // count; on non-SUCCESS we commit 0 and fall through to the slow path.
+        // SAFETY: the `reserve` above leaves at least `length` spare bytes once the
+        // prepend has been appended, and `length` is simdutf's length scan of `remain`,
+        // the bound the converter requires. simdutf writes initialized bytes into that
+        // spare capacity and returns the count; on non-SUCCESS we commit 0 and fall
+        // through to the slow path.
         let result = unsafe {
             bun_core::vec::fill_spare(buf, 0, |spare| {
                 let r = simdutf::convert::utf16::to::utf8::with_errors::le(remain, spare);

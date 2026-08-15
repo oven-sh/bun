@@ -2202,27 +2202,28 @@ pub(crate) mod strings_impl {
     }
 
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
-    /// the written sub-slice. Infallible. The
-    /// caller is responsible for sizing `out` for the worst case (≤ 3× input
-    /// code units).
+    /// the written sub-slice. Infallible: unpaired surrogates (legal in the
+    /// Windows paths, environment values and module names this is fed) become
+    /// U+FFFD, as in [`copy_utf16_into_utf8`]. The caller sizes `out` for the
+    /// conversion; 3 bytes per input code unit always suffices.
     ///
-    /// We assert the sizing in release too — one extra SIMD length
-    /// scan is cheap, and a panic beats heap corruption if a future caller
-    /// gets the sizing wrong. All current callers (~10, Windows wide-path
-    /// code) size `out` at `3 * utf16.len()` or `MAX_PATH * 3`, so this never
-    /// fires in practice.
+    /// The size is asserted in release too, against the length the replacing
+    /// encoder actually writes (a lone surrogate costs 3 bytes, not the 2 the
+    /// plain scan charges): one SIMD scan is cheap, and a panic beats heap
+    /// corruption if a caller under-sizes `out`.
     pub fn convert_utf16_to_utf8_in_buffer<'a>(out: &'a mut [u8], utf16: &[u16]) -> &'a mut [u8] {
         if utf16.is_empty() {
             return &mut out[..0];
         }
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        let need = element_length_utf16_into_utf8(utf16);
         assert!(
             need <= out.len(),
             "convert_utf16_to_utf8_in_buffer: out too small (need {need}, have {})",
             out.len(),
         );
-        let result = simdutf::convert::utf16::to::utf8::le(utf16, out);
-        &mut out[..result]
+        let result = copy_utf16_into_utf8_with_utf8_len(out, utf16, need);
+        debug_assert_eq!(result.read as usize, utf16.len());
+        &mut out[..result.written as usize]
     }
     // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0

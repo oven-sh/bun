@@ -484,7 +484,7 @@ pub use bun_core::strings::remove_leading_dot_slash;
 
 // Run with `cargo test -p bun_paths` (also the Miri lane,
 // `bun run rust:miri -p bun_paths`). simdutf's C++ implementation is only
-// linked into the full binary, so the two externs the conversion path uses
+// linked into the full binary, so the externs the two conversion paths use
 // are satisfied below with faithful pure-Rust scalar stubs — which is also
 // what keeps these tests runnable under Miri (no foreign code).
 #[cfg(test)]
@@ -589,6 +589,65 @@ mod tests {
                 }
             })
             .sum()
+    }
+
+    /// Scalar `simdutf::length::utf8::from::utf16::le_with_replacement`: the
+    /// byte length of the replacing encoding, 3 (U+FFFD) per unpaired
+    /// surrogate. `char::decode_utf16` pairs surrogates exactly like simdutf
+    /// does (an unpaired one is reported on its own and the next unit is
+    /// examined afresh).
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
+        input: *const u16,
+        length: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(input, length) };
+        char::decode_utf16(input.iter().copied())
+            .map(|unit| unit.map_or(3, char::len_utf8))
+            .sum()
+    }
+
+    /// Scalar `simdutf::convert::utf16::to::utf8::with_errors::le`: writes the
+    /// UTF-8 of the valid prefix and returns SUCCESS + bytes written, or
+    /// SURROGATE + the input position of the first unpaired surrogate, which
+    /// writes nothing. Like the real function it is never told the output
+    /// length, so under Miri a caller whose buffer does not hold the valid
+    /// prefix fails here.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
+        buf: *const u16,
+        len: usize,
+        utf8_output: *mut u8,
+    ) -> SIMDUTFResult {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(buf, len) };
+        let mut read = 0usize;
+        let mut written = 0usize;
+        for unit in char::decode_utf16(input.iter().copied()) {
+            let Ok(c) = unit else {
+                return SIMDUTFResult {
+                    status: Status::SURROGATE,
+                    count: read,
+                };
+            };
+            let mut encoded = [0u8; 4];
+            let encoded = c.encode_utf8(&mut encoded).as_bytes();
+            // SAFETY: test stub mirroring simdutf — the caller guarantees
+            // capacity for the conversion before calling (that is the
+            // invariant under test).
+            unsafe {
+                utf8_output
+                    .add(written)
+                    .copy_from_nonoverlapping(encoded.as_ptr(), encoded.len());
+            }
+            written += encoded.len();
+            read += c.len_utf16();
+        }
+        SIMDUTFResult {
+            status: Status::SUCCESS,
+            count: written,
+        }
     }
 
     /// The u16 length of the buffer `PathLike::os_path_kernel32` uses on
@@ -720,5 +779,54 @@ mod tests {
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
+    }
+
+    // `convert_utf16_to_utf8_in_buffer` is the other direction: it is what the
+    // Windows path code (`Path::init_fd_path`, `which`, `node:path`'s drive
+    // cwd lookup, ...) narrows OS-provided UTF-16 with, and NTFS names and
+    // environment values may contain unpaired surrogates. It used to check the
+    // buffer against the non-replacing length scan (2 bytes per surrogate
+    // unit) and then call simdutf's valid-input-only converter, which turns a
+    // lone surrogate plus whatever unit follows it into 4 bytes (one past an
+    // exactly sized buffer) and a lone surrogate at the end into "".
+
+    #[test]
+    fn convert_utf16_to_utf8_in_buffer_exact_fit() {
+        // 1 + 2 + 3 + 4 (surrogate pair) bytes.
+        let text = "a\u{E9}\u{4E16}\u{1F600}";
+        let input: Vec<u16> = text.encode_utf16().collect();
+        let mut out = [0u8; 10];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &input),
+            text.as_bytes()
+        );
+    }
+
+    #[test]
+    fn convert_utf16_to_utf8_in_buffer_replaces_unpaired_surrogates() {
+        // Lone lead followed by a non-trail: U+FFFD, and the following unit
+        // survives (the old code filled these four bytes with one bogus
+        // 4-byte sequence built from both units).
+        let mut out = [0u8; 4];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xD800, 0x61]),
+            b"\xEF\xBF\xBDa"
+        );
+
+        // Lone trail, and a lead as the final unit (used to yield "").
+        let mut out = [0u8; 7];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xDC00, 0x61, 0xD800]),
+            b"\xEF\xBF\xBDa\xEF\xBF\xBD"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "out too small (need 4, have 3)")]
+    fn convert_utf16_to_utf8_in_buffer_charges_the_replacement_for_a_lone_surrogate() {
+        // The non-replacing scan accepted this 3-byte buffer (2 + 1) for an
+        // input whose conversion writes 4 bytes.
+        let mut out = [0u8; 3];
+        let _ = bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xD800, 0x61]);
     }
 }

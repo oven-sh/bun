@@ -598,7 +598,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub(crate) will_wrap_module_in_try_catch_for_using: bool,
 
-    /// Receives hoisted declarations; installed by `visit_stmts` and, for enum members, `s_enum`.
+    /// Receives hoisted declarations; `visit_stmts` and `s_enum` keep it installed while visiting.
     pub(crate) nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
     // Lifetime caution: points at a stack local saved/restored across calls.
     /// Name from assignment context for anonymous decorated class expressions.
@@ -661,6 +661,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Safe mutable projection of `nearest_stmt_list`.
     #[inline]
     pub(crate) fn nearest_stmt_list_mut(&mut self) -> Option<&mut ListManaged<'a, Stmt>> {
+        debug_assert!(
+            self.nearest_stmt_list.is_some(),
+            "nearest_stmt_list read outside of visit_stmts / s_enum; the hoisted declaration would be dropped"
+        );
         // SAFETY: `nearest_stmt_list` is a back-pointer to stack storage on
         // the enclosing visit frame, set before recursion and restored before
         // that frame returns. It is disjoint from `*self` and from any other

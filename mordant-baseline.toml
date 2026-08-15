@@ -23,7 +23,6 @@
 "arg_named_like_other_param:src/install/resolution.rs" = 1
 "bare_bool_args:src/install/isolated_install.rs" = 1
 "defaulted_failure:src/install/npm.rs" = 1
-"index_of_other_kind:src/install/isolated_install.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 "same_match_twice:src/install/PackageManager/install_with_manager.rs" = 1
 

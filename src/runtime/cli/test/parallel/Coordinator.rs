@@ -7,7 +7,7 @@
 use core::ffi::c_void;
 #[cfg(unix)]
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::io::Write as _;
 
 use bun_core::strings;
@@ -922,14 +922,35 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 }
 
 /// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a
-/// flag; `Coordinator::drive` checks it and tears down workers itself so we
-/// don't do non-signal-safe work in the handler. Linux PDEATHSIG and the
-/// Windows Job Object are the safety net for when the coordinator can't run
-/// this (SIGKILL).
+/// flag and wakes the event loop; `Coordinator::drive` checks the flag and
+/// tears down workers itself so we don't do non-signal-safe work in the
+/// handler. Linux PDEATHSIG and the Windows Job Object are the safety net for
+/// when the coordinator can't run this (SIGKILL).
 pub(crate) mod abort_handler {
     use super::*;
 
     pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
+
+    /// The loop `Coordinator::drive` parks in. Published by `install`, cleared
+    /// by `uninstall`; the loop itself lives until process exit.
+    static LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
+
+    /// Signal context on POSIX, the console control thread on Windows. The flag
+    /// alone is not enough: `drive` reads it between polls and the poll retries
+    /// on EINTR, so an idle coordinator would only notice it when the next
+    /// housekeeping timer (~1s) fired. `us_wakeup_loop` is an atomic add plus an
+    /// eventfd write / mach_msg / kevent / uv_async_send, so it is safe to call
+    /// from here and makes the poll return immediately.
+    fn request_abort() {
+        SHOULD_ABORT.store(true, Ordering::Release);
+        let loop_ = LOOP.load(Ordering::Acquire);
+        if !loop_.is_null() {
+            // SAFETY: `install` published the live per-process uws loop, which
+            // outlives the coordinator; the raw extern forms no `&mut Loop`, so
+            // it cannot alias the tick the main thread is inside of.
+            unsafe { bun_uws::us_wakeup_loop(loop_) };
+        }
+    }
 
     // PORTING.md §Global mutable state: written once in `install()` (single
     // call site), read once in `uninstall()`. RacyCell — `sigaction` is POD,
@@ -943,7 +964,7 @@ pub(crate) mod abort_handler {
 
     #[cfg(unix)]
     extern "C" fn posix_handler(_: i32, _: *const libc::siginfo_t, _: *const c_void) {
-        SHOULD_ABORT.store(true, Ordering::Release);
+        request_abort();
     }
 
     #[cfg(windows)]
@@ -953,7 +974,7 @@ pub(crate) mod abort_handler {
         use bun_sys::windows;
         match ctrl {
             windows::CTRL_C_EVENT | windows::CTRL_BREAK_EVENT | windows::CTRL_CLOSE_EVENT => {
-                SHOULD_ABORT.store(true, Ordering::Release);
+                request_abort();
                 windows::TRUE
             }
             _ => windows::FALSE,
@@ -971,7 +992,10 @@ pub(crate) mod abort_handler {
         }
     }
 
-    pub(crate) fn install() -> Guard {
+    /// `loop_` is the loop `Coordinator::drive` will tick; it must already be
+    /// set up (`EventLoop::ensure_waker`) so the handler has something to wake.
+    pub(crate) fn install(loop_: *mut bun_uws::Loop) -> Guard {
+        LOOP.store(loop_, Ordering::Release);
         #[cfg(unix)]
         {
             // SAFETY: signal handler installation; PREV_* are written before
@@ -1031,5 +1055,6 @@ pub(crate) mod abort_handler {
                 bun_sys::windows::FALSE,
             );
         }
+        LOOP.store(core::ptr::null_mut(), Ordering::Release);
     }
 }

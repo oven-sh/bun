@@ -1801,11 +1801,7 @@ impl JSValkeyClient {
                 // This is less-than-ideal, still, because this assumes a happy path. What happens if
                 // the SUBSCRIBE command fails? We have no way to roll back the addition of the
                 // handler.
-                this._subscription_ctx.get().upsert_receive_handler(
-                    global,
-                    channel_arg,
-                    handler_callback,
-                )?;
+                this.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
@@ -1814,11 +1810,7 @@ impl JSValkeyClient {
             };
             redis_channels.push(channel);
 
-            this._subscription_ctx.get().upsert_receive_handler(
-                global,
-                channel_or_many,
-                handler_callback,
-            )?;
+            this.upsert_receive_handler(global, channel_or_many, handler_callback)?;
         } else {
             return Err(global.throw_invalid_argument_type(
                 "subscribe",
@@ -1836,9 +1828,7 @@ impl JSValkeyClient {
             Ok(p) => p,
             Err(err) => {
                 // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this._subscription_ctx
-                    .get()
-                    .clear_all_receive_handlers(global)?;
+                this.clear_all_receive_handlers(global)?;
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
             }
         };
@@ -1885,9 +1875,7 @@ impl JSValkeyClient {
 
         // If no arguments, unsubscribe from all channels
         if args_view.is_empty() {
-            this._subscription_ctx
-                .get()
-                .clear_all_receive_handlers(global)?;
+            this.clear_all_receive_handlers(global)?;
             return Self::send_unsubscribe_request_and_cleanup(
                 this,
                 frame.this(),
@@ -1935,22 +1923,19 @@ impl JSValkeyClient {
             };
             redis_channels.push(ch);
 
-            let remaining_listeners = match this._subscription_ctx.get().remove_receive_handler(
-                global,
-                channel,
-                listener_cb,
-            ) {
-                Ok(Some(n)) => n,
-                Ok(None) => {
-                    // Listeners weren't present in the first place, so we can return a
-                    // resolved promise.
-                    return Ok(JSPromise::resolved_promise_value(
-                        global,
-                        JSValue::UNDEFINED,
-                    ));
-                }
-                Err(e) => return Err(e),
-            };
+            let remaining_listeners =
+                match this.remove_receive_handler(global, channel, listener_cb) {
+                    Ok(Some(n)) => n,
+                    Ok(None) => {
+                        // Listeners weren't present in the first place, so we can return a
+                        // resolved promise.
+                        return Ok(JSPromise::resolved_promise_value(
+                            global,
+                            JSValue::UNDEFINED,
+                        ));
+                    }
+                    Err(e) => return Err(e),
+                };
 
             // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this
             // channel.
@@ -1992,9 +1977,7 @@ impl JSValkeyClient {
                 };
                 redis_channels.push(channel);
                 // Clear the handlers for this channel
-                this._subscription_ctx
-                    .get()
-                    .clear_receive_handlers(global, channel_arg)?;
+                this.clear_receive_handlers(global, channel_arg)?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
@@ -2003,9 +1986,7 @@ impl JSValkeyClient {
             };
             redis_channels.push(channel);
             // Clear the handlers for this channel
-            this._subscription_ctx
-                .get()
-                .clear_receive_handlers(global, channel_or_many)?;
+            this.clear_receive_handlers(global, channel_or_many)?;
         } else {
             return Err(global.throw_invalid_argument_type(
                 "unsubscribe",

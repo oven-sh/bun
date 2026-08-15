@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_collections::DynamicBitSet;
+use bun_collections::bit_set::Range;
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -523,33 +524,10 @@ pub fn install_with_manager(
                         pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
                     }
 
-                    // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
-                    // which grows `buffers.dependencies` and may reallocate it.
-                    // Iterate by index against a snapshot of the original length and
-                    // copy each entry to the stack so neither the loop nor the callee
-                    // ever reads through a pointer into the old backing storage.
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for dependency_i in 0..dependencies_len {
-                            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
-                                continue;
-                            }
-                            let dependency =
-                                manager.lockfile.buffers.dependencies[dependency_i].clone();
-                            if all_name_hashes.binary_search(&dependency.name_hash).is_ok() {
-                                manager.lockfile.buffers.resolutions[dependency_i] =
-                                    invalid_package_id;
-                                if let Err(err) = enqueue_dependency_with_main(
-                                    manager,
-                                    dependency_i as u32,
-                                    &dependency,
-                                    invalid_package_id,
-                                    false,
-                                ) {
-                                    add_dependency_error(manager, &dependency, err);
-                                }
-                            }
-                        }
+                        reresolve_owned_rows(manager, &pinned_rows, |dependency| {
+                            all_name_hashes.binary_search(&dependency.name_hash).is_ok()
+                        })?;
                     }
 
                     if manager.summary.catalogs_changed {
@@ -560,33 +538,12 @@ pub fn install_with_manager(
                             .append_catalog_valued_name_hashes(&mut catalog_overridden);
                         catalog_overridden.sort_unstable();
                         catalog_overridden.dedup();
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for _dep_id in 0..dependencies_len {
-                            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
-                            if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
-                                continue;
-                            }
-                            let dep =
-                                manager.lockfile.buffers.dependencies[dep_id as usize].clone();
-                            if dep.version.tag != DependencyVersionTag::Catalog
-                                && (catalog_overridden.is_empty()
-                                    || catalog_overridden.binary_search(&dep.name_hash).is_err())
-                            {
-                                continue;
-                            }
-
-                            manager.lockfile.buffers.resolutions[dep_id as usize] =
-                                invalid_package_id;
-                            if let Err(err) = enqueue_dependency_with_main(
-                                manager,
-                                dep_id,
-                                &dep,
-                                invalid_package_id,
-                                false,
-                            ) {
-                                add_dependency_error(manager, &dep, err);
-                            }
-                        }
+                        reresolve_owned_rows(manager, &pinned_rows, |dependency| {
+                            dependency.version.tag == DependencyVersionTag::Catalog
+                                || catalog_overridden
+                                    .binary_search(&dependency.name_hash)
+                                    .is_ok()
+                        })?;
                     }
 
                     // Split this into two passes because the below may allocate memory or invalidate pointers
@@ -1588,6 +1545,57 @@ fn enqueue_transitive(
         return Ok(DynamicBitSet::default());
     }
     transitive.enqueue_tracked(manager)
+}
+
+/// Invalidates and re-resolves every row `selects`, except `pinned_rows` and rows no package owns any more:
+/// the differ just gave the root a fresh dependency list, so the rows it was loaded with are dead. The resolver
+/// decides how far to trust a row by its owner (`Lockfile::is_workspace_dependency`), so re-resolving a dead
+/// root row is wasted work at best and, for a `file:` path outside the project that nothing overrides any
+/// more, a resolution error.
+fn reresolve_owned_rows(
+    manager: &mut PackageManager,
+    pinned_rows: &DynamicBitSet,
+    selects: impl Fn(&Dependency) -> bool,
+) -> crate::Result<()> {
+    let owned_rows = {
+        let lockfile = &*manager.lockfile;
+        let mut owned = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len())?;
+        for slice in lockfile.packages.items_dependencies() {
+            if slice.len == 0 {
+                continue;
+            }
+            owned.set_range_value(
+                Range {
+                    start: slice.begin() as usize,
+                    end: slice.end() as usize,
+                },
+                true,
+            );
+        }
+        owned
+    };
+    // Resolving may append packages and grow `buffers.dependencies`, so only the rows present when this pass
+    // started are visited, each copied out before the resolver runs.
+    for dep_id in 0..owned_rows.bit_length() {
+        if !owned_rows.is_set(dep_id) || pinned_rows.is_set_allow_out_of_bound(dep_id, false) {
+            continue;
+        }
+        let dependency = manager.lockfile.buffers.dependencies[dep_id].clone();
+        if !selects(&dependency) {
+            continue;
+        }
+        manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
+        if let Err(err) = enqueue_dependency_with_main(
+            manager,
+            dep_id as DependencyID,
+            &dependency,
+            invalid_package_id,
+            false,
+        ) {
+            add_dependency_error(manager, &dependency, err);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]

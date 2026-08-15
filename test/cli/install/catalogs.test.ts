@@ -259,6 +259,54 @@ describe("basic", () => {
     await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
   });
 
+  // A file: path outside the project is only accepted on a row the root (or a workspace) owns. A catalog change
+  // re-resolves every catalog: row; the rows the root was loaded with have been replaced by then and belong to
+  // nobody, so re-resolving them fails the way an escaping transitive file: dependency does.
+  test.concurrent("changing the entry of a catalog: dependency pointing outside the project", async () => {
+    const packageJson = (xPath: string) =>
+      JSON.stringify({
+        name: "catalog-file-dep",
+        workspaces: { packages: [], catalog: { x: xPath } },
+        dependencies: { x: "catalog:" },
+      });
+    using dir = tempDir("catalog-file-dep", {
+      "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "x2/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+      "project/package.json": packageJson("file:../x"),
+    });
+    const packageDir = join(String(dir), "project");
+    const installedVersion = async () =>
+      (await file(join(packageDir, "node_modules", "x", "package.json")).json()).version;
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await installedVersion()).toBe("1.0.0");
+
+    await write(join(packageDir, "package.json"), packageJson("file:../x2"));
+    await runBunInstall(bunEnv, packageDir);
+    expect(await installedVersion()).toBe("2.0.0");
+    expect(normalizeBunSnapshot(await file(join(packageDir, "bun.lock")).text(), packageDir)).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "catalog-file-dep",
+            "dependencies": {
+              "x": "catalog:",
+            },
+          },
+        },
+        "catalog": {
+          "x": "file:../x2",
+        },
+        "packages": {
+          "x": ["x@file:../x2", {}],
+        }
+      }"
+    `);
+    await runBunInstall(bunEnv, packageDir, { frozenLockfile: true });
+  });
+
   test.concurrent("catalog and catalogs.default may split different packages between them", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {

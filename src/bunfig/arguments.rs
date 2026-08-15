@@ -93,7 +93,7 @@ fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Er
     Ok(())
 }
 
-pub fn load_config_path(
+fn load_config_path(
     cmd: CommandTag,
     auto_loaded: bool,
     config_path: &ZStr,

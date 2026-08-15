@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -487,34 +487,11 @@ describe("Bun.Terminal", () => {
       expect(terminal.closed).toBe(true);
     });
 
-    test.skipIf(!isGlibc)("setting flags the PTY refuses to apply throws", async () => {
-      // Linux forces CREAD on for PTYs. glibc's tcsetattr reads the attributes
-      // back and fails with EINVAL when the requested change did not take;
-      // libcs that only issue the ioctl report success, hence the gate.
-      const CREAD = 0x80;
-      await using terminal = new Bun.Terminal({});
-      const original = terminal.controlFlags;
-      expect(original & CREAD).toBe(CREAD);
-
-      let caught: any;
-      try {
-        terminal.controlFlags = original & ~CREAD;
-      } catch (e) {
-        caught = e;
-      }
-
-      expect({ code: caught?.code, syscall: caught?.syscall, controlFlags: terminal.controlFlags }).toEqual({
-        code: "EINVAL",
-        syscall: "ioctl",
-        controlFlags: original,
-      });
-    });
-
     test.skipIf(isWindows)("setting flags throws when the terminal's fd is not a PTY", async () => {
-      // Portable version of the above: swap the PTY master fd out for
-      // /dev/null (ENOTTY) behind the terminal's back. openpty() hands out
-      // the lowest free fd, so the master lands on the fd number the probe
-      // just freed.
+      // No libc rejects a termios update on a healthy PTY portably, so swap
+      // the PTY master fd out for /dev/null (ENOTTY) behind the terminal's
+      // back. openpty() hands out the lowest free fd, so the master lands on
+      // the fd number the probe just freed.
       const script = `
         const fs = require("node:fs");
         // The first terminal may open unrelated fds on the side (openpty is
@@ -568,8 +545,9 @@ describe("Bun.Terminal", () => {
       // matching the reference `@max(0, @min(num, max))` semantics. The kernel
       // may mask some bits per field, so compare NaN against Infinity rather
       // than a hard-coded constant. Both assignments start from the original
-      // flags: re-requesting the already-masked bits asks the PTY for a change
-      // it refuses, which glibc's tcsetattr reports as EINVAL.
+      // flags: re-requesting only the already-masked c_cflag bits is a
+      // tcsetattr that changes nothing, which Debian's and Ubuntu's patched
+      // glibc reports as EINVAL (upstream glibc and other libcs return 0).
       await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
 
       for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {

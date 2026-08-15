@@ -322,6 +322,13 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
+        /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
+        pub fn set_url(&mut self, href: Box<[u8]>) {
+            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
+                .unwrap_or_else(|_| OwnedURL::from_href(href));
+            self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+        }
+
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
@@ -508,16 +515,15 @@ pub mod registry {
                 registry_url
             };
 
-            let url_hash = Self::hash(strings::without_trailing_slash(&final_href));
-
-            Ok(Scope {
+            let mut scope = Scope {
                 name: name.into(),
-                url: OwnedURL::from_href(final_href),
-                url_hash,
                 token: registry.token,
                 auth,
                 user,
-            })
+                ..Default::default()
+            };
+            scope.set_url(final_href);
+            Ok(scope)
         }
     }
 

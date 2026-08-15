@@ -1198,8 +1198,6 @@ impl<'a> Resolver<'a> {
                     jsx: self.opts.jsx.clone(),
                     ..Default::default()
                 };
-                // Same as the regular success path below: this is a file on
-                // disk, so it gets its own tsconfig, sideEffects and realpath.
                 if let Err(err) = self.finalize_result(&mut result, kind) {
                     self.extension_order = original_order;
                     return ResultUnion::Failure(err);

@@ -612,10 +612,7 @@ impl<'a> Transpiler<'a> {
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler_with_options` mutates
     /// `self.options` so the resolver sees the same conditions/target/public_path.
-    ///
-    /// `jsx` is kept, not re-projected: by now `configure_linker` /
-    /// `run_env_loader` have merged the cwd tsconfig.json into `options.jsx`
-    /// (see `resolver_bundle_options_subset`).
+    /// `jsx` is kept: see `resolver_bundle_options_subset`.
     pub fn sync_resolver_opts(&mut self) {
         let jsx = core::mem::take(&mut self.resolver.opts.jsx);
         self.resolver.opts = resolver_bundle_options_subset(&self.options, jsx);
@@ -1054,10 +1051,8 @@ fn init_file_system(top_level_dir: Option<&'static [u8]>) -> crate::Result<*mut 
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
 ///
-/// `jsx` is not taken from `src`: `configure_linker` / `run_env_loader` merge
-/// the cwd tsconfig.json into `src.jsx`, while the resolver merges each file's
-/// own tsconfig over `opts.jsx`, so the base it gets must stay the user's
-/// configuration (`options.jsx` as built by `from_api`).
+/// `jsx` is a parameter because `src.jsx` has the cwd tsconfig merged in
+/// (`configure_linker`), and the resolver merges each file's own tsconfig over it.
 ///
 /// This projection can be dropped once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type

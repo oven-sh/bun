@@ -1413,12 +1413,79 @@ export function escapeGitHubAction(string) {
   return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
+// Escapes used by GitHub Actions workflow commands (`::error file=a,title=b::message`).
+// The message escapes `%` and newlines; property values also escape the `,` and
+// `:` that delimit them. Decoding happens in one pass so that an escaped literal
+// "%0A" (written "%250A") does not turn into a newline.
+// https://github.com/actions/toolkit/blob/main/packages/core/src/command.ts
+const githubActionEscapes = { "%25": "%", "%0D": "\r", "%0A": "\n", "%3A": ":", "%2C": "," };
+
 /**
+ * Decodes the message of a GitHub Actions workflow command.
  * @param {string} string
  * @returns {string}
  */
 export function unescapeGitHubAction(string) {
-  return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
+  return string.replace(/%(?:25|0D|0A)/g, escaped => githubActionEscapes[escaped]);
+}
+
+/**
+ * Decodes a property value (`file=`, `title=`, ...) of a GitHub Actions workflow command.
+ * @param {string} string
+ * @returns {string}
+ */
+export function unescapeGitHubActionProperty(string) {
+  return string.replace(/%(?:25|0D|0A|3A|2C)/g, escaped => githubActionEscapes[escaped]);
+}
+
+/**
+ * @typedef {object} GitHubActionCommand
+ * @property {string} command `error` for `::error ...::...`
+ * @property {Record<string, string>} properties decoded, e.g. `{ file, line, col, title }`
+ * @property {string} message decoded
+ */
+
+/**
+ * Parses a workflow command line, `::error file=a.ts,line=1,col=2,title=t::message`,
+ * the way the GitHub Actions runner does: the command and its properties end at the
+ * first `::` after the leading one, properties are separated by `,` and each value
+ * starts after the first `=` of its property (the value itself may contain `=`), and
+ * values and message are decoded as above.
+ *
+ * https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
+ *
+ * @param {string} line
+ * @returns {GitHubActionCommand | undefined} undefined if the line is not a workflow command
+ */
+export function parseGitHubActionCommand(line) {
+  if (!line.startsWith("::")) {
+    return undefined;
+  }
+  const end = line.indexOf("::", 2);
+  if (end === -1) {
+    return undefined;
+  }
+
+  const header = line.slice(2, end);
+  const space = header.indexOf(" ");
+  const command = space === -1 ? header : header.slice(0, space);
+  if (!command) {
+    return undefined;
+  }
+
+  /** @type {Record<string, string>} */
+  const properties = {};
+  if (space !== -1) {
+    for (const property of header.slice(space + 1).split(",")) {
+      const equals = property.indexOf("=");
+      if (equals <= 0) {
+        continue;
+      }
+      properties[property.slice(0, equals)] = unescapeGitHubActionProperty(property.slice(equals + 1));
+    }
+  }
+
+  return { command, properties, message: unescapeGitHubAction(line.slice(end + 2)) };
 }
 
 /**

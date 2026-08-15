@@ -63,6 +63,7 @@ import {
   isWindows,
   isX64,
   markBuildkiteStepReported,
+  parseGitHubActionCommand,
   printEnvironment,
   reportAnnotationToBuildKite,
   startGroup,
@@ -2125,14 +2126,14 @@ function parseTestStdout(stdout, testPath) {
     }
 
     if (string.startsWith("::error")) {
-      const eol = string.indexOf("::", 8);
-      const message = unescapeGitHubAction(string.substring(eol + 2));
-      const { file, line, col, title } = Object.fromEntries(
-        string
-          .substring(8, eol)
-          .split(",")
-          .map(entry => entry.split("=")),
-      );
+      const annotation = parseGitHubActionCommand(string);
+      if (annotation?.command !== "error") {
+        continue;
+      }
+      const {
+        properties: { file, line, col, title },
+        message,
+      } = annotation;
 
       const errorPath = file || testPath;
       const error = {
@@ -2957,22 +2958,6 @@ function getAnsi(color) {
  */
 function stripAnsi(string) {
   return string.replace(/\u001b\[\d+m/g, "");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapeGitHubAction(string) {
-  return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function unescapeGitHubAction(string) {
-  return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
 }
 
 /**

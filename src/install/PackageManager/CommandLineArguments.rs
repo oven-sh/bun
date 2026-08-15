@@ -89,7 +89,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--no-verify                           Skip verifying integrity of newly downloaded packages"
     ),
     clap::param!(
-        "--ignore-scripts                      Skip lifecycle scripts in the project's package.json (dependency scripts are never run)"
+        "--ignore-scripts                      Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies"
     ),
     clap::param!(
         "--trust                               Add to trustedDependencies in the project's package.json and install the package(s)"

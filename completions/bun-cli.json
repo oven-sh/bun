@@ -373,7 +373,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -694,7 +694,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1025,7 +1025,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1296,7 +1296,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1714,7 +1714,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2095,7 +2095,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2378,7 +2378,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2637,7 +2637,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2889,7 +2889,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3194,7 +3194,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3623,7 +3623,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false

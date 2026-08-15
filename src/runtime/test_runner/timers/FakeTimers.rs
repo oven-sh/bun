@@ -36,6 +36,11 @@ impl FakeTimers {
         self.now.is_some()
     }
 
+    /// Which fake clock installation is current; `None` on the real clock.
+    pub(crate) fn clock_id(&self) -> Option<u32> {
+        self.now.map(|_| self.generation)
+    }
+
     fn generation() -> u32 {
         // SAFETY: per-thread `timer::All`, live for the VM lifetime.
         unsafe { (*timer_all()).fake_timers.generation }
@@ -138,7 +143,9 @@ impl ClearedTimers {
 
 impl FakeTimers {
     /// Like Jest and Vitest, every `useFakeTimers()` installs a fresh clock:
-    /// timers pending on a previous fake clock are dropped, not carried over.
+    /// timers pending on a previous fake clock are dropped, not carried over
+    /// (a `setInterval` mid-fire is not in the heap; `TimerObjectInternals::fire`
+    /// sees the `clock_id` change and declines to reschedule it).
     fn activate(&mut self, js_now: f64, global: &JSGlobalObject) -> ClearedTimers {
         let cleared = self.clear();
         self.generation = self.generation.wrapping_add(1);
@@ -346,6 +353,11 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
             } else {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "'now' must be a number or Date"
+                )));
+            }
+            if !js_now.is_finite() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'now' must be a finite number or a valid Date"
                 )));
             }
         }

@@ -167,6 +167,34 @@ describe("advanceTimersByTime", () => {
     expect(fired).toEqual(["reinstall", "on new clock"]);
     expect(Date.now()).toBe(5050);
   });
+
+  test("a firing setInterval whose callback installs a fresh clock is dropped with the old one", () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    setInterval(() => {
+      fired++;
+      vi.useFakeTimers({ now: 5000 });
+    }, 100);
+    vi.advanceTimersByTime(100);
+    expect({ fired, count: vi.getTimerCount() }).toEqual({ fired: 1, count: 0 });
+    vi.advanceTimersByTime(1000);
+    expect(fired).toBe(1);
+  });
+
+  test("a firing setInterval whose callback calls useRealTimers() does not escape onto the real clock", async () => {
+    vi.useFakeTimers({ now: 0 });
+    let fired = 0;
+    const interval = setInterval(() => {
+      fired++;
+      vi.useRealTimers();
+    }, 5);
+    vi.advanceTimersByTime(5);
+    expect({ fired, fake: vi.isFakeTimers() }).toEqual({ fired: 1, fake: false });
+    // An escaped 5ms interval would have gone round several times by now.
+    await Bun.sleep(50);
+    clearInterval(interval);
+    expect(fired).toBe(1);
+  });
 });
 
 describe("useFakeTimers while already active", () => {
@@ -823,6 +851,11 @@ describe("useFakeTimers with options", () => {
 
   test("useFakeTimers still rejects non-string non-object arguments", () => {
     expect(() => vi.useFakeTimers(123 as any)).toThrow("useFakeTimers() expects an options object");
+    expect(vi.isFakeTimers()).toBe(false);
+  });
+
+  test.each([NaN, Infinity, -Infinity, new Date("invalid")])("useFakeTimers({ now: %p }) throws", now => {
+    expect(() => vi.useFakeTimers({ now })).toThrow("'now' must be a finite number or a valid Date");
     expect(vi.isFakeTimers()).toBe(false);
   });
 });

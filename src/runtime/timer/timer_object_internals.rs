@@ -21,7 +21,7 @@ use core::cell::Cell;
 use crate::jsc::virtual_machine::VirtualMachine;
 
 use super::{
-    ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, Kind, KindBig,
+    ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, InHeap, Kind, KindBig,
     TimeoutObject,
 };
 
@@ -558,6 +558,15 @@ impl TimerObjectInternals {
 
         let state = crate::jsc_hooks::runtime_state();
         debug_assert!(!state.is_null(), "RuntimeState not installed");
+        // The fake clock this timer was popped from, if it was a fake timer
+        // (`in_heap` still names the heap until it is re-inserted or removed).
+        // SAFETY: `event_loop_timer()` points into the live parent; `state`
+        // is the boxed per-thread `RuntimeState`.
+        let fake_clock_before_call = if unsafe { (*s.event_loop_timer()).in_heap } == InHeap::Fake {
+            unsafe { (*state).timer.fake_timers.clock_id() }
+        } else {
+            None
+        };
 
         // SAFETY: `vm` is live; `event_loop()` returns `*mut` to the embedded
         // EventLoop. Re-entrancy is permitted by the raw-ptr contract above.
@@ -605,6 +614,18 @@ impl TimerObjectInternals {
                     // `ref_()` above pins the parent across the deref.
                     match s.event_loop_timer_state() {
                         EventLoopTimerState::FIRED => {
+                            // The callback uninstalled (`useRealTimers()`) or
+                            // replaced (`useFakeTimers()`) the fake clock this
+                            // interval was scheduled on; it goes with that
+                            // clock's other timers instead of hopping heaps
+                            // at a deadline from the old timeline.
+                            if fake_clock_before_call.is_some()
+                                // SAFETY: as for `fake_clock_before_call`.
+                                && unsafe { (*state).timer.fake_timers.clock_id() }
+                                    != fake_clock_before_call
+                            {
+                                break 'is_timer_done true;
+                            }
                             // If we didn't clear the setInterval, reschedule it starting from
                             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
                             // single-threaded JS heap so no concurrent `&mut` to

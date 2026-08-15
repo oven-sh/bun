@@ -144,6 +144,70 @@ static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateIntern
     };
 }
 
+// Loaders whose transpile result is a value rather than JavaScript source text
+// (see transpile_source_code_inner in src/runtime/jsc_hooks.rs): the json loader
+// hands back the raw JSON bytes (JSONForObjectLoader); jsonc/toml/yaml/json5/xml
+// hand back the parsed value (ExportsObject); css/html/file hand back the value
+// to expose as the sole default export (ExportDefaultObject).
+static bool isExportValueSource(const ResolvedSource& source)
+{
+    switch (source.tag) {
+    case SyntheticModuleType::JSONForObjectLoader:
+    case SyntheticModuleType::ExportsObject:
+    case SyntheticModuleType::ExportDefaultObject:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// The JSONForObjectLoader tag is source code returned from Bun that needs
+// to go through the JSON parser in JSC.
+//
+// We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
+// object to be accessible as named imports.
+//
+// We don't use Bun's JSON parser because JSON.parse is faster and
+// handles stack overflow better.
+//
+// When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
+// parser instead to support comments and trailing commas.
+//
+// Throws and returns an empty JSValue on failure.
+static JSC::JSValue exportValueFromSource(Zig::GlobalObject* globalObject, const ResolvedSource& source)
+{
+    ASSERT(isExportValueSource(source));
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (source.tag == SyntheticModuleType::JSONForObjectLoader) {
+        WTF::String jsonSource = source.source_code.toWTFString(BunString::NonNull);
+        RELEASE_AND_RETURN(scope, JSC::JSONParseWithException(globalObject, jsonSource));
+    }
+
+    JSC::JSValue value = JSC::JSValue::decode(source.jsvalue_for_export);
+    if (!value) {
+        throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
+        return {};
+    }
+    return value;
+}
+
+// ESM view of an export value. The value is the default export; for
+// JSONForObjectLoader / ExportsObject an object's top-level keys are named
+// exports as well (a non-object value such as `123` only gets the default export).
+static JSC::JSSourceCode* createExportValueModuleSourceCode(Zig::GlobalObject* globalObject, const ResolvedSource& source, JSC::JSValue value, BunString* specifier)
+{
+    auto function = source.tag == SyntheticModuleType::ExportDefaultObject
+        ? generateJSValueExportDefaultObjectSourceCode(globalObject, value)
+        : generateJSValueModuleSourceCode(globalObject, value);
+    auto sourceCode = JSC::SourceCode(
+        JSC::SyntheticSourceProvider::create(WTF::move(function),
+            JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+    JSC::ensureStillAliveHere(value);
+    return JSC::JSSourceCode::create(globalObject->vm(), WTF::move(sourceCode));
+}
+
 static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JSC::JSObject* object)
 {
     OnLoadResult result {};
@@ -407,6 +471,22 @@ static JSValue handleVirtualModuleResult(
         Bun__transpileVirtualModule(globalObject, specifier, referrer, &onLoadResult.value.sourceText.string, onLoadResult.value.sourceText.loader, res);
         if (!res->success) {
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
+        }
+
+        if (isExportValueSource(res->result.value)) {
+            JSValue value = exportValueFromSource(globalObject, res->result.value);
+            if (auto* exception = scope.exception()) [[unlikely]] {
+                (void)scope.tryClearException();
+                RELEASE_AND_RETURN(scope, reject(exception));
+            }
+
+            if (commonJSModule) {
+                commonJSModule->setExportsObject(value);
+                commonJSModule->hasEvaluated = true;
+                return commonJSModule;
+            }
+
+            return resolve(createExportValueModuleSourceCode(globalObject, res->result.value, value, specifier));
         }
 
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -853,39 +933,16 @@ JSValue fetchCommonJSModuleNonBuiltin(
         RELEASE_AND_RETURN(scope, {});
     }
 
-    // The JSONForObjectLoader tag is source code returned from Bun that needs
-    // to go through the JSON parser in JSC.
-    //
-    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
-    // object to be accessible as named imports.
-    //
-    // We don't use Bun's JSON parser because JSON.parse is faster and
-    // handles stack overflow better.
-    //
-    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
-    // parser instead to support comments and trailing commas.
-    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
-        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
+    if (isExportValueSource(res->result.value)) {
+        JSC::JSValue value = exportValueFromSource(globalObject, res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
 
-        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
+        target->setExportsObject(value);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
-
     }
-    // TOML and JSONC may go through here
-    else if (res->result.value.tag == SyntheticModuleType::ExportsObject || res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
-        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-        if (!value) {
-            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
-            RELEASE_AND_RETURN(scope, {});
-        }
 
-        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
-        target->hasEvaluated = true;
-        RELEASE_AND_RETURN(scope, target);
-    } else if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
+    if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
         if constexpr (isExtension) {
             ASSERT_NOT_REACHED();
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
@@ -1149,67 +1206,14 @@ static JSValue fetchESMSourceCode(
         RELEASE_AND_RETURN(scope, reject(exception));
     }
 
-    // The JSONForObjectLoader tag is source code returned from Bun that needs
-    // to go through the JSON parser in JSC.
-    //
-    // We don't use JSON.parse directly in JS because we want the top-level keys of the JSON
-    // object to be accessible as named imports.
-    //
-    // We don't use Bun's JSON parser because JSON.parse is faster and
-    // handles stack overflow better.
-    //
-    // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
-    // parser instead to support comments and trailing commas.
-    if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
-        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
-        if (scope.exception()) [[unlikely]] {
-            auto* exception = scope.exception();
+    if (isExportValueSource(res->result.value)) {
+        JSC::JSValue value = exportValueFromSource(globalObject, res->result.value);
+        if (auto* exception = scope.exception()) [[unlikely]] {
             (void)scope.tryClearException();
             RELEASE_AND_RETURN(scope, reject(exception));
         }
 
-        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueModuleSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
-    }
-    // TOML and JSONC may go through here
-    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
-        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-        if (!value) {
-            RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
-        }
-
-        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueModuleSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
-    } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
-        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
-        if (!value) {
-            RELEASE_AND_RETURN(scope, reject(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
-        }
-
-        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        auto function = generateJSValueExportDefaultObjectSourceCode(
-            globalObject,
-            value);
-        auto source = JSC::SourceCode(
-            JSC::SyntheticSourceProvider::create(WTF::move(function),
-                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
-        JSC::ensureStillAliveHere(value);
-        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createExportValueModuleSourceCode(globalObject, res->result.value, value, specifier)));
     }
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);

@@ -286,7 +286,7 @@ plugin({
 
       // Emit JSON containing the stats of each import
       return {
-        contents: `export default ${JSON.stringify(trackedImports)}`,
+        contents: JSON.stringify(trackedImports),
         loader: "json",
       };
     });

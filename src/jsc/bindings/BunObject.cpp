@@ -108,9 +108,11 @@ static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Same shape as constructEnv in BunProcess.cpp: the exception is left pending so the read throws and the property is retried next time.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* env = uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
-    RETURN_IF_EXCEPTION(scope, {});
+    if (scope.exception()) [[unlikely]]
+        return {};
     return env;
 }
 

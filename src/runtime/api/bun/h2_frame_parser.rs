@@ -1133,9 +1133,8 @@ enum BatchSegment {
 }
 
 impl BatchSegment {
-    /// # Safety
-    /// The send_data call that recorded the segment must still be running (`Ext` borrows
-    /// its payload).
+    // SAFETY: the send_data call that recorded the segment must still be running (`Ext`
+    // borrows its payload).
     unsafe fn bytes(self, batch: &[u8]) -> &[u8] {
         match self {
             BatchSegment::Batch { off, len } => &batch[off as usize..off as usize + len as usize],

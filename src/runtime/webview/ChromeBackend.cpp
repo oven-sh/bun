@@ -646,6 +646,22 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
+// The view's page (or all of Chrome) is gone: no further reply or event
+// will arrive for it. Rejects whatever is still awaited by walking the
+// slots themselves, not m_pending: a navigate()/reload()/goBack() whose
+// CDP reply already came back has no m_pending entry (it is waiting on
+// Page.loadEventFired) but its Navigate slot is still set. settleSlot is
+// a no-op on an empty slot. Same contract as HostClient::rejectAllAndMarkDead.
+static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    settleSlot(g, view, view->m_pendingNavigate, false, err);
+    settleSlot(g, view, view->m_pendingEval, false, err);
+    settleSlot(g, view, view->m_pendingScreenshot, false, err);
+    settleSlot(g, view, view->m_pendingMisc, false, err);
+    settleSlot(g, view, view->m_pendingCdp, false, err);
+}
+
 // Build an Error from CDP exceptionDetails. exception.description is V8's
 // Error.prototype.stack formatter:
 //   "Error: msg\n    at functionName (url:line:col)\n    at ..."
@@ -1069,10 +1085,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         JSWebView* view = viewFor(vid);
         m_views.remove(vid);
         if (!view) return;
-        // Reject all pending slots. settle() is idempotent on empty slots.
-        auto* err = createError(g, "page detached (crashed or closed)"_s);
-        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
-            settle(g, view, s, false, err);
+        rejectViewSlots(g, view, createError(g, "page detached (crashed or closed)"_s));
         // Erase stale m_pending entries — replies won't come.
         m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
         view->m_closed = true;
@@ -1284,13 +1297,14 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Reject each view's slots via settle(). Multiple pending ids may point
-    // at the same view (different slots); settle() is idempotent on an
-    // already-cleared slot — the first settle for a slot rejects, the rest
-    // find barrier.get() == null and no-op.
-    for (auto& [id, entry] : m_pending) {
-        if (JSWebView* v = viewFor(entry.viewId))
-            settle(g, v, entry.slot, false, err);
+    // Every live view, not just the ones with an entry in m_pending: a
+    // navigation that is past its Page.navigate reply is only reachable
+    // through its slot (see rejectViewSlots). Views that left m_views
+    // earlier (close(), detachedFromTarget) had their slots rejected then,
+    // so any m_pending entries they left behind have nothing to settle.
+    for (auto& weak : m_views.values()) {
+        if (JSWebView* v = weak.get())
+            rejectViewSlots(g, v, err);
     }
     m_pending.clear();
     m_sessions.clear();

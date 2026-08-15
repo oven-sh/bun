@@ -100,6 +100,10 @@ pub struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// Matcher waits on the stack (`bun_test::WaitingEntry`) holding `on_stack_entry`'s
+    /// callback blocked underneath them. While non-zero, JS reaching a matcher is a
+    /// continuation of something, not that callback's own synchronous code.
+    pub(crate) blocking_matcher_waits: core::cell::Cell<u32>,
 }
 
 pub struct ConcurrentGroup {
@@ -282,6 +286,7 @@ impl Execution {
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
+            blocking_matcher_waits: core::cell::Cell::new(0),
         }
     }
 

@@ -1019,20 +1019,33 @@ impl EventLoop {
     /// terminated mid-wait). Nothing is thrown for it; a caller inside a `JsResult`
     /// function crosses explicitly with [`jsc::Stopped::throw`].
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+        self.wait_for_promise_or_give_up(promise, || false).map(|_settled| ())
+    }
+
+    /// [`Self::wait_for_promise`] for a waiter with a deadline of its own (a
+    /// bun:test matcher inside a test that can time out): `give_up` is asked
+    /// before each tick, and the wait also returns, with `Ok(false)`, once it
+    /// answers `true` while the promise is still pending. `Ok(true)` means the
+    /// promise settled.
+    pub fn wait_for_promise_or_give_up(
+        &mut self,
+        promise: jsc::AnyPromise,
+        mut give_up: impl FnMut() -> bool,
+    ) -> Result<bool, jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
-        if promise.status() != PromiseStatus::Pending {
-            return Ok(());
-        }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
                 return Err(jsc::Stopped);
+            }
+            if give_up() {
+                return Ok(false);
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }
-        Ok(())
+        Ok(true)
     }
 
     pub fn wakeup(&self) {

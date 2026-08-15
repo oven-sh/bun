@@ -1537,6 +1537,110 @@ impl RefData {
     }
 }
 
+/// The test or hook on whose behalf a matcher is about to tick the event loop until a promise
+/// settles (`.resolves`, `.rejects`, `toThrow()` on an async function, an async `expect.extend`
+/// matcher), polled between the ticks so that a promise which never settles fails that entry with
+/// its timeout instead of ticking forever. Attributed the way the `expect()` call itself is: to the
+/// callback on the stack, else to whatever the runner is executing, so a continuation of an entry
+/// the runner already gave up on is charged to whatever runs now, as its `expect()` calls are.
+pub(crate) struct WaitingEntry {
+    buntest: BunTestPtr,
+    ends_when: EndsWhen,
+}
+
+/// With a callback on the stack the runner is blocked underneath the matcher (`BunTest::run` is
+/// re-entrancy guarded), so the matcher has to watch the deadlines itself; reached from a
+/// continuation with nothing blocked underneath, the runner keeps running during the ticks and
+/// gives entries up exactly as if they were still awaiting, so the matcher only has to notice.
+enum EndsWhen {
+    /// The callback on the stack is this entry's own. Once the matcher gives up, the callback
+    /// completes and the runner evaluates the entry's timeout as for any callback that overran.
+    EntryTimedOut(NonNull<ExecutionEntry>),
+    /// The callback on the stack is itself blocked in a matcher, so this is some continuation of
+    /// an entry of the active group, and which one is unknown. Whichever it is has timed out once
+    /// every entry still executing in the group has.
+    GroupTimedOut,
+    /// A continuation of this entry; the runner is live. Ends as soon as [`RefDataValue::entry`]
+    /// no longer finds the entry: right away for a continuation that outlived its file (`Done`).
+    RunnerGaveEntryUp(RefDataValue),
+    /// A continuation of some entry of this concurrent group; the runner is live.
+    GroupOver(usize),
+}
+
+impl WaitingEntry {
+    /// `None` when nothing that has a timeout is running: no test file at all (`bun:test`'s
+    /// `expect` in a plain script or a preload), or the describe callbacks of the collection phase.
+    pub(crate) fn current() -> Option<Self> {
+        let buntest = clone_active_strong()?;
+        let execution = &buntest.execution;
+        let ends_when = match execution.on_stack_entry.get() {
+            Some(entry) if execution.blocking_matcher_waits.get() == 0 => EndsWhen::EntryTimedOut(entry),
+            Some(_) => EndsWhen::GroupTimedOut,
+            None => match buntest.get_current_state_data() {
+                RefDataValue::Execution { group_index, entry_data: None } => EndsWhen::GroupOver(group_index),
+                RefDataValue::Collection { .. } => return None,
+                data @ (RefDataValue::Execution { entry_data: Some(_), .. }
+                | RefDataValue::Done
+                | RefDataValue::Start) => EndsWhen::RunnerGaveEntryUp(data),
+            },
+        };
+        let waiting = WaitingEntry { buntest, ends_when };
+        if waiting.blocks_callback() {
+            let counter = &waiting.buntest.execution.blocking_matcher_waits;
+            counter.set(counter.get() + 1);
+        }
+        Some(waiting)
+    }
+
+    /// Whether this wait holds `Execution::on_stack_entry`'s callback blocked underneath it.
+    fn blocks_callback(&self) -> bool {
+        matches!(self.ends_when, EndsWhen::EntryTimedOut(_) | EndsWhen::GroupTimedOut)
+    }
+
+    pub(crate) fn timed_out(&self) -> bool {
+        match &self.ends_when {
+            EndsWhen::EntryTimedOut(entry) => {
+                // SAFETY: entries live as long as the BunTest, which `self.buntest` keeps alive.
+                unsafe { entry.as_ref() }.has_timed_out(&Timespec::now_force_real_time())
+            }
+            EndsWhen::GroupTimedOut => {
+                let buntest = self.buntest.get();
+                let now = Timespec::now_force_real_time();
+                let group_timed_out = buntest.execution.active_group_ref().is_none_or(|group| {
+                    group
+                        .sequences(&buntest.execution)
+                        .iter()
+                        .filter(|sequence| sequence.executing)
+                        .all(|sequence| {
+                            sequence
+                                .active_entry
+                                // SAFETY: as above.
+                                .is_some_and(|entry| unsafe { entry.as_ref() }.has_timed_out(&now))
+                        })
+                });
+                if group_timed_out {
+                    // What `Execution::handle_timeout` queues when the timer fires, which it may
+                    // not have yet. Queued ahead of the completion the matcher's error is about to
+                    // produce, it gets the entry reported as timed out, not as failed by that error.
+                    buntest.add_result(RefDataValue::Start);
+                }
+                group_timed_out
+            }
+            EndsWhen::RunnerGaveEntryUp(data) => data.entry(self.buntest.get()).is_none(),
+            EndsWhen::GroupOver(group_index) => *group_index != self.buntest.execution.group_index,
+        }
+    }
+}
+
+impl Drop for WaitingEntry {
+    fn drop(&mut self) {
+        if self.blocks_callback() {
+            let counter = &self.buntest.execution.blocking_matcher_waits;
+            counter.set(counter.get() - 1);
+        }
+    }
+}
+
 pub struct RunTestsTask {
     pub(crate) weak: BunTestPtrWeak,
     // `GlobalRef` (not a borrow): the JSGlobalObject is stored across the task
@@ -1951,12 +2055,17 @@ impl ExecutionEntry {
         entry
     }
 
+    /// Never true for an entry running without a timeout.
+    pub(crate) fn has_timed_out(&self, now: &Timespec) -> bool {
+        !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less
+    }
+
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,
         now: &Timespec,
     ) -> bool {
-        if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
+        if self.has_timed_out(now) {
             // timed out
             // SAFETY: pointer-identity comparison only — no deref, no provenance laundering.
             let is_test_entry = sequence

@@ -18,7 +18,8 @@ const code = "/*" + Buffer.alloc(eachSizeMiB * 1024 * 1024 - 4, 0x20).toString()
 function test() {
   return new Promise((resolve, reject) => {
     const worker = new Worker(code, { eval: true });
-    worker.on("exit", resolve);
+    // A worker that did not run its source did not make the copy being measured.
+    worker.on("exit", exitCode => (exitCode === 0 ? resolve() : reject(new Error(`worker exited with ${exitCode}`))));
     worker.on("error", reject);
   });
 }

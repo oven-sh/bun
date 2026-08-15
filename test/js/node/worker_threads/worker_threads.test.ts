@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import { resolveObjectURL } from "node:buffer";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -24,10 +24,11 @@ import wt, {
   workerData,
 } from "worker_threads";
 
-// Worker startup under debug/ASAN is slow enough that several tests here cannot
-// finish inside the 5s default. (CI runs release builds, where this is stricter
-// than the runner's own per-test timeout.)
-setDefaultTimeout(isDebug ? 90_000 : 10_000);
+// Worker and subprocess startup under ASAN (CI's ASAN lane, and debug builds,
+// which are ASAN too) is several times slower, and the tests below overlap, so
+// each one's own wall time includes waiting on the others. On release builds
+// the 10s here is stricter than the runner's own per-test timeout.
+setDefaultTimeout(isASAN || isDebug ? 90_000 : 10_000);
 
 // Nearly every test below owns its Worker / MessageChannel / subprocess outright,
 // so they are test.concurrent: the file's cost is startup latency (a worker or a

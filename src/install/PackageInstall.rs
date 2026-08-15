@@ -2248,6 +2248,11 @@ impl<'a> PackageInstall<'a> {
         package_id: PackageID,
         resolution_tag: resolution::Tag,
     ) -> bool {
+        // No entry can be named yet (a local tarball whose integrity the
+        // lockfile does not record); extracting it is what names one.
+        if self.cache_dir_subpath.is_empty() {
+            return true;
+        }
         let state = manager.get_preinstall_state(package_id);
         match state {
             crate::PreinstallState::Done => false,

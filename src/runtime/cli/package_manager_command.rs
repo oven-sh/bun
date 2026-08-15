@@ -134,10 +134,11 @@ impl PackageManagerCommand {
 
         Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
-        Output::flush();
-        Output::disable_buffering();
-        Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-        Output::enable_buffering();
+        {
+            Output::flush();
+            let _buffering = Output::disable_buffering_scope();
+            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
+        }
         Global::exit(0);
     }
 
@@ -405,20 +406,22 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 .lockfile
                 .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
 
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-            Output::enable_buffering();
+            {
+                Output::flush();
+                let _buffering = Output::disable_buffering_scope();
+                Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
+            }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-print") {
             let log_level = pm.options.log_level;
             let load_lockfile = pm.load_lockfile_from_cwd::<true>();
             Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
 
-            Output::flush();
-            Output::disable_buffering();
-            Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-            Output::enable_buffering();
+            {
+                Output::flush();
+                let _buffering = Output::disable_buffering_scope();
+                Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
+            }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"hash-string") {
             let log_level = pm.options.log_level;

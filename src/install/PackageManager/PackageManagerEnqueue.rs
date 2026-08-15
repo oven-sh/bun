@@ -2564,8 +2564,7 @@ fn get_or_put_resolved_package(
                 Npm::FindVersionResult::Err(err_type) => match err_type {
                     Npm::FindVersionError::TooRecent
                     | Npm::FindVersionError::AllVersionsTooRecent => {
-                        // Deferred like `NotFound` below: the peer pass may still bind the
-                        // peer to a same-named package that is already in the tree.
+                        // The peer pass may still bind it to a same-named package in the tree.
                         if behavior.is_peer() && !install_peer {
                             return Ok(None);
                         }

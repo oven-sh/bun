@@ -154,9 +154,8 @@ enum PackageJson {
     Workspaces(Vec<Box<[u8]>>),
 }
 
-/// Classifies `dir/package.json`; an unparseable file counts as `Plain`, as
-/// does a `workspaces` value without a pattern array (yarn per-member
-/// nohoist), so such members still inherit their workspace root.
+/// Classifies `dir/package.json`; an unparseable file or a `workspaces`
+/// value without a pattern array (yarn per-member nohoist) counts as `Plain`.
 fn read_package_json(dir: &[u8]) -> PackageJson {
     let mut name_buf = PathBuffer::uninit();
     let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(
@@ -206,6 +205,11 @@ fn workspace_pattern(p: &[u8]) -> (bool, &[u8]) {
     while let Some(rest) = pat.strip_prefix(b"./".as_slice()) {
         pat = rest;
     }
+    // A residual "!" ("./!x") would read as glob negation and match almost
+    // everything; treat the entry as inert instead.
+    if pat.first() == Some(&b'!') {
+        return (false, b"");
+    }
     while pat.len() > 1 && pat.last() == Some(&b'/') {
         pat = &pat[..pat.len() - 1];
     }
@@ -227,9 +231,9 @@ fn workspaces_claim(patterns: &[Box<[u8]>], rel: &[u8]) -> bool {
 }
 
 /// Prefix length of `cwd` naming the last directory the walk may check: the
-/// project root as `--filter` finds it (filter_arg.rs). With no package.json
-/// anywhere up the tree, the bound is cwd itself (fail closed, like
-/// `get_candidate_package_patterns`'s fallback to the working directory).
+/// project root as `--filter` finds it (filter_arg.rs). No package.json
+/// anywhere bounds at cwd, and a package.json nested inside a member bounds
+/// at that directory (both fail closed).
 fn walk_root_bound(cwd: &[u8]) -> usize {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();

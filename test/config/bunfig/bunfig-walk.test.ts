@@ -51,6 +51,7 @@ test.concurrent.each([
 test.concurrent.each([
   { label: "negated member", workspaces: ["packages/*", "!packages/app"], dir: ["packages", "app"] },
   { label: "outsider with negation present", workspaces: ["packages/*", "!packages/internal"], dir: ["vendor", "app"] },
+  { label: "outsider with ./! spelling", workspaces: ["packages/*", "./!packages/internal"], dir: ["vendor", "app"] },
 ])("does not inherit: $label", async ({ workspaces, dir: sub }) => {
   using dir = tempDir("bunfig-walk-negation", {
     "package.json": JSON.stringify({ name: "root", workspaces }) + "\n",

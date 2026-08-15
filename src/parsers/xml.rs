@@ -2446,6 +2446,13 @@ impl<T: Copy> Rows<T> {
         self.locs.truncate(len);
     }
 
+    fn reset(&mut self, len: usize, value: T, loc: Loc) {
+        self.values.clear();
+        self.values.resize(len, value);
+        self.locs.clear();
+        self.locs.resize(len, loc);
+    }
+
     #[inline]
     fn set(&mut self, i: usize, value: T, loc: Loc) {
         self.values[i] = value;
@@ -2598,8 +2605,7 @@ struct CompactSink<'a, U: Unit> {
     /// Scratch for `end_element`'s grouping of repeated child names.
     group_of: Vec<u32>,
     groups: Vec<Group>,
-    gathered: Vec<E::JsonValue>,
-    gathered_locs: Vec<Loc>,
+    gathered: Rows<E::JsonValue>,
     group_index: HashMap<&'a [u8], u32>,
     root: Option<(&'a [U], E::JsonValue, Loc)>,
 }
@@ -2660,8 +2666,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             key_cache: [None; KEY_CACHE_SIZE],
             group_of: Vec::new(),
             groups: Vec::new(),
-            gathered: Vec::new(),
-            gathered_locs: Vec::new(),
+            gathered: Rows::with_capacity(0),
             group_index: HashMap::default(),
             root: None,
         }
@@ -2786,15 +2791,16 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                 next += g.count;
             }
         }
-        self.gathered.clear();
-        self.gathered.resize(next as usize, E::JsonValue::Null);
-        self.gathered_locs.clear();
-        self.gathered_locs.resize(next as usize, Loc::EMPTY);
+        self.gathered
+            .reset(next as usize, E::JsonValue::Null, Loc::EMPTY);
         for (i, &g) in self.group_of.iter().enumerate() {
             let group = &mut self.groups[g as usize];
             if group.count > 1 {
-                self.gathered[group.cursor as usize] = children[i].value;
-                self.gathered_locs[group.cursor as usize] = self.tape.props.locs[mark + i];
+                self.gathered.set(
+                    group.cursor as usize,
+                    children[i].value,
+                    self.tape.props.locs[mark + i],
+                );
                 group.cursor += 1;
             }
         }
@@ -2804,12 +2810,9 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             let mut prop = self.tape.props.values[mark + g.first as usize];
             if g.count > 1 {
                 let run = (g.cursor - g.count) as usize..g.cursor as usize;
-                prop.value = E::JsonValue::Array(Tape::array_of(
-                    self.tape.tape,
-                    &self.gathered[run.clone()],
-                    &self.gathered_locs[run],
-                    prop.key_loc,
-                ));
+                let (values, locs) = self.gathered.columns(run);
+                prop.value =
+                    E::JsonValue::Array(Tape::array_of(self.tape.tape, values, locs, prop.key_loc));
             }
             self.tape.props.set(mark + slot, prop, prop.key_loc);
         }

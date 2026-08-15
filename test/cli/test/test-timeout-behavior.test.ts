@@ -132,9 +132,11 @@ test.concurrent("a test without a timeout keeps its processes when an earlier te
     test("has no timeout and spawns a child", async () => {
       const child = spawnEcho();
       try {
-        // Both timers live in the same heap and fire in deadline order, so the
-        // first test's 50ms timer has fired by the time this sleep resolves.
-        await Bun.sleep(250);
+        // Nothing in this file can observe the stale timer firing, so wait on a
+        // timer with a later deadline instead: the runner's timer and this one
+        // are in the same heap and fire in deadline order, so the 50ms timer
+        // (armed before this test started) has fired once this resolves.
+        await Bun.sleep(100);
         expect(await echo(child, "still here")).toBe("still here");
       } finally {
         child.kill();

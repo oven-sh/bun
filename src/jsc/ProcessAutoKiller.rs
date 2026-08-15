@@ -8,15 +8,12 @@ bun_core::declare_scope!(AutoKiller, hidden);
 #[derive(Default)]
 pub struct ProcessAutoKiller {
     /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
-    /// on remove/drop). Stored as raw ptr for identity-hash semantics.
-    /// The value is the [`Self::scope`] that was current when the process was
-    /// spawned.
+    /// on remove/drop). Stored as raw ptr for identity-hash semantics. Values
+    /// are the [`Self::scope`] each process was spawned in.
     pub(crate) processes: ArrayHashMap<*mut Process, u32>,
     pub enabled: bool,
     pub(crate) ever_enabled: bool,
-    /// Advanced by [`Self::begin_scope`]. The test runner starts a scope per
-    /// test (or hook) so that [`Self::kill_scope`] on a timeout leaves
-    /// processes spawned by earlier tests and `beforeAll` hooks alone.
+    /// The test runner begins a scope per test, so a timeout only kills what that test spawned.
     scope: u32,
 }
 
@@ -30,13 +27,10 @@ impl ProcessAutoKiller {
         self.enabled = false;
     }
 
-    /// Attributes every process spawned from now on to a new scope.
-    /// Processes already tracked keep the scope they were spawned in.
     pub fn begin_scope(&mut self) {
         self.scope = self.scope.wrapping_add(1);
     }
 
-    /// Kills every tracked process and stops tracking all of them.
     pub fn kill(&mut self) -> Result {
         let mut count: u32 = 0;
         while let Some(entry) = self.processes.pop() {
@@ -45,9 +39,8 @@ impl ProcessAutoKiller {
         Result { processes: count }
     }
 
-    /// Kills only the processes spawned since the last [`Self::begin_scope`]
-    /// and stops tracking them. Processes from earlier scopes are left running
-    /// and stay tracked, so a later [`Self::kill`] still covers them.
+    /// Kills the current scope's processes. Earlier scopes stay tracked so that
+    /// [`Self::kill`] still covers them.
     pub fn kill_scope(&mut self) -> Result {
         let mut count: u32 = 0;
         let mut index = self.processes.len();
@@ -56,17 +49,14 @@ impl ProcessAutoKiller {
             if self.processes.values()[index] != self.scope {
                 continue;
             }
-            // Walking backwards, so the entry swapped into `index` has
-            // already been visited.
+            // Walking backwards, so the entry swapped into `index` was already visited.
             let (process, _) = self.processes.swap_remove_at(index);
             count += Self::kill_and_release(process);
         }
         Result { processes: count }
     }
 
-    /// Signals `process` if it is still running, then releases the ref taken in
-    /// [`Self::on_subprocess_spawn`]. The caller must already have removed it
-    /// from `processes`. Returns 1 if a signal was sent.
+    /// `process` must already be removed from `processes`; this releases its ref.
     fn kill_and_release(process: *mut Process) -> u32 {
         let killed = {
             // SAFETY: every key in `processes` was ref()'d on insert and is

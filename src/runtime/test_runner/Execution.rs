@@ -299,11 +299,8 @@ impl Execution {
         let _g = group_begin!();
 
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill the dangling processes spawned by that group (each group is its own auto_killer scope, so
-        //   processes spawned by beforeAll or by earlier tests are left alone)
+        //   kill the dangling processes it spawned
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
-        // timespec == EPOCH means the entry has no timeout; the timer that fired was armed by an earlier
-        // entry (update_min_timeout never unsets a timer), same as in ExecutionEntry::evaluate_timeout.
         if let Some(current_group) = self.active_group() {
             // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
@@ -314,6 +311,7 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
+                    // EPOCH: this entry has no timeout; a timer left armed by an earlier entry fired.
                     if !entry.timespec.eql(&Timespec::EPOCH)
                         && entry.timespec.order(&now) == core::cmp::Ordering::Less
                     {

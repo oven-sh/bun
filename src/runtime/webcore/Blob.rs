@@ -4,11 +4,8 @@
 //! operations like writing `Store::File` to another `Store::File` knows to use a
 //! basic file copy instead of a naive read write loop.
 
-use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
-
-use bun_jsc::JsCell;
 
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
@@ -364,22 +361,13 @@ pub trait BlobExt {
         lifetime: Lifetime,
     ) -> JsResult<JSValue>;
     fn to_form_data(&self, global: &JSGlobalObject, _lifetime: Lifetime) -> JsResult<JSValue>;
-    fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
-        global: &JSGlobalObject,
-        arg: JSValue,
-    ) -> JsResult<Blob>
+    /// `new Blob(parts)` semantics. With `REQUIRE_ARRAY = false` (body inits,
+    /// `Bun.write` sources) a bare part is accepted too. A part that is itself
+    /// a Blob shares its store; the source Blob is left untouched.
+    fn get<const REQUIRE_ARRAY: bool>(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
     where
         Self: Sized;
-    fn from_js_move(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
-    where
-        Self: Sized;
-    fn from_js_clone(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
-    where
-        Self: Sized;
-    fn from_js_clone_optional_array(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob>
-    where
-        Self: Sized;
-    fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
+    fn from_js_without_defer_gc<const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
     ) -> JsResult<Blob>
@@ -2354,7 +2342,7 @@ impl BlobExt for Blob {
                 blob = Blob::init(Vec::new(), global_this);
             }
             _ => {
-                blob = Blob::get::<false, true>(global_this, args[0])?;
+                blob = Blob::get::<true>(global_this, args[0])?;
 
                 if args.len() > 1 {
                     let options = args[1];
@@ -3174,33 +3162,11 @@ impl BlobExt for Blob {
         Ok(unsafe { self.to_form_data_with_bytes::<{ Lifetime::Temporary }>(global, view_ptr) })
     }
     #[inline]
-    fn get<const MOVE: bool, const REQUIRE_ARRAY: bool>(
-        global: &JSGlobalObject,
-        arg: JSValue,
-    ) -> JsResult<Blob> {
-        match (MOVE, REQUIRE_ARRAY) {
-            (true, false) => Self::from_js_move(global, arg),
-            (false, false) => Self::from_js_clone_optional_array(global, arg),
-            (_, true) => Self::from_js_clone(global, arg),
-        }
+    fn get<const REQUIRE_ARRAY: bool>(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
+        Self::from_js_without_defer_gc::<REQUIRE_ARRAY>(global, arg)
     }
 
-    #[inline]
-    fn from_js_move(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<true, false>(global, arg)
-    }
-
-    #[inline]
-    fn from_js_clone(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, true>(global, arg)
-    }
-
-    #[inline]
-    fn from_js_clone_optional_array(global: &JSGlobalObject, arg: JSValue) -> JsResult<Blob> {
-        Self::from_js_without_defer_gc::<false, false>(global, arg)
-    }
-
-    fn from_js_without_defer_gc<const MOVE: bool, const REQUIRE_ARRAY: bool>(
+    fn from_js_without_defer_gc<const REQUIRE_ARRAY: bool>(
         global: &JSGlobalObject,
         arg: JSValue,
     ) -> JsResult<Blob> {
@@ -3233,7 +3199,7 @@ impl BlobExt for Blob {
             }
         }
 
-        if might_only_be_one_thing || !MOVE {
+        if might_only_be_one_thing {
             // Fast path: one item, we don't need to join
             match top_value.js_type_loose() {
                 jsc::JSType::Cell
@@ -3263,47 +3229,11 @@ impl BlobExt for Blob {
 
                 jsc::JSType::DOMWrapper => {
                     if !fail_if_top_value_is_not_typed_array_like {
-                        if let Some(blob_ptr) = top_value.as_::<Blob>() {
-                            // SAFETY: live JS heap pointer; single-threaded JS execution.
-                            // Shared access only — Blob state is Cell/JsCell-based.
-                            let blob = unsafe { &*blob_ptr };
-                            if MOVE {
-                                // Move the store without bumping its refcount, but take
-                                // independent ownership of name/content_type so the
-                                // source's eventual finalize() doesn't double-free them.
-                                // *Take* the StoreRef out of `blob`
-                                // (no clone, no into_raw leak) and field-copy the
-                                // rest, deep-owning `name`/`content_type` — net 0 on
-                                // the store refcount.
-                                let _blob = Blob {
-                                    reported_estimated_size: Cell::new(
-                                        blob.reported_estimated_size.get(),
-                                    ),
-                                    size: Cell::new(blob.size.get()),
-                                    offset: Cell::new(blob.offset.get()),
-                                    store: JsCell::new(blob.take_store()), // ← the move
-                                    content_type: JsCell::new(blob.content_type.get().clone()),
-                                    content_type_was_set: Cell::new(
-                                        blob.content_type_was_set.get(),
-                                    ),
-                                    charset: Cell::new(blob.charset.get()),
-                                    is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
-                                    ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-                                    global_this: Cell::new(blob.global_this.get()),
-                                    last_modified: Cell::new(blob.last_modified.get()),
-                                    name: blob.name.clone(),
-                                };
-                                return Ok(_blob);
-                            } else {
-                                return Ok(blob.dupe());
-                            }
+                        if let Some(blob) = top_value.as_class_ref::<Blob>() {
+                            return Ok(blob.dupe());
                         } else if let Some(artifact) =
                             top_value.as_class_ref::<crate::api::BuildArtifact>()
                         {
-                            // The previous "move" path here only nulled the store on a
-                            // local copy and left `build.blob` fully intact, so it was
-                            // never a real move. Share the store and deep-copy owned
-                            // buffers instead — regardless of `MOVE`.
                             return Ok(artifact.blob.dupe());
                         } else {
                             // Dispatch on the `ZigStringSlice` variant to detect an
@@ -5203,7 +5133,7 @@ pub(crate) fn write_file_internal(
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
         }
 
-        break 'brk Blob::get::<false, false>(global_this, data)?;
+        break 'brk Blob::get::<false>(global_this, data)?;
     };
     // Detach the source blob on scope exit.
     let mut source_blob = scopeguard::guard(source_blob, |b| b.detach());
@@ -5541,11 +5471,11 @@ pub(crate) fn jsdom_file_construct(
         // copies bytes (`to_owned_slice`) or takes its own ref (`dupe_ref`).
         let name_value_str = OwnedString::new(BunString::from_js(args[1], global_this)?);
 
-        blob = Blob::get::<false, true>(global_this, args[0])?;
+        blob = Blob::get::<true>(global_this, args[0])?;
         if let Some(store_) = blob.store.get() {
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
-                    // `get::<_, true>` on a single-Blob sequence returns
+                    // `get::<true>` on a single-Blob sequence returns
                     // `dupe()` (a shared StoreRef), so this `Bytes` may already
                     // carry an owned `stored_name` from the source blob; the
                     // assignment drops (frees) the previous `Box<[u8]>`.

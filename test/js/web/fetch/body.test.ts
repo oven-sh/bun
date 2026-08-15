@@ -1,7 +1,8 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
 import net from "net";
+import { join } from "path";
 
 const exampleServer = exampleSite("http");
 
@@ -141,6 +142,55 @@ for (const { body, fn } of bodyTypes) {
             expect(await fn(actual).blob()).toStrictEqual(actual);
           });
         }
+      });
+      // Bun also accepts an array of blob parts as a body. A Blob part has to be
+      // shared with the body, not moved out of the caller's Blob.
+      describe("array containing a Blob", () => {
+        test("the Blob still reads back its bytes after being used as a body part", async () => {
+          const blob = new Blob(["hello world"], { type: "text/plain" });
+          const actual = fn([blob] as any);
+          expect(actual.headers.get("content-type")).toBe(blob.type);
+          expect(await actual.text()).toBe("hello world");
+          expect(blob.size).toBe(11);
+          expect(await blob.text()).toBe("hello world");
+          expect(await blob.slice(6).text()).toBe("world");
+        });
+        test("the same Blob can back several bodies", async () => {
+          const blob = new Blob(["hello world"]);
+          const first = fn([blob] as any);
+          const second = fn([blob] as any);
+          expect(await Promise.all([first.text(), second.text(), blob.text()])).toEqual([
+            "hello world",
+            "hello world",
+            "hello world",
+          ]);
+        });
+        test("a File keeps its name and bytes", async () => {
+          const f = new File(["file bytes"], "part.txt");
+          // f.name is read only after the body was built: a byte-backed File
+          // keeps its name in the store, so losing the store loses the name too.
+          expect(await fn([f] as any).text()).toBe("file bytes");
+          expect({ name: f.name, size: f.size, text: await f.text() }).toEqual({
+            name: "part.txt",
+            size: 10,
+            text: "file bytes",
+          });
+        });
+        test("a Bun.file() stays readable", async () => {
+          using dir = tempDir("body-array-bun-file", { "data.txt": "from disk" });
+          const f = file(join(String(dir), "data.txt"));
+          expect(await fn([f] as any).text()).toBe("from disk");
+          expect(await f.text()).toBe("from disk");
+        });
+        test("a BuildArtifact stays readable", async () => {
+          using dir = tempDir("body-array-build-artifact", { "entry.js": `console.log("artifact-body-marker");` });
+          const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "entry.js")] });
+          const [artifact] = outputs;
+          const expected = await artifact.text();
+          expect(expected).toContain("artifact-body-marker");
+          expect(await fn([artifact] as any).text()).toBe(expected);
+          expect(await artifact.text()).toBe(expected);
+        });
       });
       describe("FormData", () => {
         const forms = [
@@ -1259,5 +1309,25 @@ describe("constructing a body from an unusable ReadableStream", () => {
     rs.getReader();
     expect(() => new Response(rs)).toThrow(TypeError);
     expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
+  });
+});
+
+// server.fetch() builds the Request body through the same blob-part extraction
+// as the constructors above, without going through new Request().
+describe("server.fetch() body option", () => {
+  test.each([
+    ["a Blob", (blob: Blob) => blob],
+    ["an array containing a Blob", (blob: Blob) => [blob]],
+  ])("%s is shared with the request, not moved out of the caller's Blob", async (_, body) => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+    const blob = new Blob(["hello world"]);
+    const response = await server.fetch(String(server.url), { method: "POST", body: body(blob) as any });
+    expect(await response.text()).toBe("hello world");
+    expect(await blob.text()).toBe("hello world");
   });
 });

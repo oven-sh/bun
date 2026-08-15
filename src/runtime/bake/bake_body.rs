@@ -244,7 +244,7 @@ impl UserOptions {
             }
         };
 
-        if let Some(plugin_array) = config.get(global, "plugins")? {
+        if let Some(plugin_array) = get_optional_value(config, global, b"plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
@@ -312,6 +312,10 @@ impl SplitBundlerOptions {
         plugin_array: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
+        if !plugin_array.is_array() {
+            return Err(global.throw_invalid_arguments(format_args!("plugins must be an array")));
+        }
+
         // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
         // so `plugins: []` still leaves `self.plugin = Some(_)`.
         let plugin: NonNull<Plugin> = match self.plugin {

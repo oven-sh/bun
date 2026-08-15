@@ -121,7 +121,7 @@ describe("fake node cli", () => {
   // "Missing script".
   test.concurrent.each(isWindows ? ["node.EXE", "NODE.EXE"] : ["NODE", "nodE"])(
     "detects node mode when invoked as %s",
-    name => {
+    async name => {
       using temp = tempDir("fake-node-case", {});
       const dir = String(temp);
       if (isWindows) {
@@ -130,13 +130,16 @@ describe("fake node cli", () => {
       } else {
         symlinkSync(bunExe(), join(dir, name));
       }
-      const result = Bun.spawnSync([join(dir, name)], {
+      await using proc = Bun.spawn({
+        cmd: [join(dir, name)],
         cwd: dir,
         env: { ...bunEnv, NODE_ENV: undefined },
         stdin: Buffer.alloc(0),
+        stderr: "pipe",
       });
-      expect(result.stderr.toString()).toContain("Missing script");
-      expect(result.success).toBe(false);
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Missing script");
+      expect(exitCode).not.toBe(0);
     },
   );
 });

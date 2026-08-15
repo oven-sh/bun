@@ -132,6 +132,7 @@ console.log(utils());`,
         cwd: baseDir,
         stderr: "pipe",
       });
+      expect(await successResult.stderr.text()).toBe("");
       expect(await successResult.exited).toBe(0);
 
       const outputFile = path.join(baseDir, "out-success", "index.js");
@@ -169,7 +170,9 @@ console.log(utils());`,
         cmd: [bunExe(), "build", "index.ts", "--tsconfig-override", "../../custom-tsconfig.json", "--outdir", "out"],
         env: bunEnv,
         cwd: nestedDir,
+        stderr: "pipe",
       });
+      expect(await result.stderr.text()).toBe("");
       expect(await result.exited).toBe(0);
 
       const outputFile = path.join(nestedDir, "out", "index.js");

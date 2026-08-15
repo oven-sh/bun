@@ -2565,6 +2565,15 @@ pub mod package_index {
         Ids(PackageIDList),
     }
 
+    impl Entry {
+        pub(crate) fn as_slice(&self) -> &[PackageID] {
+            match self {
+                Entry::Id(id) => core::slice::from_ref(id),
+                Entry::Ids(ids) => ids.as_slice(),
+            }
+        }
+    }
+
     impl Default for Entry {
         /// `HashMap::get_or_put` needs a `Default` to fill the value slot before
         /// the caller writes the real `Entry::Id(..)` / `Entry::Ids(..)`.

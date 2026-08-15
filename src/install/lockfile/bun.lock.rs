@@ -44,7 +44,7 @@ use super::override_selector::{PackageSelector, parse_package_segment};
 use super::package::{Meta, PackageColumns as _, value_loc_of};
 use super::{
     CatalogMap, DependencySlice, LoadResult, Lockfile as BinaryLockfile, OverrideMap, Package,
-    PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
+    PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
 use bun_io::AsFmt;
@@ -3386,12 +3386,7 @@ pub(crate) fn resolve_peer_dep_version_based(
         return None;
     }
 
-    let entry = package_index.get(&name_hash)?;
-    let candidates: &[PackageID] = match entry {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
-
+    let candidates = package_index.get(&name_hash)?.as_slice();
     for &id in candidates {
         if (id as usize) < pkg_resolutions.len()
             && pkg_resolutions[id as usize]

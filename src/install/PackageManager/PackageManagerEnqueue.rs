@@ -2900,10 +2900,7 @@ fn locked_version_in_lockfile<'a>(
         return None;
     }
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
     let range = &version.npm().version;
@@ -2936,10 +2933,7 @@ fn patched_package_satisfying(
     if lockfile.patched_dependencies.count() == 0 {
         return None;
     }
-    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
     candidates.iter().copied().find(|&id| {

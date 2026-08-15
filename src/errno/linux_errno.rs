@@ -5,7 +5,16 @@ pub use crate::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(
-    Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr, strum::EnumString, enum_map::Enum,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    Debug,
+    strum::IntoStaticStr,
+    strum::EnumString,
+    strum::FromRepr,
+    enum_map::Enum,
 )]
 pub enum SystemErrno {
     SUCCESS = 0,
@@ -183,13 +192,13 @@ impl GetErrno for usize {
     fn get_errno(self) -> E {
         // `as` between same-width usize/isize is a bit-reinterpretation
         let signed = self as isize;
-        let int = if signed > -4096 && signed < 0 {
-            -signed
+        if signed > -4096 && signed < 0 {
+            // The kernel's `-errno` range (1..4096) is wider than the enum
+            // (`MAX`), so the code is validated; unknown ones collapse to EIO.
+            crate::from_errno((-signed) as i32)
         } else {
-            0
-        };
-        // SAFETY: int is in [0, 4096); E is #[repr] over the kernel errno range
-        unsafe { core::mem::transmute::<u16, E>(int as u16) }
+            E::SUCCESS
+        }
     }
 }
 

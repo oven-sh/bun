@@ -54,13 +54,15 @@ impl<T: Copy> Unaligned<T> {
         if slice.is_empty() {
             return &mut [];
         }
-        debug_assert!(
+        // Hard `assert!` for the same reason as `bytes_as_slice_mut`: a
+        // misaligned `&mut [T]` is UB the moment it is formed.
+        assert!(
             (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
         // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
-        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
+        // and field offset 0; the alignment asserted above upgrades it to `T`'s
         // layout. `&mut` exclusivity is preserved.
         unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
     }
@@ -106,51 +108,67 @@ impl ZStr {
     }
     /// Wrap a `&'static [u8]` literal that already includes the trailing
     /// `\0` (e.g. `b".\0"`). The returned `&ZStr` excludes the NUL from
-    /// `len()` per the type invariant. Panics in debug if no trailing NUL.
+    /// `len()` per the type invariant. Panics (a compile error in const
+    /// context) if there is no trailing NUL.
     #[inline]
     pub const fn from_static(s: &'static [u8]) -> &'static ZStr {
-        debug_assert!(!s.is_empty() && s[s.len() - 1] == 0);
-        // SAFETY: caller-supplied literal ends in NUL; lifetime is 'static.
+        assert!(
+            !s.is_empty() && s[s.len() - 1] == 0,
+            "ZStr::from_static: missing trailing NUL"
+        );
+        // SAFETY: `s` ends in NUL (asserted above); lifetime is 'static.
         unsafe { Self::from_raw(s.as_ptr(), s.len() - 1) }
     }
     /// Borrow `buf[..len]` as a `&ZStr`, where `buf[len] == 0`. This is the
     /// safe-surface form of [`from_raw`] for the dominant call shape in the
     /// install pipeline: a stack `PathBuffer` filled to `len` with a NUL
     /// written at `buf[len]`. The slice bound proves `buf[..=len]` is in the
-    /// same allocation; the NUL is debug-asserted.
+    /// same allocation; the NUL is asserted.
+    ///
+    /// These constructors are safe fns, so their checks are hard `assert!`s
+    /// (one compare each, next to a syscall): a `debug_assert!` would leave
+    /// release builds handing an over-long or unterminated buffer to the OS.
+    ///
+    /// # Panics
+    /// If `len >= buf.len()` or `buf[len] != 0`.
     #[inline]
     pub fn from_buf(buf: &[u8], len: usize) -> &ZStr {
-        debug_assert!(len < buf.len(), "ZStr::from_buf: NUL must lie within buf");
-        debug_assert_eq!(buf[len], 0, "ZStr::from_buf: missing NUL at buf[len]");
-        // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; release
-        // relies on caller upholding the documented `buf[len] == 0`
-        // precondition).
+        assert!(len < buf.len(), "ZStr::from_buf: NUL must lie within buf");
+        assert!(buf[len] == 0, "ZStr::from_buf: missing NUL at buf[len]");
+        // SAFETY: `buf[..=len]` is in-bounds and `buf[len] == 0`, both
+        // asserted above.
         unsafe { Self::from_raw(buf.as_ptr(), len) }
     }
     /// Borrow `buf[..buf.len()-1]` as a `&ZStr`, where the last byte of `buf`
     /// is the NUL terminator. This is [`from_buf`] specialized for the second
     /// most common call shape: a slice that already includes its trailing NUL
     /// (e.g. a `Vec<u8>` with `0` pushed, or `CStr::to_bytes_with_nul`).
-    /// Debug-asserts the trailing NUL; release relies on the documented
-    /// precondition.
+    ///
+    /// # Panics
+    /// If `buf` is empty or its last byte is not NUL.
     #[inline]
     pub fn from_slice_with_nul(buf: &[u8]) -> &ZStr {
-        debug_assert!(!buf.is_empty(), "ZStr::from_slice_with_nul: empty slice");
-        debug_assert_eq!(
-            buf[buf.len() - 1],
-            0,
+        assert!(!buf.is_empty(), "ZStr::from_slice_with_nul: empty slice");
+        assert!(
+            buf[buf.len() - 1] == 0,
             "ZStr::from_slice_with_nul: missing trailing NUL"
         );
-        // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
-        // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
+        // SAFETY: `buf[buf.len()-1] == 0` (asserted above) and
+        // `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
     /// Mutable variant of [`from_buf`].
+    ///
+    /// # Panics
+    /// If `len >= buf.len()` or `buf[len] != 0`.
     #[inline]
     pub fn from_buf_mut(buf: &mut [u8], len: usize) -> &mut ZStr {
-        debug_assert!(len < buf.len());
-        debug_assert_eq!(buf[len], 0);
-        // SAFETY: see `from_buf`.
+        assert!(
+            len < buf.len(),
+            "ZStr::from_buf_mut: NUL must lie within buf"
+        );
+        assert!(buf[len] == 0, "ZStr::from_buf_mut: missing NUL at buf[len]");
+        // SAFETY: see `from_buf`; `&mut buf` makes `buf[..=len]` writable.
         unsafe { Self::from_raw_mut(buf.as_mut_ptr(), len) }
     }
     #[inline]
@@ -445,29 +463,33 @@ impl WStr {
     /// Borrow `buf[..len]` as a `&WStr`, where `buf[len] == 0`. Safe-surface
     /// form of [`from_raw`] for the dominant call shape: a stack `WPathBuffer`
     /// filled to `len` with a NUL written at `buf[len]`. The slice bound proves
-    /// `buf[..=len]` lies in one allocation; the NUL is debug-asserted (release
-    /// relies on the documented `buf[len] == 0` precondition). Mirrors
-    /// [`ZStr::from_buf`].
+    /// `buf[..=len]` lies in one allocation; the NUL is asserted. Mirrors
+    /// [`ZStr::from_buf`], including why the checks are not `debug_assert!`s.
+    ///
+    /// # Panics
+    /// If `len >= buf.len()` or `buf[len] != 0`.
     #[inline]
     pub fn from_buf(buf: &[u16], len: usize) -> &WStr {
-        debug_assert!(len < buf.len(), "WStr::from_buf: NUL must lie within buf");
-        debug_assert_eq!(buf[len], 0, "WStr::from_buf: missing NUL at buf[len]");
-        // SAFETY: `buf[..=len]` is in-bounds (debug-asserted above; caller
-        // contract in release).
+        assert!(len < buf.len(), "WStr::from_buf: NUL must lie within buf");
+        assert!(buf[len] == 0, "WStr::from_buf: missing NUL at buf[len]");
+        // SAFETY: `buf[..=len]` is in-bounds and `buf[len] == 0`, both
+        // asserted above.
         unsafe { Self::from_raw(buf.as_ptr(), len) }
     }
     /// Borrow `buf[..buf.len()-1]` as a `&WStr`, where the last unit of `buf`
     /// is the NUL terminator. Mirrors [`ZStr::from_slice_with_nul`].
+    ///
+    /// # Panics
+    /// If `buf` is empty or its last unit is not NUL.
     #[inline]
     pub fn from_slice_with_nul(buf: &[u16]) -> &WStr {
-        debug_assert!(!buf.is_empty(), "WStr::from_slice_with_nul: empty slice");
-        debug_assert_eq!(
-            buf[buf.len() - 1],
-            0,
+        assert!(!buf.is_empty(), "WStr::from_slice_with_nul: empty slice");
+        assert!(
+            buf[buf.len() - 1] == 0,
             "WStr::from_slice_with_nul: missing trailing NUL"
         );
-        // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
-        // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
+        // SAFETY: `buf[buf.len()-1] == 0` (asserted above) and
+        // `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
     /// Borrow a NUL-terminated FFI wide string as `&WStr`, or [`EMPTY`] if

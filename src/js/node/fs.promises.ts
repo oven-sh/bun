@@ -684,6 +684,7 @@ function asyncWrap(fn: any, name: string) {
       const fd = this[kFd];
       throwEBADFIfNecessary("writeFile", fd);
       let encoding: string = "utf8";
+      let flush = false;
       let signal: AbortSignal | undefined = undefined;
 
       if (options == null || typeof options === "function") {
@@ -691,6 +692,7 @@ function asyncWrap(fn: any, name: string) {
         encoding = options;
       } else {
         encoding = options?.encoding ?? encoding;
+        flush = options?.flush ?? flush;
         signal = options?.signal ?? undefined;
       }
 
@@ -698,6 +700,7 @@ function asyncWrap(fn: any, name: string) {
         this[kRef]();
         return await writeFile(fd, data, {
           encoding,
+          flush,
           flag: this[kFlag],
           signal,
         });

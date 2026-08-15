@@ -90,22 +90,29 @@ describe("fs.promises.writeFile async iterator: options.flush", () => {
     );
   });
 
-  test.concurrent("validates flush when the iterable is written through a FileHandle", async () => {
+  test.concurrent("validates flush on every FileHandle entry point", async () => {
     await using dir = tempDir("writeFile-iterable-flush-type-fh", { "a.txt": "" });
     const file = join(String(dir), "a.txt");
     const fh = await open(file, "w");
+    const outcome = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolved",
+        e => `${e.code}: ${e.message}`,
+      );
     try {
-      const results = await Promise.all([
-        writeFile(fh, ["x"], { flush: "yes" } as any).then(
-          () => "resolved",
-          e => `${e.code}: ${e.message}`,
-        ),
-        fh.appendFile(["x"] as any, { flush: "yes" } as any).then(
-          () => "resolved",
-          e => `${e.code}: ${e.message}`,
-        ),
-      ]);
-      expect(results).toEqual([invalidMessage("type string ('yes')"), invalidMessage("type string ('yes')")]);
+      const results = {
+        "writeFile(handle, iterable)": await outcome(writeFile(fh, ["x"], { flush: "yes" } as any)),
+        "handle.writeFile(iterable)": await outcome(fh.writeFile(["x"] as any, { flush: "yes" } as any)),
+        "handle.appendFile(iterable)": await outcome(fh.appendFile(["x"] as any, { flush: "yes" } as any)),
+        // String data takes the native path, whose message is worded differently.
+        "handle.writeFile(string)": (await outcome(fh.writeFile("x", { flush: "yes" } as any))).split(":")[0],
+      };
+      expect(results).toEqual({
+        "writeFile(handle, iterable)": invalidMessage("type string ('yes')"),
+        "handle.writeFile(iterable)": invalidMessage("type string ('yes')"),
+        "handle.appendFile(iterable)": invalidMessage("type string ('yes')"),
+        "handle.writeFile(string)": "ERR_INVALID_ARG_TYPE",
+      });
     } finally {
       await fh.close();
     }
@@ -264,25 +271,23 @@ await section("string path", () => fsp.writeFile(file("c"), ["1", "2"], { flush:
 await section("URL path", () => fsp.writeFile(pathToFileURL(file("d")), ["1", "2"], { flush: true }).then(() => contents("d")));
 await section("Buffer path", () => fsp.writeFile(Buffer.from(file("e")), ["1", "2"], { flush: true }).then(() => contents("e")));
 await section("async iterable", () => fsp.writeFile(file("f"), (async function* () { yield "1"; yield "2"; })(), { flush: true }).then(() => contents("f")));
-await section("FileHandle", async () => {
-  const fh = await fsp.open(file("g"), "w");
+// Each FileHandle case opens its own file (pre-filled with "0" when appending),
+// runs the write with the handle, closes it and reports the file's contents.
+const withHandle = (name, flag, write) => section(name, async () => {
+  if (flag === "a") fs.writeFileSync(file(name), "0");
+  const fh = await fsp.open(file(name), flag);
   try {
-    await fsp.writeFile(fh, ["1", "2"], { flush: true });
+    await write(fh);
   } finally {
     await fh.close();
   }
-  return contents("g");
+  return contents(name);
 });
-await section("FileHandle.appendFile", async () => {
-  fs.writeFileSync(file("h"), "0");
-  const fh = await fsp.open(file("h"), "a");
-  try {
-    await fh.appendFile(["1", "2"], { flush: true });
-  } finally {
-    await fh.close();
-  }
-  return contents("h");
-});
+await withHandle("writeFile(handle)", "w", fh => fsp.writeFile(fh, ["1", "2"], { flush: true }));
+await withHandle("handle.writeFile(iterable)", "w", fh => fh.writeFile(["1", "2"], { flush: true }));
+await withHandle("handle.writeFile(string)", "w", fh => fh.writeFile("12", { flush: true }));
+await withHandle("handle.writeFile(iterable) without flush", "w", fh => fh.writeFile(["1", "2"]));
+await withHandle("handle.appendFile(iterable)", "a", fh => fh.appendFile(["1", "2"], { flush: true }));
 await section("iterable throws", () => fsp.writeFile(file("i"), failing(), { flush: true }));
 console.log(JSON.stringify(report));
 `,
@@ -295,8 +300,11 @@ console.log(JSON.stringify(report));
         "URL path": { fsyncs: 1, result: "12" },
         "Buffer path": { fsyncs: 1, result: "12" },
         "async iterable": { fsyncs: 1, result: "12" },
-        "FileHandle": { fsyncs: 1, result: "12" },
-        "FileHandle.appendFile": { fsyncs: 1, result: "012" },
+        "writeFile(handle)": { fsyncs: 1, result: "12" },
+        "handle.writeFile(iterable)": { fsyncs: 1, result: "12" },
+        "handle.writeFile(string)": { fsyncs: 1, result: "12" },
+        "handle.writeFile(iterable) without flush": { fsyncs: 0, result: "12" },
+        "handle.appendFile(iterable)": { fsyncs: 1, result: "012" },
         "iterable throws": { fsyncs: 0, result: "boom" },
       });
     });

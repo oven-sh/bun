@@ -371,6 +371,53 @@ test("basic unchanging inline snapshot", () => {
   );
 });
 
+// React 18 marks elements with Symbol.for("react.element"), React 19 with
+// Symbol.for("react.transitional.element"). Both serialize as JSX, like Bun.inspect
+// prints them, instead of as the element's fields. test/ pins React 18, so the
+// elements are built by hand.
+describe.each(["react.element", "react.transitional.element"])("inline snapshots of %s elements", $$typeofKey => {
+  const $$typeof = Symbol.for($$typeofKey);
+  const h = (type: unknown, props: Record<string, unknown>, key: string | null = null) => ({
+    $$typeof,
+    type,
+    key,
+    ref: null,
+    props,
+  });
+  function Greeting() {}
+
+  test("serialize as JSX", () => {
+    expect(h("div", { id: "x" })).toMatchInlineSnapshot(`<div id="x" />`);
+    expect(h("li", { children: "one" }, "a")).toMatchInlineSnapshot(`<li key="a">one</li>`);
+    expect(h(Greeting, { name: "bun" })).toMatchInlineSnapshot(`<Greeting name="bun" />`);
+  });
+
+  test("child elements serialize as JSX", () => {
+    expect(h("ul", { className: "list", children: h("li", { children: "one" }) }))
+      .toMatchInlineSnapshot(`<ul className="list">
+  <li>one</li>
+</ul>`);
+    expect(h("ul", { children: [h("li", { children: "one" }, "1"), h("li", { children: "two" }, "2")] }))
+      .toMatchInlineSnapshot(`<ul>
+  <li key="1">one</li>
+  <li key="2">two</li>
+</ul>`);
+  });
+
+  test("elements inside other values serialize as JSX", () => {
+    expect({ el: h("div", { id: "x" }) }).toMatchInlineSnapshot(`
+      {
+        "el": <div id="x" />,
+      }
+    `);
+    expect([h("br", {})]).toMatchInlineSnapshot(`
+      [
+        <br />,
+      ]
+    `);
+  });
+});
+
 class InlineSnapshotTester {
   tmpdir: string;
   tmpid: number;

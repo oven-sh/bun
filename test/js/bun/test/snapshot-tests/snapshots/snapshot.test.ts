@@ -395,10 +395,14 @@ test("jsx element props are separated in snapshots and diffs", () => {
   <y p="1" q="2" />
 </x>`);
 
-  // toEqual and friends print both sides with the same formatter.
-  expect(() => expect(createElement("x", { a: "1", b: "2" })).toEqual(createElement("x", { a: "1", b: "3" }))).toThrow(
-    'Expected: <x a="1" b="3" />\nReceived: <x a="1" b="2" />',
-  );
+  // toEqual and friends print both sides with the same formatter; the message is colored when colors are on.
+  let message = "";
+  try {
+    expect(createElement("x", { a: "1", b: "2" })).toEqual(createElement("x", { a: "1", b: "3" }));
+  } catch (e) {
+    message = Bun.stripANSI((e as Error).message);
+  }
+  expect(message).toContain('Expected: <x a="1" b="3" />\nReceived: <x a="1" b="2" />');
 });
 
 class InlineSnapshotTester {

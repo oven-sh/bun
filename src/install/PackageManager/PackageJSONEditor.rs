@@ -1198,10 +1198,19 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 ));
 
+                // A replaced entry keeps the literal the before-install pass wrote until the write-back
+                // below decides what to save (the `workspace:` arm keeps it as typed).
+                let declared: &[u8] = match new_dependencies[k]
+                    .value
+                    .as_ref()
+                    .and_then(Expr::as_utf8_string_literal)
+                {
+                    Some(literal) => arena_dup(arena, literal),
+                    None => b"",
+                };
                 new_dependencies[k].value = Some(Expr::allocate(
                     arena,
-                    // we set it later
-                    E::EString::init(b""),
+                    E::EString::init(declared),
                     bun_ast::Loc::EMPTY,
                 ));
 
@@ -1451,7 +1460,15 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                resolution::Tag::Workspace => b"workspace:*",
+                // `<member>@workspace:^` (or `~`, or a version) is saved as typed since `bun pm pack`
+                // derives the published range from the spelling; a member linked any other way
+                // (`<member>@1.0.0`, a folder path) is saved as `workspace:*`. `request.version` does
+                // not say which: on the root it is bound to the implicit row the `workspaces` list
+                // creates for the member, whose literal is the member's path.
+                resolution::Tag::Workspace => match dependency::Tag::infer(e_string.data.slice()) {
+                    dependency::Tag::Workspace => e_string.data.slice(),
+                    _ => b"workspace:*",
+                },
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
             };
             if e_string.data.slice() != new_literal {

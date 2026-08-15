@@ -2021,6 +2021,71 @@ describe("Glob.match", () => {
     expect(new Glob("foo/**").match("foo/\u0041\u030A")).toBeTrue(); // "A" with ring
     expect(new Glob("foo/**").match("foo/\u00C5")).toBeTrue(); // "Å" single character
   });
+
+  test("** inside a segment stays a plain * when ** segments follow it", () => {
+    // `a**` is `a*` (see "bash extra_stars" and "trailing globstar patterns"), so
+    // `a**/**` is `a*/**`: the `/**` is its own segment and the path still needs
+    // a `/`. The matcher used to fold the following `**` segments into the inline
+    // `**` before noticing it was not a globstar, which left plain `a*` behind.
+    expect(new Glob("a**/**").match("ab")).toBeFalse();
+    expect(new Glob("a**/**").match("a")).toBeFalse();
+    expect(new Glob("a/b**/**").match("a/b")).toBeFalse();
+    expect(new Glob("?**/**").match("b")).toBeFalse();
+    expect(new Glob("[a]**/**").match("a")).toBeFalse();
+    expect(new Glob("**/a**/**").match("x/ab")).toBeFalse();
+    expect(new Glob("{x,a}**/**").match("ab")).toBeFalse();
+    expect(new Glob("a**/**/**").match("ab")).toBeFalse();
+    expect(new Glob("a**/**/b").match("ab")).toBeFalse();
+    expect(new Glob("a**/**/*.js").match("ab.js")).toBeFalse();
+    expect(new Glob("!a**/**").match("ab")).toBeTrue();
+
+    // With the `/` present, the trailing `**` segments match as usual.
+    expect(new Glob("a**/**").match("a/")).toBeTrue();
+    expect(new Glob("a**/**").match("ab/")).toBeTrue();
+    expect(new Glob("a**/**").match("ab/c")).toBeTrue();
+    expect(new Glob("a**/**").match("ab/c/d")).toBeTrue();
+    expect(new Glob("a**/**/b").match("ab/b")).toBeTrue();
+    expect(new Glob("a**/**/b").match("ab/x/y/b")).toBeTrue();
+    expect(new Glob("a**/**/*.js").match("ab/c/d.js")).toBeTrue();
+    expect(new Glob("**/a**/**").match("x/ab/c")).toBeTrue();
+    expect(new Glob("!a**/**").match("ab/c")).toBeFalse();
+
+    // Every inline form must agree with its `*` spelling on every path.
+    const paths = [
+      "",
+      ..."a ab axb ba a/ ab/ a/b ab/b ab/c ab/c/ ab/c/d ab/x/y/b x/ab x/ab/c ab.js ab/c.js".split(" "),
+    ];
+    const spellings: [inline: string, plain: string][] = [
+      ["a**/**", "a*/**"],
+      ["a**/**/**", "a*/**/**"],
+      ["a**/**/", "a*/**/"],
+      ["a**/**/b", "a*/**/b"],
+      ["a**/**/*", "a*/**/*"],
+      ["a**/**/*.js", "a*/**/*.js"],
+      ["?**/**", "?*/**"],
+      ["[a]**/**", "[a]*/**"],
+      ["**/a**/**", "**/a*/**"],
+      ["{x,a}**/**", "{x,a}*/**"],
+      ["!a**/**", "!a*/**"],
+    ];
+    const matches = (pattern: string) => paths.map(path => ({ path, matches: new Glob(pattern).match(path) }));
+    for (const [inline, plain] of spellings) {
+      expect(matches(inline), `${inline} should match the same paths as ${plain}`).toEqual(matches(plain));
+    }
+
+    // Runs of real globstar segments still collapse into one.
+    expect(new Glob("**/**").match("a")).toBeTrue();
+    expect(new Glob("a/**/**").match("a/")).toBeTrue();
+    expect(new Glob("a/**/**/b").match("a/b")).toBeTrue();
+    expect(new Glob("a/**/**/*").match("a/")).toBeFalse();
+    expect(new Glob("{**/**/a,**/b}").match("x/y/b")).toBeTrue();
+
+    // A failing brace branch backtracks to the pattern-initial `**`, which is
+    // then re-examined from inside the branch and must still be a globstar.
+    expect(new Glob("**/{a,b}").match("x/y/b")).toBeTrue();
+    expect(new Glob("!**/{a,b}").match("x/y/b")).toBeFalse();
+    expect(new Glob("**/{a,b}").match("x/y/c")).toBeFalse();
+  });
 });
 
 function returnError(cb: () => any): Error | undefined {

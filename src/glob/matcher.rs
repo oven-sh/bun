@@ -132,8 +132,9 @@ struct Wildcard {
 ///     Matches zero or more characters, except for path separators ('/' or '\').
 /// "**"
 ///     Matches zero or more characters, including path separators.
-///     Must match a complete path segment, i.e. followed by a path separator or
-///     at the end of the pattern.
+///     Must be a complete path segment, i.e. preceded by a path separator (or
+///     the start of the pattern) and followed by one (or the end of the
+///     pattern). Anywhere else ("a**") it behaves like "*".
 /// "[ab]"
 ///     Matches one of the characters contained in the brackets.
 ///     Character ranges (e.g. "[a-z]") are also supported.
@@ -199,8 +200,18 @@ fn glob_match_impl(
                 'to_else: {
                     match ch {
                         b'*' => {
+                            // `**` is a globstar only at the start of a segment: after a `/`
+                            // or at `glob_start` (the pattern or, as in `{**/a,**/b}`, the
+                            // brace branch; `<=` because backtracking out of a branch can
+                            // land before its start). Anywhere else (`a**`) each `*` is a
+                            // plain wildcard, and this must be decided before
+                            // `skip_globstars` folds any following `/**` segments into this
+                            // one: those belong to the rest of the pattern when this `**`
+                            // is not a globstar (`a**/**` means `a*/**`).
                             let is_globstar = (state.glob_index as usize) + 1 < glob.len()
-                                && glob[state.glob_index as usize + 1] == b'*';
+                                && glob[state.glob_index as usize + 1] == b'*'
+                                && (state.glob_index <= glob_start
+                                    || glob[state.glob_index as usize - 1] == b'/');
                             if is_globstar {
                                 skip_globstars(glob, &mut state.glob_index);
                             }
@@ -232,13 +243,7 @@ fn glob_match_impl(
                                     continue 'main_loop;
                                 }
 
-                                // subtract glob_start from glob index before checking if length is less than 3. Given the pattern:
-                                // {**/a,**/b}
-                                // if we start at index 6 (start of **/b pattern), we don't want to index into the pattern before it
-                                if (state.glob_index.saturating_sub(glob_start) < 3
-                                    || glob[state.glob_index as usize - 3] == b'/')
-                                    && (!is_end_invalid || glob[state.glob_index as usize] == b'/')
-                                {
+                                if !is_end_invalid || glob[state.glob_index as usize] == b'/' {
                                     if is_end_invalid {
                                         state.glob_index += 1;
                                     }

@@ -96,6 +96,23 @@ pub mod argon2 {
     #[derive(Copy, Clone, Default)]
     pub(crate) struct VerifyOptions;
 
+    /// rust-argon2 allocates its block matrix infallibly (`vec![Block::zero(); n]`
+    /// in `Memory::new`), so a memory cost the system cannot satisfy would abort
+    /// the process. Probe the same amount (`m` KiB, the crate rounds down to a
+    /// multiple of `4 * lanes` blocks) with a fallible reservation first and
+    /// report failure as `OutOfMemory`, the error the JS caller gets. The probe
+    /// is freed before the crate allocates for real.
+    fn check_memory_is_allocatable(mem_cost_kib: u32) -> Result<(), Error> {
+        let bytes = (mem_cost_kib as usize)
+            .checked_mul(1024)
+            .ok_or(bun_alloc::AllocError)?;
+        let mut probe: Vec<u8> = Vec::new();
+        probe
+            .try_reserve_exact(bytes)
+            .map_err(|_| bun_alloc::AllocError)?;
+        Ok(())
+    }
+
     fn map_err(e: &vendor::Error) -> Error {
         use vendor::Error as E;
         match e {
@@ -152,6 +169,7 @@ pub mod argon2 {
             version: vendor::Version::Version13,
         };
 
+        check_memory_is_allocatable(config.mem_cost)?;
         let encoded = vendor::hash_encoded(password, &salt, &config).map_err(|e| map_err(&e))?;
         let bytes = encoded.as_bytes();
 
@@ -211,6 +229,7 @@ pub mod argon2 {
             }
         };
 
+        let mut memory_cost: Option<u32> = None;
         if let Some(after_dollar) = normalised.as_bytes().strip_prefix(b"$") {
             if let Some(sep) = strings::index_of_char_usize(after_dollar, b'$') {
                 let mut rest = &after_dollar[sep + 1..];
@@ -244,8 +263,17 @@ pub mod argon2 {
                     if value > limit {
                         return Err(crate::Error::WeakParameters);
                     }
+                    if key == b"m" {
+                        memory_cost = Some(value);
+                    }
                 }
             }
+        }
+        // The decoder only accepts strings with exactly one `m=`, so this is the
+        // cost `verify_encoded` would allocate for; anything else it rejects
+        // before allocating.
+        if let Some(memory_cost) = memory_cost {
+            check_memory_is_allocatable(memory_cost)?;
         }
 
         match vendor::verify_encoded(&normalised, password) {

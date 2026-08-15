@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_collections::VecExt as _;
+use bun_alloc::AllocError;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSUint8Array, JSValue};
 use bun_ptr::RawSlice;
@@ -24,24 +24,30 @@ pub struct TextEncoderStreamEncoder {
     scratch: core::cell::RefCell<Vec<u8>>,
 }
 
+// The output buffer of a chunk is sized by user data (up to 3x the chunk), so
+// every reservation in the `*_into` encoders is fallible and an `Err` is thrown
+// to JS as an out-of-memory RangeError, which errors the stream instead of
+// aborting the process.
 impl TextEncoderStreamEncoder {
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {
         if input.is_empty() {
             return JSUint8Array::create_empty(global);
         }
         let mut buffer = Vec::new();
-        self.encode_latin1_into(input, &mut buffer);
+        if self.encode_latin1_into(input, &mut buffer).is_err() {
+            return global.throw_out_of_memory_value();
+        }
         JSUint8Array::from_bytes(global, buffer.into())
     }
 
-    fn encode_latin1_into(&self, input: &[u8], buffer: &mut Vec<u8>) {
+    fn encode_latin1_into(&self, input: &[u8], buffer: &mut Vec<u8>) -> Result<(), AllocError> {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeLatin1: \"{}\"",
             bstr::BStr::new(input)
         );
         if input.is_empty() {
-            return;
+            return Ok(());
         }
 
         let prepend_replacement_len: usize = if self.pending_lead_surrogate.take().is_some() {
@@ -57,7 +63,9 @@ impl TextEncoderStreamEncoder {
         // 278.00 ms   13.0%    278.00 ms           simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
         //
         //
-        buffer.reserve(input.len() + prepend_replacement_len);
+        buffer
+            .try_reserve(input.len() + prepend_replacement_len)
+            .map_err(|_| AllocError)?;
         if prepend_replacement_len > 0 {
             buffer.extend_from_slice(&[0xef, 0xbf, 0xbd]);
         }
@@ -75,14 +83,17 @@ impl TextEncoderStreamEncoder {
             remain = &remain[result.read as usize..];
 
             if result.written == 0 && result.read == 0 {
-                buffer.reserve(2);
+                buffer.try_reserve(2).map_err(|_| AllocError)?;
             } else if buffer.len() == buffer.capacity() && !remain.is_empty() {
-                buffer.ensure_total_capacity(buffer.len() + remain.len() + 1);
+                buffer
+                    .try_reserve(remain.len() + 1)
+                    .map_err(|_| AllocError)?;
             }
         }
         debug_assert!(
             buffer.len() == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
         );
+        Ok(())
     }
 
     fn encode_utf16(&self, global: &JSGlobalObject, input: &[u16]) -> JSValue {
@@ -99,7 +110,7 @@ impl TextEncoderStreamEncoder {
         JSUint8Array::from_bytes(global, buf.into())
     }
 
-    fn encode_utf16_into(&self, input: &[u16], buf: &mut Vec<u8>) -> Result<(), ()> {
+    fn encode_utf16_into(&self, input: &[u16], buf: &mut Vec<u8>) -> Result<(), AllocError> {
         bun_output::scoped_log!(
             TextEncoderStreamEncoder,
             "encodeUTF16: \"{}\"",
@@ -144,7 +155,9 @@ impl TextEncoderStreamEncoder {
 
                     remain = &remain[1..];
                     if remain.is_empty() {
-                        buf.extend_from_slice(&sequence[0..converted.utf8_width() as usize]);
+                        let width = converted.utf8_width() as usize;
+                        buf.try_reserve(width).map_err(|_| AllocError)?;
+                        buf.extend_from_slice(&sequence[0..width]);
                         return Ok(());
                     }
 
@@ -158,13 +171,14 @@ impl TextEncoderStreamEncoder {
 
         let length = simdutf::length::utf8::from::utf16::le(remain);
 
-        buf.reserve(
+        buf.try_reserve(
             length
                 + match prepend {
                     Some(pre) => pre.len as usize,
                     None => 0,
                 },
-        );
+        )
+        .map_err(|_| AllocError)?;
 
         if let Some(pre) = &prepend {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
@@ -188,8 +202,7 @@ impl TextEncoderStreamEncoder {
 
         if result.status != simdutf::Status::SUCCESS {
             // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-            let lead_surrogate =
-                strings::to_utf8_list_with_type_bun::<true>(buf, remain).map_err(|_| ())?;
+            let lead_surrogate = strings::to_utf8_list_with_type_bun::<true>(buf, remain)?;
             if let Some(pending_lead) = lead_surrogate {
                 self.pending_lead_surrogate.set(Some(pending_lead));
             }
@@ -289,15 +302,13 @@ pub extern "C" fn TextEncoderStreamEncoder__encodeIntoSink(
     // (theoretical) re-entrant encode-into-sink call cannot BorrowMut-panic.
     let mut buf = this.scratch.take();
     buf.clear();
-    if str.is_16bit() {
-        if this
-            .encode_utf16_into(str.utf16_slice_aligned(), &mut buf)
-            .is_err()
-        {
-            return global.throw_out_of_memory_value();
-        }
+    let encoded = if str.is_16bit() {
+        this.encode_utf16_into(str.utf16_slice_aligned(), &mut buf)
     } else {
-        this.encode_latin1_into(str.slice(), &mut buf);
+        this.encode_latin1_into(str.slice(), &mut buf)
+    };
+    if encoded.is_err() {
+        return global.throw_out_of_memory_value();
     }
     if buf.is_empty() {
         this.scratch.replace(buf);

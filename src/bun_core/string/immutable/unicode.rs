@@ -129,6 +129,9 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
 
 /// Returns `Some(u16)` (the trailing lead surrogate) when `SKIP_TRAILING_REPLACEMENT` and a
 /// dangling lead surrogate is at the end; otherwise `None`.
+///
+/// `Err` is a failed growth of `list`, which the streaming encoder reports to JS;
+/// `list` keeps whatever was appended before the failure.
 pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     list: &mut Vec<u8>,
     utf16: &[u16],
@@ -146,16 +149,11 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
 
         let count: usize = replacement.utf8_width() as usize;
         #[cfg(not(target_family = "wasm"))]
-        {
-            let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
-            list.reserve_exact((i + count + list.len() + extra).saturating_sub(list.len()));
-        }
+        let extra = ((utf16_remaining.len() as u64 & ((1u64 << 52) - 1)) as f64 * 1.2) as usize;
         #[cfg(target_family = "wasm")]
-        {
-            list.reserve_exact(
-                (i + count + list.len() + utf16_remaining.len() + 4).saturating_sub(list.len()),
-            );
-        }
+        let extra = utf16_remaining.len() + 4;
+        list.try_reserve_exact(i + count + extra)
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, to_copy);
 
         if SKIP_TRAILING_REPLACEMENT {
@@ -174,8 +172,8 @@ pub fn to_utf8_list_with_type_bun<const SKIP_TRAILING_REPLACEMENT: bool>(
     }
 
     if !utf16_remaining.is_empty() {
-        let need = utf16_remaining.len() + list.len();
-        list.reserve_exact(need.saturating_sub(list.len()));
+        list.try_reserve_exact(utf16_remaining.len())
+            .map_err(|_| AllocError)?;
         append_u16_as_u8(list, utf16_remaining);
     }
 

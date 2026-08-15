@@ -579,3 +579,58 @@ describe.concurrent("modules that fail to print", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe.concurrent("bun build --no-bundle with an entry point that cannot be resolved", () => {
+  // The resolve failure used to be printed straight to stderr without being
+  // recorded as a build error, so the command still reported
+  // "Transpiled file" and exited 0.
+  async function build(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Same error line as `bun build missing.ts` without --no-bundle.
+  const missingEntryFailure = {
+    stdout: "",
+    stderr: expect.stringContaining('error: ModuleNotFound resolving "missing.ts" (entry point)'),
+    exitCode: 1,
+  };
+
+  test("exits 1 when the entry point does not exist", async () => {
+    using dir = tempDir("build-no-bundle-missing", {});
+    expect(await build(String(dir), "missing.ts")).toEqual(missingEntryFailure);
+  });
+
+  test("--outfile: exits 1 and does not create the output file", async () => {
+    using dir = tempDir("build-no-bundle-missing-outfile", {});
+    expect(await build(String(dir), "missing.ts", "--outfile", "out.js")).toEqual(missingEntryFailure);
+    expect(fs.existsSync(path.join(String(dir), "out.js"))).toBe(false);
+  });
+
+  test("--outdir: one missing entry point fails the whole build, like bundling does", async () => {
+    using dir = tempDir("build-no-bundle-missing-outdir", {
+      "present.ts": "export const present: number = 1;\n",
+    });
+    expect(await build(String(dir), "present.ts", "missing.ts", "--outdir", "out")).toEqual(missingEntryFailure);
+    expect(fs.existsSync(path.join(String(dir), "out", "present.js"))).toBe(false);
+  });
+
+  test("exits 1 when the entry point is disabled by the package.json browser field", async () => {
+    using dir = tempDir("build-no-bundle-browser-disabled", {
+      "package.json": JSON.stringify({ name: "pkg", browser: { "./entry.ts": false } }),
+      "entry.ts": "export const entry: number = 1;\n",
+    });
+    expect(await build(String(dir), "--target=browser", "entry.ts")).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining('entry.ts" is disabled due to "browser" field in package.json'),
+      exitCode: 1,
+    });
+  });
+});

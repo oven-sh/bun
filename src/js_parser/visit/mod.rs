@@ -227,7 +227,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
+                // Propagate name from the parameter to an anonymous decorated class default value
+                let prev_decorator_class_name = self.decorator_class_name;
+                if default.is_anonymous_named()
+                    && let ExprData::EClass(e_class) = &default.data
+                    && e_class.should_lower_standard_decorators
+                    && let BData::BIdentifier(id) = arg.binding.data
+                {
+                    self.decorator_class_name = Some(self.load_name_from_ref(id.r#ref));
+                }
                 self.visit_expr(default);
+                self.decorator_class_name = prev_decorator_class_name;
             }
         }
     }

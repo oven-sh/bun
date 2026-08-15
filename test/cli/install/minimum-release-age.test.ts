@@ -2425,7 +2425,7 @@ describe("minimum-release-age", () => {
         // One manifest/tarball cache per project, so the second install of a
         // test sees exactly what its first install cached.
         env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/.bun-cache`, ...env },
-        stdout: "pipe",
+        stdout: "ignore",
         stderr: "pipe",
       });
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

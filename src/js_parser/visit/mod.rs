@@ -227,27 +227,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
             self.visit_binding(arg.binding, dup);
             if let Some(default) = arg.default.as_mut() {
-                self.visit_binding_initializer(arg.binding, default);
+                let prev_decorator_class_name = self.decorator_class_name;
+                self.decorator_class_name =
+                    self.decorator_class_name_from_binding(arg.binding, default);
+                self.visit_expr(default);
+                self.decorator_class_name = prev_decorator_class_name;
             }
         }
     }
 
-    /// Names an anonymous decorated class after the binding it initializes (`decorator_class_name`).
-    pub(crate) fn visit_binding_initializer(
-        &mut self,
+    /// The `.name` that `binding` gives an anonymous class initializer; lowering the class would lose it.
+    pub(crate) fn decorator_class_name_from_binding(
+        &self,
         binding: BindingNodeIndex,
-        initializer: &mut Expr,
-    ) {
-        let prev_decorator_class_name = self.decorator_class_name;
-        if initializer.is_anonymous_named()
-            && let ExprData::EClass(e_class) = &initializer.data
-            && e_class.should_lower_standard_decorators
-            && let BData::BIdentifier(id) = binding.data
-        {
-            self.decorator_class_name = Some(self.load_name_from_ref(id.r#ref));
+        value: &Expr,
+    ) -> Option<&'a [u8]> {
+        let ExprData::EClass(class) = value.data else {
+            return None;
+        };
+        if class.class_name.is_some() || !class.should_lower_standard_decorators {
+            return None;
         }
-        self.visit_expr(initializer);
-        self.decorator_class_name = prev_decorator_class_name;
+        let BData::BIdentifier(id) = binding.data else {
+            return None;
+        };
+        Some(self.load_name_from_ref(id.r#ref))
     }
 
     // `Vec<Expr>` is not `Copy`; mutate in place.
@@ -315,18 +319,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     !SCAN_ONLY,
                     "only_scan_imports_and_do_not_visit must not run this."
                 );
-                // Propagate name from binding to anonymous decorated class expressions
                 let prev_decorator_class_name = self.decorator_class_name;
-                if was_anonymous_named_expr {
-                    if let ExprData::EClass(e_class) = &val.data {
-                        if e_class.should_lower_standard_decorators {
-                            if let BData::BIdentifier(id) = decl.binding.data {
-                                let id = id.get();
-                                self.decorator_class_name = Some(self.load_name_from_ref(id.r#ref));
-                            }
-                        }
-                    }
-                }
+                self.decorator_class_name =
+                    self.decorator_class_name_from_binding(decl.binding, &val);
                 if self.react_compiler.is_some()
                     && self.current_scope == self.module_scope
                     && let BData::BIdentifier(id) = decl.binding.data
@@ -594,7 +589,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 for dec in st.decls.slice_mut() {
                     self.visit_binding(dec.binding, None);
                     if let Some(val) = dec.value.as_mut() {
-                        self.visit_binding_initializer(dec.binding, val);
+                        let prev_decorator_class_name = self.decorator_class_name;
+                        self.decorator_class_name =
+                            self.decorator_class_name_from_binding(dec.binding, val);
+                        self.visit_expr(val);
+                        self.decorator_class_name = prev_decorator_class_name;
                     }
                 }
                 st.kind = self.select_local_kind(st.kind);
@@ -652,7 +651,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.visit_binding(item.binding, duplicate_arg_check.as_deref_mut());
                     if let Some(default_value) = item.default_value.as_mut() {
                         let was_anonymous_named_expr = default_value.is_anonymous_named();
-                        self.visit_binding_initializer(item.binding, default_value);
+                        let prev_decorator_class_name = self.decorator_class_name;
+                        self.decorator_class_name =
+                            self.decorator_class_name_from_binding(item.binding, default_value);
+                        self.visit_expr(default_value);
+                        self.decorator_class_name = prev_decorator_class_name;
 
                         if let BData::BIdentifier(bind_) = item.binding.data {
                             let bind_ = bind_.get();
@@ -678,7 +681,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.visit_binding(property.value, duplicate_arg_check.as_deref_mut());
                     if let Some(default_value) = property.default_value.as_mut() {
                         let was_anonymous_named_expr = default_value.is_anonymous_named();
-                        self.visit_binding_initializer(property.value, default_value);
+                        let prev_decorator_class_name = self.decorator_class_name;
+                        self.decorator_class_name =
+                            self.decorator_class_name_from_binding(property.value, default_value);
+                        self.visit_expr(default_value);
+                        self.decorator_class_name = prev_decorator_class_name;
 
                         if let BData::BIdentifier(bind_) = property.value.data {
                             let bind_ = bind_.get();

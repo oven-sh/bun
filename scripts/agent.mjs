@@ -105,6 +105,13 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
     }
 
     if (isOpenRc()) {
+      // openrc starts a runlevel's unrelated services one at a time in name
+      // order, so without `after docker` this service ("b") starts, and the
+      // ephemeral agent acquires its job, before the boot has reached "docker";
+      // the shard then begins with no daemon socket at all (routine on the
+      // alpine test agents, occasionally for minutes when a service in between
+      // is slow). `after` is ordering only: images without docker still boot
+      // the agent. Takes effect when the images are next published.
       const servicePath = "/etc/init.d/buildkite-agent";
       const service = `#!/sbin/openrc-run
         name="buildkite-agent"
@@ -123,6 +130,7 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
         depend() {
           need net
           use dns logger
+          after docker
         }
       `;
       writeFile(servicePath, service, { mode: 0o755 });

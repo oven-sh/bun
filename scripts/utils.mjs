@@ -3160,7 +3160,15 @@ export function printEnvironment() {
       startGroup("Docker", () => {
         const shell = which(["sh", "bash"]);
         if (shell) {
-          spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
+          const { exitCode } = spawnSync([shell, "-c", "docker ps"], { stdio: "inherit" });
+          // On the openrc (alpine) images the job can start before the boot has
+          // reached the docker service; the docker coordinator waits for the
+          // daemon, so this is not fatal, but the service table shows which boot
+          // step the daemon was stuck behind when a shard's container tests end
+          // up waiting or failing.
+          if (exitCode !== 0 && which("rc-status")) {
+            spawnSync([shell, "-c", "rc-status"], { stdio: "inherit" });
+          }
         }
       });
     }

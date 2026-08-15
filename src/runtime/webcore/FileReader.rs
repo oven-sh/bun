@@ -1274,14 +1274,12 @@ impl FileReader {
 
 pub type Source = readable_stream::NewSource<FileReader>;
 
-// Intrusive backref: `self` is always the `context` field of a heap-allocated
-// `Source`. Returns `*mut Source`
-// (NOT `&mut Source`) because `self` IS the `context` field — materializing
-// `&mut Source` would alias the live `&self` borrow. Callers deref in a tight
-// `unsafe { (*ptr).method() }` scope and never hold `&mut Source` across other
-// `self.*` accesses.
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; }
-bun_core::impl_field_parent! { FileReader => Source.context; pub fn parent_const; }
+// SAFETY: `FileReader` is always the `context` field of a heap-allocated
+// `Source`. `parent` is the `raw` arm because the ref-count pin
+// (`increment_count`/`decrement_count`) and `global_this` are plain `Source`
+// fields; callers deref in a tight `unsafe { (*ptr).method() }` scope and never
+// hold `&mut Source` across other `self.*` accesses.
+bun_core::impl_field_parent! { FileReader => Source.context; pub fn raw parent; pub fn shared parent_const; }
 
 impl readable_stream::SourceContext for FileReader {
     const NAME: &'static str = "File";

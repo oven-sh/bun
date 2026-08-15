@@ -53,10 +53,6 @@ pub struct SubscriptionCtx {
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
 pub use crate::generated_classes::js_RedisClient as Js;
 
-// SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
-// (intrusive backref). `JsCell<SubscriptionCtx>` is `#[repr(transparent)]`.
-bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
-
 impl SubscriptionCtx {
     pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
         let callback_map = JSMap::create(&valkey_parent.global_object);
@@ -82,14 +78,14 @@ impl SubscriptionCtx {
             is_subscriber: false,
         })
     }
+}
 
+/// The subscription bookkeeping that needs the client (its `this` value, poll
+/// ref, refcount) lives on the client: `SubscriptionCtx` itself is three flags,
+/// and a `&SubscriptionCtx` carries no right to reach the client around it.
+impl JSValkeyClient {
     fn subscription_callback_map(&self) -> &mut JSMap {
-        let parent_this = self
-            .parent()
-            .this_value
-            .get()
-            .try_get()
-            .expect("unreachable");
+        let parent_this = self.this_value.get().try_get().expect("unreachable");
         let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
@@ -183,7 +179,7 @@ impl SubscriptionCtx {
     ) -> JsResult<()> {
         // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
         // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self.parent());
+        let parent_br = BackRef::new(self);
         let _guard = scopeguard::guard(parent_br, |p| {
             p.on_new_subscription_callback_insert();
         });
@@ -264,7 +260,7 @@ impl SubscriptionCtx {
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
         // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
         // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self.parent());
+        let parent_br = BackRef::new(self);
         let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
 
         // If callbacks is an array, iterate and call each one
@@ -279,19 +275,17 @@ impl SubscriptionCtx {
         Ok(())
     }
 
-    fn is_deletable(&self) -> bool {
+    fn subscription_ctx_is_deletable(&self) -> bool {
         // The user may request .close(), in which case we can dispose of the subscription object.
         // If that is the case, finalized will be true. Otherwise, we should treat the object as
         // disposable if there are no active subscriptions.
-        self.parent().client.get().flags.finalized || !self.has_subscriptions()
+        self.client.get().flags.finalized || !self.has_subscriptions()
     }
 
-    // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
-    // `close` per PORTING.md (never expose `pub fn deinit`).
-    pub fn close(&self, global_object: &JSGlobalObject) {
-        debug_assert!(self.is_deletable());
+    pub fn close_subscription_ctx(&self, global_object: &JSGlobalObject) {
+        debug_assert!(self.subscription_ctx_is_deletable());
 
-        if let Some(parent_this) = self.parent().this_value.get().try_get() {
+        if let Some(parent_this) = self.this_value.get().try_get() {
             Js::subscription_callback_map_set_cached(
                 parent_this,
                 global_object,
@@ -949,12 +943,12 @@ impl JSValkeyClient {
     pub(crate) fn remove_subscription(&self) {
         debug!(
             "removeSubscription: entering, has subscriptions: {}",
-            self._subscription_ctx.get().has_subscriptions()
+            self.has_subscriptions()
         );
         let _guard = self.ref_scope();
 
         // This is the last subscription, restore original flags
-        if !self._subscription_ctx.get().has_subscriptions() {
+        if !self.has_subscriptions() {
             let (q, p) = {
                 let s = self._subscription_ctx.get();
                 (
@@ -1332,8 +1326,6 @@ impl JSValkeyClient {
 
         // Invoke callbacks for this channel with message and channel as arguments
         if self
-            ._subscription_ctx
-            .get()
             .invoke_callbacks(
                 &global_object,
                 channel_value,
@@ -1655,8 +1647,7 @@ impl JSValkeyClient {
         // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns
         // null for a finalized ref. Short-circuit here: a finalized client has
         // no subscriptions by definition.
-        let subs_deletable: bool =
-            self.client.get().flags.finalized || !self._subscription_ctx.get().has_subscriptions();
+        let subs_deletable: bool = self.client.get().flags.finalized || !self.has_subscriptions();
 
         let has_activity =
             has_pending_commands || !subs_deletable || self.client.get().flags.is_reconnecting;

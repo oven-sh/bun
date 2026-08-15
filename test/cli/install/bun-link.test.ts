@@ -498,7 +498,7 @@ it.each([
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const lines = stdout.split(/\r?\n/).map(line => line.trim());
   const descriptionOf = (flag: string) =>
@@ -506,11 +506,12 @@ it.each([
       .find(line => line.startsWith(`${flag} `))
       ?.slice(flag.length)
       .trim();
-  expect({ "--save": descriptionOf("--save"), "--no-save": descriptionOf("--no-save") }).toEqual({
+  expect({ "--save": descriptionOf("--save"), "--no-save": descriptionOf("--no-save"), stderr, exitCode }).toEqual({
     "--save": save,
     "--no-save": noSave,
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });
 
 it("bun link <package> only writes package.json and a lockfile when --save is passed", async () => {

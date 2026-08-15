@@ -474,7 +474,8 @@ unsafe fn init_runtime_state(
                         .wake_ctx
                         .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: &raw mut (*vm).modules,
-                            loop_handle: (*vm).loop_handle(),
+                            handle: (*vm).handle(),
+                            kind: (*vm).current_loop_kind(),
                         }));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),
@@ -2845,6 +2846,13 @@ fn transpile_source_code_inner(
                     return Err(crate::Error::ParseError);
                 }
 
+                // Set before the early returns below (cache hit, `// @bun`, async queue):
+                // every later module load is gated on this flag.
+                if is_main && !disable_transpilying {
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    unsafe { (*jsc_vm).has_loaded = true };
+                }
+
                 let source = &parse_result.source;
 
                 // Raw JSON: hand the source bytes straight to JSC.
@@ -2919,9 +2927,6 @@ fn transpile_source_code_inner(
                             Err(e) => {
                                 return Err(match e {
                                     bun_ast::ToJSError::JSError => bun_jsc::JsError::Thrown,
-                                    bun_ast::ToJSError::JSTerminated => {
-                                        bun_jsc::JsError::Terminated
-                                    }
                                     bun_ast::ToJSError::OutOfMemory => global.throw_out_of_memory(),
                                     e => global.throw_error(
                                         bun_jsc::CrateError::from(e),
@@ -3269,11 +3274,6 @@ fn transpile_source_code_inner(
                     print_result?;
                 }
 
-                if is_main {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    unsafe { (*jsc_vm).has_loaded = true };
-                }
-
                 // `module_info.asDeserialized()`: finalize the
                 // printer-filled record into the FFI shape consumed by C++
                 // (freed by C++ `~SourceProvider` via
@@ -3502,13 +3502,8 @@ fn transpile_source_code_inner(
         // .sqlite / .sqlite_embedded
         // ────────────────────────────────────────────────────────────────────
         L::Sqlite | L::SqliteEmbedded => {
-            // The low-tier
-            // `VirtualMachine.hot_reload` slot is a raw `u8`; compare against
-            // the real `HotReload` enum discriminant (`!= 0` would also match
-            // `.watch`, which is wrong).
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            let hot =
-                unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot as u8;
+            let hot = unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot;
             let sqlite_module_source_code_string: &'static [u8] = if hot {
                 SQLITE_MODULE_SOURCE_HOT
             } else {

@@ -15,8 +15,9 @@ use bun_install::integrity::Integrity;
 // resolve against the ported types.
 use crate::Origin;
 use crate::lockfile_real::package::meta::HasInstallScript;
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use crate::lockfile_real::package::{
-    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
+    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _, value_loc_of,
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
 use bun_install::npm;
@@ -148,6 +149,14 @@ impl<'a> Entry<'a> {
 
     pub(crate) fn is_file_dependency(version: &[u8]) -> bool {
         version.starts_with(b"file:") || version.starts_with(b"./") || version.starts_with(b"../")
+    }
+
+    pub(crate) fn file_path_from_spec(spec: &[u8]) -> &[u8] {
+        let mut path = spec.strip_prefix(b"file:").unwrap_or(spec);
+        while let Some(rest) = path.strip_prefix(b"./") {
+            path = rest;
+        }
+        strings::without_trailing_slash(path)
     }
 
     pub(crate) fn parse_git_url(
@@ -320,8 +329,7 @@ impl<'a> YarnLock<'a> {
 
                 for spec in &current_specs {
                     if let Some(at_index) = strings::index_of(spec, b"@file:") {
-                        let file_path = &spec[at_index + 6..];
-                        new_entry.file = Some(file_path);
+                        new_entry.file = Some(Entry::file_path_from_spec(&spec[at_index + 1..]));
                         break;
                     }
                 }
@@ -390,13 +398,7 @@ impl<'a> YarnLock<'a> {
                         if Entry::is_workspace_dependency(value) {
                             entry.workspace = true;
                         } else if Entry::is_file_dependency(value) {
-                            entry.file = Some(
-                                if value.starts_with(b"file:") && value.len() > b"file:".len() {
-                                    &value[b"file:".len()..]
-                                } else {
-                                    value
-                                },
-                            );
+                            entry.file = Some(Entry::file_path_from_spec(value));
                         } else if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
                             entry.commit = git_info.commit;
@@ -643,47 +645,44 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     let mut root_dependencies: Vec<RootDep> = Vec::new();
 
-    {
-        // read package.json to get specified dependencies
-        let Ok(package_json_fd) =
-            bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
+    // read package.json to get specified dependencies
+    let Ok(package_json_fd) = bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
+    else {
+        return Err(crate::Error::InvalidPackageJSON);
+    };
+    let Ok(package_json_contents) = package_json_fd.read_to_end() else {
+        return Err(crate::Error::InvalidPackageJSON);
+    };
+
+    // `package_json_source.path` borrows this buffer (lifetime-erased); keep it alive until the overrides are parsed below.
+    let mut package_json_path_buf = PathBuffer::uninit();
+    let package_json_source = {
+        let Ok(package_json_path) =
+            bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
         else {
             return Err(crate::Error::InvalidPackageJSON);
         };
-        let Ok(package_json_contents) = package_json_fd.read_to_end() else {
-            return Err(crate::Error::InvalidPackageJSON);
-        };
+        bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
+    };
+    drop(package_json_fd);
 
-        // The path buffer must outlive `package_json_source`: `Source.path.text`
-        // borrows into it (lifetime-erased) and is read when `parse_append`
-        // emits a warning (`Location::clone` deep-copies the file path).
-        let mut package_json_path_buf = PathBuffer::uninit();
-        let package_json_source = {
-            let Ok(package_json_path) =
-                bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
-            else {
-                return Err(crate::Error::InvalidPackageJSON);
-            };
-            bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
-        };
-        drop(package_json_fd); // close now; fd no longer needed past path resolution
+    let json_bump = bun_alloc::Arena::new();
+    let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
+        bun_json::JSONOptions {
+            json_warn_duplicate_keys: false,
+            guess_indentation: true,
+            ..bun_json::PACKAGE_JSON_OPTS
+        },
+        &package_json_source,
+        log,
+        &json_bump,
+    ) else {
+        return Err(crate::Error::InvalidPackageJSON);
+    };
 
-        let json_bump = bun_alloc::Arena::new();
-        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
-            bun_json::JSONOptions {
-                json_warn_duplicate_keys: false,
-                guess_indentation: true,
-                ..bun_json::PACKAGE_JSON_OPTS
-            },
-            &package_json_source,
-            log,
-            &json_bump,
-        ) else {
-            return Err(crate::Error::InvalidPackageJSON);
-        };
+    let package_json = package_json_expr.root;
 
-        let package_json = package_json_expr.root;
-
+    {
         let package_name: Option<Vec<u8>> = 'blk: {
             if let Some(name_prop) = package_json.as_property(b"name") {
                 if let bun_ast::ExprData::EString(e_string) = &name_prop.expr.data {
@@ -803,28 +802,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             bin: Bin::init(),
             scripts: Default::default(),
         })?;
-
-        if let Some(resolutions) = package_json.as_property(b"resolutions") {
-            let root_package = *this.packages.get(0);
-            let (mut string_builder, lf) = this.string_builder_split();
-
-            if let bun_ast::ExprData::EObject(e_object) = &resolutions.expr.data {
-                string_builder.cap += e_object.properties.len_u32() as usize * 128;
-            }
-            if string_builder.cap > 0 {
-                string_builder.allocate()?;
-            }
-            lf.overrides.parse_append(
-                manager,
-                lf.dependencies.as_slice(),
-                &root_package,
-                log,
-                &package_json_source,
-                package_json,
-                &mut string_builder,
-            )?;
-            this.packages.set(0, root_package);
-        }
     }
 
     // SAFETY: capacity reserved above to num_deps; we write past `len` through
@@ -1713,6 +1690,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         u32::try_from(root_dependencies.len()).expect("int cast"),
     );
 
+    parse_root_overrides(this, manager, log, &package_json_source, package_json)?;
+
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
         if package_id == install::INVALID_PACKAGE_ID {
@@ -1959,6 +1938,76 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     });
 
     Ok(result)
+}
+
+/// Must run after the root package's dependencies are laid out: `$ref` values resolve through them, then through the workspaces.
+fn parse_root_overrides(
+    this: &mut Lockfile,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    package_json: bun_ast::Expr,
+) -> Result<(), Error> {
+    if package_json.as_property(b"overrides").is_none()
+        && package_json.as_property(b"resolutions").is_none()
+    {
+        return Ok(());
+    }
+
+    let mut workspace_names = WorkspaceMap::init();
+    let workspaces = package_json.as_property(b"workspaces");
+    let packages = workspaces
+        .as_ref()
+        .filter(|q| !q.expr.is_array())
+        .and_then(|q| q.expr.as_property(b"packages"));
+    let names: Option<(NamesArray<'_>, bun_ast::Loc)> = match (&workspaces, &packages) {
+        (Some(q), _) if q.expr.is_array() => Some((
+            NamesArray::from_expr(&q.expr, value_loc_of(source, q.loc))
+                .expect("is_array was checked above"),
+            q.loc,
+        )),
+        (Some(_), Some(p)) if p.expr.is_array() => Some((
+            NamesArray::from_expr(&p.expr, value_loc_of(source, p.loc))
+                .expect("is_array was checked above"),
+            p.loc,
+        )),
+        _ => None,
+    };
+    if let Some((arr, loc)) = names {
+        workspace_names.process_names_array(
+            &mut manager.workspace_package_json_cache,
+            log,
+            arr,
+            source,
+            loc,
+            None,
+            MissingWorkspace::Skip,
+        )?;
+    }
+
+    let root_package = *this.packages.get(0);
+    let (mut string_builder, lf) = this.string_builder_split();
+    lf.overrides.parse_count(
+        manager,
+        log,
+        source,
+        &workspace_names,
+        package_json,
+        &mut string_builder,
+    );
+    string_builder.allocate()?;
+    lf.overrides.parse_append(
+        manager,
+        lf.dependencies.as_slice(),
+        &root_package,
+        log,
+        source,
+        &workspace_names,
+        package_json,
+        &mut string_builder,
+    )?;
+    string_builder.clamp();
+    Ok(())
 }
 
 #[inline]

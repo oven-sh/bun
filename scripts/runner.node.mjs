@@ -54,6 +54,7 @@ import {
   getSecret,
   getShell,
   getWindowsExitReason,
+  isAndroid,
   isBuildkite,
   isCI,
   isGithubAction,
@@ -184,7 +185,7 @@ const { values: options, positionals: filters } = parseArgs({
     },
     ["coredump-upload"]: {
       type: "boolean",
-      default: isBuildkite && isLinux,
+      default: isBuildkite && isLinux && !isAndroid,
     },
     ["parallel"]: {
       type: "boolean",

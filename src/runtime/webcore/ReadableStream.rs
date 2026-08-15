@@ -255,11 +255,11 @@ impl ReadableStream {
         // this will resolve any pending promises to done: true
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Blob(source) => unsafe { (*(*source).parent()).cancel() },
+            Source::Blob(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::File(source) => unsafe { (*(*source).parent()).cancel() },
+            Source::File(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
+            Source::Bytes(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             _ => {}
         }
         self.detach_if_possible(global_this);
@@ -632,6 +632,10 @@ pub(crate) fn is_disturbed_value(value: JSValue, global_object: &JSGlobalObject)
     ReadableStream__isDisturbed(value, global_object)
 }
 
+pub(crate) fn is_locked_value(value: JSValue, global_object: &JSGlobalObject) -> bool {
+    ReadableStream__isLocked(value, global_object)
+}
+
 // ─── Tag / Source ────────────────────────────────────────────────────────────
 
 #[repr(i32)]
@@ -846,8 +850,9 @@ pub struct NewSource<C: SourceContext> {
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
-    /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
-    /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
+    /// R-2: written by context methods (`ByteStream::to_any_blob`,
+    /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
+    /// interior-mutable.
     pub is_closed: Cell<bool>,
 }
 
@@ -1033,6 +1038,16 @@ impl<C: SourceContext> NewSource<C> {
     /// the JS cell still points at it (UAF), so this returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
+    }
+
+    /// Inverse of the `*mut Self as *mut C` cast [`ReadableStream::from_js`]
+    /// performs: `ctx` must be that pointer (whole-allocation provenance), not
+    /// one derived from a `&C`/`&mut C` — use the context's
+    /// `impl_field_parent!` accessors for those.
+    #[inline]
+    pub unsafe fn from_context_ptr(ctx: *mut C) -> *mut Self {
+        // SAFETY: caller contract.
+        unsafe { bun_core::from_field_ptr!(Self, context, ctx) }
     }
 
     /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.

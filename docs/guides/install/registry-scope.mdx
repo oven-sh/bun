@@ -11,7 +11,7 @@ To configure a registry for a particular npm scope:
 ```toml bunfig.toml icon="settings"
 [install.scopes]
 # as a string
-"@myorg1" = "https://usertitle:password@registry.myorg.com/"
+"@myorg1" = "https://username:password@registry.myorg.com/"
 
 # as an object with username/password
 # you can reference environment variables
@@ -28,7 +28,7 @@ To configure a registry for a particular npm scope:
 
 ---
 
-Your `bunfig.toml` can reference environment variables. Bun automatically loads environment variables from `.env.local`, `.env.[NODE_ENV]`, and `.env`. See [Environment variables](/runtime/environment-variables).
+Your `bunfig.toml` can reference environment variables. `bun install` automatically loads environment variables from `.env.local`, `.env.production`, and `.env`, regardless of `NODE_ENV`; it does not read `.env.development` or `.env.test`. See [Environment variables](/runtime/environment-variables).
 
 ```toml bunfig.toml icon="settings"
 [install.scopes]

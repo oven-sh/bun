@@ -1452,4 +1452,66 @@ nativeTests.test_threadsafe_function_microtask_order = async () => {
   }
 };
 
+// A script that only ever calls the ungated napi functions (ungated-calls-
+// spin-worker.js has the worker version) still has to be stoppable when the
+// stop is requested while one of those calls is running. Several rounds, since
+// whether it lands inside a call or in the loop itself is down to timing.
+nativeTests.test_ungated_calls_vm_timeout = () => {
+  const vm = require("node:vm");
+  const spin = nativeTests.make_ungated_calls_spinner();
+  for (let i = 0; i < 5; i++) {
+    try {
+      vm.runInNewContext("for (;;) spin(bigint, string);", { spin, bigint: -7n, string: "ungated" }, { timeout: 20 });
+      console.log("returned");
+    } catch (e) {
+      console.log(e.code);
+    }
+  }
+};
+
+nativeTests.test_ungated_calls_worker_terminate = async () => {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  for (let i = 0; i < 2; i++) {
+    const worker = new Worker(path.join(__dirname, "ungated-calls-spin-worker.js"));
+    await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+    });
+    console.log("terminate() resolved with", await worker.terminate());
+  }
+};
+
+// See ungated_calls_through_timeout in standalone_tests.cpp: 200ms of ungated
+// calls under a 20ms timeout.
+nativeTests.test_ungated_calls_through_vm_timeout = () => {
+  const vm = require("node:vm");
+  try {
+    vm.runInNewContext("f(200)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 20 });
+    console.log("returned");
+  } catch (e) {
+    console.log(e.code);
+  }
+};
+
+nativeTests.test_threadsafe_function_call_js_throws = async () => {
+  // main.js exits on the first uncaught exception; this test wants all three.
+  process.removeAllListeners("uncaughtException");
+  let seen = 0;
+  const { promise, resolve } = Promise.withResolvers();
+  process.on("uncaughtException", function handler(err) {
+    seen++;
+    console.log("uncaughtException", seen, err.message);
+    Promise.resolve().then(() => console.log("microtask", seen));
+    if (seen === 3) {
+      process.removeListener("uncaughtException", handler);
+      resolve();
+    }
+  });
+  nativeTests.test_napi_threadsafe_function_call_js_throws();
+  await promise;
+  await new Promise(r => setImmediate(r));
+  console.log("done", seen);
+};
+
 module.exports = nativeTests;

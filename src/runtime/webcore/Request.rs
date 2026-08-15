@@ -1671,18 +1671,23 @@ impl InternalJSEventCallback {
         self.function.deinit();
     }
 
-    pub(crate) fn trigger(&mut self, event_type: EventType, global_this: &JSGlobalObject) -> bool {
-        if let Some(callback) = self.function.get() {
-            let _ = callback
-                .call(
-                    global_this,
-                    JSValue::UNDEFINED,
-                    &[JSValue::js_number(event_type as i32 as f64)],
-                )
-                .map_err(|err| global_this.report_active_exception_as_unhandled(err));
-            return true;
-        }
-        false
+    /// Fire the internal event callback (node:http's per-request timeout /
+    /// abort hook). `Ok(true)`: it ran; `Err`: it ran and threw, for the
+    /// response callback that fired it to fold.
+    pub(crate) fn trigger(
+        &mut self,
+        event_type: EventType,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<bool> {
+        let Some(callback) = self.function.get() else {
+            return Ok(false);
+        };
+        callback.call(
+            global_this,
+            JSValue::UNDEFINED,
+            &[JSValue::js_number(event_type as i32 as f64)],
+        )?;
+        Ok(true)
     }
 }
 

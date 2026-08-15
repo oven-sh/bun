@@ -164,11 +164,19 @@ To install in production mode (without `devDependencies`):
 bun install --production
 ```
 
+`--production` implies `--frozen-lockfile`. It only controls what gets installed — `devDependencies` already in `node_modules` from an earlier install are left there. Use [`bun prune --production`](/pm/cli/prune) to remove them.
+
 For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versions specified in the lockfile and does not update it. If your `package.json` disagrees with `bun.lock`, Bun exits with an error.
 
 ```bash terminal icon="terminal"
 bun install --frozen-lockfile
 ```
+
+Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
+
+`--frozen-lockfile` works on a pruned monorepo checkout (e.g. `turbo prune` output, or a Docker context with only some workspace folders copied in). Workspaces listed in `bun.lock` whose `package.json` is missing on disk are skipped with a `note:`, and their exclusive dependencies are not installed. If a remaining workspace depends on a skipped one, the install fails.
+
+To validate the lockfile without installing, use `bun install --frozen-lockfile --dry-run`.
 
 See [lockfile](/pm/lockfile) for more on `bun.lock`.
 
@@ -296,7 +304,7 @@ On `bun install`, `bun remove`, and `bun add`, Bun looks for `bunfig.toml` in:
 1. `$XDG_CONFIG_HOME/.bunfig.toml` or `$HOME/.bunfig.toml`
 2. `./bunfig.toml`
 
-If both are found, the results are merged together.
+If both are found, both are loaded, and keys set in the project's `bunfig.toml` override the same keys in the global file.
 
 Configuring with `bunfig.toml` is optional. These are the default values:
 
@@ -512,10 +520,14 @@ The migration process handles:
 
 ### Lockfile Migration
 
-- Converts `pnpm-lock.yaml` to `bun.lock` format
-- Preserves package versions and resolution information
-- Maintains dependency relationships and peer dependencies
-- Handles patched dependencies with integrity hashes
+- Converts `pnpm-lock.yaml` (lockfile versions 7–9, including pnpm 11's multi-document files) to `bun.lock`
+- Preserves resolved versions and integrity hashes
+- Preserves peer dependency ranges and `peerDependenciesMeta`, so the next `bun install` leaves the migrated lockfile unchanged
+- Migrates git, GitHub, tarball URL, `file:`, and `npm:` alias dependencies, including transitive ones
+- Resolves pnpm named registries (`name@registry:version`) via `namedRegistries` in `pnpm-workspace.yaml`
+- Converts injected workspace packages (`dependenciesMeta.*.injected`) to ordinary workspace dependencies
+- Handles patched dependencies, matching pnpm's hash-only `patchedDependencies` entries to the patch files
+- Skips `runtime:` entries (pnpm-managed Node.js versions) with a warning
 
 ### Workspace Configuration
 
@@ -577,11 +589,14 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
 - **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
 
-### Requirements
+### Requirements and limitations
 
 - Requires pnpm lockfile version 7 or higher
 - Workspace packages must have a `name` field in their `package.json`
 - All catalog entries referenced by dependencies must exist in the catalogs definition
+- Every workspace in `pnpm-lock.yaml` must have its `package.json` on disk (in Docker, copy them in before `bun install`)
+- Relative `link:` dependencies and git dependencies with a sub-directory (`resolution.path`) are not supported
+- If migration fails for any of these reasons, Bun prints why and resolves from scratch instead
 
 After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
 

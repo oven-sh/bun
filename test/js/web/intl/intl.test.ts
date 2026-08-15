@@ -10,7 +10,7 @@
 // links the unmodified libicudata.a.
 
 import { describe, expect, test } from "bun:test";
-import { isMacOS } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, libcPathForDlopen } from "harness";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
@@ -111,6 +111,54 @@ describe("Intl.DateTimeFormat", () => {
 // ---------------------------------------------------------------------------
 
 describe("Intl.Collator", () => {
+  // The default locale must not be ICU's en_US_POSIX fallback (what an invalid
+  // platform language tag degrades to; bionic's default "C.UTF-8" used to
+  // produce exactly that): its case-first collation gives "a".localeCompare("B") === 1.
+  test("default locale is a real locale, not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(JSON.stringify([new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B")]))`,
+      ],
+      // whatever the environment says, including nothing at all
+      env: { ...bunEnv, LANG: undefined, LC_ALL: undefined, LC_CTYPE: undefined },
+      stdout: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [locale, order] = JSON.parse(stdout);
+    expect(locale).not.toContain("posix");
+    expect(order).toBe(-1);
+    expect(exitCode).toBe(0);
+  });
+
+  // Same path with the C locale spelled "C.UTF-8" (glibc/musl name for it, and
+  // what bionic reports by default): WTF must still treat it as C -> "en-US".
+  test.skipIf(!isLinux)("default locale under C.UTF-8 is not en-US-u-va-posix", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, { setlocale: { args: ["i32", "cstring"], returns: "cstring" } });
+         const LC_CTYPE = 0; // glibc, musl and bionic; the category platformLanguage() reads
+         const set = String(libc.symbols.setlocale(LC_CTYPE, Buffer.from("C.UTF-8\\0")));
+         console.log(JSON.stringify([set, new Intl.Collator().resolvedOptions().locale, "a".localeCompare("B"), (12345.5).toLocaleString()]));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [set, locale, order, grouped] = JSON.parse(stdout);
+    // a libc without a C.UTF-8 locale keeps "C", which is the case above
+    if (set === "C.UTF-8") {
+      expect(locale).toBe("en-US");
+      expect(order).toBe(-1);
+      expect(grouped).toBe("12,345.5");
+    }
+    expect(exitCode).toBe(0);
+  });
+
   snapshotIf("sort order across locales", () => {
     const out: Record<string, string[]> = {};
     for (const loc of LOCALES) out[loc] = ["z", "a", "ä", "ö", "Z", "A"].sort(new Intl.Collator(loc).compare);

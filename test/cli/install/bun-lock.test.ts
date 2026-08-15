@@ -1,11 +1,12 @@
 import { file, spawn, write } from "bun";
-import { afterAll, beforeAll, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readlinkSync } from "fs";
 import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
   isWindows,
+  normalizeBunSnapshot,
   readdirSorted,
   runBunInstall,
   toBeValidBin,
@@ -216,8 +217,8 @@ it("should convert a binary lockfile with invalid optional peers", async () => {
   }));
 
   [out, err] = await Promise.all([stdout.text(), stderr.text()]);
-  expect(err).toContain("Saved lockfile");
-  expect(out).toContain("Saved bun.lock (69 packages)");
+  expect(err).not.toContain("Saved lockfile");
+  expect(out).toContain("Done! Checked 69 packages (no changes)");
 
   expect(await exited).toBe(0);
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
@@ -807,8 +808,8 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
   }));
 
   [out, err] = await Promise.all([stdout.text(), stderr.text()]);
-  expect(err).toContain("Saved lockfile");
-  expect(out).toContain("Saved bun.lock");
+  expect(err).not.toContain("Saved lockfile");
+  expect(out).toContain("Done! Checked");
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   expect(await exited).toBe(0);
 });
@@ -901,6 +902,138 @@ it("prints an actionable error for a lockfile version newer than this build supp
   // the old message gave no hint at all
   expect(err).not.toContain("Unknown lockfile version");
   expect(await exited).toBe(0);
+});
+
+async function installWithHandEditedOverrides(overrides: Record<string, unknown>) {
+  const { packageDir, packageJson } = await registry.createTestDir();
+  const lockfile = JSON.stringify(
+    {
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "invalid-overrides" } },
+      overrides,
+      packages: {},
+    },
+    null,
+    2,
+  );
+  await Promise.all([
+    write(packageJson, JSON.stringify({ name: "invalid-overrides" })),
+    write(join(packageDir, "bun.lock"), lockfile),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  return { out: normalizeBunSnapshot(out, packageDir), err: normalizeBunSnapshot(err, packageDir), exitCode };
+}
+
+describe.concurrent("hand-edited bun.lock overrides", () => {
+  it("rejects a top-level row whose value is a number", async () => {
+    const { out, err, exitCode } = await installWithHandEditedOverrides({ "no-deps": 1 });
+    expect(err).toMatchInlineSnapshot(`
+      "10 |     "no-deps": 1
+                          ^
+      error: Expected a string or an object
+          at bun.lock:10:16
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("rejects a group whose key is a bare scope", async () => {
+    const { out, err, exitCode } = await installWithHandEditedOverrides({ "@scope": { ".": "1.0.0" } });
+    expect(err).toMatchInlineSnapshot(`
+      "10 |     "@scope": {
+               ^
+      error: Invalid override key
+          at bun.lock:10:5
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("rejects a group child whose key is a bare scope", async () => {
+    const { out, err, exitCode } = await installWithHandEditedOverrides({ "no-deps": { "@scope": "1.0.0" } });
+    expect(err).toMatchInlineSnapshot(`
+      "11 |       "@scope": "1.0.0"
+                 ^
+      error: Invalid override key
+          at bun.lock:11:7
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("rejects a group child whose value is a number", async () => {
+    const { out, err, exitCode } = await installWithHandEditedOverrides({ "no-deps": { "a-dep": 1 } });
+    expect(err).toMatchInlineSnapshot(`
+      "11 |       "a-dep": 1
+                          ^
+      error: Expected a string
+          at bun.lock:11:16
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("rejects a group whose key carries a non-npm range", async () => {
+    const { out, err, exitCode } = await installWithHandEditedOverrides({
+      "no-deps@file:./vendored": { ".": "1.0.0" },
+    });
+    expect(err).toMatchInlineSnapshot(`
+      "11 |       ".": "1.0.0"
+                      ^
+      error: Invalid override version
+          at bun.lock:11:12
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("rejects a group child whose value does not parse as a dependency", async () => {
+    const { out, err, exitCode } = await installWithHandEditedOverrides({ "no-deps": { "a-dep": "./a:dep" } });
+    expect(err).toMatchInlineSnapshot(`
+      "error: Unsupported protocol ./a:dep
+
+      11 |       "a-dep": "./a:dep"
+                          ^
+      error: Invalid override version
+          at bun.lock:11:16
+      InvalidLockfile: failed to parse lockfile: 'bun.lock'
+
+      warn: Ignoring lockfile
+      error: lockfile had changes, but lockfile is frozen"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun install <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
 });
 
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {

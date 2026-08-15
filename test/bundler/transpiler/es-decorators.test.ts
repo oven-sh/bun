@@ -325,6 +325,168 @@ describe("ES Decorators", () => {
     });
   });
 
+  describe("anonymous class expressions named by the property key", () => {
+    // An anonymous class expression used as a property value is named after the
+    // property key. The lowering moves the class out of that position, so the
+    // parser has to hand it the key's string form, whatever kind of key it is,
+    // and the lowering must apply it as a string (a class binding of that name
+    // would shadow an outer variable spelled like the key inside the body).
+    // Expected values are what the same code prints without the decorators.
+    test.concurrent("object literal keys reach a class decorator as ctx.name and .name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const names = [];
+        function dec(cls, ctx) { names.push(ctx.name); }
+        const o = {
+          123: @dec class {},
+          1_000: @dec class {},
+          0x10: @dec class {},
+          0.5: @dec class {},
+          1e21: @dec class {},
+          [-1]: @dec class {},
+          1n: @dec class {},
+          "héllo": @dec class {},
+          "\\u{20BB7}": @dec class {},
+          ["a" + "b"]: @dec class {},
+          "a-b": @dec class {},
+        };
+        const keys = [123, 1000, 16, 0.5, 1e21, -1, 1, "héllo", "\\u{20BB7}", "ab", "a-b"];
+        console.log(JSON.stringify([names, keys.map(key => o[key].name)]));
+      `);
+      expect(stderr).toBe("");
+      const expected = ["123", "1000", "16", "0.5", "1e+21", "-1", "1", "héllo", "\u{20BB7}", "ab", "a-b"];
+      expect(JSON.parse(stdout)).toEqual([expected, expected]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("keys name a class that only has member decorators or accessors", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const o = {
+          ascii: class { @dec m() {} },
+          123: class { @dec m() {} },
+          "héllo": class { @dec m() {} },
+          "\\u{20BB7}": class { accessor x; },
+          [-1]: class { accessor x; },
+          1n: class { @dec m() {} },
+          ["a" + "b"]: class { accessor x; },
+        };
+        class Holder {
+          static 456 = class { @dec m() {} };
+          static ["x-y"] = class { accessor x; };
+          #secret = class { @dec m() {} };
+          get secret() { return this.#secret; }
+        }
+        console.log(JSON.stringify([
+          o.ascii.name, o[123].name, o["héllo"].name, o["\\u{20BB7}"].name, o[-1].name, o[1].name, o.ab.name,
+          Holder[456].name, Holder["x-y"].name, new Holder().secret.name,
+        ]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        "ascii",
+        "123",
+        "héllo",
+        "\u{20BB7}",
+        "-1",
+        "1",
+        "ab",
+        "456",
+        "x-y",
+        "#secret",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("the key only names the class, it does not shadow a same-named outer binding", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const wörld = "outer", Widget = "outer", Model = "outer";
+        const o = {
+          "wörld": @dec class { static outer() { return wörld; } },
+          ["Wid" + "get"]: class { @dec m() {} static outer() { return Widget; } },
+        };
+        class Holder {
+          static ["Model"] = class { accessor x; static outer() { return Model; } };
+        }
+        const classes = [o["wörld"], o.Widget, Holder.Model];
+        console.log(JSON.stringify(classes.map(cls => [cls.name, cls.outer()])));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        ["wörld", "outer"],
+        ["Widget", "outer"],
+        ["Model", "outer"],
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("class member keys reach a class decorator as ctx.name and .name", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const names = [];
+        function dec(cls, ctx) { names.push(ctx.name); }
+        class Holder {
+          static 456 = @dec class {};
+          static "wörld" = @dec class {};
+          static ["x-y"] = @dec class {};
+          static #hidden = @dec class {};
+          123 = @dec class {};
+          2n = @dec class {};
+          #secret = @dec class {};
+          static classNames() {
+            const instance = new Holder();
+            return [
+              Holder[456].name,
+              Holder["wörld"].name,
+              Holder["x-y"].name,
+              Holder.#hidden.name,
+              instance[123].name,
+              instance[2].name,
+              instance.#secret.name,
+            ];
+          }
+        }
+        const classNames = Holder.classNames();
+        console.log(JSON.stringify([names, classNames]));
+      `);
+      expect(stderr).toBe("");
+      const expected = ["456", "wörld", "x-y", "#hidden", "123", "2", "#secret"];
+      expect(JSON.parse(stdout)).toEqual([expected, expected]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("inlined enum member keys name the class after the enum value", async () => {
+      using dir = tempDir("es-dec-enum-key", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          enum Kind { User = "User", Num = 7 }
+          class User {}
+          const names: string[] = [];
+          function dec(cls: unknown, ctx: ClassDecoratorContext) { names.push(String(ctx.name)); }
+          const registry = {
+            [Kind.User]: @dec class { static model() { return User; } },
+            [Kind.Num]: class { accessor x; },
+          };
+          console.log(JSON.stringify([
+            names,
+            registry[Kind.User].name,
+            registry[Kind.User].model() === User,
+            registry[Kind.Num].name,
+          ]));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(JSON.parse(stdout)).toEqual([["User"], "User", true, "7"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("decorator ordering", () => {
     test("decorators on different elements evaluate in source order", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`

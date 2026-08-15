@@ -5,11 +5,11 @@
  * This code is licensed under the MIT License: https://opensource.org/licenses/MIT
  */
 import { $ } from "bun";
-import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
-import { createTestBuilder, sortedShellOutput } from "../util";
+import { createTestBuilder, nodeModulesTree, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
 const fileExists = async (path: string): Promise<boolean> =>
@@ -17,18 +17,33 @@ const fileExists = async (path: string): Promise<boolean> =>
 
 $.nothrow();
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
-
-const BUN = bunExe();
-const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
-
 describe.concurrent("bunshell rm", () => {
-  TestBuilder.command`echo ${packagejson()} > package.json; ${BUN} install --linker hoisted &> ${DEV_NULL}; rm -rf node_modules/`
-    .ensureTempDir()
-    .doesNotExist("node_modules")
-    .runAsTest("node_modules");
+  test("node_modules", async () => {
+    using dir = tempDir("rm-node_modules", { ...nodeModulesTree(), "outside/keep.txt": "" });
+    const nodeModules = path.join(String(dir), "node_modules");
+    if (isPosix) {
+      symlinkSync("../outside", path.join(nodeModules, "linked-dir"));
+      symlinkSync("../pkg-0/lib/mod0.js", path.join(nodeModules, ".bin", "linked-bin"));
+      symlinkSync("./does-not-exist", path.join(nodeModules, "dangling"));
+    }
+
+    const { stdout, stderr, exitCode } = await $`rm -rf node_modules/`.cwd(String(dir));
+
+    expect({
+      stdout: stdout.toString(),
+      stderr: stderr.toString(),
+      exitCode,
+      nodeModulesExists: existsSync(nodeModules),
+      // rm -rf must delete the symlink itself, not what it points at.
+      keptFileOutsideTree: existsSync(path.join(String(dir), "outside", "keep.txt")),
+    }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      nodeModulesExists: false,
+      keptFileOutsideTree: true,
+    });
+  });
 
   test("force", async () => {
     const files = {
@@ -211,32 +226,6 @@ foo/
     expect(exitCode).toBe(0);
   }, 120_000);
 });
-
-function packagejson() {
-  return `{
-  "name": "dummy",
-  "dependencies": {
-    "@biomejs/biome": "^1.5.3",
-    "@vscode/debugadapter": "^1.61.0",
-    "esbuild": "^0.17.15",
-    "eslint": "^8.20.0",
-    "eslint-config-prettier": "^8.5.0",
-    "mitata": "^0.1.3",
-    "peechy": "0.4.34",
-    "prettier": "3.2.2",
-    "react": "next",
-    "react-dom": "next",
-    "source-map-js": "^1.0.2",
-    "typescript": "^5.0.2"
-  },
-  "devDependencies": {
-    "@types/react": "^18.0.25",
-    "@typescript-eslint/eslint-plugin": "^5.31.0",
-    "@typescript-eslint/parser": "^5.31.0"
-  },
-  "version": "0.0.0"
-}`;
-}
 
 // Recursive `rm -rf` classifies each entry as a directory from readdir, then
 // later re-opens it by path on a worker thread. If that path is replaced by a

@@ -1,23 +1,15 @@
 import { $ } from "bun";
-import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, tempDir, tempDirWithFiles } from "harness";
-import { createTestBuilder } from "../util";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { DirectoryTree, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { symlinkSync } from "node:fs";
+import { join, posix } from "node:path";
+import { createTestBuilder, nodeModulesTree } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
 const fileExists = async (path: string): Promise<boolean> =>
   $`ls -d ${path}`.then(o => o.stdout.toString() === `${path}\n`);
 
 $.nothrow();
-
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
-
-const BUN = process.argv0;
-const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
-
-let node_modules_tempdir: string;
-let nodeModulesSetup: Promise<string[]>;
 
 let tempdir: string;
 let allFiles: string[] = [];
@@ -41,39 +33,51 @@ const sortedLsOutput = (s: string) =>
     )
     .sort();
 
+/**
+ * What `ls -RA .` prints for a directory created from `tree`, in `sortedLsOutput`
+ * form: every file and directory once under its parent, plus a `./dir:` header for
+ * every directory below the root. Values in these trees are file contents or `{}`
+ * for an empty directory.
+ */
+const expectedRecursiveListing = (tree: DirectoryTree): string[] => {
+  const paths = new Set<string>();
+  const dirs = new Set<string>();
+  for (const [file, contents] of Object.entries(tree)) {
+    const parts = file.split("/");
+    let prefix = "";
+    for (let i = 0; i < parts.length; i++) {
+      prefix = i === 0 ? parts[0] : `${prefix}/${parts[i]}`;
+      paths.add(prefix);
+      if (i < parts.length - 1 || typeof contents !== "string") dirs.add(prefix);
+    }
+  }
+  return [...Array.from(paths, p => posix.basename(p)), ...Array.from(dirs, dir => `./${dir}:`)].sort();
+};
+
 describe.concurrent("bunshell ls", () => {
   beforeAll(async () => {
-    node_modules_tempdir = tempDirWithFiles("ls-node_modules", {});
     tempdir = tempDirWithFiles("ls", {});
-    // Kick off the expensive `bun install` without awaiting so the other 26 tests
-    // (which don't depend on it) can run concurrently while it completes.
-    nodeModulesSetup = $`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}`
-      .quiet()
-      .throws(true)
-      .cwd(node_modules_tempdir)
-      .then(() =>
-        isPosix
-          ? Bun.$`ls -RA .`
-              .quiet()
-              .throws(true)
-              .cwd(node_modules_tempdir)
-              .text()
-              .then(s => sortedLsOutput(s))
-          : [],
-      );
-    // Avoid an unhandled rejection if install fails before the node_modules test awaits it.
-    nodeModulesSetup.catch(() => {});
     await $`touch a b c; mkdir foo; touch foo/a foo/b foo/c`.quiet().throws(true).cwd(tempdir);
 
     allFiles = ["./foo:", "a", "a", "b", "b", "c", "c", "foo"];
   });
 
   describe("recursive", () => {
-    test.if(isPosix)("node_modules", async () => {
-      const allNodeModuleFiles = await nodeModulesSetup;
-      const s = await Bun.$`ls -RA .`.quiet().throws(true).cwd(node_modules_tempdir).text();
-      const lines = sortedLsOutput(s);
-      expect(lines).toEqual(allNodeModuleFiles);
+    test("node_modules", async () => {
+      const tree: DirectoryTree = { ...nodeModulesTree(), "outside/keep.txt": "" };
+      using dir = tempDir("ls-node_modules", tree);
+      const expected = expectedRecursiveListing(tree);
+      if (isPosix) {
+        // A symlink to a directory is listed but not descended into.
+        symlinkSync("../outside", join(String(dir), "node_modules", "linked"));
+        expected.push("linked");
+        expected.sort();
+      }
+
+      const { stdout, stderr, exitCode } = await $`ls -RA .`.quiet().cwd(String(dir));
+      expect(stderr.toString()).toBe("");
+      expect(sortedLsOutput(stdout.toString())).toEqual(expected);
+      expect(exitCode).toBe(0);
     });
 
     test("basic", async () => {
@@ -370,29 +374,3 @@ describe.concurrent("bunshell ls", () => {
     });
   });
 });
-
-function packagejson() {
-  return `{
-  "name": "dummy",
-  "dependencies": {
-    "@biomejs/biome": "^1.5.3",
-    "@vscode/debugadapter": "^1.61.0",
-    "esbuild": "^0.17.15",
-    "eslint": "^8.20.0",
-    "eslint-config-prettier": "^8.5.0",
-    "mitata": "^0.1.3",
-    "peechy": "0.4.34",
-    "prettier": "3.2.2",
-    "react": "next",
-    "react-dom": "next",
-    "source-map-js": "^1.0.2",
-    "typescript": "^5.0.2"
-  },
-  "devDependencies": {
-    "@types/react": "^18.0.25",
-    "@typescript-eslint/eslint-plugin": "^5.31.0",
-    "@typescript-eslint/parser": "^5.31.0"
-  },
-  "version": "0.0.0"
-}`;
-}

@@ -1595,6 +1595,7 @@ function Socket(options?) {
   this._parent = null;
   this._parentWrap = null;
   this[kupgraded] = null;
+  this[kOnUpgradedClose] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -2060,8 +2061,8 @@ Socket.prototype.connect = function connect(...args) {
               // replace socket
               connection._handle = raw;
               raw[kAdoptedTLSRaw] = true;
-              this.once("end", this[kCloseRawConnection]);
               destroyWhenUpgradedCloses(this, connection);
+              this.once("end", this[kCloseRawConnection]);
               raw.connecting = false;
               this._handle = tls;
             } else {
@@ -2109,8 +2110,8 @@ Socket.prototype.connect = function connect(...args) {
                   // replace socket
                   connection._handle = raw;
                   raw[kAdoptedTLSRaw] = true;
-                  this.once("end", this[kCloseRawConnection]);
                   destroyWhenUpgradedCloses(this, connection);
+                  this.once("end", this[kCloseRawConnection]);
                   raw.connecting = false;
                   this._handle = tls;
                 } else {
@@ -2460,8 +2461,8 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     const [raw, tlsHandle] = result;
     connection._handle = raw;
     raw[kAdoptedTLSRaw] = true;
-    this.once("end", this[kCloseRawConnection]);
     destroyWhenUpgradedCloses(this, connection);
+    this.once("end", this[kCloseRawConnection]);
     raw.connecting = false;
     this._handle = tlsHandle;
     this.emit(kUpgradeAttached);

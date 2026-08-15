@@ -457,11 +457,11 @@ impl<'a> Transpiler<'a> {
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
     ///
-    /// Every failure is logged before it is returned: callers drop the entry
+    /// Callers rely on every `Err` having been logged here: they drop the entry
     /// point on `Err`, and the build drivers decide whether to keep going from
-    /// the log alone. That includes an entry point the resolver disabled (mapped
-    /// to `false` by a package.json `"browser"` field, or a Node.js builtin that
-    /// browser builds stub out), which has no module to bundle.
+    /// the log alone. An entry point the resolver disabled (mapped to `false` by
+    /// a package.json `"browser"` field, or a Node.js builtin that browser builds
+    /// stub out) has no module to bundle, so it is reported the same way.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => self.reject_disabled_entry_point(r, entry_point),

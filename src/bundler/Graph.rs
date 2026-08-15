@@ -327,13 +327,4 @@ impl<T: OutstandingNode> OutstandingList<T> {
             }
         }
     }
-    pub(crate) fn pop(&mut self) -> Option<*mut T> {
-        let head = self.head;
-        if head.is_null() {
-            return None;
-        }
-        // SAFETY: linked ⇒ arena-live.
-        self.unlink(unsafe { &mut *head });
-        Some(head)
-    }
 }

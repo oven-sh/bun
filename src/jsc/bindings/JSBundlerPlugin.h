@@ -8,6 +8,7 @@
 #include "napi_external.h"
 #include <JavaScriptCore/Yarr.h>
 #include "WriteBarrierList.h"
+#include <wtf/HashSet.h>
 
 typedef void (*JSBundlerPluginAddErrorCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 typedef void (*JSBundlerPluginOnLoadAsyncCallback)(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -119,7 +120,19 @@ public:
 
 public:
     bool anyMatchesCrossThread(JSC::VM&, BunString* namespaceStr, BunString* path, bool isOnLoad);
-    void tombstone() { tombstoned = true; }
+
+    // The onResolve / onLoad requests this plugin chain currently holds (handed over by the bundle thread,
+    // not yet answered). A request has exactly one answer, produced on this (the JS) thread: by the plugin
+    // (onResolveAsync / onLoadAsync / addError — whichever comes first; anything later for the same request
+    // is dropped), or, once the VM that runs the plugins is shutting down, by tombstone(). JS thread only.
+    enum class RequestKind : uint8_t { Resolve = 0,
+        Load = 1 };
+    void holdRequest(RequestKind kind, void* context) { held(kind).add(context); }
+    // True if the request was still held (and no longer is): the caller produces its answer.
+    bool takeRequest(RequestKind kind, void* context) { return held(kind).remove(context); }
+    // From here the plugin object answers nothing itself: what it still holds is answered as cancelled now,
+    // and whatever its JS side delivers later is dropped.
+    void tombstone();
 
     BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
         : addError(addError)
@@ -145,6 +158,11 @@ public:
     JSBundlerPluginOnResolveAsyncCallback onResolveAsync;
     void* config { nullptr };
     bool tombstoned { false };
+
+private:
+    WTF::HashSet<void*>& held(RequestKind kind) { return kind == RequestKind::Resolve ? heldResolves : heldLoads; }
+    WTF::HashSet<void*> heldResolves;
+    WTF::HashSet<void*> heldLoads;
 };
 
 } // namespace Zig

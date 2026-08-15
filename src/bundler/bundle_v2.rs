@@ -683,6 +683,24 @@ pub mod bv2_impl {
     /// `jsc::api::BuildArtifact` that the bundler reads/constructs without touching
     /// JSC. The JS-thread halves (dispatch onto the JS event loop, `toJS`, plugin
     /// FFI bodies) stay in tier-6 (`bun_runtime::api`) and re-export these.
+    /// The answer a plugin request gets when the plugins can no longer answer it.
+    pub fn cancelled_plugin_request_msg(file: &[u8]) -> bun_ast::Msg {
+        bun_ast::Msg {
+            data: bun_ast::Data {
+                text: std::borrow::Cow::Borrowed(
+                    b"Bun.build was cancelled: the VM that owns its plugins shut down",
+                ),
+                location: Some(bun_ast::Location {
+                    file: std::borrow::Cow::Owned(file.to_vec()),
+                    line: -1,
+                    column: -1,
+                    ..Default::default()
+                }),
+            },
+            ..Default::default()
+        }
+    }
+
     pub mod api {
         /// `JSBundler` — TYPE_ONLY subset.
         /// Exposed as a module (not a struct) so callers can write
@@ -1091,11 +1109,6 @@ pub mod bv2_impl {
                 /// Links in the bundle's list of requests a plugin currently
                 /// holds (`Graph::outstanding_resolves`); bundle thread only.
                 pub(crate) outstanding: crate::Graph::OutstandingLink<Resolve>,
-                /// Set by whichever side produces the answer — the plugin on the JS thread, or the
-                /// bundle thread failing the request on cancellation; the other side then leaves
-                /// `value` alone (a plugin answer already in flight when the pass is cancelled is
-                /// delivered, not failed and then delivered again).
-                pub answered: core::sync::atomic::AtomicBool,
             }
             impl Default for Resolve {
                 fn default() -> Self {
@@ -1105,16 +1118,26 @@ pub mod bv2_impl {
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     outstanding: Default::default(),
-                    answered: core::sync::atomic::AtomicBool::new(false),
                 }
                 }
             }
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
-                /// Arena-owned by a bundle pass that already failed its
-                /// outstanding requests when it was cancelled; nothing to free.
-                unsafe fn release_unrun(_: *mut Self) {}
+                /// The hop to the plugins' VM was released unrun by that VM's teardown (its thread): the
+                /// plugins will never see the request, so it is answered here — as cancelled — and handed
+                /// back to the bundle thread, which is waiting for it.
+                unsafe fn release_unrun(this: *mut Self) {
+                    // SAFETY: released ⇒ the hop never ran; the request is ours alone on this thread, and
+                    // `bv2` outlives every request of its pass (it cannot finish before this answer).
+                    unsafe {
+                        (*this).value =
+                            ResolveValue::Err(super::super::cancelled_plugin_request_msg(
+                                &(*this).import_record.source_file,
+                            ));
+                        (*(*this).bv2).on_resolve_async(&mut *this);
+                    }
+                }
             }
             impl Resolve {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, record: MiniImportRecord) -> Self {
@@ -1126,12 +1149,12 @@ pub mod bv2_impl {
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     outstanding: Default::default(),
-                    answered: core::sync::atomic::AtomicBool::new(false),
                 }
                 }
-                /// Hops to the JS thread to call the `onResolve` plugin chain —
-                /// unless the pass is already cancelled (that VM is stopping and
-                /// will never answer): then the request fails here and now.
+                /// Hands the request over to the plugins' (JS) thread, which answers it exactly once — the
+                /// `onResolve` chain's answer, or "cancelled" once that VM is shutting down — unless the pass
+                /// is already cancelled: then it is never handed over and the bundle thread answers it itself,
+                /// through its own queue like every other answer (not here, mid-caller).
                 pub(crate) fn dispatch(&mut self) {
                     // SAFETY: `bv2` is a valid backref set by `init`; plugins is
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
@@ -1139,9 +1162,11 @@ pub mod bv2_impl {
                         let bv2 = &mut *self.bv2;
                         bv2.graph.outstanding_resolves.push(self);
                         if bv2.graph.cancelled {
-                            // Failed by `is_done` at the loop's top level (not
-                            // here, mid-caller); make sure it runs again.
-                            bv2.wake_own_loop();
+                            self.value =
+                                ResolveValue::Err(super::super::cancelled_plugin_request_msg(
+                                    &self.import_record.source_file,
+                                ));
+                            bv2.on_resolve_async(self);
                             return;
                         }
                         let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
@@ -1217,8 +1242,6 @@ pub mod bv2_impl {
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
                 /// Links in `Graph::outstanding_loads`; bundle thread only.
                 pub(crate) outstanding: crate::Graph::OutstandingLink<Load>,
-                /// See `Resolve::answered`.
-                pub answered: core::sync::atomic::AtomicBool,
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
@@ -1239,7 +1262,6 @@ pub mod bv2_impl {
                     deferred: false,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     outstanding: Default::default(),
-                    answered: core::sync::atomic::AtomicBool::new(false),
                 }
                 }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
@@ -1276,9 +1298,10 @@ pub mod bv2_impl {
                         let bv2 = &mut *self.bv2;
                         bv2.graph.outstanding_loads.push(self);
                         if bv2.graph.cancelled {
-                            // Failed by `is_done` at the loop's top level (not
-                            // here, mid-caller); make sure it runs again.
-                            bv2.wake_own_loop();
+                            self.value = LoadValue::Err(
+                                super::super::cancelled_plugin_request_msg(&self.path),
+                            );
+                            bv2.on_load_async(self);
                             return;
                         }
                         let concurrent_task =
@@ -1312,8 +1335,16 @@ pub mod bv2_impl {
             }
             impl bun_event_loop::Taskable for Load {
                 const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2PluginLoad;
-                /// As `Resolve`: arena-owned by its (cancelled) bundle pass.
-                unsafe fn release_unrun(_: *mut Self) {}
+                /// As `Resolve::release_unrun`.
+                unsafe fn release_unrun(this: *mut Self) {
+                    // SAFETY: as `Resolve::release_unrun`.
+                    unsafe {
+                        (*this).value = LoadValue::Err(super::super::cancelled_plugin_request_msg(
+                            &(*this).path,
+                        ));
+                        (*(*this).bv2).on_load_async(&mut *this);
+                    }
+                }
             }
             impl crate::Graph::OutstandingNode for Load {
                 fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
@@ -2044,36 +2075,17 @@ pub mod bv2_impl {
         fn is_done(&mut self) -> bool {
             self.thread_lock.assert_locked();
 
-            if self.completion.as_ref().is_some_and(|c| c.is_cancelled()) {
-                // The VM that owns the plugins is shutting down: no answer will
-                // come for what they hold. Take the answers already delivered,
-                // fail the rest here, and wait only for our own parse tasks.
-                if !self.graph.cancelled {
-                    self.graph.cancelled = true;
-                    // The pass as a whole fails at its next checkpoint.
-                    self.transpiler.log_mut().add_error(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        &b"Bun.build was cancelled: the VM that started it shut down"[..],
-                    );
-                }
-                // Every check, not just the first: `dispatch()` refuses new
-                // requests once cancelled, but one may have been linked between
-                // the completion's flag flipping and this thread observing it.
-                // Answers already sitting in our queue are consumed first (each
-                // unlinks its request), so nothing is failed here and then
-                // answered again.
-                let this: *mut Self = self;
-                // SAFETY: `linker.r#loop` is the Mini loop owned by this
-                // bundle pass's stack frame; the tasks it runs re-enter
-                // `*this` exactly as `tick_once` would between `is_done` calls.
-                unsafe {
-                    if let bun_event_loop::AnyEventLoop::Mini(mini) = &mut *(*this).any_loop_mut() {
-                        mini.run_ready(this.cast());
-                    }
-                }
-                self.fail_outstanding_plugin_requests();
-                return self.graph.pending_items == 0;
+            if !self.graph.cancelled && self.completion.as_ref().is_some_and(|c| c.is_cancelled()) {
+                // The VM that owns the plugins is shutting down. It answers every request the plugins still
+                // hold — and every hop that never reached them — as cancelled, on its own thread like any
+                // other answer; the pass keeps consuming answers until none is pending, hands nothing further
+                // to that VM (`dispatch()`), and fails as a whole at its next checkpoint.
+                self.graph.cancelled = true;
+                self.transpiler.log_mut().add_error(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    &b"Bun.build was cancelled: the VM that started it shut down"[..],
+                );
             }
 
             if self.graph.pending_items == 0 {
@@ -2090,69 +2102,6 @@ pub mod bv2_impl {
             }
 
             false
-        }
-
-        /// Bundle thread: make the pass's own Mini loop return from its poll so
-        /// `is_done` is evaluated again.
-        pub(crate) fn wake_own_loop(&mut self) {
-            if let bun_event_loop::AnyEventLoop::Mini(mini) = self.any_loop_mut() {
-                mini.wakeup();
-            }
-        }
-
-        /// Every onResolve/onLoad a plugin still holds is answered with an
-        /// error (bundle thread; the plugins' VM runs no more script).
-        fn fail_outstanding_plugin_requests(&mut self) {
-            fn cancelled_msg(file: &[u8]) -> bun_ast::Msg {
-                bun_ast::Msg {
-                    data: bun_ast::Data {
-                        text: std::borrow::Cow::Borrowed(
-                            b"Bun.build was cancelled: the VM that owns its plugins shut down",
-                        ),
-                        location: Some(bun_ast::Location {
-                            file: std::borrow::Cow::Owned(file.to_vec()),
-                            line: -1,
-                            column: -1,
-                            ..Default::default()
-                        }),
-                    },
-                    ..Default::default()
-                }
-            }
-            while let Some(resolve) = self.graph.outstanding_resolves.pop() {
-                // SAFETY: linked ⇒ arena-live for this pass. Claim it through the atomic first: the JS
-                // thread may be answering it right now, and only the winner may take `&mut`.
-                if unsafe { &(*resolve).answered }.swap(true, core::sync::atomic::Ordering::AcqRel)
-                {
-                    // The plugin's answer is already in flight to our queue; it stays counted in
-                    // `pending_items` and is consumed when it arrives.
-                    continue;
-                }
-                // SAFETY: claimed above ⇒ held by no one else now.
-                let resolve = unsafe { &mut *resolve };
-                resolve.value = jsc_api::JSBundler::ResolveValue::Err(cancelled_msg(
-                    &resolve.import_record.source_file,
-                ));
-                Self::on_resolve(resolve, self);
-            }
-            while let Some(load) = self.graph.outstanding_loads.pop() {
-                // SAFETY: as above.
-                if unsafe { &(*load).answered }.swap(true, core::sync::atomic::Ordering::AcqRel) {
-                    continue;
-                }
-                // SAFETY: as above.
-                let load = unsafe { &mut *load };
-                if load.deferred {
-                    // Its unit is parked in `deferred_pending`, not `pending_items`.
-                    load.deferred = false;
-                    self.graph.deferred_pending -= 1;
-                    drop(core::mem::take(&mut load.path));
-                    drop(core::mem::take(&mut load.namespace));
-                    continue;
-                }
-                load.value = jsc_api::JSBundler::LoadValue::Err(cancelled_msg(&load.path));
-                Self::on_load(load, self);
-            }
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
@@ -4431,7 +4380,13 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             this.graph.outstanding_loads.unlink(load);
-            load.deferred = false;
+            if load.deferred {
+                // Answered while `.defer()`red (cancelled, or a plugin that did not wait): its unit is parked
+                // in `deferred_pending`; move it back so this answer accounts for it like any other.
+                load.deferred = false;
+                this.graph.deferred_pending -= 1;
+                this.graph.pending_items += 1;
+            }
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
             impl Drop for LoadDeinitGuard {

@@ -1445,23 +1445,15 @@ pub mod js_bundler {
     /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
     /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn JSBundlerPlugin__onResolveAsync(
-        resolve: *mut Resolve,
+    extern "C" fn JSBundlerPlugin__onResolveAsync(
+        resolve: &mut Resolve,
         _unused: *mut c_void,
         path_value: JSValue,
         namespace_value: JSValue,
         external_value: JSValue,
     ) {
-        // SAFETY: called from C++ with valid Resolve pointer
-        let resolve = unsafe { &mut *resolve };
-        // The bundle thread may already have failed this request on cancellation (`answered`); its
-        // fields are then no longer ours to write and it must not be delivered a second time.
-        if resolve
-            .answered
-            .swap(true, core::sync::atomic::Ordering::AcqRel)
-        {
-            return;
-        }
+        // C++ calls this only for a request the plugin object still held (BundlerPlugin::takeRequest): it is
+        // the request's one answer, produced on this thread, so `&mut` is real.
         if path_value.is_empty_or_undefined_or_null()
             || namespace_value.is_empty_or_undefined_or_null()
         {
@@ -1586,22 +1578,14 @@ pub mod js_bundler {
     }
 
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn JSBundlerPlugin__onLoadAsync(
-        this: *mut Load,
+    extern "C" fn JSBundlerPlugin__onLoadAsync(
+        this: &mut Load,
         _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
     ) {
         jsc::mark_binding();
-        // SAFETY: called from C++ with the live Load pointer; claim before `&mut` (see `onResolveAsync`).
-        if unsafe { &(*this).answered }.swap(true, core::sync::atomic::Ordering::AcqRel) {
-            return;
-        }
-        // SAFETY: claimed above ⇒ ours alone.
-        on_load_async_answered(unsafe { &mut *this }, source_code_value, loader_as_int);
-    }
-
-    fn on_load_async_answered(this: &mut Load, source_code_value: JSValue, loader_as_int: JSValue) {
+        // As `onResolveAsync`: the request's one answer.
         if source_code_value.is_empty_or_undefined_or_null()
             || loader_as_int.is_empty_or_undefined_or_null()
         {
@@ -1881,32 +1865,48 @@ pub mod js_bundler {
         let plugin = unsafe { &mut *plugin };
         match which.as_int32() {
             0 => {
-                let resolve = ctx.cast::<Resolve>();
-                // SAFETY: C++ caller passes the live `*mut Resolve` it received from
-                // `Resolve::dispatch` as `ctx` when `which == 0`; claim before `&mut` (see `onResolveAsync`).
-                if unsafe { &(*resolve).answered }.swap(true, core::sync::atomic::Ordering::AcqRel)
-                {
-                    return;
-                }
-                // SAFETY: claimed above ⇒ sole owner on the JS thread.
-                let resolve = unsafe { &mut *resolve };
+                // SAFETY: C++ caller passes the live `*mut Resolve` it received from `Resolve::dispatch` as
+                // `ctx` when `which == 0`, for a request the plugin object still held: its one answer.
+                let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
-                let load = ctx.cast::<Load>();
                 // SAFETY: as for `which == 0`, with the live `*mut Load` from `Load::dispatch`.
-                if unsafe { &(*load).answered }.swap(true, core::sync::atomic::Ordering::AcqRel) {
-                    return;
-                }
-                // SAFETY: claimed above ⇒ sole owner on the JS thread.
-                let load = unsafe { &mut *load };
+                let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_mut(load.bv2).on_load_async(load);
             }
             _ => panic!("invalid error type"),
+        }
+    }
+
+    /// The plugins can no longer answer this request — their VM is shutting down (BundlerPlugin::tombstone),
+    /// or the hop arrived after that / could not call them: answer it as cancelled, from this (the JS)
+    /// thread like every other answer, and hand it back to the bundle thread. `kind`: 0 = Resolve, 1 = Load.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn JSBundlerPlugin__answerCancelled(kind: u8, ctx: *mut c_void) {
+        match kind {
+            0 => {
+                // SAFETY: the live `*mut Resolve` handed over by `Resolve::dispatch`; its one answer.
+                let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
+                resolve.value = ResolveValue::Err(
+                    bun_bundler::bundle_v2::bv2_impl::cancelled_plugin_request_msg(
+                        &resolve.import_record.source_file,
+                    ),
+                );
+                bv2_mut(resolve.bv2).on_resolve_async(resolve);
+            }
+            _ => {
+                // SAFETY: as above, `*mut Load` from `Load::dispatch`.
+                let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
+                load.value = LoadValue::Err(
+                    bun_bundler::bundle_v2::bv2_impl::cancelled_plugin_request_msg(&load.path),
+                );
+                bv2_mut(load.bv2).on_load_async(load);
+            }
         }
     }
 }
@@ -1924,6 +1924,7 @@ pub(crate) use js_bundler::PluginJscExt;
 pub struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
+
     pub path: Box<[u8]>,
     pub(crate) hash: u64,
     pub(crate) output_kind: OutputKind,

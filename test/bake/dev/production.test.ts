@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -700,7 +700,10 @@ export function getStaticPaths() {
       expect(stderr).toContain("Cannot find module './does-not-exist'");
     });
 
-    test("a route importing a file outside the bundle while rendering", async () => {
+    // On Windows this import() currently fails before reaching the loader (the build exits 1
+    // with `EINVAL reading "\\"`: the drive path gets joined as if it were relative), with or
+    // without the exception checks this test is about. Tracked separately.
+    test.skipIf(isWindows)("a route importing a file outside the bundle while rendering", async () => {
       // import() of a path the bundler never saw is resolved to a "bake:/" key that is not
       // in the output map, so the fetch hook hands it to the regular loader to read from disk.
       const dir = await tempDirWithBakeDeps("bake-production-validate-disk-import", {

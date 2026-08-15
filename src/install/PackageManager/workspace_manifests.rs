@@ -13,6 +13,7 @@ use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry, root_package_j
 use super::workspace_selection::WorkspaceGraph;
 
 /// Root + member package.json files parsed the way `bun install` parses them, into a throw-away lockfile.
+/// Errors the parse only logs (an invalid catalog range, say) fail it here, as they fail `bun install`.
 pub(crate) struct ScratchManifests {
     pub(crate) lockfile: Lockfile,
     pub(crate) log: bun_ast::Log,
@@ -49,7 +50,8 @@ impl ScratchManifests {
             root_json,
             &mut resolver,
             Features::main(),
-        )
+        )?;
+        self.fail_on_logged_errors()
     }
 
     pub(crate) fn parse_member(
@@ -73,7 +75,15 @@ impl ScratchManifests {
             &mut resolver,
             Features::WORKSPACE,
         )?;
+        self.fail_on_logged_errors()?;
         Ok(pkg)
+    }
+
+    fn fail_on_logged_errors(&self) -> crate::Result<()> {
+        if self.log.has_errors() {
+            return Err(crate::Error::InstallFailed);
+        }
+        Ok(())
     }
 }
 

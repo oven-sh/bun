@@ -1623,6 +1623,33 @@ describe("peer dependencies", () => {
     });
   });
 
+  // The catalog parse logs this error and skips the entry; pack reports it like `bun install` does
+  // instead of complaining that the entry is missing.
+  test.concurrent("bun pm pack reports an invalid catalog range at its definition", async () => {
+    const dir = await makeRepo({
+      catalog: { "no-deps": ".:" },
+      peerSpec: "catalog:",
+      libVersion: "1.2.3",
+      linker: "hoisted",
+    });
+    const libDir = join(dir, "packages", "lib");
+
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pack"],
+      cwd: libDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const normalizedErr = normalizeBunSnapshot(err, dir);
+    expect(normalizedErr).toContain("error: Invalid dependency version\n");
+    expect(normalizedErr).toContain("at <dir>/package.json:");
+    expect(normalizedErr).not.toContain("no matching catalog dependency");
+    expect(exitCode).toBe(1);
+    expect(existsSync(join(libDir, "lib-1.2.3.tgz"))).toBeFalse();
+  });
+
   // lib's package.json is edited after the install; the root catalog never had these entries.
   describe.each([
     ["a-dep", "catalog:"],

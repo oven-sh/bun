@@ -1734,16 +1734,24 @@ static void checkExternalBufferData(const char* function, const void* data, size
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but
 // calls a (data, hint) callback directly instead of routing through
 // NapiEnv::doFinalizer.
+//
+// ownsPlaceholder: `data` is our stand-in for the addon's NULL pointer (see the
+// caller), so it is freed here and the addon's callback still receives NULL.
 class NapiNoEnvExternalBufferDestructor final : public SharedTask<void(void*)> {
 public:
-    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint)
+    NapiNoEnvExternalBufferDestructor(node_api_noenv_finalize cb, void* hint, bool ownsPlaceholder)
         : m_cb(cb)
         , m_hint(hint)
+        , m_ownsPlaceholder(ownsPlaceholder)
     {
     }
 
     void run(void* data) override
     {
+        if (m_ownsPlaceholder) {
+            fastFree(data);
+            data = nullptr;
+        }
         if (m_armed && m_cb) {
             m_cb(data, m_hint);
         }
@@ -1754,6 +1762,7 @@ public:
 private:
     node_api_noenv_finalize m_cb;
     void* m_hint;
+    bool m_ownsPlaceholder;
     bool m_armed { false };
 };
 
@@ -1770,32 +1779,17 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
-    auto* structure = globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared);
 
-    if (external_data == nullptr) {
-        // byte_length is 0. makeShared() asserts !isDetached(), and a null data pointer is what detached means to JSC.
-        RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(0, 1);
-        NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer, napi_generic_failure);
-        arrayBuffer->makeShared();
-
-        auto* buffer = JSC::JSArrayBuffer::create(vm, structure, WTF::move(arrayBuffer));
-        if (finalize_cb) {
-            vm.heap.addFinalizer(buffer, [finalize_cb, finalize_hint](JSCell*) {
-                NAPI_LOG("external sharedarraybuffer finalizer (empty buffer)");
-                finalize_cb(nullptr, finalize_hint);
-            });
-        }
-
-        *result = toNapi(buffer, globalObject);
-        NAPI_RETURN_SUCCESS(env);
-    }
-
-    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint));
+    // To JSC a null data pointer means detached, and makeShared() asserts the buffer is not,
+    // so a NULL external_data (byte_length is 0 then) is stood in for by a byte of ours.
+    bool usePlaceholder = external_data == nullptr;
+    const void* data = usePlaceholder ? fastMalloc(1) : external_data;
+    Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint, usePlaceholder));
     auto* destructorPtr = destructor.ptr();
-    auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
+    auto arrayBuffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(data), byte_length }, WTF::move(destructor));
     arrayBuffer->makeShared();
 
-    auto* buffer = JSC::JSArrayBuffer::create(vm, structure, WTF::move(arrayBuffer));
+    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
     destructorPtr->arm();
 
     *result = toNapi(buffer, globalObject);

@@ -507,7 +507,7 @@ impl BuildCommand {
             // perfect field-wise copy is not load-bearing.
             ct.options.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
-            ct.options.conditions = this_transpiler.options.conditions.clone()?;
+            ct.options.conditions = this_transpiler.options.conditions.clone();
             this_transpiler
                 .options
                 .conditions

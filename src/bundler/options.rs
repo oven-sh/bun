@@ -712,6 +712,7 @@ fn default_loaders_match_table() {
 }
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
+#[derive(Clone)]
 pub struct ESMConditions {
     pub(crate) default: ConditionsMap,
     pub(crate) import: ConditionsMap,
@@ -772,20 +773,6 @@ impl ESMConditions {
             import: import_condition_map,
             require: require_condition_map,
             style: style_condition_map,
-        })
-    }
-
-    pub fn clone(&self) -> Result<ESMConditions, bun_alloc::AllocError> {
-        let default = self.default.clone();
-        let import = self.import.clone();
-        let require = self.require.clone();
-        let style = self.style.clone();
-
-        Ok(ESMConditions {
-            default,
-            import,
-            require,
-            style,
         })
     }
 

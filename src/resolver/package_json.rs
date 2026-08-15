@@ -45,23 +45,14 @@ type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
 type MainFieldMap = StringMap;
 
-#[derive(Default)]
+/// Cloning copies the key/value vecs; `SemverString`/`Dependency` are POD
+/// over `source_buf`, which every clone keeps borrowing.
+#[derive(Default, Clone)]
 pub struct DependencyMap {
     pub map: DependencyHashMap,
     // Borrows the package.json source contents; lifetime-erased to 'static,
     // kept alive by `PackageJSON::source_contents`.
     pub source_buf: &'static [u8],
-}
-
-impl Clone for DependencyMap {
-    /// Deep-clones the small key/value vecs; `SemverString`/`Dependency` are
-    /// POD over `source_buf`.
-    fn clone(&self) -> Self {
-        Self {
-            map: self.map.clone(),
-            source_buf: self.source_buf,
-        }
-    }
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.

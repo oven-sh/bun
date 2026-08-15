@@ -132,19 +132,6 @@ fn level_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun
     bun_ast::Level::MAP.from_js(global, value)
 }
 
-/// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
-/// is needed wherever the map is assigned by value.
-fn clone_macro_map(src: &MacroMap) -> MacroMap {
-    let mut out = MacroMap::default();
-    out.ensure_unused_capacity(src.count());
-    for (k, v) in src.keys().iter().zip(src.values().iter()) {
-        // inner map: `StringArrayHashMap<&'static [u8]>` — `&[u8]: Clone` ⇒ inherent `clone()` works.
-        let inner = v.clone();
-        out.put_assume_capacity(k, inner);
-    }
-    out
-}
-
 const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
     skip_empty_name: true,
     include_value: true,
@@ -708,7 +695,7 @@ impl TransformTask {
             input_code,
             output_code: BunString::empty(),
             transpiler: transpiler_copy,
-            macro_map: clone_macro_map(&config.macro_map),
+            macro_map: config.macro_map.clone(),
             tsconfig: config
                 .tsconfig
                 .as_deref()
@@ -786,7 +773,7 @@ impl TransformTask {
 
         let parse_options = ParseOptions {
             arena: arena_ref,
-            macro_remappings: clone_macro_map(&self.macro_map),
+            macro_remappings: self.macro_map.clone(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: self.loader,
@@ -1043,7 +1030,7 @@ impl JSTranspiler {
         }
 
         if config.macro_map.count() > 0 {
-            transpiler.options.macro_remap = clone_macro_map(&config.macro_map);
+            transpiler.options.macro_remap = config.macro_map.clone();
         }
 
         // REPL mode disables DCE to preserve expressions like `42`
@@ -1244,7 +1231,7 @@ impl JSTranspiler {
 
         let parse_options = ParseOptions {
             arena,
-            macro_remappings: clone_macro_map(&config.macro_map),
+            macro_remappings: config.macro_map.clone(),
             dirname_fd: bun_sys::Fd::INVALID,
             file_descriptor: None,
             loader: loader.unwrap_or(config.default_loader),

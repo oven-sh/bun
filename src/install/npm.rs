@@ -1953,10 +1953,7 @@ impl PackageManifest {
 }
 
 /// Fills `set` with the names listed in `bundle(d)Dependencies`; returns whether it was `true` (bundle everything).
-fn collect_bundled_deps(
-    version_obj: Option<&JSON::E::ObjectJSON>,
-    set: &mut StringSet,
-) -> bool {
+fn collect_bundled_deps(version_obj: Option<&JSON::E::ObjectJSON>, set: &mut StringSet) -> bool {
     set.map.clear_retaining_capacity();
     let mut bundle_all_deps = false;
     if let Some(bundled_deps_value) = version_obj

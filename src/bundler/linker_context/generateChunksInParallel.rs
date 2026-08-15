@@ -1120,7 +1120,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             }));
                         } else {
                             // an error
-                            // logger OOM-only
                             // Split-borrow — `static_route_visitor.c` holds a
                             // detached `&LinkerContext`; `log_disjoint` returns the
                             // disjoint `Transpiler.log` backref so no `&mut c` is

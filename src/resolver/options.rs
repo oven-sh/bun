@@ -19,22 +19,11 @@ pub enum Packages {
     External,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ExternalModules {
     pub patterns: Vec<WildcardPattern>,
     pub abs_paths: StringSet,
     pub node_modules: StringSet,
-}
-impl Clone for ExternalModules {
-    fn clone(&self) -> Self {
-        // `StringSet::clone` is an inherent fallible method (returns
-        // `Result<_, AllocError>`), so this can't be `#[derive(Clone)]`.
-        Self {
-            patterns: self.patterns.clone(),
-            abs_paths: self.abs_paths.clone(),
-            node_modules: self.node_modules.clone(),
-        }
-    }
 }
 #[derive(Debug, Clone)]
 pub struct WildcardPattern {

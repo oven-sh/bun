@@ -198,10 +198,6 @@ impl Stringifier {
         }
 
         // Object or array — check for circular references.
-        // The call site is wired for fallible
-        // allocation (Err → OutOfMemory), but `zig_hash_map`'s grow path currently
-        // allocates infallibly and aborts on OOM, so the Err arm only becomes live
-        // once the collections-side grow is made fallible.
         let was_present = self.visiting.get_or_put(unwrapped).found_existing;
         if was_present {
             return Err(global

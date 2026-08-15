@@ -956,7 +956,6 @@ pub mod parse_worker {
 
             Loader::SqliteEmbedded | Loader::Sqlite => {
                 if !topts.target.is_bun() {
-                    // logger OOM-only
                     log.add_error(
                         Some(source),
                         Loc::EMPTY,
@@ -1077,7 +1076,6 @@ pub mod parse_worker {
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")
                 if topts.target == options::Target::Browser {
-                    // logger OOM-only
                     log.add_error(
                     Some(source),
                     Loc::EMPTY,

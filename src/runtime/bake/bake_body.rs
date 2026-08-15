@@ -477,6 +477,7 @@ impl Default for BuildConfigSubset {
 /// structure is always arena-allocated, usually owned by the arena in `UserOptions`
 ///
 /// Full documentation on these fields is located in the TypeScript definitions.
+#[derive(Clone)]
 pub struct Framework {
     pub is_built_in_react: bool,
     /// `resolve()` rewrites this in place. Stored as an owned `Vec` so
@@ -611,18 +612,6 @@ impl Framework {
             server_components: None,
             react_fast_refresh: None,
             built_in_modules: ArrayHashMap::new(),
-        }
-    }
-
-    /// `Framework.clone()` — manual because `ArrayHashMap` exposes a
-    /// fallible inherent `clone()` rather than `impl Clone`.
-    pub fn clone(&self) -> Framework {
-        Framework {
-            is_built_in_react: self.is_built_in_react,
-            file_system_router_types: self.file_system_router_types.clone(),
-            server_components: self.server_components,
-            react_fast_refresh: self.react_fast_refresh,
-            built_in_modules: self.built_in_modules.clone(),
         }
     }
 

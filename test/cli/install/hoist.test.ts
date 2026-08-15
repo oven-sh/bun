@@ -1,5 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
+import { readFileSync } from "fs";
 import { exists } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, runBunInstall } from "harness";
 import { join } from "path";
@@ -114,33 +115,52 @@ test.concurrent(
   },
 );
 
+// The root provides no-deps as something other than a registry package. A
+// workspace is checked through its own version; a copy with no version in the
+// lockfile (a tarball here, git would be the same) cannot be checked and is
+// never reported.
+const workspaceNoDeps = (version?: string) => ({
+  "packages/no-deps/package.json": JSON.stringify({ name: "no-deps", version }),
+});
+const tarballNoDeps = {
+  "no-deps-2.0.0.tgz": readFileSync(join(registry.packagesPath, "no-deps", "no-deps-2.0.0.tgz")),
+};
 test.concurrent.each([
   [
-    "2.0.0",
+    "a workspace at 2.0.0",
     "warns",
+    workspaceNoDeps("2.0.0"),
+    {},
     [
       'warn: incorrect peer dependency "no-deps@workspace:packages/no-deps": "peer-deps-fixed@1.0.0" requires "no-deps@^1.0.0"',
     ],
+    "2.0.0",
   ],
-  ["1.5.0", "is quiet", []],
-])("a workspace package at %s serving a dependency's no-deps@^1.0.0 peer %s", async (version, _, warnings) => {
-  const { packageDir } = await registry.createTestDir({
-    bunfigOpts: { linker: "hoisted" },
-    files: {
-      "package.json": JSON.stringify({
-        name: "root",
-        workspaces: ["packages/*"],
-        dependencies: { "peer-deps-fixed": "1.0.0", "provides-peer-deps-1-0-0": "1.0.0" },
-      }),
-      "packages/no-deps/package.json": JSON.stringify({ name: "no-deps", version }),
-    },
-  });
+  ["a workspace at 1.5.0", "is quiet", workspaceNoDeps("1.5.0"), {}, [], "1.5.0"],
+  ["a workspace without a version", "is quiet", workspaceNoDeps(), {}, [], undefined],
+  ["a file: tarball of 2.0.0", "is quiet", tarballNoDeps, { "no-deps": "file:./no-deps-2.0.0.tgz" }, [], "2.0.0"],
+])(
+  "root-provided no-deps (%s) serving a dependency's no-deps@^1.0.0 peer %s",
+  async (_, __, files, noDepsDependency, warnings, installed) => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...files,
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "peer-deps-fixed": "1.0.0", "provides-peer-deps-1-0-0": "1.0.0", ...noDepsDependency },
+        }),
+      },
+    });
 
-  const { err } = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: warnings.length > 0 });
-  expect(peerWarnings(err)).toEqual(warnings);
-  expect(await installedVersion(packageDir, "no-deps")).toBe(version);
-  expect(await hasOwnNodeModules(packageDir, "peer-deps-fixed")).toBe(false);
-});
+    const { err } = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: warnings.length > 0 });
+    expect(peerWarnings(err)).toEqual(warnings);
+    expect(await installedVersion(packageDir, "no-deps")).toBe(installed);
+    expect(await installedVersion(packageDir, "provides-peer-deps-1-0-0", "node_modules", "no-deps")).toBe("1.0.0");
+    expect(await hasOwnNodeModules(packageDir, "peer-deps-fixed")).toBe(false);
+  },
+);
 
 // one-optional-peer-dep has a peer on no-deps@^1.0.0: required in 1.0.1, optional in 1.0.2.
 test.concurrent.each([

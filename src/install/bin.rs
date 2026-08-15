@@ -1262,8 +1262,16 @@ impl<'a> Linker<'a> {
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
-        let rel_target =
-            resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
+        // One `..` per component of `abs_dest_dir` can make this longer than `abs_target`.
+        let rel_bound = abs_target.len() + 3 * (strings::count_char(abs_dest_dir, SEP) + 1) + 2;
+        let mut rel_spill: Vec<u8>;
+        let rel_buf: &mut [u8] = if rel_bound <= self.rel_buf.len() {
+            self.rel_buf
+        } else {
+            rel_spill = vec![0; rel_bound];
+            &mut rel_spill
+        };
+        let rel_target = resolve_path::relative_buf_z(rel_buf, abs_dest_dir, abs_target.as_bytes());
 
         debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
 

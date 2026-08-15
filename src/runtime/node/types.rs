@@ -1860,4 +1860,21 @@ impl PathOrBlob {
             arg,
         ))
     }
+
+    /// Panics on a detached or non-file `Blob`; the only caller, the POSIX
+    /// `Bun.write` fast path, has already rejected both.
+    #[cfg(not(windows))]
+    pub(crate) fn pathlike(&self) -> &PathOrFileDescriptor {
+        match self {
+            PathOrBlob::Path(path) => path,
+            PathOrBlob::Blob(blob) => {
+                &blob
+                    .store()
+                    .expect("infallible: store present")
+                    .data
+                    .as_file()
+                    .pathlike
+            }
+        }
+    }
 }

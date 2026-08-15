@@ -354,6 +354,17 @@ pub enum PathOrFileDescriptor {
     Fd(bun_sys::Fd),
 }
 
+impl From<&node_types::PathOrFileDescriptor> for PathOrFileDescriptor {
+    fn from(pathlike: &node_types::PathOrFileDescriptor) -> Self {
+        match pathlike {
+            node_types::PathOrFileDescriptor::Fd(fd) => Self::Fd(*fd),
+            node_types::PathOrFileDescriptor::Path(path) => Self::Path(bun_core::handle_oom(
+                bun_core::zig_string::Slice::init_dupe(path.slice()),
+            )),
+        }
+    }
+}
+
 // ─── SinkHandle ──────────────────────────────────────────────────────────────
 // Held by ByteStream; dispatches write()/end() to the native sink.
 

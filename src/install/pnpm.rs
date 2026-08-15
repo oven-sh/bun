@@ -2657,8 +2657,7 @@ fn copy_object(src: &Expr) -> Expr {
     )
 }
 
-/// Merges `src` into the root-level `field` object, creating it when absent.
-/// `false` when `field` exists but is not an object; nothing is written then.
+/// Merges `src` into the root-level `field` (created when absent); `false` if it is not an object.
 fn copy_into_root(
     json: &mut Expr,
     bump: &bun_alloc::Arena,

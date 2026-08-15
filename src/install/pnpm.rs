@@ -1647,14 +1647,8 @@ fn invalid_pnpm_lockfile() -> MigratePnpmLockfileError {
     MigratePnpmLockfileError::InvalidPnpmLockfile
 }
 
-/// pnpm resolves a `file:` directory declared by a registry, tarball or git
-/// package against the project, and every `directory:` in pnpm-lock.yaml is
-/// project-relative. bun installs such a dependency from inside the declaring
-/// package (`PackageInstaller`, transitive folder branch), so the migrated row
-/// keeps pnpm's path but only installs when the package ships that directory.
-/// Rows also declared by the root, a workspace, or a `file:` package declared by
-/// one of them install from the project as before, as do overridden names, which
-/// the resolver and installer treat as root-authored.
+/// pnpm resolved these against the project; the installer reads a folder row under a
+/// cache-installed package relative to that package (`PackageInstaller`, transitive folder branch).
 fn warn_folders_resolved_inside_installed_packages(
     lockfile: &Lockfile,
     workspace_pkgs_end: usize,

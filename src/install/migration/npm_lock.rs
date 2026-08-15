@@ -99,28 +99,19 @@ fn parent_dir(dir: &[u8]) -> &[u8] {
     }
 }
 
-/// `path` relative to `dir` when `path` is strictly inside it (both are
-/// package-lock keys, which are `/`-separated and relative to the project).
+/// The part of package-lock key `path` below key `dir`, if it is strictly inside it.
 fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
     path.strip_prefix(dir)?
         .strip_prefix(b"/")
         .filter(|rest| !rest.is_empty())
 }
 
-/// A `file:` directory that lives inside the package depending on it, which npm
-/// records for a registry, tarball or git package declaring one of its own
-/// directories. A folder declared by the root, a workspace or a local folder is
-/// installed relative to the project, so its entry key is its resolution; one
-/// declared by a package installed from the cache is installed relative to that
-/// package (`PackageInstaller`, transitive folder branch), so its resolution is
-/// `path`. Such a build is made for each dependent and never enters
-/// `entry_package_ids`, so a dependent of either kind gets its own form of the row
-/// whichever is linked first.
+/// A folder inside a cache-installed dependent; the installer reads its row relative to that
+/// package (`PackageInstaller`, transitive folder branch), so it is built per dependent.
 #[derive(Clone, Copy)]
 struct FolderInDependent<'k> {
     path: &'k [u8],
-    /// A fresh resolve names such a folder after the dependency; npm writes its
-    /// entry without a `name`, since the package is not unpacked when it resolves.
+    /// Fallback name, as in a fresh resolve; npm writes these entries without one.
     alias: &'k [u8],
 }
 
@@ -480,8 +471,7 @@ impl<'a> Migrator<'a> {
         })?;
         self.this.get_or_put_id(id, name_hash)?;
         self.queue.push((j, id));
-        // `entry_package_ids` only ever holds the entry-key build, which every
-        // dependent that is not installed from the cache gets from `build_or_get`.
+        // `build_or_get` must keep handing other dependents the entry-key build.
         match folder_in_dependent {
             None => self.entry_package_ids[j as usize] = id,
             Some(_) => self.shadowed.set(j as usize),

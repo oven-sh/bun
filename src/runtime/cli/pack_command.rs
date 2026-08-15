@@ -1519,11 +1519,8 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     Ok(bins)
 }
 
-/// The package subpath named by a `bin` value (`File`) or by `directories.bin`
-/// (`Dir`), in the form the tree walks and `is_package_bin` compare against
-/// entry subpaths. `None` when there is nothing to pack from it: the package
-/// root, a path outside the package, a file spelled as a directory, or the root
-/// package.json, which is always archived separately.
+/// A `bin` (`File`) or `directories.bin` (`Dir`) value as the subpath the tree
+/// walks compare against, or `None` when there is nothing to pack from it.
 pub(crate) fn bin_subpath<'a>(value: &[u8], ty: BinType, buf: &'a mut [u8]) -> Option<&'a [u8]> {
     let normalized: &'a [u8] =
         resolve_path::normalize_buf::<resolve_path::platform::Posix>(value, buf);

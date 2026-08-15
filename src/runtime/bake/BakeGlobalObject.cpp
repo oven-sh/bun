@@ -137,7 +137,7 @@ JSC::JSPromise* bakeModuleLoaderFetch(JSC::JSGlobalObject* globalObject,
                 JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(moduleKey));
                 JSC::SourceCode sourceCode = JSC::SourceCode(Bake::SourceProvider::create(
                     globalObject,
-                    source.toWTFString(),
+                    source.transferToWTFString(),
                     origin,
                     WTF::move(moduleKey),
                     WTF::TextPosition(),

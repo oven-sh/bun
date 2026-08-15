@@ -1799,9 +1799,7 @@ function parseOptions(
   let bigint: boolean | undefined;
   let path: string;
   let prepare: boolean = true;
-  // MySQL-only. Defaults to `true` to match the `mysql2` and `mariadb` drivers
-  // (both enable CLIENT_FOUND_ROWS by default). Read from the options object
-  // and the URL query string below; ignored for non-MySQL adapters.
+  // MySQL-only; defaults to `true` to match mysql2 / mariadb.
   let foundRows: boolean = true;
 
   if (url !== null) {
@@ -1836,11 +1834,8 @@ function parseOptions(
       } else if (lowerKey === "path") {
         path = queryObject[key];
       } else if (lowerKey === "foundrows") {
-        // Accept "false"/"0" (case-insensitive) to disable; anything else
-        // (including "true"/"1" or empty) leaves the default enabled. Only
-        // consumed by the MySQL adapter. `toJSON()` returns an array when a
-        // key appears more than once (`?foundRows=a&foundRows=b`), so coerce
-        // to a string before calling `.toLowerCase`.
+        // "false"/"0" disables; anything else keeps the default. `${}` handles
+        // the array `toJSON()` returns for duplicate keys.
         const value = `${queryObject[key]}`.toLowerCase();
         foundRows = !(value === "false" || value === "0");
       } else {
@@ -2016,9 +2011,7 @@ function parseOptions(
     prepare = false;
   }
 
-  // The options-object form wins over the URL query string. `foundRows` is
-  // only meaningful for the MySQL wire protocol (maps to CLIENT_FOUND_ROWS);
-  // for Postgres/SQLite it's a no-op.
+  // Options object wins over the URL query string.
   if (options.foundRows !== undefined) {
     foundRows = !!options.foundRows;
   }

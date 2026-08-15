@@ -56,13 +56,8 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          // `Bun.build` parses `define:` values as JSON. The other defines
-          // above already go through `JSON.stringify` / `String`, but the
-          // raw minified CSS starts with `*{...}` — bun versions that lack
-          // the auto-quote fallback (#30679) reject it as "Operators are
-          // not allowed in JSON". Quote explicitly so cold builds work with
-          // the older bootstrap bun (1.3.13) used in the CI Dockerfile and
-          // any pre-fix local install.
+          // `define:` values are parsed as JSON; the CSS starts with `*{...}`,
+          // so quote it for bootstrap bun that predates #30679.
           OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {

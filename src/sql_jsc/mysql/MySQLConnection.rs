@@ -91,9 +91,7 @@ pub struct MySQLConnection {
     ssl_mode: SSLMode,
     allow_public_key_retrieval: bool,
     flags: ConnectionFlags,
-    /// When `true`, request `CLIENT_FOUND_ROWS` during handshake so
-    /// `affected_rows` counts rows matched by `WHERE` instead of rows whose
-    /// column values actually changed (mysql2 / mariadb default).
+    /// Request `CLIENT_FOUND_ROWS` during handshake (mysql2 / mariadb default).
     found_rows: bool,
 }
 
@@ -675,11 +673,8 @@ impl MySQLConnection {
             self.ssl_mode != SSLMode::Disable,
             !self.database.is_empty(),
         );
-        // CLIENT_FOUND_ROWS (`foundRows` connection option; default on) tells
-        // the server to report rows matched by `WHERE` in affected_rows rather
-        // than rows actually changed. Matches the mysql2 / mariadb driver
-        // defaults so an `UPDATE` that matches but doesn't change values still
-        // returns `affectedRows: 1`.
+        // CLIENT_FOUND_ROWS makes affected_rows count WHERE-matched rows
+        // rather than changed rows (mysql2 / mariadb default).
         requested.CLIENT_FOUND_ROWS = self.found_rows;
         self.capabilities = requested.intersect(handshake.capability_flags);
         self.mariadb_capabilities = MariaDBCapabilities::get_default_capabilities()

@@ -482,16 +482,15 @@ impl EventLoop {
         result
     }
 
-    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> u32 {
+    /// `None`: a task's fold or the checkpoint after it met the VM's termination and landed it; the
+    /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
+    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Option<u32> {
         let mut counter: u32 = 0;
-        // On `Stopped` — a task's fold or the checkpoint after it met the VM's termination — this is
-        // the landing frame: take it (a fold already has; the drain leaves it to us) and report 0 so
-        // the `while tick_with_count() > 0` loops in `tick()` / `tick_tasks_only()` stop.
         if tick_queue_with_count(self, virtual_machine, &mut counter).is_err() {
             crate::task::termination_landed(self.global_ref());
-            return 0;
+            return None;
         }
-        counter
+        Some(counter)
     }
 
     fn tick_concurrent(&mut self) {
@@ -684,7 +683,15 @@ impl EventLoop {
 
         let mut refills = 0u32;
         'tick: loop {
-            while self.tick_with_count(ctx) > 0 {
+            loop {
+                match self.tick_with_count(ctx) {
+                    None => {
+                        self.entered_event_loop_count -= 1;
+                        return;
+                    }
+                    Some(0) => break,
+                    Some(_) => {}
+                }
                 if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                     break 'tick;
                 }
@@ -696,8 +703,7 @@ impl EventLoop {
                 .drain_microtasks_with_global(global, global_vm)
                 .is_err()
             {
-                // The checkpoint met the VM's termination; this is its landing frame.
-                crate::task::termination_landed(global);
+                // The checkpoint met the VM's termination (and landed it): the turn is over.
                 self.entered_event_loop_count -= 1;
                 return;
             }
@@ -719,9 +725,18 @@ impl EventLoop {
             break;
         }
 
-        while refills < Self::CONCURRENT_REFILLS_PER_TICK && self.tick_with_count(ctx) > 0 {
-            refills += 1;
-            self.tick_concurrent();
+        while refills < Self::CONCURRENT_REFILLS_PER_TICK {
+            match self.tick_with_count(ctx) {
+                None => {
+                    self.entered_event_loop_count -= 1;
+                    return;
+                }
+                Some(0) => break,
+                Some(_) => {
+                    refills += 1;
+                    self.tick_concurrent();
+                }
+            }
         }
 
         self.global_ref().handle_rejected_promises();
@@ -738,7 +753,7 @@ impl EventLoop {
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
-        while self.tick_with_count(vm) > 0 {
+        while let Some(1..) = self.tick_with_count(vm) {
             self.tick_concurrent();
         }
 

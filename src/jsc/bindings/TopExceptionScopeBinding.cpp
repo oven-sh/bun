@@ -38,11 +38,21 @@ extern "C" void TopExceptionScope__construct(
 #endif
 }
 
+// Every Rust exception check lands in one of these: a termination it observes is being carried on to
+// its landing frame (see Bun__VM__terminationInFlight).
+static inline JSC::Exception* observed(TopExceptionScope& scope)
+{
+    auto* exception = scope.exception();
+    if (exception && scope.vm().isTerminationException(exception) && !scope.vm().hasTerminationRequest()) [[unlikely]]
+        scope.vm().setHasTerminationRequest();
+    return exception;
+}
+
 extern "C" JSC::Exception* TopExceptionScope__pureException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
     auto* scope = static_cast<TopExceptionScope*>(ptr);
-    return scope->exception();
+    return observed(*scope);
 }
 
 extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
@@ -52,7 +62,7 @@ extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
     // this is different than `return scope->exception()` because `RETURN_IF_EXCEPTION` also checks
     // if there are traps that should throw an exception (like a termination request from another
     // thread)
-    RETURN_IF_EXCEPTION(*scope, scope->exception());
+    RETURN_IF_EXCEPTION(*scope, observed(*scope));
     return nullptr;
 }
 

@@ -40,19 +40,22 @@ unsafe extern "C" {
     safe fn Bun__VM__terminationLanded(global: &JSGlobalObject);
 }
 
-/// A landing frame took the VM's TerminationException: drop it (it has unwound what it was for) and, if
-/// the VM's stop requested it, forbid execution from here on (see `Bun__VM__terminationLanded`).
+/// A TerminationException came back to this frame. If no script is left beneath it (the VM is not
+/// entered), this is its landing frame: it is taken, and execution is forbidden if the VM's stop
+/// requested it. Beneath script it is left pending to unwind the frames above; their landing frame
+/// takes it. See `Bun__VM__terminationLanded`.
 #[inline]
 pub fn termination_landed(global: &JSGlobalObject) {
     Bun__VM__terminationLanded(global)
 }
 
 /// The fold: what a dispatcher does with the exception a callback it invoked left pending — report it
-/// as uncaught, or, if what came back is the VM's termination, take it and stand the loop down
-/// (WebCore: `isTerminationException(returned)`; nothing is left pending either way). When this runs
-/// as the outermost frame (a foreign trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
-/// checkpoint over the pending exception, so it runs here once the exception is taken; beneath
-/// another dispatch or a host function that checkpoint is still the outer frame's.
+/// as uncaught, or, if what came back is a termination, land it (`termination_landed`) and stand
+/// down (WebCore: `isTerminationException(returned)`). When this runs as the outermost frame (a
+/// foreign trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
+/// checkpoint over the pending exception, so it runs here once the exception is taken — and lands a
+/// termination that checkpoint meets; beneath another dispatch or a host function that checkpoint is
+/// still the outer frame's, and a termination stays pending for it.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);

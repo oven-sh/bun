@@ -584,10 +584,18 @@ impl ExceptionValidationScope {
 // so the validation scope's diagnostics point at the user's call site, and the
 // scope is RAII (dropped on every return path including `?`).
 
-/// An FFI call into JSC came back with an exception pending.
+unsafe extern "C" {
+    // safe fn: `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*`; C++ only reads
+    // its VM's exception and writes its termination bit.
+    safe fn Bun__VM__terminationInFlight(global: &JSGlobalObject);
+}
+
+/// An FFI call into JSC came back with an exception pending; if it is a termination, it is being
+/// carried on to its landing frame (see `Bun__VM__terminationInFlight`). Cold path only.
 #[cold]
 #[inline(never)]
-pub fn thrown(_global: &JSGlobalObject) -> JsError {
+pub fn thrown(global: &JSGlobalObject) -> JsError {
+    Bun__VM__terminationInFlight(global);
     JsError::Thrown
 }
 

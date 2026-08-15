@@ -7,14 +7,13 @@
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/Heap.h"
 #include "ZigGlobalObject.h"
+#include "BunClientData.h"
 
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
-
-extern "C" void Bun__VM__terminationLanded(JSC::JSGlobalObject*);
 
 namespace Bun {
 using namespace JSC;

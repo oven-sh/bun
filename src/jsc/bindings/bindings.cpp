@@ -6796,18 +6796,34 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
     return operationMathPow(x, y);
 }
 
-// A dispatcher's landing frame has just taken this VM's TerminationException back from the entry it made:
-// the script it interrupted is unwound, so the exception has done its job and is dropped here rather than
-// left in the VM (JSC resets its own "termination in progress" state at the outermost VMEntryScope for the
-// same reason, and asserts that nobody keeps the exception past it). If the VM's stop is what requested it,
-// no script runs from here on: that is carried by the script gate and executionForbidden — what the
-// native→JS boundary consults — not by an exception left pending (WebCore's forbidExecution() model).
+// A TerminationException on its way to its landing frame has left JSC's outermost VMEntryScope, which
+// reset the VM's "termination in flight" bit; anything that would defer termination before the landing
+// (a LazyProperty's initializer, reifying static properties) asserts that bit while the exception is
+// pending. Whoever carries the exception on keeps the bit with it: every Rust exception read
+// (TopExceptionScope), the throwing FFI wrappers' cold path, and GlobalObject::drainMicrotasks.
+extern "C" void Bun__VM__terminationInFlight(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* exception = vm.exceptionForInspection();
+    if (exception && vm.isTerminationException(exception) && !vm.hasTerminationRequest()) [[unlikely]]
+        vm.setHasTerminationRequest();
+}
+
+// A TerminationException reached a frame with no script left beneath it to unwind (a dispatcher's
+// fold, a loop-level microtask checkpoint, a timer's C++ caller): it is taken here — exception and
+// in-flight bit — so nothing stays pending between entries. Beneath script (the VM is still entered) it
+// is left alone: it is still unwinding the frames above, and their landing frame takes it. If the VM's
+// stop is what requested it, script is over for good: executionForbidden, as WebCore's forbidExecution().
 extern "C" void Bun__VM__terminationLanded(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
+    if (vm.isEntered())
+        return;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     ASSERT(!scope.exception() || vm.isTerminationException(scope.exception()));
     scope.clearException();
+    if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
+        vm.clearHasTerminationRequest();
     if (!WebCore::clientData(vm)->scriptAllowed())
         vm.setExecutionForbidden();
 }

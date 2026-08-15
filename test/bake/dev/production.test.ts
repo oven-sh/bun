@@ -659,4 +659,63 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  describe.concurrent("route scan errors", () => {
+    async function build(dir: string) {
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      return { exitCode, stderr: normalizePath(stderr.toString()) };
+    }
+
+    test("two files resolving to the same route fail the build", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
+        "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/about.tsx");
+      expect(stderr).toContain("  - pages/about/index.tsx");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+
+    test("a file that is not a valid route fails the build", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-route-syntax-error", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function Index() { return <p>index</p>; }`,
+        "pages/blog-[slug].tsx": `export default function Post() { return <p>post</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain('"pages/blog-[slug].tsx" is not a valid route');
+      expect(stderr).toContain("Parameters must take up the entire file name");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+
+    test("every route error is reported before the build fails", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-route-errors", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
+        "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
+        "pages/_layout.tsx": `export default function Layout({ children }) { return <main>{children}</main>; }`,
+        "pages/_layout.jsx": `export default function Layout({ children }) { return <main>{children}</main>; }`,
+        "pages/blog-[slug].tsx": `export default function Post() { return <p>post</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("Multiple layout matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/_layout.tsx");
+      expect(stderr).toContain("  - pages/_layout.jsx");
+      expect(stderr).toContain('"pages/blog-[slug].tsx" is not a valid route');
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+  });
 });

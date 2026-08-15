@@ -1895,8 +1895,18 @@ describe("streamed input pacing", () => {
   const count = 2500; // ~2.4 MB of input: many upstream chunks
   const input = Buffer.alloc(piece.length * count, piece).toString();
   const rewritten = Buffer.alloc((piece.length + 6) * count, `<p x="1">${text}</p>`).toString();
-  const dir = tempDirWithFiles("hr-pacing", { "in.html": input });
+  // A second document made of different bytes, for the tests below that read
+  // it while another document is being parsed: if that read lands in the
+  // other document's buffer, these bytes show up in its output.
+  const otherText = Buffer.alloc(1000, "b").toString();
+  const otherPiece = `<p>${otherText}</p>`;
+  const otherRewritten = Buffer.alloc((otherPiece.length + 6) * count, `<p x="1">${otherText}</p>`).toString();
+  const dir = tempDirWithFiles("hr-pacing", {
+    "in.html": input,
+    "other.html": Buffer.alloc(otherPiece.length * count, otherPiece).toString(),
+  });
   const file = path.join(dir, "in.html");
+  const otherFile = path.join(dir, "other.html");
 
   function transformInput(body = Bun.file(file)) {
     let seen = 0;
@@ -2075,6 +2085,62 @@ describe("streamed input pacing", () => {
       .transform(new Response(Bun.file(file)));
     expect(await outer.text()).toBe(rewritten);
     expect(await inner).toBe(rewritten);
+  });
+
+  // Starting a transform inside the handler and reading it are two reads
+  // nested in the outer one, which still has its document in the read buffer:
+  // the second nested read must be kept out of it just like the first.
+  it("a handler may transform and read another file", async () => {
+    let inner;
+    const outer = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          e.setAttribute("x", "1");
+          inner ??= transformInput(Bun.file(otherFile)).res.text();
+        },
+      })
+      .transform(new Response(Bun.file(file)));
+    expect(await outer.text()).toBe(rewritten);
+    expect(await inner).toBe(otherRewritten);
+  });
+
+  // Same, with the outer document arriving on a pipe (the child's stdin): a
+  // pipe is read by a different loop than a regular file, out of the same
+  // buffer.
+  it("a handler may transform and read another file while its document arrives on stdin", async () => {
+    const pieces = 64;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const attr = { element: e => void e.setAttribute("x", "1") };
+         let inner;
+         const outer = new HTMLRewriter()
+           .on("p", {
+             element(e) {
+               attr.element(e);
+               inner ??= new HTMLRewriter().on("p", attr).transform(new Response(Bun.file(process.argv[1]))).text();
+             },
+           })
+           .transform(new Response(Bun.stdin));
+         const out = await outer.text();
+         console.log(JSON.stringify({ out, innerLength: (await inner).length }));`,
+        otherFile,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(Buffer.alloc(piece.length * pieces, piece));
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      out: Buffer.alloc((piece.length + 6) * pieces, `<p x="1">${text}</p>`).toString(),
+      innerLength: otherRewritten.length,
+    });
+    expect(exitCode).toBe(0);
   });
 
   // Regular-file reads are synchronous on POSIX, so reading ahead of the

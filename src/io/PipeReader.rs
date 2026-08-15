@@ -162,7 +162,15 @@ struct ReadScratchClaim;
 
 impl ReadScratchClaim {
     fn try_claim() -> Option<Self> {
-        READ_SCRATCH_IN_USE.with(|in_use| (!in_use.replace(true)).then_some(Self))
+        READ_SCRATCH_IN_USE.with(|in_use| {
+            if in_use.get() {
+                // Not `then_some(Self)`: its argument is built before the test,
+                // and dropping that refused claim would release the outer one.
+                return None;
+            }
+            in_use.set(true);
+            Some(Self)
+        })
     }
 }
 
@@ -902,8 +910,14 @@ impl PosixBufferedReader {
             } else {
                 // SAFETY: caller contract; `maxbuf` is Copy, borrow ends at `;`.
                 let maxbuf = unsafe { (*this).maxbuf };
+                // Streaming delivers and clears per read, so this reserve is the
+                // chunk size. Nested reads (a consumer re-pulling from inside its
+                // chunk handler, e.g. `process.stdin.on("data")`) all land here
+                // rather than in the scratch, so give them a whole default pipe
+                // buffer per read.
+                let reserve = if streaming { 64 * 1024 } else { 16 * 1024 };
                 // SAFETY: caller contract; borrow ends at `;`.
-                unsafe { (*this)._buffer.reserve(16 * 1024) };
+                unsafe { (*this)._buffer.reserve(reserve) };
                 // SAFETY: caller contract. `sys::read_nonblocking` writes only
                 // initialized bytes into the prefix it reports; `commit_spare`
                 // exposes exactly that prefix. The `_buffer` borrow ends before

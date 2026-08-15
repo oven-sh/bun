@@ -87,11 +87,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         alias: js_ast::StoreStr::new(name),
                                         ..Default::default()
                                     }));
-                                // `handle_identifier` skips the namespace alias when the
-                                // identifier is an assignment target (an assigned-to import
-                                // has to stay a bare identifier). An assignment to a sibling
-                                // block's export must still become "ns.name", so route it
-                                // through the same rewrite as this block's own exports.
+                                // The alias only rewrites reads; this also rewrites assignments.
                                 self.is_exported_inside_namespace.insert(new_ref, arg_ref);
                                 break 'brk new_ref;
                             }

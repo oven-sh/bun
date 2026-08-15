@@ -108,7 +108,7 @@ let chromePath = findChrome();
 // Chrome refuses to start as root unless its sandbox is turned off, which is
 // how these tests run inside containers. Wrap the binary in a script that adds
 // the flag: in-process views get it through `chrome.path` below, the tests
-// that spawn a second bun through BUN_CHROME_PATH in bunEnv. (The runtime
+// that spawn a second bun through BUN_CHROME_PATH in chromeEnv. (The runtime
 // reads the real environment, so setting process.env here would not reach it.)
 let rootChromeWrapper: string | undefined;
 if (chromePath && process.platform === "linux" && process.getuid?.() === 0 && !process.env.BUN_CHROME_PATH) {
@@ -118,8 +118,8 @@ if (chromePath && process.platform === "linux" && process.getuid?.() === 0 && !p
   afterAll(() => dir[Symbol.dispose]());
   chromePath = rootChromeWrapper = join(String(dir), "chrome");
   chmodSync(chromePath, 0o755);
-  bunEnv.BUN_CHROME_PATH = chromePath;
 }
+const chromeEnv = rootChromeWrapper ? { ...bunEnv, BUN_CHROME_PATH: rootChromeWrapper } : bunEnv;
 
 // TODO: macOS 13/14 aarch64 CI — findChrome() resolves the Playwright
 // chrome-headless-shell, but it either throws ERR_DLOPEN_FAILED at spawn or
@@ -597,7 +597,7 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
         console.log("rejected");
       `,
     ],
-    env: bunEnv,
+    env: chromeEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -619,7 +619,7 @@ it("chrome: backend.stderr defaults to ignore (Chrome noise hidden)", async () =
         view.close();
       `,
     ],
-    env: bunEnv,
+    env: chromeEnv,
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -679,7 +679,7 @@ it("backend.argv appends after core flags", async () => {
       console.log("ok");
       `,
     ],
-    env: bunEnv,
+    env: chromeEnv,
     stderr: "pipe",
   });
   const [stdout, , exit] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1014,7 +1014,7 @@ it("chrome: console: globalThis.console forwards to parent's stdout", async () =
       view.close();
       `,
     ],
-    env: bunEnv,
+    env: chromeEnv,
     stdout: "pipe",
     stderr: "pipe",
   });

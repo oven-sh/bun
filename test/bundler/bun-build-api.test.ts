@@ -1648,15 +1648,18 @@ test.skipIf(isWindows)(
   30_000,
 );
 
-describe.concurrent("source whose path is close to the path buffer size", () => {
+describe.concurrent("source whose path is close to or beyond the path buffer size", () => {
   // Bun's fixed path buffer (MAX_PATH_BYTES): PATH_MAX on Linux and macOS, the
   // UTF-8 worst case of a 32767-character path on Windows.
   const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
   // The path itself fits in the buffer (and, on Linux and macOS, on disk); the
   // paths derived from it by relativizing against the cwd below do not.
   const PATH_LENGTH = MAX_PATH_BYTES - 32;
+  // Not even the path itself fits. Only a plugin can hand the bundler one of
+  // these: nothing on disk can be this long.
+  const OVERSIZED_PATH_LENGTH = MAX_PATH_BYTES * 2;
 
-  async function bundle(mode: string) {
+  async function build(mode: string, length: number) {
     using dir = tempDir("bun-build-long-source-path", {});
     // Relativizing against the cwd adds `../` per level of the cwd outside the
     // common prefix, so a cwd this deep puts the relative form of the long
@@ -1670,7 +1673,7 @@ describe.concurrent("source whose path is close to the path buffer size", () => 
         bunExe(),
         join(import.meta.dir, "fixtures", "long-source-path-fixture.ts"),
         mode,
-        String(PATH_LENGTH),
+        String(length),
         String(dir),
       ],
       env: bunEnv,
@@ -1685,13 +1688,18 @@ describe.concurrent("source whose path is close to the path buffer size", () => 
     expect(exitCode).toBe(0);
 
     const result = JSON.parse(stdout);
-    expect(result.path).toHaveLength(PATH_LENGTH);
+    expect(result.path).toHaveLength(length);
     // The display form Bun derives from the path, as node computes it.
     const relativePath = path.relative(result.cwd, result.path).replaceAll("\\", "/");
     expect(relativePath.length).toBeGreaterThan(MAX_PATH_BYTES);
+    return { ...result, relativePath };
+  }
+
+  async function bundle(mode: string, length = PATH_LENGTH) {
+    const result = await build(mode, length);
     expect(result.logs).toEqual([]);
     expect(result.success).toBe(true);
-    return { ...result, relativePath };
+    return result;
   }
 
   test("as an in-memory entry point", async () => {
@@ -1702,10 +1710,11 @@ describe.concurrent("source whose path is close to the path buffer size", () => 
 
   test("as an in-memory asset", async () => {
     const { outputs } = await bundle("asset");
+    // Output paths use either separator on Windows (`./entry.js` next to `.\image.png`).
     expect(outputs).toEqual([
-      expect.stringMatching(/(^|\/)entry\.js$/),
-      expect.stringMatching(/(^|\/)entry\.js\.map$/),
-      expect.stringMatching(/(^|\/)e*image-[a-z0-9]+\.png$/),
+      expect.stringMatching(/(^|[\\/])entry\.js$/),
+      expect.stringMatching(/(^|[\\/])entry\.js\.map$/),
+      expect.stringMatching(/(^|[\\/])e*image-[a-z0-9]+\.png$/),
     ]);
   });
 
@@ -1723,4 +1732,25 @@ describe.concurrent("source whose path is close to the path buffer size", () => 
     expect(inputs).toEqual(["entry.js", relativePath]);
     expect(sources).toEqual([relativePath, "entry.js"]);
   });
+
+  for (const [description, length] of [
+    ["close to the path buffer size", PATH_LENGTH],
+    ["longer than the path buffer", OVERSIZED_PATH_LENGTH],
+  ] as const) {
+    test(`as a path ${description} returned by an onResolve plugin and loaded by an onLoad plugin`, async () => {
+      const { inputs, sources, relativePath } = await bundle("load-plugin", length);
+      expect(inputs).toEqual(["entry.js", relativePath]);
+      expect(sources).toEqual([relativePath, "entry.js"]);
+    });
+
+    test(`as a path ${description} returned by an onResolve plugin that does not exist on disk`, async () => {
+      const { success, logs, path: resolvedPath } = await build("resolve-plugin", length);
+      // Reading it fails (ENOENT, or ENAMETOOLONG once it is longer than the
+      // filesystem allows) and is reported like any other unreadable import.
+      expect(logs).toHaveLength(1);
+      expect(logs[0]).toMatch(/^BuildMessage: (File not found|\w+ reading file:) "/);
+      expect(logs[0]).toContain(`"${resolvedPath}"`);
+      expect(success).toBe(false);
+    });
+  }
 });

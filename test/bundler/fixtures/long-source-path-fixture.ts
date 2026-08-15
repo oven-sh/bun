@@ -10,6 +10,12 @@
 //   import         entry point on disk importing a file on disk at the long path
 //   import-plugin  like `import`, with an onResolve plugin that declines every path
 //                  (imports then reach the resolver through the plugin code path)
+//   resolve-plugin entry point on disk whose import an onResolve plugin resolves to the
+//                  long path; nothing exists there, so the build reports the failed read
+//   load-plugin    like `resolve-plugin`, with an onLoad plugin supplying the contents
+//
+// A plugin can return a path of any length, so the last two modes are the
+// ones that accept a `length` beyond the path buffer.
 import type { BuildConfig } from "bun";
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -64,6 +70,26 @@ switch (mode) {
         mode === "import-plugin"
           ? [{ name: "declines everything", setup: build => build.onResolve({ filter: /.*/ }, () => undefined) }]
           : [],
+    };
+    break;
+  }
+  case "resolve-plugin":
+  case "load-plugin": {
+    path = longPath(root, "dep.js");
+    writeFileSync("entry.js", `import value from "./dep.js"; console.log(value);`);
+    options = {
+      entrypoints: ["./entry.js"],
+      plugins: [
+        {
+          name: "resolves to the long path",
+          setup(build) {
+            build.onResolve({ filter: /^\.\/dep\.js$/ }, () => ({ path }));
+            if (mode === "load-plugin") {
+              build.onLoad({ filter: /dep\.js$/ }, () => ({ contents: "export default 42;", loader: "js" }));
+            }
+          },
+        },
+      ],
     };
     break;
   }

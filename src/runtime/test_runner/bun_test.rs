@@ -1173,8 +1173,7 @@ impl BunTest {
             JSValue::UNDEFINED,
             args_slice,
         );
-        // Relax before reporting: error printing re-enters user JS (e.g. Error.prepareStackTrace),
-        // and a termination raised there would outlive the clear below and silently skip later tests.
+        // Relax before reporting: printing the error runs user getters, after the clear below.
         if watchdog_armed {
             vm.jsc_vm().clear_execution_time_limit();
         }

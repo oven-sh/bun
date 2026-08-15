@@ -11,6 +11,7 @@ import {
   runBunInstall,
   tempDir,
 } from "harness";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
 
@@ -24,31 +25,34 @@ function fixture(
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
-let server: Bun.Server;
-const verdaccio = new VerdaccioRegistry();
+// The body of one bulk advisory request: installed versions by package name.
+type BulkRequest = Record<string, string[]>;
 
-beforeAll(async () => {
-  server = Bun.serve({
+// Answers the bulk advisory endpoint with the responses recorded in audit-fixtures.json for the projects under
+// registry/fixtures/audit, which ship with a bun.lock and are never installed. Every request body lands in `requests`.
+function startFixtureRegistry(requests: BulkRequest[] = []) {
+  return Bun.serve({
     port: 0,
-    fetch: async req => {
-      const body = await gunzipJsonRequest(req);
-
-      const fixture = resolveBulkAdvisoryFixture(body);
-
-      if (!fixture) {
-        console.log("No fixture found for", body);
-        return new Response("No fixture found", { status: 404 });
-      }
-
-      return Response.json(fixture);
+    async fetch(req) {
+      const body: BulkRequest = await gunzipJsonRequest(req);
+      requests.push(body);
+      const response = resolveBulkAdvisoryFixture(body);
+      return response ? Response.json(response) : new Response("No fixture found", { status: 404 });
     },
   });
+}
+
+const verdaccio = new VerdaccioRegistry();
+let templates: ReturnType<typeof tempDir>;
+
+beforeAll(async () => {
   await verdaccio.start();
+  templates = tempDir("bun-audit-templates-", {});
 });
 
 afterAll(() => {
-  server?.stop();
   verdaccio.stop();
+  templates[Symbol.dispose]();
 });
 
 function doAuditTest(
@@ -57,37 +61,25 @@ function doAuditTest(
     args?: string[];
     exitCode: number;
     files: DirectoryTree | string;
-    fn: (std: { stdout: PromiseLike<string>; stderr: PromiseLike<string>; dir: string }) => Promise<void>;
+    fn: (result: { stdout: string; stderr: string; dir: string; requests: BulkRequest[] }) => void;
   },
 ) {
-  test(label, async () => {
-    await using dir = tempDir("bun-test-audit-" + label.replace(/[^a-zA-Z0-9]/g, "-"), options.files);
-
-    const cmd = [bunExe(), "audit", ...(options.args ?? [])];
-
-    const url = server.url.toString().slice(0, -1);
+  test.concurrent(label, async () => {
+    const requests: BulkRequest[] = [];
+    await using registry = startFixtureRegistry(requests);
+    using dir = tempDir("bun-test-audit-", options.files);
 
     await using proc = spawn({
-      cmd,
+      cmd: [bunExe(), "audit", ...(options.args ?? [])],
       stdout: "pipe",
       stderr: "pipe",
       cwd: dir,
-      env: {
-        ...bunEnv,
-        NPM_CONFIG_REGISTRY: url,
-      },
+      env: { ...bunEnv, NPM_CONFIG_REGISTRY: registryHref(registry) },
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    try {
-      await options.fn({ stdout: Promise.resolve(out), stderr: Promise.resolve(err), dir });
-      expect(exitCode).toBe(options.exitCode);
-    } catch (e) {
-      console.log("ERR:", err);
-      console.log("OUT:", out);
-      throw e;
-    }
+    options.fn({ stdout, stderr, dir: String(dir), requests });
+    expect(exitCode).toBe(options.exitCode);
   });
 }
 
@@ -116,7 +108,7 @@ type RegistryOptions = {
   // Incremented on every bulk request; lets a test prove the registry was never contacted.
   bulkHits?: { count: number };
   // Every bulk request's body, in request order.
-  bulkBodies?: Record<string, string[]>[];
+  bulkBodies?: BulkRequest[];
   // Package names whose manifest requests answer 404; mutable so a test can break the registry after installing.
   denyManifests?: Set<string>;
   // Tarball file names (`a-dep-1.0.4.tgz`) whose downloads answer 404.
@@ -135,7 +127,7 @@ function startRegistry(advisories: Record<string, Advisory[]>, options: Registry
       if (req.method === "POST" && url.pathname === "/-/npm/v1/security/advisories/bulk") {
         bulkRequests++;
         if (options.bulkHits) options.bulkHits.count++;
-        const body: Record<string, string[]> = await gunzipJsonRequest(req);
+        const body: BulkRequest = await gunzipJsonRequest(req);
         options.bulkBodies?.push(body);
         if (options.bulkStatus) return new Response("registry exploded", { status: options.bulkStatus });
         if (options.bulkFailAfter !== undefined && bulkRequests > options.bulkFailAfter) {
@@ -221,6 +213,55 @@ function installEnv(dir: string) {
   return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
 }
 
+// Most tests start from one of a few dozen single-package.json projects, so each distinct project is installed once,
+// straight from verdaccio, and then copied like a checked-in fixture: `installedProject` returns a directory holding
+// the package.json, bun.lock and node_modules that `steps` (package.json texts installed in order) end up with.
+// bun.lock names verdaccio in every tarball URL, which `copyProject` re-points at the registry a test is using; the
+// bunfig and the install cache are removed so a copy only ever talks to that registry.
+const installedProjects = new Map<string, Promise<string>>();
+
+function installedProject(steps: string[]) {
+  const key = JSON.stringify(steps);
+  let project = installedProjects.get(key);
+  if (!project) {
+    const dir = join(templates, String(installedProjects.size));
+    project = (async () => {
+      mkdirSync(dir);
+      await writeBunfig(dir, verdaccio.registryUrl());
+      for (const text of steps) {
+        await write(join(dir, "package.json"), text);
+        await runBunInstall(installEnv(dir), dir);
+      }
+      rmSync(join(dir, "bunfig.toml"));
+      rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
+      return dir;
+    })();
+    installedProjects.set(key, project);
+  }
+  return project;
+}
+
+async function copyProject(project: string, server: Registry) {
+  const dir = tempDir("audit-fix-", project);
+  await write(join(dir, "bun.lock"), (await lock(dir)).replaceAll(verdaccio.registryUrl(), server.url.href));
+  await writeBunfig(dir, server);
+  return dir;
+}
+
+async function installThrough(
+  server: Registry,
+  pkgJsonText: string,
+  extraFiles: Record<string, string> = {},
+  scopes?: Record<string, string>,
+) {
+  const dir = tempDir("audit-fix-", { "package.json": pkgJsonText, ...extraFiles });
+  await writeBunfig(dir, server, scopes);
+  await runBunInstall(installEnv(dir), dir);
+  return dir;
+}
+
+// Projects with more files than a package.json (workspaces) or with scoped registries (whose URLs bun.lock would
+// also carry) are installed through `server` every time.
 async function setup(
   server: Registry,
   pkgJson: object | string,
@@ -228,10 +269,8 @@ async function setup(
   scopes?: Record<string, string>,
 ) {
   const text = typeof pkgJson === "string" ? pkgJson : JSON.stringify(pkgJson);
-  const dir = tempDir("audit-fix-", { "package.json": text, ...extraFiles });
-  await writeBunfig(dir, server, scopes);
-  await runBunInstall(installEnv(dir), dir);
-  return dir;
+  if (scopes || Object.keys(extraFiles).length > 0) return installThrough(server, text, extraFiles, scopes);
+  return copyProject(await installedProject([text]), server);
 }
 
 function pkgJson(dir: string, ...segments: string[]) {
@@ -344,20 +383,74 @@ function scanned(dir: string): Promise<string[]> {
 
 // a-dep@1.0.2 stays installed after the range is widened because the still-satisfied edge is not re-resolved.
 async function setupVulnerableADep(server: Registry) {
-  const dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
-  await reinstall(dir, { name: "foo", dependencies: { "a-dep": "^1.0.2" } });
+  const project = await installedProject([
+    JSON.stringify({ name: "foo", dependencies: { "a-dep": "1.0.2" } }),
+    JSON.stringify({ name: "foo", dependencies: { "a-dep": "^1.0.2" } }),
+  ]);
+  const dir = await copyProject(project, server);
   expect(await lock(dir)).toContain('"a-dep@1.0.2"');
   return dir;
 }
 
+describe("setup()", () => {
+  // Everything in the project by relative path, minus the two things that are per directory: the bunfig (it names
+  // the directory's own cache) and the cache itself.
+  async function projectFiles(dir: string) {
+    const files: Record<string, string> = {};
+    for (const path of new Bun.Glob("**").scanSync({ cwd: dir, dot: true })) {
+      const name = path.replaceAll("\\", "/");
+      if (name === "bunfig.toml" || name.startsWith(".bun-cache/")) continue;
+      files[name] = await file(join(dir, path)).text();
+    }
+    return files;
+  }
+
+  test.concurrent("a copied project is what installing through the test's registry produces", async () => {
+    await using server = startRegistry({});
+    const pkg = JSON.stringify({ name: "foo", dependencies: { "one-fixed-dep": "1.0.0" } });
+    using copied = await setup(server, pkg);
+    using installed = await installThrough(server, pkg);
+
+    const files = await projectFiles(copied);
+    expect(Object.keys(files).sort()).toEqual([
+      "bun.lock",
+      "node_modules/no-deps/index.js",
+      "node_modules/no-deps/package.json",
+      "node_modules/one-fixed-dep/index.js",
+      "node_modules/one-fixed-dep/package.json",
+      "package.json",
+    ]);
+    expect(files["bun.lock"]).toContain(server.url.href);
+    expect(files["bun.lock"]).not.toContain(verdaccio.registryUrl());
+    expect(files).toEqual(await projectFiles(installed));
+  });
+});
+
 describe("`bun audit`", () => {
+  const MS_REQUEST: BulkRequest = { ms: ["0.7.0"] };
+  const MS_REPORT =
+    AUDIT_HEADER +
+    "ms@0.7.0\n" +
+    "  (direct dependency)\n" +
+    "  moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability (<2.0.0) - https://github.com/advisories/GHSA-w9mr-4mfr-499f\n" +
+    "  high: Regular Expression Denial of Service in ms (<0.7.1) - https://github.com/advisories/GHSA-3fx5-fwvr-xrjg\n" +
+    "\n" +
+    "2 vulnerabilities (1 high, 1 moderate)\n" +
+    "\n" +
+    REPORT_FOOTER;
+
   doAuditTest("should fail with no package.json", {
     exitCode: 1,
     files: {
       "README.md": "This place sure is empty...",
     },
-    fn: async ({ stderr }) => {
-      expect(await stderr).toContain("No package.json was found for directory");
+    fn: ({ stdout, stderr, dir, requests }) => {
+      expect(normalizeBunSnapshot(stderr, dir)).toMatchInlineSnapshot(`
+        "error: No package.json was found for directory "<dir>"
+        note: Run "bun init" to initialize a project"
+      `);
+      expect(stdout).toBe("");
+      expect(requests).toEqual([]);
     },
   });
 
@@ -372,9 +465,10 @@ describe("`bun audit`", () => {
         },
       }),
     },
-    fn: async ({ stdout, stderr }) => {
-      expect(normalizeBunSnapshot(await stderr)).toBe(MISSING_LOCKFILE);
-      expect(normalizeBunSnapshot(await stdout)).toBe("bun audit <version> (<revision>)");
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stderr)).toBe(MISSING_LOCKFILE);
+      expect(normalizeBunSnapshot(stdout)).toBe("bun audit <version> (<revision>)");
+      expect(requests).toEqual([]);
     },
   });
 
@@ -396,32 +490,108 @@ describe("`bun audit`", () => {
         "packages": {},
       }),
     },
-    fn: async ({ stdout }) => {
-      expect(normalizeBunSnapshot(await stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0));
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0));
+      expect(stderr).toBe("");
+      expect(requests).toEqual([{}]);
     },
   });
 
   doAuditTest("should exit 0 when there are no vulnerabilities", {
     exitCode: 0,
     files: fixture("safe-is-number@7"),
-    fn: async ({ stdout, stderr }) => {
-      expect(normalizeBunSnapshot(await stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
-      expect(await stdout).toMatch(DURATION);
-      expect(await stderr).toBe("");
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+      expect(stdout).toMatch(DURATION);
+      expect(stderr).toBe("");
+      expect(requests).toEqual([{ "is-number": ["7.0.0"] }]);
     },
   });
 
   doAuditTest("should exit code 1 when there are vulnerabilities", {
     exitCode: 1,
     files: fixture("express@3"),
-    fn: async ({ stdout, stderr }) => {
-      const out = normalizeBunSnapshot(await stdout);
-      expect(out).toStartWith(AUDIT_HEADER);
-      expect(out).toEndWith("21 vulnerabilities (2 critical, 9 high, 4 moderate, 6 low)\n\n" + REPORT_FOOTER);
-      expect(out).not.toContain("›");
-      expect(out).not.toContain("bun update");
-      expect(out).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
-      expect(await stderr).toBe("");
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+        "bun audit <version> (<revision>)
+
+        base64-url@1.2.1
+          express > connect > csurf > csrf > uid-safe > base64-url
+          high: Out-of-bounds Read in base64-url (<2.0.0) - https://github.com/advisories/GHSA-j4mr-9xw3-c9jx
+
+        basic-auth-connect@1.0.0
+          express > connect > basic-auth-connect
+          high: basic-auth-connect's callback uses time unsafe string comparison (<1.1.0) - https://github.com/advisories/GHSA-7p89-p6hx-q4fw
+
+        body-parser@1.13.3
+          express > connect > body-parser
+          high: body-parser vulnerable to denial of service when url encoding is enabled (<1.20.3) - https://github.com/advisories/GHSA-qwcr-r2fm-qrc7
+
+        cookie@0.1.3
+          express > connect > cookie
+          low: cookie accepts cookie name, path, and domain with out of bounds characters (<0.7.0) - https://github.com/advisories/GHSA-pxg6-pf52-xh8x
+
+        debug@2.2.0, 2.6.9
+          express > connect > compression > debug
+          high: debug Inefficient Regular Expression Complexity vulnerability (<2.6.9) - https://github.com/advisories/GHSA-9vvw-cc9w-f27h
+          low: Regular Expression Denial of Service in debug (<2.6.9) - https://github.com/advisories/GHSA-gxpj-cx7g-858c
+
+        express@3.21.2
+          (direct dependency)
+          low: Express Open Redirect vulnerability (>=3.4.5 <4.0.0-rc1) - https://github.com/advisories/GHSA-jj78-5fmv-mv28
+          low: express vulnerable to XSS via response.redirect() (<4.20.0) - https://github.com/advisories/GHSA-qw6h-vgh9-j6wx
+          moderate: Express ressource injection (<=3.21.4) - https://github.com/advisories/GHSA-cm5g-3pgc-8rg4
+          moderate: Express.js Open Redirect in malformed URLs (<4.19.2) - https://github.com/advisories/GHSA-rv95-896h-c2vc
+
+        fresh@0.3.0
+          express > connect > fresh
+          high: Regular Expression Denial of Service in fresh (<0.5.2) - https://github.com/advisories/GHSA-9qj9-36jm-prpv
+
+        mime@1.3.4
+          express > send > mime
+          high: mime Regular Expression Denial of Service when MIME lookup performed on untrusted user input (<1.4.1) - https://github.com/advisories/GHSA-wrvr-8mpx-r7pp
+
+        minimist@0.0.8
+          express > mkdirp > minimist
+          critical: Prototype Pollution in minimist (<0.2.4) - https://github.com/advisories/GHSA-xvch-5gv4-984h
+          moderate: Prototype Pollution in minimist (<0.2.1) - https://github.com/advisories/GHSA-vh95-rmgr-6w4m
+
+        morgan@1.6.1
+          express > connect > morgan
+          critical: Code Injection in morgan (<1.9.1) - https://github.com/advisories/GHSA-gwg9-rgvj-4h5j
+
+        ms@0.7.1, 0.7.2, 2.0.0
+          express > connect > serve-favicon > ms
+          moderate: Vercel ms Inefficient Regular Expression Complexity vulnerability (<2.0.0) - https://github.com/advisories/GHSA-w9mr-4mfr-499f
+
+        negotiator@0.5.3, 0.6.3
+          express > connect > serve-index > accepts > negotiator
+          high: Regular Expression Denial of Service in negotiator (<0.6.1) - https://github.com/advisories/GHSA-7mc5-chhp-fmc3
+
+        qs@4.0.0
+          express > connect > body-parser > qs
+          high: qs vulnerable to Prototype Pollution (<6.2.4) - https://github.com/advisories/GHSA-hrpp-h998-j3pp
+          high: Prototype Pollution Protection Bypass in qs (<6.0.4) - https://github.com/advisories/GHSA-gqgv-6jq5-jjj9
+
+        send@0.13.0, 0.13.2
+          express > send
+          low: send vulnerable to template injection that can lead to XSS (<0.19.0) - https://github.com/advisories/GHSA-m6fv-jmcg-4jfg
+
+        serve-static@1.10.3
+          express > connect > serve-static
+          low: serve-static vulnerable to template injection that can lead to XSS (<1.16.0) - https://github.com/advisories/GHSA-cm22-4g7w-348p
+
+        21 vulnerabilities (2 critical, 9 high, 4 moderate, 6 low)
+
+          bun audit fix           upgrade the vulnerable packages within their ranges
+          bun audit fix --latest  also cross major versions"
+      `);
+      expect(stdout).toEndWith("also cross major versions\n");
+      expect(stderr).toBe("");
+      // One request carrying every installed version of the lockfile's 77 packages.
+      expect(requests).toHaveLength(1);
+      expect(Object.keys(requests[0])).toHaveLength(77);
+      expect(requests[0]).toMatchObject({ express: ["3.21.2"], ms: ["0.7.1", "0.7.2", "2.0.0"] });
     },
   });
 
@@ -429,11 +599,11 @@ describe("`bun audit`", () => {
     exitCode: 0,
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--audit-level", "critical"],
-    fn: async ({ stdout }) => {
-      expect(normalizeBunSnapshot(await stdout)).toBe(
-        AUDIT_HEADER + noVulnerabilities(1, "2 below --audit-level=critical"),
-      );
-      expect(await stdout).toMatch(DURATION);
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1, "2 below --audit-level=critical"));
+      expect(stdout).toMatch(DURATION);
+      expect(stderr).toBe("");
+      expect(requests).toEqual([MS_REQUEST]);
     },
   });
 
@@ -441,8 +611,10 @@ describe("`bun audit`", () => {
     exitCode: 0,
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--ignore", "GHSA-w9mr-4mfr-499f", "--ignore", "GHSA-3fx5-fwvr-xrjg"],
-    fn: async ({ stdout }) => {
-      expect(normalizeBunSnapshot(await stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1, "2 ignored"));
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1, "2 ignored"));
+      expect(stderr).toBe("");
+      expect(requests).toEqual([MS_REQUEST]);
     },
   });
 
@@ -450,10 +622,12 @@ describe("`bun audit`", () => {
     exitCode: 0,
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--audit-level", "high", "--ignore", "GHSA-3fx5-fwvr-xrjg"],
-    fn: async ({ stdout }) => {
-      expect(normalizeBunSnapshot(await stdout)).toBe(
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stdout)).toBe(
         AUDIT_HEADER + noVulnerabilities(1, "1 below --audit-level=high", "1 ignored"),
       );
+      expect(stderr).toBe("");
+      expect(requests).toEqual([MS_REQUEST]);
     },
   });
 
@@ -461,21 +635,42 @@ describe("`bun audit`", () => {
     exitCode: 0,
     files: fixture("safe-is-number@7"),
     args: ["--json"],
-    fn: async ({ stdout }) => {
-      const out = await stdout;
-      const json = JSON.parse(out); // this would throw making the test fail if the JSON was invalid
-      expect(json).toMatchSnapshot("bun-audit-expect-valid-json-stdout-report-no-vulnerabilities");
+    fn: ({ stdout, stderr, requests }) => {
+      expect(stdout).toBe("{}\n");
+      expect(stderr).toBe("");
+      expect(requests).toEqual([{ "is-number": ["7.0.0"] }]);
     },
   });
 
+  // --json prints the registry's response as it arrived, so the expected document is the recorded fixture response.
   doAuditTest("should print valid JSON and exit 1 when --json is passed and there are vulnerabilities", {
     exitCode: 1,
     files: fixture("express@3"),
     args: ["--json"],
-    fn: async ({ stdout }) => {
-      const out = await stdout;
-      const json = JSON.parse(out); // this would throw making the test fail if the JSON was invalid
-      expect(json).toMatchSnapshot("bun-audit-expect-valid-json-stdout-report-vulnerabilities");
+    fn: ({ stdout, stderr, requests }) => {
+      expect(stdout.trim().split("\n")).toHaveLength(1);
+      const json = JSON.parse(stdout);
+      expect(json).toEqual(resolveBulkAdvisoryFixture(requests[0]));
+      // The same 15 packages and 21 advisories the report above lists.
+      expect(Object.keys(json)).toEqual([
+        "base64-url",
+        "basic-auth-connect",
+        "body-parser",
+        "cookie",
+        "debug",
+        "express",
+        "fresh",
+        "mime",
+        "minimist",
+        "morgan",
+        "ms",
+        "negotiator",
+        "qs",
+        "send",
+        "serve-static",
+      ]);
+      expect(Object.values(json).flat()).toHaveLength(21);
+      expect(stderr).toBe("");
     },
   });
 
@@ -483,9 +678,10 @@ describe("`bun audit`", () => {
     exitCode: 0,
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--json", "--audit-level", "critical"],
-    fn: async ({ stdout }) => {
-      const json = JSON.parse(await stdout);
-      expect(json.ms.map((a: { severity: string }) => a.severity).sort()).toStrictEqual(["high", "moderate"]);
+    fn: ({ stdout, stderr, requests }) => {
+      expect(JSON.parse(stdout)).toEqual(resolveBulkAdvisoryFixture(MS_REQUEST));
+      expect(stderr).toBe("");
+      expect(requests).toEqual([MS_REQUEST]);
     },
   });
 
@@ -493,9 +689,10 @@ describe("`bun audit`", () => {
     exitCode: 0,
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--json", "--ignore", "GHSA-w9mr-4mfr-499f", "--ignore", "GHSA-3fx5-fwvr-xrjg"],
-    fn: async ({ stdout }) => {
-      const json = JSON.parse(await stdout);
-      expect(json.ms).toHaveLength(2);
+    fn: ({ stdout, stderr, requests }) => {
+      expect(JSON.parse(stdout)).toEqual(resolveBulkAdvisoryFixture(MS_REQUEST));
+      expect(stderr).toBe("");
+      expect(requests).toEqual([MS_REQUEST]);
     },
   });
 
@@ -503,8 +700,10 @@ describe("`bun audit`", () => {
     exitCode: 1,
     files: fixture("vuln-with-only-dev-dependencies"),
     args: ["--json", "--audit-level", "high", "--ignore", "GHSA-w9mr-4mfr-499f"],
-    fn: async ({ stdout }) => {
-      expect(JSON.parse(await stdout).ms).toHaveLength(2);
+    fn: ({ stdout, stderr, requests }) => {
+      expect(JSON.parse(stdout)).toEqual(resolveBulkAdvisoryFixture(MS_REQUEST));
+      expect(stderr).toBe("");
+      expect(requests).toEqual([MS_REQUEST]);
     },
   });
 
@@ -513,8 +712,10 @@ describe("`bun audit`", () => {
     {
       exitCode: 1,
       files: fixture("vuln-with-only-dev-dependencies"),
-      fn: async ({ stdout }) => {
-        expect(normalizeBunSnapshot(await stdout)).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
+      fn: ({ stdout, stderr, requests }) => {
+        expect(normalizeBunSnapshot(stdout)).toBe(MS_REPORT);
+        expect(stderr).toBe("");
+        expect(requests).toEqual([MS_REQUEST]);
       },
     },
   );
@@ -524,15 +725,11 @@ describe("`bun audit`", () => {
     {
       exitCode: 1,
       files: fixture("mix-of-safe-and-vulnerable-dependencies"),
-      fn: async ({ stdout }) => {
-        // The fixture installs a safe is-number and a vulnerable ms.
-
-        const out = await stdout;
-
-        expect(out).toContain("ms");
-        expect(out).not.toContain("is-number");
-
-        expect(normalizeBunSnapshot(out)).toMatchSnapshot("bun-audit-expect-vulnerabilities-found");
+      fn: ({ stdout, stderr, requests }) => {
+        // is-number is audited but has no advisories, so the report is the one for ms alone.
+        expect(requests).toEqual([{ "is-number": ["7.0.0"], ...MS_REQUEST }]);
+        expect(normalizeBunSnapshot(stdout)).toBe(MS_REPORT);
+        expect(stderr).toBe("");
       },
     },
   );
@@ -566,38 +763,57 @@ describe("`bun audit`", () => {
     };
   }
 
+  // Runs `bun audit` with a fixture registry as the default registry and returns the package names it was asked about.
   async function auditWithDefaultRegistry(dir: string) {
+    const requests: BulkRequest[] = [];
+    await using registry = startFixtureRegistry(requests);
     await using proc = spawn({
       cmd: [bunExe(), "audit"],
       stdout: "pipe",
       stderr: "pipe",
       cwd: dir,
-      env: { ...bunEnv, NPM_CONFIG_REGISTRY: registryHref(server) },
+      env: { ...bunEnv, NPM_CONFIG_REGISTRY: registryHref(registry) },
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout, stderr, exitCode, askedAbout: requests.flatMap(Object.keys) };
   }
 
-  test("packages served by a scoped registry are audited against that registry", async () => {
-    await using scoped = startRegistry({}, { bulkResponse: { "@foo/bar": [adv("<2.0.0")] } });
+  test.concurrent("packages served by a scoped registry are audited against that registry", async () => {
+    const bulkBodies: BulkRequest[] = [];
+    await using scoped = startRegistry({}, { bulkResponse: { "@foo/bar": [adv("<2.0.0")] }, bulkBodies });
     using dir = tempDir("bun-test-audit-scoped-registry", scopedRegistryProject(scoped));
 
-    const { stdout, stderr, exitCode } = await auditWithDefaultRegistry(String(dir));
-    expect(stdout).toContain("@foo/bar@1.0.0\n");
-    expect(stdout).toContain("1 vulnerability (1 high)");
+    const { stdout, stderr, exitCode, askedAbout } = await auditWithDefaultRegistry(String(dir));
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit <version> (<revision>)
+
+      @foo/bar@1.0.0
+        high: test advisory (<2.0.0) - https://example.invalid/advisory/1
+
+      1 vulnerability (1 high)
+
+        bun audit fix           upgrade the vulnerable packages within their ranges
+        bun audit fix --latest  also cross major versions"
+    `);
     expect(stderr).toBe("");
+    expect(bulkBodies).toEqual([{ "@foo/bar": ["1.0.0"], "@foo/baz": ["1.0.0"] }]);
+    expect(askedAbout).toEqual([]);
     expect(exitCode).toBe(1);
   });
 
-  test("packages whose scoped registry does not answer the audit request are listed as skipped", async () => {
-    await using scoped = startRegistry({}, { bulkStatus: 404 });
-    using dir = tempDir("bun-test-audit-scoped-registry-down", scopedRegistryProject(scoped));
+  test.concurrent(
+    "packages whose scoped registry does not answer the audit request are listed as skipped",
+    async () => {
+      await using scoped = startRegistry({}, { bulkStatus: 404 });
+      using dir = tempDir("bun-test-audit-scoped-registry-down", scopedRegistryProject(scoped));
 
-    const { stdout, stderr, exitCode } = await auditWithDefaultRegistry(String(dir));
-    expect(normalizeBunSnapshot(stderr)).toBe(skippedWarning(registryHref(scoped), "404", "@foo/bar", "@foo/baz"));
-    expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0, "2 skipped"));
-    expect(exitCode).toBe(0);
-  });
+      const { stdout, stderr, exitCode, askedAbout } = await auditWithDefaultRegistry(String(dir));
+      expect(normalizeBunSnapshot(stderr)).toBe(skippedWarning(registryHref(scoped), "404", "@foo/bar", "@foo/baz"));
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0, "2 skipped"));
+      expect(askedAbout).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   doAuditTest("workspaces print the path to the vulnerable package and include workspace:pkg in the name", {
     exitCode: 1,
@@ -634,10 +850,11 @@ describe("`bun audit`", () => {
         },
       }),
     },
-    fn: async ({ stdout }) => {
-      const out = await stdout;
-      expect(out).toContain("\nms@0.7.0\n  workspace:a > ms\n");
-      expect(out).not.toContain("›");
+    fn: ({ stdout, stderr, requests }) => {
+      // The workspace package itself is not sent to the registry.
+      expect(requests).toEqual([MS_REQUEST]);
+      expect(normalizeBunSnapshot(stdout)).toBe(MS_REPORT.replace("(direct dependency)", "workspace:a > ms"));
+      expect(stderr).toBe("");
     },
   });
 
@@ -645,13 +862,24 @@ describe("`bun audit`", () => {
     exitCode: 1,
     files: fixture("express@3"),
     args: ["--audit-level", "critical"],
-    fn: async ({ stdout, stderr }) => {
-      expect(await stderr).not.toContain("invalid `--audit-level` value");
-      const output = await stdout;
-      expect(output).toContain("critical:");
-      expect(output).not.toContain("moderate:");
-      expect(output).not.toContain("high:");
-      expect(output).not.toContain("low:");
+    fn: ({ stdout, stderr }) => {
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+        "bun audit <version> (<revision>)
+
+        minimist@0.0.8
+          express > mkdirp > minimist
+          critical: Prototype Pollution in minimist (<0.2.4) - https://github.com/advisories/GHSA-xvch-5gv4-984h
+
+        morgan@1.6.1
+          express > connect > morgan
+          critical: Code Injection in morgan (<1.9.1) - https://github.com/advisories/GHSA-gwg9-rgvj-4h5j
+
+        2 vulnerabilities (2 critical)
+
+          bun audit fix           upgrade the vulnerable packages within their ranges
+          bun audit fix --latest  also cross major versions"
+      `);
+      expect(stderr).toBe("");
     },
   });
 
@@ -659,9 +887,12 @@ describe("`bun audit`", () => {
     exitCode: 1,
     files: fixture("safe-is-number@7"),
     args: ["--audit-level", "invalid"],
-    fn: async ({ stderr }) => {
-      expect(await stderr).toContain("invalid `--audit-level` value");
-      expect(await stderr).toContain("Valid values are: low, moderate, high, critical");
+    fn: ({ stdout, stderr, requests }) => {
+      expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(
+        `"error: invalid \`--audit-level\` value: 'invalid'. Valid values are: low, moderate, high, critical"`,
+      );
+      expect(stdout).toBe("");
+      expect(requests).toEqual([]);
     },
   });
 
@@ -669,9 +900,10 @@ describe("`bun audit`", () => {
     exitCode: 0,
     files: fixture("safe-is-number@7"),
     args: ["--audit-level", "moderate"],
-    fn: async ({ stdout, stderr }) => {
-      expect(await stderr).toBe("");
-      expect(normalizeBunSnapshot(await stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+    fn: ({ stdout, stderr, requests }) => {
+      expect(stderr).toBe("");
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+      expect(requests).toEqual([{ "is-number": ["7.0.0"] }]);
     },
   });
 
@@ -679,9 +911,11 @@ describe("`bun audit`", () => {
     exitCode: 1,
     files: fixture("mix-of-safe-and-vulnerable-dependencies"),
     args: ["--prod"],
-    fn: async ({ stdout, stderr }) => {
-      expect(await stderr).not.toContain("error");
-      expect(await stdout).toContain("vulnerabilities");
+    fn: ({ stdout, stderr, requests }) => {
+      // Both packages are production dependencies, so --prod audits and reports the same set.
+      expect(requests).toEqual([{ "is-number": ["7.0.0"], ...MS_REQUEST }]);
+      expect(normalizeBunSnapshot(stdout)).toBe(MS_REPORT);
+      expect(stderr).toBe("");
     },
   });
 
@@ -689,15 +923,20 @@ describe("`bun audit`", () => {
     exitCode: 1,
     files: fixture("express@3"),
     args: ["--ignore", "GHSA-gwg9-rgvj-4h5j"],
-    fn: async ({ stdout, stderr }) => {
-      expect(await stderr).not.toContain("error");
-      const output = await stdout;
-      expect(output).not.toContain("GHSA-gwg9-rgvj-4h5j");
-      expect(output).toContain("vulnerabilities");
+    fn: ({ stdout, stderr }) => {
+      const out = normalizeBunSnapshot(stdout);
+      // The ignored advisory was morgan's only one, so its block disappears and the critical count drops with it:
+      // the header, 14 of the 15 packages, the summary and the footer remain.
+      expect(out).not.toContain("morgan");
+      expect(out).not.toContain("GHSA-gwg9-rgvj-4h5j");
+      expect(out.split("\n\n")).toHaveLength(17);
+      expect(out).toStartWith(AUDIT_HEADER + "base64-url@1.2.1\n");
+      expect(out).toEndWith("\n\n20 vulnerabilities (1 critical, 9 high, 4 moderate, 6 low)\n\n" + REPORT_FOOTER);
+      expect(stderr).toBe("");
     },
   });
 
-  test("sends a well-formed JSON request body when a package name contains a double quote", async () => {
+  test.concurrent("sends a well-formed JSON request body when a package name contains a double quote", async () => {
     const packageName = 'a"b';
     using dirHandle = tempDir("bun-test-audit-name-with-quote", {
       "package.json": JSON.stringify({
@@ -748,6 +987,7 @@ describe("`bun audit`", () => {
 
     expect(JSON.parse(receivedBody)).toStrictEqual({ [packageName]: ["1.0.0"] });
     expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });
@@ -850,13 +1090,14 @@ describe("`bun audit` with a secret in the registry URL", () => {
   // answers 404, so both commands report that registry as skipped; `printed` is how it must be named.
   async function expectSkippedRegistry(dir: string, printed: string) {
     const skipped = skippedWarning(printed, "404", "@foo/bar");
+    await using defaultRegistry = startFixtureRegistry();
 
-    const report = await auditAgainst(dir, registryHref(server));
+    const report = await auditAgainst(dir, registryHref(defaultRegistry));
     expect(normalizeBunSnapshot(report.stderr)).toBe(skipped);
     expect(normalizeBunSnapshot(report.stdout)).toBe(AUDIT_HEADER + noVulnerabilities(0, "1 skipped"));
     expect(report.exitCode).toBe(0);
 
-    const fix = await auditAgainst(dir, registryHref(server), "fix", "--json");
+    const fix = await auditAgainst(dir, registryHref(defaultRegistry), "fix", "--json");
     expect(normalizeBunSnapshot(fix.stderr)).toBe(skipped);
     expect(JSON.parse(fix.stdout)).toStrictEqual({
       dryRun: false,

@@ -87,6 +87,7 @@ pub struct UnmatchedAdvisory {
 }
 
 pub struct UnauditedRegistry {
+    /// The registry's href without URL credentials or a trailing slash.
     pub registry: Box<[u8]>,
     pub packages: Vec<Box<[u8]>>,
     /// Status code or error name; empty when unknown.

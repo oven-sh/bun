@@ -125,25 +125,20 @@ pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
     destination
 }
 
-fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
-    simdutf::base64::encode_len(source_len, true)
-}
-
 /// Encode with the following differences from regular `encode` function:
 ///
 /// * No padding is added (the extra `=` characters at the end)
 /// * `-` and `_` are used instead of `+` and `/`
 ///
+/// Panics if `dest` is shorter than [`url_safe_encode_len`]`(source)`.
 /// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
 pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
     simdutf::base64::encode(source, dest, true)
 }
 
-/// `encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
-/// `simdutf_encode_len_url_safe` (simdutf computes the exact no-padding length, so
-/// the trailing `truncate` is a no-op kept for symmetry with `encode_alloc`).
+/// `encode_url_safe` into a freshly allocated `Vec<u8>` of exactly `url_safe_encode_len(source)` bytes.
 pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
-    let len = simdutf_encode_len_url_safe(source.len());
+    let len = url_safe_encode_len(source);
     let mut destination = vec![0u8; len];
     let encoded_len = encode_url_safe(&mut destination, source);
     destination.truncate(encoded_len);
@@ -171,17 +166,28 @@ pub const fn encode_len_from_size(source: usize) -> usize {
 }
 
 #[inline]
-const fn url_safe_encode_len_from_size(n: usize) -> usize {
-    // Equivalent to WebKit's `ceil(n * 4 / 3)`, but split so the intermediate
-    // product can't overflow before the divide for large `n`.
-    let full_chunks = n / 3;
-    let leftover = n % 3;
-    full_chunks * 4 + (leftover * 4).div_ceil(3)
+pub const fn url_safe_encode_len(source: &[u8]) -> usize {
+    simdutf::base64::encode_len(source.len(), true)
 }
 
-#[inline]
-pub const fn url_safe_encode_len(source: &[u8]) -> usize {
-    url_safe_encode_len_from_size(source.len())
+// Run by scripts/rust-miri.ts (also with --release), where reaching simdutf fails the test.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "need 4 bytes for a 1-byte input, got 3")]
+    fn encode_panics_when_the_destination_is_too_short() {
+        let mut dest = [0u8; 3];
+        encode(&mut dest, b"a");
+    }
+
+    #[test]
+    #[should_panic(expected = "need 2 bytes for a 1-byte input, got 1")]
+    fn encode_url_safe_panics_when_the_destination_is_too_short() {
+        let mut dest = [0u8; 1];
+        encode_url_safe(&mut dest, b"a");
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -972,7 +978,7 @@ pub fn wyhash_url_safe<'a>(
     let h: u32 = hasher.final_() as u32; // @truncate
     let h_bytes: [u8; 4] = h.to_le_bytes();
 
-    let encode_len = simdutf_encode_len_url_safe(h_bytes.len());
+    let encode_len = url_safe_encode_len(&h_bytes);
 
     // Always alloc a fresh slice from the arena.
     // PERF: no buffer reuse for large encode_len — profile if hot.

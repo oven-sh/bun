@@ -3598,20 +3598,19 @@ pub mod base64 {
     /// padded). Port of `bun.base64.encodeLen`.
     #[inline]
     pub const fn encode_len(source: &[u8]) -> usize {
-        // simdutf::base64_length_from_binary(len, default)
         standard_encoder_calc_size(source.len())
     }
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
+    /// Panics if `dest` is shorter than [`encode_len`]`(source)`.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
-        debug_assert!(dest.len() >= encode_len(source));
         simdutf::base64::encode(source, dest, false)
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.
     #[inline]
     pub const fn standard_encoder_calc_size(source_len: usize) -> usize {
-        source_len.div_ceil(3) * 4
+        simdutf::base64::encode_len(source_len, false)
     }
 
     /// Standard-base64 encode, returning the written sub-slice of `dest`.

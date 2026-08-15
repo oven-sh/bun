@@ -46,9 +46,17 @@ const MIRI_CRATES = [
   "bun_ptr",
   "bun_resolve_builtins",
   "bun_shell_parser",
+  "bun_simdutf_sys",
   "bun_threading",
   "bun_wyhash",
 ];
+
+// Crates with tests that pin a check to release builds: an `assert!` in front
+// of an FFI write, which the tests only distinguish from a `debug_assert!`
+// (compiled out in release) when debug assertions are off. They get a second
+// run with `--release`; the default run keeps debug assertions on for every
+// other crate's `debug_assert!` coverage.
+const RELEASE_MIRI_CRATES = ["bun_base64", "bun_simdutf_sys"];
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
@@ -79,14 +87,20 @@ if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo)) {
   }
 }
 
-const extraArgs = process.argv.slice(2);
-const crateArgs = extraArgs.length > 0 ? extraArgs : MIRI_CRATES.flatMap(c => ["-p", c]);
+function miriTest(args: string[]): number {
+  console.log(`\x1b[36m[miri]\x1b[0m cargo miri test ${args.join(" ")}`);
+  const r = run("cargo", ["miri", "test", ...args], {
+    env: {
+      ...process.env,
+      MIRIFLAGS: ["-Zmiri-tree-borrows", process.env.MIRIFLAGS ?? ""].join(" ").trim(),
+    },
+  });
+  return r.status ?? 1;
+}
 
-console.log(`\x1b[36m[miri]\x1b[0m cargo miri test ${crateArgs.join(" ")}`);
-const r = run("cargo", ["miri", "test", ...crateArgs], {
-  env: {
-    ...process.env,
-    MIRIFLAGS: ["-Zmiri-tree-borrows", process.env.MIRIFLAGS ?? ""].join(" ").trim(),
-  },
-});
-process.exit(r.status ?? 1);
+const extraArgs = process.argv.slice(2);
+if (extraArgs.length > 0) process.exit(miriTest(extraArgs));
+
+const status = miriTest(MIRI_CRATES.flatMap(c => ["-p", c]));
+if (status !== 0) process.exit(status);
+process.exit(miriTest(["--release", ...RELEASE_MIRI_CRATES.flatMap(c => ["-p", c])]));

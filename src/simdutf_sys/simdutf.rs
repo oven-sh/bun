@@ -482,19 +482,20 @@ pub mod base64 {
             output: *mut u8,
             outlen: usize,
         ) -> SIMDUTFResult;
-        fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
     }
 
+    /// Writes exactly `encode_len(input.len(), is_urlsafe)` bytes; panics if `output` is shorter (simdutf is never told its length).
     pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> usize {
-        // SAFETY: caller guarantees output.len() >= encode_len(input.len(), is_urlsafe).
-        unsafe {
-            simdutf__base64_encode(
-                input.as_ptr(),
-                input.len(),
-                output.as_mut_ptr(),
-                is_urlsafe as c_int,
-            )
-        }
+        let needed = encode_len(input.len(), is_urlsafe);
+        assert!(
+            output.len() >= needed,
+            "base64 encode: output buffer too small: need {needed} bytes for a {}-byte input, got {}",
+            input.len(),
+            output.len(),
+        );
+        // SAFETY: `output` holds at least the `needed` bytes `encode_raw`
+        // writes, and as a live `&mut` it cannot overlap `input`.
+        unsafe { encode_raw(input, output.as_mut_ptr(), is_urlsafe) }
     }
 
     /// Raw-pointer variant of [`encode`] for writing into uninitialised
@@ -509,12 +510,20 @@ pub mod base64 {
     pub unsafe fn encode_raw(input: &[u8], output: *mut u8, is_urlsafe: bool) -> usize {
         // SAFETY: caller contract guarantees `output` is valid for
         // `encode_len(input.len(), is_urlsafe)` bytes and disjoint from `input`.
-        unsafe { simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe as c_int) }
+        let written = unsafe {
+            simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe as c_int)
+        };
+        debug_assert_eq!(written, encode_len(input.len(), is_urlsafe));
+        written
     }
 
-    pub fn encode_len(input: usize, is_urlsafe: bool) -> usize {
-        // SAFETY: pure length computation; no pointers dereferenced.
-        unsafe { simdutf__base64_length_from_binary(input, is_urlsafe as c_int) }
+    /// simdutf's `base64_length_from_binary`, which is exactly what [`encode`] writes; in Rust so the check in `encode` is plain arithmetic.
+    pub const fn encode_len(input_len: usize, is_urlsafe: bool) -> usize {
+        if !is_urlsafe {
+            return input_len.div_ceil(3) * 4;
+        }
+        let tail = input_len % 3;
+        input_len / 3 * 4 + if tail == 0 { 0 } else { tail + 1 }
     }
 
     pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {
@@ -544,6 +553,34 @@ pub mod base64 {
                 output.as_mut_ptr(),
                 output.len(),
             )
+        }
+    }
+
+    // Run by scripts/rust-miri.ts (also with --release), where reaching the foreign call fails the test.
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn encode_len_pads_the_standard_alphabet_only() {
+            let standard: Vec<usize> = (0..8).map(|n| encode_len(n, false)).collect();
+            assert_eq!(standard, [0, 4, 4, 4, 8, 8, 8, 12]);
+            let url_safe: Vec<usize> = (0..8).map(|n| encode_len(n, true)).collect();
+            assert_eq!(url_safe, [0, 2, 3, 4, 6, 7, 8, 10]);
+        }
+
+        #[test]
+        #[should_panic(expected = "need 4 bytes for a 1-byte input, got 3")]
+        fn encode_panics_when_the_padded_output_does_not_fit() {
+            let mut output = [0u8; 3];
+            encode(b"a", &mut output, false);
+        }
+
+        #[test]
+        #[should_panic(expected = "need 2 bytes for a 1-byte input, got 1")]
+        fn encode_panics_when_the_url_safe_output_does_not_fit() {
+            let mut output = [0u8; 1];
+            encode(b"a", &mut output, true);
         }
     }
 }

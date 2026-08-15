@@ -1905,7 +1905,9 @@ test.concurrent("migrates package-lock.json when there is no bun.lock", async ()
   // Nothing was installed before this run, so the summary also carries the install count.
   const { stdout, stderr, exitCode } = await dedupe(packageDir);
   expectRemoved(stdout, "no-deps 1.1.0 -> 1.0.0", { checked: 4 });
-  expect(lines(stdout).at(-1)).toBe("1 duplicate version removed, 2 packages installed (checked 4 packages in bun.lock)");
+  expect(lines(stdout).at(-1)).toBe(
+    "1 duplicate version removed, 2 packages installed (checked 4 packages in bun.lock)",
+  );
   expect(stderr).toContain("migrated lockfile from package-lock.json");
   expect(stderr).toContain("Saved lockfile");
   expect(stderr).not.toContain("error:");

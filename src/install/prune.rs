@@ -959,8 +959,9 @@ fn plan_hoisted(
 
     let quiet = manager.options.log_level == LogLevel::Silent;
     let features = manager.options.local_package_features;
-    let filtered =
-        !features.dev_dependencies || !features.optional_dependencies || !features.peer_dependencies;
+    let filtered = !features.dev_dependencies
+        || !features.optional_dependencies
+        || !features.peer_dependencies;
     let lockfile: &Lockfile = &manager.lockfile;
     let hoisted = HoistedTree::init(lockfile, quiet, filtered);
     let buf = lockfile.buffers.string_bytes.as_slice();

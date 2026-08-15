@@ -1909,9 +1909,7 @@ test.concurrent.each(["hoisted", "isolated"] as Linker[])(
     const junk = plant(dir, "node_modules/junk");
 
     const { stdout, exitCode } = await prune(dir, "--linker", linker);
-    expect(out(stdout)).toBe(
-      `bun prune <version> (<revision>)\n\n- junk\n${REMOVED(1, linker === "hoisted" ? 4 : 6)}`,
-    );
+    expect(out(stdout)).toBe(`bun prune <version> (<revision>)\n\n- junk\n${REMOVED(1, linker === "hoisted" ? 4 : 6)}`);
     expect(exitCode).toBe(0);
     expect(existsSync(junk)).toBeFalse();
     expect(await file(join(nm, "my-alias", "package.json")).json()).toMatchObject({

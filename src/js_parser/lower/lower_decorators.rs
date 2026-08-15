@@ -156,6 +156,15 @@ fn has_private_key(prop: &Property) -> bool {
     matches!(prop.key, Some(key) if matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_)))
 }
 
+/// Undecorated private static field or static auto-accessor: initialized outside step 7's order.
+#[inline]
+fn is_unordered_static_initializer(prop: &Property) -> bool {
+    prop.flags.contains(Flags::Property::IsStatic)
+        && !prop.flags.contains(Flags::Property::IsMethod)
+        && prop.ts_decorators.len_u32() == 0
+        && (has_private_key(prop) || prop.kind == PropertyKind::AutoAccessor)
+}
+
 /// Shapes `rewrite_expr` walks fully; never `super`, `new.target`, `#names`, functions or classes.
 fn can_leave_class_body(expr: &Expr) -> bool {
     use js_ast::ExprData as D;
@@ -1284,8 +1293,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // All or nothing (keys are pre-evaluated in Phase 2), so static members keep their order.
         let relocate_static_fields = class_decorators_len > 0
             && class.properties.slice().iter().all(|prop| {
-                (!prop.flags.contains(Flags::Property::IsComputed)
-                    || prop.key.is_none_or(|key| can_leave_class_body(&key)))
+                !is_unordered_static_initializer(prop)
+                    && (!prop.flags.contains(Flags::Property::IsComputed)
+                        || prop.key.is_none_or(|key| can_leave_class_body(&key)))
                     && (!is_plain_static_field(prop)
                         || prop
                             .initializer

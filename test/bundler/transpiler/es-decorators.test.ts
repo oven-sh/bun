@@ -334,6 +334,61 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("a private static field or a static accessor keeps every static field in place", async () => {
+      // Neither is initialized through the ordered part of the lowering, so
+      // relocating their siblings would move those out from under them.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const log = [];
+        let original;
+        function wrap(cls, ctx) {
+          log.push("decorator");
+          original = cls;
+          return class Wrapped extends cls {};
+        }
+        function keep(cls, ctx) {
+          log.push("decorator");
+        }
+        @wrap class WithPrivate {
+          static first = (log.push("first"), 1);
+          static #second = (log.push("second"), WithPrivate.first + 1);
+          static get second() { return WithPrivate.#second; }
+        }
+        const withPrivate = {
+          log: log.splice(0),
+          second: WithPrivate.second,
+          originalKeys: Object.keys(original),
+          replacementKeys: Object.keys(WithPrivate),
+        };
+        @keep class WithAccessor {
+          static first = (log.push("first"), 1);
+          static accessor second = (log.push("second"), 2);
+          static third = (log.push("third"), WithAccessor.first + 2);
+        }
+        const withAccessor = {
+          log: log.splice(0),
+          values: [WithAccessor.first, WithAccessor.second, WithAccessor.third],
+          keys: Object.keys(WithAccessor),
+        };
+        console.log(JSON.stringify({ withPrivate, withAccessor }));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        withPrivate: {
+          log: ["first", "second", "decorator"],
+          second: 2,
+          originalKeys: ["first"],
+          replacementKeys: [],
+        },
+        withAccessor: {
+          // The accessor's storage is set up by the lowering after the body runs; unchanged by this change.
+          log: ["first", "third", "second", "decorator"],
+          values: [1, 2, 3],
+          keys: ["first", "third"],
+        },
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test("relocated static fields define properties instead of invoking inherited setters", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         ${wrap}

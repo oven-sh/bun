@@ -1,7 +1,7 @@
 use core::ffi::c_ulong;
 use std::io::Write as _;
 
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::HashMap;
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
 use bun_core;
@@ -33,11 +33,6 @@ pub struct Snapshots {
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
     // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
     values: HashMap<u64, Box<[u8]>>,
-    /// Test name -> number of snapshot matchers (file or inline) that test has run so far;
-    /// numbers the `.snap` keys. Scoped to the test file being run, not to `_current_file`:
-    /// inline snapshots bump it before the file's `.snap` is opened, and a file that only
-    /// uses inline snapshots never opens one.
-    counts: StringHashMap<usize>,
     _current_file: Option<File>,
     /// Directory whose `__snapshots__/` was last created (or found existing);
     /// borrowed from the runner's `File::source.path`, a `Path<'static>`.
@@ -66,7 +61,6 @@ impl Snapshots {
             failed: 0,
             file_buf: Vec::new(),
             values: HashMap::new(),
-            counts: StringHashMap::new(),
             _current_file: None,
             snapshot_dir_path: None,
             inline_snapshots_to_write: IndexMap::new(),
@@ -113,19 +107,16 @@ pub struct File {
 }
 
 impl Snapshots {
-    /// Called when a test file starts running (including each `--rerun-each` pass) and
-    /// when a test is retried, so every run of a file numbers its snapshots from 1.
-    pub(crate) fn reset_counts(&mut self) {
-        self.counts.clear();
-    }
-
     pub(crate) fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
+        // `get_snapshot_name` just upgraded this same weak ref, so the test's file is alive.
+        let buntest_strong = expect.bun_test().ok_or(crate::Error::TestNotActive)?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
-        let gop = self
-            .counts
+        let gop = buntest_strong
+            .get()
+            .snapshot_counts
             .get_or_put(&snapshot_name)
             .map_err(Error::from)?;
         if gop.found_existing {

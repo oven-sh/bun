@@ -3235,9 +3235,6 @@ impl TestCommand {
                 let entry = ZigString::init(file_path);
                 vm.global().delete_module_registry_entry(&entry)?;
             }
-            // Snapshot keys are numbered per test file: counts left over from the
-            // previous file (or the previous rerun of this one) would shift them.
-            reporter.jest.snapshots.reset_counts();
 
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern

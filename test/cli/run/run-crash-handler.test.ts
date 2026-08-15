@@ -430,7 +430,8 @@ describe.if(isWindows)("Windows: crash trace continues below the JS frames", () 
 
     expect(stderr).toContain("Segmentation fault at address 0xE8");
     const images = traceStringFrameImages(stderr);
-    expect(images[0]).toBe("ntdll.dll");
+    // The loader reports system DLL names in whatever case it mapped them.
+    expect(images[0]).toMatch(/^ntdll\.dll$/i);
     // The FFI call stub and the native-call thunk are JIT-pool code even for
     // interpreted callers; a third JIT frame proves the JS was compiled (the
     // DFG may inline the three functions into one frame).

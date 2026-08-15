@@ -375,9 +375,7 @@ pub mod lib {
             // SAFETY: self valid.
             unsafe { archive_write_close(self.as_mut_ptr()) }
         }
-        /// Granularity the final output block is padded to. libarchive's default
-        /// pads it to a full block (10 KiB for tar); `archive_write_open_filename`
-        /// sets 1 (no padding) when writing to a regular file.
+        /// Padding unit for the last output block; the default pads it to 10 KiB, 1 disables padding.
         pub fn write_set_bytes_in_last_block(&self, bytes: c_int) -> Result {
             // SAFETY: self valid.
             unsafe { archive_write_set_bytes_in_last_block(self.as_mut_ptr(), bytes) }
@@ -845,10 +843,9 @@ pub mod lib {
             let data = unsafe { core::slice::from_raw_parts(buff.cast::<u8>(), length) };
             if this.list.try_reserve(length).is_err() {
                 this.had_error = true;
-                // libarchive leaves describing a failed client write to the
-                // client; this is what `archive_error_string` reports afterwards.
-                // SAFETY: `a` is the live archive this callback was invoked for;
-                // the format string has no conversions, so no varargs are read.
+                // libarchive sets no error of its own for a failed client write.
+                // SAFETY: `a` is the archive this callback was invoked for; the
+                // format string has no conversions, so no varargs are read.
                 unsafe { archive_set_error(a, libc::ENOMEM, c"No memory".as_ptr()) };
                 return -1;
             }

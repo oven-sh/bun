@@ -2413,8 +2413,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     let mut print_buf: Vec<u8> = Vec::new();
 
-    // Declared before `archive` so it is dropped after it: the archive writes
-    // into this buffer until it is closed, which `WriteArchive`'s Drop also does.
+    // Must outlive `archive`, whose close (also run by its Drop) writes into it.
     let mut tarball_buffer = GrowingBuffer::init();
     let archive = WriteArchive::new();
 
@@ -2479,8 +2478,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    // What `archive_write_open_filename` used to set for a regular file; keeps the
-    // bytes identical to the tarballs earlier versions wrote.
+    // Same as `archive_write_open_filename` set for a file, so the output stays byte-identical.
     match archive.write_set_bytes_in_last_block(1) {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic(
@@ -2492,8 +2490,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    // `bun publish` sends the tarball straight from memory; only `bun pm pack`
-    // writes it out, once it is complete (see `write_tarball`).
+    // `bun publish` uploads the bytes from memory; only `bun pm pack` writes a file.
     let mut dest_buf = PathBuffer::uninit();
     let abs_tarball_dest: Option<&ZStr> = if FOR_PUBLISH {
         None
@@ -2999,8 +2996,7 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
-/// Where `bun pm pack` writes the tarball; also creates the directory it goes
-/// into. The path is built in `buf`.
+/// Resolves where `bun pm pack` writes the tarball and creates that directory.
 fn pack_destination<'a>(
     manager: &PackageManager,
     abs_workspace_path: &[u8],
@@ -3022,8 +3018,7 @@ fn pack_destination<'a>(
     ZStr::from_buf(&buf[..], len)
 }
 
-/// The tarball only touches the disk here, once it is complete, so this is the
-/// one failure that can leave a partial file behind.
+/// The only write to disk, and so the only failure that has a partial file to remove.
 fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
     let file = match File::create(Fd::cwd(), abs_tarball_dest, true) {
         Ok(file) => file,
@@ -3044,8 +3039,7 @@ fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
         );
         // Windows cannot delete the file while it is open.
         drop(file);
-        // Only delete what `File::create` created or truncated: a `--filename`
-        // that is a symlink or a device is left alone.
+        // A `--filename` that is a symlink or a device is not ours to delete.
         if let Ok(stat) = bun_sys::lstat(abs_tarball_dest) {
             if bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::FileKind::File {
                 let _ = bun_sys::unlink(abs_tarball_dest);
@@ -3055,8 +3049,7 @@ fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
     }
 }
 
-/// Writes data of the entry whose header was written last. Returns the number
-/// of bytes libarchive accepted.
+/// Returns the number of bytes libarchive accepted for the current entry.
 fn write_entry_data(archive: &Archive, pathname: &[u8], data: &[u8]) -> usize {
     match usize::try_from(archive.write_data(data)) {
         Ok(written) => written,

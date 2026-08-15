@@ -316,6 +316,25 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+it("jsx props are separated no matter where children sits in props", () => {
+  // A spread can put `children` before the other props.
+  expect(Bun.inspect(<x {...{ children: "c" }} a="1" b="2" />)).toBe(`<x a="1" b="2">c</x>`);
+  expect(Bun.inspect(<x key="k" {...{ children: "c" }} a="1" b="2" />)).toBe(`<x key="k" a="1" b="2">c</x>`);
+  // `children: undefined` is not printed and must not leave a stray space behind.
+  expect(
+    Bun.inspect(
+      <x a="1" b="2">
+        {undefined}
+      </x>,
+    ),
+  ).toBe(`<x a="1" b="2" />`);
+  // Five props share the tag's line; the rest go one per line.
+  expect(Bun.inspect(<x a="1" b="2" c="3" d="4" e="5" f="6" />)).toBe(`<x a="1" b="2" c="3" d="4" e="5"\n  f="6" />`);
+  expect(Bun.inspect(<x {...{ children: "c" }} a="1" b="2" c="3" d="4" e="5" f="6" />)).toBe(
+    `<x a="1" b="2" c="3" d="4" e="5"\n  f="6">c</x>`,
+  );
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

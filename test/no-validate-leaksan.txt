@@ -374,12 +374,6 @@ test/bake/dev/deinitialization.test.ts
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts
 
-# LSAN reports the std::thread::spawn allocations of the detached threads that
-# `bun install` leaves running when it exits (http_thread::init_once,
-# ThreadPool::notify_slow) and aborts; as PID 1 that abort is the SIGSEGV this
-# file checks bun no longer dies from. The file only asserts exit statuses.
-test/cli/run/run-propagate-sigkill.test.ts
-
 # Need to run the event loop once more to ensure sockets close
 test/js/node/test/parallel/test-https-localaddress-bind-error.js
 

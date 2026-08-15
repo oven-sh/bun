@@ -691,6 +691,8 @@ unsafe extern "C" {
     #[cfg(unix)]
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
+    #[cfg(not(windows))]
+    safe fn _exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }
@@ -813,8 +815,8 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
 
     #[cfg(not(windows))]
     {
-        // Only PID 1 of a pid namespace gets here (init cannot signal itself); abort() would trap.
-        exit((128 + sig) as u32)
+        // Only PID 1 of a pid namespace gets here; like a signal death, run no exit handlers.
+        _exit(128 + sig)
     }
     #[cfg(windows)]
     {

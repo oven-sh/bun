@@ -121,6 +121,87 @@ test("throwing inside an error suppresses the error and continues printing prope
   expect(exitCode).toBe(1);
 });
 
+// JSC holds an error's captured frames weakly. When a GC runs before .stack is first read and one
+// of the frames has died, the stack is rendered to a string inside the GC instead of on first
+// access. The header line must come out the same either way.
+test("error.stack header keeps name and message when the frames are rendered during GC", async () => {
+  class MyError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = "MyError";
+    }
+  }
+  class ProtoNamed extends Error {}
+  ProtoNamed.prototype.name = "ProtoNamed";
+
+  // Runs `create` inside a function that nothing references once it has returned, so the deadFrame
+  // frame recorded in each error is dead by the time the GC below runs.
+  const inDeadFrame = <T>(create: () => T): T =>
+    new Function("create", "return function deadFrame() { return create(); }")(create)();
+  const errors: Record<string, Error> = {
+    typeError: inDeadFrame(() => new TypeError("path argument is required to res.sendFile")),
+    noMessage: inDeadFrame(() => new RangeError()),
+    nameSetInConstructor: inDeadFrame(() => new MyError("custom subclass")),
+    nameOnPrototype: inDeadFrame(() => new ProtoNamed("from the prototype")),
+    nameReassigned: inDeadFrame(() => Object.assign(new Error("renamed"), { name: "Renamed" })),
+    messageReassigned: inDeadFrame(() =>
+      Object.assign(new Error("original"), { message: "changed before first read" }),
+    ),
+    emptyName: inDeadFrame(() => Object.assign(new Error("only the message"), { name: "" })),
+    numberMessage: inDeadFrame(() => Object.assign(new Error("original"), { message: 404 })),
+    bigintMessage: inDeadFrame(() => Object.assign(new Error("original"), { message: 10n })),
+    objectName: inDeadFrame(() => Object.assign(new Error("object name"), { name: {} })),
+    thrownAndCaught: inDeadFrame(() => {
+      try {
+        throw new SyntaxError("thrown and caught");
+      } catch (e) {
+        return e as Error;
+      }
+    }),
+    thrownByTheEngine: inDeadFrame(() => {
+      try {
+        (null as any).property;
+      } catch (e) {
+        return e as Error;
+      }
+    }),
+    captureStackTrace: inDeadFrame(() => {
+      const e = new TypeError("captured");
+      Error.captureStackTrace(e);
+      return e;
+    }),
+  };
+
+  // Not waiting for anything: yielding once resumes this function on a fresh stack, so nothing the
+  // calls above left behind can keep a deadFrame alive through the collection.
+  await Bun.sleep(0);
+  Bun.gc(true);
+
+  const headers: Record<string, string> = {};
+  for (const [label, error] of Object.entries(errors)) {
+    const [header, ...frames] = error.stack!.split("\n");
+    headers[label] = header;
+    // A dead frame in the trace is what makes the GC render it, so its presence proves this stack
+    // took that path.
+    expect(frames, label).toEqual(expect.arrayContaining([expect.stringMatching(/^    at deadFrame \(/)]));
+  }
+  expect(headers).toEqual({
+    typeError: "TypeError: path argument is required to res.sendFile",
+    noMessage: "RangeError",
+    nameSetInConstructor: "MyError: custom subclass",
+    nameOnPrototype: "ProtoNamed: from the prototype",
+    nameReassigned: "Renamed: renamed",
+    messageReassigned: "Error: changed before first read",
+    emptyName: "only the message",
+    numberMessage: "Error: 404",
+    bigintMessage: "Error: 10",
+    objectName: "Error: object name",
+    thrownAndCaught: "SyntaxError: thrown and caught",
+    thrownByTheEngine: `TypeError: ${errors.thrownByTheEngine.message}`,
+    captureStackTrace: "TypeError: captured",
+  });
+});
+
 test("Async functions frame should be included in stack trace", async () => {
   async function foo() {
     return await bar();

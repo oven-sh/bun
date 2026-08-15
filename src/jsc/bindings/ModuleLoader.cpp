@@ -655,11 +655,9 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// JSC settles every later load of a FetchFailed key with JSModuleLoader::duplicateError's
-// copy of the stored error, which keeps only its type and message (an AggregateError of
-// build errors loses `errors`). Such an entry holds no module record, so dropping it only
-// makes the next load fetch the module again, as Node does; link and evaluation failures
-// hold a record and stay cached as the spec requires.
+// JSC replays a FetchFailed key through JSModuleLoader::duplicateError, which keeps only the
+// error's type and message. The entry holds no module record, so dropping it just makes the
+// next load fetch again, as Node does; link and evaluation failures stay cached per spec.
 void evictFetchFailedModuleRegistryEntry(JSC::JSModuleLoader* moduleLoader, const JSC::Identifier& key)
 {
     using Type = JSC::ScriptFetchParameters::Type;
@@ -746,7 +744,7 @@ JSValue fetchCommonJSModule(
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    globalObject->moduleLoader()->provideFetch(globalObject, moduleKey, JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -811,7 +809,7 @@ JSValue fetchCommonJSModule(
                     JSC::VM::SynchronousModuleQueue queue;
                     queue.prev = vm.m_synchronousModuleQueue;
                     vm.m_synchronousModuleQueue = &queue;
-                    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
+                    globalObject->moduleLoader()->provideFetch(globalObject, moduleKey, JSC::ScriptFetchParameters::Type::JavaScript, jsSourceCode);
                     if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                     vm.m_synchronousModuleQueue = queue.prev;
                     RETURN_IF_EXCEPTION(scope, {});
@@ -845,7 +843,7 @@ JSValue fetchCommonJSModule(
                 JSC::VM::SynchronousModuleQueue queue;
                 queue.prev = vm.m_synchronousModuleQueue;
                 vm.m_synchronousModuleQueue = &queue;
-                globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, specifierWtfString), JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
+                globalObject->moduleLoader()->provideFetch(globalObject, moduleKey, JSC::ScriptFetchParameters::Type::JavaScript, JSC::SourceCode(Ref(*cached)));
                 if (!scope.exception()) JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
                 vm.m_synchronousModuleQueue = queue.prev;
                 RETURN_IF_EXCEPTION(scope, {});

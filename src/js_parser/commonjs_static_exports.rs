@@ -1,27 +1,14 @@
-//! Static detection of CommonJS export names for ESM `import { x } from "./x.cjs"`.
+//! The export names Node's cjs-module-lexer would find in a CommonJS file, so that
+//! `import { x } from "./x.cjs"` links (as `undefined`) even when evaluation never
+//! put `x` on `module.exports`. `JSCommonJSModule::toSyntheticSource` unions them
+//! with the evaluated object's own properties.
 //!
-//! Node.js decides which named imports a CommonJS module offers by lexing its
-//! source (cjs-module-lexer), so a name that is only assigned conditionally
-//! (`if (dev) exports.debug = ...`) or that was assigned and then replaced
-//! (`exports.a = 1; module.exports = { b }`) still links and imports as
-//! `undefined`. Bun builds the list from the own properties of `module.exports`
-//! after evaluation (`populateESMExports` in JSCommonJSModule.cpp). This pass
-//! collects the same patterns the lexer documents while the runtime transpiler
-//! visits a CommonJS file, and the module loader adds any names that are missing
-//! from the evaluated `module.exports` on top of the runtime ones:
-//!
-//! - `exports.x = ...`, `exports["x"] = ...`, `module.exports.x = ...`
+//! Detected, lexically (any scope, any binding named `exports` / `module`):
+//! - `exports.x =`, `exports["x"] =`, `module.exports.x =`
 //! - `module.exports = { x, "y": ..., ...require("./z") }`
 //! - `Object.defineProperty(exports, "x", { value | get })`
-//! - re-exports: `module.exports = require("./z")`, `__exportStar(require("./z"), exports)`,
-//!   `__export(require("./z"))`. Like the lexer, a later `module.exports = ...`
-//!   assignment discards re-exports collected before it.
-//!
-//! Matching is purely lexical (`exports` / `module` by name, whatever they are
-//! bound to, in any scope, reachable or not), exactly like the lexer. The result
-//! travels as one string so it can be stored in the runtime transpiler cache and
-//! handed to C++ without a separate ownership protocol; see
-//! `CommonJSStaticExports::serialize` for the format.
+//! - re-exports: `module.exports = require("./z")`, `__exportStar(require("./z"))`,
+//!   `__export(require("./z"))`; a later `module.exports =` discards earlier ones.
 
 use std::io::Write as _;
 
@@ -36,8 +23,6 @@ use bun_ast::{self as js_ast, E, Expr, ExprData, G, StoreStr};
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
 pub(crate) struct CommonJSStaticExports<'a> {
-    /// Insertion-ordered set; TypeScript output assigns every name twice
-    /// (`exports.x = void 0; ... exports.x = x;`).
     names: StringArrayHashMap<(), StringContext, AstAlloc>,
     reexports: BumpVec<'a, &'a [u8]>,
 }
@@ -55,15 +40,11 @@ impl<'a> CommonJSStaticExports<'a> {
     }
 
     fn add_name(&mut self, name: &[u8]) {
-        // `default` is always the exports object (or `exports.default` under an
-        // `__esModule` marker) and `__esModule` itself is never a named export;
-        // both are decided from the evaluated object in `populateESMExports`.
+        // `populateESMExports` decides these two from the evaluated object.
         if name.is_empty() || name == b"default" || name == b"__esModule" {
             return;
         }
-        if !self.names.contains(name) {
-            let _ = self.names.put(name, ());
-        }
+        bun_core::handle_oom(self.names.put(name, ()));
     }
 
     fn add_reexport(&mut self, specifier: &'a [u8]) {
@@ -72,10 +53,8 @@ impl<'a> CommonJSStaticExports<'a> {
         }
     }
 
-    /// Serializes into `arena` as a sequence of `<kind><utf16 length>:<text>`
-    /// entries, e.g. `e6:alwayse9:debugOnlyr10:./cond.cjs`. The length counts
-    /// UTF-16 code units because the consumer (`JSCommonJSModule`) walks it as a
-    /// `WTF::String`. Returns the empty string when nothing was detected.
+    /// `<kind><length>:<text>` entries, e.g. `e6:alwayse9:debugOnlyr10:./cond.cjs`;
+    /// lengths are in UTF-16 code units because C++ walks this as a `WTF::String`.
     pub(crate) fn serialize(&self, arena: &'a bun_alloc::Arena) -> StoreStr {
         if self.names.is_empty() && self.reexports.is_empty() {
             return StoreStr::EMPTY;
@@ -83,9 +62,7 @@ impl<'a> CommonJSStaticExports<'a> {
 
         let mut out: Vec<u8> = Vec::new();
         let mut append = |kind: u8, text: &[u8]| {
-            // Names come from identifiers and string literals the lexer already
-            // decoded, so this only rejects a literal that was invalid UTF-8 in
-            // the source; such a name could not be imported anyway.
+            // An invalid name would desynchronize every entry after it.
             if core::str::from_utf8(text).is_err() {
                 return;
             }
@@ -176,8 +153,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Non-computed key of an object literal property, for `{ x }`, `{ x: ... }`,
-    /// `{ "x": ... }`, `{ x() {} }`, `{ get x() {} }`.
+    /// `{ x }` / `{ x: ... }` / `{ "x": ... }` / `{ x() {} }` / `{ get x() {} }` => `x`
     fn property_key_name(&self, property: &G::Property) -> Option<&'a [u8]> {
         if property.flags.contains(js_ast::flags::Property::IsComputed) {
             return None;

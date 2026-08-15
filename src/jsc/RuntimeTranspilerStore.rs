@@ -1059,7 +1059,6 @@ impl TranspilerJob {
 
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
-        // Arena-backed; read before `print_with_source_map` consumes the AST.
         let commonjs_static_exports = parse_result.ast.commonjs_static_exports;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache

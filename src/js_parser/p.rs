@@ -293,8 +293,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Used by commonjs_at_runtime
     pub(crate) has_commonjs_export_names: bool,
 
-    /// Export names detected lexically for `import { x } from "./cjs"`; see
-    /// `commonjs_static_exports.rs`. Only collected with `commonjs_at_runtime`.
+    /// Only collected with `commonjs_at_runtime`.
     pub(crate) commonjs_static_exports: crate::commonjs_static_exports::CommonJSStaticExports<'a>,
 
     pub(crate) stack_check: bun_core::StackCheck,

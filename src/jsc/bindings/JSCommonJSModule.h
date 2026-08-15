@@ -77,9 +77,7 @@ public:
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
 
     bool ignoreESModuleAnnotation { false };
-    // Export names the transpiler detected in the source (ResolvedSource::
-    // commonjs_static_exports), still serialized; only decoded when the module
-    // is imported from ESM. Empty unless the module came from the transpiler.
+    // ResolvedSource::commonjs_static_exports, decoded by toSyntheticSource.
     WTF::String m_staticExports;
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
@@ -93,13 +91,12 @@ public:
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
     void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
-    // For a provider served by IsolatedModuleCache; the module's metadata comes from the provider's ResolvedSource.
-    void evaluate(Zig::GlobalObject* globalObject, Ref<Zig::SourceProvider>&& sourceProvider);
+    // Provider served by IsolatedModuleCache.
+    void evaluate(Zig::GlobalObject* globalObject, Zig::SourceProvider&);
 
-    // What the loader learned while transpiling this module: whether the __esModule
-    // annotation is honored and which export names were detected statically.
+    // ignoreESModuleAnnotation and m_staticExports, from the source's ResolvedSource.
     void setSourceMetadata(const Zig::SourceProvider&);
-    // Same, from a ResolvedSource no provider was created for; takes ownership of its commonjs_static_exports.
+    // Same, taking commonjs_static_exports out of a ResolvedSource that gets no provider.
     void takeSourceMetadata(ResolvedSource&);
     void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
     inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
@@ -171,11 +168,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     ResolvedSource& source,
     bool isBuiltIn);
 
-// For a provider served by IsolatedModuleCache; the module's metadata comes from the provider's ResolvedSource.
+// Provider served by IsolatedModuleCache.
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
-    Ref<Zig::SourceProvider>&& provider);
+    Zig::SourceProvider& provider);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,

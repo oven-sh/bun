@@ -7737,9 +7737,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .serialize(&mut srlz_res)
                 .map_err(|_| crate::Error::WriteFailed)?;
         }
-        // A CommonJS module has no ESM record; its slot in the cache entry
-        // holds the statically detected export names instead, so a cache hit
-        // links the same named imports as a fresh transpile.
+        // CommonJS entries keep their static export names in the record slot.
         let module_record: &[u8] = if tree.exports_kind == js_ast::ExportsKind::Cjs {
             debug_assert!(!have_module_info);
             tree.commonjs_static_exports.slice()

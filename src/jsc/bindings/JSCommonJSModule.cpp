@@ -1180,8 +1180,7 @@ void populateESMExports(
     }
 }
 
-// The CommonJS module `specifier` refers to from `module`, if require() would
-// find it already loaded. Resolution failures are ignored, as in Node.js.
+// What require(specifier) inside `module` resolved to, if it is a loaded CommonJS module.
 static JSCommonJSModule* loadedReexportTarget(Zig::GlobalObject* globalObject, JSCommonJSModule* module, const WTF::String& specifier)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1211,9 +1210,7 @@ static JSCommonJSModule* loadedReexportTarget(Zig::GlobalObject* globalObject, J
     return dynamicDowncast<JSCommonJSModule>(entry);
 }
 
-// Walks `module->m_staticExports` (format: src/js_parser/commonjs_static_exports.rs)
-// and appends every detected name that is not exported yet as `undefined`,
-// following re-exports into modules that were actually loaded.
+// Decodes m_staticExports (format: src/js_parser/commonjs_static_exports.rs).
 static void appendStaticExports(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* module,
@@ -1292,11 +1289,7 @@ void JSCommonJSModule::toSyntheticSource(JSC::JSGlobalObject* lexicalGlobalObjec
     if (this->m_staticExports.isEmpty())
         return;
 
-    // Node.js links the names cjs-module-lexer finds in the source, so a name
-    // that evaluation did not put on module.exports (assigned conditionally,
-    // or replaced by a later `module.exports = ...`) imports as undefined
-    // instead of failing to link. The evaluated object decides the names it
-    // does have; this only adds what it lacks.
+    // Like Node.js, names found in the source but not on the evaluated object link as undefined.
     JSC::IdentifierSet exported;
     for (auto& name : exportNames)
         exported.add(name.impl());
@@ -1557,13 +1550,13 @@ void JSCommonJSModule::evaluate(
 
 void JSCommonJSModule::evaluate(
     Zig::GlobalObject* globalObject,
-    Ref<Zig::SourceProvider>&& sourceProvider)
+    Zig::SourceProvider& sourceProvider)
 {
     auto& vm = JSC::getVM(globalObject);
-    this->setSourceMetadata(sourceProvider.get());
+    this->setSourceMetadata(sourceProvider);
     if (this->hasEvaluated)
         return;
-    this->sourceCode = JSC::SourceCode(WTF::move(sourceProvider));
+    this->sourceCode = JSC::SourceCode(Ref(sourceProvider));
     evaluateCommonJSModuleOnce(vm, globalObject, this, this->m_dirname.get(), this->m_filename.get());
 }
 
@@ -1659,13 +1652,11 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();
-        // Stays alive past the move below: the module's SourceCode holds it.
-        Zig::SourceProvider& provider = sourceProvider.get();
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
-        moduleObject->setSourceMetadata(provider);
+            requireMapKey, filename, dirname, JSC::SourceCode(sourceProvider.copyRef()));
+        moduleObject->setSourceMetadata(sourceProvider.get());
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1674,8 +1665,6 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         requireMap->set(globalObject, filename, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
-        // Typically require()d first and imported afterwards; the import path
-        // transpiled it again, so apply the fresh metadata without a provider.
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
         moduleObject->takeSourceMetadata(source);
     }
@@ -1737,16 +1726,13 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSC::JSString* requireMapKey,
-    Ref<Zig::SourceProvider>&& sourceProvider)
+    Zig::SourceProvider& sourceProvider)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSCommonJSModule* moduleObject = nullptr;
-    // Valid for the whole function: either `sourceProvider` still owns it or the
-    // new module's SourceCode does.
-    Zig::SourceProvider& provider = sourceProvider.get();
-    WTF::String sourceURL = provider.sourceURL();
-    SourceOrigin sourceOrigin = provider.sourceOrigin();
+    WTF::String sourceURL = sourceProvider.sourceURL();
+    SourceOrigin sourceOrigin = sourceProvider.sourceOrigin();
 
     JSValue entry = globalObject->requireMap()->get(globalObject, requireMapKey);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1773,7 +1759,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         moduleObject = JSCommonJSModule::create(
             vm,
             globalObject->CommonJSModuleObjectStructure(),
-            requireMapKey, filename, dirname, JSC::SourceCode(WTF::move(sourceProvider)));
+            requireMapKey, filename, dirname, JSC::SourceCode(Ref(sourceProvider)));
 
         moduleObject->putDirect(vm,
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
@@ -1783,7 +1769,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    moduleObject->setSourceMetadata(provider);
+    moduleObject->setSourceMetadata(sourceProvider);
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
 }

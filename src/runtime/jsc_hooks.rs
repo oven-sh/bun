@@ -3058,8 +3058,6 @@ fn transpile_source_code_inner(
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-                // Arena-backed (the arena outlives this fn); read before
-                // `print_with_source_map` consumes the AST.
                 let commonjs_static_exports = parse_result.ast.commonjs_static_exports;
                 // Collect the ESM record while printing, for the isolation
                 // source-provider cache (same shape as `RuntimeTranspilerStore`).

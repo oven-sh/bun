@@ -331,7 +331,7 @@ static AUDIT_PARAMS: &[ParamType] = concat_params![
             "--ignore <STR>...                      Ignore advisories by GHSA or numeric advisory ID (repeatable)"
         ),
         clap::param!(
-            "-L, --latest                           Let bun audit fix also apply fixes that your package.json ranges exclude, rewriting those ranges"
+            "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
         ),
     ]
 ];
@@ -354,7 +354,7 @@ const AUDIT_HELP_PARAMS: &[ParamType] = &[
         "--dry-run                              Show what bun audit fix would change without changing anything"
     ),
     clap::param!(
-        "-L, --latest                           Let bun audit fix also apply fixes that your package.json ranges exclude, rewriting those ranges"
+        "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
     ),
     clap::param!("--cwd <STR>                            Set a specific cwd"),
     clap::param!("-h, --help                             Print this help menu"),

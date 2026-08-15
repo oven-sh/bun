@@ -924,7 +924,7 @@ describe("`bun audit --help`", () => {
       "--help",
     ]);
     expect(flagLines.find(line => line.includes("--production"))).toStartWith("  -p, --production");
-    expect(flagLines.find(line => line.includes("--production"))).toContain("--prod");
+    expect(flagLines.find(line => line.includes("--production"))).toContain("(alias: --prod)");
     expect(flagLines.find(line => line.includes("--omit"))).toContain("dev, optional, or peer");
     expect(flagLines.find(line => line.includes("--dry-run"))).toContain("bun audit fix");
     expect(flagLines.find(line => line.includes("--latest"))).toStartWith("  -L, --latest");

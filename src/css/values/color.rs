@@ -1457,13 +1457,17 @@ fn parse_legacy_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssR
 }
 
 fn parse_alpha(input: &mut css::Parser, parser: &ComponentParser) -> CssResult<f32> {
-    let res = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
-        parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
+    if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
+        return Ok(parse_number_or_percentage(input, parser)?.clamp(0.0, 1.0));
+    }
 
-    Ok(res)
+    // In the relative color syntax an omitted alpha defaults to the origin
+    // color's alpha, not to 100%.
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    Ok(match &parser.from {
+        Some(from) => from.components.3,
+        None => 1.0,
+    })
 }
 
 pub(crate) fn parse_number_or_percentage(

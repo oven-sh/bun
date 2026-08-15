@@ -7242,8 +7242,20 @@ describe("css tests", () => {
     minify_test(".foo { rotate: y 10deg }", ".foo{rotate:y 10deg}");
     minify_test(".foo { rotate: 0 1 0 10deg }", ".foo{rotate:y 10deg}");
     minify_test(".foo { rotate: 1 1 1 10deg }", ".foo{rotate:1 1 1 10deg}");
-    minify_test(".foo { rotate: 0 0 1 0deg }", ".foo{rotate:none}");
+    // A zero rotation is not `none`: unlike `none` it still creates a stacking
+    // context and a containing block, the same as `transform: rotate(0)`.
+    minify_test(".foo { rotate: 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: 0turn }", ".foo{rotate:0turn}");
+    minify_test(".foo { rotate: z 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: 0 0 1 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: x 0deg }", ".foo{rotate:x 0deg}");
     minify_test(".foo { rotate: none }", ".foo{rotate:none}");
+    minify_test(".foo { rotate: NONE }", ".foo{rotate:none}");
+    minify_test(".foo { rotate: none; rotate: 0deg }", ".foo{rotate:0deg}");
+    minify_test(".foo { rotate: 0deg; rotate: none }", ".foo{rotate:none}");
+    // When folded into a preceding `transform`, `none` and `0deg` are both the identity rotation.
+    minify_test(".foo { transform: translate(1px); rotate: none }", ".foo{transform:translate(1px)rotate(0)}");
+    minify_test(".foo { transform: translate(1px); rotate: 0deg }", ".foo{transform:translate(1px)rotate(0)}");
     minify_test(".foo { scale: 1 }", ".foo{scale:1}");
     minify_test(".foo { scale: 1 1 }", ".foo{scale:1}");
     minify_test(".foo { scale: 1 1 1 }", ".foo{scale:1}");
@@ -7317,6 +7329,34 @@ describe("css tests", () => {
       }
       `,
     );
+  });
+
+  describe("relative colors", () => {
+    // https://drafts.csswg.org/css-color-5/#relative-colors
+    // An omitted alpha defaults to the origin color's alpha, not to 100%.
+    minify_test(".foo { color: rgb(from #0008 r g b) }", ".foo{color:#0008}");
+    minify_test(".foo { color: rgb(from #0008 r g b / alpha) }", ".foo{color:#0008}");
+    minify_test(".foo { color: rgb(from #0008 r g b / calc(alpha / 2)) }", ".foo{color:#0004}");
+    minify_test(".foo { color: rgb(from #0008 r g b / 1) }", ".foo{color:#000}");
+    minify_test(".foo { color: rgb(from #0008 r g b / 0) }", ".foo{color:#0000}");
+    minify_test(".foo { color: rgb(from #000 r g b) }", ".foo{color:#000}");
+    minify_test(".foo { color: rgb(from rgb(0 0 0 / none) r g b) }", ".foo{color:#0000}");
+    minify_test(".foo { color: rgb(from rgb(1 2 3 / 50%) b g r) }", ".foo{color:#03020180}");
+    minify_test(".foo { color: hsl(from #0008 h s l) }", ".foo{color:#0008}");
+    minify_test(".foo { color: hsl(from rgb(1 2 3 / 50%) calc(h + 180) s l) }", ".foo{color:#03020180}");
+    minify_test(".foo { color: hwb(from #0008 h w b) }", ".foo{color:#0008}");
+    minify_test(".foo { color: lab(from lab(50% 0 0 / 50%) l a b) }", ".foo{color:lab(50% 0 0/.5)}");
+    minify_test(".foo { color: lch(from lch(50% 0 0 / 50%) l c h) }", ".foo{color:lch(50% 0 0/.5)}");
+    minify_test(".foo { color: oklab(from oklab(50% 0 0 / 50%) l a b) }", ".foo{color:oklab(50% 0 0/.5)}");
+    minify_test(".foo { color: oklch(from oklch(50% 0 0 / 50%) l c h) }", ".foo{color:oklch(50% 0 0/.5)}");
+    minify_test(".foo { color: oklch(from oklch(50% 0 0 / 50%) l c h / 1) }", ".foo{color:oklch(50% 0 0)}");
+    minify_test(".foo { color: color(from color(srgb 0 0 0 / 50%) srgb r g b) }", ".foo{color:color(srgb 0 0 0/.5)}");
+    minify_test(
+      ".foo { color: color(from color(srgb 0 0 0 / 50%) display-p3 r g b) }",
+      ".foo{color:color(display-p3 0 0 0/.5)}",
+    );
+    minify_test(".foo { color: rgb(from light-dark(#ff08, #f008) r g b) }", ".foo{color:light-dark(#ff08,#f008)}");
+    minify_test(".foo { color: rgb(from rgb(from #0008 r g b) r g b) }", ".foo{color:#0008}");
   });
 
   describe("color-scheme", () => {

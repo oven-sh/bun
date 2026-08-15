@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync } from "node:fs";
 
 describe("compile --target=browser", () => {
@@ -657,6 +657,138 @@ console.log(greet("world"));`,
 
       const html = await result.outputs[0].text();
       expect(html).toContain("//# sourceMappingURL=data:application/json;base64,");
+    });
+  });
+
+  // Standalone HTML is a browser build that happens to be spelled with
+  // --compile. The executable-only settings (target=bun, the compile target's
+  // process.platform/arch/versions.bun defines) must not leak into it.
+  describe.concurrent("executable-only settings", () => {
+    const builtinImportFixture = {
+      "index.html": `<!DOCTYPE html><html><body><script src="./app.js"></script></body></html>`,
+      "app.js": `import { Database } from "bun:sqlite";\nconsole.log(typeof Database);`,
+    };
+    const definesFixture = {
+      "index.html": `<!DOCTYPE html>
+<html><head><link rel="stylesheet" href="./style.css"></head>
+<body><script src="./app.js"></script></body></html>`,
+      "app.js": `console.log(process.platform, process.arch, process.versions.bun, process.browser);`,
+      // Nesting is not supported by the default browser targets, so a browser
+      // build flattens it. The runtime targets used for executables keep it.
+      "style.css": `.a { color: red; .b { color: blue; } }`,
+    };
+    const definesExpectedScript = `console.log(process.platform, process.arch, process.versions.bun, true);`;
+
+    async function buildCli(dir: string, args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...args],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode };
+    }
+
+    test("CLI rejects a bun: builtin import exactly like a plain browser build", async () => {
+      using dir = tempDir("compile-browser-cli-builtin", builtinImportFixture);
+
+      const standalone = await buildCli(String(dir), [
+        "--compile",
+        "--target=browser",
+        "./index.html",
+        "--outdir",
+        "dist",
+      ]);
+      expect(standalone.stderr).toMatchInlineSnapshot(`
+        "1 | import { Database } from "bun:sqlite";
+                                     ^
+        error: Browser build cannot import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'
+            at <dir>/app.js:1:26"
+      `);
+      expect(standalone.exitCode).toBe(1);
+      expect(existsSync(`${dir}/dist/index.html`)).toBe(false);
+
+      const plain = await buildCli(String(dir), ["--target=browser", "./index.html", "--outdir", "dist-plain"]);
+      expect(plain).toEqual({ stdout: standalone.stdout, stderr: standalone.stderr, exitCode: standalone.exitCode });
+    });
+
+    test("Bun.build() rejects a bun: builtin import", async () => {
+      using dir = tempDir("compile-browser-api-builtin", builtinImportFixture);
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+        throw: false,
+      });
+
+      expect(result.logs.map(log => log.message)).toEqual([
+        `Browser build cannot import Bun builtin: "bun:sqlite". When bundling for Bun, set target to 'bun'`,
+      ]);
+      expect(result.success).toBe(false);
+    });
+
+    test("CLI emits browser code: no compile defines, process.browser is true, CSS uses browser targets", async () => {
+      using dir = tempDir("compile-browser-cli-defines", definesFixture);
+
+      const { stderr, exitCode } = await buildCli(String(dir), [
+        "--compile",
+        "--target=browser",
+        "./index.html",
+        "--outdir",
+        "dist",
+      ]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      const html = await Bun.file(`${dir}/dist/index.html`).text();
+      expect(html).toContain(definesExpectedScript);
+      expect(html).toContain(".a .b {");
+      expect(html).not.toContain("& .b");
+    });
+
+    test("Bun.build() emits browser code: no compile defines, process.browser is true, CSS uses browser targets", async () => {
+      using dir = tempDir("compile-browser-api-defines", definesFixture);
+
+      const result = await Bun.build({
+        entrypoints: [`${dir}/index.html`],
+        compile: true,
+        target: "browser",
+      });
+      expect(result.outputs.map(output => output.loader)).toEqual(["html"]);
+
+      const html = await result.outputs[0].text();
+      expect(html).toContain(definesExpectedScript);
+      expect(html).toContain(".a .b {");
+      expect(html).not.toContain("& .b");
+    });
+
+    test("CLI still builds a bun executable with the compile defines when the entrypoint is not HTML", async () => {
+      using dir = tempDir("compile-browser-cli-executable", {
+        // bun:sqlite only resolves for target=bun; process.versions.bun is one
+        // of the compile defines, so the read is inlined and the runtime
+        // reassignment is not observed.
+        "app.js": `import { Database } from "bun:sqlite";
+process.versions.bun = "runtime";
+console.log(typeof Database, process.browser, process.versions.bun === "runtime");`,
+      });
+      const outfile = isWindows ? "app.exe" : "app";
+
+      const build = await buildCli(String(dir), ["--compile", "--target=browser", "./app.js", "--outfile", outfile]);
+      expect(build.stderr).toBe("");
+      expect(build.exitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [`${dir}/${outfile}`],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "function false false\n", stderr: "", exitCode: 0 });
     });
   });
 });

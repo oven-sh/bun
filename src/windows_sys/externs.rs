@@ -572,7 +572,8 @@ pub struct M128A {
 }
 
 /// `_CONTEXT` for AMD64 (winnt.h). Full layout so `RtlVirtualUnwind` can
-/// mutate it in place during a stack walk. Only `Rip`/`Rsp` are read by bun.
+/// mutate it in place during a stack walk. Only `Rip`/`Rsp`/`Rbp` are read by
+/// bun.
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -629,10 +630,11 @@ pub struct CONTEXT {
 const _: () = {
     assert!(core::mem::size_of::<CONTEXT>() == 1232);
     assert!(core::mem::offset_of!(CONTEXT, Rsp) == 0x98);
+    assert!(core::mem::offset_of!(CONTEXT, Rbp) == 0xa0);
     assert!(core::mem::offset_of!(CONTEXT, Rip) == 0xf8);
 };
 
-/// `_ARM64_NT_CONTEXT` (winnt.h). Only `Pc`/`Sp`/`Lr` are read by bun.
+/// `_ARM64_NT_CONTEXT` (winnt.h). Only `Fp`/`Lr`/`Sp`/`Pc` are read by bun.
 #[cfg(all(windows, target_arch = "aarch64"))]
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -656,6 +658,7 @@ pub struct CONTEXT {
 #[cfg(all(windows, target_arch = "aarch64"))]
 const _: () = {
     assert!(core::mem::size_of::<CONTEXT>() == 912);
+    assert!(core::mem::offset_of!(CONTEXT, Fp) == 0xf0);
     assert!(core::mem::offset_of!(CONTEXT, Lr) == 0xf8);
     assert!(core::mem::offset_of!(CONTEXT, Sp) == 0x100);
     assert!(core::mem::offset_of!(CONTEXT, Pc) == 0x108);

@@ -114,6 +114,7 @@
 "defaulted_failure:src/runtime/server/RequestContext.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
 "dependent_field:src/runtime/cli/filter_run.rs" = 1
+"dependent_field:src/runtime/shell/builtin/rm.rs" = 1
 "misbound_arg:src/runtime/cli/install_completions_command.rs" = 4
 "misbound_arg:src/runtime/cli/open.rs" = 1
 "misbound_arg:src/runtime/cli/pack_command.rs" = 1

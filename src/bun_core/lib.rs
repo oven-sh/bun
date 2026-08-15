@@ -2204,25 +2204,18 @@ pub(crate) mod strings_impl {
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
     /// the written sub-slice. Infallible: unpaired surrogates (legal in the
     /// Windows paths, environment values and module names this is fed) become
-    /// U+FFFD, as in [`copy_utf16_into_utf8`]. The caller sizes `out` for the
-    /// conversion; 3 bytes per input code unit always suffices.
-    ///
-    /// The size is asserted in release too, against the length the replacing
-    /// encoder actually writes (a lone surrogate costs 3 bytes, not the 2 the
-    /// plain scan charges): one SIMD scan is cheap, and a panic beats heap
-    /// corruption if a caller under-sizes `out`.
+    /// U+FFFD. [`copy_utf16_into_utf8`] does the sizing, handing simdutf the
+    /// buffer only when it holds 3 bytes per code unit or the exact replacing
+    /// length, so an under-sized `out` ends in a partial copy, which is a
+    /// caller bug and panics in release builds too.
     pub fn convert_utf16_to_utf8_in_buffer<'a>(out: &'a mut [u8], utf16: &[u16]) -> &'a mut [u8] {
-        if utf16.is_empty() {
-            return &mut out[..0];
-        }
-        let need = element_length_utf16_into_utf8(utf16);
+        let result = copy_utf16_into_utf8(out, utf16);
         assert!(
-            need <= out.len(),
-            "convert_utf16_to_utf8_in_buffer: out too small (need {need}, have {})",
+            result.read as usize == utf16.len(),
+            "convert_utf16_to_utf8_in_buffer: out too small ({} bytes for {} code units)",
             out.len(),
+            utf16.len(),
         );
-        let result = copy_utf16_into_utf8_with_utf8_len(out, utf16, need);
-        debug_assert_eq!(result.read as usize, utf16.len());
         &mut out[..result.written as usize]
     }
     // ─── path basename ─────────────────────────────────────────────────────

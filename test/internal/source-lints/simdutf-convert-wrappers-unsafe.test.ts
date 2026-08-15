@@ -7,20 +7,20 @@ import path from "node:path";
 //
 // simdutf's convert_* entry points take an output *pointer* and write however
 // many code units the input transcodes to (up to 3 bytes per UTF-16 unit, one
-// UTF-16 unit per UTF-8 byte, ...). The wrappers take `output: &mut [_]`, but
-// `output.len()` never reaches C++, so with a safe signature any caller could
-// pass a too-short slice and get a heap or stack overflow out of safe code; the
-// only protection was whatever length check each caller happened to make. The
-// wrappers cannot make that check themselves at an acceptable cost: the exact
-// requirement is a SIMD length scan of the input, which the hot callers
-// deliberately skip by sizing for the worst case instead. So they are
-// `unsafe fn`, with the bound in their `# Safety` section, and every call site
-// has to say which check establishes it. `base64::encode_raw` in the same file
-// has the same shape.
+// UTF-16 unit per UTF-8 byte). The wrappers take `output: &mut [_]`, but
+// `output.len()` never reaches C++, so as safe functions they let any caller
+// overflow the slice; the only protection was whatever length check each caller
+// made, and oven-sh/bun#20258 (fixed in #31694) was a caller that got it wrong.
+// The wrappers cannot make the check themselves at an acceptable cost: the
+// exact requirement is a SIMD length scan of the input, which the hot callers
+// deliberately skip by sizing for the worst case. So they are `unsafe fn`, with
+// the bound in their `# Safety` section, and every call site has to say which
+// check establishes it (`base64::encode_raw` in the same file has the same
+// shape).
 //
 // Not covered here, deliberately: `base64::encode` (its bound is O(1)
-// arithmetic, so it asserts the length itself and stays safe) and
-// `base64::decode*` (they pass the output length through to C++).
+// arithmetic, so it can assert the length itself) and `base64::decode*` (they
+// pass the output length through to C++).
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const file = "src/simdutf_sys/simdutf.rs";
@@ -79,10 +79,10 @@ function convertWrappers(): Wrapper[] {
 
 const wrappers = convertWrappers();
 
-test("the walker still finds the wrappers the runtime uses", () => {
+test("the walker still finds the two wrappers", () => {
   // Guards the assertion below against passing on an empty list after a
-  // rename or restructuring of the module: these two back UTF-8 -> UTF-16
-  // string conversion and UTF-16 -> UTF-8 encoding into caller buffers.
+  // rename or restructuring of the module. These back UTF-8 -> UTF-16 string
+  // conversion and UTF-16 -> UTF-8 encoding into caller buffers.
   const names = wrappers.map(w => w.name);
   expect(names).toContain("convert::utf8::to::utf16::with_errors::le");
   expect(names).toContain("convert::utf16::to::utf8::with_errors::le");

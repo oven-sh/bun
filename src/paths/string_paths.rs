@@ -792,7 +792,8 @@ mod tests {
 
     #[test]
     fn convert_utf16_to_utf8_in_buffer_exact_fit() {
-        // 1 + 2 + 3 + 4 (surrogate pair) bytes.
+        // 1 + 2 + 3 + 4 (surrogate pair) bytes: below 3 bytes per unit, so
+        // the buffer is checked against the exact replacing length.
         let text = "a\u{E9}\u{4E16}\u{1F600}";
         let input: Vec<u16> = text.encode_utf16().collect();
         let mut out = [0u8; 10];
@@ -819,10 +820,18 @@ mod tests {
             &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xDC00, 0x61, 0xD800]),
             b"\xEF\xBF\xBDa\xEF\xBF\xBD"
         );
+
+        // The callers' shape: a buffer with 3 bytes per unit to spare goes to
+        // simdutf without a length scan and still takes the replacing path.
+        let mut out = [0u8; 16];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0x61, 0xD800, 0x62]),
+            b"a\xEF\xBF\xBDb"
+        );
     }
 
     #[test]
-    #[should_panic(expected = "out too small (need 4, have 3)")]
+    #[should_panic(expected = "out too small (3 bytes for 2 code units)")]
     fn convert_utf16_to_utf8_in_buffer_charges_the_replacement_for_a_lone_surrogate() {
         // The non-replacing scan accepted this 3-byte buffer (2 + 1) for an
         // input whose conversion writes 4 bytes.

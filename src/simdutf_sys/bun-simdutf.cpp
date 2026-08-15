@@ -34,17 +34,6 @@ bool simdutf__validate_utf16le(const char16_t* buf, size_t len)
     return simdutf::validate_utf16le(buf, len);
 }
 
-size_t simdutf__convert_utf8_to_utf16le(const char* buf, size_t len,
-    char16_t* utf16_output)
-{
-    return simdutf::convert_utf8_to_utf16le(buf, len, utf16_output);
-}
-
-size_t simdutf__convert_utf8_to_utf16be(const char* buf, size_t len,
-    char16_t* utf16_output)
-{
-    return simdutf::convert_utf8_to_utf16be(buf, len, utf16_output);
-}
 SIMDUTFResult
 simdutf__convert_utf8_to_utf16le_with_errors(const char* buf, size_t len,
     char16_t* utf16_output)
@@ -53,89 +42,12 @@ simdutf__convert_utf8_to_utf16le_with_errors(const char* buf, size_t len,
     return { res.error, res.count };
 }
 
-SIMDUTFResult
-simdutf__convert_utf8_to_utf16be_with_errors(const char* buf, size_t len,
-    char16_t* utf16_output)
-{
-    auto res = simdutf::convert_utf8_to_utf16be_with_errors(buf, len, utf16_output);
-    return { res.error, res.count };
-}
-SIMDUTFResult
-simdutf__convert_utf8_to_utf32_with_errors(const char* buf, size_t len,
-    char32_t* utf32_output)
-{
-    auto res = simdutf::convert_utf8_to_utf32_with_errors(buf, len, utf32_output);
-    return { res.error, res.count };
-}
-
-size_t simdutf__convert_valid_utf8_to_utf32(const char* buf, size_t len,
-    char32_t* utf32_buffer)
-{
-    return simdutf::convert_valid_utf8_to_utf32(buf, len, utf32_buffer);
-}
-
 SIMDUTFResult simdutf__convert_utf16le_to_utf8_with_errors(const char16_t* buf,
     size_t len,
     char* utf8_buffer)
 {
     auto res = simdutf::convert_utf16le_to_utf8_with_errors(buf, len, utf8_buffer);
     return { res.error, res.count };
-}
-
-SIMDUTFResult simdutf__convert_utf16be_to_utf8_with_errors(const char16_t* buf,
-    size_t len,
-    char* utf8_buffer)
-{
-    auto res = simdutf::convert_utf16be_to_utf8_with_errors(buf, len, utf8_buffer);
-    return { res.error, res.count };
-}
-
-size_t simdutf__convert_valid_utf16be_to_utf8(const char16_t* buf, size_t len,
-    char* utf8_buffer)
-{
-    return simdutf::convert_valid_utf16be_to_utf8(buf, len, utf8_buffer);
-}
-
-SIMDUTFResult simdutf__convert_utf32_to_utf8_with_errors(const char32_t* buf,
-    size_t len,
-    char* utf8_buffer)
-{
-    auto res = simdutf::convert_utf32_to_utf8_with_errors(buf, len, utf8_buffer);
-    return { res.error, res.count };
-}
-
-size_t simdutf__convert_valid_utf32_to_utf8(const char32_t* buf, size_t len,
-    char* utf8_buffer)
-{
-    return simdutf::convert_valid_utf32_to_utf8(buf, len, utf8_buffer);
-}
-
-SIMDUTFResult
-simdutf__convert_utf32_to_utf16be_with_errors(const char32_t* buf, size_t len,
-    char16_t* utf16_buffer)
-{
-    auto res = simdutf::convert_utf32_to_utf16be_with_errors(buf, len, utf16_buffer);
-    return { res.error, res.count };
-}
-
-size_t simdutf__convert_valid_utf32_to_utf16be(const char32_t* buf, size_t len,
-    char16_t* utf16_buffer)
-{
-    return simdutf::convert_valid_utf32_to_utf16be(buf, len, utf16_buffer);
-}
-
-SIMDUTFResult
-simdutf__convert_utf16be_to_utf32_with_errors(const char16_t* buf, size_t len,
-    char32_t* utf32_buffer)
-{
-    auto res = simdutf::convert_utf16be_to_utf32_with_errors(buf, len, utf32_buffer);
-    return { res.error, res.count };
-}
-
-size_t simdutf__convert_valid_utf16be_to_utf32(const char16_t* buf, size_t len,
-    char32_t* utf32_buffer)
-{
-    return simdutf::convert_valid_utf16be_to_utf32(buf, len, utf32_buffer);
 }
 
 size_t simdutf__utf8_length_from_utf16le(const char16_t* input, size_t length)

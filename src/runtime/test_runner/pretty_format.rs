@@ -2500,12 +2500,9 @@ impl<'a> Formatter<'a> {
         result
     }
 
-    /// jest surrounds a snapshot value that spans several lines with a newline on each side
-    /// (jest-snapshot's `addExtraLineBreaks`). The other arms of `print_as` write those
-    /// newlines themselves because a non-empty object or array always spans several lines;
-    /// whether an element does depends on its props and children (`<div />` and
-    /// `<div>text</div>` fit on one line), so a top-level element is rendered into a buffer
-    /// first and wrapped afterwards.
+    /// A top-level value that spans several lines is stored as `"\n...\n"` (jest's
+    /// `addExtraLineBreaks`). Unlike an object or array, an element only sometimes does, so it
+    /// is rendered before deciding.
     fn print_jsx<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer: &mut W,

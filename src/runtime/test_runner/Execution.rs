@@ -159,12 +159,8 @@ pub struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
-    /// Bumped by every [`Execution::reset_sequence`] (retry or repeat). Each
-    /// callback's [`EntryData`] records the generation it started under, so a
-    /// completion arriving from an earlier attempt of this sequence (a timed-out
-    /// attempt's promise settling or `done()` firing while the retry runs) is
-    /// rejected by [`Execution::get_current_and_valid_execution_sequence`]
-    /// instead of finishing the attempt that is currently running.
+    /// Bumped by every [`Execution::reset_sequence`] (retry or repeat). [`EntryData`] carries the
+    /// generation a callback started under, so a completion from an earlier attempt is stale.
     pub(crate) generation: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,

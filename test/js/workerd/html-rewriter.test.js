@@ -1895,8 +1895,18 @@ describe("streamed input pacing", () => {
   const count = 2500; // ~2.4 MB of input: many upstream chunks
   const input = Buffer.alloc(piece.length * count, piece).toString();
   const rewritten = Buffer.alloc((piece.length + 6) * count, `<p x="1">${text}</p>`).toString();
-  const dir = tempDirWithFiles("hr-pacing", { "in.html": input });
+  // A second document made of different bytes, for the tests below that read
+  // it while another document is being parsed: if that read lands in the
+  // other document's buffer, these bytes show up in its output.
+  const otherText = Buffer.alloc(1000, "b").toString();
+  const otherPiece = `<p>${otherText}</p>`;
+  const otherRewritten = Buffer.alloc((otherPiece.length + 6) * count, `<p x="1">${otherText}</p>`).toString();
+  const dir = tempDirWithFiles("hr-pacing", {
+    "in.html": input,
+    "other.html": Buffer.alloc(otherPiece.length * count, otherPiece).toString(),
+  });
   const file = path.join(dir, "in.html");
+  const otherFile = path.join(dir, "other.html");
 
   function transformInput(body = Bun.file(file)) {
     let seen = 0;
@@ -1992,16 +2002,25 @@ describe("streamed input pacing", () => {
     expect(seen()).toBe(count);
   });
 
-  it("a locked but idle reader holds the input", async () => {
+  // Progress is driven by the reader's pulls: one read yields one chunk and
+  // leaves the rest of the document unread until the next.
+  it("a locked reader paces the input by its reads", async () => {
     const { res, seen } = transformInput();
     const reader = res.body.getReader();
-    for (let i = 0; i < 5; i++) await setImmediatePromise();
+    const first = await reader.read();
     const held = seen();
     expect(held).toBeLessThan(count);
-    for (let i = 0; i < 5; i++) await setImmediatePromise();
-    expect(seen()).toBe(held);
+    // Locked but not reading: give the loop real work to turn on and check the input did not advance meanwhile.
+    // (Windows reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.)
+    expect((await Bun.file(otherFile).bytes()).length).toBe(otherPiece.length * count);
+    expect(seen() - held).toBeLessThanOrEqual(isWindows ? (256 * 1024) / piece.length : 0);
+    const second = await reader.read();
+    expect(seen()).toBeGreaterThan(held);
+    expect(seen()).toBeLessThan(count);
     reader.releaseLock();
-    expect(await readAll(res.body)).toBe(rewritten);
+    const rest = await readAll(res.body);
+    expect(Buffer.concat([first.value, second.value]).toString() + rest).toBe(rewritten);
+    expect(seen()).toBe(count);
   });
 
   // With nothing reading the output the rewrite is a side effect the caller is
@@ -2075,6 +2094,120 @@ describe("streamed input pacing", () => {
       .transform(new Response(Bun.file(file)));
     expect(await outer.text()).toBe(rewritten);
     expect(await inner).toBe(rewritten);
+  });
+
+  // Starting a transform inside the handler and reading it are two reads
+  // nested in the outer one, which still has its document in the read buffer:
+  // the second nested read must be kept out of it just like the first.
+  it("a handler may transform and read another file", async () => {
+    let inner;
+    const outer = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          e.setAttribute("x", "1");
+          inner ??= transformInput(Bun.file(otherFile)).res.text();
+        },
+      })
+      .transform(new Response(Bun.file(file)));
+    expect(await outer.text()).toBe(rewritten);
+    expect(await inner).toBe(otherRewritten);
+  });
+
+  // Same, with the outer document arriving on a pipe (the child's stdin): a
+  // pipe is read by a different loop than a regular file, out of the same
+  // buffer.
+  it("a handler may transform and read another file while its document arrives on stdin", async () => {
+    const pieces = 64;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const attr = { element: e => void e.setAttribute("x", "1") };
+         let inner;
+         const outer = new HTMLRewriter()
+           .on("p", {
+             element(e) {
+               attr.element(e);
+               inner ??= new HTMLRewriter().on("p", attr).transform(new Response(Bun.file(process.argv[1]))).text();
+             },
+           })
+           .transform(new Response(Bun.stdin));
+         const out = await outer.text();
+         const innerText = await inner;
+         const expectedInner = await new HTMLRewriter().on("p", attr).transform(new Response(await Bun.file(process.argv[1]).bytes())).text();
+         console.log(JSON.stringify({ out, innerMatches: innerText === expectedInner, innerLength: innerText.length }));`,
+        otherFile,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(Buffer.alloc(piece.length * pieces, piece));
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      out: Buffer.alloc((piece.length + 6) * pieces, `<p x="1">${text}</p>`).toString(),
+      innerMatches: true,
+      innerLength: otherRewritten.length,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Same hazard with the other user of that read buffer: readFileSync reads
+  // the file into it before deciding whether it needs to stat. Covers both a
+  // regular-file input and a pipe (stdin of a child).
+  describe("a handler may call readFileSync", () => {
+    const otherContent = Buffer.alloc(4096, "Z").toString();
+    const otherTxt = path.join(dir, "other.txt");
+    beforeAll(() => fs.writeFileSync(otherTxt, otherContent));
+
+    it("while the input is a file", async () => {
+      let intactInnerReads = 0;
+      const res = new HTMLRewriter()
+        .on("p", {
+          element(e) {
+            e.setAttribute("x", "1");
+            if (fs.readFileSync(otherTxt, "utf8") === otherContent) intactInnerReads++;
+          },
+        })
+        .transform(new Response(Bun.file(file)));
+      expect(await res.text()).toBe(rewritten);
+      expect(intactInnerReads).toBe(count);
+    });
+
+    it("while the input is a pipe", async () => {
+      const pieces = 64;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { readFileSync } from "fs";
+           const otherContent = Buffer.alloc(4096, "Z").toString();
+           const res = new HTMLRewriter()
+             .on("p", {
+               element(e) {
+                 e.setAttribute("x", "1");
+                 if (readFileSync(process.argv[1], "utf8") !== otherContent) throw new Error("inner read corrupted");
+               },
+             })
+             .transform(new Response(Bun.stdin));
+           process.stdout.write(await res.text());`,
+          otherTxt,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write(Buffer.alloc(piece.length * pieces, piece));
+      proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(Buffer.alloc((piece.length + 6) * pieces, `<p x="1">${text}</p>`).toString());
+      expect(exitCode).toBe(0);
+    });
   });
 
   // Regular-file reads are synchronous on POSIX, so reading ahead of the

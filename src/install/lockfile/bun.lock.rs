@@ -3301,11 +3301,8 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
-        if let Err(err) = lockfile.resolve(log) {
-            return Err(match err {
-                tree::SubtreeError::OutOfMemory => ParseError::OutOfMemory,
-                tree::SubtreeError::DependencyLoop => ParseError::InvalidPackagesObject,
-            });
+        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
+            return Err(ParseError::OutOfMemory);
         }
     }
 

@@ -1351,7 +1351,7 @@ Bun converts MySQL types to JavaScript types:
 | FLOAT, DOUBLE                           | number                   |                                                                                                  |
 | DATE                                    | Date                     | JavaScript Date object                                                                           |
 | DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                            |
-| TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours)                                             |
+| TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours); prepared queries drop fractional seconds   |
 | YEAR                                    | number                   |                                                                                                  |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                  |
 | TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                  |

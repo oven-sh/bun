@@ -74,7 +74,7 @@ static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::
 #[inline]
 fn empty_object_expr() -> Expr {
     Expr {
-        loc: bun_ast::Loc { start: 0 },
+        loc: Some(bun_ast::Loc::new(0)),
         data: js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get())),
     }
 }
@@ -140,10 +140,7 @@ fn parse_impl_in(
             .min()
     };
     let rejected_comment = |sidx: &StructuralIndex, before: usize| {
-        !opts.allow_comments
-            && sidx
-                .first_comment
-                .is_some_and(|r| (r.loc.start as usize) < before)
+        !opts.allow_comments && sidx.first_comment.is_some_and(|r| r.loc.usize() < before)
     };
     if let Some(e) = sidx.index_error {
         let pos = match e {
@@ -167,14 +164,14 @@ fn parse_impl_in(
     }
     if !opts.allow_comments
         && let Some(range) = sidx.first_comment
-        && min_stage2_err(log).is_none_or(|first_err| first_err as i32 >= range.loc.start)
+        && min_stage2_err(log).is_none_or(|first_err| first_err >= range.loc.usize())
     {
         drop_stage2_errors(log);
         log.add_error_fmt_opts(
             format_args!("JSON does not support comments"),
             bun_ast::AddErrorOptions {
                 source: Some(source),
-                loc: range.loc,
+                loc: Some(range.loc),
                 len: range.len,
                 ..Default::default()
             },
@@ -225,7 +222,7 @@ fn report_index_error(
                 format_args!("Expected \"*/\" to terminate multi-line comment"),
                 bun_ast::AddErrorOptions {
                     source: Some(source),
-                    loc: bun_ast::usize2loc(source.contents.len()),
+                    loc: Some(bun_ast::usize2loc(source.contents.len())),
                     ..Default::default()
                 },
             );
@@ -235,7 +232,7 @@ fn report_index_error(
                 format_args!("Unsupported syntax: Operators are not allowed in JSON"),
                 bun_ast::AddErrorOptions {
                     source: Some(source),
-                    loc: bun_ast::usize2loc(pos + 1),
+                    loc: Some(bun_ast::usize2loc(pos + 1)),
                     ..Default::default()
                 },
             );
@@ -245,7 +242,7 @@ fn report_index_error(
                 format_args!("JSON document is too large to parse (2 GiB maximum)"),
                 bun_ast::AddErrorOptions {
                     source: Some(source),
-                    loc: bun_ast::Loc { start: 0 },
+                    loc: Some(bun_ast::Loc::new(0)),
                     ..Default::default()
                 },
             );
@@ -427,8 +424,8 @@ fn parse_to_rows(
         let root = Expr::init(
             // SAFETY: the tape's own pointer; `ParsedJson` keeps it alive, and
             // an empty span never dereferences it anyway.
-            unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, bun_ast::Loc::EMPTY) },
-            bun_ast::Loc { start: 0 },
+            unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, None) },
+            bun_ast::Loc::new(0),
         );
         return Ok(ParsedJson {
             root,
@@ -454,8 +451,8 @@ fn parse_to_rows_in(
         return Ok(Expr::init(
             // SAFETY: the arena-allocated tape's own pointer; it lives until the
             // arena resets, and an empty span never dereferences it anyway.
-            unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, bun_ast::Loc::EMPTY) },
-            bun_ast::Loc { start: 0 },
+            unsafe { E::ObjectJSON::new(tape.root_ptr(), 0, 0, true, None) },
+            bun_ast::Loc::new(0),
         ));
     }
     Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
@@ -563,25 +560,25 @@ pub fn parse_env_json(
             match &contents[..word_len] {
                 b"true" => {
                     return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
+                        loc: Some(bun_ast::Loc::new(0)),
                         data: js_ast::expr::Data::EBoolean(E::Boolean { value: true }),
                     });
                 }
                 b"false" => {
                     return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
+                        loc: Some(bun_ast::Loc::new(0)),
                         data: js_ast::expr::Data::EBoolean(E::Boolean { value: false }),
                     });
                 }
                 b"null" => {
                     return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
+                        loc: Some(bun_ast::Loc::new(0)),
                         data: js_ast::expr::Data::ENull(E::Null {}),
                     });
                 }
                 b"undefined" => {
                     return Ok(Expr {
-                        loc: bun_ast::Loc { start: 0 },
+                        loc: Some(bun_ast::Loc::new(0)),
                         data: js_ast::expr::Data::EUndefined(E::Undefined {}),
                     });
                 }
@@ -614,7 +611,7 @@ fn parse_auto_quoted_string(
     bump: &Bump,
 ) -> crate::Result<Expr> {
     let contents: &[u8] = &source.contents;
-    let loc = bun_ast::Loc { start: 0 };
+    let loc = bun_ast::Loc::new(0);
 
     let mut needs_decode = false;
     let mut i = 0;
@@ -723,7 +720,7 @@ const PKG_JSON_CHECKER_OPTS: JSONOptions = JSONOptions {
 
 /// Location of the first byte of the value of the property whose key string token starts at `key_loc`.
 pub fn property_value_loc(contents: &[u8], key_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
-    let key_start = usize::try_from(key_loc.start).ok()?;
+    let key_start = key_loc.usize();
     let after_key = skip_string_token(contents, key_start)?;
     let colon = skip_ws_and_comments(contents, after_key)?;
     if contents[colon] != b':' {
@@ -745,7 +742,7 @@ pub fn array_item_loc(
     array_loc: bun_ast::Loc,
     index: usize,
 ) -> Option<bun_ast::Loc> {
-    let mut p = array_first_item(contents, usize::try_from(array_loc.start).ok()?)?;
+    let mut p = array_first_item(contents, array_loc.usize())?;
     for _ in 0..index {
         p = array_next_item(contents, p)?;
     }
@@ -753,11 +750,16 @@ pub fn array_item_loc(
 }
 
 /// Source location of a property's value, re-scanning `contents` when it only carries its key's.
-pub fn value_loc_of_property(contents: &[u8], key_loc: bun_ast::Loc, value: &Expr) -> bun_ast::Loc {
-    if value.loc != key_loc {
-        return value.loc;
+pub fn value_loc_of_property(
+    contents: &[u8],
+    key_loc: Option<bun_ast::Loc>,
+    value: &Expr,
+) -> Option<bun_ast::Loc> {
+    match (value.loc, key_loc) {
+        (Some(loc), Some(key_loc)) if loc != key_loc => Some(loc),
+        (_, Some(key_loc)) => Some(property_value_loc_or_key(contents, key_loc)),
+        (loc, None) => loc,
     }
-    property_value_loc_or_key(contents, key_loc)
 }
 
 /// Where an immutable-AST JSON value sits in its document, so its source location can be recovered.
@@ -782,7 +784,7 @@ impl ValueLocation<'_> {
 
 /// Location of the item after the one starting at `item_loc`; `None` past the last item.
 pub fn array_next_item_loc(contents: &[u8], item_loc: bun_ast::Loc) -> Option<bun_ast::Loc> {
-    let p = array_next_item(contents, usize::try_from(item_loc.start).ok()?)?;
+    let p = array_next_item(contents, item_loc.usize())?;
     Some(bun_ast::usize2loc(p))
 }
 
@@ -938,7 +940,10 @@ fn materialize_impl(
         stack_check: bun_core::StackCheck::init(),
         overflowed: core::cell::Cell::new(false),
     };
-    let out = m.expr(root, root.loc);
+    let out = m.expr(
+        root,
+        root.loc.expect("the parser locates the document root"),
+    );
     if m.overflowed.get() {
         return Err(crate::Error::StackOverflow);
     }
@@ -961,7 +966,10 @@ impl Materializer<'_> {
             js_ast::expr::Data::EString(s) => {
                 Expr::init(E::EString::init(self.rehome(s.get().data).slice()), loc)
             }
-            _ => Expr { data: e.data, loc },
+            _ => Expr {
+                data: e.data,
+                loc: Some(loc),
+            },
         }
     }
 
@@ -1015,9 +1023,7 @@ impl Materializer<'_> {
         let item_locs = a.item_locs();
         let mut cursor = match item_locs {
             Some(_) => None,
-            None => usize::try_from(loc.start)
-                .ok()
-                .and_then(|start| array_first_item(self.contents, start)),
+            None => array_first_item(self.contents, loc.usize()),
         };
         for (i, item) in rows.iter().enumerate() {
             let item_loc = match item_locs {
@@ -1126,7 +1132,7 @@ mod tests {
             E::JsonValue::Null => out.push_str("null"),
             E::JsonValue::Boolean(b) => out.push_str(if *b { "true" } else { "false" }),
             E::JsonValue::Number(n) => {
-                let tmp = Expr::init(*n, bun_ast::Loc::EMPTY);
+                let tmp = Expr::init(*n, None);
                 to_json_string(&tmp, out);
             }
             E::JsonValue::String(s) => {
@@ -1616,7 +1622,7 @@ mod tests {
 
     #[test]
     fn materialize_matches_the_classic_entry_points() {
-        type Nodes = Vec<(i32, std::string::String)>;
+        type Nodes = Vec<(u32, std::string::String)>;
         fn canon_full(root: &Expr) -> (std::string::String, Nodes) {
             fn nodes(e: &Expr, out: &mut Nodes) {
                 let label = match &e.data {
@@ -1631,7 +1637,7 @@ mod tests {
                         s
                     }
                 };
-                out.push((e.loc.start, label));
+                out.push((e.loc.expect("parsed values are located").get(), label));
                 match &e.data {
                     Data::EObject(o) => {
                         for prop in o.properties.iter() {
@@ -1728,28 +1734,30 @@ mod tests {
                     for prop in o.properties.iter() {
                         let key = prop.key.unwrap();
                         let value = prop.value.unwrap();
+                        let key_loc = key.loc.expect("parsed keys are located");
                         assert_eq!(
-                            property_value_loc(src, key.loc),
-                            Some(value.loc),
+                            property_value_loc(src, key_loc),
+                            value.loc,
                             "value loc of the key at byte {} of {:?}",
-                            key.loc.start,
+                            key_loc.get(),
                             std::string::String::from_utf8_lossy(src),
                         );
                         walk(src, &value);
                     }
                 }
                 Data::EArray(a) => {
+                    let array_loc = e.loc.expect("parsed values are located");
                     for (i, item) in a.items.iter().enumerate() {
                         assert_eq!(
-                            array_item_loc(src, e.loc, i),
-                            Some(item.loc),
+                            array_item_loc(src, array_loc, i),
+                            item.loc,
                             "loc of item {i} of the array at byte {} of {:?}",
-                            e.loc.start,
+                            array_loc.get(),
                             std::string::String::from_utf8_lossy(src),
                         );
                         walk(src, item);
                     }
-                    assert_eq!(array_item_loc(src, e.loc, a.items.len()), None);
+                    assert_eq!(array_item_loc(src, array_loc, a.items.len()), None);
                 }
                 _ => {}
             }
@@ -1771,8 +1779,8 @@ mod tests {
         let doc = b"{\"k\" /* : 9 */ : /* x */ 42}";
         let key_loc = bun_ast::usize2loc(1);
         let value_loc = property_value_loc(doc, key_loc).unwrap();
-        assert_eq!(value_loc.start as usize, 25);
-        assert_eq!(&doc[value_loc.start as usize..][..2], b"42");
+        assert_eq!(value_loc.usize(), 25);
+        assert_eq!(&doc[value_loc.usize()..][..2], b"42");
         assert_eq!(property_value_loc(b"{\"k\", 1}", key_loc), None);
         assert_eq!(property_value_loc(b"{\"k\"", key_loc), None);
         assert_eq!(array_item_loc(b"{}", bun_ast::usize2loc(0), 0), None);
@@ -1842,7 +1850,7 @@ mod tests {
                     out,
                     "{}@{}=",
                     std::str::from_utf8(key).unwrap(),
-                    q.loc.start
+                    q.loc.expect("parsed keys are located").get()
                 )
                 .unwrap();
                 describe(&q.expr, bump, &mut out);
@@ -2072,11 +2080,20 @@ mod tests {
         let Data::EObject(o) = &p.root.as_ref().unwrap().data else {
             panic!()
         };
-        assert_eq!(o.close_brace_loc.start as usize, doc.len() - 1);
+        assert_eq!(
+            o.close_brace_loc.map(bun_ast::Loc::usize),
+            Some(doc.len() - 1)
+        );
         let Data::EArray(a) = &o.properties[0].value.as_ref().unwrap().data else {
             panic!()
         };
-        assert_eq!(doc[a.close_bracket_loc.start as usize], b']');
+        assert_eq!(
+            doc[a
+                .close_bracket_loc
+                .expect("parsed arrays record their `]`")
+                .usize()],
+            b']'
+        );
     }
 
     #[test]

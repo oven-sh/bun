@@ -367,10 +367,14 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
-test("a dependency whose bins fail to link does not stop its siblings' bins from being linked", async () => {
+test("a bin that fails to link does not stop the remaining bins of the package or of its siblings from being linked", async () => {
   // `directories.bin` names a file, so opening it as a directory fails with
   // ENOTDIR (a missing directory would be skipped silently).
   const badBinDir = (name: string) => JSON.stringify({ name, version: "1.0.0", directories: { bin: "package.json" } });
+  // Longer than a file name may be, so creating the link itself fails. It is
+  // the first of the package's bins, both as declared and sorted.
+  const longBinName = Buffer.alloc(300, "a").toString();
+  const longBinNameError = isWindows ? "ENOENT" : "ENAMETOOLONG";
   const { packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
     files: {
@@ -381,6 +385,7 @@ test("a dependency whose bins fail to link does not stop its siblings' bins from
           "a-bin": "file:./deps/a-bin",
           "bad-bin-dir-1": "file:./deps/bad-bin-dir-1",
           "bad-bin-dir-2": "file:./deps/bad-bin-dir-2",
+          "multi-bin": "file:./deps/multi-bin",
           "z-bin": "file:./deps/z-bin",
         },
       }),
@@ -397,6 +402,12 @@ test("a dependency whose bins fail to link does not stop its siblings' bins from
       "deps/z-bin/cli.js": "#!/usr/bin/env node\nconsole.log('z');\n",
       "deps/bad-bin-dir-1/package.json": badBinDir("bad-bin-dir-1"),
       "deps/bad-bin-dir-2/package.json": badBinDir("bad-bin-dir-2"),
+      "deps/multi-bin/package.json": JSON.stringify({
+        name: "multi-bin",
+        version: "1.0.0",
+        bin: { [longBinName]: "cli.js", "multi-b": "cli.js", "multi-c": "cli.js" },
+      }),
+      "deps/multi-bin/cli.js": "#!/usr/bin/env node\nconsole.log('multi');\n",
     },
   });
 
@@ -409,32 +420,40 @@ test("a dependency whose bins fail to link does not stop its siblings' bins from
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const linkedBin = (dir: string, name: string) =>
-    existsSync(join(dir, "node_modules", ".bin", isWindows ? `${name}.bunx` : name));
+  const binDir = async (dir: string) => {
+    const path = join(dir, "node_modules", ".bin");
+    return existsSync(path) ? await readdirSorted(path) : [];
+  };
+  const bins = (...names: string[]) => (isWindows ? names.flatMap(n => [`${n}.bunx`, `${n}.exe`]) : names).sort();
   expect({
-    "root a-cli": linkedBin(packageDir, "a-cli"),
-    "root z-cli": linkedBin(packageDir, "z-cli"),
-    "ws z-cli": linkedBin(join(packageDir, "packages", "ws"), "z-cli"),
+    root: await binDir(packageDir),
+    ws: await binDir(join(packageDir, "packages", "ws")),
+    "multi-bin's own": await binDir(join(packageDir, "node_modules", ".bun", "multi-bin@file+deps+multi-bin")),
   }).toEqual({
-    "root a-cli": true,
-    "root z-cli": true,
-    "ws z-cli": true,
+    root: bins("a-cli", "multi-b", "multi-c", "z-cli"),
+    ws: bins("z-cli"),
+    "multi-bin's own": bins("multi-b", "multi-c"),
   });
 
-  // Every failing dependency is reported, attributed to the package whose
-  // `.bin` it could not be linked into. Tasks run in parallel, so sort.
+  // Every failing package is reported once for its own `.bin` and once per
+  // package whose `.bin` it could not be linked into. Tasks run in parallel,
+  // so sort.
   const binErrors = stderr
     .split("\n")
     .filter(line => line.includes("failed to link binaries"))
     .map(line => line.replaceAll("\\", "/"))
     .sort();
-  expect(binErrors).toEqual([
-    "ENOTDIR: failed to link binaries for package: bad-bin-dir-1@deps/bad-bin-dir-1",
-    "ENOTDIR: failed to link binaries for package: bad-bin-dir-2@deps/bad-bin-dir-2",
-    "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: test-pkg-bin-link-errors@",
-    "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: ws@workspace:packages/ws",
-    "ENOTDIR: failed to link binaries of dependency bad-bin-dir-2@deps/bad-bin-dir-2 for package: test-pkg-bin-link-errors@",
-  ]);
+  expect(binErrors).toEqual(
+    [
+      "ENOTDIR: failed to link binaries for package: bad-bin-dir-1@deps/bad-bin-dir-1",
+      "ENOTDIR: failed to link binaries for package: bad-bin-dir-2@deps/bad-bin-dir-2",
+      `${longBinNameError}: failed to link binaries for package: multi-bin@deps/multi-bin`,
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: test-pkg-bin-link-errors@",
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: ws@workspace:packages/ws",
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-2@deps/bad-bin-dir-2 for package: test-pkg-bin-link-errors@",
+      `${longBinNameError}: failed to link binaries of dependency multi-bin@deps/multi-bin for package: test-pkg-bin-link-errors@`,
+    ].sort(),
+  );
   expect(exitCode).toBe(1);
 });
 

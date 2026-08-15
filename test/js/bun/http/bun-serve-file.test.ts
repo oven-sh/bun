@@ -72,6 +72,15 @@ describe("Bun.file in serve routes", () => {
       }),
       "/partial.txt": new Response(Bun.file(join(tempDir, "partial.txt"))),
       "/partial-slice.txt": new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10)),
+      // An unread Bun.file() stream is turned back into the file Blob when a
+      // route or handler response is built from it; the slice must survive.
+      "/partial-slice-stream.txt": new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10).stream()),
+      "/partial-slice-stream-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10).stream()),
+      "/partial-open-slice-stream-handler": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")).slice(10).stream()),
+      "/partial-empty-slice-stream-handler": () =>
+        new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 5).stream()),
+      "/partial-stream-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).stream()),
       "/fd-not-supported.txt": (() => {
         // This would test file descriptors, but they're not supported yet
         return new Response(Bun.file(join(tempDir, "hello.txt")));
@@ -711,6 +720,36 @@ describe("Bun.file in serve routes", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("56789");
       expect(res.headers.get("Content-Length")).toBe("5");
+    });
+
+    it("serves the slice behind a sliced file's stream as a route", async () => {
+      const res = await fetch(new URL(`/partial-slice-stream.txt`, server.url));
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("56789");
+      expect(res.headers.get("Content-Length")).toBe("5");
+    });
+
+    it("serves the slice behind a sliced file's stream from a handler", async () => {
+      const serve = async (pathname: string) => {
+        const get = await fetch(new URL(pathname, server.url));
+        const head = await fetch(new URL(pathname, server.url), { method: "HEAD" });
+        return {
+          body: await get.text(),
+          contentLength: get.headers.get("Content-Length"),
+          headContentLength: head.headers.get("Content-Length"),
+        };
+      };
+      expect({
+        "slice(5, 10)": await serve("/partial-slice-stream-handler"),
+        "slice(10)": await serve("/partial-open-slice-stream-handler"),
+        "slice(5, 5)": await serve("/partial-empty-slice-stream-handler"),
+        "whole file": await serve("/partial-stream-handler"),
+      }).toEqual({
+        "slice(5, 10)": { body: "56789", contentLength: "5", headContentLength: "5" },
+        "slice(10)": { body: "ABCDEF", contentLength: "6", headContentLength: "6" },
+        "slice(5, 5)": { body: "", contentLength: "0", headContentLength: "0" },
+        "whole file": { body: "0123456789ABCDEF", contentLength: "16", headContentLength: "16" },
+      });
     });
 
     // The slice is shorter than the file, so the byte budget runs out before

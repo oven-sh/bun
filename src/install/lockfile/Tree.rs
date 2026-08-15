@@ -450,6 +450,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) sort_buf: Vec<DependencyID>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
     pub(crate) install_root_dependencies: bool,
+    /// When set, exactly these root dependencies are installed (with their own
+    /// dependencies), regardless of the root's dependency-group and workspace filters.
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
 }
 
@@ -704,35 +706,31 @@ impl Tree {
 
             // filter out disabled dependencies
             if METHOD == BuilderMethod::Filter {
-                if is_filtered_dependency_or_workspace(
-                    dep_id,
-                    parent_pkg_id,
-                    builder.workspace_filters,
-                    builder.install_root_dependencies,
-                    builder.manager.expect("manager set when METHOD == Filter"),
-                    lockfile,
-                    &*builder.resolutions,
-                ) {
-                    continue;
-                }
-
-                // unresolved packages are skipped when filtering. they already had
-                // their chance to resolve.
-                if pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                if let Some(packages_to_install) = builder.packages_to_install {
-                    if parent_pkg_id == 0 {
-                        let mut found = false;
-                        for &package_to_install in packages_to_install {
-                            if pkg_id == package_to_install {
-                                found = true;
-                                break;
-                            }
+                match builder.packages_to_install {
+                    // Replaces the root's filters instead of narrowing them (same as the
+                    // isolated linker): the security scanner is usually a devDependency
+                    // and still has to be installed under `--production` before it can run.
+                    Some(packages_to_install) if parent_pkg_id == 0 => {
+                        if !packages_to_install.contains(&pkg_id) {
+                            continue;
+                        }
+                    }
+                    _ => {
+                        if is_filtered_dependency_or_workspace(
+                            dep_id,
+                            parent_pkg_id,
+                            builder.workspace_filters,
+                            builder.install_root_dependencies,
+                            builder.manager.expect("manager set when METHOD == Filter"),
+                            lockfile,
+                            &*builder.resolutions,
+                        ) {
+                            continue;
                         }
 
-                        if !found {
+                        // unresolved packages are skipped when filtering. they already had
+                        // their chance to resolve.
+                        if pkg_id == invalid_package_id {
                             continue;
                         }
                     }

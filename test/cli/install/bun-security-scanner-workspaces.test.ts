@@ -359,4 +359,63 @@ describe.concurrent("security scanner workspaces", () => {
       }
     },
   );
+
+  // The documented setup is `bun add -d <scanner>`, so the scanner has to be installed
+  // before the scan even when the install itself leaves devDependencies out.
+  test.each([
+    ["hoisted", "--production"],
+    ["hoisted", "--omit=dev"],
+    ["isolated", "--production"],
+    ["isolated", "--omit=dev"],
+  ])("a scanner from devDependencies is installed and run by bun install %s (%s)", async (linker, flag) => {
+    await using dir = tempDir(`scanner-npm-dev-dependency-${linker}`, {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: {
+          "left-pad": "1.3.0",
+        },
+        devDependencies: {
+          "test-security-scanner": "1.0.0",
+          "is-odd": "1.0.0",
+        },
+      }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          cache: { disable: true },
+          linker,
+          registry: `${registryUrl}/`,
+          security: {
+            scanner: "test-security-scanner",
+          },
+        },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", flag],
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdout + stderr;
+    expect(output).toContain("Security scanner installed successfully");
+    expect(output).toContain("SCANNER_RAN:");
+    expect(output).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const installed = async (...segments: string[]) =>
+      await Bun.file(join(dir, "node_modules", ...segments, "package.json")).exists();
+    expect({
+      "left-pad": await installed("left-pad"),
+      "is-odd": await installed("is-odd"),
+      "is-odd (isolated store)": await installed(".bun", "is-odd@1.0.0", "node_modules", "is-odd"),
+    }).toEqual({
+      "left-pad": true,
+      "is-odd": false,
+      "is-odd (isolated store)": false,
+    });
+  });
 });

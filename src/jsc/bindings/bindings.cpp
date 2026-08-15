@@ -2223,9 +2223,7 @@ struct AsymmetricMatcherSubstitution {
     std::set<EncodedJSValue> matcherPath;
 
     // nullptr for kinds the formatter renders from internal state rather than
-    // from properties (Date, RegExp, Map, Set, boxed primitives, matcher
-    // instances, ...): a matcher on one of those was never visible, so the
-    // original is used.
+    // from properties (Date, Map, ...): a matcher put on one of those is invisible.
     JSObject* cloneFor(JSObject* received)
     {
         auto& vm = globalObject->vm();
@@ -2368,9 +2366,7 @@ struct AsymmetricMatcherSubstitution {
                 if (onMatcherPath.second) matcherPath.erase(onMatcherPath.first);
                 continue;
             }
-            // Nothing is put on `clone` for this key: whichever copied property
-            // holds the child (this key, or the field behind a getter) is pointed
-            // at the child's clone by redirectToClones.
+            // redirectToClones repoints the copied reference to the child at its clone.
             substitute(receivedProp.getObject(), matcherProp.getObject());
             receivedPath.erase(JSValue::encode(receivedProp));
             matcherPath.erase(JSValue::encode(matcherProp));

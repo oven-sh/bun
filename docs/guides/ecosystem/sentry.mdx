@@ -35,7 +35,7 @@ Sentry.init({
 
 ---
 
-Start your app with [`--preload`](/runtime) so this file runs before any of your app's modules. A file's `import`s are evaluated before its own code, so calling `Sentry.init()` at the top of your entry file would still run after everything that file imports.
+Start your app with [`--preload`](/runtime) so this file runs before any of your app's modules. Bun evaluates a file's `import`s before its own code, so calling `Sentry.init()` at the top of your entry file would still run after everything that file imports.
 
 ```sh terminal icon="terminal"
 bun --preload ./sentry.ts index.ts

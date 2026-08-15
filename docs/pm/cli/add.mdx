@@ -19,7 +19,7 @@ bun add zod@^3.0.0
 bun add zod@latest
 ```
 
-The package is written to `dependencies` unless `--dev`, `--optional`, or `--peer` is given. If `package.json` already lists it in another group, that entry is updated in place.
+Bun writes the package to `dependencies` unless you pass `--dev`, `--optional`, or `--peer`. If `package.json` already lists it in another group, Bun updates that entry in place.
 
 ## `--dev`
 
@@ -110,11 +110,11 @@ bun add vitest --catalog=testing
 }
 ```
 
-- If the catalog already has an entry, it is reused and only `"catalog:"` is written to the current package. Pass an explicit version (`bun add react@19 --catalog`) to replace the entry — this affects every package that references it.
-- Without a version, a range already in the current `package.json` (`"react": "^18.2.0"`) is what gets cataloged.
+- If the catalog already has an entry, Bun reuses it and writes only `"catalog:"` to the current package. Pass an explicit version (`bun add react@19 --catalog`) to replace the entry — this affects every package that references it.
+- If you omit the version and the current `package.json` already has a range (`"react": "^18.2.0"`), Bun catalogs that range.
 - A package that already references `"catalog:<name>"` keeps using that catalog.
-- The name must be attached with `=`: `--catalog=testing`, not `--catalog testing`.
-- Tarball and git specifiers are cataloged under the package's real name. Relative paths and workspace packages are rejected.
+- Attach the name with `=`: `--catalog=testing`, not `--catalog testing`.
+- Bun catalogs tarball and git specifiers under the package's real name. It rejects relative paths and workspace packages.
 
 Even without the flag, `bun add react` (no version) writes `"catalog:"` if the default catalog already lists `react`. Pass a version to write a concrete range instead.
 
@@ -132,9 +132,9 @@ bun remove zod --filter '*' --filter '!api'
 ```
 
 - `*` matches every workspace package but not the root. To include the root, name it: `--filter '*' --filter '<root-name>'`.
-- If no workspace matches, nothing is written and the command fails.
-- Local paths are resolved from the current directory and rewritten relative to each selected package.
-- `bun.lock` is updated for the whole repo, but only the selected workspaces are linked into `node_modules`, as with `bun install --filter`.
+- If no workspace matches, Bun writes nothing and the command fails.
+- Bun resolves local paths from the current directory and rewrites them relative to each selected package.
+- Bun updates `bun.lock` for the whole repo but links only the selected workspaces into `node_modules`, as with `bun install --filter`.
 - Cannot be combined with `--global`.
 
 ## `--global`

@@ -3,7 +3,7 @@ title: Standalone HTML
 description: Bundle a single-page app into a single self-contained .html file with no external dependencies
 ---
 
-Bun can bundle your entire frontend into a **single `.html` file** with zero external dependencies. JavaScript, TypeScript, JSX, CSS, images, fonts, videos, WASM — everything gets inlined into one file.
+Bun can bundle your entire frontend into a **single `.html` file** with zero external dependencies. JavaScript, TypeScript, JSX, CSS, images, fonts, videos, WASM: Bun inlines everything into one file.
 
 ```bash terminal icon="terminal"
 bun build --compile --target=browser ./index.html --outdir=dist
@@ -25,9 +25,9 @@ There's nothing to install, no `node_modules` to deploy, no build artifacts to c
 
 ## Truly one file
 
-Normally, distributing a web page means managing a folder of assets — the HTML, the JavaScript bundles, the CSS files, the images. Move the HTML without the rest and everything breaks. Browsers have tried to solve this before: Safari's `.webarchive` and `.mhtml` are supposed to save a page as a single file, but in practice they unpack into a folder of loose files on your computer — defeating the purpose.
+Normally, distributing a web page means managing a folder of assets — the HTML, the JavaScript bundles, the CSS files, the images. Move the HTML without the rest and everything breaks. Browsers have tried to solve this before. Safari's `.webarchive` and `.mhtml` are supposed to save a page as a single file. In practice, they unpack into a folder of loose files on your computer, which defeats the purpose.
 
-Standalone HTML output is a plain `.html` file: not an archive, not a folder. Every image, every font, every line of CSS and JavaScript is embedded directly in the HTML using standard `<style>` tags, `<script>` tags, and `data:` URIs. Any browser can open it and any server can host it.
+Standalone HTML output is a plain `.html` file: not an archive, not a folder. Bun embeds every image, every font, and every line of CSS and JavaScript directly in the HTML using standard `<style>` tags, `<script>` tags, and `data:` URIs. Any browser can open it and any server can host it.
 
 You can distribute the page the same way you'd distribute a PDF: a single file you can move, copy, upload, or share without worrying about broken paths or missing assets.
 
@@ -98,9 +98,9 @@ Bun inlines every local asset it finds in your HTML: anything with a relative pa
 | CSS `url("./font.woff2")`                        | CSS `url(data:font/woff2;base64,...)`                                    |
 | JS `import "./styles.css"`                       | Merged into the `<style>` tag                                            |
 
-Images, fonts, WASM binaries, videos, audio files, SVGs — any file referenced by a relative path gets base64-encoded into a `data:` URI and embedded directly in the HTML. Bun detects the MIME type from the file extension.
+Images, fonts, WASM binaries, videos, audio files, SVGs: Bun base64-encodes any file referenced by a relative path into a `data:` URI and embeds it directly in the HTML. Bun detects the MIME type from the file extension.
 
-External URLs (like CDN links or absolute URLs) are left untouched.
+Bun leaves external URLs (like CDN links or absolute URLs) untouched.
 
 ## Using with React
 
@@ -160,7 +160,7 @@ export function Counter() {
 bun build --compile --target=browser ./index.html --outdir=dist
 ```
 
-All of React, your components, and your CSS are bundled into `dist/index.html`. Upload that one file anywhere and it works.
+Bun bundles all of React, your components, and your CSS into `dist/index.html`. Upload that one file anywhere and it works.
 
 ## Using with Tailwind CSS
 
@@ -219,7 +219,7 @@ await Bun.build({
 bun run build.ts
 ```
 
-The generated Tailwind CSS is inlined directly into the HTML file as a `<style>` tag.
+Bun inlines the generated Tailwind CSS directly into the HTML file as a `<style>` tag.
 
 ## How it works
 
@@ -276,7 +276,7 @@ if (!result.success) {
 }
 ```
 
-When `outdir` is omitted, the output is available as a `BuildArtifact` in `result.outputs`:
+When you omit `outdir`, the output is available as a `BuildArtifact` in `result.outputs`:
 
 ```ts icon="/icons/typescript.svg"
 const result = await Bun.build({
@@ -311,4 +311,4 @@ Bun replaces references to `process.env.API_URL` in your JavaScript with the lit
 
 - **Code splitting** is not supported — `--splitting` cannot be used with `--compile --target=browser`
 - **Large assets** increase file size since they're base64-encoded (33% overhead vs the raw binary)
-- **External URLs** (CDN links, absolute URLs) are left as-is — only relative paths are inlined
+- **External URLs** (CDN links, absolute URLs) stay as-is: Bun inlines only relative paths

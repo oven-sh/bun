@@ -79,7 +79,7 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--public-path" type="string">
-  Prefix to be added to import paths in bundled code
+  Prefix the bundler adds to import paths in bundled code
 </ParamField>
 
 <ParamField path="--external" type="string">
@@ -139,8 +139,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--react-compiler" type="boolean">
-  Run the React Compiler over `.jsx`/`.tsx` files, automatically memoizing components and hooks. Output mode is derived
-  from `--target` (`browser` → client, `bun`/`node` → ssr). Experimental.
+  Run the React Compiler over `.jsx`/`.tsx` files, automatically memoizing components and hooks. The bundler derives the
+  output mode from `--target` (`browser` → client, `bun`/`node` → ssr). Experimental.
 </ParamField>
 
 ### Standalone Executables

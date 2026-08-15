@@ -5,6 +5,7 @@ import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { dirname, join } from "path";
+import { SimpleRegistry } from "./simple-dummy-registry";
 
 const registry = new VerdaccioRegistry();
 
@@ -1645,6 +1646,238 @@ describe("--linker flag", () => {
     expect(await exited).toBe(0);
 
     expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
+  });
+
+  async function installWithLinker(packageDir: string, linker: "isolated" | "hoisted") {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", linker],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  // `peer-deps` has a peer dependency on `no-deps`, so it shows which copy of
+  // `no-deps` a dependency resolves to. Both must resolve to the same copy the
+  // root resolves to, whichever linker laid out the tree.
+  async function resolvedNoDeps(packageDir: string) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const root = require("no-deps");
+         const viaPeer = require("peer-deps").peerDependencies["no-deps"];
+         console.log(JSON.stringify({ root: root.version, viaPeer: viaPeer.version, sameCopy: root === viaPeer }));`,
+      ],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  function rootEntryKinds(packageDir: string, names: string[]) {
+    return Object.fromEntries(
+      names.map(name => {
+        const stat = lstatSync(join(packageDir, "node_modules", name), { throwIfNoEntry: false });
+        return [name, stat === undefined ? "missing" : stat.isSymbolicLink() ? "symlink" : "directory"];
+      }),
+    );
+  }
+
+  test("switching linkers on an existing node_modules replaces the whole tree", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir();
+    const writeRootPackageJson = (noDepsVersion: string) =>
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "linker-switch",
+          dependencies: {
+            "no-deps": noDepsVersion,
+            "peer-deps": "1.0.0",
+          },
+        }),
+      );
+
+    await writeRootPackageJson("1.0.0");
+    await installWithLinker(packageDir, "isolated");
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "peer-deps"])).toEqual({
+      ".bun": "directory",
+      "no-deps": "symlink",
+      "peer-deps": "symlink",
+    });
+    expect(await resolvedNoDeps(packageDir)).toEqual({ root: "1.0.0", viaPeer: "1.0.0", sameCopy: true });
+
+    // The store symlink for `peer-deps` still points at a package.json with the
+    // right version, so a hoisted install that only compared versions would keep
+    // it linked into the store next to the old `no-deps`.
+    await writeRootPackageJson("2.0.0");
+    expect(await installWithLinker(packageDir, "hoisted")).toContain("2 packages installed");
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "peer-deps"])).toEqual({
+      ".bun": "missing",
+      "no-deps": "directory",
+      "peer-deps": "directory",
+    });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+    expect(await resolvedNoDeps(packageDir)).toEqual({ root: "2.0.0", viaPeer: "2.0.0", sameCopy: true });
+
+    // Only a tree built by the other linker gets replaced.
+    expect(await installWithLinker(packageDir, "hoisted")).toContain("(no changes)");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+
+    // Back to isolated: the real directory left behind by the hoisted install
+    // must not shadow the store entry for the version the lockfile now has.
+    await writeRootPackageJson("1.0.0");
+    expect(await installWithLinker(packageDir, "isolated")).toContain("2 packages installed");
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "peer-deps"])).toEqual({
+      ".bun": "directory",
+      "no-deps": "symlink",
+      "peer-deps": "symlink",
+    });
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bun",
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+    expect(await resolvedNoDeps(packageDir)).toEqual({ root: "1.0.0", viaPeer: "1.0.0", sameCopy: true });
+
+    expect(await installWithLinker(packageDir, "isolated")).toContain("(no changes)");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bun",
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+  });
+
+  test("switching from isolated to hoisted also replaces workspace node_modules", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "linker-switch-workspaces",
+          workspaces: ["packages/*"],
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "packages/pkg1/index.js": `console.log(require.resolve("no-deps/package.json"));`,
+      },
+    });
+
+    await installWithLinker(packageDir, "isolated");
+    expect(lstatSync(join(packageDir, "packages", "pkg1", "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
+
+    await installWithLinker(packageDir, "hoisted");
+    // The workspace's store link would otherwise keep shadowing the hoisted copy.
+    expect(existsSync(join(packageDir, "packages", "pkg1", "node_modules"))).toBeFalse();
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "pkg1"])).toEqual({
+      ".bun": "missing",
+      "no-deps": "directory",
+      "pkg1": "symlink",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "packages/pkg1/index.js"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(join(packageDir, "node_modules", "no-deps", "package.json"));
+    expect(exitCode).toBe(0);
+  });
+
+  // A security scanner that is not installed yet is installed on its own, with
+  // the hoisted linker, before the real install runs. Finding the store in that
+  // step is not a linker switch.
+  test("installing a missing security scanner into an isolated node_modules keeps the tree", async () => {
+    using scannerRegistry = new SimpleRegistry(false);
+    await scannerRegistry.start();
+
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "scanner-into-isolated",
+          workspaces: ["packages/*"],
+          devDependencies: {
+            "test-security-scanner": "1.0.0",
+          },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: {
+            "left-pad": "1.3.0",
+          },
+        }),
+      },
+    });
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(packageDir, ".bun-cache"),
+          registry: `${scannerRegistry.getUrl()}/`,
+          security: { scanner: "test-security-scanner" },
+        },
+      }),
+    );
+
+    async function installWithScanner() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const output = stdout + stderr;
+      expect(output).toContain("Attempting to install security scanner from npm");
+      expect(output).toContain("SCANNER_RAN:");
+      expect(exitCode).toBe(0);
+    }
+
+    await installWithScanner();
+    const nodeModules = join(packageDir, "node_modules");
+    const entriesAfterFirstInstall = await readdirSorted(nodeModules);
+    expect(entriesAfterFirstInstall).toEqual([
+      ".bun",
+      expect.stringContaining(".old_modules-"),
+      "test-security-scanner",
+    ]);
+
+    // Make the scanner need its own install step again, this time into a tree
+    // that already has a store.
+    await rm(join(nodeModules, "test-security-scanner"), { recursive: true, force: true });
+    await installWithScanner();
+    expect(await readdirSorted(nodeModules)).toEqual(entriesAfterFirstInstall);
+    expect(await readdirSorted(join(packageDir, "packages", "app", "node_modules"))).toEqual(["left-pad"]);
   });
 });
 test("many transitive dependencies", async () => {

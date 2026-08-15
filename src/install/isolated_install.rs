@@ -1132,6 +1132,73 @@ pub(crate) fn build_store(
     })
 }
 
+/// Entry by entry rather than renaming `node_modules` itself, which may be a mount point or a symlink.
+pub(crate) fn move_node_modules_aside(lockfile: &Lockfile) {
+    use bun_sys::FdExt as _;
+
+    let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
+    let rand = fast_random();
+    old_modules
+        .append_fmt(format_args!(
+            ".old_modules-{}",
+            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
+        ))
+        .assume_ok();
+    if sys::mkdirat(Fd::cwd(), old_modules.slice_z(), 0o755).is_err() {
+        return;
+    }
+    let old_modules_name = old_modules.basename().to_vec();
+
+    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") else {
+        return;
+    };
+    let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
+    let mut iter = sys::iterate_dir(node_modules);
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if name == b".cache" || name == old_modules_name.as_slice() {
+            continue;
+        }
+
+        let entry_path_len = entry_path.len();
+        entry_path.append(name).assume_ok();
+        let old_modules_len = old_modules.len();
+        old_modules.append(name).assume_ok();
+
+        let _ = sys::renameat(
+            Fd::cwd(),
+            entry_path.slice_z(),
+            Fd::cwd(),
+            old_modules.slice_z(),
+        );
+
+        entry_path.set_length(entry_path_len);
+        old_modules.set_length(old_modules_len);
+    }
+    node_modules.close();
+
+    for workspace_path in lockfile.workspace_paths.values() {
+        let mut workspace_node_modules =
+            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)).assume_ok();
+        let basename = workspace_node_modules.basename().to_vec();
+        workspace_node_modules.append(b"node_modules").assume_ok();
+
+        let old_modules_len = old_modules.len();
+        old_modules
+            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
+            .assume_ok();
+
+        let _ = sys::renameat(
+            Fd::cwd(),
+            workspace_node_modules.slice_z(),
+            Fd::cwd(),
+            old_modules.slice_z(),
+        );
+
+        old_modules.set_length(old_modules_len);
+    }
+}
+
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
@@ -1675,233 +1742,13 @@ pub(crate) fn install_isolated_packages(
         // matches `Installer::NODE_MODULES_BUN`.
         let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
-        match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
-            Ok(()) => {
-                // fallthrough to creating bun_modules below
+        if sys::mkdirat(Fd::cwd(), node_modules_path, 0o755).is_err() {
+            if sys::directory_exists_at(Fd::cwd(), bun_modules_path).unwrap_or(false) {
+                break 'is_new_bun_modules false;
             }
-            Err(_) => {
-                match sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
-                    Err(_) => break 'is_new_bun_modules false,
-                    Ok(()) => {}
-                }
 
-                // 'node_modules' exists and 'node_modules/.bun' doesn't
-
-                #[cfg(windows)]
-                {
-                    // Windows:
-                    // 1. create 'node_modules/.old_modules-{hex}'
-                    // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
-                    // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-
-                    // `sys::mkdirat`/`renameat` take `&ZStr` (u8) and widen
-                    // internally, so a single u8 `AutoRelPath` covers both the
-                    // mkdir and rename targets.
-                    let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
-                    let rand = fast_random();
-                    rename_path
-                        .append_fmt(format_args!(
-                            ".old_modules-{}",
-                            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                        ))
-                        .assume_ok();
-
-                    // 1
-                    if sys::mkdirat(Fd::cwd(), rename_path.slice_z(), 0o755).is_err() {
-                        break 'is_new_bun_modules true;
-                    }
-
-                    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules")
-                    else {
-                        break 'is_new_bun_modules true;
-                    };
-                    // Windows HANDLE-leak audit: `Fd` is `Copy` (no Drop) and the
-                    // `WrappedIterator` from `sys::iterate_dir` does not own/close it,
-                    // so close explicitly. The guard fires on
-                    // normal fall-through to step 3 and on every
-                    // `break 'is_new_bun_modules true` early exit.
-                    let _close_node_modules = scopeguard::guard(node_modules, |fd| {
-                        use bun_sys::FdExt as _;
-                        fd.close();
-                    });
-
-                    let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
-
-                    // 2
-                    let mut node_modules_iter = sys::iterate_dir(node_modules);
-                    loop {
-                        let Some(entry) = (match node_modules_iter.next() {
-                            Ok(v) => v,
-                            Err(_) => break 'is_new_bun_modules true,
-                        }) else {
-                            break;
-                        };
-                        if bun_core::starts_with_char(entry.name.slice_u8(), b'.') {
-                            continue;
-                        }
-
-                        // Capture lengths and truncate manually so
-                        // the paths stay unborrowed across the loop body.
-                        let entry_path_save = entry_path.len();
-                        entry_path.append(entry.name.slice()).assume_ok();
-
-                        let rename_path_save = rename_path.len();
-                        rename_path.append(entry.name.slice()).assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            entry_path.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                        entry_path.set_length(entry_path_save);
-                    }
-
-                    // 3
-                    for workspace_path in lockfile.workspace_paths.values() {
-                        let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
-                                .assume_ok();
-
-                        // Clone basename before mutating
-                        // `workspace_node_modules`.
-                        let basename = workspace_node_modules.basename().to_vec();
-
-                        workspace_node_modules.append(b"node_modules").assume_ok();
-
-                        // Reshaped for borrowck — capture length instead
-                        // of `save()` so `rename_path` stays unborrowed.
-                        let rename_path_save = rename_path.len();
-                        rename_path
-                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
-                            .assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            workspace_node_modules.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                    }
-                }
-                #[cfg(not(windows))]
-                {
-                    // Posix:
-                    // 1. rename existing 'node_modules' to temp location
-                    // 2. create new 'node_modules' directory
-                    // 3. rename temp into 'node_modules/.old_modules-{hex}'
-                    // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
-                    // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-                    let mut temp_node_modules_buf = PathBuffer::uninit();
-                    let temp_node_modules = paths::fs::FileSystem::tmpname(
-                        b"tmp_modules",
-                        &mut temp_node_modules_buf.0,
-                        fast_random(),
-                    )
-                    .expect("unreachable");
-
-                    // 1
-                    if sys::renameat(
-                        Fd::cwd(),
-                        bun_core::zstr!("node_modules"),
-                        Fd::cwd(),
-                        temp_node_modules,
-                    )
-                    .is_err()
-                    {
-                        break 'is_new_bun_modules true;
-                    }
-
-                    // 2
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
-                        Output::err(err, "failed to create './node_modules'", format_args!(""));
-                        Global::exit(1);
-                    }
-
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
-                        Output::err(
-                            err,
-                            "failed to create './node_modules/.bun'",
-                            format_args!(""),
-                        );
-                        Global::exit(1);
-                    }
-
-                    let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
-
-                    let rand = fast_random();
-                    rename_path
-                        .append_fmt(format_args!(
-                            ".old_modules-{}",
-                            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                        ))
-                        .assume_ok();
-
-                    // 3
-                    if sys::renameat(
-                        Fd::cwd(),
-                        temp_node_modules,
-                        Fd::cwd(),
-                        rename_path.slice_z(),
-                    )
-                    .is_err()
-                    {
-                        break 'is_new_bun_modules true;
-                    }
-
-                    rename_path.append(b".cache").assume_ok();
-
-                    let mut cache_path = AutoRelPath::from(b"node_modules").assume_ok();
-                    cache_path.append(b".cache").assume_ok();
-
-                    // 4
-                    let _ = sys::renameat(
-                        Fd::cwd(),
-                        rename_path.slice_z(),
-                        Fd::cwd(),
-                        cache_path.slice_z(),
-                    );
-
-                    // remove .cache so we can append destination for each workspace
-                    rename_path.undo(1);
-
-                    // 5
-                    for workspace_path in lockfile.workspace_paths.values() {
-                        let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
-                                .assume_ok();
-
-                        // Clone basename before mutating
-                        // `workspace_node_modules`.
-                        let basename = workspace_node_modules.basename().to_vec();
-
-                        workspace_node_modules.append(b"node_modules").assume_ok();
-
-                        // Capture the length and truncate manually
-                        // so `rename_path` stays unborrowed between save/restore.
-                        let rename_path_save = rename_path.len();
-
-                        rename_path
-                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
-                            .assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            workspace_node_modules.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                    }
-                }
-
-                break 'is_new_bun_modules true;
-            }
+            // 'node_modules' exists and 'node_modules/.bun' doesn't
+            move_node_modules_aside(lockfile);
         }
 
         if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {

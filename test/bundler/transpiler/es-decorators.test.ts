@@ -1510,6 +1510,353 @@ describe("ES Decorators", () => {
     });
   });
 
+  // The lowering also moves static blocks and the initializers of lowered static
+  // fields/accessors out of the class body. The expected output of each program
+  // is what the same class prints without the lowering (checked with node; the
+  // class decorator case against tsc's emit), which pins the receiver as well as
+  // the object the lookup starts from.
+  describe.concurrent("super property access in relocated static code", () => {
+    const base = `
+      class Base {
+        static x = 1;
+        static named = "named";
+        static get who() { return "who:" + this.name; }
+        static set tap(v) { this.tapped = this.name + "=" + v; }
+        static m(...args) { return "m:" + this.name + ":" + args.join(","); }
+        static tag(strings, ...values) { return "tag:" + this.name + ":" + strings.join("|") + ":" + values.join(","); }
+      }
+    `;
+
+    test("static block reads, computed keys and calls keep the class as receiver", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        const prop = "named";
+        const method = "m";
+        class C extends Base {
+          @dec static decorated;
+          static {
+            console.log(super.x, super[prop], super.who);
+            console.log(super.m(1, 2), super[method](3));
+            console.log(super.m?.(4), super.missing?.(5));
+            console.log(super.tag\`a\${super.x}b\`);
+            console.log((() => super.x + 1)());
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(["1 named who:C", "m:C:1,2 m:C:3", "m:C:4 undefined", "tag:C:a|b:1", "2"].join("\n") + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("awaited super accesses inside an async arrow in a static block", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        class C extends Base {
+          @dec static decorated;
+          static {
+            (async () => {
+              console.log(await super.m("async"), (await super.x) + 1);
+            })();
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("m:C:async 2\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static block assignments invoke inherited setters and define on the class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        const key = "viaIndex";
+        class C extends Base {
+          @dec static decorated;
+          static {
+            super.tap = "t";
+            super.plain = "p";
+            super[key] = "i";
+            super.a = 1, super.b = 2;
+            if (super.x) super.c = 3;
+          }
+        }
+        console.log(C.tapped, Object.hasOwn(Base, "tapped"));
+        console.log(C.plain, C.viaIndex, Object.hasOwn(Base, "plain"), Object.hasOwn(Base, "viaIndex"));
+        console.log(C.a, C.b, C.c);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("C=t false\np i false false\n1 2 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("every write form prints what the undecorated class prints", async () => {
+      // Reads go to the parent and writes land on the class, so e.g. super.n++
+      // after super.n += 5 still reads the parent's 1.
+      const body = `
+        static out = [];
+        static {
+          super.n += 5;
+          this.out.push(["plusEq", this.n, Base.n, Object.hasOwn(this, "n")]);
+          super[key] *= 3;
+          this.out.push(["computedMulEq", this.computed, Base.computed]);
+          const post = super.n++;
+          this.out.push(["postInc", post, this.n]);
+          this.out.push(["preDec", --super.n]);
+          super.missing ??= "filled";
+          super.n ||= "never";
+          this.out.push(["logical", this.missing, this.n]);
+          const assigned = (super.acc = "v");
+          this.out.push(["assignValue", assigned, this.backing]);
+          [super.first, super.second = "dflt"] = ["f"];
+          ({ s: super.third } = { s: "t" });
+          this.out.push(["destructure", this.first, this.second, this.third]);
+          let threw = "no";
+          try { delete super.n; } catch (e) { threw = e.constructor.name; }
+          this.out.push(["delete", threw]);
+          this.out.push(["call", super.m()]);
+        }
+      `;
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        const key = "computed";
+        function makeBase() {
+          return class {
+            static n = 1;
+            static computed = 10;
+            static get acc() { return this.backing; }
+            static set acc(v) { this.backing = "set:" + v; }
+            static m() { return "m:" + this.name; }
+          };
+        }
+        const native = (() => { const Base = makeBase(); class C extends Base { ${body} } return JSON.stringify(C.out); })();
+        const lowered = (() => { const Base = makeBase(); class C extends Base { @dec static decorated; ${body} } return JSON.stringify(C.out); })();
+        console.log(native === lowered);
+        console.log(lowered);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "true\n" +
+          JSON.stringify([
+            ["plusEq", 6, 1, true],
+            ["computedMulEq", 30, 10],
+            ["postInc", 1, 2],
+            ["preDec", 0],
+            ["logical", "filled", 0],
+            ["assignValue", "v", "set:v"],
+            ["destructure", "f", "dflt", "t"],
+            ["delete", "ReferenceError"],
+            ["call", "m:C"],
+          ]) +
+          "\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test("static block with declarations (wrapped in an IIFE) still sees super", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        class C extends Base {
+          @dec static decorated;
+          static {
+            const doubled = super.x * 2;
+            let calls = "";
+            for (let i = 0; i < 2; i++) calls += super.m(i);
+            let destructured;
+            [destructured] = [super.named];
+            console.log(doubled, calls, destructured);
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("2 m:C:0m:C:1 named\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated static field, accessor and private field initializers", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        const key = "x";
+        class C extends Base {
+          @dec static field = super.x + 10;
+          @dec static computed = super[key] + 20;
+          @dec static called = super.m("init");
+          @dec static got = super.who;
+          @dec static self = this === C && this.field;
+          @dec static accessor acc = super.x + 30;
+          @dec static #priv = super.x + 40;
+          static get priv() { return C.#priv; }
+        }
+        console.log(C.field, C.computed, C.called, C.got, C.self, C.acc, C.priv);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("11 21 m:C:init who:C 11 31 41\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("undecorated static accessor initializer in a decorated class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        class C extends Base {
+          @dec static decorated;
+          static accessor acc = super.m(super.x) + "/" + this.name;
+        }
+        console.log(C.acc);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("m:C:1/C\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("static accessor initializer in a class with no decorators at all", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        class C extends Base {
+          static accessor acc = super.x + 5;
+        }
+        console.log(C.acc);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("6\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class without an extends clause looks up Function.prototype", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        class C {
+          @dec static decorated;
+          static { console.log(super.call === Function.prototype.call); }
+          @dec static ctor = super.constructor === Function;
+        }
+        console.log(C.ctor);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true\ntrue\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class replaced by a class decorator is the receiver, lookup still starts at the parent", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        function replace(cls) {
+          return class Replaced extends cls { static x = "shadowed"; };
+        }
+        @replace class C extends Base {
+          static { console.log(super.x, super.who, this.name); }
+          @dec static field = super.m(super.x);
+        }
+        console.log(C.name, C.field);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1 who:Replaced Replaced\nReplaced m:Replaced:1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("class expressions", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        const Anon = class extends Base {
+          @dec static field = super.x + 1;
+          static { console.log(super.m("anon")); }
+        };
+        const Named = class Inner extends Base {
+          @dec static field = super.x + 2;
+          static { console.log(super.m("named")); }
+        };
+        console.log(Anon.field, Named.field);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("m:Anon:anon\nm:Inner:named\n2 3\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("decorated class inside a method binds super to its own parent", async () => {
+      // Without the rewrite this is not even a syntax error: the relocated
+      // super.x lands inside Outer's method and silently reads OuterBase.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec() {}
+        class OuterBase { static x = "outer"; }
+        class InnerBase { static x = "inner"; }
+        class Outer extends OuterBase {
+          static make() {
+            class Inner extends InnerBase {
+              @dec static fromInit = super.x;
+              static { this.fromBlock = super.x; }
+            }
+            return Inner;
+          }
+        }
+        const Inner = Outer.make();
+        console.log(Inner.fromInit, Inner.fromBlock);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("inner inner\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("super inside nested methods and classes is left alone", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        ${base}
+        function dec() {}
+        class C extends Base {
+          @dec static decorated;
+          static {
+            const proto = { m() { return "proto:" + this.tagName; } };
+            const obj = { tagName: "obj", m() { return super.m() + "," + this.tagName; } };
+            Object.setPrototypeOf(obj, proto);
+            class Inner extends Base { static { this.fromInner = super.m("inner"); } }
+            console.log(obj.m(), Inner.fromInner, super.m("outer"));
+          }
+        }
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("proto:obj,obj m:Inner:inner m:C:outer\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("Bun.Transpiler output uses the captured class with the class binding as receiver", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const statement = transpiler.transformSync(`
+        function dec() {}
+        class C extends Base {
+          @dec static field = super.x;
+          static { super.m(1); }
+        }
+      `);
+      expect(statement).toContain("_home = this;");
+      expect(statement).toMatch(/__superGet\w*\(_home, C, "x"\)/);
+      expect(statement).toMatch(/__superGet\w*\(_home, C, "m"\)\.call\(C, 1\)/);
+      expect(statement).not.toMatch(/\bsuper\b/);
+
+      const expression = transpiler.transformSync(`
+        function dec() {}
+        const C = class extends Base {
+          @dec static field = super[key];
+        };
+      `);
+      expect(expression).toMatch(/__superGet\w*\(_home, _class, key\)/);
+      expect(expression).not.toMatch(/\bsuper\b/);
+
+      const withoutSuper = transpiler.transformSync(`
+        function dec() {}
+        class C extends Base {
+          @dec static field = this.x;
+          static { this.y = 2; }
+          static inBody = super.x;
+        }
+      `);
+      expect(withoutSuper).not.toContain("_home");
+      expect(withoutSuper).toContain("static inBody = super.x;");
+    });
+  });
+
   describe("accessor with TypeScript annotations", () => {
     test("accessor with definite assignment assertion (!)", async () => {
       using dir = tempDir("es-dec-accessor-bang", {

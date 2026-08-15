@@ -132,9 +132,7 @@ pub(crate) mod js_bindings {
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }
 
-    /// A real C `abort()`, the way WTF `CRASH()`/`RELEASE_ASSERT`, mimalloc
-    /// and BoringSSL die in release builds: SIGABRT on POSIX, the statically
-    /// linked UCRT's `abort()` (and its CRT SIGABRT hook) on Windows.
+    /// The C `abort()` a release-build `RELEASE_ASSERT` ends in, on every platform.
     #[bun_jsc::host_fn]
     fn js_abort(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
@@ -154,9 +152,8 @@ pub(crate) mod js_bindings {
 
     /// Dies like foreign native code, with Bun's crash handler provably out
     /// of the way on both platforms: `__fastfail` on Windows (uncatchable,
-    /// exit code 0xC0000409: Rust aborts, /GS checks, and `abort()` in an
-    /// addon's own CRT, whose SIGABRT slot Bun's hook is not installed in)
-    /// and a raw SIGABRT on POSIX (handlers reset first, like the
+    /// exit code 0xC0000409, like Rust aborts, /GS checks and an addon CRT's
+    /// `abort()`) and a raw SIGABRT on POSIX (handlers reset first, like the
     /// `raiseIgnoringPanicHandler` binding below). The `abort` binding
     /// above is the opposite: it routes into the crash handler on purpose.
     #[bun_jsc::host_fn]
@@ -168,11 +165,8 @@ pub(crate) mod js_bindings {
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGABRT);
     }
 
-    /// Executes the trap instruction WTF's `WTF_FATAL_CRASH_INST` and JSC's
-    /// JIT `abortWithReason()` / LLInt `break` compile to. SIGTRAP on POSIX;
-    /// on Windows, `EXCEPTION_BREAKPOINT` for x64's `int3` but
-    /// `EXCEPTION_ILLEGAL_INSTRUCTION` for arm64's `brk #0xbb08` (see
-    /// `CrashReason::Trap`), so the Windows test expects per architecture.
+    /// Executes the trap instruction WTF/JSC emit (see `CrashReason::Trap` for
+    /// how each platform reports it).
     #[bun_jsc::host_fn]
     fn js_trap(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
@@ -214,9 +208,7 @@ pub(crate) mod js_bindings {
         bun_core::out_of_memory();
     }
 
-    /// `raiseIgnoringPanicHandler(signal?)`: re-raises `signal` (name or
-    /// number, default SIGSEGV) the way `bun run` forwards a child's fatal
-    /// signal, i.e. with the crash handler's hooks torn down first.
+    /// `raiseIgnoringPanicHandler(signal = "SIGSEGV")`
     #[bun_jsc::host_fn]
     fn js_raise_ignoring_panic_handler(
         global: &JSGlobalObject,

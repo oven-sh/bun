@@ -1244,9 +1244,8 @@ pub const EXCEPTION_BREAKPOINT: u32 = 0x80000003;
 pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;
 pub const EXCEPTION_ILLEGAL_INSTRUCTION: u32 = 0xC000001D;
 pub const EXCEPTION_STACK_OVERFLOW: u32 = 0xC00000FD;
-/// The status `__fastfail(FAST_FAIL_FATAL_APP_EXIT)` terminates with, i.e.
-/// how UCRT `abort()` and Rust aborts end a process when nothing intercepts
-/// them. Never an `ExceptionCode`: a fast-fail dispatches no exception.
+/// Exit status of `__fastfail()`, i.e. of an unhandled `abort()`; never an
+/// `ExceptionCode`.
 pub const STATUS_STACK_BUFFER_OVERRUN: u32 = 0xC0000409;
 
 /// `EXCEPTION_RECORD` (winnt.h).

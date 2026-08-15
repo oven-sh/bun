@@ -827,9 +827,8 @@ impl<'a> Coordinator<'a> {
 /// Windows delivers no signals: an unhandled exception or `__fastfail`
 /// exits with the NTSTATUS as the exit code, so recognized fatal values of
 /// `Exited.raw` (the untruncated code; `Exited.code` is `u8`) classify as
-/// panics too. A crash Bun's crash handler reports exits with the status
-/// the unreported crash would have had (`CrashReason::terminal_exit_code`
-/// in `bun_crash_handler`), so it classifies the same way, banner or not.
+/// panics too; Bun's own crash handler exits with the same values
+/// (`CrashReason::terminal_exit_code`).
 fn is_panic_status(status: &SpawnStatus) -> bool {
     if let Some(sig) = status.signal_code() {
         use bun_core::SignalCode;
@@ -876,10 +875,8 @@ fn is_fatal_windows_exit_code(code: u32) -> bool {
         | 0xC000_0096                // STATUS_PRIVILEGED_INSTRUCTION (SIGILL)
         | 0xC000_00FD                // STATUS_STACK_OVERFLOW
         | 0xC000_0374                // STATUS_HEAP_CORRUPTION
-        | 0xC000_0409                // STATUS_STACK_BUFFER_OVERRUN: __fastfail (UCRT
-                                     // abort(), Rust abort, /GS checks) and what the
-                                     // crash handler exits with for aborts, panics
-                                     // and OOM (SIGABRT)
+        | 0xC000_0409                // STATUS_STACK_BUFFER_OVERRUN: __fastfail, i.e.
+                                     // abort(), Rust abort, /GS checks, panics (SIGABRT)
         | 0xC000_0417                // STATUS_INVALID_CRUNTIME_PARAMETER
         | 0xC000_041D                // STATUS_FATAL_USER_CALLBACK_EXCEPTION
         | 0xC000_0420                // STATUS_ASSERTION_FAILURE

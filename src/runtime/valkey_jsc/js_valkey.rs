@@ -1148,7 +1148,16 @@ impl JSValkeyClient {
     /// because `onclose` may call connect(), and a dial that fails the same way
     /// from in there would otherwise re-enter `on_close()` on the same stack.
     fn close_without_socket_next_tick(&self) {
-        self.enqueue_deferred_close(DeferredClose::WithoutSocket);
+        // A pending socket close keeps the wrapper strong through
+        // `update_poll_ref()` (status Connecting); this pending close is
+        // invisible to it, and after `fail()` nothing else it counts as
+        // activity is left, so the task has to hold the wrapper itself.
+        let wrapper = self
+            .this_value
+            .get()
+            .try_get()
+            .map(|this| jsc::Strong::create(this, &self.global_object));
+        self.enqueue_deferred_close(DeferredClose::WithoutSocket { _wrapper: wrapper });
     }
 
     fn enqueue_deferred_close(&self, what: DeferredClose) {
@@ -1471,8 +1480,6 @@ impl JSValkeyClient {
         let _guard = self.ref_scope();
 
         // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
-        // Taken before the TLS-context check so the `tls_ctx_failed` branch's
-        // `on_valkey_close()` has a ref to consume instead of over-releasing.
         // Forgotten on success (the socket adopts it).
         let socket_ref = self.ref_scope();
 
@@ -1512,11 +1519,10 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
-            // `on_valkey_close()` consumes the socket ref; hand it over so it
-            // isn't released twice.
-            socket_ref.forget();
-            self.client_mut().on_valkey_close()?;
-            self.client_mut().status = valkey::Status::Disconnected;
+            // Settles connect() and runs `onclose` from the event loop, as for
+            // a dial that fails asynchronously; `fail()` already closed the
+            // client, so the deferred close takes the manual-close path.
+            self.close_without_socket_next_tick();
             return Ok(());
         }
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
@@ -2017,13 +2023,14 @@ impl Options {
     }
 }
 
-#[derive(Clone, Copy)]
 enum DeferredClose {
     /// Close the socket the finalized wrapper left behind.
     Socket,
     /// Run the close path for a dial that never produced a socket
-    /// (`close_without_socket_next_tick`).
-    WithoutSocket,
+    /// (`close_without_socket_next_tick`). `_wrapper` is the JS object that
+    /// path settles connect() and calls `onclose` on, held until the task has
+    /// run (or is released unrun); `None` only if it was already finalized.
+    WithoutSocket { _wrapper: Option<jsc::Strong> },
 }
 
 pub(crate) struct ValkeyDeferredClose {
@@ -2043,7 +2050,7 @@ impl ValkeyDeferredClose {
             DeferredClose::Socket => {
                 crate::dispatch::fold(this.client_mut().close(uws::CloseCode::FastShutdown))
             }
-            DeferredClose::WithoutSocket => {
+            DeferredClose::WithoutSocket { .. } => {
                 // `on_close()` ends in `on_valkey_close`/`on_valkey_reconnect`,
                 // which release the ref the socket would have held.
                 this.ref_();
@@ -2065,8 +2072,9 @@ impl bun_event_loop::Taskable for ValkeyDeferredClose {
             // Script-free bookkeeping; do it.
             DeferredClose::Socket => task.run(),
             // The VM is going away: `on_close()` would run `onclose`, so only
-            // give back what `reconnect()` and the enqueue took.
-            DeferredClose::WithoutSocket => {
+            // give back the poll ref and the ref the enqueue took; the wrapper
+            // is released with `task`.
+            DeferredClose::WithoutSocket { .. } => {
                 // SAFETY: as in `run`.
                 let _enqueue_ref = unsafe { ScopedRef::adopt(task.ctx) };
                 // SAFETY: live per the ref above.

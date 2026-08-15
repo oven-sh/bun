@@ -399,9 +399,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         import_record_index: u32,
         namespace_ref: Ref,
         items: js_ast::StoreSlice<js_ast::ClauseItem>,
-        star_name_loc: bun_ast::Loc,
+        star_name_loc: Option<bun_ast::Loc>,
         default_name: Option<js_ast::LocRef>,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
     ) -> Result<DeduplicatedImportResult, AllocError> {
         let path_text = p.import_records.items()[import_record_index as usize]
             .path
@@ -474,10 +474,8 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     p.symbol_uses.swap_remove(&namespace_ref);
                 }
             }
-            if stmt.star_name_loc.is_empty() {
-                if let Some(stl) = star_name_loc.to_nullable() {
-                    stmt.star_name_loc = stl;
-                }
+            if stmt.star_name_loc.is_none() {
+                stmt.star_name_loc = star_name_loc;
             }
             if stmt.default_name.is_none() {
                 if let Some(dn) = default_name {
@@ -541,7 +539,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         p: &mut P<'p, TS, SCAN>,
         ref_: Ref,
         export_symbol_name: Option<js_ast::StoreStr>,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         is_live_binding_source: bool,
     ) -> Result<(), AllocError> {
         let (kind, has_been_assigned_to, original_name) = {
@@ -658,7 +656,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     )),
                     ..Default::default()
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             );
 
             // `hmr.exports = ...`
@@ -667,18 +665,18 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     value: Expr::assign(
                         Expr::init(
                             E::Dot {
-                                target: Expr::init_identifier(p.hmr_api_ref, bun_ast::Loc::EMPTY),
+                                target: Expr::init_identifier(p.hmr_api_ref, None),
                                 name: b"exports".into(),
-                                name_loc: bun_ast::Loc::EMPTY,
+                                name_loc: None,
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         obj,
                     ),
                     ..Default::default()
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             ));
 
             // mark a dependency on module_ref so it is renamed
@@ -700,24 +698,21 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         E::Call {
                             target: Expr::init(
                                 E::Dot {
-                                    target: Expr::init_identifier(
-                                        p.hmr_api_ref,
-                                        bun_ast::Loc::EMPTY,
-                                    ),
+                                    target: Expr::init_identifier(p.hmr_api_ref, None),
                                     name: b"reactRefreshAccept".into(),
-                                    name_loc: bun_ast::Loc::EMPTY,
+                                    name_loc: None,
                                     ..Default::default()
                                 },
-                                bun_ast::Loc::EMPTY,
+                                None,
                             ),
                             args: bun_alloc::AstAlloc::vec(),
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     ..Default::default()
                 },
-                bun_ast::Loc::EMPTY,
+                None,
             ));
         }
 

@@ -35,41 +35,27 @@ fn tokenToString_get(token: T) -> &'static [u8] {
 
 #[derive(Default, Clone, Copy)]
 pub struct JSXPragma {
-    pub(crate) _jsx: js_ast::Span,
-    pub(crate) _jsx_frag: js_ast::Span,
-    pub(crate) _jsx_runtime: js_ast::Span,
-    pub(crate) _jsx_import_source: js_ast::Span,
+    pub(crate) _jsx: Option<js_ast::Span>,
+    pub(crate) _jsx_frag: Option<js_ast::Span>,
+    pub(crate) _jsx_runtime: Option<js_ast::Span>,
+    pub(crate) _jsx_import_source: Option<js_ast::Span>,
 }
 
 impl JSXPragma {
-    // `Span.text` is a `StoreStr`; `.len()` via Deref<[u8]>.
+    fn non_empty(span: Option<js_ast::Span>) -> Option<js_ast::Span> {
+        span.filter(|span| !span.text.is_empty())
+    }
     pub(crate) fn jsx(&self) -> Option<js_ast::Span> {
-        if self._jsx.text.len() > 0 {
-            Some(self._jsx)
-        } else {
-            None
-        }
+        Self::non_empty(self._jsx)
     }
     pub(crate) fn jsx_frag(&self) -> Option<js_ast::Span> {
-        if self._jsx_frag.text.len() > 0 {
-            Some(self._jsx_frag)
-        } else {
-            None
-        }
+        Self::non_empty(self._jsx_frag)
     }
     pub(crate) fn jsx_runtime(&self) -> Option<js_ast::Span> {
-        if self._jsx_runtime.text.len() > 0 {
-            Some(self._jsx_runtime)
-        } else {
-            None
-        }
+        Self::non_empty(self._jsx_runtime)
     }
     pub(crate) fn jsx_import_source(&self) -> Option<js_ast::Span> {
-        if self._jsx_import_source.text.len() > 0 {
-            Some(self._jsx_import_source)
-        } else {
-            None
-        }
+        Self::non_empty(self._jsx_import_source)
     }
 }
 
@@ -183,7 +169,7 @@ pub struct LexerSnapshot<'a> {
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) approximate_newline_count: usize,
-    pub(crate) previous_backslash_quote_in_jsx: Range,
+    pub(crate) previous_backslash_quote_in_jsx: Option<Range>,
     pub(crate) token: T,
     pub(crate) has_newline_before: bool,
     pub(crate) has_pure_comment_before: bool,
@@ -198,9 +184,9 @@ pub struct LexerSnapshot<'a> {
     pub(crate) source_mapping_url: Option<js_ast::Span>,
     pub(crate) number: f64,
     pub(crate) rescan_close_brace_as_template_token: bool,
-    pub(crate) prev_error_loc: Loc,
+    pub(crate) prev_error_loc: Option<Loc>,
     pub(crate) prev_token_was_await_keyword: bool,
-    pub(crate) fn_or_arrow_start_loc: Loc,
+    pub(crate) fn_or_arrow_start_loc: Option<Loc>,
     pub(crate) regex_flags_start: Option<u16>,
     pub(crate) string_literal_raw_content: &'a [u8],
     pub(crate) string_literal_start: usize,
@@ -258,7 +244,7 @@ pub struct LexerType<
     pub(crate) start: usize,
     pub end: usize,
     pub(crate) approximate_newline_count: usize,
-    pub(crate) previous_backslash_quote_in_jsx: Range,
+    pub(crate) previous_backslash_quote_in_jsx: Option<Range>,
     pub token: T,
     pub(crate) has_newline_before: bool,
     pub(crate) has_pure_comment_before: bool,
@@ -281,9 +267,9 @@ pub struct LexerType<
     pub(crate) source_mapping_url: Option<js_ast::Span>,
     pub(crate) number: f64,
     pub(crate) rescan_close_brace_as_template_token: bool,
-    pub(crate) prev_error_loc: Loc,
+    pub(crate) prev_error_loc: Option<Loc>,
     pub(crate) prev_token_was_await_keyword: bool,
-    pub(crate) fn_or_arrow_start_loc: Loc,
+    pub(crate) fn_or_arrow_start_loc: Option<Loc>,
     pub(crate) regex_flags_start: Option<u16>,
     pub(crate) arena: &'a Arena,
     pub(crate) string_literal_raw_content: &'a [u8],
@@ -362,7 +348,7 @@ impl<
         self.source
     }
     #[inline]
-    fn prev_error_loc_mut(&mut self) -> &mut Loc {
+    fn prev_error_loc_mut(&mut self) -> &mut Option<Loc> {
         &mut self.prev_error_loc
     }
     #[inline]
@@ -410,7 +396,7 @@ lexer_impl_header! {
         if self.is_log_disabled {
             return Ok(());
         }
-        if self.prev_error_loc.eql(r.loc) {
+        if self.prev_error_loc == Some(r.loc) {
             return Ok(());
         }
 
@@ -419,7 +405,7 @@ lexer_impl_header! {
         let notes_owned: Box<[bun_ast::Data]> = notes.to_vec().into_boxed_slice();
         self.log()
             .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args);
-        self.prev_error_loc = r.loc;
+        self.prev_error_loc = Some(r.loc);
 
         // if (panic) {
         //     return Error.ParserError;
@@ -666,9 +652,7 @@ lexer_impl_header! {
                                 // `start + hex_start` in the `\u{}` branch).
                                 self.add_range_error(
                                     Range {
-                                        loc: Loc {
-                                            start: i32::try_from(start + octal_start).expect("int cast"),
-                                        },
+                                        loc: Loc::from_usize(start + octal_start),
                                         len: i32::try_from(
                                             iter.i as usize - octal_start,
                                         )
@@ -783,10 +767,7 @@ lexer_impl_header! {
                                 if is_out_of_range {
                                     self.add_range_error(
                                         Range {
-                                            loc: Loc {
-                                                start: i32::try_from(start + hex_start)
-                                                    .unwrap(),
-                                            },
+                                            loc: Loc::from_usize(start + hex_start),
                                             len: i32::try_from(
                                                 (iter.i as usize).saturating_sub(hex_start),
                                             )
@@ -1184,7 +1165,7 @@ lexer_impl_header! {
 
                 if self.code_point != 0x75 {
                     self.add_syntax_error(
-                        self.loc().to_usize(),
+                        self.loc().usize(),
                         format_args!(
                             "{}",
                             InvalidEscapeSequenceFormatter {
@@ -2153,16 +2134,16 @@ lexer_impl_header! {
     pub(crate) fn expected_string(&mut self, text: &[u8]) -> Result<(), Error> {
         if self.prev_token_was_await_keyword {
             let mut notes: [bun_ast::Data; 1] = [bun_ast::Data::default()];
-            if !self.fn_or_arrow_start_loc.is_empty() {
+            if let Some(fn_or_arrow_start_loc) = self.fn_or_arrow_start_loc {
                 notes[0] = bun_ast::range_data(
                     Some(self.source),
-                    range_of_identifier(self.source, self.fn_or_arrow_start_loc),
+                    range_of_identifier(self.source, fn_or_arrow_start_loc),
                     b"Consider adding the \"async\" keyword here",
                 );
             }
 
             let notes_ptr: &[bun_ast::Data] =
-                &notes[0..(!self.fn_or_arrow_start_loc.is_empty()) as usize];
+                &notes[0..self.fn_or_arrow_start_loc.is_some() as usize];
 
             self.add_range_error_with_notes(
                 self.range(),
@@ -2466,7 +2447,7 @@ lexer_impl_header! {
                 chunk,
                 allow_newline,
             ) {
-                self.jsx_pragma._jsx = span;
+                self.jsx_pragma._jsx = Some(span);
                 return "jsx".len()
                     + if span.range.len > 0 {
                         usize::try_from(span.range.len).expect("int cast")
@@ -2481,7 +2462,7 @@ lexer_impl_header! {
                 chunk,
                 allow_newline,
             ) {
-                self.jsx_pragma._jsx_frag = span;
+                self.jsx_pragma._jsx_frag = Some(span);
                 return "jsxFrag".len()
                     + if span.range.len > 0 {
                         usize::try_from(span.range.len).expect("int cast")
@@ -2496,7 +2477,7 @@ lexer_impl_header! {
                 chunk,
                 allow_newline,
             ) {
-                self.jsx_pragma._jsx_runtime = span;
+                self.jsx_pragma._jsx_runtime = Some(span);
                 return "jsxRuntime".len()
                     + if span.range.len > 0 {
                         usize::try_from(span.range.len).expect("int cast")
@@ -2511,7 +2492,7 @@ lexer_impl_header! {
                 chunk,
                 allow_newline,
             ) {
-                self.jsx_pragma._jsx_import_source = span;
+                self.jsx_pragma._jsx_import_source = Some(span);
                 return "jsxImportSource".len()
                     + if span.range.len > 0 {
                         usize::try_from(span.range.len).expect("int cast")
@@ -2563,7 +2544,7 @@ lexer_impl_header! {
             start: 0,
             end: 0,
             approximate_newline_count: 0,
-            previous_backslash_quote_in_jsx: Range::NONE,
+            previous_backslash_quote_in_jsx: None,
             token: T::TEndOfFile,
             has_newline_before: false,
             has_pure_comment_before: false,
@@ -2579,9 +2560,9 @@ lexer_impl_header! {
             source_mapping_url: None,
             number: 0.0,
             rescan_close_brace_as_template_token: false,
-            prev_error_loc: Loc::EMPTY,
+            prev_error_loc: None,
             prev_token_was_await_keyword: false,
-            fn_or_arrow_start_loc: Loc::EMPTY,
+            fn_or_arrow_start_loc: None,
             regex_flags_start: None,
             arena,
             string_literal_raw_content: b"",
@@ -2922,7 +2903,7 @@ lexer_impl_header! {
     pub(crate) fn parse_jsx_string_literal<const QUOTE: u8>(&mut self) -> Result<(), Error> {
         self.assert_not_json();
 
-        let mut backslash = Range::NONE;
+        let mut backslash: Option<Range> = None;
         let mut needs_decode = false;
 
         'string_literal: loop {
@@ -2936,12 +2917,10 @@ lexer_impl_header! {
                 }
 
                 0x5C => {
-                    backslash = Range {
-                        loc: Loc {
-                            start: i32::try_from(self.end).expect("int cast"),
-                        },
+                    backslash = Some(Range {
+                        loc: Loc::from_usize(self.end),
                         len: 1,
-                    };
+                    });
                     self.step();
 
                     // JSX string literals do not support escaping
@@ -2962,9 +2941,9 @@ lexer_impl_header! {
                     continue;
                 }
                 c if c == QUOTE as i32 => {
-                    if backslash.len > 0 {
+                    if let Some(mut backslash) = backslash {
                         backslash.len += 1;
-                        self.previous_backslash_quote_in_jsx = backslash;
+                        self.previous_backslash_quote_in_jsx = Some(backslash);
                     }
                     self.step();
                     break 'string_literal;
@@ -2980,7 +2959,7 @@ lexer_impl_header! {
                     self.step();
                 }
             }
-            backslash = Range::NONE;
+            backslash = None;
         }
 
         self.token = T::TStringLiteral;
@@ -3760,28 +3739,26 @@ pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
 
 pub use bun_core::identifier::{is_identifier, is_identifier_utf16};
 
-pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
-    let contents = &source.contents;
-    let Some(start) = loc.index_in(contents) else {
-        return Range::NONE;
-    };
-
-    let iter = CodepointIterator::init(&contents[start..]);
+/// The identifier starting at `loc`; `None` without a location or with one
+/// at or past the end of the file.
+pub fn range_of_identifier(source: &Source, loc: impl Into<Option<Loc>>) -> Option<Range> {
+    let loc = loc.into()?;
+    let text = source.text_from(loc)?;
+    let iter = CodepointIterator::init(text);
     let mut cursor = strings::Cursor::default();
 
     let mut r = Range { loc, len: 0 };
-    let text = iter.bytes;
     let end = u32::try_from(text.len()).expect("int cast");
 
     if !iter.next(&mut cursor) {
-        return r;
+        return Some(r);
     }
 
     // Handle private names
     if cursor.c == 0x23 {
         if !iter.next(&mut cursor) {
             r.len = 1;
-            return r;
+            return Some(r);
         }
     }
 
@@ -3806,14 +3783,14 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
                 }
             } else if !is_identifier_continue(cursor.c) {
                 r.len = i32::try_from(cursor.i).expect("int cast");
-                return r;
+                return Some(r);
             }
         }
 
         r.len = i32::try_from(cursor.i).expect("int cast");
     }
 
-    r
+    Some(r)
 }
 
 #[inline]
@@ -3884,9 +3861,7 @@ impl PragmaArg {
         *result = Some(js_ast::Span {
             range: Range {
                 len: i32::try_from(url_len).expect("int cast"), // Correct length
-                loc: Loc {
-                    start: i32::try_from(absolute_arg_start).expect("int cast"),
-                }, // Correct start
+                loc: Loc::from_usize(absolute_arg_start),       // Correct start
             },
             text: js_ast::StoreStr::new(url),
         });
@@ -3940,14 +3915,11 @@ impl PragmaArg {
         Some(js_ast::Span {
             range: Range {
                 len: i32::try_from(i).expect("int cast"),
-                loc: Loc {
-                    start: i32::try_from(
-                        start
-                            + u32::try_from(offset_).expect("int cast")
-                            + u32::try_from(pragma.len()).expect("int cast"),
-                    )
-                    .unwrap(),
-                },
+                loc: Loc::new(
+                    start
+                        + u32::try_from(offset_).expect("int cast")
+                        + u32::try_from(pragma.len()).expect("int cast"),
+                ),
             },
             text: js_ast::StoreStr::new(&text[0..i]),
         })

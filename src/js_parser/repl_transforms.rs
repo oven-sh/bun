@@ -69,7 +69,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let all_stmts: &mut [Stmt] = all_stmts.into_bump_slice_mut();
 
         // Check if there's top-level await or imports (imports become dynamic awaited imports)
-        let mut has_top_level_await = self.top_level_await_keyword.len > 0;
+        let mut has_top_level_await = self.top_level_await_keyword.is_some();
         if !has_top_level_await {
             for stmt in all_stmts.iter() {
                 if matches!(stmt.data, StmtData::SImport(_)) {
@@ -294,7 +294,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // `items` is an arena-owned `StoreSlice<ClauseItem>` valid for 'a.
                     let import_items: &[bun_ast::ClauseItem] = import_data.items.slice();
 
-                    if !import_data.star_name_loc.is_empty() {
+                    if import_data.star_name_loc.is_some() {
                         // import * as X from 'mod' -> var X = await import('mod')
                         hoisted_stmts.push(self.s(
                             S::Local {
@@ -492,13 +492,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let arrow = self.new_expr(
             E::Arrow {
                 body: G::FnBody {
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: None,
                     stmts: bun_ast::StoreSlice::new_mut(inner_slice),
                 },
                 is_async,
                 ..Default::default()
             },
-            bun_ast::Loc::EMPTY,
+            None,
         );
 
         let iife = self.new_expr(
@@ -507,7 +507,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 args: bun_alloc::AstAlloc::vec(),
                 ..Default::default()
             },
-            bun_ast::Loc::EMPTY,
+            None,
         );
 
         // Final output: hoisted declarations + IIFE call
@@ -521,7 +521,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 value: iife,
                 ..Default::default()
             },
-            bun_ast::Loc::EMPTY,
+            None,
         ));
         let final_slice: &mut [Stmt] = final_stmts.into_bump_slice_mut();
 
@@ -554,7 +554,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         hoisted_stmts: &mut BumpVec<'bump, Stmt>,
         inner_stmts: &mut BumpVec<'bump, Stmt>,
         bump: &'bump Bump,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
     ) -> Result<(), bun_alloc::AllocError> {
         // Store the module in the namespace ref: var __ns = await import('mod')
         hoisted_stmts.push(self.s(

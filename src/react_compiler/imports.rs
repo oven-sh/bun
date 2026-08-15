@@ -210,7 +210,7 @@ pub(crate) fn validate_restricted_imports(
                 "Import from module {}",
                 bun_core::BStr::new(import.path.text)
             ));
-            detail.loc = convert_loc(import.range.loc);
+            detail.loc = convert_loc(import.range.map(|r| r.loc));
             error.push_error_detail(detail);
         }
     }
@@ -222,14 +222,11 @@ pub(crate) fn validate_restricted_imports(
     }
 }
 
-fn convert_loc(loc: Loc) -> Option<SourceLocation> {
-    if loc.start < 0 {
-        return None;
-    }
+fn convert_loc(loc: Option<Loc>) -> Option<SourceLocation> {
     let pos = Position {
         line: 0,
         column: 0,
-        index: Some(loc.start as u32),
+        index: Some(loc?.get()),
     };
     Some(SourceLocation {
         start: pos,
@@ -281,12 +278,12 @@ pub(crate) fn add_imports_to_program(
                 namespace_ref,
                 default_name: None,
                 items: StoreSlice::new_mut(items.leak()),
-                star_name_loc: Loc::EMPTY,
+                star_name_loc: None,
                 import_record_index,
                 is_single_line: true,
                 phase_defer: false,
             },
-            Loc::EMPTY,
+            None,
         ));
     }
 
@@ -301,9 +298,9 @@ pub(crate) fn add_imports_to_program(
 fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
     ClauseItem {
         alias: arena_str(spec.imported.as_bytes()),
-        alias_loc: Loc::EMPTY,
+        alias_loc: None,
         name: LocRef {
-            loc: Loc::EMPTY,
+            loc: None,
             ref_: spec.name_ref,
         },
         original_name: StoreStr::EMPTY,

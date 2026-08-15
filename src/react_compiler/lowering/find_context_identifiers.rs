@@ -73,10 +73,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
         self.function_stack.pop();
     }
 
-    fn push_scope(&mut self, loc: Loc) {
-        let next = self
-            .host
-            .scope_for_loc(loc)
+    fn push_scope(&mut self, loc: Option<Loc>) {
+        let next = loc
+            .and_then(|loc| self.host.scope_for_loc(loc))
             .unwrap_or_else(|| self.current_scope());
         self.scope_stack.push(next);
     }

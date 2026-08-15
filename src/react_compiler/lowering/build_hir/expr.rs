@@ -366,7 +366,7 @@ fn lower_identifier_reference(
 fn lower_binary(
     builder: &mut HirBuilder,
     bin: &E::Binary,
-    bun_loc: Loc,
+    bun_loc: Option<Loc>,
 ) -> Result<InstructionValue, CompilerError> {
     use OpCode::*;
     let loc = convert_loc(bun_loc);
@@ -743,7 +743,7 @@ fn lower_simple_assignment_identifier(
     builder: &mut HirBuilder,
     ref_: Ref,
     right_expr: &Expr,
-    left_bun_loc: Loc,
+    left_bun_loc: Option<Loc>,
 ) -> Result<InstructionValue, CompilerError> {
     let right = lower_expression_to_temporary(builder, right_expr)?;
     let ident_loc = convert_loc(left_bun_loc);
@@ -978,7 +978,7 @@ fn lower_compound_assignment_identifier(
 fn lower_unary(
     builder: &mut HirBuilder,
     unary: &E::Unary,
-    bun_loc: Loc,
+    bun_loc: Option<Loc>,
 ) -> Result<InstructionValue, CompilerError> {
     use OpCode::*;
     let loc = convert_loc(bun_loc);
@@ -1128,7 +1128,7 @@ fn lower_update(
 fn lower_update_identifier(
     builder: &mut HirBuilder,
     ref_: Ref,
-    arg_bun_loc: Loc,
+    arg_bun_loc: Option<Loc>,
     prefix: bool,
     operation: UpdateOperator,
     loc: Option<SourceLocation>,

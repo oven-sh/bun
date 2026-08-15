@@ -66,7 +66,7 @@ fn lower_block_statement_inner(
     body: &[Stmt],
 ) -> Result<(), CompilerDiagnostic> {
     // Phase 1: collect this block's let/const/function bindings by statement index.
-    let mut decls: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 8]> = SmallVec::new();
+    let mut decls: SmallVec<[(usize, Ref, Option<ast::Loc>, InstructionKind); 8]> = SmallVec::new();
     for (i, stmt) in body.iter().enumerate() {
         match &stmt.data {
             Data::SLocal(local) => {
@@ -115,7 +115,7 @@ fn lower_block_statement_inner(
     // it any earlier would extend the variable's mutable range across
     // unrelated instructions (e.g. a preceding hook call), which causes the
     // resulting scope to be flattened.
-    let mut hoist: SmallVec<[(usize, Ref, ast::Loc, InstructionKind); 4]> = SmallVec::new();
+    let mut hoist: SmallVec<[(usize, Ref, Option<ast::Loc>, InstructionKind); 4]> = SmallVec::new();
     'outer: for (i, stmt) in body.iter().enumerate() {
         let mut k = 0;
         while k < decls.len() {
@@ -186,7 +186,7 @@ fn lower_block_statement_inner(
     Ok(())
 }
 
-fn collect_binding_refs(binding: &Binding, f: &mut impl FnMut(Ref, ast::Loc)) {
+fn collect_binding_refs(binding: &Binding, f: &mut impl FnMut(Ref, Option<ast::Loc>)) {
     match &binding.data {
         b::B::BIdentifier(id) => f(id.r#ref, binding.loc),
         b::B::BArray(arr) => {

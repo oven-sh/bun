@@ -288,8 +288,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
-                    let _ =
-                        p.inject_replacement_export(stmts, old_ref, bun_ast::Loc::EMPTY, &entry);
+                    let _ = p.inject_replacement_export(stmts, old_ref, None, &entry);
                     continue;
                 }
 
@@ -345,14 +344,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .cloned()
                 {
                     let declared = p
-                        .declare_symbol(
-                            js_ast::symbol::Kind::Other,
-                            bun_ast::Loc::EMPTY,
-                            alias_name,
-                        )
+                        .declare_symbol(js_ast::symbol::Kind::Other, None, alias_name)
                         .expect("unreachable");
-                    let _ =
-                        p.inject_replacement_export(stmts, declared, bun_ast::Loc::EMPTY, &entry);
+                    let _ = p.inject_replacement_export(stmts, declared, None, &entry);
                     return Ok(());
                 }
             }
@@ -559,12 +553,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     {
                         *expr = replace_expr;
                     } else {
-                        let _ = p.inject_replacement_export(
-                            stmts,
-                            Ref::NONE,
-                            bun_ast::Loc::EMPTY,
-                            &entry,
-                        );
+                        let _ = p.inject_replacement_export(stmts, Ref::NONE, None, &entry);
                         restore_dead!();
                         record_on_exit!();
                         return Ok(());
@@ -651,12 +640,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
                             } else {
-                                let _ = p.inject_replacement_export(
-                                    stmts,
-                                    Ref::NONE,
-                                    bun_ast::Loc::EMPTY,
-                                    &entry,
-                                );
+                                let _ = p.inject_replacement_export(stmts, Ref::NONE, None, &entry);
                                 p.react_refresh.hook_ctx_storage = prev;
                                 restore_dead!();
                                 record_on_exit!();
@@ -795,12 +779,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             {
                                 data.value = js_ast::StmtOrExpr::Expr(replace_expr);
                             } else {
-                                let _ = p.inject_replacement_export(
-                                    stmts,
-                                    Ref::NONE,
-                                    bun_ast::Loc::EMPTY,
-                                    &entry,
-                                );
+                                let _ = p.inject_replacement_export(stmts, Ref::NONE, None, &entry);
                                 restore_dead!();
                                 record_on_exit!();
                                 return Ok(());
@@ -1002,14 +981,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
                 let init = p.get_react_refresh_hook_signal_init(
                     hook,
-                    Expr::init_identifier(name_ref, bun_ast::Loc::EMPTY),
+                    Expr::init_identifier(name_ref, None),
                 );
                 stmts.push(p.s(
                     S::SExpr {
                         value: init,
                         ..Default::default()
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 ));
             }
 
@@ -1454,8 +1433,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_top_level: true,
                                     })
                                     .expect("oom");
-                                p.esm_export_keyword.loc = stmt.loc;
-                                p.esm_export_keyword.len = 5;
+                                p.esm_export_keyword = Some(bun_ast::Range {
+                                    loc: stmt.loc.expect("statements reaching the CommonJS export conversion come from the parser"),
+                                    len: 5,
+                                });
                                 p.had_commonjs_named_exports_this_visit = true;
                                 let clause_items =
                                     core::slice::from_mut(p.arena.alloc(js_ast::ClauseItem {
@@ -1532,15 +1513,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // Forbid top-level return inside modules with ECMAScript-style exports
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
-            let where_ = if p.esm_export_keyword.len > 0 {
-                p.esm_export_keyword
-            } else if p.top_level_await_keyword.len > 0 {
-                p.top_level_await_keyword
-            } else {
-                bun_ast::Range::NONE
-            };
-
-            if where_.len > 0 {
+            if let Some(where_) = p.esm_export_keyword.or(p.top_level_await_keyword) {
                 p.log().add_range_error(
                     Some(p.source),
                     where_,
@@ -2269,7 +2242,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         E::Dot {
                             target: Expr::init_identifier(data.arg, value.loc),
                             name: name.into(),
-                            name_loc: value.loc,
+                            name_loc: Some(value.loc),
                             ..Default::default()
                         },
                         value.loc,

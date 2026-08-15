@@ -7,7 +7,7 @@ use bun_ast::{Ref, Scope};
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn find_symbol(
         &mut self,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         name: &'a [u8],
     ) -> Result<FindSymbolResult, crate::Error> {
         self.find_symbol_with_record_usage::<true>(loc, name)
@@ -15,12 +15,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn find_symbol_with_record_usage<const RECORD_USAGE: bool>(
         &mut self,
-        loc: bun_ast::Loc,
+        loc: Option<bun_ast::Loc>,
         name: &'a [u8],
     ) -> Result<FindSymbolResult, crate::Error> {
         // Every `break 'brk` below assigns `declare_loc` first; the one
         // early-`return` builds its own `FindSymbolResult` without reading it.
-        let declare_loc: bun_ast::Loc;
+        let declare_loc: Option<bun_ast::Loc>;
         let mut is_inside_with_scope = false;
         // This function can show up in profiling.
         // That's part of why we do this.
@@ -101,7 +101,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !RECORD_USAGE {
                 return Ok(FindSymbolResult {
                     r#ref: Ref::NONE,
-                    declare_loc: Some(loc),
+                    declare_loc: loc,
                     is_inside_with_scope,
                 });
             }
@@ -146,7 +146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         Ok(FindSymbolResult {
             r#ref: ref_,
-            declare_loc: Some(declare_loc),
+            declare_loc,
             is_inside_with_scope,
         })
     }

@@ -503,14 +503,14 @@ impl<'a> Parser<'a> {
                 arena.alloc_slice_copy(&p.options.jsx.classic_import_source);
             let _ = p.add_import_record(
                 bun_ast::ImportKind::Require,
-                bun_ast::Loc { start: 0 },
+                Some(bun_ast::Loc::new(0)),
                 import_source,
             );
             // Ensure we have both classic and automatic
             // This is to handle cases where they use fragments in the automatic runtime
             let _ = p.add_import_record(
                 bun_ast::ImportKind::Require,
-                bun_ast::Loc { start: 0 },
+                Some(bun_ast::Loc::new(0)),
                 classic_import_source,
             );
         }
@@ -905,7 +905,7 @@ impl<'a> Parser<'a> {
         if p.options.features.set_breakpoint_on_first_line {
             let debugger_stmts = p.arena.alloc_slice_fill_with(1, |_| Stmt {
                 data: js_ast::StmtData::SDebugger(Default::default()),
-                loc: bun_ast::Loc::EMPTY,
+                loc: None,
             });
             before.push(js_ast::Part {
                 stmts: debugger_stmts.into(),
@@ -989,7 +989,7 @@ impl<'a> Parser<'a> {
                             .scopes_in_order_for_enum
                             .keys()
                             .iter()
-                            .position(|k| *k == stmt.loc)
+                            .position(|k| Some(*k) == stmt.loc)
                             .expect("enum scope-order entry recorded during parse");
                         // Map stores `&'a [ScopeOrder]`; shared borrow may freely alias the inner
                         // re-lookup performed by `append_part → visit_stmts`.
@@ -1097,7 +1097,7 @@ impl<'a> Parser<'a> {
                             .scopes_in_order_for_enum
                             .keys()
                             .iter()
-                            .position(|k| *k == stmt.loc)
+                            .position(|k| Some(*k) == stmt.loc)
                             .expect("enum scope-order entry");
                         let enum_scope_count = p.scopes_in_order_for_enum.values()[idx].len();
                         // Advance the shared-slice cursor past this enum's scopes.
@@ -1148,14 +1148,14 @@ impl<'a> Parser<'a> {
                             B::Identifier {
                                 r#ref: p.dirname_ref,
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         value: Some(p.new_expr(
                             E::String {
                                 data: p.source.path.name().dir.into(),
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         )),
                     };
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -1169,14 +1169,14 @@ impl<'a> Parser<'a> {
                             B::Identifier {
                                 r#ref: p.filename_ref,
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         ),
                         value: Some(p.new_expr(
                             E::String {
                                 data: p.source.path.text.into(),
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         )),
                     };
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -1198,7 +1198,7 @@ impl<'a> Parser<'a> {
                             },
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     )
                 });
                 before.push(js_ast::Part {
@@ -1221,7 +1221,7 @@ impl<'a> Parser<'a> {
                 let all_stmts = p.arena.alloc_slice_fill_with::<Stmt, _>(
                     p.imports_to_convert_from_require.len(),
                     |_| Stmt {
-                        loc: bun_ast::Loc::EMPTY,
+                        loc: None,
                         data: js_ast::StmtData::SEmpty(S::Empty {}),
                     },
                 );
@@ -1312,9 +1312,13 @@ impl<'a> Parser<'a> {
                     }
                 }
 
-                if !p.commonjs_named_exports_deoptimized && p.esm_export_keyword.len == 0 {
-                    p.esm_export_keyword.loc = first_export_ref_loc;
-                    p.esm_export_keyword.len = 5;
+                if !p.commonjs_named_exports_deoptimized && p.esm_export_keyword.is_none() {
+                    p.esm_export_keyword = Some(bun_ast::Range {
+                        loc: first_export_ref_loc.expect(
+                            "CommonJS named exports are recorded from parsed property accesses",
+                        ),
+                        len: 5,
+                    });
                 }
             }
         }
@@ -1527,9 +1531,11 @@ impl<'a> Parser<'a> {
                                             }
                                         }
 
-                                        if p.esm_export_keyword.len == 0 {
-                                            p.esm_export_keyword.loc = stmt_loc;
-                                            p.esm_export_keyword.len = 5;
+                                        if p.esm_export_keyword.is_none() {
+                                            p.esm_export_keyword = Some(bun_ast::Range {
+                                                loc: stmt_loc.expect("statements reaching the CommonJS export conversion come from the parser"),
+                                                len: 5,
+                                            });
                                         }
                                         p.commonjs_named_exports_deoptimized = false;
                                         break;
@@ -1570,7 +1576,7 @@ impl<'a> Parser<'a> {
 
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
-        } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
+        } else if p.esm_export_keyword.is_some() || p.top_level_await_keyword.is_some() {
             exports_kind = js_ast::ExportsKind::Esm;
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
         {
@@ -1751,22 +1757,22 @@ impl<'a> Parser<'a> {
                 .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
             if uses_dirname {
                 // var __dirname = import.meta
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
+                let import_meta = p.new_expr(E::ImportMeta {}, None);
                 decls[0] = G::Decl {
                     binding: p.b(
                         B::Identifier {
                             r#ref: p.dirname_ref,
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"dir".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
+                            name_loc: None,
                             target: import_meta,
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     )),
                 };
                 declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -1776,22 +1782,22 @@ impl<'a> Parser<'a> {
             }
             if uses_filename {
                 // var __filename = import.meta.path
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
+                let import_meta = p.new_expr(E::ImportMeta {}, None);
                 decls[uses_dirname as usize] = G::Decl {
                     binding: p.b(
                         B::Identifier {
                             r#ref: p.filename_ref,
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     ),
                     value: Some(p.new_expr(
                         E::Dot {
                             name: b"path".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
+                            name_loc: None,
                             target: import_meta,
                             ..Default::default()
                         },
-                        bun_ast::Loc::EMPTY,
+                        None,
                     )),
                 };
                 declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -1813,7 +1819,7 @@ impl<'a> Parser<'a> {
                         },
                         ..Default::default()
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 )
             });
             before.push(js_ast::Part {
@@ -1877,11 +1883,8 @@ impl<'a> Parser<'a> {
 
             // For CommonJS modules, use require instead of import
             if exports_kind == js_ast::ExportsKind::Cjs {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Require,
-                    bun_ast::Loc::EMPTY,
-                    b"bun:test",
-                );
+                let import_record_id =
+                    p.add_import_record(bun_ast::ImportKind::Require, None, b"bun:test");
 
                 // Create object binding pattern for destructuring
                 let mut properties = BumpVec::<B::Property>::with_capacity_in(items_count, p.arena);
@@ -1893,9 +1896,9 @@ impl<'a> Parser<'a> {
                                 data: symbol_name.as_bytes().into(),
                                 ..Default::default()
                             },
-                            bun_ast::Loc::EMPTY,
+                            None,
                         );
-                        let value = p.b(B::Identifier { r#ref: r }, bun_ast::Loc::EMPTY);
+                        let value = p.b(B::Identifier { r#ref: r }, None);
                         properties.push(B::Property {
                             flags: bun_ast::flags::PROPERTY_NONE,
                             key,
@@ -1916,14 +1919,14 @@ impl<'a> Parser<'a> {
                         properties,
                         is_single_line: false,
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 );
                 let value = p.new_expr(
                     E::RequireString {
                         import_record_index: import_record_id,
                         ..Default::default()
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 );
                 let mut decls = G::DeclList::init_capacity(1);
                 decls.append_assume_capacity(G::Decl {
@@ -1937,7 +1940,7 @@ impl<'a> Parser<'a> {
                         decls,
                         ..Default::default()
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 );
                 let part_stmts = p.arena.alloc_slice_fill_with(1, |_| local_stmt);
 
@@ -1951,11 +1954,8 @@ impl<'a> Parser<'a> {
                     ..Default::default()
                 });
             } else {
-                let import_record_id = p.add_import_record(
-                    bun_ast::ImportKind::Stmt,
-                    bun_ast::Loc::EMPTY,
-                    b"bun:test",
-                );
+                let import_record_id =
+                    p.add_import_record(bun_ast::ImportKind::Stmt, None, b"bun:test");
 
                 // For ESM modules, use import statement
                 let mut clauses =
@@ -1964,12 +1964,9 @@ impl<'a> Parser<'a> {
                     let r = get_ref(&p.jest);
                     if p.symbols.as_slice()[r.inner_index() as usize].use_count_estimate > 0 {
                         clauses.push(js_ast::ClauseItem {
-                            name: js_ast::LocRef {
-                                ref_: r,
-                                loc: bun_ast::Loc::EMPTY,
-                            },
+                            name: js_ast::LocRef { ref_: r, loc: None },
                             alias: js_ast::StoreStr::new(symbol_name.as_bytes()),
-                            alias_loc: bun_ast::Loc::EMPTY,
+                            alias_loc: None,
                             original_name: js_ast::StoreStr::new(b""),
                         });
                         declared_symbols.append_assume_capacity(DeclaredSymbol {
@@ -1983,7 +1980,7 @@ impl<'a> Parser<'a> {
                 let namespace_ref = p
                     .declare_symbol(
                         js_ast::symbol::Kind::Unbound,
-                        bun_ast::Loc::EMPTY,
+                        None,
                         b"bun_test_import_namespace_for_internal_use_only",
                     )
                     .expect("unreachable");
@@ -1993,11 +1990,11 @@ impl<'a> Parser<'a> {
                         items: clauses,
                         import_record_index: import_record_id,
                         default_name: None,
-                        star_name_loc: bun_ast::Loc::EMPTY,
+                        star_name_loc: None,
                         is_single_line: false,
                         phase_defer: false,
                     },
-                    bun_ast::Loc::EMPTY,
+                    None,
                 );
 
                 let part_stmts = p.arena.alloc_slice_fill_with(1, |_| import_stmt);
@@ -2129,7 +2126,7 @@ impl<'a> Parser<'a> {
             if let bun_react_compiler::CompileOutput::Error { error, .. } = result {
                 p.log().add_range_error_fmt(
                     Some(p.source),
-                    bun_ast::Range::NONE,
+                    None,
                     format_args!("React Compiler: {error}"),
                 );
             }

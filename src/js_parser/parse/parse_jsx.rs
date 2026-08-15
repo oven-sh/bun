@@ -28,7 +28,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let _ = p.skip_type_script_type_arguments::<true, false>()?;
         }
 
-        let mut previous_string_with_backslash_loc = bun_ast::Loc::default();
+        let mut previous_string_with_backslash_loc: Option<bun_ast::Loc> = None;
         let mut properties = bun_alloc::AstAlloc::vec();
         let mut key_prop_i: i32 = -1;
         let mut flags = flags::JSXElementBitset::empty();
@@ -41,7 +41,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             start_tag = Some(t);
             can_be_inlined = p.options.features.jsx_optimization_inline;
 
-            let mut spread_loc: bun_ast::Loc = bun_ast::Loc::EMPTY;
+            let mut spread_loc: Option<bun_ast::Loc> = None;
             let mut props: Vec<G::Property> = Vec::new();
             let mut first_spread_prop_i: i32 = -1;
             let mut i: i32 = 0;
@@ -81,12 +81,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let value: Expr = if p.lexer.token != T::TEquals {
                             // Implicitly true value
                             // <button selected>
-                            p.new_expr(
-                                E::Boolean { value: true },
-                                bun_ast::Loc {
-                                    start: key_range.loc.start + key_range.len,
-                                },
-                            )
+                            p.new_expr(E::Boolean { value: true }, key_range.end())
                         } else {
                             can_be_inlined = false;
                             p.parse_jsx_prop_value_identifier(
@@ -114,7 +109,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 if first_spread_prop_i == -1 {
                                     first_spread_prop_i = i;
                                 }
-                                spread_loc = p.lexer.loc();
+                                spread_loc = Some(p.lexer.loc());
                                 let value = p.parse_expr(Level::Comma)?;
                                 props.push(G::Property {
                                     value: Some(value),
@@ -248,7 +243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // This code special-cases this error to provide a less obscure error message.
         if p.lexer.token == T::TSyntaxError
             && p.lexer.raw() == b"\\"
-            && previous_string_with_backslash_loc.start > 0
+            && previous_string_with_backslash_loc.is_some_and(|loc| loc.get() > 0)
         {
             let r = p.lexer.range();
             // Not dealing with this right now.
@@ -277,7 +272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     properties,
                     key_prop_index: key_prop_i,
                     flags,
-                    close_tag_loc,
+                    close_tag_loc: Some(close_tag_loc),
                     ..Default::default()
                 },
                 loc,
@@ -368,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             properties,
                             key_prop_index: key_prop_i,
                             flags,
-                            close_tag_loc: end_tag.range.loc,
+                            close_tag_loc: Some(end_tag.range.loc),
                             ..Default::default()
                         },
                         loc,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { isASAN, isDebug, tempDir } from "harness";
 import { itBundled } from "../expectBundled";
 
 // The React Compiler emits `import { c as _c } from "react/compiler-runtime"` and

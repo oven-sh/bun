@@ -75,6 +75,8 @@ async function runTestFile(source: string, args: string[] = []) {
   return { combined: stdout + stderr, exitCode };
 }
 
+// Under --isolate the runner also tracks the module-scope child; without it only
+// the hooks and tests are tracked. Either way the timeout must not touch it.
 test.concurrent.each([[[]], [["--isolate"]]])(
   "a test timeout only kills the processes spawned by that test (args: %p)",
   async args => {
@@ -82,7 +84,7 @@ test.concurrent.each([[[]], [["--isolate"]]])(
       /* ts */ `
         import { afterAll, beforeAll, expect, test } from "bun:test";
 
-        const children: ReturnType<typeof spawnEcho>[] = [];
+        const children: ReturnType<typeof spawnEcho>[] = [spawnEcho()];
         afterAll(() => children.forEach(child => child.kill()));
 
         beforeAll(() => {
@@ -98,28 +100,167 @@ test.concurrent.each([[[]], [["--isolate"]]])(
           await new Promise(() => {});
         }, 100);
 
-        test("children spawned by beforeAll and by an earlier test are still running", async () => {
-          const [fromBeforeAll, fromEarlierTest] = children;
-          expect(await Promise.all([echo(fromBeforeAll, "beforeAll"), echo(fromEarlierTest, "earlier test")])).toEqual([
-            "beforeAll",
-            "earlier test",
-          ]);
+        test("the other children are still running", async () => {
+          const [fromModuleScope, fromBeforeAll, fromEarlierTest] = children;
+          expect(
+            await Promise.all([
+              echo(fromModuleScope, "module scope"),
+              echo(fromBeforeAll, "beforeAll"),
+              echo(fromEarlierTest, "earlier test"),
+            ]),
+          ).toEqual(["module scope", "beforeAll", "earlier test"]);
         });
       `,
       args,
     );
 
-    // Only the child of the test that timed out is killed.
     expect(combined).toContain("killed 1 dangling process");
     expect(combined).not.toContain("dangling processes");
     expect(combined).toContain("(pass) spawns a child that outlives the test");
     expect(combined).toContain("(fail) times out");
-    expect(combined).toContain("(pass) children spawned by beforeAll and by an earlier test are still running");
+    expect(combined).toContain("(pass) the other children are still running");
     expect(combined).toContain(" 2 pass\n");
     expect(combined).toContain(" 1 fail\n");
     expect(exitCode).toBe(1);
   },
 );
+
+test.concurrent("a test timeout kills the children of its beforeEach hooks, not of beforeAll", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+
+    let fromBeforeAll: ReturnType<typeof spawnEcho>;
+    let fromBeforeEach: ReturnType<typeof spawnEcho>;
+    afterAll(() => {
+      fromBeforeAll.kill();
+      fromBeforeEach.kill();
+    });
+
+    beforeAll(() => {
+      fromBeforeAll = spawnEcho();
+    });
+
+    describe("with a beforeEach", () => {
+      beforeEach(() => {
+        fromBeforeEach = spawnEcho();
+      });
+
+      test("times out", async () => {
+        await new Promise(() => {});
+      }, 100);
+    });
+
+    test("only the beforeEach child was killed", async () => {
+      await fromBeforeEach.exited;
+      expect(await echo(fromBeforeAll, "beforeAll")).toBe("beforeAll");
+    });
+  `);
+
+  expect(combined).toContain("killed 1 dangling process");
+  expect(combined).not.toContain("dangling processes");
+  expect(combined).toContain("(fail) with a beforeEach > times out");
+  expect(combined).toContain("(pass) only the beforeEach child was killed");
+  expect(combined).toContain(" 1 pass\n");
+  expect(combined).toContain(" 1 fail\n");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("a beforeAll timeout only kills the children of that hook", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { afterAll, beforeAll, test } from "bun:test";
+
+    let fromFirstHook: ReturnType<typeof spawnEcho>;
+    let fromTimedOutHook: ReturnType<typeof spawnEcho>;
+
+    beforeAll(() => {
+      fromFirstHook = spawnEcho();
+    });
+
+    beforeAll(async () => {
+      fromTimedOutHook = spawnEcho();
+      await new Promise(() => {});
+    }, 100);
+
+    test("is skipped because beforeAll failed", () => {});
+
+    afterAll(async () => {
+      await fromTimedOutHook.exited;
+      console.log("first hook's child answered:", JSON.stringify(await echo(fromFirstHook, "still here")));
+      fromFirstHook.kill();
+    });
+  `);
+
+  expect(combined).toContain("killed 1 dangling process");
+  expect(combined).not.toContain("dangling processes");
+  expect(combined).toContain('first hook\'s child answered: "still here"');
+  expect(exitCode).toBe(1);
+});
+
+// on_subprocess_exit swap-removes entries, so once a child from an earlier scope
+// exits, the timed-out test's children are no longer the tail of the tracked set.
+test.concurrent("a test timeout kills all of its children after an earlier child exited", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { afterAll, beforeAll, expect, test } from "bun:test";
+
+    const children: ReturnType<typeof spawnEcho>[] = [];
+    afterAll(() => children.forEach(child => child.kill()));
+
+    beforeAll(() => {
+      children.push(spawnEcho(), spawnEcho());
+    });
+
+    test("spawns a child that outlives the test", () => {
+      children.push(spawnEcho());
+    });
+
+    test("times out after the first beforeAll child exited", async () => {
+      children.push(spawnEcho(), spawnEcho());
+      children[0].kill();
+      await children[0].exited;
+      await new Promise(() => {});
+    }, 100);
+
+    test("the second beforeAll child and the earlier test's child are still running", async () => {
+      const [, secondFromBeforeAll, fromEarlierTest] = children;
+      expect(await Promise.all([echo(secondFromBeforeAll, "beforeAll"), echo(fromEarlierTest, "earlier test")])).toEqual([
+        "beforeAll",
+        "earlier test",
+      ]);
+    });
+  `);
+
+  expect(combined).toContain("killed 2 dangling processes");
+  expect(combined).toContain("(pass) the second beforeAll child and the earlier test's child are still running");
+  expect(combined).toContain(" 2 pass\n");
+  expect(combined).toContain(" 1 fail\n");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("a test that overruns its timeout without yielding still gets its children killed", async () => {
+  const { combined, exitCode } = await runTestFile(/* ts */ `
+    import { afterAll, test } from "bun:test";
+
+    let child: ReturnType<typeof spawnEcho>;
+    afterAll(() => child.kill());
+
+    test("blocks past its timeout", () => {
+      child = spawnEcho();
+      Bun.sleepSync(150);
+    }, 50);
+
+    test("its child was killed", async () => {
+      await child.exited;
+    });
+  `);
+
+  expect(combined).toContain("killed 1 dangling process");
+  expect(combined).not.toContain("dangling processes");
+  expect(combined).toContain("(fail) blocks past its timeout");
+  expect(combined).toContain("(pass) its child was killed");
+  expect(combined).toContain(" 1 pass\n");
+  expect(combined).toContain(" 1 fail\n");
+  expect(exitCode).toBe(1);
+});
 
 test.concurrent("a test without a timeout keeps its processes when an earlier test's timer fires", async () => {
   const { combined, exitCode } = await runTestFile(/* ts */ `

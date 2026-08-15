@@ -8,12 +8,12 @@ bun_core::declare_scope!(AutoKiller, hidden);
 #[derive(Default)]
 pub struct ProcessAutoKiller {
     /// Keys are intrusively-refcounted `*Process` (ref()'d on insert, deref()'d
-    /// on remove/drop). Stored as raw ptr for identity-hash semantics. Values
-    /// are the [`Self::scope`] each process was spawned in.
+    /// on remove/drop). Stored as raw ptr for identity-hash semantics.
     pub(crate) processes: ArrayHashMap<*mut Process, u32>,
     pub enabled: bool,
     pub(crate) ever_enabled: bool,
-    /// The test runner begins a scope per test, so a timeout only kills what that test spawned.
+    /// Stored per process as the map value. The test runner begins one per execution group
+    /// (a test with its beforeEach/afterEach hooks, or one beforeAll/afterAll).
     scope: u32,
 }
 
@@ -39,8 +39,7 @@ impl ProcessAutoKiller {
         Result { processes: count }
     }
 
-    /// Kills the current scope's processes. Earlier scopes stay tracked so that
-    /// [`Self::kill`] still covers them.
+    /// Earlier scopes stay tracked (and alive) so that [`Self::kill`] still covers them.
     pub fn kill_scope(&mut self) -> Result {
         let mut count: u32 = 0;
         let mut index = self.processes.len();

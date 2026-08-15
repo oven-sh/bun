@@ -300,7 +300,6 @@ impl Execution {
 
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
         //   kill the dangling processes it spawned
-        // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = self.active_group() {
             // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
@@ -315,16 +314,7 @@ impl Execution {
                     if !entry.timespec.eql(&Timespec::EPOCH)
                         && entry.timespec.order(&now) == core::cmp::Ordering::Less
                     {
-                        // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill_scope();
-                        if kill_count.processes > 0 {
-                            bun_core::pretty_errorln!(
-                                "<d>killed {} dangling process{}<r>",
-                                kill_count.processes,
-                                if kill_count.processes != 1 { "es" } else { "" },
-                            );
-                            bun_core::Output::flush();
-                        }
+                        kill_dangling_processes(end - start, global_this);
                     }
                 }
             }
@@ -1042,7 +1032,12 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            let _ = next_item.evaluate_timeout(sequence, now);
+            if next_item.evaluate_timeout(sequence, now) {
+                // The callback overran its deadline synchronously, so handle_timeout may never have run.
+                // SAFETY: group points into buntest.execution.groups; read-only.
+                let g = unsafe { group.as_ref() };
+                kill_dangling_processes(g.sequence_end - g.sequence_start, global_this);
+            }
 
             // the result is available immediately; advance the sequence and run again.
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
@@ -1081,5 +1076,22 @@ fn step_sequence_one(
         }
         Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
         return Ok(None); // run again
+    }
+}
+
+/// Kills what the timed-out group spawned (its auto_killer scope). Skipped for test.concurrent()
+/// groups, whose sequences all share one scope, so this could kill other still-running tests' children.
+fn kill_dangling_processes(group_sequence_count: usize, global_this: &JSGlobalObject) {
+    if group_sequence_count != 1 {
+        return;
+    }
+    let kill_count = global_this.bun_vm().as_mut().auto_killer.kill_scope();
+    if kill_count.processes > 0 {
+        bun_core::pretty_errorln!(
+            "<d>killed {} dangling process{}<r>",
+            kill_count.processes,
+            if kill_count.processes != 1 { "es" } else { "" },
+        );
+        bun_core::Output::flush();
     }
 }

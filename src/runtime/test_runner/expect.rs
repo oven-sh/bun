@@ -623,25 +623,10 @@ impl Expect {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
-        let active_entry = core::ptr::NonNull::from(
-            parent
-                .phase
-                .entry(buntest)
-                .ok_or(crate::Error::SnapshotInConcurrentGroup)?,
-        );
-        // While a beforeEach/afterEach/onTestFinished callback runs, the active
-        // entry is the hook, but the snapshot belongs to the test whose sequence
-        // the hook runs in (as with jest's currentTestName). beforeAll/afterAll
-        // sequences have no test and stay keyed by the hook entry itself.
-        let named_entry = parent
+        let execution_entry = parent
             .phase
-            .sequence(buntest)
-            .and_then(|sequence| sequence.test_entry)
-            .unwrap_or(active_entry);
-        // SAFETY: both candidates are entries of the sequence `entry()` just
-        // validated as running; entries are owned by `buntest`, which
-        // `buntest_strong` keeps alive for the rest of this function.
-        let execution_entry = unsafe { named_entry.as_ref() };
+            .snapshot_entry(buntest)
+            .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 

@@ -480,8 +480,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     | PropertyModifierKeyword::PPublic
                                     | PropertyModifierKeyword::PReadonly
                                     | PropertyModifierKeyword::POverride => {
-                                        // Skip over TypeScript keywords ("public\n x" is a field
-                                        // named "public", like "declare" but unlike "static")
+                                        // Skip over TypeScript keywords
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
                                             && !p.lexer.has_newline_before

@@ -1045,7 +1045,9 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)
-        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+        // Define, don't [[Set]]: `list` points into the env table until this loop ends, and a [[Set]] can run an indexed setter from Object.prototype.
+        keyArray->putDirectIndex(globalObject, (unsigned)i, jsString(vm, name));
+        RETURN_IF_EXCEPTION(scope, nullptr);
 #endif
         if (name == TZ) {
             hasTZ = true;

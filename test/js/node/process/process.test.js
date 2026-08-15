@@ -1563,6 +1563,48 @@ describe.concurrent(() => {
         result: { reentered: true, oneObject: true, envIntact: "lazy-env-value", json: "lazy-env-value" },
       });
     });
+
+    // The only point where user code may run during the build is the builtin
+    // call above, after the walk over the native environment table is done. An
+    // indexed setter on Object.prototype makes every [[Set]] into an array hole
+    // run user code; the key array used to be filled with [[Set]] while the walk
+    // still held a pointer into that table, which both ran the setter from inside
+    // the walk (where a re-entered build may grow the table) and dropped the key.
+    it("building the env map runs no user code while walking the environment", async () => {
+      const env = { ...bunEnv, BUN_TEST_LAZY_ENV: "lazy-env-value" };
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let fired = 0;
+           Object.defineProperty(Object.prototype, "0", {
+             configurable: true,
+             set() {
+               fired++;
+               process.env;
+             },
+           });
+           const env = process.env;
+           delete Object.prototype[0];
+           const keys = new Set(Object.keys(env));
+           console.log(JSON.stringify({
+             fired,
+             missing: JSON.parse(process.argv[1]).filter(key => !keys.has(key)),
+             cached: Bun.env === env,
+           }));`,
+          JSON.stringify(Object.keys(env)),
+        ],
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode, result: stdout && JSON.parse(stdout) }).toEqual({
+        stderr: "",
+        exitCode: 0,
+        result: { fired: 0, missing: [], cached: true },
+      });
+    });
   }
 
   it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {

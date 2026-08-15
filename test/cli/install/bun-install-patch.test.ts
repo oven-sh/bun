@@ -19,12 +19,12 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..bc652e496c165a7415880ef4520c0ab3
 --- a/index.js
 +++ b/index.js
 @@ -10,5 +10,6 @@
-  var isOdd = require('is-odd');
+ var isOdd = require('is-odd');
 
-  module.exports = function isEven(i) {
+ module.exports = function isEven(i) {
 +  console.log("HI");
-    return !isOdd(i);
-  };
+   return !isOdd(i);
+ };
 `;
   const is_even_patch2 = /* patch */ `diff --git a/index.js b/index.js
 index 832d92223a9ec491364ee10dcbe3ad495446ab80..217353bf51861fe4fdba68cb98bc5f361c7730e1 100644
@@ -40,10 +40,10 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..217353bf51861fe4fdba68cb98bc5f36
 -var isOdd = require('is-odd');
 +var isOdd = require("is-odd");
 
-  module.exports = function isEven(i) {
+ module.exports = function isEven(i) {
 +  console.log("lmao");
-    return !isOdd(i);
-  };
+   return !isOdd(i);
+ };
 `;
 
   const is_odd_patch = /* patch */ `diff --git a/index.js b/index.js
@@ -451,14 +451,14 @@ index aa7c7012cda790676032d1b01d78c0b69ec06360..6048e7cb462b3f9f6ac4dc21aacf9a09
 --- a/package.json
 +++ b/package.json
 @@ -2,7 +2,7 @@
-    "name": "@zackradisic/hls-dl",
-    "version": "0.0.1",
-    "description": "",
+   "name": "@zackradisic/hls-dl",
+   "version": "0.0.1",
+   "description": "",
 -  "main": "dist/hls-dl.commonjs2.js",
 +  "main": "./index.js",
-    "dependencies": {
-      "m3u8-parser": "^4.5.0",
-      "typescript": "^4.0.5"
+   "dependencies": {
+     "m3u8-parser": "^4.5.0",
+     "typescript": "^4.0.5"
 `;
 
     $.throws(true);

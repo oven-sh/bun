@@ -4,6 +4,7 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
+use bun_core::fmt::PathSep;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
@@ -137,6 +138,8 @@ enum HoistDependencyResult {
     ResolveLater,
     /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
     Rebind(PackageID),
+    /// `Hoisted` onto the root package.json's copy of a peer, whose version the peer's range rejects.
+    HoistedOutOfRange(PackageID),
     Placement(Placement),
 }
 
@@ -487,6 +490,36 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
     fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+    }
+
+    /// Same message as the resolver prints when it binds a peer to a version outside its
+    /// range, plus the dependent and the range, which this site knows.
+    #[cold]
+    fn warn_peer_out_of_range(
+        &mut self,
+        dependent_id: PackageID,
+        peer: &Dependency,
+        copy_id: PackageID,
+    ) {
+        let lockfile_ref = self.lockfile;
+        let lockfile: &Lockfile = lockfile_ref.get();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_names = lockfile.packages.items_name();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let range = lockfile.catalogs.resolve_range(buf, peer);
+        self.log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "incorrect peer dependency \"{}@{}\": \"{}@{}\" requires \"{}@{}\"",
+                pkg_names[copy_id as usize].fmt(buf),
+                pkg_resolutions[copy_id as usize].fmt(buf, PathSep::Posix),
+                pkg_names[dependent_id as usize].fmt(buf),
+                pkg_resolutions[dependent_id as usize].fmt(buf, PathSep::Posix),
+                peer.name.fmt(buf),
+                range.literal.fmt(buf),
+            ),
+        );
     }
 
     fn buf(&self) -> &[u8] {
@@ -886,6 +919,13 @@ impl Tree {
                     debug_assert!(dependency.behavior.is_optional_peer());
                     builder.resolutions[dep_id as usize] = res_id;
                 }
+                HoistDependencyResult::HoistedOutOfRange(res_id) => {
+                    // Only the build whose tree is installed reports it: the `Resolvable` build
+                    // also runs on every lockfile load and again when the lockfile is cleaned.
+                    if METHOD == BuilderMethod::Filter {
+                        builder.warn_peer_out_of_range(parent_pkg_id, dependency, res_id);
+                    }
+                }
                 HoistDependencyResult::ResolveLater => {
                     // `dep_id` is an unresolved optional peer. while hoisting it deduplicated
                     // with another unresolved optional peer. save it so we remember resolve it
@@ -1038,8 +1078,26 @@ impl Tree {
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
-                    // TODO: warning about peer dependency version mismatch
-                    return dedupe(); // 1
+                    // Optional peers take whatever the tree offers them (the resolver never binds
+                    // them either), and a copy without a version (git, tarball, unversioned
+                    // workspace) has nothing to check the range against.
+                    let rejected = !dependency.behavior.is_optional_peer()
+                        && peer_range.tag == crate::dependency::VersionTag::Npm
+                        && builder
+                            .lockfile()
+                            .package_version(res_id)
+                            .is_some_and(|copy| {
+                                !peer_range.npm().version.satisfies(
+                                    copy,
+                                    builder.buf(),
+                                    builder.buf(),
+                                )
+                            });
+                    return if rejected {
+                        HoistDependencyResult::HoistedOutOfRange(res_id) // 1
+                    } else {
+                        dedupe() // 1
+                    };
                 }
             }
 

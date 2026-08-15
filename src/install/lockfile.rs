@@ -745,6 +745,20 @@ impl Lockfile {
         self.packages.items_dependencies()[0].contains(id)
     }
 
+    /// The version a semver range can be checked against: `None` for packages that
+    /// have none (git, tarball and folder resolutions, workspaces without a `version`).
+    pub(crate) fn package_version(&self, id: PackageID) -> Option<Semver::Version> {
+        let resolution = &self.packages.items_resolution()[id as usize];
+        match resolution.tag {
+            ResolutionTag::Npm => Some(resolution.npm().version),
+            ResolutionTag::Workspace => self
+                .workspace_versions
+                .get(&self.packages.items_name_hash()[id as usize])
+                .copied(),
+            _ => None,
+        }
+    }
+
     /// Is this a direct dependency of the workspace the install is taking place in?
     pub(crate) fn is_root_dependency(
         &self,

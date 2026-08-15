@@ -450,7 +450,7 @@ pub(crate) fn enqueue_peer_rows(
         index_sort::sort_indices_unstable(&mut targets, &mut |a, b| a.cmp(&b));
         targets.dedup();
         populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&targets))?;
-        print_log(manager)?;
+        print_log(manager);
         for &row in rows {
             moved.push((row, manager.lockfile.buffers.resolutions[row as usize]));
             reresolve(manager, row)?;
@@ -463,13 +463,12 @@ pub(crate) fn enqueue_peer_rows(
 }
 
 /// Pending log lines go to stderr; `--silent` drops everything but errors.
-fn print_log(manager: &PackageManager) -> crate::Result<()> {
+fn print_log(manager: &PackageManager) {
     let log = manager.log_mut();
     if manager.options.log_level != LogLevel::Silent || log.has_errors() {
-        log.print(core::ptr::from_mut(Output::error_writer()))?;
+        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
     }
     log.reset();
-    Ok(())
 }
 
 /// `moved` pairs an invalidated edge with the package it used to resolve to; every other edge still on that package follows it to the edge's new npm resolution when its range allows.
@@ -1216,7 +1215,7 @@ fn plan_edges(
     }
     index_sort::sort_vec_unstable_by(&mut unchecked, |a, b| a.cmp(b));
     warn_unchecked(manager, msgs_before, &unchecked);
-    print_log(manager)?;
+    print_log(manager);
 
     for (range, hash, pre) in pre_strings {
         let pre = manager

@@ -1039,8 +1039,7 @@ fn run_tasks_erased(
         if !task.log.msgs.is_empty() {
             // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
             // not `&mut Writer` (the underlying `Writer` is the FFI shape).
-            // Propagate the write error (WriteFailed) out of `run_tasks`.
-            task.log.print(std::ptr::from_mut(Output::error_writer()))?;
+            let _ = task.log.print(std::ptr::from_mut(Output::error_writer()));
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;
             }

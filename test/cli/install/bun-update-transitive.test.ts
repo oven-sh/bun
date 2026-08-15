@@ -507,25 +507,52 @@ test.concurrent("a transitive dependency pinned exactly by its dependent stays p
   expect(exitCode).toBe(0);
 });
 
-// The root's no-deps@1.0.0 dedupes both dependents onto 1.0.0 before it is dropped; the update forks only the `^1.0.0` edge.
-test.concurrent("dependents with different ranges are resolved independently", async () => {
+// The root's no-deps@1.0.0 dedupes both dependents onto 1.0.0 before it is dropped; the fixed edge keeps 1.0.0 alive, so the `^1.0.0` edge is held instead of forked into the duplicate `bun dedupe` would remove.
+test.concurrent("a range edge is not forked off an instance a fixed sibling keeps alive", async () => {
   const dependents = { "one-fixed-dep": "1.0.0", "one-range-dep": "1.0.0" };
   const dir = await setup({ "package.json": pkgJson({ "no-deps": "1.0.0", ...dependents }) });
   const packageJson = pkgJson(dependents);
   await reinstall(dir, packageJson);
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const before = await lockText(dir);
   const { stdout, stderr, exitCode } = await run(dir, "update");
-  expectSummary(stdout, NO_DEPS_ROW_HINTED, "", installed(1));
+  expectSummary(stdout, noChanges(3, 4));
   expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
   expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
-  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
-  const { packages } = await lock(dir);
-  expect([packages["no-deps"][0], packages["one-range-dep/no-deps"][0]]).toStrictEqual([
-    "no-deps@1.0.0",
-    "no-deps@1.1.0",
-  ]);
+  expect(await lockText(dir)).toBe(before);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
   await frozen(dir);
   expect(exitCode).toBe(0);
+});
+
+// #38903: `bun update` and `bun dedupe` must reach a fixed point. After dedupe collapses the `^1.0.0`
+// edge onto the exact pin's 1.0.0, a bare update holds that edge instead of re-adding the duplicate.
+test.concurrent("a deduped lockfile is a fixed point of `bun update`", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "one-range-dep": "1.0.0" }) });
+  const packageJson = pkgJson({ "one-range-dep": "1.0.0", "no-deps": "1.0.0" });
+  await reinstall(dir, packageJson);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0", "1.1.0"]);
+
+  const deduped = await run(dir, "dedupe");
+  expect(deduped.stderr).not.toContain("error:");
+  expect(deduped.exitCode).toBe(0);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.0.0"]);
+  const before = await lockText(dir);
+
+  const { stdout, stderr, exitCode } = await run(dir, "update");
+  expectSummary(stdout, noChanges(2, 3));
+  expectCleanStderr(stderr);
+  expect(stderr).not.toContain("Saved lockfile");
+  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+  expect(await lockText(dir)).toBe(before);
+  expect(exitCode).toBe(0);
+
+  const check = await run(dir, "dedupe", "--check");
+  expect(check.stderr).not.toContain("error:");
+  expect(check.exitCode).toBe(0);
+  expect(await lockText(dir)).toBe(before);
+  await frozen(dir);
 });
 
 // The root's exact 1.0.0 takes the root slot and pushes one-range-dep's 1.1.0 into a nested folder; widening the root keeps 1.0.0 locked, so the update collapses both rows onto 1.1.0.

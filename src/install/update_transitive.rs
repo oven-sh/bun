@@ -259,6 +259,13 @@ struct Pin {
     to: Option<Semver::Version>,
 }
 
+struct Planned {
+    v: Semver::Version,
+    /// `None` re-resolves the edge through its own dist-tag.
+    to: Option<Semver::Version>,
+    later: Box<[u8]>,
+}
+
 /// The transitive half of a bare `bun update`: every edge owned by a non-workspace package the selected workspaces reach (all of them from the root or with -r) moves to the newest release its own range allows, or to wherever its dist-tag points now.
 #[derive(Default)]
 pub struct TransitiveUpdate {
@@ -1126,6 +1133,7 @@ fn plan_edges(
     if instances.is_empty() {
         return Ok((Vec::new(), Report::default()));
     }
+    let edges_on = edges_on_instances(&manager.lockfile, &instances);
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     let msgs_before = manager.log_mut().msgs.len();
@@ -1142,7 +1150,7 @@ fn plan_edges(
     let mut unchecked: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
     // Non-inline prerelease strings of planned versions live in the manifest buffer; copied into the lockfile's below.
     let mut pre_strings: Vec<(core::ops::Range<usize>, u64, Box<[u8]>)> = Vec::new();
-    for inst in &instances {
+    for (inst_i, inst) in instances.iter().enumerate() {
         if inst.held {
             continue;
         }
@@ -1166,41 +1174,63 @@ fn plan_edges(
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
         let rows_before = report.rows.len();
-        for want in &inst.wants {
-            let (v, to, later) = if want.version.tag == DependencyVersionTag::Npm {
-                let range = &want.version.npm().version;
-                let Some(found) = manifest
-                    .find_best_version_with_filter(range, buf, min_age, excludes)
-                    .unwrap()
-                else {
-                    continue;
-                };
-                let v = found.version;
-                if v.order(inst.current, manifest_buf, buf) != Ordering::Greater {
-                    continue;
+        let planned: Vec<Option<Planned>> = inst
+            .wants
+            .iter()
+            .map(|want| {
+                if want.version.tag == DependencyVersionTag::Npm {
+                    let range = &want.version.npm().version;
+                    manifest
+                        .find_best_version_with_filter(range, buf, min_age, excludes)
+                        .unwrap()
+                        .map(|found| found.version)
+                        .filter(|&v| v.order(inst.current, manifest_buf, buf) == Ordering::Greater)
+                        .map(|v| Planned {
+                            v,
+                            to: Some(v),
+                            later: later_than(manifest, v, min_age, excludes),
+                        })
+                } else {
+                    let tag = want.version.dist_tag().tag.slice(buf);
+                    manifest
+                        .find_by_dist_tag_with_filter(tag, min_age, excludes)
+                        .unwrap()
+                        .map(|found| found.version)
+                        .filter(|&v| v.order(inst.current, manifest_buf, buf) != Ordering::Equal)
+                        .map(|v| Planned {
+                            v,
+                            to: None,
+                            later: Box::default(),
+                        })
                 }
-                if !v.tag.pre.value.is_inline() {
-                    let end = pins.len() + want.dep_ids.len();
-                    pre_strings.push((
-                        pins.len()..end,
-                        v.tag.pre.hash,
-                        Box::from(v.tag.pre.slice(manifest_buf)),
-                    ));
-                }
-                (v, Some(v), later_than(manifest, v, min_age, excludes))
-            } else {
-                let tag = want.version.dist_tag().tag.slice(buf);
-                let Some(found) = manifest
-                    .find_by_dist_tag_with_filter(tag, min_age, excludes)
-                    .unwrap()
-                else {
-                    continue;
-                };
-                if found.version.order(inst.current, manifest_buf, buf) == Ordering::Equal {
-                    continue;
-                }
-                (found.version, None, Box::default())
+            })
+            .collect();
+        for (w, want) in inst.wants.iter().enumerate() {
+            let Some(plan) = &planned[w] else {
+                continue;
             };
+            let (v, to) = (plan.v, plan.to);
+            if to.is_some()
+                && forks_surviving_instance(
+                    &manager.lockfile,
+                    inst,
+                    w,
+                    &planned,
+                    &edges_on[inst_i],
+                    v,
+                    manifest_buf,
+                )
+            {
+                continue;
+            }
+            if to.is_some() && !v.tag.pre.value.is_inline() {
+                let end = pins.len() + want.dep_ids.len();
+                pre_strings.push((
+                    pins.len()..end,
+                    v.tag.pre.hash,
+                    Box::from(v.tag.pre.slice(manifest_buf)),
+                ));
+            }
             pins.extend(want.dep_ids.iter().map(|&dep_id| Pin {
                 dep_id,
                 from: inst.pkg_id,
@@ -1210,7 +1240,7 @@ fn plan_edges(
                 name: Box::from(name),
                 from: text(inst.current.fmt(buf)),
                 to: text(v.fmt(manifest_buf)),
-                later,
+                later: plan.later.clone(),
             });
         }
         if report.rows.len() != rows_before {
@@ -1235,6 +1265,67 @@ fn plan_edges(
 
     sort_dedup_rows(&mut report.rows);
     Ok((pins, report))
+}
+
+/// For each planned instance, every edge in the lockfile still resolving to it.
+fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> Vec<Vec<DependencyID>> {
+    let mut slot_of: Vec<u32> = vec![u32::MAX; lockfile.packages.len()];
+    for (i, inst) in instances.iter().enumerate() {
+        slot_of[inst.pkg_id as usize] = i as u32;
+    }
+    let mut edges_on: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
+    for (j, &target) in lockfile.buffers.resolutions.iter().enumerate() {
+        let Some(&slot) = slot_of.get(target as usize) else {
+            continue;
+        };
+        if slot != u32::MAX {
+            edges_on[slot as usize].push(j as DependencyID);
+        }
+    }
+    edges_on
+}
+
+/// A move to `v` is dropped when another edge on the instance stays behind at `current` (its range
+/// rejects `v`, or it is bundled or has no npm range, so the post-resolve redirect cannot carry it)
+/// while `current` already satisfies the moving range: the fork would add exactly the duplicate
+/// `bun dedupe` removes, and the two commands would undo each other forever.
+fn forks_surviving_instance(
+    lockfile: &Lockfile,
+    inst: &Instance,
+    want_index: usize,
+    planned: &[Option<Planned>],
+    edges: &[DependencyID],
+    v: Semver::Version,
+    manifest_buf: &[u8],
+) -> bool {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let want = &inst.wants[want_index];
+    if want.version.tag != DependencyVersionTag::Npm
+        || !want.version.npm().version.satisfies(inst.current, buf, buf)
+    {
+        return false;
+    }
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let stays = |version: &dependency::Version| {
+        version.tag != DependencyVersionTag::Npm
+            || !version.npm().version.satisfies(v, buf, manifest_buf)
+    };
+    edges.iter().any(|&edge| {
+        match inst
+            .wants
+            .iter()
+            .position(|other| other.dep_ids.contains(&edge))
+        {
+            Some(w) if w == want_index => false,
+            Some(w) => planned[w].is_none() && stays(&inst.wants[w].version),
+            None => {
+                let dep = &deps[edge as usize];
+                dep.behavior.is_bundled()
+                    || dedupe::effective_npm_range(lockfile, edge, dep)
+                        .is_none_or(|range| stays(&range))
+            }
+        }
+    })
 }
 
 /// The `latest` dist-tag when it is newer than the release `v` an in-range move stops at, like the `+` rows' `(vX available)`.

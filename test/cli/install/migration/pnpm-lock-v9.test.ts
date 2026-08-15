@@ -2546,6 +2546,77 @@ snapshots:
     });
   });
 
+  // #23694: `bun update -i` migrates once to list the outdated packages, edits the root package.json through the
+  // cache, then installs, which migrates again because bun.lock is still not on disk. The editor and the second
+  // migration both used the tree the first migration had edited, which pointed into the contents it had freed.
+  test("bun update -i in a pnpm workspace migrates twice and keeps package.json intact", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "update-interactive",
+          dependencies: { "no-deps": "^1.0.0" },
+          pnpm: { overrides: { "a-dep": "1.0.1" } },
+        }),
+        "packages/a/package.json": JSON.stringify({ name: "a" }),
+        "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+overrides:
+  a-dep: 1.0.1
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/a: {}
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+`,
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "-i"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("a\r");
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("no-deps");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+      name: "update-interactive",
+      dependencies: { "no-deps": "^1.1.0" },
+      pnpm: { overrides: { "a-dep": "1.0.1" } },
+      overrides: { "a-dep": "1.0.1" },
+      workspaces: ["packages/*"],
+    });
+    expect(existsSync(join(packageDir, "bun.lock"))).toBe(true);
+
+    const frozen = await run(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+  });
+
   describe("overrides", () => {
     function overridesLockfile(overrides: string) {
       return `lockfileVersion: '9.0'

@@ -2402,9 +2402,18 @@ mod draft {
     /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
     /// '2' - same as '1' but this build is known to be a canary build
     /// '3' - decoder-only (build flags + fault registers), never emitted
-    /// '4' - '1' plus, after the hash: a `BuildFlags` VLQ, then the debug id as a
-    ///       VLQ byte count and that many bytes of lowercase hex (0 bytes if none)
+    /// '4' - '1' plus a header after the hash: a VLQ field count, then per field a VLQ
+    ///       `HeaderField` tag, a VLQ char count and that many chars. Decoders skip
+    ///       tags they do not know, so adding a field does not need a new version char.
     const VERSION_CHAR: &str = "4";
+
+    /// Tags of the '4' header fields. Only ever append.
+    enum HeaderField {
+        /// One VLQ of `BuildFlags`.
+        BuildFlags = 0,
+        /// The executable's debug id in lowercase hex; absent when it has none.
+        DebugId = 1,
+    }
 
     bitflags::bitflags! {
         #[derive(Clone, Copy)]
@@ -2418,6 +2427,17 @@ mod draft {
     } else {
         BuildFlags::empty()
     };
+
+    fn write_header_field(
+        writer: &mut impl Write,
+        tag: HeaderField,
+        chars: &[u8],
+    ) -> crate::Result<()> {
+        writer.write_all(VLQ::encode(tag as i32).slice())?;
+        writer.write_all(VLQ::encode(chars.len() as i32).slice())?;
+        writer.write_all(chars)?;
+        Ok(())
+    }
 
     // The trace-string
     // format encodes exactly 7 hex chars. `Environment::GIT_SHA_SHORT` is 9 chars and would
@@ -2644,14 +2664,19 @@ mod draft {
 
         writer.write_all(VERSION_CHAR.as_bytes())?;
         writer.write_all(GIT_SHA.as_bytes())?;
-        writer.write_all(VLQ::encode(BUILD_FLAGS.bits() as i32).slice())?;
 
         let id = debug_id::of_running_executable();
-        let id: &[u8] = id.as_deref().unwrap_or(&[]);
-        writer.write_all(VLQ::encode(id.len() as i32).slice())?;
-        let mut hex = [0u8; 2 * debug_id::MAX_LEN];
-        let hex_len = bun_fmt::bytes_to_hex_lower(id, &mut hex);
-        writer.write_all(&hex[..hex_len])?;
+        writer.write_all(VLQ::encode(1 + i32::from(id.is_some())).slice())?;
+        write_header_field(
+            writer,
+            HeaderField::BuildFlags,
+            VLQ::encode(BUILD_FLAGS.bits() as i32).slice(),
+        )?;
+        if let Some(id) = &id {
+            let mut hex = [0u8; 2 * debug_id::MAX_LEN];
+            let hex_len = bun_fmt::bytes_to_hex_lower(id, &mut hex);
+            write_header_field(writer, HeaderField::DebugId, &hex[..hex_len])?;
+        }
 
         let packed_features: u64 = bun_analytics::packed_features().bits();
         write_u64_as_two_vlqs(writer, packed_features as usize)?;

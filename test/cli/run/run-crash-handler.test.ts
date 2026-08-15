@@ -550,11 +550,14 @@ describe("automatic crash reporter", () => {
   }
 });
 
-// One commit can be published as several links of the same platform (x64 and
-// x64-baseline), so after the sha the trace string carries the id the linker
-// stamped into the executable. Layout (`encode_trace_string` in src/crash_handler/lib.rs):
+// One commit is published as several links with the same platform char (the
+// glibc, musl and android builds all report 'l'), so after the sha the trace
+// string carries a header with the id the linker stamped into the executable.
+// Layout (`encode_trace_string` in src/crash_handler/lib.rs):
 //
-//   {platform}{command}4{sha7}{build flags VLQ}{id byte count VLQ}{id hex}{features 2 VLQs}{frames}A{reason}
+//   {platform}{command}4{sha7}{field count VLQ}({tag VLQ}{char count VLQ}{chars})*{features 2 VLQs}{frames}A{reason}
+//
+// Tags: 0 = build flags (one VLQ, bit 0 = canary), 1 = debug id (lowercase hex).
 describe.concurrent("trace string identifies the build", () => {
   async function tracePayload(approach: string): Promise<string> {
     using server = Bun.serve({ port: 0, fetch: () => new Response("OK") });
@@ -707,19 +710,26 @@ describe.concurrent("trace string identifies the build", () => {
     expect(payload.slice(i, i + 7)).toBe(revision ? revision.slice(0, 7) : "unknown");
     i += 7;
 
-    let buildFlags: number;
-    [buildFlags, i] = vlq(payload, i);
-    expect(buildFlags).toBe(is_canary ? 1 : 0);
+    let fieldCount: number;
+    [fieldCount, i] = vlq(payload, i);
+    const fields: [tag: number, chars: string][] = [];
+    for (let n = 0; n < fieldCount; n++) {
+      let tag: number, length: number;
+      [tag, i] = vlq(payload, i);
+      [length, i] = vlq(payload, i);
+      expect(i + length).toBeLessThanOrEqual(payload.length);
+      fields.push([tag, payload.slice(i, i + length)]);
+      i += length;
+    }
+    expect(fields).toEqual([
+      [0, expect.stringMatching(/^[A-Za-z0-9+/]+$/)],
+      [1, debugIdOfExecutable(bunExe())],
+    ]);
+    // The build-flags payload is exactly one VLQ.
+    expect(vlq(fields[0][1], 0)).toEqual([is_canary ? 1 : 0, fields[0][1].length]);
 
-    let idLength: number;
-    [idLength, i] = vlq(payload, i);
-    const expectedId = debugIdOfExecutable(bunExe());
-    expect(idLength).toBe(expectedId.length / 2);
-    expect(payload.slice(i, i + 2 * idLength)).toBe(expectedId);
-    i += 2 * idLength;
-
-    // Everything after the new fields must still be where the decoder expects
-    // it: features, the frame list, and a reason whose payload round-trips.
+    // Everything after the header must still be where the decoder expects it:
+    // features, the frame list, and a reason whose payload round-trips.
     [, i] = vlq(payload, i);
     [, i] = vlq(payload, i);
     for (;;) {

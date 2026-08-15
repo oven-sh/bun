@@ -23,6 +23,7 @@ describe("Bun.openInEditor", () => {
       err = e;
     }
     expect(err).toBeDefined();
+    expect(err.message).toMatch(/^(No file path specified|Failed to auto-detect editor)$/);
     expect(err.code).not.toBe("ERR_INVALID_ARG_TYPE");
   });
 });

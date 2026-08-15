@@ -2781,9 +2781,6 @@ mod draft {
     /// These URLs contain no source code or personally-identifiable
     /// information (PII). The stackframes point to Bun's open-source native code
     /// (not user code), and are safe to share publicly and with the Bun team.
-    ///
-    /// The upload child outlives us, so it must not inherit our cwd: on Windows a
-    /// directory cannot be deleted while it is any process's cwd.
     fn report(url: &[u8]) {
         if !is_reporting_enabled() {
             return;
@@ -2881,7 +2878,8 @@ mod draft {
                     1, // true
                     0,
                     core::ptr::null_mut(),
-                    sysdir.as_ptr(), // lpCurrentDirectory
+                    // lpCurrentDirectory: the child outlives us and would pin our cwd.
+                    sysdir.as_ptr(),
                     &mut startup_info,
                     &mut process,
                 )

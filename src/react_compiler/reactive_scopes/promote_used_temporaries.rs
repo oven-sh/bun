@@ -1179,14 +1179,7 @@ fn promote_identifier(identifier_id: IdentifierId, state: &mut State, env: &mut 
     } else {
         b't'
     };
-    let mut itoa = bun_core::fmt::ItoaBuf::new();
-    let digits = itoa.format(decl_id.0).as_bytes();
-    let mut buf = [0u8; 16];
-    buf[0] = b'#';
-    buf[1] = kind;
-    buf[2..2 + digits.len()].copy_from_slice(digits);
-    env.identifiers[identifier_id.0 as usize].name = Some(IdentifierName::Promoted(
-        crate::hir::StoreStr::new(bun_ast::data_store_dupe_str(&buf[..2 + digits.len()])),
-    ));
+    env.identifiers[identifier_id.0 as usize].name =
+        Some(IdentifierName::promoted(kind, decl_id.0));
     state.promoted.insert(decl_id);
 }

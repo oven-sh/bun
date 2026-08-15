@@ -1192,6 +1192,19 @@ impl IdentifierName {
             IdentifierName::Named(v) | IdentifierName::Promoted(v) => v.slice(),
         }
     }
+
+    /// `#<kind><n>`, e.g. `#t12` for a promoted temporary.
+    pub fn promoted(kind: u8, n: u32) -> IdentifierName {
+        let mut itoa = bun_core::fmt::ItoaBuf::new();
+        let digits = itoa.format(n).as_bytes();
+        let mut buf = [0u8; 16];
+        buf[0] = b'#';
+        buf[1] = kind;
+        buf[2..2 + digits.len()].copy_from_slice(digits);
+        IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
+            &buf[..2 + digits.len()],
+        )))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -121,6 +121,80 @@ function serveDirectory(root: string) {
 }
 
 describe.concurrent("bun-install", () => {
+  it("bun install --help states the --network-concurrency default that bun install actually uses", async () => {
+    // BUN_CONFIG_MAX_HTTP_REQUESTS also configures this limit; this test is about the default.
+    const installEnv = { ...env, BUN_CONFIG_MAX_HTTP_REQUESTS: undefined };
+
+    await using help = spawn({
+      cmd: [bunExe(), "install", "--help"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: installEnv,
+    });
+    const [helpStdout, helpStderr, helpExitCode] = await Promise.all([
+      help.stdout.text(),
+      help.stderr.text(),
+      help.exited,
+    ]);
+    const helpLine = (helpStdout + helpStderr).split(/\r?\n/).find(line => line.includes("--network-concurrency"));
+    const documentedDefault = /Maximum number of concurrent network requests \(default (\d+)\)$/.exec(helpLine ?? "");
+    expect(documentedDefault).not.toBeNull();
+    expect(helpExitCode).toBe(0);
+    const documented = Number(documentedDefault![1]);
+
+    await withContext(defaultOpts, async ctx => {
+      // One dependency more than the documented limit. Every manifest request is
+      // held open, so bun can only ever have as many in flight as its limit
+      // allows and the extra one has to wait for a slot.
+      const dependencies: Record<string, string> = {};
+      for (let i = 0; i < documented + 1; i++) dependencies[`dep-${i}`] = "^1";
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({ name: "foo", version: "0.0.1", dependencies }),
+      );
+
+      let inFlight = 0;
+      let maxInFlight = 0;
+      const documentedLimitReached = Promise.withResolvers<void>();
+      const documentedLimitExceeded = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<void>();
+      setContextHandler(ctx, async () => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        if (inFlight === documented) documentedLimitReached.resolve();
+        if (inFlight > documented) documentedLimitExceeded.resolve();
+        await release.promise;
+        inFlight--;
+        return new Response("404", { status: 404 });
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: installEnv,
+      });
+      try {
+        await documentedLimitReached.promise;
+        // bun sends everything its limit allows in one burst, so a request beyond
+        // the documented limit arrives right behind the others. That it never
+        // arrives can only be observed by giving it a moment to show up.
+        await Promise.race([documentedLimitExceeded.promise, Bun.sleep(500)]);
+      } finally {
+        release.resolve();
+      }
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(maxInFlight).toBe(documented);
+      expect(ctx.requested).toBe(documented + 1);
+      expect(stderr).toContain("failed to resolve");
+      expect(stdout).toContain("bun install v1.");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   for (let input of ["abcdef", "65537", "-1"]) {
     it(`bun install --network-concurrency=${input} fails`, async () => {
       await withContext(defaultOpts, async ctx => {

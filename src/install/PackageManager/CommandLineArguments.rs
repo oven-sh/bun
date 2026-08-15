@@ -104,7 +104,7 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
         "--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"
     ),
     clap::param!(
-        "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 48)"
+        "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 64)"
     ),
     clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
     clap::param!(

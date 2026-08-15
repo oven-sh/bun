@@ -496,8 +496,9 @@ impl Tag {
         if js_type.is_object() && js_type != JSType::ProxyObject {
             if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                 const REACT_ELEMENT_SYMBOLS: [&[u8]; 3] = [
-                    b"react.element",              // React 18 and below
-                    b"react.transitional.element", // React 19
+                    b"react.element",
+                    // React 19 - https://github.com/oven-sh/bun/issues/17223
+                    b"react.transitional.element",
                     b"react.fragment",
                 ];
 

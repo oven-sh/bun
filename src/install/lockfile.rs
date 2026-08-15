@@ -193,24 +193,46 @@ pub struct Lockfile {
     /// `packages.len()` at the moment lockfile load (including npm/pnpm/yarn
     /// migration) finished. Packages with `id < this` were carried in from a
     /// lockfile and represent a user-pinned resolution; packages with
-    /// `id >= this` were appended by manifest fetches in the current
-    /// resolve session. `get_package_id` uses this to keep its
-    /// order-independence guard from overriding lockfile pins. Set by
-    /// `mark_loaded_packages`; defaults to `invalid_package_id` (no lockfile
-    /// loaded → guard applies to nothing, equivalent to "all entries are
-    /// session-appended").
+    /// `id >= this` were appended in the current resolve session. Set by
+    /// `mark_loaded_packages`; a fresh lockfile has `0`.
     ///
     /// Runtime-only — never serialised.
     pub(crate) loaded_package_count: PackageID,
 
-    /// `bit[id] == true` ⇔ package `id` was appended for a dependency whose
-    /// version range was an exact `=X.Y.Z` (i.e. the user — root or workspace
-    /// — pinned this exact version somewhere in the tree). `get_package_id`'s
-    /// order-independence guard never blocks deduping to one of these: an
-    /// exact pin is a deliberate choice, not an artifact of which manifest
-    /// happened to land first. Runtime-only — never serialised; sized lazily
-    /// in `mark_exact_pin`.
-    pub(crate) exact_pinned: DynamicBitSet,
+    /// Packages with `id < this` are present on every install of this
+    /// package.json, whatever order the registry answers in: they were loaded
+    /// from the lockfile, or were appended before the last point at which
+    /// resolution had drained completely (`mark_settled_packages`). The rest
+    /// were appended while manifests were still arriving, and which of them
+    /// exist at any given moment depends on arrival order, unless they were
+    /// appended for a direct dependency (`AppendedFor::direct`). See
+    /// `get_package_id`.
+    ///
+    /// Runtime-only — never serialised.
+    pub(crate) settled_package_count: PackageID,
+
+    /// `appended_for[id]` for every package appended from a registry manifest
+    /// in this resolve session (`mark_appended_for`); indexed by `PackageID`,
+    /// grown lazily, and only consulted for `id >= loaded_package_count`.
+    ///
+    /// Runtime-only — never serialised.
+    pub(crate) appended_for: Vec<AppendedFor>,
+}
+
+/// What `Lockfile::get_package_id` needs to know about the dependency row a
+/// package was appended from a registry manifest to resolve.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AppendedFor {
+    /// The row belongs to the root or a workspace package. Those rows are
+    /// enqueued before any manifest is processed and each manifest's waiting
+    /// rows are resolved FIFO, so for a given package name they resolve before
+    /// any transitive row, and what they append is present on every install
+    /// even while manifests are still arriving.
+    pub direct: bool,
+    /// The row's range (after overrides and catalogs) was an exact version, a
+    /// deliberate choice that ranges from any major may settle on; a version a
+    /// range picked only attracts ranges that would pick the same major.
+    pub exact: bool,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -1967,11 +1989,9 @@ impl Lockfile {
             meta_hash: ZERO_HASH,
             patched_dependencies: PatchedDependenciesMap::default(),
             saved_config_version: None,
-            // Fresh lockfile (no load): every package appended later is
-            // session-appended, so the order-independence guard in
-            // `get_package_id` applies from id 0.
             loaded_package_count: 0,
-            exact_pinned: DynamicBitSet::default(),
+            settled_package_count: 0,
+            appended_for: Vec::new(),
         }
     }
 
@@ -1981,124 +2001,101 @@ impl Lockfile {
     #[inline]
     pub(crate) fn mark_loaded_packages(&mut self) {
         self.loaded_package_count = self.packages.len() as PackageID;
+        self.settled_package_count = self.loaded_package_count;
     }
 
-    /// Record that package `id` was appended via an exact-version dependency
-    /// (`=X.Y.Z`). See the `exact_pinned` field doc.
+    /// Call once nothing is left to resolve (every enqueued row is bound and
+    /// no manifest is in flight), e.g. between resolving regular rows and
+    /// installing peers: the packages present at such a point are the same on
+    /// every install, so rows resolved afterwards may settle on any of them.
     #[inline]
-    pub(crate) fn mark_exact_pin(&mut self, id: PackageID) {
-        let i = id as usize;
-        if self.exact_pinned.bit_length() <= i {
-            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
-        }
-        self.exact_pinned.set(i);
+    pub(crate) fn mark_settled_packages(&mut self) {
+        self.settled_package_count = self.packages.len() as PackageID;
     }
 
+    /// Record that package `id` was just appended from a registry manifest to
+    /// resolve `dependency_id`, whose range (after overrides and catalogs) was
+    /// an exact version iff `exact`.
+    pub(crate) fn mark_appended_for(
+        &mut self,
+        id: PackageID,
+        dependency_id: DependencyID,
+        exact: bool,
+    ) {
+        let appended_for = AppendedFor {
+            direct: self.is_workspace_dependency(dependency_id),
+            exact,
+        };
+        let i = id as usize;
+        if self.appended_for.len() <= i {
+            self.appended_for.resize(i + 1, AppendedFor::default());
+        }
+        self.appended_for[i] = appended_for;
+    }
+
+    /// The package `resolution` is already stored as, if any.
+    ///
+    /// When `version` is an npm range, `resolution` is the range's best match
+    /// from the manifest, and the highest version already present that the
+    /// range accepts is preferred over it (lockfile versions unconditionally,
+    /// others when pinned exactly or of the best match's major), provided
+    /// that version is present on every install of this package.json
+    /// (`settled_package_count`, `AppendedFor::direct`). A version that is
+    /// present only because some transitive dependency's manifest happened to
+    /// be processed already is not a candidate, and resolves the range only
+    /// when it is the best match itself, so the answer does not depend on the
+    /// order the registry answered in.
     pub(crate) fn get_package_id(
         &self,
         name_hash: u64,
-        // If non-null, attempt to use an existing package
-        // that satisfies this version range.
         version: Option<&DependencyVersion>,
         resolution: &Resolution,
     ) -> Option<PackageID> {
-        let entry = self.package_index.get(&name_hash)?;
+        // Highest version first (`get_or_put_id`).
+        let ids: &[PackageID] = match self.package_index.get(&name_hash)? {
+            PackageIndexEntry::Id(id) => core::slice::from_ref(id),
+            PackageIndexEntry::Ids(ids) => ids.as_slice(),
+        };
         let resolutions: &[Resolution] = self.packages.items_resolution();
-        // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
-        // list head). `version` is held by-value for the whole fn body so the
-        // borrow is sound.
-        let npm_version = match version {
-            Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
-            _ => None,
-        };
-        // Order-independence guard for the `satisfies` fallback below: when the
-        // caller already knows the manifest's best-match version (the npm
-        // `resolution` it passes), only dedupe to an existing entry whose
-        // version is at least that. Without this, the result depends on which
-        // sibling's manifest happened to land first — `*` deduping to a
-        // previously-appended `1.0.2` instead of resolving to `2.0.2` is the
-        // long-standing "text lockfile is hoisted" flake. Lockfile-pinned deps
-        // are kept out of this codepath by `Diff::generate`'s
-        // satisfies-preserves-mapping rule (which keeps the resolution slot
-        // populated so the early return in `get_or_put_resolved_package` fires
-        // before we get here).
-        let resolved_npm_floor = if resolution.tag == ResolutionTag::Npm {
-            Some(resolution.npm().version)
-        } else {
-            None
-        };
+        debug_assert!(ids.iter().all(|&id| (id as usize) < resolutions.len()));
         let buf = self.buffers.string_bytes.as_slice();
 
-        let loaded_watermark = self.loaded_package_count;
-        let exact_pinned = &self.exact_pinned;
-        let try_satisfies_dedupe = |id: PackageID| -> bool {
-            let existing = &resolutions[id as usize];
-            if existing.tag != ResolutionTag::Npm {
-                return false;
-            }
-            let Some(npm_v) = npm_version else {
-                return false;
-            };
-            let existing_ver = existing.npm().version;
-            if !npm_v.satisfies(existing_ver, buf, buf) {
-                return false;
-            }
-            // Order-independence guard. We refuse to dedupe a wide range to a
-            // *lower* existing entry only when ALL of the following hold:
-            //   - the entry was appended in this resolve session
-            //     (lockfile-loaded entries are the user's existing pin),
-            //   - the entry was NOT appended for an exact-`=X.Y.Z` dependency
-            //     (an exact pin anywhere in the tree is a deliberate choice,
-            //     not a network-order artefact — `dragon test 2` /
-            //     "dependency from root satisfies range from dependency"),
-            //   - the manifest's best-match is a *different major* (within a
-            //     major, deduping to an older patch is the long-standing
-            //     behaviour and the worst case is still ^-compatible).
-            // What this leaves is exactly the cross-parent network-order
-            // flake: a wide range (`*`, `>=X`) collapsing onto a sibling's
-            // *range-resolved* lower major depending on whose manifest landed
-            // first ("text lockfile is hoisted").
-            if id >= loaded_watermark && !exact_pinned.is_set_allow_out_of_bound(id as usize, false)
-            {
-                if let Some(floor) = resolved_npm_floor {
-                    if existing_ver.order(floor, buf, buf) == Ordering::Less
-                        && existing_ver.major != floor.major
-                    {
-                        return false;
-                    }
+        if let Some(range) = version
+            .filter(|v| v.tag == dependency::Tag::Npm)
+            .map(|v| &v.npm().version)
+        {
+            let best_match =
+                (resolution.tag == ResolutionTag::Npm).then(|| resolution.npm().version);
+            let present_on_every_install = ids.iter().copied().find(|&id| {
+                let existing = &resolutions[id as usize];
+                if existing.tag != ResolutionTag::Npm {
+                    return false;
                 }
-            }
-            true
-        };
-
-        match entry {
-            PackageIndexEntry::Id(id) => {
-                debug_assert!((*id as usize) < resolutions.len());
-
-                if resolutions[*id as usize].eql(resolution, buf, buf) {
-                    return Some(*id);
+                let existing_version = existing.npm().version;
+                if !range.satisfies(existing_version, buf, buf) {
+                    return false;
                 }
-
-                if try_satisfies_dedupe(*id) {
-                    return Some(*id);
+                if id < self.loaded_package_count {
+                    return true;
                 }
-            }
-            PackageIndexEntry::Ids(ids) => {
-                for &id in ids.iter() {
-                    debug_assert!((id as usize) < resolutions.len());
-
-                    if resolutions[id as usize].eql(resolution, buf, buf) {
-                        return Some(id);
-                    }
-
-                    if try_satisfies_dedupe(id) {
-                        return Some(id);
-                    }
-                }
+                let appended_for = self
+                    .appended_for
+                    .get(id as usize)
+                    .copied()
+                    .unwrap_or_default();
+                (id < self.settled_package_count || appended_for.direct)
+                    && (appended_for.exact
+                        || best_match
+                            .is_none_or(|best_match| existing_version.major == best_match.major))
+            });
+            if present_on_every_install.is_some() {
+                return present_on_every_install;
             }
         }
 
-        None
+        ids.iter()
+            .copied()
+            .find(|&id| resolutions[id as usize].eql(resolution, buf, buf))
     }
 
     /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.

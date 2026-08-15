@@ -2078,20 +2078,12 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // Determinism: passing `version` here unconditionally lets a
-    // peer like `>= 1.0.2` collapse onto whichever sibling-appended entry
-    // (e.g. `1.0.9`) happens to be highest in the index *at this instant* — a
-    // network-order artefact that the `^1.0.2` peer-hoisting test already
-    // todoIf's on macOS. The floor guard in `get_package_id` was
-    // meant to close that, but its exact-pinned/same-major exemptions reopen
-    // it when *every* candidate is an exact-pinned same-major sibling
-    // (`uses-a-dep-1..10`). For deferred peers, suppress the satisfies-
-    // fallback so only an exact `eql(find_result)` can bind here; everything
-    // else falls through to the `is_peer && !install_peer` defer below and is
-    // resolved deterministically by phase 2's descending-index scan in
-    // `get_or_put_resolved_package`. `*` is left alone — it expresses no
-    // version preference, and the "peer *" hoisting test depends on it
-    // deduping to whatever sibling pin exists rather than the manifest floor.
+    // A peer that is not being installed yet binds here only to its exact
+    // best match; otherwise it is deferred (`is_peer && !install_peer` below)
+    // and bound in phase 2 (`get_or_put_resolved_package`), once every
+    // non-peer row is resolved, to the highest version present that satisfies
+    // it. `*` expresses no preference, so it may also bind now to a version
+    // that is settled already (`Lockfile::get_package_id`).
     let suppress_peer_satisfies = behavior.is_peer()
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
@@ -2134,15 +2126,13 @@ fn get_or_put_resolved_package_with_find_result(
     )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
-    // Record exact-version pins so `Lockfile::get_package_id`'s
-    // order-independence guard can tell them apart from range-resolved
-    // entries (which it treats as network-order artefacts).
-    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
-        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
-        // `lockfile.exact_pinned` is disjoint from `package` (returned
-        // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
-    }
+    // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here; `package`
+    // was returned by value above.
+    unsafe { &mut *(*this_ptr).lockfile }.mark_appended_for(
+        package.meta.id,
+        dependency_id,
+        version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact(),
+    );
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
     // `this` reborrow below doesn't conflict with the closure capture.

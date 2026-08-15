@@ -3305,7 +3305,8 @@ describe("binaries", () => {
       const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { out, err, exitCode };
     }
-    const install = (linker: "hoisted" | "isolated") => run(["install", `--linker=${linker}`]);
+    const install = (linker: "hoisted" | "isolated", cwd = packageDir) =>
+      run(["install", `--linker=${linker}`], { cwd });
 
     for (const linker of ["hoisted", "isolated"] as const) {
       test(`file targets are skipped like missing bins (${linker})`, async () => {
@@ -3429,31 +3430,35 @@ describe("binaries", () => {
     // filesystem accepts, so these overflows cannot be set up there.
     test.skipIf(isWindows)("entries of a directories.bin close to the path limit", async () => {
       const maxPathBytes = isMacOS ? 1024 : 4096;
-      // The directory is 64 bytes below the limit, so it can be opened. Joined
-      // onto it, `short.js` fits, `crlfEntry` fits but the temporary file for its
-      // shebang (27 bytes longer) does not, and `longEntry` does not fit at all.
-      const binDirPath = join(packageDir, "node_modules", "deep-dir-bin", "bins");
-      const components: string[] = [];
-      let remaining = maxPathBytes - 64 - Buffer.byteLength(binDirPath);
-      while (remaining > 0) {
-        let len = Math.min(200, remaining - 1);
-        if (remaining - 1 - len === 1) len -= 1;
-        components.push(Buffer.alloc(len, "d").toString());
-        remaining -= 1 + len;
-      }
+      // Directory components (at most 200 bytes each) that bring `base` to exactly `length` bytes.
+      const componentsUpTo = (base: string, length: number, fill: string) => {
+        const components: string[] = [];
+        let remaining = length - Buffer.byteLength(base);
+        while (remaining > 0) {
+          let len = Math.min(200, remaining - 1);
+          if (remaining - 1 - len === 1) len -= 1;
+          components.push(Buffer.alloc(len, fill).toString());
+          remaining -= 1 + len;
+        }
+        return components;
+      };
+      // Most of the depth goes into the project directory: the `.bin` links are
+      // relative, so everything below the package ends up in the link targets,
+      // and XFS rejects link targets of 1 KiB or more. The bin directory is then
+      // 64 bytes below the limit, so it can be opened. Joined onto it, `short.js`
+      // fits, `crlfEntry` fits but the temporary file for its shebang (27 bytes
+      // longer) does not, and `longEntry` does not fit at all.
+      const project = join(packageDir, ...componentsUpTo(packageDir, maxPathBytes - 768, "p"));
+      const chain = componentsUpTo(join(project, "node_modules", "deep-dir-bin", "bins"), maxPathBytes - 64, "d");
       const crlfEntry = Buffer.alloc(49, "c").toString() + ".js";
       const crlfScript = `#!/usr/bin/env node\r\nconsole.log("crlf")`;
       const longEntry = Buffer.alloc(128, "e").toString();
 
       await Promise.all([
-        write(packageJson, JSON.stringify({ name: "foo", workspaces: ["deep-dir-bin"] })),
+        write(join(project, "package.json"), JSON.stringify({ name: "foo", workspaces: ["deep-dir-bin"] })),
         write(
-          join(packageDir, "deep-dir-bin", "package.json"),
-          JSON.stringify({
-            name: "deep-dir-bin",
-            version: "1.0.0",
-            directories: { bin: join("bins", ...components) },
-          }),
+          join(project, "deep-dir-bin", "package.json"),
+          JSON.stringify({ name: "deep-dir-bin", version: "1.0.0", directories: { bin: join("bins", ...chain) } }),
         ),
       ]);
       // The entries' absolute paths are too long for the OS to create them
@@ -3466,27 +3471,27 @@ describe("binaries", () => {
            for (const component of process.argv.slice(1)) { fs.mkdirSync(component); process.chdir(component); }
            for (const [name, contents] of Object.entries(${JSON.stringify(entries)})) fs.writeFileSync(name, contents);`,
           "bins",
-          ...components,
+          ...chain,
         ],
-        { cwd: join(packageDir, "deep-dir-bin") },
+        { cwd: join(project, "deep-dir-bin") },
       );
       expect(mkErr).toBe("");
       expect(mkExitCode).toBe(0);
 
       try {
-        const { err, exitCode } = await install("hoisted");
+        const { err, exitCode } = await install("hoisted", project);
         expect(err).not.toContain("error:");
         expect(exitCode).toBe(0);
-        expect(await readdirSorted(binDir())).toEqual([crlfEntry, "short.js"]);
+        const projectBinDir = join(project, "node_modules", ".bin");
+        expect(await readdirSorted(projectBinDir)).toEqual([crlfEntry, "short.js"]);
+        expect(join(projectBinDir, "short.js")).toBeValidBin(join("..", "deep-dir-bin", "bins", ...chain, "short.js"));
+        expect(join(projectBinDir, crlfEntry)).toBeValidBin(join("..", "deep-dir-bin", "bins", ...chain, crlfEntry));
       } finally {
         // Shorten the paths again so that ordinary tools can delete the directory.
-        await rename(
-          join(packageDir, "deep-dir-bin", "bins", components[0]),
-          join(packageDir, "deep-dir-bin", "bins", "d"),
-        );
+        await rename(join(project, "deep-dir-bin", "bins", chain[0]), join(project, "deep-dir-bin", "bins", "d"));
       }
       // Linked, but left as it was since the shebang could not be rewritten in place.
-      expect(await file(join(packageDir, "deep-dir-bin", "bins", "d", ...components.slice(1), crlfEntry)).text()).toBe(
+      expect(await file(join(project, "deep-dir-bin", "bins", "d", ...chain.slice(1), crlfEntry)).text()).toBe(
         crlfScript,
       );
     });

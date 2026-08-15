@@ -400,6 +400,58 @@ describe("@types/bun integration test", () => {
     });
   });
 
+  // Runs on debug builds too, like the Bun.mmap test above.
+  describe("global onmessage / onerror", () => {
+    test("take a handler receiving the MessageEvent / ErrorEvent, or null", async () => {
+      const checkDir = join(TEMP_DIR, "global-event-handlers-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["global-event-handlers.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "global-event-handlers.ts": `onmessage satisfies ((event: MessageEvent) => any) | null;
+           onerror satisfies ((event: ErrorEvent) => any) | null;
+
+           // A worker thread's handlers are called with the event as their only argument.
+           onmessage = event => {
+             event satisfies MessageEvent;
+             postMessage(event.data);
+           };
+           onerror = event => {
+             event satisfies ErrorEvent;
+             event.message satisfies string;
+             console.error(event.error);
+           };
+           globalThis.onmessage = event => event.data;
+           globalThis.onerror = event => event.message;
+           onmessage = null;
+           onerror = null;
+
+           // @ts-expect-error the handler receives a MessageEvent, not the posted data
+           onmessage = (data: string) => data;
+           // @ts-expect-error Bun passes the ErrorEvent, not browsers' (message, source, ...) arguments
+           onerror = (message: string, source: string) => message + source;
+           // @ts-expect-error a handler is cleared with null, not undefined
+           onerror = undefined;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;
@@ -868,6 +920,13 @@ describe("@types/bun integration test", () => {
           code: 2339,
           line: "worker.ts:25:11",
           message: "Property 'threadId' does not exist on type 'Worker'.",
+        },
+        {
+          // lib.dom's global onerror is window.onerror, whose first parameter is `Event | string`;
+          // Bun's own declaration (which applies without lib.dom) receives an ErrorEvent.
+          code: 2554,
+          line: "worker.ts:52:25",
+          message: "Expected 2 arguments, but got 0.",
         },
       ],
     });

@@ -2,6 +2,7 @@ use crate::lockfile::package::PackageColumns as _;
 use core::mem::ManuallyDrop;
 
 use bun_core::Output;
+use bun_core::fmt::redacted;
 use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_semver as semver;
@@ -388,14 +389,14 @@ impl PackageManager {
                     {
                         Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
-                            (failed_dep.version.literal.fmt(string_buf),),
+                            (redacted(failed_dep.version.literal.fmt(string_buf)),),
                         );
                     } else {
                         Output::err_generic(
                             "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
                             (
                                 bstr::BStr::new(failed_dep.name.slice(string_buf)),
-                                failed_dep.version.literal.fmt(string_buf),
+                                redacted(failed_dep.version.literal.fmt(string_buf)),
                             ),
                         );
                     }

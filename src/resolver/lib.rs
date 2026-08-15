@@ -1446,12 +1446,8 @@ pub mod fs {
                         cache.kind = EntryKind::Dangling;
                         return Ok(cache);
                     }
-                    // EACCES / sharing violation / ...: `cache.kind` is already set
-                    // from the link's own directory bit. `Entry.kind`/`Entry.symlink`
-                    // swallow errors and fall back to the `.file` placeholder
-                    // anyway, so returning the half-populated cache is strictly
-                    // better than `try`. Empty `cache.symlink` makes the
-                    // resolver fall back to `parent.abs_real_path + base`.
+                    // Otherwise keep the kind from the link's own directory bit; the empty
+                    // `cache.symlink` makes the resolver fall back to `parent.abs_real_path + base`.
                     return Ok(cache);
                 }
                 scopeguard::defer! {
@@ -1551,10 +1547,8 @@ pub mod fs {
         }
     }
 
-    /// Following the link failed because there is nothing at the other end;
-    /// these are the errors `stat()` reports for a dangling (or looping) link.
-    /// Anything else (EACCES, EMFILE, ...) is a real error about an entry
-    /// that does exist and is reported when the entry is read.
+    /// What `stat()` fails with on a link to nothing (or a loop); other errors
+    /// (EACCES, EMFILE, ...) describe an entry that exists and surface when it is read.
     fn is_dangling_link_error(errno: bun_sys::E) -> bool {
         matches!(
             errno,

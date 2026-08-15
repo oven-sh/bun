@@ -118,11 +118,7 @@ pub struct Installer<'a> {
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
 
-    /// Main-thread only: optional dependencies whose package was deleted from
-    /// the store because one of its lifecycle scripts failed. The symlinks
-    /// pointing at them are removed by `unlink_failed_optional_entries` once
-    /// every task has finished, since the packages depending on them may
-    /// still be creating those links while the script failure is handled.
+    /// Main-thread only: entries deleted by `on_optional_dependency_scripts_failed`.
     pub(crate) failed_optional_entries: Vec<StoreEntryId>,
 }
 
@@ -574,10 +570,7 @@ impl<'a> Installer<'a> {
         self.installed.set(pkg_id as usize);
     }
 
-    /// Called from main thread after the package of an optional dependency was
-    /// deleted because one of its lifecycle scripts failed. The entries
-    /// depending on it are unblocked and finish installing without it, like
-    /// the hoisted linker leaves them without the package directory.
+    /// Called from main thread once the package is deleted; dependents finish without it.
     pub(crate) fn on_optional_dependency_scripts_failed(&mut self, entry_id: StoreEntryId) {
         self.failed_optional_entries.push(entry_id);
         self.store.entries.items_step()[entry_id.get() as usize]
@@ -2146,8 +2139,7 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
-    /// `node_modules/.bun/node_modules/<package name>`, the link created for
-    /// entries with `hoisted` set.
+    /// `node_modules/.bun/node_modules/<package name>`
     fn hidden_node_modules_link_path(&self, entry_id: StoreEntryId) -> AutoPath {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
@@ -2331,11 +2323,8 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    /// Called from main thread once every task has finished. Removes the
-    /// links `symlink_dependencies` and `link_to_hidden_node_modules` created
-    /// for the packages deleted by `on_optional_dependency_scripts_failed`, so
-    /// that resolving them fails like it does with the hoisted linker instead
-    /// of running into a dangling symlink.
+    /// Called from main thread after every task has finished (dependents may still be
+    /// creating these links while a script failure is handled).
     pub(crate) fn unlink_failed_optional_entries(&self) {
         if self.failed_optional_entries.is_empty() {
             return;
@@ -2355,10 +2344,7 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = nodes.items_pkg_id();
         let node_dep_ids = nodes.items_dep_id();
 
-        // Links from the root, workspaces and other store entries. Public
-        // hoisting adds dependencies to the root without recording it as a
-        // parent, so every entry's dependency list is checked rather than
-        // the failed entries' `parents`.
+        // Not `parents`: public hoisting adds root dependencies without recording a parent.
         for (entry_index, entry_deps) in entries.items_dependencies().iter().enumerate() {
             if !entry_deps
                 .slice()
@@ -2933,9 +2919,8 @@ pub enum Which {
     Staging,
 }
 
-/// Appends the name a dependency called `dep_name` is linked as inside the
-/// `node_modules` directory of an entry whose own package directory is called
-/// `entry_node_modules_name`.
+/// Appends the link name of `dep_name` inside the `node_modules` of an entry
+/// installed as `entry_node_modules_name`.
 fn append_dependency_link_name(
     dest: &mut AutoPath,
     dep_name: &[u8],
@@ -2949,12 +2934,10 @@ fn append_dependency_link_name(
     }
 }
 
-/// Removes the link `Symlinker` created at `path`, if it is still there.
 fn remove_link(path: &ZStr) {
     #[cfg(windows)]
     {
-        // Directory symlinks and junctions are removed with rmdir, even when
-        // their target is gone; only file symlinks need unlink.
+        // directory symlinks and junctions (dangling or not) go through rmdir
         if sys::rmdir(path).is_ok() {
             return;
         }

@@ -469,8 +469,7 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
-                    // Nothing that long names a directory whose cache could be stale
-                    // (and the join below has a PathBuffer to fit `top_level_dir/entry/..` in).
+                    // `cache_bust_buf` has to fit `top_level_dir/entry_point/..`.
                     if self.fs().top_level_dir.len() + entry_point.len() + 4
                         > bun_paths::MAX_PATH_BYTES
                     {
@@ -2653,8 +2652,6 @@ impl<'a> Transpiler<'a> {
 
             let _reset = bun_ast::StoreResetGuard::new();
 
-            // Failures have to reach the log, not just stderr: `BuildCommand`
-            // decides the exit code from `log.errors`.
             let Ok(result) = self.resolve_entry_point(entry) else {
                 continue;
             };

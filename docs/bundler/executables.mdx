@@ -758,9 +758,9 @@ import { file, serve } from "bun";
 
 serve({
   routes: {
-    "/favicon.ico": new Response(file(favicon)),
-    "/logo.png": new Response(file(logo)),
-    "/styles.css": new Response(file(styles)),
+    "/favicon.ico": file(favicon),
+    "/logo.png": file(logo),
+    "/styles.css": file(styles),
   },
   fetch(req) {
     return new Response("Not found", { status: 404 });
@@ -934,6 +934,7 @@ const staticRoutes: Record<string, Response> = {};
 for (const blob of embeddedFiles) {
   // Remove hash from filename: "icon-a1b2c3d4.png" -> "icon.png"
   const name = blob.name.replace(/-[a-z0-9]+\./, ".");
+  // embeddedFiles are plain Blobs, which routes does not accept directly
   staticRoutes[`/${name}`] = new Response(blob);
 }
 

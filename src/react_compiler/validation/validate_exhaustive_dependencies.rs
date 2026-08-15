@@ -1080,10 +1080,7 @@ fn collect_dependencies(
                     visit_candidate_dependency(receiver, temporaries, &mut dependencies, &locals);
                     // Skip property — matches TS behavior
                     for arg in args {
-                        let place = match arg {
-                            PlaceOrSpread::Place(p) => p,
-                            PlaceOrSpread::Spread(s) => &s.place,
-                        };
+                        let place = arg.place();
                         visit_candidate_dependency(place, temporaries, &mut dependencies, &locals);
                     }
                 }

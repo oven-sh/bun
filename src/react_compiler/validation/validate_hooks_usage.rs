@@ -318,10 +318,7 @@ pub(crate) fn validate_hooks_usage(
                     }
                     // Visit all operands except callee
                     for arg in args {
-                        let place = match arg {
-                            crate::hir::PlaceOrSpread::Place(p) => p,
-                            crate::hir::PlaceOrSpread::Spread(s) => &s.place,
-                        };
+                        let place = arg.place();
                         visit_place(place, &value_kinds, &mut errors_by_loc, env)?;
                     }
                 }
@@ -347,10 +344,7 @@ pub(crate) fn validate_hooks_usage(
                     // Visit receiver and args (not property)
                     visit_place(receiver, &value_kinds, &mut errors_by_loc, env)?;
                     for arg in args {
-                        let place = match arg {
-                            crate::hir::PlaceOrSpread::Place(p) => p,
-                            crate::hir::PlaceOrSpread::Spread(s) => &s.place,
-                        };
+                        let place = arg.place();
                         visit_place(place, &value_kinds, &mut errors_by_loc, env)?;
                     }
                 }

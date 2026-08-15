@@ -1311,6 +1311,23 @@ pub enum PlaceOrSpread {
     Spread(SpreadPattern),
 }
 
+impl PlaceOrSpread {
+    /// The argument's place, whether or not it is spread.
+    pub fn place(&self) -> &Place {
+        match self {
+            PlaceOrSpread::Place(p) => p,
+            PlaceOrSpread::Spread(s) => &s.place,
+        }
+    }
+
+    pub fn place_mut(&mut self) -> &mut Place {
+        match self {
+            PlaceOrSpread::Place(p) => p,
+            PlaceOrSpread::Spread(s) => &mut s.place,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ArrayElement {
     Place(Place),

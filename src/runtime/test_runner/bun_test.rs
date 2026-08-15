@@ -1146,10 +1146,15 @@ impl BunTest {
     }
 
     /// if sync, the result is returned. if async, None is returned.
+    ///
+    /// `invocation_ref` (a `+1`, consumed) is the `RefData` a test or hook
+    /// invocation runs under (see AsyncContextRef.rs); describe callbacks pass
+    /// `None` and run as they are.
     pub(crate) fn run_test_callback(
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         cfg_callback: JSValue,
+        invocation_ref: Option<RefDataPtr>,
         cfg_done_parameter: bool,
         cfg_data: RefDataValue,
         timeout: &Timespec,
@@ -1180,24 +1185,68 @@ impl BunTest {
             };
         }
 
+        let mut callable: JSValue = cfg_callback;
+        let mut entered_ref: JSValue = JSValue::ZERO;
+        if let Some(invocation_ref) = invocation_ref {
+            match AsyncContextRef::enter(global_this, cfg_callback, invocation_ref) {
+                Ok(entered) => {
+                    callable = entered.callable;
+                    entered_ref = entered.ref_js;
+                }
+                Err(e) => {
+                    // Out of memory building the context. Charge it to this entry and
+                    // still run the callback, as with a done callback that failed to bind.
+                    // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &cfg_data) };
+                }
+            }
+        }
+
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-        ) {
-            Ok(v) => v,
-            Err(_) => {
-                global_this.clear_termination_exception();
-                // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
-                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
-                bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
-                JSValue::ZERO
+
+        // `JSValue::call`, then the ref comes back out, then microtasks are drained:
+        // the same order as `run_callback_with_result_and_forcefully_drain_microtasks`,
+        // with the context restored at the point a wrapped callback's would be.
+        // A failure anywhere is charged to this entry; the callback's own exception
+        // is taken before `leave` so that `leave` does not mistake it for its own.
+        // `Some` once something failed; the inner `None` is a termination (nothing
+        // to print), which is what `on_uncaught_exception` takes.
+        let mut failure: Option<Option<JSValue>> = None;
+        let mut result: JSValue = JSValue::UNDEFINED;
+        if !global_this.has_exception() {
+            match callable.call(global_this, JSValue::UNDEFINED, args_slice) {
+                Ok(v) => result = v,
+                Err(_) => {
+                    global_this.clear_termination_exception();
+                    failure = Some(global_this.try_take_exception());
+                }
             }
-        };
+        }
+        if !entered_ref.is_empty() {
+            if let Err(e) = AsyncContextRef::leave(global_this, entered_ref) {
+                // Out of memory; the callback's own failure, if any, is the one worth reporting.
+                let exception = global_this.take_exception(e);
+                if failure.is_none() {
+                    failure = Some(Some(exception));
+                }
+            }
+        }
+        if failure.is_none() {
+            if let Err(stopped) = vm.event_loop_mut().drain_microtasks_with_global(global_this, vm.jsc_vm()) {
+                let _ = stopped.throw(global_this);
+                global_this.clear_termination_exception();
+                failure = Some(global_this.try_take_exception());
+            }
+        }
+        result.ensure_still_alive();
+        if let Some(exception) = failure {
+            // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
+            unsafe { (*this).on_uncaught_exception(global_this, exception, false, &cfg_data) };
+            bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
+            result = JSValue::ZERO;
+        }
 
         done_callback.ensure_still_alive();
 

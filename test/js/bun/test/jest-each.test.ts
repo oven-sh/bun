@@ -89,4 +89,10 @@ describe("registered inside an AsyncLocalStorage context", () => {
       });
     });
   });
+
+  // The beforeEach above still runs (with its own store) before this test; its store must not
+  // be left behind for a test that was registered outside of it.
+  it("a test registered outside of the store does not see it", () => {
+    expect(storage.getStore()).toBeUndefined();
+  });
 });

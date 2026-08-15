@@ -45,7 +45,7 @@ use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
-    group_begin, AddedInPhase, AsyncContextRef, BunTest, BunTestPtr, EntryData, ExecutionEntry,
+    group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
     HandleUncaughtExceptionResult, Order, RefDataPtr, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
@@ -1046,9 +1046,9 @@ fn step_sequence_one(
         // One RefData per invocation, shared between the sequence (which marks it
         // abandoned if the runner moves on before the callback completes) and
         // the async context the callback runs under (how late callers find it).
-        let executing_ref: RefDataPtr = BunTest::ref_(buntest_strong, callback_data.clone());
+        let invocation_ref: RefDataPtr = BunTest::ref_(buntest_strong, callback_data.clone());
         debug_assert!(sequence.executing_ref.is_none());
-        sequence.executing_ref = Some(executing_ref.dupe_ref());
+        sequence.executing_ref = Some(invocation_ref.dupe_ref());
 
         let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
         let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
@@ -1061,32 +1061,11 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
-        // `sequence` and `this` are not used again below this point: both the
-        // failure branch here and run_test_callback re-enter BunTest.
-        let callback = match AsyncContextRef::bind(global_this, cb.get(), executing_ref) {
-            Ok(bound) => bound,
-            Err(err) => {
-                // Out of memory building the context. Charge it to this entry and
-                // still run the callback unbound, as run_test_callback does when
-                // binding the done callback fails.
-                // SAFETY: `buntest_ptr` is the live per-file BunTest; no `&mut`
-                // derived from it is used after this call (see above).
-                unsafe {
-                    (*buntest_ptr.as_ptr()).on_uncaught_exception(
-                        global_this,
-                        Some(global_this.take_exception(err)),
-                        false,
-                        &callback_data,
-                    );
-                }
-                cb.get()
-            }
-        };
-
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,
-            callback,
+            cb.get(),
+            Some(invocation_ref),
             next_item.has_done_parameter,
             callback_data,
             &next_item.timespec,

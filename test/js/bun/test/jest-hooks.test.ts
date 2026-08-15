@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 let hooks_run: string[] = [];
 
@@ -246,6 +247,44 @@ describe("test jest hooks in bun-test", () => {
     it("should have called afterEach for previous test", () => {
       expect(beforeEachCalled).toEqual(2); // Called once just before this test
       expect(afterEachCalled).toEqual(1);
+    });
+  });
+});
+
+// The runner adds its own entry to the async context while a hook or test runs; what the
+// callback itself does to the context has to stay in effect afterwards, as it always has.
+describe("AsyncLocalStorage.enterWith() in a hook stays in effect for the tests that follow", () => {
+  const storage = new AsyncLocalStorage<string>();
+  afterAll(() => storage.disable());
+
+  describe("entered in beforeAll", () => {
+    beforeAll(() => {
+      storage.enterWith("from beforeAll");
+    });
+
+    it("is the store of the first test", () => {
+      expect(storage.getStore()).toBe("from beforeAll");
+    });
+
+    it("and of the next one, before and after an await", async () => {
+      expect(storage.getStore()).toBe("from beforeAll");
+      await Promise.resolve();
+      expect(storage.getStore()).toBe("from beforeAll");
+    });
+  });
+
+  describe("entered in beforeEach", () => {
+    let runs = 0;
+    beforeEach(() => {
+      storage.enterWith(`beforeEach run ${++runs}`);
+    });
+
+    it("is the store of the test it ran for", () => {
+      expect(storage.getStore()).toBe("beforeEach run 1");
+    });
+
+    it("and is replaced for the next test", () => {
+      expect(storage.getStore()).toBe("beforeEach run 2");
     });
   });
 });

@@ -6,14 +6,19 @@
 //! the moment it is called. When the runner abandons an invocation that is
 //! still running (it timed out, or an unhandled error failed it while it was
 //! awaiting), that rule would attribute the rest of its body (snapshot names,
-//! `expect()` counts) to whatever entry runs next. So `Execution` binds every
-//! invocation to one of these and flips [`RefData::abandoned`] when it gives
-//! up on the invocation; `bun_test::caller_ref` then attributes JS running
-//! under an abandoned invocation's context to that invocation, whose
+//! `expect()` counts) to whatever entry runs next. So every invocation runs
+//! with one of these in its context and `Execution` flips [`RefData::abandoned`]
+//! when it gives up on the invocation; `bun_test::caller_ref` then attributes
+//! JS running under an abandoned invocation's context to that invocation, whose
 //! `RefData` no longer resolves to a running entry, instead of to the entry
 //! running now. Invocations that completed are never consulted, so a callback
 //! registered by one entry and invoked during a later one (a server started in
 //! `beforeAll`, ...) still attributes to the entry that is running, as before.
+//!
+//! The ref is the only thing added to the context: what the callback itself
+//! does to the context (`als.enterWith()` in a `beforeEach`) stays visible to
+//! the entries that follow, as it did before (see `Bun__AsyncContextRef__enter`
+//! in AsyncContextFrame.cpp).
 //!
 //! [`RefData::abandoned`]: crate::test_runner::bun_test::RefData::abandoned
 
@@ -27,6 +32,15 @@ pub struct AsyncContextRef {
     r#ref: RefDataPtr,
 }
 
+/// Returned by [`AsyncContextRef::enter`]: what to invoke in place of the
+/// callback, and the ref wrapper to hand to [`AsyncContextRef::leave`] once it
+/// returned. Plain `JSValue`s (not an `Option`) so the conservative stack scan
+/// keeps both alive across the call.
+pub(crate) struct Entered {
+    pub(crate) callable: JSValue,
+    pub(crate) ref_js: JSValue,
+}
+
 impl AsyncContextRef {
     // Codegen's `host_fn_finalize` calls this via `|b| AsyncContextRef::finalize(b)`
     // and requires `fn finalize(self: Box<Self>)`; clippy::boxed_local is a
@@ -38,14 +52,24 @@ impl AsyncContextRef {
         self.r#ref.deref();
     }
 
-    /// Wraps `callback` so that it, and every continuation of it, runs with
-    /// `refdata` in the async context. Takes over the caller's `+1` on `refdata`.
-    pub(crate) fn bind(global: &JSGlobalObject, callback: JSValue, refdata: RefDataPtr) -> JsResult<JSValue> {
+    /// Puts `refdata` into the async context `callback` is about to be invoked
+    /// with, so that it and every continuation of it carry the ref. Takes over
+    /// the caller's `+1` on `refdata`.
+    pub(crate) fn enter(global: &JSGlobalObject, callback: JSValue, refdata: RefDataPtr) -> JsResult<Entered> {
         // `to_js` boxes `self` and hands the pointer to the wrapper; `finalize` releases the ref.
         let ref_js = AsyncContextRef { r#ref: refdata }.to_js(global);
-        let bound = bun_jsc::cpp::Bun__AsyncContextRef__bind(global, callback, ref_js);
+        let callable = bun_jsc::cpp::Bun__AsyncContextRef__enter(global, callback, ref_js);
         ref_js.ensure_still_alive();
-        bound
+        Ok(Entered { callable: callable?, ref_js })
+    }
+
+    /// Takes the ref back out of the context. Runs right after the callback
+    /// returned, before microtasks are drained, which is also when a wrapped
+    /// callback's context is restored by `Bun__JSValue__call`.
+    pub(crate) fn leave(global: &JSGlobalObject, ref_js: JSValue) -> JsResult<()> {
+        let result = bun_jsc::cpp::Bun__AsyncContextRef__leave(global, ref_js);
+        ref_js.ensure_still_alive();
+        result
     }
 
     /// A `+1` to the `RefData` of the abandoned invocation whose async context

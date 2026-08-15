@@ -1088,6 +1088,11 @@ impl BuildCommand {
         let _ = log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer(),
         ));
+        // `exit_or_watch` never returns and runs no destructors, so free the
+        // option snapshots here rather than leave them to LeakSanitizer's
+        // stack scan.
+        drop(opt_output_dir);
+        drop(opt_public_path);
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,

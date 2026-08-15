@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "path";
 
 // Tagged template cooked strings round-trip through the runtime transpiler.
@@ -156,6 +156,47 @@ describe.concurrent("tagged template .raw preserves non-ASCII", () => {
   });
 });
 
+// Ill-formed UTF-8 in verbatim text is decoded by the same routine the lexer
+// decodes string literals with, so whatever policy the lexer has for a byte
+// sequence (#38262 is making it U+FFFD per maximal subpart, like node), the
+// regex source and the raw text built from the same bytes must come out equal
+// to a string literal built from them. This pins the two paths to each other
+// rather than to a particular policy. (Files written by `bun build` keep the
+// bytes and are decoded with replacement by whoever loads them, which only
+// differs for WTF-8 encoded surrogates; that path is not covered here.)
+describe.concurrent("ill-formed bytes in verbatim text decode like a string literal", () => {
+  test.each([
+    ["stray continuation byte", [0xa9]],
+    ["truncated sequence followed by ASCII", [0xe4, 0xb8, 0x78]],
+    ["overlong encoding", [0xc0, 0x80]],
+    ["encoded surrogate", [0xed, 0xa0, 0x80]],
+    ["byte that cannot start a sequence", [0xff]],
+  ])("%s", async (_name, bytes) => {
+    const bad = Buffer.from(bytes);
+    const wrap = (before: string, after: string) => Buffer.concat([Buffer.from(before), bad, Buffer.from(after)]);
+    using dir = tempDir("ill-formed-verbatim", {
+      "entry.js": Buffer.concat([
+        wrap("const literal = 'a", "b';\n"),
+        wrap("const source = /a", "b/.source;\n"),
+        wrap("const raw = ((s) => s.raw[0])`a", "b`;\n"),
+        Buffer.from(
+          "const units = (s) => [...s].map(c => c.codePointAt(0));\n" +
+            "process.stdout.write(JSON.stringify([units(literal), source === literal, raw === literal]));\n",
+        ),
+      ]),
+    });
+    const { stdout, stderr, exitCode } = await runIn(String(dir), ["entry.js"]);
+    expect(stderr).toBe("");
+    const [literal, sourceMatches, rawMatches] = JSON.parse(stdout);
+    // The literal itself is the lexer's reading of the bytes; only its shape
+    // is asserted, the policy belongs to the lexer.
+    expect(literal[0]).toBe(0x61);
+    expect(literal.at(-1)).toBe(0x62);
+    expect({ sourceMatches, rawMatches, literal }).toEqual({ sourceMatches: true, rawMatches: true, literal });
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("bun build --target=bun preserves non-ASCII in regex/raw templates", async () => {
   using dir = tempDir("nonascii-regex-template", {
     "index.ts": [
@@ -231,6 +272,8 @@ const raw = String.raw\`${text}\\n\`;
 const values = [re.source, re.source.length, String(re), raw, raw.length];
 `;
   return {
+    text,
+    body,
     expected: JSON.stringify([text, text.length, `/${text}/u`, `${text}\\n`, text.length + "\\n".length]),
     files: probeFiles(body),
   };
@@ -247,7 +290,7 @@ function tagged() {
 }
 const values = [tagged.toString().split("/*! ")[1].split(" */")[0]];
 `;
-  return { expected: JSON.stringify([text]), files: probeFiles(body) };
+  return { text, body, expected: JSON.stringify([text]), files: probeFiles(body) };
 }
 
 type Probe = ReturnType<typeof probe>;
@@ -298,6 +341,27 @@ function cacheEntries(dir: string) {
   });
 }
 
+// Entry header, see `Metadata::encode` in src/jsc/RuntimeTranspilerCache.rs:
+// u32 version, u8 module type, u8 encoding tag, then u64 fields starting with
+// features_hash, input_byte_length, input_hash, output_byte_offset and
+// output_byte_length. UTF-16 output is stored in native byte order; CI is
+// little-endian everywhere.
+const CACHE_TAG_UTF16 = 2;
+const CACHE_TAG_LATIN1 = 3;
+function cacheEntryOutputs(dir: string) {
+  const cacheDir = join(dir, "transpiler-cache");
+  return readdirSync(cacheDir)
+    .map(name => {
+      const entry = readFileSync(join(cacheDir, name));
+      const tag = entry[5];
+      const offset = Number(entry.readBigUInt64LE(30));
+      const length = Number(entry.readBigUInt64LE(38));
+      const output = entry.subarray(offset, offset + length);
+      return { tag, output: output.toString(tag === CACHE_TAG_UTF16 ? "utf16le" : "latin1") };
+    })
+    .sort((a, b) => a.tag - b.tag);
+}
+
 describe.concurrent("every module loading path preserves non-ASCII regex/raw text", () => {
   describe.each(kinds)("%s", (_kind, { files, expected }) => {
     test.each([
@@ -316,15 +380,18 @@ describe.concurrent("every module loading path preserves non-ASCII regex/raw tex
   });
 
   // The on-disk transpiler cache stores the output in the width the printer
-  // ended up with, tagged so that it is read back in that width. The first run
-  // writes the entry and the second run must serve it: an entry read back in
-  // the wrong width is garbage, and an entry that fails to load is rewritten.
+  // ended up with, and the entry's tag is the one place that width can be
+  // observed from outside: 8-bit text must leave the module 8-bit, and text
+  // above U+00FF must have widened it. The first run writes the entry and the
+  // second run must serve it: an entry read back in the wrong width is
+  // garbage, and an entry that fails to load is rewritten.
   test.each([
-    ["8-bit", "entry point (sync transpiler)", "padded-main.js", latin1],
-    ["8-bit", "import (async transpiler)", "import-padded.mjs", latin1],
-    ["UTF-16", "entry point (sync transpiler)", "padded-main.js", nonAscii],
-    ["UTF-16", "import (async transpiler)", "import-padded.mjs", nonAscii],
-  ])("transpiler cache round trip of %s output through the %s", async (_width, _name, entry, { files, expected }) => {
+    ["8-bit", "entry point (sync transpiler)", "padded-main.js", latin1, CACHE_TAG_LATIN1],
+    ["8-bit", "import (async transpiler)", "import-padded.mjs", latin1, CACHE_TAG_LATIN1],
+    ["UTF-16", "entry point (sync transpiler)", "padded-main.js", nonAscii, CACHE_TAG_UTF16],
+    ["UTF-16", "import (async transpiler)", "import-padded.mjs", nonAscii, CACHE_TAG_UTF16],
+  ])("transpiler cache round trip of %s output through the %s", async (_width, _name, entry, probe, tag) => {
+    const { files, expected, text } = probe;
     using dir = tempDir("nonascii-transpiler-cache", files);
     const env = transpilerCacheEnv(String(dir));
 
@@ -334,11 +401,33 @@ describe.concurrent("every module loading path preserves non-ASCII regex/raw tex
     // Only the padded module is large enough to be cached.
     const written = cacheEntries(String(dir));
     expect(written).toHaveLength(1);
+    const [stored] = cacheEntryOutputs(String(dir));
+    expect(stored.tag).toBe(tag);
+    expect(stored.output).toContain(`/${text}/u`);
 
     const second = await runIn(String(dir), [entry], env);
     expect({ stdout: second.stdout, stderr: second.stderr }).toEqual({ stdout: expected, stderr: "" });
     expect(second.exitCode).toBe(0);
     expect(cacheEntries(String(dir))).toEqual(written);
+  });
+
+  // `require()` reuses one printer for every module of the process, so after
+  // a module has widened it, the next module must start out 8-bit again.
+  // Nothing else in this file loads a widening module before an 8-bit one in
+  // the same process.
+  test("a module printed after a widened one is 8-bit again", async () => {
+    using dir = tempDir("nonascii-printer-reset", {
+      "wide.cjs": padding + nonAscii.body + "module.exports = values;\n",
+      "narrow.cjs": padding + latin1.body + "module.exports = values;\n",
+      "main.cjs": `process.stdout.write(JSON.stringify([require("./wide.cjs"), require("./narrow.cjs")]));\n`,
+    });
+    const { stdout, stderr, exitCode } = await runIn(String(dir), ["main.cjs"], transpilerCacheEnv(String(dir)));
+    expect({ stdout, stderr }).toEqual({ stdout: `[${nonAscii.expected},${latin1.expected}]`, stderr: "" });
+    expect(exitCode).toBe(0);
+    const [wide, narrow] = cacheEntryOutputs(String(dir));
+    expect([wide.tag, narrow.tag]).toEqual([CACHE_TAG_UTF16, CACHE_TAG_LATIN1]);
+    expect(wide.output).toContain(`/${nonAscii.text}/u`);
+    expect(narrow.output).toContain(`/${latin1.text}/u`);
   });
 });
 
@@ -352,59 +441,94 @@ describe.concurrent("every module loading path preserves non-ASCII regex/raw tex
 // bytes). Before this change a cached module with a non-ASCII legal comment
 // still reached the compile cache, so that combination must keep working.
 //
-// Each of these runs three probes through two rounds of processes, the first
-// of which also generates and persists the bytecode, so they stay out of the
-// concurrent group above rather than racing the timeout while it saturates
-// the machine.
+// The modes differ in which path populates the compile cache: "transpiled
+// again" and "served from the transpiler cache" generate the bytecode from the
+// print path on the first run, while "warmed" writes the transpiler cache
+// entry first (as a machine that has run the program before would have) so
+// that the bytecode is generated from the entry's bytes and stored width, and
+// the last run's acceptance is the match between the two.
+//
+// Each mode runs three probes through two or three rounds of processes, the
+// first of which also generates and persists the bytecode, so these stay out
+// of the concurrent groups and get an explicit timeout: three rounds of a
+// debug build take about as long as the default allows.
+type CompileCacheMode = "transpiled again" | "served from the transpiler cache" | "warmed";
 describe("NODE_COMPILE_CACHE bytecode is accepted", () => {
-  test.each([
-    ["regex and raw template text, module transpiled again", "import-empty.mjs", false, asciiTwin, [latin1, nonAscii]],
+  test.each<[string, CompileCacheMode, string, Probe, Probe[]]>([
+    [
+      "regex and raw template text, module transpiled again",
+      "transpiled again",
+      "import-empty.mjs",
+      asciiTwin,
+      [latin1, nonAscii],
+    ],
     [
       "regex and raw template text, module served from the transpiler cache",
+      "served from the transpiler cache",
       "import-padded.mjs",
-      true,
+      asciiTwin,
+      [latin1, nonAscii],
+    ],
+    [
+      "regex and raw template text, bytecode generated from a warm transpiler cache",
+      "warmed",
+      "import-padded.mjs",
       asciiTwin,
       [latin1, nonAscii],
     ],
     [
       "legal comment text, module served from the transpiler cache",
+      "served from the transpiler cache",
       "import-padded.mjs",
-      true,
       asciiCommentTwin,
       [latin1Comment, nonAsciiComment],
     ],
-  ])("%s", async (_name, entry, useTranspilerCache, twin, probes) => {
-    async function cacheHits({ files, expected }: Probe) {
-      using dir = tempDir("nonascii-compile-cache", files);
-      const env = {
-        NODE_COMPILE_CACHE: join(String(dir), "compile-cache"),
-        ...(useTranspilerCache ? transpilerCacheEnv(String(dir)) : {}),
-      };
+  ])(
+    "%s",
+    async (_name, mode, entry, twin, probes) => {
+      async function cacheHits({ files, expected }: Probe) {
+        using dir = tempDir("nonascii-compile-cache", files);
+        const compileCache = { NODE_COMPILE_CACHE: join(String(dir), "compile-cache") };
+        const transpilerCache = transpilerCacheEnv(String(dir));
+        const runs =
+          mode === "transpiled again"
+            ? [compileCache, compileCache]
+            : mode === "served from the transpiler cache"
+              ? [
+                  { ...compileCache, ...transpilerCache },
+                  { ...compileCache, ...transpilerCache },
+                ]
+              : [transpilerCache, { ...compileCache, ...transpilerCache }, { ...compileCache, ...transpilerCache }];
 
-      const first = await runIn(String(dir), [entry], env);
-      expect({ stdout: first.stdout, stderr: first.stderr }).toEqual({ stdout: expected, stderr: "" });
-      expect(first.exitCode).toBe(0);
-      if (useTranspilerCache) expect(cacheEntries(String(dir))).toHaveLength(1);
+        let stderr = "";
+        for (const [i, env] of runs.entries()) {
+          const last = i === runs.length - 1;
+          const result = await runIn(String(dir), [entry], last ? { ...env, BUN_JSC_verboseDiskCache: "1" } : env);
+          if (!last) expect({ stdout: result.stdout, stderr: result.stderr }).toEqual({ stdout: expected, stderr: "" });
+          else expect(result.stdout).toBe(expected);
+          expect(result.exitCode).toBe(0);
+          if (i === 0 && mode !== "transpiled again") expect(cacheEntries(String(dir))).toHaveLength(1);
+          stderr = result.stderr;
+        }
+        return stderr.split("[Disk Cache] Cache hit for sourceCode").length - 1;
+      }
 
-      const second = await runIn(String(dir), [entry], { ...env, BUN_JSC_verboseDiskCache: "1" });
-      expect(second.stdout).toBe(expected);
-      expect(second.exitCode).toBe(0);
-      return second.stderr.split("[Disk Cache] Cache hit for sourceCode").length - 1;
-    }
-
-    const [twinHits, ...hits] = await Promise.all([twin, ...probes].map(cacheHits));
-    expect(twinHits).toBeGreaterThanOrEqual(3);
-    // One entry per probe: 8-bit output, then output widened to UTF-16.
-    expect(hits).toEqual([twinHits, twinHits]);
-  });
+      const [twinHits, ...hits] = await Promise.all([twin, ...probes].map(cacheHits));
+      expect(twinHits).toBeGreaterThanOrEqual(3);
+      // One entry per probe: 8-bit output, then output widened to UTF-16.
+      expect(hits).toEqual([twinHits, twinHits]);
+    },
+    20_000,
+  );
 });
 
-// The runtime source map counts generated columns in bytes while the output is
-// 8-bit and in UTF-16 code units once it has widened, switching over at the
-// point where the widening happened. Stack positions must map back to the
-// original source wherever the widening happens relative to the construct
-// being located. Columns are 1-based UTF-16 offsets of the callee in the
-// original line, which `indexOf` gives directly.
+// Error positions must still map back to the original source when a module
+// widens partway through. These layouts pin the line accounting on both sides
+// of the switch (the runtime printer puts each statement on its own generated
+// line, so they say nothing about columns within a line; the column arithmetic
+// of both builder modes is pinned by test/cli/inspect/inspect-inline-sourcemap.test.ts).
+// Columns below are 1-based UTF-16 offsets of the callee in the original
+// line, which `indexOf` gives directly.
 describe.concurrent("stack positions are remapped around non-ASCII regex/raw text", () => {
   const layouts = {
     "text before the error sites": (text: string) => [

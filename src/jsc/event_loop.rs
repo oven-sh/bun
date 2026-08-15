@@ -989,7 +989,9 @@ impl EventLoop {
 
     /// `eventLoop().autoTick()` — bounces through `VirtualMachine::auto_tick`,
     /// which dispatches to the `bun_runtime` hook (needs `Timer::All` for the
-    /// poll timeout). The body lives in `bun_runtime::jsc_hooks::auto_tick`.
+    /// poll timeout). Parks while the loop has active handles, or until the
+    /// next timer deadline when it has none; returns at once when there is
+    /// neither. The body lives in `bun_runtime::jsc_hooks::auto_tick`.
     #[inline]
     pub fn auto_tick(&mut self) {
         self.vm_ref().as_mut().auto_tick();

@@ -1,4 +1,4 @@
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 test("we can go back in time", () => {
@@ -113,4 +113,86 @@ test("real timer heap is ticked against the real clock under useFakeTimers", asy
   // null => exited on its own; non-null => killed by the spawn timeout (spun).
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+// Every fixture below waits on a timer that does not keep the event loop alive
+// (an unref'd setTimeout, or the per-test timeout) with nothing else ref'ing
+// the loop, and prints how much CPU the process burned while waiting. The loop
+// has to sleep until the deadline: it used to return from every poll at once
+// while nothing ref'd it, so each of these waits spun at 100% CPU for its whole
+// duration. The fixtures cover each wait loop that polls this way: the test
+// runner's own loop, the nested wait behind `expect().resolves`, and `bun run`
+// waiting for a top-level await.
+const IDLE_MS = 1000;
+
+const idleLoopFixtures = {
+  "idle-window.ts": `
+    export function startIdleWindow() {
+      const cpu0 = process.cpuUsage();
+      const t0 = performance.now();
+      return () => {
+        const cpu = process.cpuUsage(cpu0);
+        console.log(JSON.stringify({ cpuMs: (cpu.user + cpu.system) / 1000, wallMs: performance.now() - t0 }));
+      };
+    }
+  `,
+  "per-test-timeout.test.ts": `
+    import { afterAll, test } from "bun:test";
+    import { startIdleWindow } from "./idle-window";
+    let endIdleWindow: () => void;
+    afterAll(() => endIdleWindow());
+    test("never settles; the per-test timeout ends it", async () => {
+      endIdleWindow = startIdleWindow();
+      await new Promise(() => {});
+    }, ${IDLE_MS});
+  `,
+  "unref-timer.test.ts": `
+    import { test } from "bun:test";
+    import { startIdleWindow } from "./idle-window";
+    test("awaits an unref'd timer", async () => {
+      const endIdleWindow = startIdleWindow();
+      await new Promise(resolve => setTimeout(resolve, ${IDLE_MS}).unref());
+      endIdleWindow();
+    });
+  `,
+  "expect-resolves.test.ts": `
+    import { expect, test } from "bun:test";
+    import { startIdleWindow } from "./idle-window";
+    test("expect().resolves waits for an unref'd timer", async () => {
+      const endIdleWindow = startIdleWindow();
+      await expect(new Promise(resolve => setTimeout(() => resolve(1), ${IDLE_MS}).unref())).resolves.toBe(1);
+      endIdleWindow();
+    });
+  `,
+  "top-level-await.ts": `
+    import { startIdleWindow } from "./idle-window";
+    const endIdleWindow = startIdleWindow();
+    await new Promise(resolve => setTimeout(resolve, ${IDLE_MS}).unref());
+    endIdleWindow();
+  `,
+};
+
+test.concurrent.each([
+  ["bun test waiting for the per-test timeout", ["test", "per-test-timeout.test.ts"], 1],
+  ["bun test waiting for an unref'd setTimeout", ["test", "unref-timer.test.ts"], 0],
+  ["expect().resolves waiting for an unref'd setTimeout", ["test", "expect-resolves.test.ts"], 0],
+  ["bun run waiting for a top-level await on an unref'd setTimeout", ["run", "top-level-await.ts"], 0],
+])("%s sleeps instead of spinning", async (_, args, expectedExitCode) => {
+  using dir = tempDir("idle-loop", idleLoopFixtures);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const report = stdout.split("\n").find(line => line.startsWith("{"));
+  expect(report, stdout + stderr).toBeDefined();
+  const { cpuMs, wallMs } = JSON.parse(report!);
+  expect(wallMs).toBeGreaterThanOrEqual(IDLE_MS * 0.9);
+  // Spinning costs about IDLE_MS of CPU; sleeping costs a few ms (tens under
+  // debug + ASAN, mostly the idle GC timer firing once).
+  expect(cpuMs).toBeLessThan(IDLE_MS / 2);
+  expect(exitCode).toBe(expectedExitCode);
 });

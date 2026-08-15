@@ -949,8 +949,11 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     }
 }
 
-/// `eventLoop().autoTick()`. Needs
-/// `timer::All` for the poll-timeout calculation, hence dispatched here.
+/// `eventLoop().autoTick()`: one poll of the I/O loop for the `tick();
+/// auto_tick();` wait loops (`wait_for_promise`, the test runner). Parks while
+/// the loop has active handles, or until the next timer deadline when it has
+/// none; returns at once when neither exists. Needs `timer::All` for the
+/// poll-timeout calculation, hence dispatched here.
 ///
 /// PERF: the one fn-ptr indirection is dwarfed by the kqueue/epoll syscall it
 /// gates.
@@ -1028,15 +1031,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         return;
     }
 
-    // Call `ctx.timer.getTimeout(..)` ONLY inside
-    // `if (loop.isActive())` — `get_timeout` has side effects (pops + fires
-    // due `WTFTimer` heap entries), so it must stay guarded by `is_active()`
-    // rather than running unconditionally.
     {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
-        // SAFETY: `el` is the live per-thread event loop.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
             || !unsafe { &*el }.immediate_tasks.is_empty()
@@ -1051,44 +1049,67 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 Some(ild.quic_next_tick_us)
             }
         };
-        let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
+        // Before `get_timeout`: the first call arms the idle GC timer, and a
+        // timer armed after the poll deadline is computed is not in that deadline.
+        // SAFETY: `el` is the live per-thread event loop.
+        unsafe { (*el).process_gc_timer() };
+        // Computed whether or not the loop is active: the idle branch below
+        // parks on the deadline too. `get_timeout` also fires the due
+        // `WTFTimer`s, which the timer drain after the poll would otherwise
+        // fire a moment later, so for an idle loop that only moves them earlier.
+        // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
+        // `WTFTimer` JS callback.
+        // A re-entrant `setTimeout`/`clearTimeout` reaches
+        // `timer::All::insert`/`remove` via `runtime_state()` and would
+        // mint a second `&mut timer` if we held `&mut (*state).timer`
+        // across the call. Pass the raw `*mut Self` instead;
+        // `timer::All::get_timeout` forms short-lived `&mut` only around
+        // heap ops that cannot re-enter JS, releasing the borrow before
+        // invoking `fire()`.
+        // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+        // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
+        // and so is the hook: NOW_NS_UNKNOWN means it took none.
+        let mut timespec = bun_core::Timespec::EPOCH;
+        let mut now: Option<bun_core::Timespec> = None;
+        // SAFETY: `state` is the live per-thread `RuntimeState`; the
+        // `timer` field address is stable for the VM lifetime.
+        let have_timeout = unsafe {
+            timer::All::get_timeout(
+                &mut (*state).timer,
+                &mut timespec,
+                has_pending_immediate,
+                quic_next_tick_us,
+                vm.cast(),
+                &mut now,
+            )
+        };
+        let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
-            // Before `get_timeout`: the first call arms the idle GC timer, and a
-            // timer armed after the poll deadline is computed is not in that deadline.
-            // SAFETY: `el` is the live per-thread event loop.
-            unsafe { (*el).process_gc_timer() };
-            // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
-            // `WTFTimer` JS callback.
-            // A re-entrant `setTimeout`/`clearTimeout` reaches
-            // `timer::All::insert`/`remove` via `runtime_state()` and would
-            // mint a second `&mut timer` if we held `&mut (*state).timer`
-            // across the call. Pass the raw `*mut Self` instead;
-            // `timer::All::get_timeout` forms short-lived `&mut` only around
-            // heap ops that cannot re-enter JS, releasing the borrow before
-            // invoking `fire()`.
-            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
-            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
-            // and so is the hook: NOW_NS_UNKNOWN means it took none.
-            let mut now: Option<bun_core::Timespec> = None;
-            // SAFETY: `state` is the live per-thread `RuntimeState`; the
-            // `timer` field address is stable for the VM lifetime.
-            let have_timeout = unsafe {
-                timer::All::get_timeout(
-                    &mut (*state).timer,
-                    &mut timespec,
-                    has_pending_immediate,
-                    quic_next_tick_us,
-                    vm.cast(),
-                    &mut now,
-                )
-            };
-            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
                 (*loop_)
                     .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
             };
+        } else if have_timeout && !has_pending_immediate && timespec != bun_core::Timespec::EPOCH {
+            // Nothing refs the loop, but a timer that does not ref it is armed
+            // (an unref'd setTimeout, the bun:test per-test timeout, the idle GC
+            // timer), and its deadline is the next thing that can move whatever
+            // the caller's `tick(); auto_tick();` loop waits on. Park until then:
+            // returning at once makes that loop spin for the whole wait.
+            // `inc`/`dec` keep the tick from early-returning on an empty poll set
+            // (`num_polls == 0`; no live handle on Windows), as
+            // `MiniEventLoop::tick_once` does; a wakeup or I/O still ends the
+            // park early. Windows ignores `timespec` and parks until any event,
+            // hence the explicit pending-work check. With no deadline the caller
+            // still gets control back at once, so a wait that nothing will ever
+            // wake does not turn into a park forever.
+            // SAFETY: `loop_` is the live per-thread uws loop.
+            unsafe {
+                (*loop_).inc();
+                (*loop_).tick_with_timeout(Some(&timespec), now_ns);
+                (*loop_).dec();
+            }
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe { (*loop_).tick_without_idle() };
@@ -1116,10 +1137,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as
-/// [`auto_tick`] but: no `runImminentGCTimer`, no `handleRejectedPromises` at
-/// the tail, and no debug sleep-timer logging. Used by `bun_main` /
-/// `on_before_exit` drain loops where blocking when the loop is idle would
-/// hang shutdown.
+/// [`auto_tick`] but: parks only while the loop has active handles (never for
+/// a bare timer deadline), no `runImminentGCTimer`, no
+/// `handleRejectedPromises` at the tail, and no debug sleep-timer logging.
+/// Used by `bun_main` / `on_before_exit` drain loops where blocking when the
+/// loop is idle would hang shutdown.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.

@@ -15,7 +15,6 @@
 "tuple_wants_struct:src/css/values/color.rs" = 5
 
 [bun_install]
-"bare_bool_args:src/install/isolated_install.rs" = 1
 "defaulted_failure:src/install/npm.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 "same_match_twice:src/install/PackageManager/install_with_manager.rs" = 1

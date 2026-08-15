@@ -349,10 +349,15 @@ pub struct Opts {}
 
 impl FlagParser for Opts {
     fn parse_long(&mut self, flag: &[u8]) -> Option<ParseFlagResult> {
-        match flag {
-            b"--no-create" => Some(ParseFlagResult::Unsupported(unsupported_flag(
-                b"--no-create",
-            ))),
+        // `--option=VALUE` spells the same option as `--option VALUE`.
+        let (name, value) = match bun_core::strings::split_once_char(flag, b'=') {
+            Some((name, value)) => (name, Some(value)),
+            None => (flag, None),
+        };
+        match name {
+            b"--no-create" if value.is_none() => Some(ParseFlagResult::Unsupported(
+                unsupported_flag(b"--no-create"),
+            )),
             b"--date" => Some(ParseFlagResult::Unsupported(unsupported_flag(b"--date"))),
             b"--reference" => Some(ParseFlagResult::Unsupported(unsupported_flag(
                 b"--reference=FILE",

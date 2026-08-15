@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { describe } from "bun:test";
+import { describe, expect } from "bun:test";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -13,6 +13,11 @@ describe.concurrent("bunshell touch", () => {
       "--date": "--date",
       "--reference": "--reference=FILE",
       "--time": "--time",
+      // --date, --reference and --time take a value, which GNU touch also accepts as `--option=VALUE`.
+      "--date=@0": "--date",
+      "--date=": "--date",
+      "--reference=other": "--reference=FILE",
+      "--time=atime": "--time",
       "-a": "-a",
       "-c": "-c",
       "-d": "-d",
@@ -32,5 +37,18 @@ describe.concurrent("bunshell touch", () => {
         .doesNotExist("file")
         .runAsTest(option);
     }
+  });
+
+  describe("options that take no value do not accept one", () => {
+    // `--no-create` is a plain flag, so `--no-create=VALUE` is not a spelling of it. Which bytes the
+    // illegal option message quotes is up to the shared flag parser, so only the classification is pinned.
+    TestBuilder.command`touch --no-create=1 file`
+      .ensureTempDir()
+      .quiet()
+      .stdout("")
+      .stderr(stderr => expect(stderr).toStartWith("touch: illegal option -- "))
+      .exitCode(1)
+      .doesNotExist("file")
+      .runAsTest("--no-create=1");
   });
 });

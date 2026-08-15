@@ -3,6 +3,8 @@ use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use std::sync::Once;
 
+use bun_alloc::AllocError;
+
 /// Valid `compression_level` range for `libdeflate_alloc_compressor`. Values
 /// outside this range make the allocator return NULL (indistinguishable from OOM),
 /// so callers must range-check first.
@@ -441,21 +443,26 @@ impl Decompressor {
     /// [`Status::InsufficientSpace`] — clamped at `max_capacity` — until
     /// success, hard error, or `out.capacity() >= max_capacity` (returned as
     /// the final `InsufficientSpace`). On success, `out.len() == result.written`.
+    ///
+    /// The output size is dictated by the (untrusted) input, so a capacity
+    /// step the allocator refuses is reported as `Err(AllocError)` rather
+    /// than aborting the process; `out` is left empty with its last capacity.
     pub fn decompress_to_vec_grow(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
         encoding: Encoding,
         max_capacity: usize,
-    ) -> Result {
+    ) -> core::result::Result<Result, AllocError> {
         loop {
             out.clear();
             let result = self.decompress_to_vec(input, out, encoding);
             if result.status != Status::InsufficientSpace || out.capacity() >= max_capacity {
-                return result;
+                return Ok(result);
             }
             let new_cap = out.capacity().max(1).saturating_mul(2).min(max_capacity);
-            out.reserve_exact(new_cap.saturating_sub(out.len()));
+            out.try_reserve_exact(new_cap.saturating_sub(out.len()))
+                .map_err(|_| AllocError)?;
         }
     }
 }

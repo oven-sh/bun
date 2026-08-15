@@ -9,7 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, rss } from "harness";
+import { bunEnv, bunExe, isASAN, rss } from "harness";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -364,6 +364,124 @@ describe("sync compression argument handling", () => {
     });
     expect(exitCode).toBe(0);
   }, 60_000);
+});
+
+// The sync gzip/deflate APIs size their output buffers from the caller's input:
+// the compressors reserve the worst-case compressed size up front, the
+// decompressors reserve a guess (the gzip trailer's ISIZE field, else the input
+// size) and then grow as the stream decodes. Every one of those reservations
+// used to be infallible, so refusing any of them aborted the process instead of
+// throwing. ASAN's per-allocation cap makes each refusal deterministic: the JS
+// Buffers passed in are allocated by JSC and are not subject to the cap, while
+// every native reservation above CAP_MB is. Each case below is shaped so that a
+// different reservation is the one refused.
+describe.skipIf(!isASAN)("gzip/deflate sync APIs throw when an output buffer cannot be allocated", () => {
+  const CAP_MB = 8;
+  const env = {
+    ...bunEnv,
+    ASAN_OPTIONS: [
+      bunEnv.ASAN_OPTIONS,
+      "allocator_may_return_null=1",
+      `max_allocation_size_mb=${CAP_MB}`,
+      // Last wins: buffers handed to JSC are still alive at exit, and the CI
+      // lanes that opt into leak detection would report them.
+      "detect_leaks=0",
+    ]
+      .filter(Boolean)
+      .join(":"),
+  };
+  const outOfMemory = { name: "RangeError", message: "Out of memory" };
+  const expected = {
+    // Compressors: the deflateBound() / libdeflate bound reservation, which is
+    // a little above the 16 MiB input, is refused.
+    "gzipSync zlib": outOfMemory,
+    "deflateSync zlib": outOfMemory,
+    "gzipSync libdeflate": outOfMemory,
+    "deflateSync libdeflate": outOfMemory,
+    // Decompressors: the input-sized initial reservation is refused.
+    "inflateSync zlib, input-sized buffer": outOfMemory,
+    "inflateSync libdeflate, input-sized buffer": outOfMemory,
+    // The initial reservation fits (the compressed payload is ~12 KiB) and the
+    // doubling growth step that crosses the cap is refused.
+    "inflateSync zlib, growth": outOfMemory,
+    "inflateSync libdeflate, growth": outOfMemory,
+    // A truthful 12 MiB ISIZE is refused, so decoding falls back to the
+    // input-sized buffer and then fails while growing.
+    "gunzipSync zlib, trailer size": outOfMemory,
+    "gunzipSync libdeflate, trailer size": outOfMemory,
+    // The bytes after the member claim a 100 MiB size; that reservation is
+    // refused but only ever was a hint, so the 256-byte member still decodes.
+    "gunzipSync zlib, unallocatable trailer size": { length: 256 },
+    "gunzipSync libdeflate, unallocatable trailer size": { length: 256 },
+    afterwards: "round trip ok",
+  };
+
+  it("reports RangeError: Out of memory and the process keeps running", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const zlib = require("node:zlib");
+        const MiB = 1024 * 1024;
+        const libdeflate = { library: "libdeflate" };
+        const big = Buffer.alloc(2 * ${CAP_MB} * MiB);
+        // node:zlib streams through chunk-sized buffers, so producing the 12 MiB
+        // payloads needs no native reservation above the cap.
+        const payload = Buffer.alloc(12 * MiB);
+        const deflated = zlib.deflateRawSync(payload);
+        const gzipped = zlib.gzipSync(payload);
+        // Stored (level 0) so the member is longer than the 64 bytes below which
+        // the size field is not consulted. The trailing bytes are not a gzip
+        // header, so both backends ignore them, as node does.
+        const member = Bun.gzipSync(Buffer.alloc(256, "a"), { level: 0 });
+        const trailing = Buffer.alloc(8);
+        trailing.writeUInt32LE(100 * MiB, 4);
+        const claimed = Buffer.concat([member, trailing]);
+        const cases = {
+          "gzipSync zlib": () => Bun.gzipSync(big),
+          "deflateSync zlib": () => Bun.deflateSync(big),
+          "gzipSync libdeflate": () => Bun.gzipSync(big, libdeflate),
+          "deflateSync libdeflate": () => Bun.deflateSync(big, libdeflate),
+          "inflateSync zlib, input-sized buffer": () => Bun.inflateSync(big),
+          "inflateSync libdeflate, input-sized buffer": () => Bun.inflateSync(big, libdeflate),
+          "inflateSync zlib, growth": () => Bun.inflateSync(deflated),
+          "inflateSync libdeflate, growth": () => Bun.inflateSync(deflated, libdeflate),
+          "gunzipSync zlib, trailer size": () => Bun.gunzipSync(gzipped),
+          "gunzipSync libdeflate, trailer size": () => Bun.gunzipSync(gzipped, libdeflate),
+          "gunzipSync zlib, unallocatable trailer size": () => Bun.gunzipSync(claimed),
+          "gunzipSync libdeflate, unallocatable trailer size": () => Bun.gunzipSync(claimed, libdeflate),
+        };
+        // One line per case, so an abort still shows which case it was in.
+        for (const [name, run] of Object.entries(cases)) {
+          let outcome;
+          try {
+            outcome = { length: run().length };
+          } catch (e) {
+            outcome = { name: e.name, message: e.message };
+          }
+          console.log(JSON.stringify([name, outcome]));
+        }
+        const text = "round trip ok";
+        console.log(JSON.stringify(["afterwards", Buffer.from(Bun.gunzipSync(Bun.gzipSync(text))).toString()]));
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      // ASAN prints a WARNING line for every refused allocation; not asserted on.
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const results = Object.fromEntries(
+      stdout
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map(line => JSON.parse(line)),
+    );
+    // An abort leaves `results` ending at the case that died; stderr then has the allocator message.
+    expect({ results, exitCode }, stderr).toEqual({ results: expected, exitCode: 0 });
+  });
 });
 
 describe.concurrent("Zstandard HTTP compression", () => {

@@ -2432,29 +2432,37 @@ pub mod JSZlib {
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
         let compressed = buffer.slice();
 
-        let mut list: Vec<u8> = 'brk: {
-            if is_gzip && compressed.len() > 64 {
-                //   0   1   2   3   4   5   6   7
-                //  +---+---+---+---+---+---+---+---+
-                //  |     CRC32     |     ISIZE     |
-                //  +---+---+---+---+---+---+---+---+
-                let estimated_size: u32 = u32::from_le_bytes(
-                    compressed[compressed.len() - 4..][..4]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
-                if estimated_size > 0 && estimated_size < 256 * 1024 * 1024 {
-                    break 'brk Vec::with_capacity((estimated_size as usize).max(64));
-                }
+        let mut estimated_size: Option<usize> = None;
+        if is_gzip && compressed.len() > 64 {
+            //   0   1   2   3   4   5   6   7
+            //  +---+---+---+---+---+---+---+---+
+            //  |     CRC32     |     ISIZE     |
+            //  +---+---+---+---+---+---+---+---+
+            let trailer_size: u32 = u32::from_le_bytes(
+                compressed[compressed.len() - 4..][..4]
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
+            // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
+            if trailer_size > 0 && trailer_size < 256 * 1024 * 1024 {
+                estimated_size = Some((trailer_size as usize).max(64));
             }
+        }
 
-            break 'brk Vec::with_capacity(if compressed.len() > 512 {
+        let mut list: Vec<u8> = Vec::new();
+        // The trailer is untrusted input and only sizes this up-front reservation: when
+        // the allocator refuses it, decompress into the default buffer and grow instead.
+        let reserved = estimated_size.is_some_and(|size| list.try_reserve_exact(size).is_ok());
+        if !reserved {
+            let initial_capacity = if compressed.len() > 512 {
                 compressed.len()
             } else {
                 32
-            });
-        };
+            };
+            if list.try_reserve_exact(initial_capacity).is_err() {
+                return Err(global_this.throw_out_of_memory());
+            }
+        }
 
         match library {
             Library::Zlib => {
@@ -2480,10 +2488,16 @@ pub mod JSZlib {
                     }
                 };
 
-                if reader.read_all(true).is_err() {
-                    let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                    return Err(global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                match reader.read_all(true) {
+                    Ok(()) => {}
+                    Err(zlib::ZlibError::OutOfMemory) => {
+                        return Err(global_this.throw_out_of_memory());
+                    }
+                    Err(_) => {
+                        let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
+                        return Err(global_this
+                            .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                    }
                 }
                 // NOTE: the reader *borrows* `list_ptr`,
                 // so drop the reader to release the borrow, then leak the owned
@@ -2503,8 +2517,12 @@ pub mod JSZlib {
                     bun_libdeflate::Encoding::Deflate
                 };
                 let max_output = ArrayBuffer::MAX_SIZE as usize;
-                let result = decompressor
-                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output);
+                let Ok(result) = decompressor
+                    .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
+                else {
+                    drop(list);
+                    return Err(global_this.throw_out_of_memory());
+                };
                 match result.status {
                     bun_libdeflate::Status::Success if list.len() <= max_output => {}
                     bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
@@ -2596,11 +2614,9 @@ pub mod JSZlib {
 
         match library {
             Library::Zlib => {
-                let mut list: Vec<u8> = Vec::with_capacity(if compressed.len() > 512 {
-                    compressed.len()
-                } else {
-                    32
-                });
+                // `init` reserves `deflateBound(input)` and reports `OutOfMemory` if
+                // it cannot, which `throw_error` below turns into a JS OOM error.
+                let mut list: Vec<u8> = Vec::new();
 
                 let mut reader = match zlib::ZlibCompressorArrayList::init(
                     compressed,
@@ -2625,10 +2641,16 @@ pub mod JSZlib {
                     }
                 };
 
-                if reader.read_all().is_err() {
-                    let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
-                    return Err(global_this
-                        .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                match reader.read_all() {
+                    Ok(()) => {}
+                    Err(zlib::ZlibError::OutOfMemory) => {
+                        return Err(global_this.throw_out_of_memory());
+                    }
+                    Err(_) => {
+                        let msg = reader.error_message().unwrap_or(b"Zlib returned an error");
+                        return Err(global_this
+                            .throw_value(ZigString::init(msg).to_error_instance(global_this)));
+                    }
                 }
                 // NOTE: see gunzip path — reader borrows `list`, so drop
                 // it before leaking `list` into the ArrayBuffer.
@@ -2655,10 +2677,14 @@ pub mod JSZlib {
                     bun_libdeflate::Encoding::Deflate
                 };
 
-                let mut list: Vec<u8> = Vec::with_capacity(
-                    // This allocation size is unfortunate, but it's not clear how to avoid it with libdeflate.
-                    compressor.max_bytes_needed(compressed, encoding),
-                );
+                let mut list: Vec<u8> = Vec::new();
+                // This allocation size is unfortunate, but it's not clear how to avoid it with libdeflate.
+                if list
+                    .try_reserve_exact(compressor.max_bytes_needed(compressed, encoding))
+                    .is_err()
+                {
+                    return Err(global_this.throw_out_of_memory());
+                }
 
                 let result = compressor.compress_to_vec(compressed, &mut list, encoding);
                 if result.status != bun_libdeflate::Status::Success {

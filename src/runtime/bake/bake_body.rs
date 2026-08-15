@@ -163,15 +163,7 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
-                    let root = match bun_sys::getcwd_alloc() {
-                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
-                        Err(e) => {
-                            return Err(global.throw_error(
-                                e.to_zig_err(),
-                                "while querying current working directory",
-                            ));
-                        }
-                    };
+                    let root = resolve_root(None, global, &arena)?;
 
                     let framework = Framework::react(&arena)
                         .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
@@ -219,35 +211,7 @@ impl UserOptions {
             &arena,
         )?;
 
-        let root: &'static ZStr = {
-            let cwd = match bun_sys::getcwd_alloc() {
-                Ok(cwd) => cwd,
-                Err(e) => {
-                    return Err(global
-                        .throw_error(e.to_zig_err(), "while querying current working directory"));
-                }
-            };
-            match config.get_optional_slice(global, b"root")? {
-                None => arena_dupe_z(&arena, cwd.as_bytes()),
-                Some(user_root) => {
-                    use bun_paths::resolve_path::join_abs_string_buf_checked;
-                    use bun_paths::string_paths::without_trailing_slash_windows_path;
-
-                    let mut buf = paths::path_buffer_pool::get();
-                    let Some(resolved) = join_abs_string_buf_checked::<paths::platform::Auto>(
-                        cwd.as_bytes(),
-                        &mut buf[..],
-                        &[user_root.slice()],
-                    ) else {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "'{}.root' is too long",
-                            API_NAME
-                        )));
-                    };
-                    arena_dupe_z(&arena, without_trailing_slash_windows_path(resolved))
-                }
-            }
-        };
+        let root = resolve_root(config.get_optional_slice(global, b"root")?, global, &arena)?;
 
         if let Some(plugin_array) = config.get(global, "plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
@@ -261,6 +225,40 @@ impl UserOptions {
             arena,
         })
     }
+}
+
+/// `app.root` defaults to, and a user supplied value is resolved against, the
+/// directory `Framework::resolve` resolves the framework's own paths against.
+/// DevServer strips the result off absolute file paths, so it never ends in a
+/// separator.
+fn resolve_root(
+    user_root: Option<ZigStringSlice>,
+    global: &JSGlobalObject,
+    arena: &Arena,
+) -> JsResult<&'static ZStr> {
+    use bun_paths::resolve_path::join_abs_string_buf_checked;
+    use bun_paths::string_paths::without_trailing_slash_windows_path;
+
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let Some(user_root) = user_root else {
+        return Ok(arena_dupe_z(
+            arena,
+            without_trailing_slash_windows_path(top_level_dir),
+        ));
+    };
+
+    let mut buf = paths::path_buffer_pool::get();
+    let Some(resolved) = join_abs_string_buf_checked::<paths::platform::Auto>(
+        top_level_dir,
+        &mut buf[..],
+        &[user_root.slice()],
+    ) else {
+        return Err(global.throw_invalid_arguments(format_args!("'{}.root' is too long", API_NAME)));
+    };
+    Ok(arena_dupe_z(
+        arena,
+        without_trailing_slash_windows_path(resolved),
+    ))
 }
 
 /// Each string stores its allocator since some may hold reference counts to JSC

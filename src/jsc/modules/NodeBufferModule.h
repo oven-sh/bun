@@ -44,7 +44,6 @@ static JSC::EncodedJSValue validateBytesOf(JSC::JSGlobalObject* globalObject, JS
     return JSValue::encode(jsBoolean(validate(reinterpret_cast<const char*>(bytes.data()), bytes.size())));
 }
 
-// TODO: Add DOMJIT fast path
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::CallFrame* callframe))
@@ -54,7 +53,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isUtf8,
     });
 }
 
-// TODO: Add DOMJIT fast path
 JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
     (JSC::JSGlobalObject * lexicalGlobalObject,
         JSC::CallFrame* callframe))

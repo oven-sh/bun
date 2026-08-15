@@ -337,8 +337,6 @@ pub struct PackageManager {
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
-    pub root_package_json_file: bun_sys::File,
-
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
@@ -538,6 +536,24 @@ impl Subcommand {
     // TODO: make all subcommands find root and chdir
     pub(crate) fn should_chdir_to_root(self) -> bool {
         !matches!(self, Self::Link)
+    }
+
+    /// `init` opens package.json read-write for these so a read-only file fails before any work.
+    pub(crate) fn writes_package_json(self, has_package_args: bool) -> bool {
+        match self {
+            Self::Add | Self::Remove | Self::Update | Self::Patch | Self::PatchCommit => true,
+            Self::Install | Self::Link => has_package_args,
+            Self::Pm
+            | Self::Unlink
+            | Self::Outdated
+            | Self::Pack
+            | Self::Publish
+            | Self::Audit
+            | Self::Info
+            | Self::Why
+            | Self::Dedupe
+            | Self::Prune => false,
+        }
     }
 }
 
@@ -1563,14 +1579,7 @@ pub fn init(
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
         let child_json: bun_sys::File = 'child: {
-            // if we are only doing `bun install` (no args), then we can open as read_only
-            // in all other cases we will need to write new data later.
-            // this is relevant because it allows us to succeed an install if package.json
-            // is readable but not writable
-            //
-            // probably wont matter as if package.json isn't writable, it's likely that
-            // the underlying directory and node_modules isn't either.
-            let need_write = subcommand != Subcommand::Install || cli.positionals.len() > 1;
+            let need_write = subcommand.writes_package_json(cli.positionals.len() > 1);
 
             loop {
                 let mut package_json_path_buf = PathBuffer::uninit();
@@ -1674,11 +1683,12 @@ pub fn init(
                     parent_path_buf[parent_without_trailing_slash.len() + b"/package.json".len()] =
                         0;
 
+                    // Finding the workspace root must not depend on its package.json being writable.
                     let json_file = match bun_sys::File::openat(
                         bun_sys::Fd::cwd(),
                         &parent_path_buf
                             [..parent_without_trailing_slash.len() + b"/package.json".len()],
-                        bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
+                        bun_sys::O::RDONLY | bun_sys::O::CLOEXEC,
                         0,
                     ) {
                         Ok(f) => f,
@@ -1802,10 +1812,6 @@ pub fn init(
                                 // process-lifetime (`set_top_level_dir` requires `'static`).
                                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                                 let _ = child_json.close();
-                                #[cfg(windows)]
-                                {
-                                    json_file.seek_to(0)?;
-                                }
                                 workspace_name_hash =
                                     Some(Semver::string::Builder::string_hash(&entry.name));
                                 break 'root_package_json_file json_file;
@@ -1854,6 +1860,8 @@ pub fn init(
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }
+    // From here on package.json is read (and, by the commands that do, written) by path.
+    let _ = root_package_json_file.close();
 
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
@@ -2046,7 +2054,6 @@ pub fn init(
         // zero-bit pattern is UB; allocate the real (empty) lockfile here directly.
         // `Lockfile::default()` ≡ `Lockfile::init_empty()`.
         wr!(lockfile, Box::new(Lockfile::default()));
-        wr!(root_package_json_file, root_package_json_file);
         // .progress
         wr!(event_loop, AnyEventLoop::init());
         wr!(
@@ -2486,13 +2493,6 @@ fn init_with_runtime_once(
         // `Lockfile` holds `HashMap`/`Vec`/`NonNull` (zero-bit pattern is
         // UB), so allocate the real empty lockfile here directly instead of a zeroed placeholder.
         wr!(lockfile, Box::new(Lockfile::default()));
-        // `.root_package_json_file` is never read in the runtime
-        // path. Use the explicit invalid-fd sentinel rather than `mem::zeroed()` —
-        // on posix `Fd(0)` is stdin, not the invalid marker.
-        wr!(
-            root_package_json_file,
-            bun_sys::File::from_fd(Fd::invalid())
-        );
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
         // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());

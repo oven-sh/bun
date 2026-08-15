@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
+import { chmodSync, existsSync, readdirSync, realpathSync, rmSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  nodeModulesPackages,
+  tempDir,
+  unprivilegedSpawnOptions,
+  VerdaccioRegistry,
+} from "harness";
 import { dirname, join } from "path";
 
 const verdaccio = new VerdaccioRegistry();
@@ -2576,6 +2584,38 @@ importers:
       expect(stderr).toContain("pnpm-lock.yaml override 'foo' must be a string");
       expect(exitCode).toBe(1);
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    });
+
+    // A read-only checkout still gets its bun.lock; the fields that could not be moved are named.
+    test.concurrent.skipIf(isWindows)("a read-only package.json keeps its fields and is reported", async () => {
+      const packageJson = JSON.stringify({ name: "overrides-read-only", pnpm: { overrides: { plain: "1.0.0" } } });
+      using dir = tempDir("pnpm-v9-overrides-read-only", {
+        "package.json": packageJson,
+        "pnpm-lock.yaml": overridesLockfile("  plain: 1.0.0"),
+      });
+      chmodSync(join(String(dir), "package.json"), 0o444);
+      using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "migrate"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain("warn: failed to write package.json (EACCES): pnpm.overrides to overrides not moved");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
+      expect(overridesSection(await bunLockOf(String(dir)))).toMatchInlineSnapshot(`
+        "  "overrides": {
+            "plain": "1.0.0",
+          },"
+      `);
     });
   });
 

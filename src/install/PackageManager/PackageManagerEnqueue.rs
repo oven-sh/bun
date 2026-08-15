@@ -2282,30 +2282,16 @@ fn get_or_put_resolved_package(
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
-        if let Some((existing_id, satisfied)) = existing_peer_target(this, name_hash, version) {
-            if !satisfied {
-                let existing_package = this.lockfile.packages.get(existing_id as usize);
-                this.log_mut().add_warning_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "incorrect peer dependency \"{}@{}\"",
-                        existing_package
-                            .name
-                            .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                        existing_package.resolution.fmt(
-                            this.lockfile.buffers.string_bytes.as_slice(),
-                            bun_fmt::PathSep::Auto
-                        ),
-                    ),
-                );
-            }
-            success_fn(this, dependency_id, existing_id);
-            return Ok(Some(ResolvedPackageResult {
-                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                package: *this.lockfile.packages.get(existing_id as usize),
-                ..Default::default()
-            }));
+        if let Some((existing_id, satisfied)) =
+            existing_peer_target(this, name_hash, version, dependency_id)
+        {
+            return Ok(Some(bind_existing_peer(
+                this,
+                dependency_id,
+                existing_id,
+                satisfied,
+                success_fn,
+            )));
         }
     }
 
@@ -2512,9 +2498,23 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
-                    if behavior.is_peer() && !install_peer {
-                        return Ok(None);
+                    if behavior.is_peer() {
+                        // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
+                        if !install_peer {
+                            return Ok(None);
+                        }
+                        // Nothing published to resolve afresh: the entry that passed over its
+                        // leftover in `existing_peer_target` keeps it, with the warning, as before.
+                        if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
+                        {
+                            return Ok(Some(bind_existing_peer(
+                                this,
+                                dependency_id,
+                                id,
+                                false,
+                                success_fn,
+                            )));
+                        }
                     }
 
                     return match version.tag {
@@ -2831,47 +2831,99 @@ fn locked_version_in_lockfile<'a>(
 
 /// Phase two of peer resolution: the package a peer row binds to among those of its name already
 /// in the lockfile (`package_index` lists the highest first). The first one the range accepts
-/// wins; failing that the highest candidate is bound anyway when it is of the row's kind, flagged
-/// `false` so the caller warns "incorrect peer dependency". Candidates `is_stale_peer_target`
-/// rejects are left out of that fallback, so a row they no longer satisfy resolves afresh.
+/// wins; failing that the highest one is bound anyway when it is of the row's kind, flagged
+/// `false` so the caller warns "incorrect peer dependency", except when binding it
+/// `would_revive_leftover`, in which case the row resolves afresh (and is bound to it after all,
+/// by the caller, when nothing published matches). Loading bun.lock binds the same way
+/// (`resolve_peer_dep_version_based`), so the fallback has to stay the highest candidate or
+/// nothing: a row that resolved afresh gets saved next to a package its range accepts, which that
+/// loader's satisfies scan finds, whereas a lower candidate bound here would be rebound on load.
 fn existing_peer_target(
     this: &PackageManager,
     name_hash: PackageNameHash,
     version: &dependency::Version,
+    row: DependencyID,
 ) -> Option<(PackageID, bool)> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let mut in_lockfile = candidates
-        .iter()
-        .copied()
-        .filter(|&id| (id as usize) < pkg_res.len());
-    if let Some(id) = in_lockfile
-        .clone()
-        .find(|&id| pkg_res[id as usize].satisfies_dependency_version(version, buf, buf))
-    {
+    if let Some(&id) = candidates.iter().find(|&&id| {
+        (id as usize) < pkg_res.len()
+            && pkg_res[id as usize].satisfies_dependency_version(version, buf, buf)
+    }) {
         return Some((id, true));
     }
-    let id = in_lockfile.find(|&id| !is_stale_peer_target(lockfile, id))?;
+    let highest = highest_peer_candidate(lockfile, name_hash, version)?;
+    (!would_revive_leftover(lockfile, row, highest)).then_some((highest, false))
+}
+
+/// The package an unsatisfied peer row falls back to: the highest of its name, when it is of the
+/// row's kind.
+fn highest_peer_candidate(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<PackageID> {
+    let &highest = lockfile.package_index.get(&name_hash)?.as_slice().first()?;
+    let resolution = lockfile.packages.items_resolution().get(highest as usize)?;
     let same_kind = matches!(
-        (pkg_res[id as usize].tag, version.tag),
+        (resolution.tag, version.tag),
         (ResolutionTag::Npm, dependency::version::Tag::Npm)
             | (ResolutionTag::Git, dependency::version::Tag::Git)
             | (ResolutionTag::Github, dependency::version::Tag::Github)
     );
-    same_kind.then_some((id, false))
+    same_kind.then_some(highest)
 }
 
-/// A package loaded from bun.lock that no non-peer row resolves to any more: it was only ever
-/// installed for peer rows, typically a root or workspace `peerDependencies` entry whose range has
-/// since been rewritten (`bun update -i`, `bun update <name>@<version>`, an edit followed by
-/// `bun install`), so it provides nothing and binding the rewritten row back to it would only
-/// keep the stale version and warn about it. Rows of packages the clean pass is about to drop
-/// still count, which errs toward binding as before; packages appended during this resolve never
-/// qualify, so a fresh install binds exactly as it always did.
-fn is_stale_peer_target(lockfile: &Lockfile::Lockfile, id: PackageID) -> bool {
-    if id >= lockfile.loaded_package_count {
+fn bind_existing_peer(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    existing_id: PackageID,
+    satisfied: bool,
+    success_fn: SuccessFn,
+) -> ResolvedPackageResult {
+    if !satisfied {
+        let existing_package = this.lockfile.packages.get(existing_id as usize);
+        this.log_mut().add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "incorrect peer dependency \"{}@{}\"",
+                existing_package
+                    .name
+                    .fmt(this.lockfile.buffers.string_bytes.as_slice()),
+                existing_package.resolution.fmt(
+                    this.lockfile.buffers.string_bytes.as_slice(),
+                    bun_fmt::PathSep::Auto
+                ),
+            ),
+        );
+    }
+    success_fn(this, dependency_id, existing_id);
+    ResolvedPackageResult {
+        // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+        package: *this.lockfile.packages.get(existing_id as usize),
+        ..Default::default()
+    }
+}
+
+/// `row` is a root or workspace `peerDependencies` entry and `package_id`, loaded from bun.lock,
+/// is resolved to by peer rows only: it was installed for such an entry in the first place, and the
+/// entry's range has since been rewritten past it (`bun update -i`, `bun update <name>@<version>`,
+/// an edit followed by `bun install`), so binding the entry back to it would keep the version the
+/// user moved off and warn about it, where installing what the entry now asks for replaces it in
+/// that workspace's node_modules. A package's own peer rows are left out: they take whatever copy
+/// the tree has, a copy resolved for them alone is never placed, so the warning is the right answer
+/// there. Packages appended during this resolve never qualify, so a fresh install binds exactly as
+/// before, and rows of packages the clean pass is about to drop still count, which can only keep
+/// the old binding.
+fn would_revive_leftover(
+    lockfile: &Lockfile::Lockfile,
+    row: DependencyID,
+    package_id: PackageID,
+) -> bool {
+    if package_id >= lockfile.loaded_package_count || !lockfile.is_workspace_dependency(row) {
         return false;
     }
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -2884,7 +2936,7 @@ fn is_stale_peer_target(lockfile: &Lockfile::Lockfile, id: PackageID) -> bool {
         .flat_map(|(dep_slice, res_slice)| {
             dep_slice.get(deps).iter().zip(res_slice.get(resolutions))
         });
-    !owned_rows.any(|(dep, &resolved)| resolved == id && !dep.behavior.is_peer())
+    !owned_rows.any(|(dep, &resolved)| resolved == package_id && !dep.behavior.is_peer())
 }
 
 fn patched_package_satisfying(

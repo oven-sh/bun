@@ -3342,11 +3342,11 @@ fn deferred_peer_range<'a>(
 /// the range. When nothing satisfies, fall back to the highest-ordered
 /// candidate, and only when it is the same kind as the dependency (the
 /// "incorrect peer dependency" case; reproducing the fresh resolver's
-/// choice exactly is the point of this helper. Its `existing_peer_target`
-/// additionally passes over packages left in the loaded lockfile that
-/// nothing provides any more, but an edge that took that route resolved
-/// to a package satisfying it, which is what gets saved and what the
-/// satisfies scan here finds). Returns `None` when no package with the name exists
+/// choice exactly is the point of this helper. The one case where its
+/// `existing_peer_target` declines that candidate, a root or workspace
+/// entry that `would_revive_leftover`, makes the edge resolve afresh to a
+/// package its range accepts, which is what gets saved and what the
+/// satisfies scan above finds). Returns `None` when no package with the name exists
 /// or the fallback is a different kind; the caller then falls back to
 /// the path walk. Edges `deferred_peer_range` rejects also return `None`.
 ///

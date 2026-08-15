@@ -331,8 +331,7 @@ pub(crate) fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
     Ok(())
 }
 
-/// A width or height reported by a C decoder (`c_int`); anything that is not
-/// strictly positive means the header was rejected or is corrupt.
+/// A decoder-reported dimension; anything not strictly positive is a corrupt header.
 #[inline]
 fn positive_dimension(v: c_int) -> Result<u32, Error> {
     match u32::try_from(v) {
@@ -660,10 +659,8 @@ pub(crate) fn modulate(rgba: &mut [u8], brightness: f32, saturation: f32) {
     unsafe { bun_image_modulate_rgba8(rgba.as_mut_ptr(), rgba.len(), brightness, saturation) }
 }
 
-/// The highway kernels take `i32` dimensions. The static decoders reject any
-/// side over 2³¹−1 (the PNG/BMP format limit; JPEG, WebP and GIF are far
-/// smaller) and `do_resize` caps targets at 0x3FFFF, so this only fails for a
-/// frame no kernel could address anyway.
+/// The highway kernels take `i32` dimensions; every decoder and `do_resize`
+/// stay below that, so this is a backstop.
 #[inline]
 fn kernel_dimension(v: u32) -> Result<i32, Error> {
     i32::try_from(v).map_err(|_| Error::TooManyPixels)

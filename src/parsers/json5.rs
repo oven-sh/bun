@@ -291,8 +291,7 @@ impl<'a> JSON5Parser<'a> {
         0
     }
 
-    /// Records the current position as the start of the token being scanned.
-    /// `parse_root` rejects documents whose positions do not fit a `Loc`.
+    /// `parse_root` has rejected any document whose positions do not fit a `Loc`.
     fn start_token(&mut self) {
         self.token.loc = usize2loc(self.pos);
     }
@@ -482,8 +481,7 @@ impl<'a> JSON5Parser<'a> {
     // ── Parser ──
 
     fn parse_root(&mut self) -> Result<Expr, ParseError> {
-        // Token and error positions are `i32` `Loc`s, including the EOF token
-        // at `source.len()`.
+        // Positions are `i32` `Loc`s, including the EOF token's at `source.len()`.
         if self.source.len() > i32::MAX as usize {
             return Err(ParseError::DocumentTooLarge);
         }

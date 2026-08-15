@@ -65,10 +65,7 @@ impl ElfFile {
         }
 
         let ehdr = read_ehdr(&self.data);
-
-        // --compile-executable-path accepts arbitrary files, and this rewrite is
-        // best-effort: a header table or PT_INTERP that does not fit in the
-        // file leaves the interpreter alone instead of failing the build.
+        // Best-effort: a template whose headers do not fit in the file is left alone.
         let Ok(phdrs) = phdr_table(&self.data, ehdr) else {
             return;
         };
@@ -230,8 +227,6 @@ impl ElfFile {
             return Err(ElfError::NoWritableLoadSegment);
         };
 
-        // Every file offset taken from the template's headers is checked
-        // against the file before the layout below is computed from it.
         let old_rw_file_end = file_range(&self.data, rw_phdr.p_offset, rw_phdr.p_filesz)?.end;
         let bun_vaddr_slot = file_range(&self.data, bun_section.file_offset, header_size)?;
         let old_shdrs = shdr_table(&self.data, ehdr)?;
@@ -290,14 +285,10 @@ impl ElfFile {
         // because that file range now lives inside the extended RW PT_LOAD.
         // Leaving it in place would mmap it into what was previously BSS
         // (zero-initialized statics), corrupting the process.
-        //
-        // A segment whose file image is larger than its memory image
-        // (p_filesz > p_memsz) is malformed and would put `new_file_offset`
-        // inside the segment's existing bytes. The section header table must
-        // be part of the relocated tail: the payload is written over its old
-        // location.
         let move_src_start = old_rw_file_end;
         let move_src_end = self.data.len();
+        // Rejected: p_filesz > p_memsz (the payload would land inside the
+        // segment) and a section header table that is not part of the tail.
         if new_file_offset < move_src_start || old_shdrs.start < move_src_start {
             return Err(ElfError::InvalidElfFile);
         }
@@ -432,10 +423,8 @@ impl ElfFile {
 const PHDR_SIZE: usize = size_of::<Elf64_Phdr>();
 const SHDR_SIZE: usize = size_of::<Elf64_Shdr>();
 
-/// The file range `offset..offset + len` described by a pair of header fields,
-/// or `InvalidElfFile` if it overflows or runs past the end of `data`. Every
-/// offset read from a template goes through here before it is used to slice:
-/// `--compile-executable-path` accepts arbitrary files.
+/// `offset..offset + len` as claimed by a template's headers, or `InvalidElfFile`
+/// if it overflows or runs past the end of `data`.
 fn file_range(data: &[u8], offset: u64, len: u64) -> Result<Range<usize>, ElfError> {
     let start = to_usize(offset)?;
     let end = start
@@ -447,8 +436,7 @@ fn file_range(data: &[u8], offset: u64, len: u64) -> Result<Range<usize>, ElfErr
     Ok(start..end)
 }
 
-/// An ELF64 offset or size as a slice index. Only fails on a target whose
-/// `usize` is narrower than the 64-bit fields.
+/// Only fails where `usize` is narrower than the ELF64 fields.
 fn to_usize(value: u64) -> Result<usize, ElfError> {
     usize::try_from(value).map_err(|_| ElfError::InvalidElfFile)
 }
@@ -474,8 +462,7 @@ fn read_phdr(data: &[u8], offset: usize) -> Elf64_Phdr {
     read_struct(&data[offset..][..PHDR_SIZE])
 }
 
-/// `table` comes from [`shdr_table`] and `index` is below the `e_shnum` it was
-/// computed from.
+/// `index` is below the `e_shnum` that `table` (from [`shdr_table`]) was sized by.
 fn shdr_offset(table: &Range<usize>, index: u16) -> usize {
     table.start + usize::from(index) * SHDR_SIZE
 }

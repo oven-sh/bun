@@ -10079,23 +10079,27 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     return { err, out, exitCode };
   }
 
-  // `declarer` is how bun prints the package declaring the tarballs.
+  // `declarer` is how bun prints the package declaring the tarball.
+  function refusal(name: string, spec: string, declarer: string) {
+    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`;
+  }
+
+  // The rest of stderr is progress output ("Resolving dependencies", ...).
+  function errorLines(stderr: string) {
+    return stderr.split(/\r?\n/).filter(line => line.startsWith("error:"));
+  }
+
   async function expectRejected(root: string, declarer: string) {
     const { err, out, exitCode } = await install(root);
 
     const rejected = Object.entries(declaredTarballs(root));
     const expected = [
-      ...rejected.map(
-        ([name, spec]) =>
-          `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`,
-      ),
+      ...rejected.map(([name, spec]) => refusal(name, spec, declarer)),
       ...rejected.map(([name, spec]) => `error: ${name}@${spec} failed to resolve`),
     ];
-    // The rest of stderr is progress output ("Resolving dependencies", ...). The
-    // dependencies are reported in the declaring package's dependency order,
+    // The dependencies are reported in the declaring package's dependency order,
     // which differs between a registry manifest and a package.json.
-    const errors = err.split(/\r?\n/).filter(line => line.startsWith("error:"));
-    expect(errors.sort()).toEqual(expected.sort());
+    expect(errorLines(err).sort()).toEqual(expected.sort());
     expect(err).not.toContain("Saved lockfile");
     expect(out).not.toContain("installed");
     expect(await exists(join(root, "project", "node_modules"))).toBe(false);
@@ -10142,6 +10146,24 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
       await plantDeclaredTarballs(root);
 
       await expectRejected(root, "bar@0.0.2");
+    });
+  });
+
+  // Peers are installed too, so the same refusal applies; unlike a regular
+  // dependency, an unresolved peer is not reported a second time as
+  // "failed to resolve".
+  it("rejects the one a registry package declares as a peer dependency", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("peer-local-tarball-of-registry-dep", {});
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { peerDependencies: { inside: "file:./inside.tgz" } });
+      await cp(planted, join(root, "project", "inside.tgz"));
+
+      const { err, exitCode } = await install(root);
+      expect(errorLines(err)).toEqual([refusal("inside", "file:./inside.tgz", "bar@0.0.2")]);
+      expect(await exists(join(root, "project", "node_modules", "inside"))).toBe(false);
+      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+      expect(exitCode).toBe(1);
     });
   });
 

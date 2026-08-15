@@ -1,57 +1,18 @@
 use crate::expr::{Data, PrimitiveType, data};
-use crate::{E, Expr, StoreRef, e};
+use crate::{E, Expr, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
-// ── local rope helpers ─────────────────────────────────────────────────────
-// `EString` has no `push` inherent method taking a `StoreRef` yet; provide the
-// minimal surface here.
-
-#[inline]
-fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
-    data::Store::append(s)
-}
-
-/// Link `other` onto `lhs`'s rope tail.
-fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
-    debug_assert!(lhs.is_utf8());
-    debug_assert!(other.is_utf8());
-
-    // `other` is a freshly Store-appended node; mutate via `StoreRef::DerefMut`.
-    if other.rope_len == 0 {
-        other.rope_len = other.data.len() as u32;
-    }
-    if lhs.rope_len == 0 {
-        lhs.rope_len = lhs.data.len() as u32;
-    }
-    lhs.rope_len += other.rope_len;
-
-    if lhs.next.is_none() {
-        lhs.next = Some(other);
-        lhs.end = Some(other);
-    } else {
-        let mut end = lhs.end.unwrap();
-        while end.get().next.is_some() {
-            end = end.get().end.unwrap();
-        }
-        // `end` points into the live Store; rope nodes are mutated in place
-        // via `StoreRef::DerefMut` (single-threaded visitor).
-        end.next = Some(other);
-        lhs.end = Some(other);
-    }
-}
-
-/// Concatenate two `E::String`s. The rope chains of BOTH inputs are linked into
-/// the result and later folds append to them in place. That is only sound
-/// because a string reachable from more than one expression is always flat
-/// (`can_be_const_value` rejects ropes, the enum visitor flattens member
-/// values), and the one node such a string does have is copied here, never
-/// mutated.
+/// Concatenate two `E::String`s. Both inputs' rope chains end up in the result
+/// (see `EString::push` for the ownership rule this relies on); a string that
+/// several expressions share is always flat (`can_be_const_value` rejects
+/// ropes, the enum visitor flattens member values), and its one node is copied
+/// here rather than linked in.
 fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
     let mut new = left.shallow_clone();
-    let rhs_clone = store_append_string(right.shallow_clone());
+    let mut rhs = data::Store::append(right.shallow_clone());
 
-    estring_push(&mut new, rhs_clone);
-    new.prefer_template = new.prefer_template || rhs_clone.get().prefer_template;
+    new.push(&mut *rhs);
+    new.prefer_template = new.prefer_template || right.prefer_template;
 
     new
 }

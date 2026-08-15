@@ -871,7 +871,12 @@ impl TagExt for Tag {
                                 }
                             }
                             b'+' => {
-                                if url.starts_with(b"+ssh:") || url.starts_with(b"+file:") {
+                                // `git+git:` is how a Git resolution of a `git://` dependency is
+                                // written back to bun.lock (`git+` label + the original URL).
+                                if url.starts_with(b"+ssh:")
+                                    || url.starts_with(b"+file:")
+                                    || url.starts_with(b"+git:")
+                                {
                                     return Tag::Git;
                                 }
                                 if url.starts_with(b"+http") {

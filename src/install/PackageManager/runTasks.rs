@@ -521,8 +521,12 @@ fn run_tasks_erased(
                     .metadata
                     .as_ref()
                     .is_none_or(|metadata| metadata.response.status_code > 399);
+                // Only while resolving: the manifests-only callers (lockfile
+                // migrations, `bun outdated`, ...) have nothing waiting that
+                // could fall back, so for them a failed request is just that.
                 if request_failed
                     && is_extended_manifest
+                    && !cb.manifests_only
                     && manager.fall_back_to_abbreviated_manifest(task.task_id)
                 {
                     let reason = match task.response.metadata.as_ref() {
@@ -544,15 +548,13 @@ fn run_tasks_erased(
                         bstr::BStr::new(name),
                     );
 
-                    if !cb.manifests_only {
-                        process_manifest_task_queue(
-                            cb,
-                            manager,
-                            task.task_id,
-                            extract_ctx,
-                            install_peer,
-                        )?;
-                    }
+                    process_manifest_task_queue(
+                        cb,
+                        manager,
+                        task.task_id,
+                        extract_ctx,
+                        install_peer,
+                    )?;
                     continue;
                 }
 

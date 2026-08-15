@@ -2713,7 +2713,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     Output::err(
                         err,
                         "failed to stat file: \"{}\"",
-                        format_args!("{}", file.handle),
+                        format_args!("{}", bstr::BStr::new(item.path.as_bytes())),
                     );
                     Global::crash();
                 }
@@ -3000,8 +3000,7 @@ fn tarball_destination<'a>(
     if !pack_filename.is_empty() && !pack_destination.is_empty() {
         Output::err_generic(
             "cannot use both filename and destination at the same time with tarball: filename \"{}\" and destination \"{}\"",
-            format_args!(
-                "{} {}",
+            (
                 bstr::BStr::new(strings::without_trailing_slash(pack_filename)),
                 bstr::BStr::new(strings::without_trailing_slash(pack_destination)),
             ),
@@ -3045,13 +3044,12 @@ fn tarball_destination<'a>(
         if res.is_err() {
             Output::err_generic(
                 "archive destination name too long: \"{}/{}\"",
-                format_args!(
-                    "{}/{}",
+                (
                     bstr::BStr::new(strings::without_trailing_slash(&dest_buf[..dir_len_full])),
                     fmt_tarball_filename(
                         package_name,
                         package_version,
-                        TarballNameStyle::Normalize
+                        TarballNameStyle::Normalize,
                     ),
                 ),
             );
@@ -3654,8 +3652,7 @@ impl IgnorePatterns {
         Output::err(
             err,
             "failed to {} {} at: \"{}{}{}\"",
-            format_args!(
-                "{} {} {}{}{}",
+            (
                 <&str>::from(reason),
                 <&str>::from(ignore_kind),
                 bstr::BStr::new(strings::without_trailing_slash(dir_path)),

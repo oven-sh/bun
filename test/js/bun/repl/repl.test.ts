@@ -1055,15 +1055,18 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
     using dir = tempDir("repl-page-keys", {
       ".bun_repl_history": "123456 + 1\n800 + 2\n",
     });
-    const isolatedHome = { HOME: String(dir) };
+    const isolatedHome = { HOME: String(dir), USERPROFILE: String(dir) };
     await withTerminalRepl(
       async ({ send, waitFor }) => {
         send("partial");
         await waitFor("partial");
+        send("\x1b[6~"); // PageDown before any history navigation leaves the typed line alone
+        send(" + 1");
+        await waitFor("partial + 1");
         send("\x1b[5~"); // PageUp — oldest entry, skipping "800 + 2"
         await waitFor("123456");
         send("\x1b[6~"); // PageDown — back to the in-progress line
-        await waitFor("partial");
+        await waitFor("partial + 1");
 
         send("\x03");
         await waitFor(/\u276f|> /);

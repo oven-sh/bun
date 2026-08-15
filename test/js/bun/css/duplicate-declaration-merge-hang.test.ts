@@ -156,3 +156,95 @@ test("declaration merges do not drop partitioned incompatible selectors", () => 
     ".a {\n  color: #00f;\n}\n\n.b:focus-visible {\n  color: #00f;\n}\n",
   );
 });
+
+// Adjacent @media rules with the same query are merged into the first one.
+// The merge used to re-minify the whole merged body after every rule, so a
+// run of n such rules cost O(n^2) rule minifications: the 6000 rules below
+// took ~7.5s in a release build and (extrapolating from 51s for 2000) several
+// minutes in a debug build, against under a second of minifying now that the
+// merged body is minified once per run. The spawn timeout is what fails the
+// quadratic version; the per-test timeout only has to outlast it.
+test("a run of same-query @media rules is minified in linear time", async () => {
+  const script = `
+    const c = require("bun:internal-for-testing").cssInternals;
+    const n = 6000;
+    const rules = Array.from({ length: n }, (_, i) => ".a" + i + "{margin:" + i + "px}");
+    const merged = c.minifyTest(rules.map(rule => "@media (min-width:1px){" + rule + "}").join(""), "");
+    const single = c.minifyTest("@media (min-width:1px){" + rules.join("") + "}", "");
+    if (merged !== single) throw new Error("the merged run minified differently from a single block");
+    console.log("OK:" + n);
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "OK:6000\n",
+    stderr: "",
+    exitCode: 0,
+  });
+}, 90_000);
+
+// Every one of those re-minify passes also charged the accumulated body
+// against the selector-expansion limit again. Chrome 80 has no native nesting,
+// so nested rules are charged once per selector of the parent: under a
+// two-selector parent, 256 merged rules (512 expanded selectors) used to fail
+// with selector_expansion_limit_exceeded.
+test("a run of same-query @media rules nested in a multi-selector rule is charged against the expansion limit once", () => {
+  const targets = { chrome: 80 << 16 };
+  const rules = Array.from({ length: 1000 }, (_, i) => `.c${i}{color:red}`);
+  const single = cssInternals.minifyTest(`.a,.b{@media (min-width:1px){${rules.join("")}}}`, "", targets);
+  expect(single).toContain(":is(.a,.b) .c999{color:red}");
+
+  const merged = `.a,.b{${rules.map(rule => `@media (min-width:1px){${rule}}`).join("")}}`;
+  expect(cssInternals.minifyTest(merged, "", targets)).toBe(single);
+});
+
+// The deferred re-minify of the merged body has to happen before anything is
+// emitted after it, whichever way the run ends, and only rules that are
+// actually emitted end it. In every case below the two .a rules only collapse
+// (and `blue` is only minified) if the merged body was minified.
+test("deferred @media merge re-minify keeps per-merge output", () => {
+  const run = "@media (min-width:1px){.a{color:red}}@media (min-width:1px){.a{color:blue}}";
+  const minify = (source: string) => cssInternals.minifyTest(source, "");
+
+  // The run ends with the stylesheet.
+  expect(minify(run)).toBe("@media (width>=1px){.a{color:#00f}}");
+  // ... with a style rule.
+  expect(minify(run + ".c{color:green}")).toBe("@media (width>=1px){.a{color:#00f}}.c{color:green}");
+  // ... with another at-rule, whether or not its arm minifies it.
+  expect(minify(run + "@supports (display:grid){.c{color:green}}")).toBe(
+    "@media (width>=1px){.a{color:#00f}}@supports (display:grid){.c{color:green}}",
+  );
+  expect(minify(run + "@keyframes k{to{opacity:0}}")).toBe(
+    "@media (width>=1px){.a{color:#00f}}@keyframes k{to{opacity:0}}",
+  );
+  // ... with a @media rule for a different query, after which a new run starts.
+  expect(minify(run + "@media print{.c{color:green}}@media (min-width:1px){.d{color:blue}}")).toBe(
+    "@media (width>=1px){.a{color:#00f}}@media print{.c{color:green}}@media (width>=1px){.d{color:#00f}}",
+  );
+  // ... with a style rule that is emitted only as the fallback rules compiled
+  // from its logical property (chrome 60 needs them), not as itself.
+  const chrome60 = { chrome: 60 << 16 };
+  const fallbackRules = cssInternals.minifyTest(".c{inset-inline-start:0}", "", chrome60);
+  expect(fallbackRules).toContain("{left:0}");
+  expect(cssInternals.minifyTest(run + ".c{inset-inline-start:0}", "", chrome60)).toBe(
+    "@media (min-width:1px){.a{color:#00f}}" + fallbackRules,
+  );
+
+  // Rules that minify away in between do not end the run.
+  expect(
+    minify(
+      "@media (min-width:1px){.a{color:red}}" +
+        "@media not all{.z{color:red}}" +
+        "@media (min-width:1px){.a{color:blue}}" +
+        ".y{}" +
+        "@media (min-width:1px){.b{color:blue}}",
+    ),
+  ).toBe("@media (width>=1px){.a,.b{color:#00f}}");
+});

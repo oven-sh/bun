@@ -494,9 +494,7 @@ impl File {
         // stored width.
         result.st_size = match self.encoding {
             Encoding::Binary => self.contents.len(),
-            Encoding::Latin1 => {
-                strings::element_length_latin1_into_utf8(self.contents.as_bytes())
-            }
+            Encoding::Latin1 => strings::element_length_latin1_into_utf8(self.contents.as_bytes()),
             Encoding::Utf16 => strings::element_length_utf16_into_utf8(self.utf16_units()),
         } as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).

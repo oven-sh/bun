@@ -800,11 +800,9 @@ impl Lockfile {
                 .is_workspace()
     }
 
-    /// Is the package whose `node_modules` this tree represents resolved from a
-    /// local `file:` folder? Its `Resolution::Folder` dependencies were normalized
-    /// relative to the top-level dir (`Package::parse` with `Features::FOLDER`), unlike
-    /// those `Package::from_npm` and `Package::parse` with `Features::NPM` produce,
-    /// which are stored as declared, relative to the package.
+    /// Is the package whose `node_modules` this tree represents resolved from a local
+    /// `file:` folder? A `Features::FOLDER` parse rebased its `Resolution::Folder` dependencies
+    /// onto the top-level dir; `from_npm` / `Features::NPM` ones are package-relative.
     pub(crate) fn is_folder_tree_id(&self, id: tree::Id) -> bool {
         if id == 0 {
             return false;

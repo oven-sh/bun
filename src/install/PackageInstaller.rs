@@ -1847,10 +1847,9 @@ impl<'a> PackageInstaller<'a> {
                             );
                         }
 
-                        // One produced by `Package::from_npm` or by `Package::parse` with
-                        // `Features::NPM` (registry, git and tarball packages) is stored as
-                        // declared, i.e. relative to the declaring package, which installs at
-                        // `dirname(node_modules.path)` because transitive folders never hoist.
+                        // One from `Package::from_npm` or a `Features::NPM` parse is relative to
+                        // the declaring package, which installs at `dirname(node_modules.path)`
+                        // because transitive folders never hoist.
                         let dir_name = {
                             let d = dirname::<platform::Auto>(self.node_modules.path.as_slice());
                             if d.is_empty() {

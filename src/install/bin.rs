@@ -750,11 +750,6 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
     name
 }
 
-/// npm `path.resolve`s bin targets, dropping trailing separators; our join keeps them.
-fn normalized_bin_target(target: &[u8]) -> &[u8] {
-    strings::without_trailing_slash(target)
-}
-
 /// True when a `bin` entry's target value would resolve outside the package
 /// directory (absolute path or `..` traversal). The bin *value* is taken
 /// verbatim from package.json, so without this check a malicious package could
@@ -1479,6 +1474,9 @@ impl<'a> Linker<'a> {
         target: &[u8],
         bin_name: &[u8],
     ) -> &'b ZStr {
+        // npm `path.resolve`s the target, dropping trailing separators; our join keeps them, and a
+        // trailing separator also makes the kernel follow a symlinked target despite `lchmod`.
+        let target = strings::without_trailing_slash(target);
         let primary = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
         if !is_native_binlink_redirect {
@@ -1608,7 +1606,7 @@ impl<'a> Linker<'a> {
                 Tag::None => {}
                 Tag::File => {
                     let file = self.bin.value.file;
-                    let target = normalized_bin_target(file.slice(self.string_buf));
+                    let target = file.slice(self.string_buf);
                     if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
@@ -1660,7 +1658,7 @@ impl<'a> Linker<'a> {
                     let named = self.bin.value.named_file;
                     let name = named[0].slice(self.string_buf);
                     let normalized_name = normalized_bin_name(name);
-                    let target = normalized_bin_target(named[1].slice(self.string_buf));
+                    let target = named[1].slice(self.string_buf);
                     if normalized_name.is_empty()
                         || target.is_empty()
                         || bin_target_escapes_package_dir(target)
@@ -1712,9 +1710,8 @@ impl<'a> Linker<'a> {
                     while i < end {
                         let bin_dest = self.extern_string_buf[i as usize].slice(self.string_buf);
                         let normalized_bin_dest = normalized_bin_name(bin_dest);
-                        let bin_target = normalized_bin_target(
-                            self.extern_string_buf[(i + 1) as usize].slice(self.string_buf),
-                        );
+                        let bin_target =
+                            self.extern_string_buf[(i + 1) as usize].slice(self.string_buf);
                         if bin_target.is_empty()
                             || normalized_bin_dest.is_empty()
                             || bin_target_escapes_package_dir(bin_target)

@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
-import { cpSync } from "node:fs";
+import { bunEnv, bunExe, bunEnv as env, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { closeSync, cpSync, openSync } from "node:fs";
 import { join } from "path";
 import {
   dummyAfterAll,
@@ -646,6 +646,35 @@ it("bun pm migrate", async () => {
   const hash = hashExec.stdout.toString("utf-8").trim();
 
   expect(hash).toMatchSnapshot();
+});
+
+test.skipIf(isWindows)("bun pm hash reports a failed write to stdout", async () => {
+  using dir = tempDir("pm-hash-write-failed", {
+    "package.json": JSON.stringify({ name: "pm-hash-write-failed", version: "1.0.0" }),
+    "bun.lock": JSON.stringify({
+      lockfileVersion: 1,
+      workspaces: { "": { name: "pm-hash-write-failed" } },
+      packages: {},
+    }),
+  });
+
+  // A read-only descriptor as stdout makes the child's write(2) fail with EBADF.
+  const stdoutFd = openSync("/dev/null", "r");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "hash"],
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: stdoutFd,
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("WriteFailed");
+    expect(exitCode).toBe(1);
+  } finally {
+    closeSync(stdoutFd);
+  }
 });
 
 test("bun whoami executes pm whoami", async () => {

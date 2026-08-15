@@ -1621,6 +1621,54 @@ describe("package-lock.json migration fixes", () => {
       expect(fs.existsSync(join(String(dir), "node_modules", "missing-file-dep", "node_modules", "files"))).toBeFalse();
     });
 
+    // `file:.` links back to the package's own entry, which is not inside itself, so the edge resolves to the package.
+    test.concurrent("a package depending on itself with file:. keeps resolving to itself", async () => {
+      using registry = localRegistry();
+      const dependencies = { "self-file-dep": "1.0.0" };
+      using dir = synthetic(
+        "npm-migrate-folder-self",
+        {
+          "package.json": JSON.stringify({ name: "folder-self", dependencies }),
+          "package-lock.json": npmLock("folder-self", {
+            "": { name: "folder-self", dependencies },
+            "node_modules/self-file-dep": {
+              version: "1.0.0",
+              resolved: registry.tarball("self-file-dep", "1.0.0"),
+              integrity: registry.integrity("self-file-dep", "1.0.0"),
+              dependencies: { "self-file-dep": "file:." },
+            },
+            "node_modules/self-file-dep/node_modules/self-file-dep": {
+              resolved: "node_modules/self-file-dep",
+              link: true,
+            },
+          }),
+        },
+        registry.url,
+      );
+
+      const { lock } = await migrate(dir);
+      expect(lock.packages).toStrictEqual({
+        "self-file-dep": [
+          "self-file-dep@1.0.0",
+          registry.tarball("self-file-dep", "1.0.0"),
+          { dependencies: { "self-file-dep": "file:." } },
+          registry.integrity("self-file-dep", "1.0.0"),
+        ],
+      });
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error");
+      expect(install.exitCode).toBe(0);
+      const resolve = await run(
+        join(String(dir), "node_modules", "self-file-dep"),
+        "-e",
+        `console.log(require("self-file-dep/package.json").version)`,
+      );
+      expect(resolve.stdout).toBe("1.0.0\n");
+      expect(resolve.exitCode).toBe(0);
+    });
+
     test.concurrent("a directory inside a folder the root declares stays relative to the project", async () => {
       const dependencies = { a: "file:vendor/a" };
       using dir = synthetic("npm-migrate-folder-in-local-folder", {

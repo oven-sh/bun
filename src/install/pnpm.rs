@@ -3,7 +3,7 @@ use bun_collections::{VecExt, index_sort};
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_collections::{DynamicBitSet, StringArrayHashMap};
+use bun_collections::StringArrayHashMap;
 
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
@@ -1621,10 +1621,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
     }
 
-    if !silent {
-        warn_folders_resolved_inside_installed_packages(lockfile, workspace_pkgs_end)?;
-    }
-
     // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
     // declares them, including `file:` folders, tarballs, and git packages.
     crate::migration::clear_non_registry_platform_constraints(lockfile);
@@ -1645,71 +1641,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
 fn invalid_pnpm_lockfile() -> MigratePnpmLockfileError {
     MigratePnpmLockfileError::InvalidPnpmLockfile
-}
-
-/// pnpm resolved these against the project; bun installs them relative to the declaring package.
-fn warn_folders_resolved_inside_installed_packages(
-    lockfile: &Lockfile,
-    workspace_pkgs_end: usize,
-) -> Result<(), AllocError> {
-    let string_buf = string_bytes!(lockfile);
-    let resolutions = lockfile.packages.items_resolution();
-    let dependency_lists = lockfile.packages.items_dependencies();
-    let names = lockfile.packages.items_name();
-    let dependency_resolutions = lockfile.buffers.resolutions.as_slice();
-
-    let folder_dependencies = |pkg_id: usize| {
-        let deps = dependency_lists[pkg_id];
-        (deps.begin()..deps.end()).filter_map(move |dep_id| {
-            let target = dependency_resolutions[dep_id as usize];
-            (target != INVALID_PACKAGE_ID
-                && resolutions[target as usize].tag == resolution::Tag::Folder)
-                .then_some((dep_id, target))
-        })
-    };
-
-    let mut declared_by_project = DynamicBitSet::init_empty(resolutions.len())?;
-    let mut queue: Vec<PackageID> = (0..workspace_pkgs_end as PackageID).collect();
-    while let Some(pkg_id) = queue.pop() {
-        for (_, folder_id) in folder_dependencies(pkg_id as usize) {
-            if !declared_by_project.is_set(folder_id as usize) {
-                declared_by_project.set(folder_id as usize);
-                queue.push(folder_id);
-            }
-        }
-    }
-
-    let mut warned = DynamicBitSet::init_empty(resolutions.len())?;
-    for pkg_id in workspace_pkgs_end..resolutions.len() {
-        if !resolutions[pkg_id].tag.can_enqueue_install_task() {
-            continue;
-        }
-        for (dep_id, folder_id) in folder_dependencies(pkg_id) {
-            if declared_by_project.is_set(folder_id as usize) || warned.is_set(folder_id as usize) {
-                continue;
-            }
-            let dep = &lockfile.buffers.dependencies[dep_id as usize];
-            let dep_name = dep.name.slice(string_buf);
-            if lockfile
-                .overrides
-                .contains_name(dep.name_hash, dep_name, string_buf)
-            {
-                continue;
-            }
-            warned.set(folder_id as usize);
-            let folder = resolutions[folder_id as usize].folder().slice(string_buf);
-            bun_core::warn!(
-                "\"{}\" (file:{}) is a dependency of \"{}@{}\" in pnpm-lock.yaml; bun resolves it inside that package instead of the project, so it is only installed if the package contains \"{}\"",
-                bstr::BStr::new(dep_name),
-                bstr::BStr::new(folder),
-                bstr::BStr::new(names[pkg_id].slice(string_buf)),
-                resolutions[pkg_id].fmt(string_buf, bun_core::fmt::PathSep::Posix),
-                bstr::BStr::new(folder),
-            );
-        }
-    }
-
-    Ok(())
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

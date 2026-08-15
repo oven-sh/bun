@@ -1076,8 +1076,8 @@ pub mod store {
         /// borrow — on this thread or any other. The same contract governs
         /// the sibling `unsafe fn`s that mint `&mut Store` access:
         /// `blob_store_mut`/`set_blob_content_type` in `webcore::body`, and
-        /// `BlobExt::shared_view_raw`/`set_is_ascii_flag`/`resolve_file_stat`
-        /// in `webcore::blob`.
+        /// `BlobExt::shared_view_raw`/`set_is_ascii_flag` and the free
+        /// `resolve_file_stat` in `webcore::blob`.
         #[inline]
         #[allow(clippy::mut_from_ref)]
         pub unsafe fn data_mut(&self) -> &mut Data {

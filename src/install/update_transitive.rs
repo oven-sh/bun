@@ -1285,10 +1285,8 @@ fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> Vec<Vec<De
     edges_on
 }
 
-/// A move to `v` is dropped when another edge on the instance stays behind at `current` (its range
-/// rejects `v`, or it is bundled or has no npm range, so the post-resolve redirect cannot carry it)
-/// while `current` already satisfies the moving range: the fork would add exactly the duplicate
-/// `bun dedupe` removes, and the two commands would undo each other forever.
+/// True when some edge on the instance cannot follow the move to `v` and stays at `current`,
+/// which still satisfies the moving range: the fork would re-add the duplicate `bun dedupe` removes.
 fn forks_surviving_instance(
     lockfile: &Lockfile,
     inst: &Instance,

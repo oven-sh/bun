@@ -2401,12 +2401,33 @@ pub mod internal {
         h
     }
 
+    /// `localhost` / `*.localhost` (RFC 6761) resolve to loopback addresses,
+    /// which glibc's AI_ADDRCONFIG does not count as "configured"
+    /// (getaddrinfo(3)): on a host whose only IPv6 address is `::1` it drops
+    /// the `::1 localhost` entry, the very address a listener on "localhost"
+    /// binds to (listen resolves without the flag and prefers IPv6). Windows,
+    /// musl and macOS's resolver all return `::1` here, so these names skip
+    /// the flag; a loopback address of an unusable family fails connect()
+    /// synchronously and usockets moves on to the next one.
     #[cfg(not(windows))]
-    pub(crate) fn get_hints() -> AddrInfo {
+    fn is_loopback_name(host: &[u8]) -> bool {
+        const DOT_LOCALHOST: &[u8] = b".localhost";
+        strings::eql_case_insensitive_ascii(host, b"localhost", true)
+            || (host.len() > DOT_LOCALHOST.len()
+                && strings::eql_case_insensitive_ascii(
+                    &host[host.len() - DOT_LOCALHOST.len()..],
+                    DOT_LOCALHOST,
+                    true,
+                ))
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) fn get_hints(host: Option<&[u8]>) -> AddrInfo {
         let mut hints_copy = default_hints();
-        if env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG
-            .get()
-            .unwrap_or(false)
+        if host.is_some_and(is_loopback_name)
+            || env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG
+                .get()
+                .unwrap_or(false)
         {
             hints_copy.ai_flags &= !netc::AI_ADDRCONFIG;
         }
@@ -2678,12 +2699,10 @@ pub mod internal {
         // set at construction, `hints`/`addrinfo` are stack locals.
         unsafe {
             let mut addrinfo: *mut AddrInfo = ptr::null_mut();
-            let mut hints = get_hints();
+            let host = (*req).key.host.as_ref();
+            let mut hints = get_hints(host.map(|h| h.as_bytes()));
 
-            let host_ptr = (*req)
-                .key
-                .host
-                .as_ref()
+            let host_ptr = host
                 .map(|h| h.as_ptr().cast::<c_char>())
                 .unwrap_or(ptr::null());
             let mut err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
@@ -2710,7 +2729,7 @@ pub mod internal {
             return false;
         };
 
-        let protocol = dns_sd::protocol_for_hints(&get_hints());
+        let protocol = dns_sd::protocol_for_hints(&get_hints(Some(host.as_bytes())));
         // SAFETY: `req` is the live heap-allocated request owned by the caller.
         unsafe {
             (*req).dns_sd = MacAsyncDNS {

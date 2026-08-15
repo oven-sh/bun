@@ -1,10 +1,12 @@
 // The internal DNS cache (used by the usockets connect path for fetch(),
-// Bun.connect() and `bun install`) interleaves address families (RFC 8305 §4)
-// so the four parallel connection attempts usockets opens always cover both
-// families. registry.npmjs.org resolves to 12 AAAA + 12 A; on a dual-stack
-// host with blackholed IPv6 a broken interleave leaves all four initial
-// attempts on dead IPv6 and every manifest fetch stalls for ~100s waiting on
-// kernel SYN-retry exhaustion.
+// WebSocket, Bun.connect() and `bun install`) decides which addresses the
+// parallel connection attempts usockets opens get to try.
+//
+// Interleave: it interleaves address families (RFC 8305 §4) so the four
+// parallel attempts always cover both families. registry.npmjs.org resolves to
+// 12 AAAA + 12 A; on a dual-stack host with blackholed IPv6 a broken interleave
+// leaves all four initial attempts on dead IPv6 and every manifest fetch stalls
+// for ~100s waiting on kernel SYN-retry exhaustion.
 //
 // https://github.com/oven-sh/bun/issues/4938
 // https://github.com/oven-sh/bun/issues/33278
@@ -195,4 +197,113 @@ describe.concurrent("getaddrinfo interleave (RFC 8305)", () => {
     },
     20_000,
   );
+});
+
+// The connect-path resolver asks getaddrinfo with AI_ADDRCONFIG, and glibc does
+// not count loopback addresses as "configured": on a host whose only IPv6
+// address is ::1 (an IPv4-only Docker network) "localhost" resolves to just
+// 127.0.0.1 on the connect side, while Bun.serve()/Bun.listen() on "localhost"
+// resolve without the flag and bind ::1. The connect side must hand usockets
+// every loopback address the name maps to, so whichever one the listener picked
+// gets a connection attempt.
+//
+// For each address the system maps the name to, the fixture starts servers
+// bound to only that address and connects to them through the *name* with each
+// client that uses the connect-path resolver. A family the kernel refuses to
+// bind (IPv6 disabled outright) is skipped: nothing can listen there.
+function loopbackNameFixture(name: string) {
+  return /* js */ `
+    const name = ${JSON.stringify(name)};
+    let addresses;
+    try {
+      addresses = (await Bun.dns.lookup(name, { backend: "system" })).map(r => r.address);
+    } catch (e) {
+      console.log(JSON.stringify({ unresolvable: e.code }));
+      process.exit(0);
+    }
+    const bound = [];
+    const results = [];
+    for (const address of new Set(addresses)) {
+      let server;
+      try {
+        server = Bun.serve({
+          hostname: address,
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req)) return;
+            return new Response("http via " + address);
+          },
+          websocket: { open(ws) { ws.send("ws via " + address); }, message() {} },
+        });
+      } catch {
+        continue;
+      }
+      bound.push(address);
+      const listener = Bun.listen({ hostname: address, port: 0, socket: { open(s) { s.end(); }, data() {} } });
+      const result = { address };
+      try {
+        result.fetch = await (await fetch("http://" + name + ":" + server.port + "/")).text();
+      } catch (e) {
+        result.fetch = e.code;
+      }
+      result.websocket = await new Promise(resolve => {
+        const ws = new WebSocket("ws://" + name + ":" + server.port + "/");
+        ws.onmessage = e => { resolve(e.data); ws.close(); };
+        ws.onclose = e => resolve("closed: " + e.code);
+      });
+      result.connect = await new Promise(resolve => {
+        Bun.connect({
+          hostname: name,
+          port: listener.port,
+          socket: {
+            open(s) { resolve(s.remoteAddress); },
+            connectError(_s, e) { resolve(e.code); },
+            data() {},
+          },
+        }).catch(e => resolve(e.code));
+      });
+      results.push(result);
+      listener.stop(true);
+      server.stop(true);
+    }
+    console.log(JSON.stringify({ bound, results }));
+    process.exit(0);
+  `;
+}
+
+function reachableViaName(bound: string[]) {
+  return bound.map(address => ({
+    address,
+    fetch: `http via ${address}`,
+    websocket: `ws via ${address}`,
+    connect: address,
+  }));
+}
+
+describe.concurrent("loopback names resolve to every loopback address on the connect path", () => {
+  test("fetch(), WebSocket and Bun.connect() reach a listener on each address localhost maps to", async () => {
+    const { out, stderr, exitCode, signal } = await run(loopbackNameFixture("localhost"));
+    expect(out.unresolvable).toBeUndefined();
+    expect(out.bound.length).toBeGreaterThan(0);
+    expect({ results: out.results, stderr, exitCode, signal }).toEqual({
+      results: reachableViaName(out.bound),
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
+
+  // Only resolvers that implement RFC 6761 for *.localhost (systemd-resolved,
+  // for one) answer this name; elsewhere there is nothing to bind and the
+  // fixture reports the name as unresolvable.
+  test("same for a *.localhost name, where the system resolves it", async () => {
+    const { out, stderr, exitCode, signal } = await run(loopbackNameFixture("bun-dns-test.localhost"));
+    if (out.unresolvable !== undefined) return;
+    expect({ results: out.results, stderr, exitCode, signal }).toEqual({
+      results: reachableViaName(out.bound),
+      stderr: "",
+      exitCode: 0,
+      signal: null,
+    });
+  });
 });

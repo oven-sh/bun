@@ -153,8 +153,6 @@ pub mod api {
     }
 
     impl NpmRegistry {
-        /// `https://user:pass@host/` fills `username`/`password` and
-        /// `https://:token@host/` fills `token`; `url` is stored without them.
         pub fn from_url(str: &[u8]) -> NpmRegistry {
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();

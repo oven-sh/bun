@@ -85,6 +85,8 @@ node_modules/
 └── package-name -> .bun/package@1.0.0/node_modules/package  # Symlinks
 ```
 
+The part of a store directory name after `@` is the package's resolution. For a registry package, that is its version. For a folder, tarball, or git dependency, it is the folder path, the tarball URL, or the repository URL followed by the commit, with `/`, `\`, `:`, `#`, and `?` replaced by `+`. Bun writes at most 80 bytes of the resolution. It cuts a longer resolution to 63 bytes and appends `+` and the 16 hex digit wyhash of the full text (`Bun.hash(text)`). This keeps the directory's path within the Windows path limit that applies to the working directory of the package's lifecycle scripts.
+
 ### Resolution algorithm
 
 1. **Central store** — Bun installs all packages in `node_modules/.bun/package@version/` directories

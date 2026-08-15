@@ -5,6 +5,7 @@ import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { dirname, join } from "path";
+import { pathToFileURL } from "url";
 
 const registry = new VerdaccioRegistry();
 
@@ -2085,6 +2086,233 @@ test("tarball URL with query string resolves at runtime", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("1.0.0\n");
   expect(exitCode).toBe(0);
+});
+
+// The resolution part of a store entry name (`<name>@<resolution>`) embeds
+// folder paths, tarball URLs and git URLs verbatim. `write_resolution` in
+// src/install/isolated_install/Store.rs bounds it: a resolution longer than
+// MAX_RESOLUTION_LEN bytes is cut and suffixed with `+` and the wyhash of the
+// full text. Unbounded, the entry's absolute path passes MAX_PATH on Windows,
+// where the package's lifecycle scripts then fail to spawn with ENOENT, and a
+// resolution longer than NAME_MAX cannot be created at all.
+describe("long store entry names", () => {
+  const MAX_RESOLUTION_LEN = 80;
+  const CUT_RESOLUTION_LEN = MAX_RESOLUTION_LEN - "+".length - 16;
+
+  function storeEntryName(name: string, resolution: string): string {
+    if (resolution.length <= MAX_RESOLUTION_LEN) return `${name}@${resolution}`;
+    const hash = Bun.hash(resolution).toString(16).padStart(16, "0");
+    return `${name}@${resolution.slice(0, CUT_RESOLUTION_LEN)}+${hash}`;
+  }
+
+  async function storeEntries(packageDir: string): Promise<string[]> {
+    return (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(entry => entry !== "node_modules");
+  }
+
+  test("a resolution at the limit is kept verbatim, a longer one is cut and hashed", async () => {
+    // `file+` plus this folder name is exactly MAX_RESOLUTION_LEN bytes; the
+    // other three folders are one byte longer.
+    const atLimit = Buffer.alloc(MAX_RESOLUTION_LEN - "file+".length, "a").toString();
+    const pastLimit = `${atLimit}b`;
+    // Two resolutions of the same package that only differ after the cut
+    // point: the hash is what keeps their entries apart.
+    const sharedPrefix1 = `${atLimit}1`;
+    const sharedPrefix2 = `${atLimit}2`;
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${atLimit}/package.json`]: JSON.stringify({ name: "at-limit", version: "1.0.0" }),
+        [`${pastLimit}/package.json`]: JSON.stringify({ name: "past-limit", version: "1.0.0" }),
+        [`${sharedPrefix1}/package.json`]: JSON.stringify({ name: "shared-prefix", version: "1.0.0" }),
+        [`${sharedPrefix2}/package.json`]: JSON.stringify({ name: "shared-prefix", version: "2.0.0" }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-long-store-entry-names",
+        dependencies: {
+          "at-limit": `file:./${atLimit}`,
+          "past-limit": `file:./${pastLimit}`,
+          "shared-prefix-1": `file:./${sharedPrefix1}`,
+          "shared-prefix-2": `file:./${sharedPrefix2}`,
+        },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const pastLimitEntry = storeEntryName("past-limit", `file+${pastLimit}`);
+    expect(pastLimitEntry).toMatch(/^past-limit@file\+a{58}\+[0-9a-f]{16}$/);
+    const expectedEntries = [
+      `at-limit@file+${atLimit}`,
+      pastLimitEntry,
+      storeEntryName("shared-prefix", `file+${sharedPrefix1}`),
+      storeEntryName("shared-prefix", `file+${sharedPrefix2}`),
+    ].sort();
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
+
+    expect(readlinkSync(join(packageDir, "node_modules", "past-limit"))).toBe(
+      join(".bun", pastLimitEntry, "node_modules", "past-limit"),
+    );
+    expect(
+      await Promise.all(
+        ["at-limit", "past-limit", "shared-prefix-1", "shared-prefix-2"].map(alias =>
+          file(join(packageDir, "node_modules", alias, "package.json")).json(),
+        ),
+      ),
+    ).toEqual([
+      { name: "at-limit", version: "1.0.0" },
+      { name: "past-limit", version: "1.0.0" },
+      { name: "shared-prefix", version: "1.0.0" },
+      { name: "shared-prefix", version: "2.0.0" },
+    ]);
+
+    // The cut name is a pure function of the resolution, so the next install
+    // finds the same entries again.
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await storeEntries(packageDir)).toEqual(expectedEntries);
+  });
+
+  test("the peer hash is appended after the cut resolution", async () => {
+    const folder = Buffer.alloc(MAX_RESOLUTION_LEN, "p").toString();
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        [`${folder}/package.json`]: JSON.stringify({
+          name: "has-peer",
+          version: "1.0.0",
+          peerDependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-long-store-entry-name-with-peer",
+        dependencies: { "has-peer": `file:./${folder}`, "no-deps": "1.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    // `+7347ae2d86f1441a` is the hash of the peer set `no-deps@1.0.0`.
+    const entry = `${storeEntryName("has-peer", `file+${folder}`)}+7347ae2d86f1441a`;
+    expect(await storeEntries(packageDir)).toEqual([entry, "no-deps@1.0.0"]);
+    expect(
+      await file(join(packageDir, "node_modules", ".bun", entry, "node_modules", "no-deps", "package.json")).json(),
+    ).toEqual({ name: "no-deps", version: "1.0.0" });
+  });
+
+  test("a tarball URL longer than NAME_MAX installs, also into the global store", async () => {
+    const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
+    const segment = Buffer.alloc(255, "t").toString();
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname !== `/${segment}/no-deps.tgz`) {
+          return new Response("Not found", { status: 404 });
+        }
+        return new Response(tarball, { headers: { "Content-Type": "application/octet-stream" } });
+      },
+    });
+    const url = `http://localhost:${server.port}/${segment}/no-deps.tgz`;
+
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore: true },
+      files: { "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);` },
+    });
+    await write(packageJson, JSON.stringify({ name: "test-long-tarball-url", dependencies: { "no-deps": url } }));
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = storeEntryName("no-deps", url.replaceAll(/[/:]/g, "+"));
+    expect(entry).toMatch(/^no-deps@http\+\+\+localhost\+\d+\+t+\+[0-9a-f]{16}$/);
+    expect(await storeEntries(packageDir)).toEqual([entry]);
+
+    const localEntry = join(packageDir, "node_modules", ".bun", entry);
+    expect(lstatSync(localEntry).isSymbolicLink()).toBe(true);
+    expect(entryStoreName(readlinkSync(localEntry))).toMatch(
+      new RegExp(`^${entry.replaceAll("+", "\\+")}-[0-9a-f]{16}$`),
+    );
+
+    await using proc = spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("1.0.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // The reported case: a git dependency's resolution is its repository URL
+  // (here: a path inside the temp directory) plus the commit, and the entry is
+  // the cwd its lifecycle scripts are spawned with.
+  test.skipIf(!gitExecutable)("a trusted git dependency with a long URL runs its lifecycle scripts", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const repoDir = join(packageDir, Buffer.alloc(60, "r").toString());
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: join(packageDir, "gitconfig"),
+      GIT_AUTHOR_NAME: "bun-test",
+      GIT_AUTHOR_EMAIL: "test@bun.sh",
+      GIT_COMMITTER_NAME: "bun-test",
+      GIT_COMMITTER_EMAIL: "test@bun.sh",
+    };
+    async function git(...args: string[]): Promise<string> {
+      await using proc = spawn({
+        cmd: [gitExecutable!, ...args],
+        cwd: repoDir,
+        env: gitEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("fatal:");
+      expect(exitCode).toBe(0);
+      return out;
+    }
+
+    await Promise.all([
+      write(join(packageDir, "gitconfig"), ""),
+      write(
+        join(repoDir, "package.json"),
+        JSON.stringify({
+          name: "git-dep",
+          version: "1.0.0",
+          scripts: { postinstall: `${bunExe()} -e "require('fs').writeFileSync('postinstall-ran.txt', 'ran')"` },
+        }),
+      ),
+    ]);
+    await git("init", "-q");
+    await git("add", "package.json");
+    await git("commit", "-qm", "init", "--no-gpg-sign");
+    const sha = (await git("rev-parse", "HEAD")).trim();
+
+    const repoUrl = pathToFileURL(repoDir).href;
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-long-git-url",
+        dependencies: { "git-dep": `git+${repoUrl}` },
+        trustedDependencies: ["git-dep"],
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const entry = storeEntryName("git-dep", `git+${repoUrl.replaceAll(/[/:]/g, "+")}+${sha}`);
+    expect(entry).toMatch(/^git-dep@git\+file\+\+\+\+.*\+[0-9a-f]{16}$/);
+    expect(await storeEntries(packageDir)).toEqual([entry]);
+    expect(await file(join(packageDir, "node_modules", "git-dep", "postinstall-ran.txt")).text()).toBe("ran");
+  });
 });
 
 describe("global virtual store", () => {

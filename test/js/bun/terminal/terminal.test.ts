@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, isLinux, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -474,16 +474,109 @@ describe("Bun.Terminal", () => {
       expect(terminal.inputFlags).toBe(0);
     });
 
+    test.skipIf(isWindows)("setting flags on a terminal closed while coercing the value is a no-op", () => {
+      const terminal = new Bun.Terminal({});
+
+      terminal.localFlags = {
+        valueOf() {
+          terminal.close();
+          return 0;
+        },
+      } as any;
+
+      expect(terminal.closed).toBe(true);
+    });
+
+    test.skipIf(!isGlibc)("setting flags the PTY refuses to apply throws", async () => {
+      // Linux forces CREAD on for PTYs. glibc's tcsetattr reads the attributes
+      // back and fails with EINVAL when the requested change did not take;
+      // libcs that only issue the ioctl report success, hence the gate.
+      const CREAD = 0x80;
+      await using terminal = new Bun.Terminal({});
+      const original = terminal.controlFlags;
+      expect(original & CREAD).toBe(CREAD);
+
+      let caught: any;
+      try {
+        terminal.controlFlags = original & ~CREAD;
+      } catch (e) {
+        caught = e;
+      }
+
+      expect({ code: caught?.code, syscall: caught?.syscall, controlFlags: terminal.controlFlags }).toEqual({
+        code: "EINVAL",
+        syscall: "ioctl",
+        controlFlags: original,
+      });
+    });
+
+    test.skipIf(isWindows)("setting flags throws when the terminal's fd is not a PTY", async () => {
+      // Portable version of the above: swap the PTY master fd out for
+      // /dev/null (ENOTTY) behind the terminal's back. openpty() hands out
+      // the lowest free fd, so the master lands on the fd number the probe
+      // just freed.
+      const script = `
+        const fs = require("node:fs");
+        // The first terminal may open unrelated fds on the side (openpty is
+        // loaded lazily); construct one up front so the probe below sees a
+        // settled fd table.
+        new Bun.Terminal({}).close();
+        const probe = fs.openSync("/dev/null", "r");
+        fs.closeSync(probe);
+
+        const terminal = new Bun.Terminal({});
+        const flags = terminal.localFlags;
+        fs.closeSync(probe);
+        const replacement = fs.openSync("/dev/null", "r");
+
+        let thrown = null;
+        try {
+          terminal.localFlags = flags;
+        } catch (e) {
+          thrown = { code: e.code, syscall: e.syscall };
+        }
+        console.log(JSON.stringify({
+          swapped: replacement === probe,
+          hadFlagsBeforeSwap: flags !== 0,
+          flagsAfterSwap: terminal.localFlags,
+          closed: terminal.closed,
+          thrown,
+        }));
+        terminal.close();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        swapped: true,
+        hadFlagsBeforeSwap: true,
+        flagsAfterSwap: 0,
+        closed: false,
+        thrown: { code: "ENOTTY", syscall: "ioctl" },
+      });
+      expect(exitCode).toBe(0);
+    });
+
     test.skipIf(isWindows)("NaN clamps to tcflag_t max, same as Infinity", async () => {
       // Assigning NaN must clamp to the same value as Infinity (tcflag_t::MAX),
       // matching the reference `@max(0, @min(num, max))` semantics. The kernel
       // may mask some bits per field, so compare NaN against Infinity rather
-      // than a hard-coded constant.
+      // than a hard-coded constant. Both assignments start from the original
+      // flags: re-requesting the already-masked bits asks the PTY for a change
+      // it refuses, which glibc's tcsetattr reports as EINVAL.
       await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
 
       for (const prop of ["inputFlags", "outputFlags", "localFlags", "controlFlags"] as const) {
+        const original = terminal[prop];
         terminal[prop] = Infinity;
         const fromInfinity = terminal[prop];
+        terminal[prop] = original;
         terminal[prop] = NaN;
         const fromNaN = terminal[prop];
         expect({ prop, fromNaN }).toEqual({ prop, fromNaN: fromInfinity });

@@ -780,9 +780,16 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
         changes.push(change);
     }
 
-    print_summary(left, right, &changes, style);
+    if style.pretty {
+        prettyln!("");
+    }
+    print_header(left, right, style);
     if changes.is_empty() {
+        prettyln!("<d>No differences ({} files)<r>", left.files.len());
         return false;
+    }
+    if !style.pretty || flags.name_only || flags.stat {
+        prettyln!("");
     }
 
     let path_width = changes
@@ -880,6 +887,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
         ));
         Output::print(format_args!("{}", BStr::new(&c.hunks)));
     }
+    print_summary(left, right, &changes, style);
     true
 }
 
@@ -892,6 +900,25 @@ impl core::fmt::Display for PathLabel<'_> {
 
 /// The header everyone reads first: which versions, how much changed, and the changes worth a second look
 /// (install scripts, binaries, dependency and entry-point changes in package.json).
+fn print_header(left: &Tree, right: &Tree, style: Style) {
+    // `react 18.2.0 → 19.0.0` when both sides are the same package, the two labels otherwise.
+    match (split_label(&left.label), split_label(&right.label)) {
+        (Some((ln, lv)), Some((rn, rv))) if style.pretty && ln == rn => prettyln!(
+            "<b>{}<r> <red>{}<r> <d>→<r> <green>{}<r>",
+            BStr::new(ln),
+            BStr::new(lv),
+            BStr::new(rv)
+        ),
+        _ => prettyln!(
+            "<b>{}<r> <d>→<r> <b>{}<r>",
+            BStr::new(&left.label),
+            BStr::new(&right.label)
+        ),
+    }
+}
+
+/// Printed after the hunks: the end of the output is what is left on screen, so the totals and the changes worth
+/// a second look (install scripts, new imports of consequential builtins, binaries, …) go there.
 fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: Style) {
     let (mut files_added, mut files_removed, mut files_changed, mut lines_added, mut lines_removed) =
         (0usize, 0usize, 0usize, 0usize, 0usize);
@@ -904,22 +931,8 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
         lines_added += c.added;
         lines_removed += c.removed;
     }
-    // `react 18.2.0 → 19.0.0` when both sides are the same package, the two labels otherwise.
-    match (split_label(&left.label), split_label(&right.label)) {
-        (Some((ln, lv)), Some((rn, rv))) if style.pretty && ln == rn => prettyln!(
-            "{}<b>{}<r> <red>{}<r> <d>→<r> <green>{}<r>",
-            if style.pretty { "\n" } else { "" },
-            BStr::new(ln),
-            BStr::new(lv),
-            BStr::new(rv)
-        ),
-        _ => prettyln!(
-            "{}<b>{}<r> <d>→<r> <b>{}<r>",
-            if style.pretty { "\n" } else { "" },
-            BStr::new(&left.label),
-            BStr::new(&right.label)
-        ),
-    }
+    prettyln!("");
+    print_header(left, right, style);
     if changes.is_empty() {
         prettyln!("<d>No differences ({} files)<r>", left.files.len());
         return;
@@ -987,15 +1000,11 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
         }
     }
     if !notes.is_empty() {
-        prettyln!("");
         let mark = if style.pretty { "▲" } else { "!" };
         for n in &notes {
             #[allow(clippy::disallowed_methods)]
             Output::pretty(format_args!("  <yellow>{}<r> {}\n", mark, n));
         }
-    }
-    if !style.pretty {
-        prettyln!("");
     }
 }
 

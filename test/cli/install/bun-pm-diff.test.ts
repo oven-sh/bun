@@ -90,12 +90,6 @@ describe("bun pm diff", () => {
     expect(stderr).toBe("");
     expect(stdout).toMatchInlineSnapshot(`
 "diffme@1.0.0 → diffme@2.0.0
-3 files changed, 2 added, 1 removed  (+10 -6 lines)
-
-  ! postinstall script added: node setup.js
-  ! dependencies added: left-pad@^1.3.0
-  ! main changed: index.js → dist/index.js
-  ! new binary file logo.bin (6 bytes)
 
 diff --bun a/README.md b/README.md
 --- a/README.md
@@ -151,6 +145,13 @@ new file
 +++ b/setup.js
 @@ -0,0 +1,1 @@
 +console.log('hi')
+
+diffme@1.0.0 → diffme@2.0.0
+3 files changed, 2 added, 1 removed  (+10 -6 lines)
+  ! postinstall script added: node setup.js
+  ! dependencies added: left-pad@^1.3.0
+  ! main changed: index.js → dist/index.js
+  ! new binary file logo.bin (6 bytes)
 "
 `);
     expect(exitCode).toBe(0);

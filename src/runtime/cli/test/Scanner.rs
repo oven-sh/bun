@@ -7,7 +7,7 @@ use bun_bundler::options::BundleOptions;
 use bun_core::ZStr;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
@@ -117,8 +117,8 @@ impl<'a> Scanner<'a> {
         top_level_dir: &'static [u8],
         parts: &[&[u8]],
         buf: &'b mut [u8],
-    ) -> &'b [u8] {
-        join_abs_string_buf::<platform::Loose>(top_level_dir, buf, parts)
+    ) -> Option<&'b [u8]> {
+        join_abs_string_buf_checked::<platform::Loose>(top_level_dir, buf, parts)
     }
 
     /// Take the list of test files out of this scanner. Caller owns the returned
@@ -130,7 +130,12 @@ impl<'a> Scanner<'a> {
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
-        let path: &[u8] = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf);
+        // `path_literal` is user-controlled and may exceed the fixed-size
+        // buffer; treat an over-long path as a filter that matches nothing
+        // instead of panicking (issues/35728).
+        let Some(path): Option<&[u8]> = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf) else {
+            return Err(ScanError::DoesNotExist);
+        };
 
         let root = self
             .read_dir_with_name(path, None)
@@ -385,7 +390,7 @@ impl<'a> Scanner<'a> {
                         &parts,
                         &mut self.open_dir_buf,
                     )
-                    .len();
+                    .map_or(0, |p| p.len());
                     let dir_path = &self.open_dir_buf[..dir_path_len];
                     if self.matches_path_ignore_pattern(dir_path) {
                         return;
@@ -417,9 +422,14 @@ impl<'a> Scanner<'a> {
                 // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
-                let path_len =
-                    Self::abs_buf_projected(self.top_level_dir(), &parts, &mut self.open_dir_buf)
-                        .len();
+                let Some(path_len) = Self::abs_buf_projected(
+                    self.top_level_dir(),
+                    &parts,
+                    &mut self.open_dir_buf,
+                )
+                .map(|p| p.len()) else {
+                    return;
+                };
                 let path = &self.open_dir_buf[..path_len];
 
                 if !self.does_absolute_path_match_filter(path) {

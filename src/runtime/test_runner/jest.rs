@@ -560,18 +560,9 @@ pub(crate) fn js_node_test_mark_result(
     let bound = match dcb_ref {
         Some(refdata) => refdata.phase.clone(),
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
-        // drain before it stamps the DoneCallback. `get_current_state_data()`
-        // can't name a sequence inside a concurrent group, but
-        // `on_stack_entry_data` holds exactly the `cfg_data` that
-        // `run_test_callback` was invoked with (set/restored around it), so
-        // the mark lands on the right sequence under --concurrent too.
-        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
-            Some(entry_data) => bun_test::RefDataValue::Execution {
-                group_index: buntest.execution.group_index,
-                entry_data: Some(entry_data),
-            },
-            None => buntest.get_current_state_data(),
-        },
+        // drain before it stamps the DoneCallback, so the entry on the stack
+        // is the one being marked (under --concurrent too).
+        None if !dcb_called => buntest.get_on_stack_or_current_state_data(),
         // done() already ran and reported — nothing left to mark.
         None => return Ok(JSValue::UNDEFINED),
     };
@@ -603,8 +594,9 @@ pub(crate) mod on_unhandled_rejection {
             // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-            // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
-            let mut current_state_data = buntest.get_current_state_data();
+            // mark unhandled errors as belonging to the currently active test. note that this can be misleading,
+            // except while a callback is still on the stack: that entry is the one at fault, also in a concurrent group.
+            let mut current_state_data = buntest.get_on_stack_or_current_state_data();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)

@@ -729,6 +729,23 @@ impl BunTest {
         }
     }
 
+    /// `get_current_state_data()`, except that while `run_test_callback` has an entry's
+    /// callback on the stack (including its microtask drain) the result names that entry
+    /// even inside a concurrent group, where `get_current_state_data()` cannot tell the
+    /// in-flight sequences apart. Only for attributing something that happens right now
+    /// (an uncaught error, node:test's runtime `t.skip()`): once the callback has returned,
+    /// a concurrent test is ambiguous again, so anything stored for later (`expect()`,
+    /// snapshots, hooks added from a test) keeps using `get_current_state_data()`.
+    pub(crate) fn get_on_stack_or_current_state_data(&self) -> RefDataValue {
+        match self.execution.on_stack_entry_data.get() {
+            Some(entry_data) => RefDataValue::Execution {
+                group_index: self.execution.group_index,
+                entry_data: Some(entry_data),
+            },
+            None => self.get_current_state_data(),
+        }
+    }
+
     pub fn ref_(this_strong: &BunTestPtr, phase: RefDataValue) -> RefDataPtr {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "ref: {}", phase);

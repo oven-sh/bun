@@ -347,6 +347,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     triple,
     "--profile",
     profile.name,
+    "--locked",
   ];
   if (tier3 || cfg.release || cfg.asan) {
     // Build std/core/alloc from source instead of linking the rustup prebuilt.
@@ -760,6 +761,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       triple,
       "--profile",
       "shim",
+      "--locked",
       "-Zbuild-std=core,compiler_builtins",
       "-Zbuild-std-features=compiler-builtins-mem",
     ];

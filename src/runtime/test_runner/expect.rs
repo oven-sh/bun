@@ -175,6 +175,56 @@ impl Flags {
     }
 }
 
+/// Why a snapshot cannot be named after the test an `expect()` was created in.
+#[derive(Clone, Copy)]
+enum SnapshotContextError {
+    TestFinished,
+    ConcurrentGroup,
+    NoTest,
+}
+
+impl SnapshotContextError {
+    /// Judged from the runner state `expect()` captured: once that state no longer resolves to
+    /// a running entry, a captured entry means its test has finished, a concurrent group never
+    /// captures an entry, and the other phases have no test at all.
+    fn from_phase(phase: &bun_test::RefDataValue) -> Self {
+        match phase {
+            bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => Self::TestFinished,
+            bun_test::RefDataValue::Execution { entry_data: None, .. } => Self::ConcurrentGroup,
+            bun_test::RefDataValue::Start
+            | bun_test::RefDataValue::Collection { .. }
+            | bun_test::RefDataValue::Done => Self::NoTest,
+        }
+    }
+
+    fn from_error(err: &crate::Error) -> Option<Self> {
+        match err {
+            crate::Error::TestNotActive => Some(Self::TestFinished),
+            crate::Error::SnapshotInConcurrentGroup => Some(Self::ConcurrentGroup),
+            crate::Error::NoTest => Some(Self::NoTest),
+            _ => None,
+        }
+    }
+
+    fn message(self) -> &'static str {
+        match self {
+            Self::TestFinished => "Snapshot matchers are not supported after the test has finished executing",
+            Self::ConcurrentGroup => "Snapshot matchers are not supported in concurrent tests",
+            Self::NoTest => "Snapshot matchers cannot be used outside of a test",
+        }
+    }
+}
+
+impl From<SnapshotContextError> for crate::Error {
+    fn from(err: SnapshotContextError) -> Self {
+        match err {
+            SnapshotContextError::TestFinished => Self::TestNotActive,
+            SnapshotContextError::ConcurrentGroup => Self::SnapshotInConcurrentGroup,
+            SnapshotContextError::NoTest => Self::NoTest,
+        }
+    }
+}
+
 impl Expect {
     /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
     #[inline]
@@ -208,6 +258,36 @@ impl Expect {
     pub(crate) fn bun_test(&self) -> Option<bun_test::BunTestPtr> {
         let parent = self.parent.as_ref()?;
         parent.bun_test()
+    }
+
+    /// Only meaningful once `bun_test()` is None: the file this `expect()` was created in has
+    /// finished (or there was none), so the captured state is all that is left to report from.
+    fn snapshot_context_error(&self) -> SnapshotContextError {
+        match self.parent.as_ref() {
+            Some(parent) => SnapshotContextError::from_phase(&parent.phase),
+            None => SnapshotContextError::NoTest,
+        }
+    }
+
+    /// Throws unless the test file this `expect()` was created in is still running. The file
+    /// snapshot matchers call this before looking at their arguments.
+    pub(crate) fn check_snapshot_context(
+        &self,
+        global_this: &JSGlobalObject,
+        matcher_name: &'static str,
+    ) -> JsResult<()> {
+        if self.bun_test().is_some() {
+            return Ok(());
+        }
+        let signature = Self::get_signature(matcher_name, "", false);
+        throw!(
+            self,
+            global_this,
+            signature,
+            "\n\n<b>Matcher error<r>: {}\n",
+            self.snapshot_context_error().message(),
+        )
+        .map(drop)
     }
 
     pub(crate) fn get_signature(
@@ -621,20 +701,10 @@ impl Expect {
 
     pub(crate) fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
-        let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
+        let context_error = || crate::Error::from(SnapshotContextError::from_phase(&parent.phase));
+        let buntest_strong = parent.bun_test().ok_or_else(context_error)?;
         let buntest = buntest_strong.get();
-        let execution_entry = match &parent.phase {
-            // `entry()` only resolves while the captured entry is still the one running.
-            bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => {
-                parent.phase.entry(buntest).ok_or(crate::Error::TestNotActive)?
-            }
-            bun_test::RefDataValue::Execution { entry_data: None, .. } => {
-                return Err(crate::Error::SnapshotInConcurrentGroup);
-            }
-            bun_test::RefDataValue::Start
-            | bun_test::RefDataValue::Collection { .. }
-            | bun_test::RefDataValue::Done => return Err(crate::Error::NoTest),
-        };
+        let execution_entry = parent.phase.entry(buntest).ok_or_else(context_error)?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
@@ -1220,8 +1290,11 @@ impl Expect {
         let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
+                if let Some(reason) = SnapshotContextError::from_error(&err) {
+                    return Err(global_this.throw(format_args!("{}", reason.message())));
+                }
                 let Some(buntest_strong) = this.bun_test() else {
-                    return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
+                    return Err(global_this.throw(format_args!("{}", this.snapshot_context_error().message())));
                 };
                 let buntest = buntest_strong.get();
                 // MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
@@ -1254,15 +1327,6 @@ impl Expect {
                                 bstr::BStr::new(&pretty_value),
                             ))
                         }
-                    }
-                    crate::Error::SnapshotInConcurrentGroup => {
-                        global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests"))
-                    }
-                    crate::Error::TestNotActive => {
-                        global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
-                    }
-                    crate::Error::NoTest => {
-                        global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test"))
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);

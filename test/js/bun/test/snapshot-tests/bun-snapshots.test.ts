@@ -1,5 +1,6 @@
-import { describe, expect, it, test } from "bun:test";
+import { beforeAll, describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 test("it will create a snapshot file if it doesn't exist", () => {
@@ -65,9 +66,9 @@ describe("toMatchSnapshot errors", () => {
   });
 });
 
-// A snapshot's name comes from the test that was running when expect() was called.
-// These cover the cases where that test cannot name a snapshot by the time the matcher runs.
-describe("snapshot matchers on an expect() created outside of a running test", () => {
+// A snapshot is named after the test that was running when expect() was called. These cover
+// the error reported when that test cannot name a snapshot by the time the matcher runs.
+describe("snapshot matchers on an expect() that has no running test", () => {
   const finishedMessage = "Snapshot matchers are not supported after the test has finished executing";
   const outsideTestMessage = "Snapshot matchers cannot be used outside of a test";
   const concurrentMessage = "Snapshot matchers are not supported in concurrent tests";
@@ -85,17 +86,17 @@ describe("snapshot matchers on an expect() created outside of a running test", (
     });
   });
 
-  describe("expect() created in a test that has since finished", () => {
+  describe("expect() created in a beforeAll that has since finished", () => {
     let value: ReturnType<typeof expect>;
     let thrower: ReturnType<typeof expect>;
     let inline: ReturnType<typeof expect>;
 
-    it("creates the expect() objects", () => {
-      value = expect({ created: "in the previous test" });
+    beforeAll(() => {
+      value = expect({ created: "in beforeAll" });
       thrower = expect(() => {
-        throw new Error("created in the previous test");
+        throw new Error("created in beforeAll");
       });
-      inline = expect("created in the previous test");
+      inline = expect("created in beforeAll");
     });
 
     it("toMatchSnapshot throws the finished-test error", () => {
@@ -108,7 +109,7 @@ describe("snapshot matchers on an expect() created outside of a running test", (
     });
 
     it("inline snapshots are keyed by source location and still work", () => {
-      inline.toMatchInlineSnapshot(`"created in the previous test"`);
+      inline.toMatchInlineSnapshot(`"created in beforeAll"`);
     });
   });
 
@@ -120,7 +121,7 @@ describe("snapshot matchers on an expect() created outside of a running test", (
     }
   });
 
-  it("expect() created in a test that timed out throws the finished-test error and writes nothing", async () => {
+  it.concurrent("expect() from a timed out test throws the finished-test error and writes nothing", async () => {
     using dir = tempDir("snapshot-after-timeout", {
       "timeout.test.ts": `
         import { expect, test } from "bun:test";
@@ -158,9 +159,10 @@ describe("snapshot matchers on an expect() created outside of a running test", (
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(normalizeBunSnapshot(stdout)).toBe(
-      `bun test <version> (<revision>)\nlate toMatchSnapshot: ${finishedMessage}`,
-    );
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun test <version> (<revision>)
+      late toMatchSnapshot: Snapshot matchers are not supported after the test has finished executing"
+    `);
     expect(stderr).toContain("this test timed out after 1ms");
     expect(stderr).toContain("(pass) next");
     expect(stderr).toContain("snapshots: +1 added");
@@ -168,5 +170,70 @@ describe("snapshot matchers on an expect() created outside of a running test", (
       '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`next 1`] = `\n{\n  "from": "next",\n}\n`;\n',
     );
     expect(exitCode).toBe(1);
+  });
+
+  it.concurrent("expect() created in a test file that has finished throws the finished-test error", async () => {
+    using dir = tempDir("snapshot-after-file", {
+      "shared.ts": `
+        import type { expect } from "bun:test";
+        export const captured: { value?: ReturnType<typeof expect>; thrower?: ReturnType<typeof expect> } = {};
+      `,
+      "1-create.test.ts": `
+        import { expect, test } from "bun:test";
+        import { captured } from "./shared";
+
+        test("creates", () => {
+          captured.value = expect({ from: "1-create" });
+          captured.thrower = expect(() => {
+            throw new Error("from 1-create");
+          });
+        });
+      `,
+      "2-use.test.ts": `
+        import { expect, test } from "bun:test";
+        import { captured } from "./shared";
+
+        test("uses", () => {
+          for (const [name, matcher] of [
+            ["toMatchSnapshot", () => captured.value!.toMatchSnapshot()],
+            ["toThrowErrorMatchingSnapshot", () => captured.thrower!.toThrowErrorMatchingSnapshot()],
+          ] as const) {
+            try {
+              matcher();
+              console.log(name + ": did not throw");
+            } catch (error) {
+              console.log(name + ": " + (error as Error).message);
+            }
+          }
+          expect({ from: "2-use" }).toMatchSnapshot();
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./1-create.test.ts", "./2-use.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun test <version> (<revision>)
+      toMatchSnapshot: expect(received).toMatchSnapshot()
+
+      Matcher error: Snapshot matchers are not supported after the test has finished executing
+
+      toThrowErrorMatchingSnapshot: expect(received).toThrowErrorMatchingSnapshot()
+
+      Matcher error: Snapshot matchers are not supported after the test has finished executing"
+    `);
+    expect(stderr).toContain("snapshots: +1 added");
+    expect(readdirSync(join(String(dir), "__snapshots__"))).toEqual(["2-use.test.ts.snap"]);
+    expect(await Bun.file(join(String(dir), "__snapshots__", "2-use.test.ts.snap")).text()).toBe(
+      '// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n\nexports[`uses 1`] = `\n{\n  "from": "2-use",\n}\n`;\n',
+    );
+    expect(exitCode).toBe(0);
   });
 });

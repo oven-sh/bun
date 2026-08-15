@@ -375,6 +375,23 @@ impl<'a> Installer<'a> {
                     ),
                 );
             }
+            TaskError::DependencyBinaries(dep_errs) => {
+                for dep_err in dep_errs.iter() {
+                    let dep_node_id = entry_node_ids[dep_err.dep_entry_id.get() as usize];
+                    let dep_pkg_id = node_pkg_ids[dep_node_id.get() as usize];
+                    Output::err(
+                        dep_err.err,
+                        "failed to link binaries of dependency {}@{} for package: {}@{}",
+                        (
+                            bstr::BStr::new(pkg_names[dep_pkg_id as usize].slice(string_buf)),
+                            pkg_resolutions[dep_pkg_id as usize]
+                                .fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                            bstr::BStr::new(pkg_name.slice(string_buf)),
+                            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        ),
+                    );
+                }
+            }
             TaskError::Download(dl) => {
                 Output::err_generic(
                     "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
@@ -684,11 +701,24 @@ pub struct DownloadError {
     pub(crate) url: Box<[u8]>,
 }
 
+/// One dependency whose bins could not be linked into the failing entry's
+/// `node_modules/.bin`.
+#[derive(Clone, Copy)]
+pub struct DependencyBinariesError {
+    pub(crate) dep_entry_id: StoreEntryId,
+    pub(crate) err: crate::Error,
+}
+
 pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
     RunScripts(crate::Error),
+    /// The entry's own bins (`Step::Binaries`).
     Binaries(crate::Error),
+    /// Bins of the entry's dependencies (`Step::SymlinkDependencyBinaries`).
+    /// Every dependency is attempted before the step fails, so this holds
+    /// one error per dependency that failed; never empty.
+    DependencyBinaries(Box<[DependencyBinariesError]>),
     Patching(Log),
     Download(DownloadError),
 }
@@ -699,6 +729,7 @@ impl TaskError {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
             TaskError::Binaries(err) => TaskError::Binaries(*err),
+            TaskError::DependencyBinaries(errs) => TaskError::DependencyBinaries(errs.clone()),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
             TaskError::Patching(_log) => {
                 // `bun_ast::Log` is non-Clone; the only caller of
@@ -1555,7 +1586,7 @@ impl Task {
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
-                        return Ok(Yield::failure(TaskError::Binaries(err)));
+                        return Ok(Yield::failure(err));
                     }
 
                     match pkg_res.tag {
@@ -2304,7 +2335,13 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
+    /// Links the bins of every dependency of `parent_entry_id` into its
+    /// `node_modules/.bin`. A dependency that fails does not stop the rest from
+    /// being linked; the failures are returned together afterwards.
+    pub(crate) fn link_dependency_bins(
+        &self,
+        parent_entry_id: StoreEntryId,
+    ) -> core::result::Result<(), TaskError> {
         let lockfile = self.lockfile();
         let store = self.store;
 
@@ -2331,6 +2368,7 @@ impl<'a> Installer<'a> {
         let mut link_rel_buf = paths::path_buffer_pool::get();
 
         let mut seen: StringHashMap<()> = StringHashMap::default();
+        let mut failed: Vec<DependencyBinariesError> = Vec::new();
 
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
         self.append_real_store_node_modules_path(
@@ -2427,11 +2465,17 @@ impl<'a> Installer<'a> {
             }
 
             if let Some(err) = bin_linker.err {
-                return Err(err);
+                failed.push(DependencyBinariesError {
+                    dep_entry_id: dep.entry_id,
+                    err,
+                });
             }
         }
 
-        Ok(())
+        if failed.is_empty() {
+            return Ok(());
+        }
+        Err(TaskError::DependencyBinaries(failed.into_boxed_slice()))
     }
 
     /// True when this entry should live in the shared global virtual store

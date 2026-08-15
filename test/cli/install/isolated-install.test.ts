@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { dirname, join } from "path";
 
@@ -365,6 +365,77 @@ test("can install folder dependencies on root package", async () => {
     join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
     await file(packageJson).json(),
   ]);
+});
+
+test("a dependency whose bins fail to link does not stop its siblings' bins from being linked", async () => {
+  // `directories.bin` names a file, so opening it as a directory fails with
+  // ENOTDIR (a missing directory would be skipped silently).
+  const badBinDir = (name: string) => JSON.stringify({ name, version: "1.0.0", directories: { bin: "package.json" } });
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "test-pkg-bin-link-errors",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "a-bin": "file:./deps/a-bin",
+          "bad-bin-dir-1": "file:./deps/bad-bin-dir-1",
+          "bad-bin-dir-2": "file:./deps/bad-bin-dir-2",
+          "z-bin": "file:./deps/z-bin",
+        },
+      }),
+      "packages/ws/package.json": JSON.stringify({
+        name: "ws",
+        dependencies: {
+          "bad-bin-dir-1": "file:../../deps/bad-bin-dir-1",
+          "z-bin": "file:../../deps/z-bin",
+        },
+      }),
+      "deps/a-bin/package.json": JSON.stringify({ name: "a-bin", version: "1.0.0", bin: { "a-cli": "cli.js" } }),
+      "deps/a-bin/cli.js": "#!/usr/bin/env node\nconsole.log('a');\n",
+      "deps/z-bin/package.json": JSON.stringify({ name: "z-bin", version: "1.0.0", bin: { "z-cli": "cli.js" } }),
+      "deps/z-bin/cli.js": "#!/usr/bin/env node\nconsole.log('z');\n",
+      "deps/bad-bin-dir-1/package.json": badBinDir("bad-bin-dir-1"),
+      "deps/bad-bin-dir-2/package.json": badBinDir("bad-bin-dir-2"),
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  const linkedBin = (dir: string, name: string) =>
+    existsSync(join(dir, "node_modules", ".bin", isWindows ? `${name}.bunx` : name));
+  expect({
+    "root a-cli": linkedBin(packageDir, "a-cli"),
+    "root z-cli": linkedBin(packageDir, "z-cli"),
+    "ws z-cli": linkedBin(join(packageDir, "packages", "ws"), "z-cli"),
+  }).toEqual({
+    "root a-cli": true,
+    "root z-cli": true,
+    "ws z-cli": true,
+  });
+
+  // Every failing dependency is reported, attributed to the package whose
+  // `.bin` it could not be linked into. Tasks run in parallel, so sort.
+  const binErrors = stderr
+    .split("\n")
+    .filter(line => line.includes("failed to link binaries"))
+    .map(line => line.replaceAll("\\", "/"))
+    .sort();
+  expect(binErrors).toEqual([
+    "ENOTDIR: failed to link binaries for package: bad-bin-dir-1@deps/bad-bin-dir-1",
+    "ENOTDIR: failed to link binaries for package: bad-bin-dir-2@deps/bad-bin-dir-2",
+    "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: test-pkg-bin-link-errors@",
+    "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: ws@workspace:packages/ws",
+    "ENOTDIR: failed to link binaries of dependency bad-bin-dir-2@deps/bad-bin-dir-2 for package: test-pkg-bin-link-errors@",
+  ]);
+  expect(exitCode).toBe(1);
 });
 
 describe("isolated workspaces", () => {

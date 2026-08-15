@@ -26,6 +26,7 @@ pub(crate) mod js_bindings {
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
+            ("allocError", __jsc_host_js_alloc_error),
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
             ("trap", __jsc_host_js_trap),
@@ -206,6 +207,15 @@ pub(crate) mod js_bindings {
     fn js_out_of_memory(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
+    }
+
+    /// Fails the way an infallible std allocation (`Vec::push`, `Box::new`,
+    /// ...) fails when the allocator returns null, so tests can check that
+    /// path is reported as out-of-memory rather than as an `abort()` crash.
+    #[bun_jsc::host_fn]
+    fn js_alloc_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        std::alloc::handle_alloc_error(core::alloc::Layout::new::<[u8; 4096]>());
     }
 
     #[bun_jsc::host_fn]

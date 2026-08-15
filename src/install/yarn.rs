@@ -594,11 +594,10 @@ fn bind_importer_dependencies(
 
 #[derive(Clone)]
 struct VersionInfo {
-    version: Vec<u8>,
     // Owned Vec<u8> (rather than a borrow from the input) avoids a second
     // lifetime on the local map.
+    version: Vec<u8>,
     package_id: PackageID,
-    yarn_idx: usize,
 }
 
 pub(crate) fn migrate_yarn_lockfile<'a>(
@@ -741,18 +740,13 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 }
 
                 if !found_existing {
-                    list.push(VersionInfo {
-                        yarn_idx: existing.yarn_idx,
-                        version: existing.version.clone(),
-                        package_id: existing.package_id,
-                    });
+                    list.push(existing);
                 }
 
                 if !found_new {
                     let package_id = next_package_id;
                     next_package_id += 1;
                     list.push(VersionInfo {
-                        yarn_idx,
                         version: version.to_vec(),
                         package_id,
                     });
@@ -779,7 +773,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 VersionInfo {
                     version: version.to_vec(),
                     package_id,
-                    yarn_idx,
                 },
             )?;
         }

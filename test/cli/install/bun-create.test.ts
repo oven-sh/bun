@@ -570,6 +570,33 @@ describe.concurrent("bun-create tasks", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A bare command is looked up the way a spawn would look it up: only on
+  // $PATH on POSIX, while Windows (CreateProcess order) checks the working
+  // directory, here the destination, first.
+  const localTaskTemplate = {
+    template: { name: "tmpl", "bun-create": { postinstall: "local-task first" } },
+    files: { "local-task": taskStubs["bin/create-task"], "local-task.cmd": taskStubs["bin/create-task.cmd"] },
+    executable: ["local-task"],
+  };
+
+  it.skipIf(isWindows)("does not look for a bare command in the destination on POSIX", async () => {
+    const { template, files, executable } = localTaskTemplate;
+    const { err, exitCode, ran } = await createFromTemplate("create-task-local-posix", template, files, executable);
+
+    expect(err).toContain('error: Failed to run "local-task first": executable not found in $PATH: "local-task"');
+    expect(ran).toEqual({});
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isWindows)("finds a bare command in the destination on Windows", async () => {
+    const { template, files, executable } = localTaskTemplate;
+    const { err, exitCode, ran } = await createFromTemplate("create-task-local-windows", template, files, executable);
+
+    expect(err).not.toContain("error:");
+    expect(ran).toEqual({ "task-ran.txt": "first" });
+    expect(exitCode).toBe(0);
+  });
+
   it("runs a command through `bun run` when the template has dependencies", async () => {
     const { out, err, exitCode, ran } = await createFromTemplate(
       "create-task-deps",

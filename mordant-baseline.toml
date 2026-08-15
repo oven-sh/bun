@@ -76,7 +76,6 @@
 "bare_bool_args:src/shell_parser/parse.rs" = 1
 
 [bun_sql_jsc]
-"bare_bool_args:src/sql_jsc/shared/datetime_text.rs" = 1
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4

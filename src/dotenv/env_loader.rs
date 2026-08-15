@@ -79,10 +79,20 @@ impl DirEntryProbe for DirEntryKeys {
 pub enum DotEnvBehavior {
     #[default]
     _none = 0,
+    /// The default when no `env` option is given: `.env` files are not loaded and no
+    /// environment variable is inlined, but the bundler still defines
+    /// `process.env.NODE_ENV` / `process.env.BUN_ENV` from the build-time NODE_ENV.
     disable = 1,
     prefix = 2,
     load_all = 3,
+    /// `.env` files are loaded (so the process sees them) but nothing is inlined,
+    /// not even the implicit NODE_ENV defines. Used at runtime and by
+    /// `bun build --env disable`.
     load_all_without_inlining = 4,
+    /// `disable`, minus the implicit NODE_ENV defines: nothing is loaded and nothing
+    /// is inlined. Used by `Bun.build({ env: "disable" })`, which must not load `.env`
+    /// files into the environment of the process that is running the build.
+    disable_without_inlining = 5,
 }
 
 #[allow(non_upper_case_globals)]
@@ -94,8 +104,12 @@ impl DotEnvBehavior {
     pub const Prefix: Self = Self::prefix;
     pub const LoadAll: Self = Self::load_all;
     pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
+    pub const DisableWithoutInlining: Self = Self::disable_without_inlining;
 
-    /// String-branch classifier for bunfig `serve.env`.
+    /// String-branch classifier shared by bunfig (serve.env) and
+    /// JSBundler (Bun.build env). Only the *string* arm is common to
+    /// both specs — the surrounding null/bool/number dispatch and the error
+    /// reporting intentionally diverge per call site, so they stay inline there.
     ///
     /// Returns `Ok((behavior, prefix))` where `prefix` is `Some(&s[..idx])` only for
     /// `DotEnvBehavior::prefix`; `Err(())` means the string is none of

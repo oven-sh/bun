@@ -248,6 +248,8 @@ describe("net.createServer listen", () => {
     const server: Server = createServer();
     let accepted = 0;
     server.on("connection", () => accepted++);
+    const { promise: closed, resolve: onClosed, reject } = Promise.withResolvers<void>();
+    server.on("error", reject);
     server.listen(0, "127.0.0.1");
 
     // Bun.connect() issues connect(2) synchronously, so the peer is already
@@ -263,7 +265,6 @@ describe("net.createServer listen", () => {
       },
     }).catch(() => null);
 
-    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
     server.once("listening", () => {
       server.close(() => onClosed());
       peer.then(socket => socket?.end());
@@ -271,6 +272,42 @@ describe("net.createServer listen", () => {
 
     await closed;
     expect(accepted).toBe(0);
+  });
+
+  // Node's server.close() completes the handle's uv_close() on the next loop
+  // turn, so a server listened and closed from a 'beforeExit' handler brings
+  // the loop back to life once more and 'beforeExit' fires again
+  // (upstream test-process-beforeexit). 'listening' itself is only a nextTick
+  // now, so close() has to hold the loop for that turn on its own.
+  it("closing a server listened from 'beforeExit' re-emits 'beforeExit'", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          process.once("beforeExit", () => {
+            net
+              .createServer()
+              .listen(0)
+              .on("listening", function () {
+                this.close();
+                process.once("beforeExit", () => console.log("beforeExit again"));
+              });
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr only matters on failure: debug builds may print benign warnings.
+    expect({ stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+      stdout: "beforeExit again\n",
+      exitCode: 0,
+      failureDetail: "",
+    });
   });
 });
 

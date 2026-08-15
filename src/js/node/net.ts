@@ -3573,6 +3573,12 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
+      // stop() closes the listening socket synchronously. In Node the handle's
+      // uv_close() completes on the next loop turn, so the loop counts as alive
+      // until then; this is what re-emits 'beforeExit' after a server is closed
+      // from a 'beforeExit' chain (test-process-beforeexit). Hold the loop for
+      // that one turn the same way closeSocketHandle does for sockets.
+      setImmediate(noop);
       // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
       const clusterHandle = this[kClusterHandle];
       if (clusterHandle) {

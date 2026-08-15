@@ -127,6 +127,42 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(exitCode).toBe(1);
 });
 
+test(
+  "--parallel: a test closing the IPC fd fails that file and the run continues",
+  async () => {
+    // fd 3 is the worker's IPC channel. Closing it (fd-hygiene code, "close
+    // every fd >= 3" helpers) kills the channel from under both sides: the
+    // worker can't notice (the fd left its poll set) and used to spin
+    // forever while the coordinator waited for an exit that never came.
+    // The coordinator must treat EOF from a still-running worker as a lost
+    // worker: kill it, fail the file, keep going.
+    using dir = tempDir("parallel-fd3-close", {
+      "fd3.test.js": `import {test} from "bun:test"; import {closeSync} from "node:fs"; test("close fd 3", () => { closeSync(3); }); test("after", async () => { await Bun.sleep(200); });`,
+      "ok1.test.js": `import {test,expect} from "bun:test"; test("ok1",()=>expect(1).toBe(1));`,
+      "ok2.test.js": `import {test,expect} from "bun:test"; test("ok2",()=>expect(1).toBe(1));`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--parallel=2"],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("PARALLEL");
+    expect(stderr).toContain("fd3.test.js");
+    expect(stderr).toContain("worker crashed");
+    // a lost channel is a per-file failure, not a run-aborting panic
+    expect(stderr).not.toContain("Aborting");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("1 fail");
+    expect(stderr).toContain("Ran 3 tests across 3 files.");
+    expect(exitCode).toBe(1);
+  },
+  isASAN || isDebug ? 60_000 : 20_000,
+);
+
 // Concurrency is proven deterministically by the lazy-spawn PID-count tests
 // below; the timing-based "faster than serial" assertion was load-sensitive
 // and removed.

@@ -29,6 +29,12 @@ pub enum Kind {
     /// str lcov — this worker's coverage data, sent at exit; the coordinator
     /// merges every worker's into the one report it writes.
     CoverageChunk,
+    /// (empty) worker → coordinator: deliberate exit in progress. VM teardown
+    /// closes the channel before `_exit` (long before it under
+    /// BUN_DESTRUCT_VM_ON_EXIT), so EOF after this frame means the exit
+    /// status is on the way, while EOF without it means the worker lost its
+    /// channel and must be killed.
+    Exiting,
 }
 
 impl TryFrom<u8> for Kind {
@@ -45,6 +51,7 @@ impl TryFrom<u8> for Kind {
             6 => Kind::Shutdown,
             7 => Kind::JunitChunk,
             8 => Kind::CoverageChunk,
+            9 => Kind::Exiting,
             _ => return Err(()),
         })
     }

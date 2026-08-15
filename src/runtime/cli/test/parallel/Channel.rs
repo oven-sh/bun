@@ -413,20 +413,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
     }
 
-    /// True while the underlying socket/pipe is still open. When `done` is set
-    /// with the transport still attached, it was a protocol error (corrupt
-    /// frame), not a clean close.
-    pub(crate) fn is_attached(&self) -> bool {
-        #[cfg(windows)]
-        {
-            return !self.backend.pipe.get().is_null();
-        }
-        #[cfg(not(windows))]
-        {
-            !self.backend.socket.get().is_detached()
-        }
-    }
-
     /// True while any encoded bytes are still queued or in flight.
     pub(crate) fn has_pending_writes(&self) -> bool {
         if !self.out.get().is_empty() {
@@ -682,9 +668,8 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
         &mut buf[..]
     }
     fn on_error(self_: &Channel<Owner>, _err: bun_sys::E) {
-        // Mirror the POSIX on_close path: detach the transport before
-        // signalling done so the owner can tell EOF apart from a protocol
-        // error (where the pipe is still attached).
+        // Mirror the POSIX on_close path: detach and destroy the pipe before
+        // signalling done.
         let p = self_.backend.pipe.replace(core::ptr::null_mut());
         if !p.is_null() {
             // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.

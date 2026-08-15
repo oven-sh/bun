@@ -71,11 +71,15 @@ pub struct Worker {
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
     pub(crate) reap_pending: bool,
+    /// Worker sent `Kind::Exiting`: the EOF that follows is its own exit
+    /// path, not a lost channel, so `on_channel_done` must not kill it.
+    pub(crate) exiting: bool,
 }
 
 impl Worker {
     pub(crate) fn start(&mut self) -> crate::Result<()> {
         debug_assert!(!self.alive);
+        self.exiting = false;
         let coord_ptr = self.coord;
         // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
         let coord = unsafe { &*coord_ptr };
@@ -375,12 +379,17 @@ impl ChannelOwner for Worker {
     }
 
     fn on_channel_done(&mut self) {
-        if self.ipc.is_attached() {
-            // Corrupt frame path — kill the worker so onWorkerExit accounts for
-            // the in-flight file and the slot can respawn.
+        // A live worker that didn't announce `Kind::Exiting` is lost with its
+        // channel (corrupt frame, or a test closed fd 3 — which the worker
+        // itself cannot detect): kill it so onWorkerExit accounts for the
+        // in-flight file and the slot can respawn.
+        if !self.exiting {
             if let Some(p) = self.process {
                 // SAFETY: `p` is the live intrusive-refcounted *mut Process.
-                let _ = unsafe { (*p).kill(9) };
+                if unsafe { !(*p).has_exited() } {
+                    // SAFETY: as above.
+                    let _ = unsafe { (*p).kill(9) };
+                }
             }
         }
         // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).

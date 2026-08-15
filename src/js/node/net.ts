@@ -3573,8 +3573,7 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
-      // Node's uv_close() keeps the loop alive one more turn (test-process-beforeexit),
-      // as closeSocketHandle's setImmediate does for sockets.
+      // Node's uv_close() keeps the loop alive for one more turn (test-process-beforeexit); so does this.
       setImmediate(noop);
       // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
       const clusterHandle = this[kClusterHandle];
@@ -3964,9 +3963,7 @@ Server.prototype[kRealListen] = function (
   // Unref the handle if the server was unref'ed prior to listening
   if (this._unref) this.unref();
 
-  // Bun.listen() has already called listen(2). A tick, not a timer, so a close() from
-  // the 'listening' handler runs before the loop accepts anything, as in Node:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2034-L2037
+  // A tick, not a timer, so a close() from 'listening' runs before the loop accepts anything (as in Node).
   process.nextTick(emitListeningNextTick, this);
 };
 

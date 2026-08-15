@@ -1177,10 +1177,8 @@ pub mod package_manifest {
                 if bun_sys::linkat_tmpfile(file.handle, cache_dir, outpath).is_ok() {
                     return Ok(());
                 }
-                // Usually because an entry exists, which linkat() cannot replace. Unlinking
-                // it first is not an option: nothing waits for this task (see `save_async`),
-                // so exiting in between would leave the cache without an entry. Give the
-                // file a temporary name and rename it over the entry below instead.
+                // Rename over the existing entry (below) rather than unlink it first: nothing
+                // waits for this task, so exiting in between would delete the entry.
                 bun_sys::linkat_tmpfile(file.handle, tmpdir, tmp_path)?;
             }
 

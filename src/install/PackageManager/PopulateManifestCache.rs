@@ -280,7 +280,8 @@ pub fn populate_manifest_cache(
             }
         }
         Packages::Exact(ids) => {
-            let needs_extended_manifest = mgr_ref.options.needs_extended_manifest_to_pick_versions();
+            let needs_extended_manifest =
+                mgr_ref.options.needs_extended_manifest_to_pick_versions();
             for &pkg_id in ids {
                 if pkg_resolutions[pkg_id as usize].tag != ResolutionTag::Npm {
                     continue;

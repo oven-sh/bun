@@ -608,9 +608,10 @@ process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
   );
 
   // The child sends a server and disconnects at once. node: process.connected drops immediately, a
-  // second disconnect() errors, and the parent still receives the server (its adoption completes a
-  // loop turn later, which must not lose it) as well as the message queued behind it. Order is not
-  // pinned: bun currently emits the late-adopted handle after 'disconnect', node before it.
+  // second disconnect() errors, and the parent still receives the server and the message queued
+  // behind it, in that order, before 'disconnect'. The parent reports on 'close', which a fork()ed
+  // child only reaches once the IPC channel's 'disconnect' and the stderr pipe's end have both been
+  // delivered; 'exit' can fire before either of them.
   test.concurrent("a handle sent right before the child's disconnect() is still delivered", async () => {
     using dir = tempDir("ipc-handle-then-disconnect", {
       "parent.js": `
@@ -621,7 +622,7 @@ let childReport = '';
 child.stderr.on('data', d => { childReport += d; });
 child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
 child.on('disconnect', () => got.push('disconnect'));
-child.on('exit', code => console.log(JSON.stringify({ got: got.sort(), code, child: JSON.parse(childReport) })));
+child.on('close', code => console.log(JSON.stringify({ got, code, child: JSON.parse(childReport) })));
 `,
       "child.js": `
 const net = require('node:net');
@@ -647,7 +648,7 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
       out: {
-        got: ["after-handle", "disconnect", "handle:srv"],
+        got: ["handle:srv", "after-handle", "disconnect"],
         code: 0,
         child: { connectedAfterDisconnect: false, secondDisconnect: "ERR_IPC_DISCONNECTED" },
       },

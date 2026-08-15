@@ -1592,9 +1592,7 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   }
 }
 
-// Node's fs/promises writeFile and appendFile also accept `data` as an iterable
-// or async iterable of chunks (the sync and callback forms do not). Strings and
-// typed arrays are iterable too, but those take the native path.
+// Strings and typed arrays are iterable too, but those take the native path.
 function isCustomIterable(data): boolean {
   return (
     !$isTypedArrayView(data) &&
@@ -1625,9 +1623,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, def
     throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");
   }
 
-  // Callers unwrap a FileHandle to its fd. Anything else is a path (string,
-  // Buffer or URL) that has to be opened with `flag` and `mode`; fs.open
-  // rejects the values that are none of those.
+  // A FileHandle arrives here as its fd; anything else is a path for fs.open to open or reject.
   const mustClose = typeof fdOrPath !== "number";
   if (mustClose) {
     fdOrPath = await fs.open(fdOrPath, flag, mode);

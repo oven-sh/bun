@@ -84,6 +84,8 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         }),
         "app/node_modules/exports-only/sub.js": "",
         "app/node_modules/no-manifest/index.js": "",
+        "app/node_modules/broken/package.json": '{"name":',
+        "app/node_modules/broken/lib/index.js": "",
         "app/node_modules/loose.js": "",
       });
       const p = (...segments) => path.join(String(dir), ...segments);
@@ -158,6 +160,18 @@ console.log(findPackageJSON(import.meta.resolve("pkg")));`,
         absoluteDirectory: p("app", "package.json"),
         absoluteDirectoryWithSlash: p("app", "nested", "package.json"),
       });
+    });
+
+    // Like Node, this only locates the file; whether it parses is the caller's problem.
+    test("a package.json that does not parse is still found", () => {
+      using fx = fixture();
+      const { p, base } = fx;
+      const broken = p("app", "node_modules", "broken", "package.json");
+      expect({
+        bare: findPackageJSON("broken", base),
+        fileInsideIt: findPackageJSON(p("app", "node_modules", "broken", "lib", "index.js")),
+        directory: findPackageJSON(p("app", "node_modules", "broken")),
+      }).toEqual({ bare: broken, fileInsideIt: broken, directory: broken });
     });
 
     test("the search never crosses a node_modules directory", () => {

@@ -162,8 +162,14 @@ fn find_package_json(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 
     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
     match resolver.find_package_json(source_dir, specifier) {
-        Ok(Some(package_json)) => {
-            jsc::bun_string_jsc::create_utf8_for_js(global, package_json.source.path.text)
+        Ok(Some(package_dir)) => {
+            let dir = package_dir.abs_path;
+            let separator = match dir.last() {
+                Some(&last) if bun_paths::Platform::AUTO.is_separator(last) => "",
+                _ => bun_paths::SEP_STR,
+            };
+            BunString::create_format(format_args!("{}{}package.json", BStr::new(dir), separator))
+                .transfer_to_js(global)
         }
         Ok(None) => Ok(JSValue::UNDEFINED),
         Err(bun_resolver::Error::ModuleNotFound) => {

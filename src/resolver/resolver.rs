@@ -4156,6 +4156,8 @@ impl<'a> Resolver<'a> {
     /// the nearest ancestor's, stopping at a `node_modules` directory since
     /// nothing above one owns the files inside it.
     ///
+    /// Returns the directory holding that `package.json`. The file counts
+    /// whether or not it could be parsed, since callers only want its path.
     /// `Ok(None)` means the package or path exists but no `package.json`
     /// applies to it; [`Error::ModuleNotFound`](crate::Error::ModuleNotFound)
     /// means the specifier does not resolve at all.
@@ -4163,7 +4165,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         source_dir: &[u8],
         specifier: &[u8],
-    ) -> crate::CrateResult<Option<&'static PackageJSON>> {
+    ) -> crate::CrateResult<Option<DirInfoRef>> {
         let mut buf = bun_paths::path_buffer_pool::get();
 
         if !is_package_path(specifier) {
@@ -4192,7 +4194,7 @@ impl<'a> Resolver<'a> {
                     parent
                 }
             };
-            return Ok(Self::closest_package_json(dir_info));
+            return Ok(Self::closest_package_dir(dir_info));
         }
 
         let Some(package_name) =
@@ -4205,9 +4207,11 @@ impl<'a> Resolver<'a> {
         };
 
         // https://nodejs.org/api/packages.html#self-referencing-a-package-using-its-name
-        if let Some(package_json) = Self::closest_package_json(source_dir_info) {
-            if package_json.name.as_ref() == package_name && package_json.exports.is_some() {
-                return Ok(Some(package_json));
+        if let Some(scope) = Self::closest_package_dir(source_dir_info) {
+            if let Some(package_json) = scope.package_json() {
+                if package_json.name.as_ref() == package_name && package_json.exports.is_some() {
+                    return Ok(Some(scope));
+                }
             }
         }
 
@@ -4219,7 +4223,9 @@ impl<'a> Resolver<'a> {
                     &mut buf,
                 ) {
                     if let Some(package_dir_info) = self.dir_info_cached(package_dir)? {
-                        return Ok(package_dir_info.package_json());
+                        return Ok(package_dir_info
+                            .has_package_json_file()
+                            .then_some(package_dir_info));
                     }
                 }
             }
@@ -4230,16 +4236,16 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// The `package.json` in `dir_info` or the nearest ancestor, not crossing a
-    /// `node_modules` directory.
-    fn closest_package_json(dir_info: DirInfoRef) -> Option<&'static PackageJSON> {
+    /// `dir_info` or its nearest ancestor with a `package.json` file, not
+    /// crossing a `node_modules` directory.
+    fn closest_package_dir(dir_info: DirInfoRef) -> Option<DirInfoRef> {
         let mut current = Some(dir_info);
         while let Some(dir_info) = current {
             if dir_info.is_node_modules() {
                 return None;
             }
-            if let Some(package_json) = dir_info.package_json() {
-                return Some(package_json);
+            if dir_info.has_package_json_file() {
+                return Some(dir_info);
             }
             current = dir_info.get_parent();
         }
@@ -6453,6 +6459,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
                 if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
+                    info.flags
+                        .set_present(DirInfo::Flag::HasPackageJsonFile, true);
                     info.package_json = if self.use_package_manager()
                         && !info.has_node_modules()
                         && !info.is_node_modules()

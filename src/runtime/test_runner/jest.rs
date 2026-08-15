@@ -649,7 +649,25 @@ pub(crate) mod on_unhandled_rejection {
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
             .map(|p| unsafe { &mut *p.as_ptr() });
+
+        // No active test: the rejection escaped every test/hook (e.g. a file's
+        // top-level async IIFE). Report it like an uncaught exception between
+        // tests so the file fails instead of being silently swallowed
+        // (issues/34859).
+        if let Some(runner) = Jest::runner() {
+            runner.unhandled_errors_between_tests += 1;
+            bun_core::pretty_errorln!(
+                "<r>\n<b><d>#<r> <red><b>Unhandled error<r><d> between tests<r>\n<d>-------------------------------<r>\n",
+            );
+            Output::flush();
+        }
+
         jsc_vm.run_error_handler(rejection, exception_list);
+
+        if let Some(runner) = Jest::runner() {
+            bun_core::pretty_error!("<r><d>-------------------------------<r>\n\n");
+            Output::flush();
+        }
     }
 }
 

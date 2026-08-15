@@ -4109,9 +4109,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// `quiet` parses into a scratch log, keeping syntax errors and content
-    /// warnings from a referenced project's config out of the resolver Log
-    /// (where they would surface in unrelated resolution errors).
+    /// `quiet` discards the file's parse diagnostics instead of adding them to the resolver log.
     pub(crate) fn parse_tsconfig(
         &mut self,
         file: &[u8],
@@ -4195,34 +4193,24 @@ impl<'a> Resolver<'a> {
             result.base_url_for_paths = Box::from(abs);
         }
 
-        // Make "references" paths and the "files"/"include"/"exclude"
-        // coverage dirs absolute (relative to the declaring config file) so
-        // project selection can compare them against source directories.
-        // Unconditional even for already-absolute entries: ${configDir}
-        // substitution keeps the source dir's trailing slash, and the
-        // resulting double separator would defeat covers_dir's comparison.
-        for reference in result.references.iter_mut() {
+        // Absolute entries too: `${configDir}` leaves a trailing slash `covers_dir` would keep.
+        let absolutize = |path: &mut Box<[u8]>| {
             let abs = self
                 .fs_ref()
-                .abs_buf(&[file_dir, &reference[..]], bufs!(tsconfig_base_url));
-            *reference = Box::from(abs);
-        }
-        for coverage in [result.files_dirs.as_mut(), result.include_dirs.as_mut()]
+                .abs_buf(&[file_dir, &path[..]], bufs!(tsconfig_base_url));
+            *path = Box::from(abs);
+        };
+        result.references.iter_mut().for_each(absolutize);
+        result
+            .exclude_dirs
+            .iter_mut()
+            .flatten()
+            .for_each(absolutize);
+        [result.files_dirs.as_mut(), result.include_dirs.as_mut()]
             .into_iter()
             .flatten()
-            .flat_map(|dirs| dirs.iter_mut())
-        {
-            let abs = self
-                .fs_ref()
-                .abs_buf(&[file_dir, &coverage.dir[..]], bufs!(tsconfig_base_url));
-            coverage.dir = Box::from(abs);
-        }
-        for dir in result.exclude_dirs.iter_mut() {
-            let abs = self
-                .fs_ref()
-                .abs_buf(&[file_dir, &dir[..]], bufs!(tsconfig_base_url));
-            *dir = Box::from(abs);
-        }
+            .flatten()
+            .for_each(|coverage| absolutize(&mut coverage.dir));
 
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
         // ownership — intermediate configs in an extends-chain are dropped via
@@ -4230,9 +4218,6 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
-    /// Chain-walk diagnostics: the resolver Log for direct config loads,
-    /// only the scoped debug logger when `quiet` (referenced projects, where
-    /// log entries would surface in unrelated resolution errors).
     fn log_tsconfig_chain_debug(&mut self, quiet: bool, args: core::fmt::Arguments<'_>) {
         if quiet {
             debuglog!("{}", args);
@@ -4243,14 +4228,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Walks the `extends` chain of an already-parsed tsconfig and merges the
-    /// chain into a single config. Takes ownership of `tsconfig_json` and
-    /// returns the merged config (heap::alloc; the caller interns or frees it).
-    /// An oversized or cyclic chain stops walking and merges what was
-    /// collected rather than failing the directory load.
-    ///
-    /// `quiet` keeps chain-walk failures out of the resolver Log (used for
-    /// referenced projects); see `log_tsconfig_chain_debug`.
+    /// Merges `tsconfig_json`'s `extends` chain into one config, which the caller owns
+    /// (`heap::alloc`). A chain longer than 64 configs (a cycle) is merged as far as it got.
+    /// `quiet` is passed on to `parse_tsconfig`.
     fn merge_tsconfig_extends_chain(
         &mut self,
         tsconfig_json: *mut TSConfigJSON,
@@ -4292,11 +4272,7 @@ impl<'a> Resolver<'a> {
                 };
             if let Some(parent_config) = parent_config_maybe {
                 if parent_configs.append(parent_config).is_err() {
-                    // Oversized (or cyclic) extends chain: stop walking and
-                    // merge what was collected instead of leaking the parsed
-                    // config and failing the whole resolution.
-                    // SAFETY: `parent_config` came from heap::into_raw above
-                    // and was not stored anywhere.
+                    // SAFETY: `parent_config` came from heap::into_raw above and was not stored.
                     TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config) });
                     self.log_tsconfig_chain_debug(
                         quiet,
@@ -4338,12 +4314,9 @@ impl<'a> Resolver<'a> {
                 mc.preserve_imports_not_used_as_values = Some(value);
             }
 
-            // The merged config should read as the config file that was found
-            // on disk, not the base of its extends chain: `abs_path` feeds the
-            // default project coverage in `covers_dir` and debug output.
+            // `covers_dir`'s default coverage is relative to the config on disk, not its base.
             mc.abs_path = core::mem::take(&mut parent_config.abs_path);
-            // "references" is the one top-level key excluded from `extends`
-            // inheritance, so the outermost config always wins (even if empty).
+            // tsc does not inherit "references" through "extends".
             mc.references = core::mem::take(&mut parent_config.references);
             if parent_config.files_dirs.is_some() {
                 mc.files_dirs = core::mem::take(&mut parent_config.files_dirs);
@@ -4351,7 +4324,7 @@ impl<'a> Resolver<'a> {
             if parent_config.include_dirs.is_some() {
                 mc.include_dirs = core::mem::take(&mut parent_config.include_dirs);
             }
-            if !parent_config.exclude_dirs.is_empty() {
+            if parent_config.exclude_dirs.is_some() {
                 mc.exclude_dirs = core::mem::take(&mut parent_config.exclude_dirs);
             }
 
@@ -4378,36 +4351,34 @@ impl<'a> Resolver<'a> {
             // (strings live in dirname_store or default_allocator and outlive the
             // struct). The heap-allocated TSConfigJSON itself is no longer needed;
             // without this, every intermediate config in an extends chain leaks on
-            // each dirInfoUncached() call, which is especially bad under HMR where
-            // bustDirCache triggers a re-parse of the whole chain on every reload.
+            // each dir_info_uncached() call, which is especially bad under HMR where
+            // bust_dir_cache triggers a re-parse of the whole chain on every reload.
             // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
             TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
         }
         merged_config
     }
 
-    /// Loads a solution-style tsconfig's referenced projects on the first
-    /// `covers_dir` miss, so path resolution can pick the referenced config
-    /// covering a source directory (see `TSConfigJSON::candidates_for_dir`).
-    /// Loading is lazy because the cwd's tsconfig is parsed on every startup
-    /// (`configure_linker`), including when a nearer config serves every
-    /// file and no referenced project could ever be selected.
+    /// Loads `enclosing`'s referenced projects the first time a directory it does not cover
+    /// resolves through it. Not at parse time: the cwd's tsconfig is parsed on every startup,
+    /// usually without any of its references ever applying. `enclosing` is shared with every
+    /// other resolver thread, hence the `OnceLock`.
     fn ensure_tsconfig_references(&mut self, enclosing: &'static TSConfigJSON, source_dir: &[u8]) {
         if enclosing.references.is_empty()
-            || enclosing.references_loaded()
+            || enclosing.reference_configs.get().is_some()
             || enclosing.covers_dir(source_dir)
         {
             return;
         }
-        self.load_tsconfig_references(enclosing);
+        enclosing
+            .reference_configs
+            .get_or_init(|| self.load_tsconfig_references(enclosing));
     }
 
-    /// Loads the projects referenced by a solution-style tsconfig.
-    /// Transitive references are followed with a visited set; configs that
-    /// fail to load are debug-logged and skipped.
-    fn load_tsconfig_references(&mut self, root: &'static TSConfigJSON) {
-        // Bounds *attempted* loads, not successes, so a config full of broken
-        // references can't trigger unbounded filesystem reads.
+    /// Parses the projects reachable through `root.references`, in reference order
+    /// (breadth first), skipping ones that fail to load. Attempted loads are bounded, not
+    /// successful ones, so a tree of broken references cannot keep the resolver reading files.
+    fn load_tsconfig_references(&mut self, root: &TSConfigJSON) -> Box<[Box<TSConfigJSON>]> {
         const MAX_REFERENCES: usize = 64;
         let mut visited: Vec<Box<[u8]>> = vec![Box::from(&root.abs_path[..])];
         let mut queue: Vec<Box<[u8]>> = root.references.to_vec();
@@ -4416,8 +4387,7 @@ impl<'a> Resolver<'a> {
         while cursor < queue.len() && visited.len() <= MAX_REFERENCES {
             let reference = core::mem::take(&mut queue[cursor]);
             cursor += 1;
-            // A "references[].path" not naming a .json file points at a
-            // project directory whose config is <path>/tsconfig.json.
+            // A reference to a project directory means its tsconfig.json.
             let config_path: &[u8] = if strings::ends_with(&reference, b".json") {
                 &reference
             } else {
@@ -4429,9 +4399,7 @@ impl<'a> Resolver<'a> {
             }
             visited.push(Box::from(config_path));
 
-            // A load failure must not touch the resolver Log: a missing
-            // referenced project is normal, and extra log entries make
-            // unrelated resolution failures surface as AggregateError.
+            // A missing or broken referenced project is normal; nothing reaches the resolver log.
             let parsed: *mut TSConfigJSON =
                 match self.parse_tsconfig(config_path, FD::INVALID, true) {
                     Ok(Some(v)) => bun_core::heap::into_raw(v),
@@ -4446,17 +4414,14 @@ impl<'a> Resolver<'a> {
                     }
                 };
             let merged_ptr = self.merge_tsconfig_extends_chain(parsed, true);
-            // SAFETY: `merged_ptr` came from heap::alloc in
-            // `merge_tsconfig_extends_chain` and is uniquely owned here; the
-            // Box hands ownership to the root config below.
+            // SAFETY: `merge_tsconfig_extends_chain` returns a heap::alloc pointer it gives up.
             let merged: Box<TSConfigJSON> = unsafe { bun_core::heap::take(merged_ptr) };
             if visited.len() <= MAX_REFERENCES {
                 queue.extend(merged.references.iter().cloned());
             }
             configs.push(merged);
         }
-
-        root.set_reference_configs(configs.into_boxed_slice());
+        configs.into_boxed_slice()
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {

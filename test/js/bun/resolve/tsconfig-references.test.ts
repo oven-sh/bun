@@ -49,6 +49,41 @@ test.concurrent("paths come from the referenced project covering the file", asyn
   expectRan(await run(String(dir), "src/web/index.ts"), "web\n");
 });
 
+test.concurrent("worker threads resolving under the same solution root at once", async () => {
+  // main.ts sits outside the solution root, so the referenced projects are
+  // first needed by the workers' own resolvers, on several threads at the same
+  // time; the shared solution config must load them once and serve them all.
+  using dir = tempDir("tsconfig-refs-workers", {
+    "main.ts": `
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const worker = new Worker(new URL("./app/src/worker.ts", import.meta.url).href);
+          worker.onmessage = event => {
+            worker.terminate();
+            resolve(event.data);
+          };
+          worker.onerror = event => reject(new Error(event.message));
+          return promise;
+        }),
+      );
+      console.log(results.join(","));
+    `,
+    "app/tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }],
+    }),
+    "app/tsconfig.app.json": JSON.stringify({
+      include: ["src"],
+      compilerOptions: { paths: { "@/*": ["./src/*"] } },
+    }),
+    "app/src/worker.ts": `import { who } from "@/who"; postMessage(who);`,
+    "app/src/who.ts": `export const who = "app";`,
+  });
+
+  expectRan(await run(String(dir), "main.ts"), "app,app,app,app\n");
+});
+
 test.concurrent("a reference path may point at a project directory", async () => {
   // The referenced project's config lives away from the source tree so the
   // nearest enclosing config of main.ts is the solution root: resolution
@@ -195,6 +230,31 @@ test.concurrent("a single-star glob include covers only its directory", async ()
   expectRan(await run(String(dir), "src/nested/index.ts"), "deep\n");
 });
 
+test.concurrent("a wildcard before the last segment covers the directories below it", async () => {
+  using dir = tempDir("tsconfig-refs-mid-wildcard", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.packages.json" }, { path: "./tsconfig.apps.json" }],
+    }),
+    // tsc reads a directory-like last segment as packages/*/src/**/*.
+    "tsconfig.packages.json": JSON.stringify({
+      include: ["packages/*/src"],
+      compilerOptions: { paths: { "@/*": ["./packages-impl/*"] } },
+    }),
+    "tsconfig.apps.json": JSON.stringify({
+      include: ["apps/*/main.ts"],
+      compilerOptions: { paths: { "@/*": ["./apps-impl/*"] } },
+    }),
+    "packages/core/src/util/index.ts": `import { who } from "@/who"; console.log(who);`,
+    "apps/web/main.ts": `import { who } from "@/who"; console.log(who);`,
+    "packages-impl/who.ts": `export const who = "packages";`,
+    "apps-impl/who.ts": `export const who = "apps";`,
+  });
+
+  expectRan(await run(String(dir), "packages/core/src/util/index.ts"), "packages\n");
+  expectRan(await run(String(dir), "apps/web/main.ts"), "apps\n");
+});
+
 test.concurrent("include with ${configDir} selects the project", async () => {
   using dir = tempDir("tsconfig-refs-configdir", {
     "tsconfig.json": JSON.stringify({
@@ -235,6 +295,38 @@ test.concurrent("an excluded directory is not covered by the project", async () 
 
   expectRan(await run(String(dir), "src/index.ts"), "a\n");
   expectRan(await run(String(dir), "src/legacy/index.ts"), "b\n");
+});
+
+test.concurrent("exclude is inherited through extends unless the extending config sets its own", async () => {
+  using dir = tempDir("tsconfig-refs-exclude-extends", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.inherits.json" }, { path: "./tsconfig.overrides.json" }],
+    }),
+    "tsconfig.base.json": JSON.stringify({
+      exclude: ["src/generated"],
+    }),
+    "tsconfig.inherits.json": JSON.stringify({
+      extends: "./tsconfig.base.json",
+      include: ["src"],
+      compilerOptions: { paths: { "@/*": ["./inherits-impl/*"] } },
+    }),
+    "tsconfig.overrides.json": JSON.stringify({
+      extends: "./tsconfig.base.json",
+      include: ["src"],
+      exclude: [],
+      compilerOptions: { paths: { "@/*": ["./overrides-impl/*"] } },
+    }),
+    "src/index.ts": `import { who } from "@/who"; console.log(who);`,
+    "src/generated/index.ts": `import { who } from "@/who"; console.log(who);`,
+    "inherits-impl/who.ts": `export const who = "inherits";`,
+    "overrides-impl/who.ts": `export const who = "overrides";`,
+  });
+
+  // Both projects cover src/, so the first reference wins there. src/generated/
+  // is excluded by the inherited exclude but not by the empty one replacing it.
+  expectRan(await run(String(dir), "src/index.ts"), "inherits\n");
+  expectRan(await run(String(dir), "src/generated/index.ts"), "overrides\n");
 });
 
 test.concurrent("a tsconfig extending itself still resolves the directory", async () => {

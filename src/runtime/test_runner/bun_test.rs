@@ -193,6 +193,14 @@ pub mod js_fns {
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
 
+            // Otherwise the hook would be added to whatever happens to be running now.
+            if AsyncContextRef::caller_is_abandoned(global_this) {
+                return Err(global_this.throw(format_args!(
+                    "Cannot call {}() here. The test or hook it was called from has already finished executing (it timed out, or failed while it was still running).",
+                    tag_name
+                )));
+            }
+
             let args = ScopeFunctions::parse_arguments(
                 global_this,
                 call_frame,

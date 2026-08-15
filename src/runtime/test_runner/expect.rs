@@ -215,13 +215,9 @@ impl Expect {
     /// Same error as for an `expect()` left over from a finished test (AsyncContextRef.rs).
     fn reject_snapshot_if_abandoned(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         if self.parent.as_ref().is_some_and(|parent| parent.abandoned.get()) {
-            return Err(Self::throw_test_finished(global_this));
+            return Err(global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing")));
         }
         Ok(())
-    }
-
-    fn throw_test_finished(global_this: &JSGlobalObject) -> JsError {
-        global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
     }
 
     pub(crate) fn get_signature(
@@ -635,22 +631,12 @@ impl Expect {
 
     pub(crate) fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
         let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
-        // Under a retry, an abandoned attempt's entry is current again; `reject_snapshot_if_abandoned` ran first.
-        debug_assert!(!parent.abandoned.get());
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
-        let execution_entry = match &parent.phase {
-            // None once the runner advanced past the entry this expect() was created in.
-            bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => {
-                parent.phase.entry(buntest).ok_or(crate::Error::TestNotActive)?
-            }
-            bun_test::RefDataValue::Execution { entry_data: None, .. } => {
-                return Err(crate::Error::SnapshotInConcurrentGroup);
-            }
-            bun_test::RefDataValue::Start
-            | bun_test::RefDataValue::Collection { .. }
-            | bun_test::RefDataValue::Done => return Err(crate::Error::NoTest),
-        };
+        let execution_entry = parent
+            .phase
+            .entry(buntest)
+            .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
@@ -1229,17 +1215,6 @@ impl Expect {
         let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
-                // These need no test file; the one this expect() belongs to may be gone.
-                match err {
-                    crate::Error::SnapshotInConcurrentGroup => {
-                        return Err(global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests")));
-                    }
-                    crate::Error::TestNotActive => return Err(Self::throw_test_finished(global_this)),
-                    crate::Error::NoTest => {
-                        return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
-                    }
-                    _ => {}
-                }
                 let Some(buntest_strong) = this.bun_test() else {
                     return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
                 };
@@ -1274,6 +1249,12 @@ impl Expect {
                                 bstr::BStr::new(&pretty_value),
                             ))
                         }
+                    }
+                    crate::Error::SnapshotInConcurrentGroup => {
+                        global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests"))
+                    }
+                    crate::Error::TestNotActive => {
+                        global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
                     }
                     _ => {
                         let mut formatter = ConsoleObject::Formatter::new(global_this);

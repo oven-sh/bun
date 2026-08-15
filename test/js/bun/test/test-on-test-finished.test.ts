@@ -1,4 +1,5 @@
 import { afterAll, afterEach, describe, expect, onTestFinished, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 // Test the basic ordering of onTestFinished
 describe("onTestFinished ordering", () => {
@@ -129,4 +130,57 @@ describe("onTestFinished with failing test", () => {
   test("verify order", () => {
     expect(output).toEqual(["test", "onTestFinished"]);
   });
+});
+
+// A test the runner has given up on (here: it timed out) keeps running while the next test
+// executes; hooks it registers from then on have no test to attach to and must be rejected rather
+// than added to the test that happens to be running.
+test("hooks registered by a test after the runner gave up on it are rejected", async () => {
+  using dir = tempDir("hooks-after-runner-moved-on", {
+    "late.test.ts": /* ts */ `
+      import { afterAll, afterEach, onTestFinished, test } from "bun:test";
+      const secondStarted = Promise.withResolvers<void>();
+      const firstDone = Promise.withResolvers<void>();
+      test("first", async () => {
+        await secondStarted.promise;
+        for (const [name, register] of [
+          ["onTestFinished", onTestFinished],
+          ["afterEach", afterEach],
+          ["afterAll", afterAll],
+        ] as const) {
+          try {
+            register(() => console.log(name + " registered by first ran"));
+            console.log(name + ": registered");
+          } catch (error) {
+            console.log(name + ": " + (error as Error).message);
+          }
+        }
+        firstDone.resolve();
+      }, 1);
+      test("second", async () => {
+        secondStarted.resolve();
+        await firstDone.promise;
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "late.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const rejected = (name: string) =>
+    `${name}: Cannot call ${name}() here. The test or hook it was called from has already finished executing (it timed out, or failed while it was still running).`;
+  expect(stdout.replace(/^bun test v.*\n/, "")).toBe(
+    [rejected("onTestFinished"), rejected("afterEach"), rejected("afterAll"), ""].join("\n"),
+  );
+  expect(stderr).toContain("this test timed out after 1ms");
+  expect(stderr).toContain("(pass) second");
+  expect(stderr).toContain(" 1 pass\n");
+  expect(stderr).toContain(" 1 fail\n");
+  expect(exitCode).toBe(1);
 });

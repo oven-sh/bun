@@ -961,8 +961,8 @@ test("write snapshot from filter", async () => {
 });
 
 // When the runner gives up on a test or hook that is still running (it timed out, or an unhandled
-// error failed it while it was awaiting), its body keeps running while the next test executes. The
-// snapshot matchers it calls from then on must be rejected, not written under the next test's name.
+// error failed it while it was still waiting), its body keeps running while the next test executes.
+// The snapshot matchers it calls from then on must be rejected, not written under the next test's name.
 describe("snapshot matchers called after the runner gave up on the test", () => {
   const rejected = "Snapshot matchers are not supported after the test has finished executing";
   const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
@@ -1090,17 +1090,23 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
     expect(snap).toBe(header + '\nexports[`second 1`] = `"from second"`;\n');
   });
 
-  test.concurrent("a test failed by an unhandled error while it was awaiting", async () => {
+  // The two cases below fail the running test with an unhandled error. They wait through a done
+  // callback rather than a returned promise: the runner gives up on a test that is only waiting for
+  // done() as soon as the error is reported (an awaited body is going to be waited for instead,
+  // see #36719), and that is the situation these cases are about.
+  test.concurrent("a test failed by an unhandled error while it was waiting for done()", async () => {
     // The only snapshot matcher in the file is the late one, so nothing at all should be written:
     // not even an empty snapshot file.
     const { stdout, stderr, snap } = await runTestFile(/* ts */ `
       const secondStarted = Promise.withResolvers<void>();
       const firstDone = Promise.withResolvers<void>();
-      test("first", async () => {
+      test("first", done => {
         Promise.reject(new Error("failure in the background"));
-        await secondStarted.promise;
-        report("late after the rejection", () => expect("from first").toMatchSnapshot());
-        firstDone.resolve();
+        secondStarted.promise.then(() => {
+          report("late after the rejection", () => expect("from first").toMatchSnapshot());
+          firstDone.resolve();
+          done();
+        });
       });
       test("second", async () => {
         secondStarted.resolve();
@@ -1118,14 +1124,15 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
     // Both attempts run the same inline matcher. On the previous behaviour the first attempt's late
     // call and the retry's call asked for different values on the same line, which fails the
     // writing of the file's inline snapshots as a whole ("Multiple inline snapshots on the same
-    // line must all have the same value").
+    // line must all have the same value"). The first attempt never calls done(): the runner has
+    // given up on it, and only the retry's done() is meant to end the test.
     const { stdout, stderr, snap, testFile, testFileAfterwards } = await runTestFile(/* ts */ `
       const retryStarted = Promise.withResolvers<void>();
       const firstAttemptDone = Promise.withResolvers<void>();
       let attempts = 0;
       test(
         "retried",
-        async () => {
+        done => {
           const attempt = ++attempts;
           // Block body: a matcher called in tail position gets located at the call to inline() instead.
           const inline = () => {
@@ -1133,16 +1140,19 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
           };
           if (attempt === 1) {
             Promise.reject(new Error("first attempt fails in the background"));
-            await retryStarted.promise;
-            report("late from the first attempt", () => expect("from attempt " + attempt).toMatchSnapshot());
-            report("late inline from the first attempt", inline);
-            firstAttemptDone.resolve();
+            retryStarted.promise.then(() => {
+              report("late from the first attempt", () => expect("from attempt " + attempt).toMatchSnapshot());
+              report("late inline from the first attempt", inline);
+              firstAttemptDone.resolve();
+            });
             return;
           }
           retryStarted.resolve();
-          await firstAttemptDone.promise;
-          expect("from attempt " + attempt).toMatchSnapshot();
-          inline();
+          firstAttemptDone.promise.then(() => {
+            expect("from attempt " + attempt).toMatchSnapshot();
+            inline();
+            done();
+          });
         },
         { retry: 1 },
       );

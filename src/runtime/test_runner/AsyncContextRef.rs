@@ -1,13 +1,15 @@
 //! Put into the async context for the duration of one test or hook invocation,
 //! so that the invocation's continuations can still be traced back to it.
 //!
-//! `expect()` belongs to whatever entry the runner is executing when it is
-//! called. Once the runner has abandoned an invocation that is still running
-//! (timeout, or an unhandled error while it was awaiting), that would be the
-//! next entry; `RefData::abandoned` makes `bun_test::caller_ref` attribute such
-//! late calls to the abandoned invocation instead, which rejects them.
-//! Invocations that completed are never consulted, so callbacks they
-//! registered keep belonging to whichever entry runs them.
+//! `expect()`, the snapshot matchers, `expect.assertions()` and hook registration
+//! belong to whatever entry the runner is executing when they are called. Once
+//! the runner has abandoned an invocation that is still running (timeout, or an
+//! unhandled error while it was awaiting), that would be the next entry;
+//! `RefData::abandoned` makes `bun_test::caller_ref` attribute such late calls
+//! to the abandoned invocation instead, which rejects them. Invocations that
+//! completed are never consulted, so callbacks they registered keep belonging to
+//! whichever entry runs them. Uncaught errors are not covered: by the time one is
+//! reported (`jest::on_unhandled_rejection`) the context it was thrown in is gone.
 //!
 //! The slot manipulation lives next to `AsyncContextFrame` (AsyncContextFrame.cpp).
 
@@ -44,12 +46,19 @@ impl AsyncContextRef {
 
     /// A `+1` to the abandoned invocation the running JS descends from, if any.
     pub(crate) fn abandoned_caller(global: &JSGlobalObject) -> Option<RefDataPtr> {
+        Self::abandoned_in_context(global).map(RefDataPtr::dupe_ref)
+    }
+
+    pub(crate) fn caller_is_abandoned(global: &JSGlobalObject) -> bool {
+        Self::abandoned_in_context(global).is_some()
+    }
+
+    /// To use right away: the borrow is of a wrapper that the context array
+    /// installed at this moment keeps alive.
+    fn abandoned_in_context(global: &JSGlobalObject) -> Option<&RefDataPtr> {
         let this = Self::from_js(bun_jsc::cpp::Bun__AsyncContextRef__current(global))?;
-        // SAFETY: the live payload of a wrapper the current context array keeps alive.
+        // SAFETY: live payload of the wrapper `__current` just found in the context array.
         let refdata: &RefDataPtr = unsafe { &(*this).r#ref };
-        if !refdata.abandoned.get() {
-            return None;
-        }
-        Some(refdata.dupe_ref())
+        refdata.abandoned.get().then_some(refdata)
     }
 }

@@ -119,24 +119,35 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
 
   // stderr is drained for the lifetime of the process (reportError prints to it); the
   // inspector's WebSocket URL is on its own line of the listening banner.
+  let stderr = "";
   const { promise: inspectorUrl, resolve: foundUrl, reject: noUrl } = Promise.withResolvers<URL>();
-  (async () => {
-    let stderr = "";
+  const stderrDone = (async () => {
     const decoder = new TextDecoder();
     for await (const chunk of proc.stderr) {
       stderr += decoder.decode(chunk, { stream: true });
-      const line = stderr.split("\n").find(line => line.trim().startsWith("ws://"));
+      // Only complete lines: a chunk boundary mid-line would yield a truncated URL.
+      const line = stderr
+        .split("\n")
+        .slice(0, -1)
+        .find(line => line.trim().startsWith("ws://"));
       if (line) foundUrl(new URL(line.trim()));
     }
     noUrl(new Error(`No inspector URL in stderr:\n${stderr}`));
   })();
 
   const ws = new WebSocket(await inspectorUrl);
-  const failed = new Promise<never>((_, reject) => {
-    ws.addEventListener("error", () => reject(new Error("WebSocket error")));
-    ws.addEventListener("close", event => reject(new Error(`WebSocket closed (${event.code})`)));
-    proc.exited.then(code => reject(new Error(`inspectee exited with code ${code}`)));
-  });
+  const { promise: failed, reject: fail } = Promise.withResolvers<never>();
+  // The inspectee's stderr carries the diagnosis for a dropped socket (a crash
+  // report, an error it printed before dying), so wait for the pipe to drain
+  // (bounded: the child may still be alive holding it open) before rejecting.
+  async function failWith(what: string): Promise<void> {
+    await Promise.race([Promise.allSettled([stderrDone, proc.exited]), Bun.sleep(1_000)]);
+    const exit = proc.exitCode ?? proc.signalCode ?? "still running";
+    fail(new Error(`${what} (inspectee exit: ${exit})\ninspectee stderr:\n${stderr}`));
+  }
+  ws.addEventListener("error", () => failWith("WebSocket error"));
+  ws.addEventListener("close", event => failWith(`WebSocket closed (${event.code})`));
+  proc.exited.then(() => failWith("inspectee exited"));
   failed.catch(() => {});
 
   const problems: string[] = [];

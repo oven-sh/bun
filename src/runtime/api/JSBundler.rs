@@ -1209,13 +1209,11 @@ pub mod js_bundler {
                         this.define.insert(key, value)?;
                     }
 
-                    // The executable loads its modules and assets (e.g. yoga.wasm)
-                    // out of the embedded virtual filesystem, so that root
-                    // replaces any publicPath the caller passed.
                     let base_public_path = StandaloneModuleGraph::target_base_public_path(
                         compile.compile_target.os,
                         b"root/",
                     );
+                    // Replaces any publicPath: executable assets live in the virtual filesystem.
                     this.public_path.reset();
                     this.public_path.append(base_public_path)?;
 

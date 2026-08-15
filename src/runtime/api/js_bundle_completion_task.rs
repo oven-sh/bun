@@ -1009,11 +1009,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         } else {
             options::CompileMode::None
         };
-
-        // Executable builds already had their public_path replaced with the
-        // virtual filesystem root in `Config::from_js`.
         transpiler.options.public_path = Box::from(config.public_path.list.as_slice());
-
         transpiler.options.output_dir = Box::from(config.outdir.list.as_slice());
         transpiler.options.root_dir = Box::from(config.rootdir.list.as_slice());
         transpiler.options.minify_syntax = config.minify.syntax;

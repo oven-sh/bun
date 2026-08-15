@@ -292,6 +292,7 @@ pub mod bun_object {
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_mmap => super::mmap_file,
+        BunObject_callback_ms => super::ms,
         BunObject_callback_nanoseconds => super::nanoseconds,
         BunObject_callback_openInEditor => super::open_in_editor,
         BunObject_callback_registerMacro => super::register_macro,
@@ -1433,6 +1434,45 @@ fn index_of_line(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     }
 
     Ok(JSValue::js_number_from_int32(-1))
+}
+
+/// `Bun.ms("2 days")` → `172800000`; `Bun.ms(60000, { long? })` → `"1m"` / `"1 minute"`.
+#[bun_jsc::host_fn]
+fn ms(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [value, options] = callframe.arguments_as_array::<2>();
+
+    // Like the `ms` package, a boxed `new String(..)` is an object and throws below.
+    if value.is_string_literal() {
+        let slice = value.to_slice(global_this)?;
+        if slice.slice().is_empty() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "ms(): value must be a non-empty string or a finite number"
+            )));
+        }
+        // An unparseable string is `undefined`, as in the `ms` package; only bad types throw.
+        match bun_core::fmt::parse_ms(slice.slice()) {
+            Some(ms) => Ok(JSValue::js_number(ms)),
+            None => Ok(JSValue::UNDEFINED),
+        }
+    } else if value.is_number() {
+        let num = value.as_number();
+        if !num.is_finite() {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "ms(): value must be a finite number of milliseconds"
+            )));
+        }
+        let long = options.is_object()
+            && options
+                .get_truthy(global_this, "long")?
+                .is_some_and(|long| long.to_boolean());
+        let mut out = String::new();
+        bun_core::fmt::format_ms(num, long, &mut out);
+        bun_string_jsc::create_utf8_for_js(global_this, out.as_bytes())
+    } else {
+        Err(global_this.throw_invalid_arguments(format_args!(
+            "ms(): value must be a string like \"2 days\" or a number of milliseconds"
+        )))
+    }
 }
 
 #[bun_jsc::host_fn]

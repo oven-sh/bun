@@ -297,13 +297,13 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
         if group.reason.is_empty() {
             bun_core::warn!(
                 "{} did not answer the audit request; skipped {}",
-                BStr::new(&group.registry),
+                bun_core::fmt::redacted_npm_url(&group.registry),
                 BStr::new(&packages)
             );
         } else {
             bun_core::warn!(
                 "{} did not answer the audit request ({}); skipped {}",
-                BStr::new(&group.registry),
+                bun_core::fmt::redacted_npm_url(&group.registry),
                 BStr::new(&group.reason),
                 BStr::new(&packages)
             );

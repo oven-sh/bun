@@ -3198,10 +3198,7 @@ fn add_archive_entry(
 enum Substitution<'a> {
     /// `workspace:^`, `workspace:~`, `workspace:*`: the workspace's current version behind that prefix.
     WorkspaceVersion { prefix: &'static str },
-    /// Anything else after `workspace:`. `bun install` reads it as a version range when the
-    /// dependency is itself one of the workspaces (`"pkg1": "workspace:1.x"`) and otherwise as the
-    /// directory of the workspace to link (`"c7": "workspace:../core"`), so which one it is takes
-    /// the manifests; see `publish_spec_for_workspace_range_or_directory`.
+    /// `workspace:1.x` on a dependency that is a workspace, or a directory, `workspace:../core`.
     WorkspaceRangeOrDirectory(&'a [u8]),
     /// `catalog:` / `catalog:<name>`: that catalog's entry for the dependency.
     Catalog { catalog_name: &'a [u8] },
@@ -3262,13 +3259,7 @@ fn needs_workspace_manifests(package_json: Expr) -> bool {
     needed
 }
 
-/// What the tarball gets for `Substitution::WorkspaceRangeOrDirectory`, or why there is nothing to
-/// publish for it. The directory reading is tried first because `"pkg1": "workspace:../pkg1"`
-/// satisfies both readings and only the directory has a version to publish: that workspace's own,
-/// as an `npm:` alias when the dependency is declared under another name (the registry's way of
-/// installing a package under a different name, and what pnpm publishes for this spec). A range is
-/// copied as written; so is `workspace:<name>@<range>`, which installs the workspace `<name>` under
-/// the dependency's name (the installer, too, only reads it that way when `<name>` is a workspace).
+/// Directory first: `"pkg1": "workspace:../pkg1"` reads both ways; only a directory has a version.
 fn publish_spec_for_workspace_range_or_directory(
     manifests: &WorkspaceManifests,
     package_dir: &[u8],
@@ -3276,6 +3267,7 @@ fn publish_spec_for_workspace_range_or_directory(
     spec: &[u8],
 ) -> Result<Vec<u8>, String> {
     let Some(workspace_name) = manifests.workspace_name_at_path(package_dir, spec) else {
+        // `workspace:<name>@<range>` installs workspace `<name>` under `dependency_name`.
         let is_alias = strings::last_index_of_char(spec, b'@')
             .is_some_and(|at| at > 0 && manifests.has_workspace(&spec[..at]));
         if manifests.has_workspace(dependency_name) || is_alias {
@@ -3298,13 +3290,13 @@ fn publish_spec_for_workspace_range_or_directory(
     Ok(if workspace_name == dependency_name {
         format!("{version}").into_bytes()
     } else {
+        // What pnpm publishes too: the alias installs the workspace's package under this name.
         format!("npm:{}@{version}", bstr::BStr::new(workspace_name)).into_bytes()
     })
 }
 
 /// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.
-/// `workspace_manifests` is `Some` whenever `needs_workspace_manifests(json.root)` is. `package_dir`
-/// is the directory of `json`, which `workspace:<directory>` specs are relative to.
+/// `workspace_manifests` is `Some` whenever `needs_workspace_manifests(json.root)` is.
 fn edit_root_package_json(
     workspace_manifests: Option<&WorkspaceManifests>,
     package_dir: &[u8],

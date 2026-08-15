@@ -94,9 +94,7 @@ impl ScratchManifests {
 /// and releases bump versions between that install and the publish.
 pub struct WorkspaceManifests {
     lockfile: Lockfile,
-    /// The root package's dependencies. The root parse turns each entry of its `workspaces` into a
-    /// `Behavior::WORKSPACE` dependency named after the workspace whose `workspace` value is its
-    /// directory relative to the root.
+    /// Has a `Behavior::WORKSPACE` entry per workspace: its name and root-relative directory.
     root_dependencies: DependencySlice,
     root_package_json_path: Box<[u8]>,
 }
@@ -119,22 +117,15 @@ impl WorkspaceManifests {
         }
     }
 
-    /// Whether one of the workspaces (the root package is not one) is named `name`. This is what
-    /// decides, in `Package::parse_dependency`, whether the text after `workspace:` in a dependency
-    /// of that name is a version range or a directory.
+    /// Whether `name` is one of the workspaces (the root package is not one).
     pub fn has_workspace(&self, name: &[u8]) -> bool {
         let name_hash: PackageNameHash = bun_semver::string::Builder::string_hash(name);
         self.lockfile.workspace_paths.contains(&name_hash)
     }
 
-    /// The name of the workspace whose directory is `path` taken relative to `package_dir`, the
-    /// directory of the package.json declaring `workspace:<path>`. `Package::parse_dependency`
-    /// links such a dependency by computing the same root-relative directory and matching it
-    /// against the workspaces, so this resolves exactly what `bun install` linked. `None` when no
-    /// workspace is in that directory.
+    /// The workspace `workspace:<path>` in `package_dir` links, per `Package::parse_dependency`.
     pub fn workspace_name_at_path(&self, package_dir: &[u8], path: &[u8]) -> Option<&[u8]> {
-        // `workspace:` with nothing after it is an empty range, not the declaring package's own
-        // directory.
+        // Joined as a path, `workspace:` alone would name `package_dir` itself.
         if path.is_empty() {
             return None;
         }

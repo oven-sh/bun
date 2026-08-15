@@ -320,58 +320,120 @@ pub(crate) enum PrepareDependencies {
     Pending,
     /// The running subprocess is `bun install`; `current_script_index` is the
     /// prepare script that runs once it succeeds.
-    Installing(PreviousNodeModules),
-    /// `bun install` succeeded. `cwd/node_modules` is removed again once the
-    /// scripts are done (or failed).
-    Installed(PreviousNodeModules),
+    Installing(NestedInstallCleanup),
+    /// `bun install` succeeded. The cleanup runs once the scripts are done
+    /// (or one of them failed).
+    Installed(NestedInstallCleanup),
 }
 
-/// What `cwd/node_modules` held before the nested `bun install` wrote to it.
-/// With the hoisted linker it can already contain dependencies of the package
-/// that conflict with the versions hoisted above it, and a checkout may commit
-/// one; those have to survive the install.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PreviousNodeModules {
-    Nothing,
-    /// Renamed to [`PREVIOUS_NODE_MODULES_NAME`] and renamed back afterwards.
-    SetAside,
-    /// Exists but could not be renamed, so the nested install shares it and
-    /// nothing is removed afterwards.
-    Shared,
-}
-
+/// While the nested `bun install` and the prepare scripts run, this directory
+/// inside the package holds the package's previous `node_modules` (with the
+/// hoisted linker: the dependencies whose versions conflict with the ones
+/// hoisted above it; or one committed to the repository), or is empty if there
+/// was none. It exists for exactly that duration, so finding it at the start
+/// means an earlier run was interrupted: it still holds the original, and the
+/// package's `node_modules` is whatever that run left behind.
 const PREVIOUS_NODE_MODULES_NAME: &[u8] = b".bun-prepare-node_modules";
 
 /// Arguments of the `bun` spawned for `PrepareDependencies::Installing`.
 /// `--ignore-scripts` because the package's own lifecycle scripts are what this
-/// runner is in the middle of executing; `--no-save` so a checkout without a
-/// lockfile does not get one written into it.
+/// runner is in the middle of executing; `--no-save` so the package.json and a
+/// committed lockfile stay as they are.
 const INSTALL_DEPENDENCIES_ARGS: [&core::ffi::CStr; 3] =
     [c"install", c"--ignore-scripts", c"--no-save"];
 /// `INSTALL_DEPENDENCIES_ARGS` as shown in logs and error messages.
 const INSTALL_DEPENDENCIES_COMMAND_LINE: &[u8] = b"bun install --ignore-scripts --no-save";
 
-/// Moves `cwd/node_modules` out of the way of the nested `bun install`.
-fn set_aside_node_modules(cwd: &[u8]) -> PreviousNodeModules {
-    let mut node_modules = AutoAbsPath::init();
-    let _ = node_modules.append(cwd);
-    let _ = node_modules.append(b"node_modules");
-    let mut previous = AutoAbsPath::init();
-    let _ = previous.append(cwd);
-    let _ = previous.append(PREVIOUS_NODE_MODULES_NAME);
+/// What the nested `bun install` leaves in the package directory that has to
+/// go again. The package's runtime dependencies live in the node_modules above
+/// it (or next to it in the isolated store), so everything the nested install
+/// puts here would only shadow them with duplicate copies.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NestedInstallCleanup {
+    /// The previous `node_modules` is in [`PREVIOUS_NODE_MODULES_NAME`]. When
+    /// it could not be moved there, the nested install shares it and it is
+    /// left alone afterwards.
+    restore_node_modules: bool,
+    /// The checkout had no `bun.lock`. `--no-save` keeps the nested install
+    /// from writing one, except that a `package-lock.json`/`yarn.lock`/... it
+    /// migrates is always saved (`saves_migrated_lockfile`).
+    remove_lockfile: bool,
+}
 
-    // Left behind by an interrupted run; the rename below would fail on it.
-    let _ = Fd::cwd().delete_tree(previous.slice());
+fn path_in_package(cwd: &[u8], name: &[u8]) -> AutoAbsPath {
+    let mut path = AutoAbsPath::init();
+    let _ = path.append(cwd);
+    let _ = path.append(name);
+    path
+}
 
-    match bun_sys::renameat(
-        Fd::cwd(),
-        node_modules.slice_z(),
-        Fd::cwd(),
-        previous.slice_z(),
-    ) {
-        Ok(()) => PreviousNodeModules::SetAside,
-        Err(err) if err.get_errno() == bun_sys::E::ENOENT => PreviousNodeModules::Nothing,
-        Err(_) => PreviousNodeModules::Shared,
+impl NestedInstallCleanup {
+    /// Gets the package directory ready for the nested install and records
+    /// what to undo afterwards.
+    fn begin(cwd: &[u8]) -> Self {
+        let remove_lockfile = !bun_sys::exists(path_in_package(cwd, b"bun.lock").slice());
+
+        let mut node_modules = path_in_package(cwd, b"node_modules");
+        let mut previous = path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME);
+        let restore_node_modules = if bun_sys::exists(previous.slice()) {
+            let _ = Fd::cwd().delete_tree(node_modules.slice());
+            true
+        } else {
+            match bun_sys::renameat(
+                Fd::cwd(),
+                node_modules.slice_z(),
+                Fd::cwd(),
+                previous.slice_z(),
+            ) {
+                Ok(()) => true,
+                Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
+                    bun_sys::mkdir(previous.slice_z(), 0o755).is_ok()
+                }
+                Err(_) => false,
+            }
+        };
+
+        Self {
+            restore_node_modules,
+            remove_lockfile,
+        }
+    }
+
+    fn finish(self, cwd: &[u8], package_name: &[u8]) {
+        if self.remove_lockfile {
+            let _ = Fd::cwd().delete_tree(path_in_package(cwd, b"bun.lock").slice());
+        }
+
+        if !self.restore_node_modules {
+            return;
+        }
+
+        let mut node_modules = path_in_package(cwd, b"node_modules");
+        if let Err(err) = Fd::cwd().delete_tree(node_modules.slice()) {
+            bun_core::warn!(
+                "failed to remove the dependencies installed for the prepare scripts of \"{}\": {}",
+                bstr::BStr::new(package_name),
+                err,
+            );
+        }
+
+        let mut previous = path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME);
+        if let Err(err) = bun_sys::renameat(
+            Fd::cwd(),
+            previous.slice_z(),
+            Fd::cwd(),
+            node_modules.slice_z(),
+        ) {
+            bun_core::warn!(
+                "failed to restore the node_modules of \"{}\" after running its prepare scripts: {}",
+                bstr::BStr::new(package_name),
+                err,
+            );
+            return;
+        }
+        // Only succeeds for the empty placeholder `begin` created when the
+        // package had no node_modules of its own.
+        let _ = bun_sys::rmdir(node_modules.slice_z());
     }
 }
 
@@ -619,7 +681,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let mut copy_script: Vec<u8> = Vec::new();
             let command_line: &[u8] = if installing_dependencies {
                 (*this).prepare_dependencies =
-                    PrepareDependencies::Installing(set_aside_node_modules(cwd));
+                    PrepareDependencies::Installing(NestedInstallCleanup::begin(cwd));
                 argv[0] = bun_core::self_exe_path()?.as_ptr();
                 for (slot, arg) in argv[1..].iter_mut().zip(INSTALL_DEPENDENCIES_ARGS) {
                     *slot = arg.as_ptr();
@@ -943,25 +1005,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         return;
                     }
                     self.print_output();
-                    if matches!(
-                        self.prepare_dependencies,
-                        PrepareDependencies::Installing(_)
-                    ) {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r><d>:<r> installing the dependencies of \"<b>{}<r>\" for its <b>{}<r> script failed <d>({} exited with {})<r>",
-                            bstr::BStr::new(&self.package_name),
-                            bstr::BStr::new(self.script_name()),
-                            bstr::BStr::new(INSTALL_DEPENDENCIES_COMMAND_LINE),
-                            exit.code,
-                        );
-                    } else {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
-                            bstr::BStr::new(self.script_name()),
-                            bstr::BStr::new(&self.package_name),
-                            exit.code,
-                        );
-                    }
+                    self.print_failure_subject();
+                    bun_core::pretty_errorln!(" exited with {}<r>", exit.code);
                     self.remove_prepare_dependencies();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
@@ -969,8 +1014,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     Global::exit(exit.code as u32);
                 }
 
-                if let PrepareDependencies::Installing(previous) = self.prepare_dependencies {
-                    self.prepare_dependencies = PrepareDependencies::Installed(previous);
+                if let PrepareDependencies::Installing(cleanup) = self.prepare_dependencies {
+                    self.prepare_dependencies = PrepareDependencies::Installed(cleanup);
                     let script_index = self.current_script_index;
                     self.reset_polls();
                     // SAFETY: `self` was created by `Self::new` (heap::alloc) and is
@@ -979,14 +1024,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     if let Err(err) = unsafe {
                         Self::spawn_next_script(std::ptr::from_mut::<Self>(self), script_index)
                     } {
-                        Output::err_generic(
-                            "Failed to run script <b>{}<r> due to error <b>{}<r>",
-                            (
-                                bstr::BStr::new(LockfileScripts::NAMES[script_index as usize]),
-                                err.name(),
-                            ),
-                        );
-                        Global::exit(1);
+                        self.exit_after_spawn_failure(script_index, &err);
                     }
                     return;
                 }
@@ -1041,14 +1079,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                 u8::try_from(new_script_index).expect("int cast"),
                             )
                         } {
-                            Output::err_generic(
-                                "Failed to run script <b>{}<r> due to error <b>{}<r>",
-                                (
-                                    bstr::BStr::new(LockfileScripts::NAMES[new_script_index]),
-                                    err.name(),
-                                ),
+                            self.exit_after_spawn_failure(
+                                u8::try_from(new_script_index).expect("int cast"),
+                                &err,
                             );
-                            Global::exit(1);
                         }
                         return;
                     }
@@ -1087,12 +1121,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 self.print_output();
                 let signal_code = bun_sys::SignalCode::from(signal);
 
+                self.print_failure_subject();
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
-                    bstr::BStr::new(self.script_name()),
-                    bstr::BStr::new(&self.package_name),
+                    " terminated by {}<r>",
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
+                self.remove_prepare_dependencies();
 
                 // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
                 // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
@@ -1122,6 +1156,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     err,
                 );
+                self.remove_prepare_dependencies();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
@@ -1200,50 +1235,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
-    /// Undoes what the nested `bun install` did to `cwd/node_modules`. The
-    /// package's runtime dependencies live in the node_modules above it (or
-    /// next to it in the isolated store), so everything the nested install put
-    /// here would only shadow them with duplicate copies.
     fn remove_prepare_dependencies(&mut self) {
-        let previous = match self.prepare_dependencies {
-            PrepareDependencies::Installing(previous)
-            | PrepareDependencies::Installed(previous) => previous,
+        let cleanup = match self.prepare_dependencies {
+            PrepareDependencies::Installing(cleanup) | PrepareDependencies::Installed(cleanup) => {
+                cleanup
+            }
             PrepareDependencies::NotNeeded | PrepareDependencies::Pending => return,
         };
         self.prepare_dependencies = PrepareDependencies::NotNeeded;
-        if previous == PreviousNodeModules::Shared {
-            return;
-        }
-
-        let cwd = self.scripts.cwd.as_bytes();
-        let mut node_modules = AutoAbsPath::init();
-        let _ = node_modules.append(cwd);
-        let _ = node_modules.append(b"node_modules");
-        if let Err(err) = Fd::cwd().delete_tree(node_modules.slice()) {
-            bun_core::warn!(
-                "failed to remove the dependencies installed for the prepare scripts of \"{}\": {}",
-                bstr::BStr::new(&self.package_name),
-                err,
-            );
-        }
-
-        if previous == PreviousNodeModules::SetAside {
-            let mut set_aside = AutoAbsPath::init();
-            let _ = set_aside.append(cwd);
-            let _ = set_aside.append(PREVIOUS_NODE_MODULES_NAME);
-            if let Err(err) = bun_sys::renameat(
-                Fd::cwd(),
-                set_aside.slice_z(),
-                Fd::cwd(),
-                node_modules.slice_z(),
-            ) {
-                bun_core::warn!(
-                    "failed to restore the node_modules of \"{}\" after running its prepare scripts: {}",
-                    bstr::BStr::new(&self.package_name),
-                    err,
-                );
-            }
-        }
+        cleanup.finish(self.scripts.cwd.as_bytes(), &self.package_name);
     }
 
     pub(crate) fn spawn_package_scripts(
@@ -1309,15 +1309,47 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
-                bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
-                err.name(),
-            );
-            Global::exit(1);
+            // SAFETY: `spawn_next_script` does not free the subprocess when it
+            // fails; `lss` is a non-owning view that is not used again.
+            unsafe { (*lifecycle_subprocess).exit_after_spawn_failure(first_index, &err) }
         }
 
         Ok(())
+    }
+
+    /// The start of every failure message: `error: <what was running>`, which
+    /// is either one of the package's scripts or the `bun install` that
+    /// fetches a git dependency's own dependencies for its prepare scripts.
+    fn print_failure_subject(&self) {
+        if matches!(
+            self.prepare_dependencies,
+            PrepareDependencies::Installing(_)
+        ) {
+            bun_core::pretty_error!(
+                "<r><red>error<r><d>:<r> <b>{}<r> for the <b>{}<r> script of \"<b>{}<r>\"",
+                bstr::BStr::new(INSTALL_DEPENDENCIES_COMMAND_LINE),
+                bstr::BStr::new(self.script_name()),
+                bstr::BStr::new(&self.package_name),
+            );
+        } else {
+            bun_core::pretty_error!(
+                "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\"",
+                bstr::BStr::new(self.script_name()),
+                bstr::BStr::new(&self.package_name),
+            );
+        }
+    }
+
+    fn exit_after_spawn_failure(&mut self, script_index: u8, err: &crate::Error) -> ! {
+        Output::err_generic(
+            "Failed to run script <b>{}<r> due to error <b>{}<r>",
+            (
+                bstr::BStr::new(LockfileScripts::NAMES[script_index as usize]),
+                err.name(),
+            ),
+        );
+        self.remove_prepare_dependencies();
+        Global::exit(1);
     }
 
     fn increment_pending_script_tasks(&self) {

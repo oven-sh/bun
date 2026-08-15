@@ -346,8 +346,7 @@ impl Snapshots {
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
-            // The file was not truncated when it was opened (see `get_snapshot_file`), so cut
-            // off whatever the previous contents had past the new length.
+            // The open in `get_snapshot_file` does not truncate, so drop the old tail here.
             file.file
                 .pwrite_all(&self.file_buf, 0)
                 .and_then(|()| bun_sys::ftruncate(file.file.handle, self.file_buf.len() as i64))
@@ -889,8 +888,7 @@ impl Snapshots {
             // SAFETY: buf[pos] == 0 written above
             let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
 
-            // Not O_TRUNC, even with --update-snapshots: the previous contents stay on disk
-            // until `write_snapshot_file` replaces them, so an exit before then keeps them.
+            // Never O_TRUNC: the old contents stay on disk until `write_snapshot_file` replaces them.
             let flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
             let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
                 bun_sys::Result::Ok(fd) => fd,

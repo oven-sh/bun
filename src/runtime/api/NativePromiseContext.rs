@@ -197,9 +197,14 @@ impl DeferredDerefTask {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();
-        // Process is dying; the leak no longer matters and the task
-        // queue won't drain.
         if vm.is_shutting_down() {
+            // The queue no longer drains. On the main thread the process is dying and the leak no
+            // longer matters; a worker's parked HTMLRewriter pipe would outlive it, so that one is
+            // abandoned here and now, script-free (this can be mid-sweep).
+            if tag == Tag::HTMLRewriterSuspension {
+                // SAFETY: the destroyed context held this live pipe; not touched after.
+                unsafe { html_rewriter::RewriterPipe::abandon_at_shutdown(ctx.cast()) };
+            }
             return;
         }
 

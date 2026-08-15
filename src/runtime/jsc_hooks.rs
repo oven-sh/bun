@@ -134,8 +134,6 @@ pub(crate) enum ActiveHandle {
     Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),
     /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
     DnsResolver(ptr::NonNull<crate::dns_jsc::Resolver>),
-    /// An HTMLRewriter transform parked on a content handler's promise.
-    RewriterSuspension(ptr::NonNull<crate::api::html_rewriter::RewriterPipe>),
 }
 
 pub(crate) type ActiveHandles = bun_collections::ArrayHashMap<ActiveHandle, ()>;
@@ -1842,13 +1840,6 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // SAFETY: registered ⇒ live; may free itself inside, not touched after.
             ActiveHandle::DnsResolver(r) => unsafe {
                 let _ = crate::dns_jsc::Resolver::close_channel_for_terminate(r.as_ptr());
-            },
-            ActiveHandle::RewriterSuspension(_) if reason == StopReason::TestIsolation => {
-                kept.push(kv.key)
-            }
-            // SAFETY: registered ⇒ live; frees itself inside, not touched after.
-            ActiveHandle::RewriterSuspension(p) => unsafe {
-                crate::api::html_rewriter::RewriterPipe::stop_for_vm_teardown(p.as_ptr())
             },
         }
     }

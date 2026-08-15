@@ -836,9 +836,7 @@ impl RewriterPipe {
     /// raw and fail the body through the Response native `+1`.
     pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) {
         let this = &*pipe;
-        if !this.end_suspension() {
-            return; // VM teardown ended it first (and released the ref).
-        }
+        this.end_suspension();
         let cell_alive = this.cell.get().is_cell();
         if !cell_alive {
             this.input_source.set(SourceHandle::None);
@@ -1720,11 +1718,10 @@ impl RewriterPipe {
         let pipe = core::ptr::from_ref(self).cast_mut();
         let context = native_promise_context::create(&self.global, pipe, cell);
         // The context destructor (promise GC'd unsettled) queues
-        // `abandon_suspension`; this ref keeps the pipe alive until that
-        // task or the settle reaction releases it — or the VM's stop phase, if
-        // it is torn down first (`stop_for_vm_teardown`).
+        // `abandon_suspension` (or, once the VM is shutting down and runs no
+        // more tasks, abandons inline: `abandon_at_shutdown`); this ref keeps
+        // the pipe alive until that or the settle reaction releases it.
         self.ref_();
-        crate::jsc_hooks::ActiveHandle::RewriterSuspension(NonNull::from(self)).register();
         promise.then_with_value(
             &self.global,
             context,
@@ -1741,33 +1738,28 @@ impl RewriterPipe {
         );
     }
 
-    /// The suspension begun by `begin_suspension` is over. `true` for the one caller that ends it —
-    /// the settle reaction, the abandonment, or VM teardown — which then owns (and releases) its ref.
-    #[must_use]
-    fn end_suspension(&self) -> bool {
-        let Some(wrapper) = self.suspended_wrapper.take() else {
-            return false;
-        };
-        wrapper.release();
-        crate::jsc_hooks::ActiveHandle::RewriterSuspension(NonNull::from(self)).unregister();
-        true
+    /// The suspension begun by `begin_suspension` is over: the settle reaction or the abandonment
+    /// (whichever holds the promise context) releases the parked wrapper and then owns the ref.
+    fn end_suspension(&self) {
+        if let Some(wrapper) = self.suspended_wrapper.take() {
+            wrapper.release();
+        }
     }
 
-    /// VM teardown's stop phase found the rewrite parked on a handler promise that can no longer settle
-    /// (script is over): sever it without erroring anything and release the suspension's ref, rather
-    /// than leaving it to a GC destructor that no longer runs tasks.
+    /// `abandon_suspension` for a VM that is shutting down and runs no more tasks (the promise
+    /// context's destructor fired during teardown or ~VM): nothing is failed or cancelled — script is
+    /// over and the streams die with the VM — the handles are cleared raw, and the ref released so the
+    /// pipe and its rewriter do not outlive the worker. GC-sweep safe: no JS is entered.
     ///
     /// # Safety
-    /// `this` is registered ⇒ live; JS thread; not touched after (the deref may free it).
-    pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
+    /// `this` is the live pipe the destroyed context held; JS thread; not touched after.
+    pub(crate) unsafe fn abandon_at_shutdown(this: *mut Self) {
         // SAFETY: per fn contract.
         let pipe = unsafe { &*this };
-        if !pipe.end_suspension() {
-            return;
-        }
+        pipe.end_suspension();
         pipe.phase.set(RewritePhase::Done);
         pipe.done.set(true);
-        let _ = pipe.detach_input_source(true);
+        pipe.input_source.set(SourceHandle::None);
         pipe.output.set(None);
         // SAFETY: per fn contract; the suspension's ref.
         Self::deref_nn(unsafe { NonNull::new_unchecked(this) });
@@ -1964,9 +1956,7 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         return Ok(JSValue::UNDEFINED);
     };
     let pipe = BackRef::from(pipe);
-    if !pipe.end_suspension() {
-        return Ok(JSValue::UNDEFINED);
-    }
+    pipe.end_suspension();
     // Runs the rest of the transform: more handlers (script), sink writes, stream delivery.
     pipe.resume_rewrite();
     // Balances the `ref_()` in `begin_suspension`.
@@ -1986,9 +1976,7 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         return Ok(JSValue::UNDEFINED);
     };
     let pipe = BackRef::from(pipe);
-    if !pipe.end_suspension() {
-        return Ok(JSValue::UNDEFINED);
-    }
+    pipe.end_suspension();
     // Fails the output stream: delivers the error to its reader (script may run).
     pipe.fail(webcore::body::ValueError::JSValue(
         jsc::strong::Optional::create(reason, global),

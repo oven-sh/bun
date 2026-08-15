@@ -1635,15 +1635,35 @@ ${yarnLockEntries}`,
   });
 
   test("a dependency declared as a tarball URL stays a remote tarball, without yarn's #sha1 suffix", async () => {
-    const url = "https://npm.example.com/leaf/-/leaf-2.0.1.tgz";
+    const registryUrl = "https://npm.example.com/leaf/-/leaf-2.0.1.tgz";
+    // yarn puts the same `#sha1` after a GitHub archive download, where it must
+    // not be mistaken for the commit of a git dependency.
+    const githubUrl = "https://github.com/isaacs/abbrev-js/archive/refs/tags/v1.1.1.tar.gz";
     const bunLock = await migrate(
-      { leaf: url },
-      `"leaf@${url}":
+      { "leaf": registryUrl, "gh-tar": githubUrl },
+      `"leaf@${registryUrl}":
   version "2.0.1"
-  resolved "${url}#f8f2c887ad10bf67f634f005b6987fed3179aac8"
+  resolved "${registryUrl}#f8f2c887ad10bf67f634f005b6987fed3179aac8"
+
+"gh-tar@${githubUrl}":
+  version "1.1.1"
+  resolved "${githubUrl}#f8f2c887ad10bf67f634f005b6987fed3179aac8"
 `,
     );
 
-    expect(bunLock).toContain(`"leaf": ["leaf@${url}", {}]`);
+    expect(bunLock).toContain(`"leaf": ["leaf@${registryUrl}", {}]`);
+    expect(bunLock).toContain(`"gh-tar": ["gh-tar@${githubUrl}", {}]`);
+  });
+
+  test("a git dependency hosted on github.com is still migrated as git", async () => {
+    const bunLock = await migrate(
+      { abbrev: "https://github.com/isaacs/abbrev-js.git" },
+      `"abbrev@https://github.com/isaacs/abbrev-js.git":
+  version "1.1.1"
+  resolved "https://github.com/isaacs/abbrev-js.git#3f9802e56ff878761a338e43ecacbfed39d2181d"
+`,
+    );
+
+    expect(bunLock).toContain(`"abbrev": ["abbrev-js@github:isaacs/abbrev-js#3f9802e", {}, ""]`);
   });
 });

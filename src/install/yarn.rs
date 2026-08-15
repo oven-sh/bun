@@ -129,10 +129,14 @@ impl<'a> Entry<'a> {
     }
 
     pub(crate) fn is_git_dependency(version: &[u8]) -> bool {
+        if let Some(github_path) = version.strip_prefix(b"https://github.com/") {
+            // `.../archive/v1.tar.gz#<sha1>` is a tarball download, and its `#` is
+            // yarn's tarball hash, not a commit.
+            return !dependency::is_github_tarball_path(Entry::url_without_hash(github_path));
+        }
         version.starts_with(b"git+")
             || version.starts_with(b"git://")
             || version.starts_with(b"github:")
-            || version.starts_with(b"https://github.com/")
     }
 
     pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
@@ -962,10 +966,12 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         package_id_to_yarn_idx[package_id as usize] = yarn_idx;
 
+        let resolved_url: Option<&[u8]> = entry.resolved.as_deref().map(Entry::url_without_hash);
+
         let name_to_use: &[u8] = 'blk: {
             if entry.commit.is_some() && entry.git_repo_name.is_some() {
                 break 'blk entry.git_repo_name.as_deref().unwrap();
-            } else if let (true, Some(resolved)) = (is_direct_url_dep, entry.resolved.as_deref()) {
+            } else if let (true, Some(resolved)) = (is_direct_url_dep, resolved_url) {
                 // https://registry.npmjs.org/package/-/package-version.tgz
                 if strings::index_of(resolved, b"registry.npmjs.org/").is_some()
                     || strings::index_of(resolved, b"registry.yarnpkg.com/").is_some()
@@ -1049,9 +1055,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     }
                 }
                 break 'blk Resolution::default();
-            } else if let Some(resolved) = entry.resolved.as_deref() {
-                let resolved = Entry::url_without_hash(resolved);
-
+            } else if let Some(resolved) = resolved_url {
                 if is_direct_url_dep {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,

@@ -1396,6 +1396,48 @@ describe.concurrent(() => {
     expect(exitCode).toBe(0);
   });
 
+  // A variable whose name is an array index ("0=zero") is stored on the env
+  // object as an indexed property while the build is still walking the native
+  // env table. Storing it with [[Set]] semantics consulted the prototype chain,
+  // so an indexed setter on Object.prototype ran user code from inside that walk
+  // on every platform; when it threw, main died dereferencing the empty result
+  // of the build. The entry is now defined directly, so the setter never runs and
+  // the variable still comes through.
+  it("an index-named variable is stored without running prototype setters during the env build", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let fired = 0;
+         let caught = null;
+         Object.defineProperty(Object.prototype, "0", {
+           configurable: true,
+           set() {
+             fired++;
+             throw new Error("boom");
+           },
+         });
+         try {
+           process.env;
+         } catch (e) {
+           caught = e.message;
+         }
+         delete Object.prototype[0];
+         const env = process.env;
+         console.log(JSON.stringify({ fired, caught, zero: env[0], named: env.BUN_TEST_LAZY_ENV, cached: Bun.env === env }));`,
+      ],
+      env: { ...bunEnv, "0": "zero", BUN_TEST_LAZY_ENV: "lazy-env-value" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode, result: stdout && JSON.parse(stdout) }).toEqual({
+      stderr: "",
+      exitCode: 0,
+      result: { fired: 0, caught: null, zero: "zero", named: "lazy-env-value", cached: true },
+    });
+  });
+
   if (isWindows) {
     it("ownKeys trap windows process.env", () => {
       expect(() => Object.keys(process.env)).not.toThrow();

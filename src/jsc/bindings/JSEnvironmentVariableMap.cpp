@@ -1076,13 +1076,15 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // CustomGetterSetter doesn't support indexed properties yet.
         // This causes strange issues when the environment variable name is an integer.
         if (chars[0] >= '0' && chars[0] <= '9') [[unlikely]] {
-            if (auto index = parseIndex(identifier)) {
+            if (parseIndex(identifier)) {
                 ZigString valueString = { nullptr, 0 };
                 ZigString nameStr = toZigString(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, nullptr);
-                    object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
+                    // The base define, not putDirectIndex: on this exotic object putDirectIndex ends in a [[Set]], which can run an indexed setter from Object.prototype while `list` is still in use.
+                    PropertyDescriptor descriptor(value, 0);
+                    JSObject::defineOwnProperty(object, globalObject, identifier, descriptor, false);
                     RETURN_IF_EXCEPTION(scope, nullptr);
                 }
                 continue;

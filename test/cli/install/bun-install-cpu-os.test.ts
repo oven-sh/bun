@@ -907,6 +907,42 @@ describe("bun install --libc flag and the libc field", () => {
     expect(await installedVersion("dep-universal", "node_modules", "baz")).toBe("0.0.5");
   });
 
+  it("falls back to the abbreviated manifest when the optional dependency is reached before the regular one", async () => {
+    const urls: string[] = [];
+    // Same registry, but here the regular dependency on baz comes from dep-both, which is only
+    // resolved after its own manifest arrives, so the optional edge from dep-universal requests baz
+    // first and its 404 may even be processed before the regular edge exists. The regular edge still
+    // requests the abbreviated document, and both edges resolve from it; otherwise the outcome would
+    // depend on the order the dependencies were reached in. Only the wording of the warning does.
+    const accepts = serveByName(
+      urls,
+      {
+        baz: { "0.0.5": { libc: ["musl"] } },
+        "dep-universal": {
+          "3.0.0": { dependencies: { "dep-both": "1.0.0" }, optionalDependencies: { baz: "0.0.5" } },
+        },
+        "dep-both": { "1.0.0": { dependencies: { baz: "0.0.5" } } },
+      },
+      undefined,
+      ["baz"],
+    );
+    await writePackageJson({ dependencies: { "dep-universal": "3.0.0" } });
+
+    const err = await install("--libc", "glibc", "--save-text-lockfile");
+    expect(err).toMatch(/^warn: (HTTP 404 downloading the full package metadata for baz|GET .*\/baz - 404)/m);
+    expect(accepts.baz.sort()).toEqual([FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT].sort());
+    expect(await installed()).toEqual(["baz", "dep-both", "dep-universal"]);
+    expect(await lockfileEntry("baz")).not.toContain(`"libc"`);
+
+    // Both edges were resolved, including the optional one that was waiting when the full request
+    // failed, so installing from the lockfile needs no manifest at all.
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    clear(accepts, urls);
+    expect(await install("--libc", "glibc", "--frozen-lockfile")).not.toContain("warn:");
+    expect(accepts).toEqual({});
+    expect(await installed()).toEqual(["baz", "dep-both", "dep-universal"]);
+  });
+
   it("records libc when migrating a yarn.lock whose package is a regular dependency first and an optional one later", async () => {
     const urls: string[] = [];
     // The yarn.lock migration fetches every package's manifest to fill in os, cpu and libc. The

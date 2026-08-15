@@ -51,9 +51,7 @@ pub struct ServerConfig {
     pub(crate) on_error: JSValue,
     pub(crate) on_request: JSValue,
     pub(crate) on_node_http_request: JSValue,
-    /// `serve()` was called with `onNodeHTTPRequest` (node:http's server).
-    /// Fixed for the server's lifetime, unlike `on_node_http_request`, which
-    /// is the current handler and can be cleared by `reload()`.
+    /// Created with `onNodeHTTPRequest`; unlike the handler above, `reload()` never clears this.
     pub(crate) is_node_http_server: bool,
 
     pub(crate) websocket: Option<WebSocketServerContext>,

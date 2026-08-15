@@ -2431,7 +2431,7 @@ extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     JSC::VM& vm = JSC::getVM(globalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
-    if (length == 0) {
+    if (data == nullptr || length == 0) {
 
         // TODO: is there a way to create a detached uint8 array?
         auto arrayBuffer = JSC::ArrayBuffer::createUninitialized(0, 1);

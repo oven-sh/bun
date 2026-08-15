@@ -1438,6 +1438,30 @@ nativeTests.test_reference_ref_after_collect_driver = async gc => {
   nativeTests.test_reference_ref_after_collect(gc, ext);
 };
 
+// node_api_create_external_sharedarraybuffer's finalizer belongs to the shared
+// contents, so it must wait for every SharedArrayBuffer object sharing them
+// (here: a structuredClone), not just the one the addon created. Node never
+// delivers it at all for a NULL pointer (V8 skips the deleter of a NULL backing
+// store), so the delivery half is only run on Bun in that case.
+nativeTests.test_external_sharedarraybuffer_lifetime_driver = async (_, usePtr, expectDelivery) => {
+  const label = usePtr ? "(ptr, 0)" : "(NULL, 0)";
+  const report = () => nativeTests.zero_length_external_sab_finalizer(usePtr);
+  // The addon's own object only ever lives in the callee's frame. The clone is
+  // dropped by clearing the property: JSC can keep the returned object itself
+  // reachable from this async function's frame, so clearing a destructured
+  // local binding instead leaves the clone alive.
+  const held = (() => {
+    const sab = nativeTests.create_zero_length_external_sab(usePtr);
+    return { original: new WeakRef(sab), clone: structuredClone(sab) };
+  })();
+  await gcUntil(() => held.original.deref() === undefined);
+  console.log(`${label} original collected, clone alive: ${report()}`);
+  if (!expectDelivery) return;
+  held.clone = null;
+  await gcUntil(() => !report().startsWith("count=0"));
+  console.log(`${label} clone collected: ${report()}`);
+};
+
 // Microtasks queued by one threadsafe-function callback must be drained before
 // the next callback in the same dispatch, and not before the first one.
 nativeTests.test_threadsafe_function_microtask_order = async () => {

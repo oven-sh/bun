@@ -3969,8 +3969,8 @@ test_external_buffer_null_data_status_paths(const Napi::CallbackInfo &info) {
          "result=NULL: status=%d\n",
          (int)status);
 
-  // These two wrap the pointer they are given as-is. Zero-length Buffers go
-  // through their own path, covered by test_napi_create_external_buffer_empty.
+  // Zero-length Buffers take a path of their own, covered by
+  // test_napi_create_external_buffer_empty.
   static char dummy;
   struct {
     const char *label;
@@ -3992,6 +3992,56 @@ test_external_buffer_null_data_status_paths(const Napi::CallbackInfo &info) {
   }
 
   return ok(env);
+}
+
+// Used by test_external_sharedarraybuffer_lifetime_driver in module.js. One
+// slot per kind of pointer, handed to the constructor as the finalize hint, so
+// the callback has to arrive with the right hint to move the right slot.
+struct ZeroLengthSabFinalizer {
+  int count;
+  void *data;
+};
+static ZeroLengthSabFinalizer zero_length_sab_finalizers[2];
+static char zero_length_sab_dummy;
+
+static void *zero_length_sab_pointer(bool use_ptr) {
+  return use_ptr ? static_cast<void *>(&zero_length_sab_dummy) : nullptr;
+}
+
+// create_zero_length_external_sab(use_ptr): external SharedArrayBuffer over
+// (ptr, 0) or (NULL, 0) whose finalizer records into the slot for that kind.
+static napi_value
+create_zero_length_external_sab(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  bool use_ptr = info[0].As<Napi::Boolean>().Value();
+  ZeroLengthSabFinalizer &slot = zero_length_sab_finalizers[use_ptr];
+  slot = {0, nullptr};
+  napi_value sab;
+  NODE_API_CALL(env, node_api_create_external_sharedarraybuffer(
+                         env, zero_length_sab_pointer(use_ptr), 0,
+                         +[](void *data, void *hint) {
+                           auto *s =
+                               static_cast<ZeroLengthSabFinalizer *>(hint);
+                           s->count++;
+                           s->data = data;
+                         },
+                         &slot, &sab));
+  return sab;
+}
+
+// zero_length_external_sab_finalizer(use_ptr): "count=N" plus, once it has
+// run, whether it received the pointer the addon passed in.
+static napi_value
+zero_length_external_sab_finalizer(const Napi::CallbackInfo &info) {
+  bool use_ptr = info[0].As<Napi::Boolean>().Value();
+  const ZeroLengthSabFinalizer &slot = zero_length_sab_finalizers[use_ptr];
+  std::string report = "count=" + std::to_string(slot.count);
+  if (slot.count != 0) {
+    report += slot.data == zero_length_sab_pointer(use_ptr)
+                  ? " data=as passed in"
+                  : " data=something else";
+  }
+  return Napi::String::New(info.Env(), report);
 }
 
 static void noop_tsfn_cb(napi_env, napi_value, void *, void *) {}
@@ -4582,6 +4632,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_null_data_nonzero_length);
   REGISTER_FUNCTION(env, exports, test_external_buffer_null_data_status_paths);
+  REGISTER_FUNCTION(env, exports, create_zero_length_external_sab);
+  REGISTER_FUNCTION(env, exports, zero_length_external_sab_finalizer);
   REGISTER_FUNCTION(env, exports, test_napi_status_codes_node26);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);

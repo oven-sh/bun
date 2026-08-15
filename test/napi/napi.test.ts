@@ -430,6 +430,37 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         node_api_create_external_sharedarraybuffer(ptr, 0): status=0 detached=0 view=0"
       `);
     });
+
+    // finalize_cb has to outlive the object the addon got back: a structuredClone
+    // shares the contents, so nothing may run until that dies too.
+    it("node_api_create_external_sharedarraybuffer(ptr, 0) finalizes once, after the last clone", async () => {
+      const result = await checkSameOutput("test_external_sharedarraybuffer_lifetime_driver", [true, true]);
+      expect(result).toMatchInlineSnapshot(`
+        "(ptr, 0) original collected, clone alive: count=0
+        (ptr, 0) clone collected: count=1 data=as passed in
+        resolved to undefined"
+      `);
+    });
+
+    it("node_api_create_external_sharedarraybuffer(NULL, 0) does not finalize while a clone is alive", async () => {
+      const result = await checkSameOutput("test_external_sharedarraybuffer_lifetime_driver", [false, false]);
+      expect(result).toMatchInlineSnapshot(`
+        "(NULL, 0) original collected, clone alive: count=0
+        resolved to undefined"
+      `);
+    });
+
+    // Node 26 never runs the callback for a NULL pointer (V8 drops the deleter of
+    // a NULL backing store); Bun keeps to the documented contract and runs it once,
+    // with the NULL the addon passed rather than the byte standing in for it.
+    it("node_api_create_external_sharedarraybuffer(NULL, 0) finalizes once with NULL on Bun", async () => {
+      const result = await runOn(bunExe(), "test_external_sharedarraybuffer_lifetime_driver", [false, true]);
+      expect(result.replaceAll(/^\[\w+\].+$/gm, "").trim()).toMatchInlineSnapshot(`
+        "(NULL, 0) original collected, clone alive: count=0
+        (NULL, 0) clone collected: count=1 data=as passed in
+        resolved to undefined"
+      `);
+    });
   });
 
   describe("pending-exception gate", () => {

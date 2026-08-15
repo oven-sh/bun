@@ -1426,7 +1426,8 @@ fn forks_surviving_instance(
         None => {
             let dep = &deps[edge as usize];
             dep.behavior.is_bundled()
-                || dedupe::effective_npm_range(lockfile, edge, dep).is_none_or(|range| stays(&range))
+                || dedupe::effective_npm_range(lockfile, edge, dep)
+                    .is_none_or(|range| stays(&range))
         }
     })
 }

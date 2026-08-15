@@ -736,10 +736,10 @@ pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     raise_ignoring_panic_handler_raw(sig as c_int)
 }
 
-/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state, or exit with
-/// `128 + sig` where the kernel refuses to deliver it (PID 1 of a pid
-/// namespace). Callers may forward any signal byte (incl. Linux RT signals
-/// 32..=64) that has no `crate::SignalCode` discriminant.
+/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state; as PID 1 of a
+/// pid namespace, where that cannot kill us, exit with `128 + sig`. Callers may
+/// forward any signal byte (incl. Linux RT signals 32..=64) that has no
+/// `crate::SignalCode` discriminant.
 pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
@@ -799,9 +799,7 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
         }
 
-        // The signal mask survives execve, so a parent that had `sig` blocked
-        // started us with it blocked too; raise() would then only leave it
-        // pending.
+        // The mask is inherited across execve; a blocked `sig` would only go pending.
         // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
         unsafe {
             let mut set: libc::sigset_t = crate::ffi::zeroed();
@@ -816,18 +814,14 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
 
     #[cfg(not(windows))]
     {
-        // Unblocked and at SIG_DFL, raise() only returns when this process is
-        // PID 1 of a pid namespace (the entrypoint of a container without an
-        // init): the kernel discards default-action signals sent to init,
-        // SIGABRT included, so abort() would end in its trap instruction and
-        // turn the child's signal into a SIGSEGV/SIGTRAP of our own. Report
-        // the signal the way a shell does instead.
+        // Only PID 1 of a pid namespace gets here: the kernel discards the signals
+        // it raises at itself, abort()'s SIGABRT included, and abort() would end
+        // in a trap (SIGSEGV/SIGTRAP). Report the signal the way a shell does.
         exit((128 + sig) as u32)
     }
     #[cfg(windows)]
     {
-        // The CRT's raise() ignores SIGTERM and rejects signals it does not
-        // know, so returning from it is routine here.
+        // The CRT's raise() returns for SIGTERM and for signals it does not know.
         libc_abort()
     }
 }

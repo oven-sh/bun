@@ -1077,15 +1077,17 @@ impl BabyString {
         (self.0 >> 16) as u16
     }
 
-    pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
+    /// Locates `substring` inside `container` (the string later passed to
+    /// [`BabyString::slice`]) and records its offset and length.
+    pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
         // bun_core::strings::index_of deliberately returns None for an empty
-        // needle, but an empty `text` reaches this path via resolve errors for
-        // `import ""`, so short-circuit it here to offset 0.
-        if text.is_empty() {
+        // needle, but an empty `substring` reaches this path via resolve errors
+        // for `import ""`, so short-circuit it here to offset 0.
+        if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(parent, text).expect("unreachable");
-        BabyString::new(off as u16, text.len() as u16) // @truncate
+        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 
     pub fn slice<'a>(self, container: &'a [u8]) -> &'a [u8] {

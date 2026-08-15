@@ -2631,6 +2631,294 @@ importers:
     expect(await bunLockOf(String(formatted))).toBe(await bunLockOf(String(plain)));
   });
 
+  // The install after a migration diffs each importer's rows against a fresh package.json parse. A row
+  // in a different shape re-resolves the whole importer, and a range with two versions in the lockfile
+  // then moves: below, the members lock `no-deps` at 1.0.0 while `one-dep` brings in 1.0.1.
+  describe("importer rows match a package.json parse", () => {
+    const catalogFiles = {
+      "pnpm-workspace.yaml": `packages:
+  - packages/*
+
+catalog:
+  a-dep: ^1.0.1
+
+catalogs:
+  tooling:
+    one-dep: ^1.0.0
+`,
+      "package.json": JSON.stringify({
+        name: "catalog-rows",
+        private: true,
+        devDependencies: { "one-dep": "catalog:tooling" },
+      }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "a-dep": "catalog:", "no-deps": "^1.0.0" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+catalogs:
+  default:
+    a-dep:
+      specifier: ^1.0.1
+      version: 1.0.1
+  tooling:
+    one-dep:
+      specifier: ^1.0.0
+      version: 1.0.0
+
+importers:
+
+  .:
+    devDependencies:
+      one-dep:
+        specifier: catalog:tooling
+        version: 1.0.0
+
+  packages/app:
+    dependencies:
+      a-dep:
+        specifier: 'catalog:'
+        version: 1.0.1
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+
+  a-dep@1.0.1:
+    resolution: {integrity: ${A_DEP_1_0_1_INTEGRITY}}
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  a-dep@1.0.1: {}
+
+  no-deps@1.0.0: {}
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+    };
+
+    const workspaceRowFiles = {
+      "pnpm-workspace.yaml": `packages:
+  - packages/*
+`,
+      "package.json": JSON.stringify({
+        name: "workspace-rows",
+        private: true,
+        devDependencies: { "one-dep": "^1.0.0" },
+      }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.2.3" }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { lib: "workspace:*", "no-deps": "^1.0.0" },
+      }),
+      // link-workspace-packages shape: a plain range pnpm linked to the member; the version is not semver
+      "packages/cli/package.json": JSON.stringify({
+        name: "cli",
+        version: "unversioned",
+        dependencies: { lib: "^1.0.0", "no-deps": "^1.0.0" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      one-dep:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/app:
+    dependencies:
+      lib:
+        specifier: workspace:*
+        version: link:../lib
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/cli:
+    dependencies:
+      lib:
+        specifier: ^1.0.0
+        version: link:../lib
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/lib: {}
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+    };
+
+    const noDeps100 = { name: "no-deps", version: "1.0.0" };
+
+    // `bun install` on a pnpm checkout migrates in-process and installs from the migrated rows directly.
+    async function installStraightFromPnpmLock(files: Record<string, string>) {
+      const { packageDir: viaMigrate } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+      const { packageDir: viaInstall } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+
+      const [migrated, install] = await Promise.all([migrate(viaMigrate), run(viaInstall, "install")]);
+
+      expect(migrated.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(migrated.exitCode).toBe(0);
+      expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(viaInstall)).toBe(await bunLockOf(viaMigrate));
+
+      return viaInstall;
+    }
+
+    test("catalog: rows keep the reference and a frozen install accepts bun pm migrate's lockfile", async () => {
+      const { packageDir } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files: catalogFiles });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      expect(workspacesSection(migrated)).toMatchInlineSnapshot(`
+        "  "workspaces": {
+            "": {
+              "name": "catalog-rows",
+              "devDependencies": {
+                "one-dep": "catalog:tooling",
+              },
+            },
+            "packages/app": {
+              "name": "app",
+              "version": "1.0.0",
+              "dependencies": {
+                "a-dep": "catalog:",
+                "no-deps": "^1.0.0",
+              },
+            },
+          },
+          "catalog": {
+            "a-dep": "^1.0.1",
+          },
+          "catalogs": {
+            "tooling": {
+              "one-dep": "^1.0.0",
+            },
+          },
+        "
+      `);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(migrated);
+      expect(await installedPackageJson(packageDir, "packages/app", "no-deps")).toStrictEqual(noDeps100);
+    });
+
+    test("bun install straight from pnpm-lock.yaml keeps the versions locked for a catalog: user", async () => {
+      const dir = await installStraightFromPnpmLock(catalogFiles);
+
+      expect(await installedPackageJson(dir, "packages/app", "no-deps")).toStrictEqual(noDeps100);
+      expect(await installedPackageJson(dir, "packages/app", "a-dep")).toStrictEqual({
+        name: "a-dep",
+        version: "1.0.1",
+      });
+    });
+
+    test("workspace: and linked rows keep their specifiers; members get their package.json version", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: workspaceRowFiles,
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(workspacesSection(bunLock)).toMatchInlineSnapshot(`
+        "  "workspaces": {
+            "": {
+              "name": "workspace-rows",
+              "devDependencies": {
+                "one-dep": "^1.0.0",
+              },
+            },
+            "packages/app": {
+              "name": "app",
+              "version": "1.0.0",
+              "dependencies": {
+                "lib": "workspace:*",
+                "no-deps": "^1.0.0",
+              },
+            },
+            "packages/cli": {
+              "name": "cli",
+              "dependencies": {
+                "lib": "^1.0.0",
+                "no-deps": "^1.0.0",
+              },
+            },
+            "packages/lib": {
+              "name": "lib",
+              "version": "1.2.3",
+            },
+          },
+        "
+      `);
+      expect(bunLock).toContain(`"lib": ["lib@workspace:packages/lib"]`);
+      expect(bunLock).toContain(`"no-deps@1.0.0"`);
+      expect(bunLock).toContain(`"no-deps@1.0.1"`);
+      expect(bunLock).not.toContain("link:");
+    });
+
+    test("bun install straight from pnpm-lock.yaml keeps the versions locked for workspace: and linked users", async () => {
+      const dir = await installStraightFromPnpmLock(workspaceRowFiles);
+
+      for (const member of ["packages/app", "packages/cli"]) {
+        expect(await installedPackageJson(dir, member, "no-deps")).toStrictEqual(noDeps100);
+        expect(await installedPackageJson(dir, member, "lib")).toStrictEqual({ name: "lib", version: "1.2.3" });
+      }
+    });
+  });
+
   describe("catalogs", () => {
     // pnpm/pnpm#10551: pruned Docker contexts ship the lockfile without pnpm-workspace.yaml
     test("lockfile catalogs: section is enough without pnpm-workspace.yaml", async () => {

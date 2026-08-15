@@ -523,6 +523,7 @@ The migration process handles:
 - Converts `pnpm-lock.yaml` (lockfile versions 7–9, including pnpm 11's multi-document files) to `bun.lock`
 - Preserves resolved versions and integrity hashes
 - Preserves peer dependency ranges and `peerDependenciesMeta`, so the next `bun install` leaves the migrated lockfile unchanged
+- Keeps `catalog:` and `workspace:` specifiers as written and records each workspace package's version, so `bun install --frozen-lockfile` accepts the migrated lockfile and the versions pnpm locked for each workspace are the ones installed
 - Migrates git, GitHub, tarball URL, `file:`, and `npm:` alias dependencies, including transitive ones
 - Resolves pnpm named registries (`name@registry:version`) via `namedRegistries` in `pnpm-workspace.yaml`
 - Converts injected workspace packages (`dependenciesMeta.*.injected`) to ordinary workspace dependencies

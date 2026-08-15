@@ -418,11 +418,13 @@ mod errno_name_tests {
     use super::*;
     use bun_core::coreutils_error_map;
 
+    // `_i64` matters: on Windows a bare literal selects the Win32-code `c_int` impl of `init`.
     #[test]
     fn errno_mapping() {
         assert_eq!(system_errno_name(2), Some("ENOENT"));
-        assert_eq!(SystemErrno::init(2), Some(SystemErrno::ENOENT));
-        assert_eq!(SystemErrno::init(12), Some(SystemErrno::ENOMEM));
+        assert_eq!(SystemErrno::init(2_i64), Some(SystemErrno::ENOENT));
+        assert_eq!(SystemErrno::init(12_i64), Some(SystemErrno::ENOMEM));
+        assert_eq!(from_errno(12), SystemErrno::ENOMEM);
         assert_eq!(system_errno_name(0), None);
         assert_eq!(system_errno_name(9999), None);
         // errno 11 is platform-specific: EAGAIN on linux/windows, EDEADLK on darwin/bsd.
@@ -433,15 +435,38 @@ mod errno_name_tests {
             target_family = "wasm"
         ))]
         {
-            assert_eq!(SystemErrno::init(11), Some(SystemErrno::EAGAIN));
-            assert_eq!(SystemErrno::init(104), Some(SystemErrno::ECONNRESET));
+            assert_eq!(SystemErrno::init(11_i64), Some(SystemErrno::EAGAIN));
+            assert_eq!(SystemErrno::init(104_i64), Some(SystemErrno::ECONNRESET));
         }
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         {
-            assert_eq!(SystemErrno::init(11), Some(SystemErrno::EDEADLK));
-            assert_eq!(SystemErrno::init(35), Some(SystemErrno::EAGAIN));
-            assert_eq!(SystemErrno::init(54), Some(SystemErrno::ECONNRESET));
+            assert_eq!(SystemErrno::init(11_i64), Some(SystemErrno::EDEADLK));
+            assert_eq!(SystemErrno::init(35_i64), Some(SystemErrno::EAGAIN));
+            assert_eq!(SystemErrno::init(54_i64), Some(SystemErrno::ECONNRESET));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn init_dispatches_on_argument_type() {
+        // 13 is the EACCES discriminant; Win32 ERROR_INVALID_DATA (13) maps to EINVAL.
+        assert_eq!(SystemErrno::init(13_i64), Some(SystemErrno::EACCES));
+        assert_eq!(from_errno(13), SystemErrno::EACCES);
+        assert_eq!(SystemErrno::init(13_i32), Some(SystemErrno::EINVAL));
+        assert_eq!(SystemErrno::init(13_u32), Some(SystemErrno::EINVAL));
+        // 12 is the ENOMEM discriminant; Win32 ERROR_INVALID_ACCESS (12) has no mapping.
+        assert_eq!(SystemErrno::init(12_i64), Some(SystemErrno::ENOMEM));
+        assert_eq!(SystemErrno::init(12_i32), None);
+        assert_eq!(SystemErrno::init(12_u32), None);
+        // WSAEADDRINUSE is not a discriminant: i64 falls through to the WSA table, either sign.
+        assert_eq!(SystemErrno::init(10048_i64), Some(SystemErrno::EADDRINUSE));
+        assert_eq!(SystemErrno::init(-10048_i64), Some(SystemErrno::EADDRINUSE));
+        assert_eq!(SystemErrno::init(10048_i32), Some(SystemErrno::EADDRINUSE));
+        // Negated libuv codes are what the c_int path exists for.
+        assert_eq!(
+            SystemErrno::init(bun_libuv_sys::UV_ENOENT),
+            Some(SystemErrno::ENOENT)
+        );
     }
 
     /// Exhaustive: every dense slot in the per-platform enum round-trips through

@@ -16,9 +16,16 @@
  * is the candidate replacement spec, allows that pattern, and still catches
  * the bugs we care about.
  *
+ * Crates in MIRI_WINDOWS_CRATES get a second pass with
+ * `--target x86_64-pc-windows-msvc`. Miri builds the sysroot for a foreign
+ * target from rust-src and interprets it on the host, so this is the one lane
+ * that compiles and runs those crates' `#[cfg(windows)]` test arms: no CI host
+ * has a cargo workspace on Windows.
+ *
  * Usage:
- *   bun run rust:miri              # default safe crate set
- *   bun run rust:miri -p bun_foo   # extra args go straight to cargo miri test
+ *   bun run rust:miri              # default safe crate set (both passes)
+ *   bun run rust:miri -p bun_foo   # extra args go straight to cargo miri test;
+ *                                  # crates in MIRI_WINDOWS_CRATES get both passes
  */
 
 import { spawnSync } from "node:child_process";
@@ -50,6 +57,12 @@ const MIRI_CRATES = [
   "bun_wyhash",
 ];
 
+// Subset of MIRI_CRATES whose unit tests have `#[cfg(windows)]` arms (the
+// Windows errno tables and `SystemErrno::init` dispatch in bun_errno). Same
+// three requirements as above, evaluated with the Windows cfg.
+const MIRI_WINDOWS_CRATES = ["bun_errno"];
+const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
+
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
   return spawnSync(cmd, args, { stdio: "inherit", cwd: repo, ...opts });
 }
@@ -80,13 +93,32 @@ if (!existsSync(buildOptionsRs) || !existsSync(lolhtmlCargo)) {
 }
 
 const extraArgs = process.argv.slice(2);
-const crateArgs = extraArgs.length > 0 ? extraArgs : MIRI_CRATES.flatMap(c => ["-p", c]);
 
-console.log(`\x1b[36m[miri]\x1b[0m cargo miri test ${crateArgs.join(" ")}`);
-const r = run("cargo", ["miri", "test", ...crateArgs], {
-  env: {
-    ...process.env,
-    MIRIFLAGS: ["-Zmiri-tree-borrows", process.env.MIRIFLAGS ?? ""].join(" ").trim(),
-  },
-});
-process.exit(r.status ?? 1);
+const passes: string[][] = [];
+if (extraArgs.length > 0) {
+  passes.push(extraArgs);
+  const hasTarget = extraArgs.some(a => a === "--target" || a.startsWith("--target="));
+  // `-p X` / `--package X` leave X as its own token; cargo also accepts `-pX` and `--package=X`.
+  const selectsWindowsCrate = MIRI_WINDOWS_CRATES.some(c =>
+    extraArgs.some(a => a === c || a === `-p${c}` || a === `--package=${c}`),
+  );
+  if (!hasTarget && selectsWindowsCrate) {
+    passes.push(["--target", WINDOWS_TARGET, ...extraArgs]);
+  }
+} else {
+  passes.push(MIRI_CRATES.flatMap(c => ["-p", c]));
+  passes.push(["--target", WINDOWS_TARGET, ...MIRI_WINDOWS_CRATES.flatMap(c => ["-p", c])]);
+}
+
+const env = {
+  ...process.env,
+  MIRIFLAGS: ["-Zmiri-tree-borrows", process.env.MIRIFLAGS ?? ""].join(" ").trim(),
+};
+
+let status = 0;
+for (const args of passes) {
+  console.log(`\x1b[36m[miri]\x1b[0m cargo miri test ${args.join(" ")}`);
+  const r = run("cargo", ["miri", "test", ...args], { env });
+  if (r.status !== 0) status = r.status ?? 1;
+}
+process.exit(status);

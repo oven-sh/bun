@@ -41,6 +41,7 @@ const {
   kPendingCallbacks,
   kRequest,
   kCloseCallback,
+  kDeferredUpgradeEmit,
   NodeHTTPResponseFlags,
   callCloseCallback,
   emitCloseNT,
@@ -683,6 +684,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         isAncientHTTP: boolean,
         connectHead?: Buffer,
         isPipelinedDispatch?: boolean,
+        bodyCompleteInHead?: boolean,
       ) {
         if (!socket) {
           socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
@@ -962,13 +964,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         } else if (is_upgrade) {
           // Hand the raw socket over to the 'upgrade' listener, like Node.js.
-          // Without a body the message is already complete: bytes that arrived
-          // after the request head become the upgradeHead and the connection
-          // switches into CONNECT-style tunnel mode immediately. With a body
-          // (Node 26 semantics) the body keeps being parsed and delivered
-          // through req; the connection only switches to tunnel mode once the
-          // message completes, so the upgradeHead is empty and everything after
-          // the end of the message reaches the socket as raw data.
+          // With a body (Node 26 semantics) the body keeps being parsed and
+          // delivered through req; the connection only switches to tunnel mode
+          // once the message completes, and head is the post-body remainder of
+          // the same chunk (the parser already computed it in connectHead).
           socketHandle.upgradeToTunnel(hasBody);
           socket[kEnableStreaming](true);
           detachSocketListenersForHandoff(socket);
@@ -978,28 +977,38 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket[kUpgradeIncoming] = http_req;
             http_req.once("end", clearUpgradeIncoming.bind(undefined, socket));
           }
-          const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
-          let upgradeHandled;
-          try {
-            upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
-          } catch (err) {
-            // A throwing 'upgrade' listener surfaces as an uncaught
-            // exception, like Node.js (the emit happens outside any JS try
-            // frame there).
-            process.nextTick(rethrowUncaught, err);
-            upgradeHandled = true;
-          }
-          if (!upgradeHandled) {
-            // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
-            // listener is installed: Node.js destroys the socket.
-            socket.destroy();
-            return;
-          }
+          const upgradeHead = (bodyCompleteInHead || !hasBody) && connectHead ? connectHead : kEmptyBuffer;
           // Like CONNECT: the connection is detached from the HTTP request
           // machinery; hold the native callback open until the raw socket
           // closes.
           const { promise: upgradePromise, resolve: resolveUpgrade } = $newPromiseCapability(Promise);
-          socket.once("close", resolveUpgrade);
+          const emitUpgrade = () => {
+            let handled;
+            try {
+              handled = server.emit("upgrade", http_req, socket, upgradeHead);
+            } catch (err) {
+              // A throwing 'upgrade' listener surfaces as an uncaught
+              // exception, like Node.js (the emit happens outside any JS try
+              // frame there).
+              process.nextTick(rethrowUncaught, err);
+              handled = true;
+            }
+            if (!handled) {
+              // shouldUpgradeCallback accepted the upgrade but no 'upgrade'
+              // listener is installed: Node.js destroys the socket.
+              socket.destroy();
+            }
+            // Attach the internal close listener after the user's handler ran:
+            // Node.js hands the socket over with no listeners (same as CONNECT).
+            socket.once("close", resolveUpgrade);
+          };
+          if (hasBody && bodyCompleteInHead) {
+            // Body is in this chunk: defer to onDataIncomingMessage's fin so
+            // the listener observes req.complete and the buffered body.
+            http_req[kDeferredUpgradeEmit] = emitUpgrade;
+          } else {
+            emitUpgrade();
+          }
           return upgradePromise;
         } else if (
           server.requireHostHeader &&

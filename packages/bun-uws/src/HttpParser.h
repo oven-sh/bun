@@ -210,6 +210,10 @@ struct HttpResponseData;
          * WARNING: This points to data in the receive buffer and may be stack-allocated.
          * Must be cloned before the request handler returns. */
         std::span<const char> head;
+        /* For an Upgrade request with a body, whether that body completes
+         * within this same parse chunk (so head above is the post-body
+         * remainder, and req.complete can be set at 'upgrade' time). */
+        bool bodyCompleteInHead = false;
 
         bool isAncient()
         {
@@ -1333,8 +1337,23 @@ struct HttpResponseData;
             /* If returned socket is not what we put in we need
              * to break here as we either have upgraded to
              * WebSockets or otherwise closed the socket. */
-            /* Store any remaining data as head for Node.js compat (connect/upgrade events) */
+            /* Store any remaining data as head for Node.js compat (connect/upgrade events).
+             * For an Upgrade with a Content-Length body that completes in this
+             * chunk, slice head to the post-body remainder like Node. */
+            req->bodyCompleteInHead = false;
             req->head = std::span<const char>(data, length);
+            if constexpr (IsNodeHttp && !ConsumeMinimally) {
+                if (!isConnectRequest && contentLengthStringLen && !transferEncoding.has
+                        && remainingStreamingBytes <= (uint64_t) length
+                        && req->getHeader("upgrade").data()) [[unlikely]] {
+                    std::string_view m = req->getCaseSensitiveMethod();
+                    if (m != "HEAD" && m != "TRACE") {
+                        unsigned int skip = (unsigned int) remainingStreamingBytes;
+                        req->head = std::span<const char>(data + skip, length - skip);
+                        req->bodyCompleteInHead = true;
+                    }
+                }
+            }
             void *returnedUser = requestHandler(user, req);
             if (returnedUser != user) {
                 /* We are upgraded to WebSocket or otherwise broken */

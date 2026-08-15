@@ -133,6 +133,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
          * and everything after the end of the message is opaque data for the
          * 'upgrade' listener's socket. */
         HTTP_NODE_TUNNEL_AFTER_BODY = 1 << 14,
+        /* The tunnel-after-body switch just happened during this parse call.
+         * The post-body remainder of the same chunk is the 'upgrade' head
+         * argument (already handed to JS via req->head), not raw socket data,
+         * so the next isConnectRequest onSocketData is suppressed once. */
+        HTTP_NODE_TUNNEL_HEAD_PENDING = 1 << 17,
         /* The peer half-closed (FIN) while there was still something to flush
          * before teardown: buffered/pinned response bytes, or (with
          * httpAllowHalfOpen) an in-flight or queued pipelined response. The

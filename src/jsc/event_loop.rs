@@ -1019,7 +1019,8 @@ impl EventLoop {
     /// terminated mid-wait). Nothing is thrown for it; a caller inside a `JsResult`
     /// function crosses explicitly with [`jsc::Stopped::throw`].
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
-        self.wait_for_promise_or_give_up(promise, || false).map(|_settled| ())
+        self.wait_for_promise_or_give_up(promise, || false)
+            .map(|_settled| ())
     }
 
     /// [`Self::wait_for_promise`] for a waiter with a deadline of its own (a

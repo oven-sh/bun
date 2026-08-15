@@ -569,20 +569,22 @@ impl ShellCpTask {
             .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
     }
 
-    fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
+    /// `path` is `operand` resolved against the shell's cwd; the error names
+    /// `operand` as the user wrote it, which is what the message prints.
+    fn is_dir(path: &bun_core::ZStr, operand: &[u8]) -> bun_sys::Maybe<bool> {
         #[cfg(windows)]
         {
             match bun_sys::get_file_attributes(path) {
                 Some(attrs) => Ok(attrs.is_directory),
                 None => Err(
                     bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile)
-                        .with_path(path.as_bytes()),
+                        .with_path(operand),
                 ),
             }
         }
         #[cfg(not(windows))]
         {
-            let st = bun_sys::lstat(path)?;
+            let st = bun_sys::lstat(path).map_err(|e| e.with_path(operand))?;
             Ok(bun_sys::S::ISDIR(st.st_mode as _))
         }
     }
@@ -625,7 +627,7 @@ impl ShellCpTask {
         //   folder -> folder
         // We need to check dest to see what it is; if it doesn't exist we
         // need to create it.
-        let src_is_dir = match Self::is_dir(src) {
+        let src_is_dir = match Self::is_dir(src, &self.src) {
             Ok(x) => x,
             Err(e) => return Some(ShellErr::new_sys(&e)),
         };
@@ -650,7 +652,7 @@ impl ShellCpTask {
             ));
         }
 
-        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
+        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt, &self.tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.

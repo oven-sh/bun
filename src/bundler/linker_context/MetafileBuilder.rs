@@ -43,7 +43,7 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
-use crate::chunk::Content as ChunkContent;
+use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
 
@@ -446,9 +446,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         b"", // no import prefix for metafile
         &chunks[0],
         chunks,
-        None,  // no display size
-        false, // not force absolute path
-        false, // no source map shifts
+        None, // no display size
+        ReferencePathStyle::ImporterRelative,
+        SourceMapShiftTracking::Disabled,
     )?;
 
     Ok(code_result.buffer)

@@ -167,6 +167,46 @@ impl Drop for MemoryAccessor {
     }
 }
 
+/// Protection flags of the committed, accessible page containing `address`.
+/// `None` for free/reserved pages and for committed pages that would still
+/// fault on access: "not MEM_FREE" is not enough to make a read safe, since
+/// MEM_RESERVE has no backing and MEM_COMMIT pages can be PAGE_NOACCESS or
+/// PAGE_GUARD (the stack guard page after EXCEPTION_STACK_OVERFLOW is exactly
+/// this).
+#[cfg(windows)]
+fn accessible_page_protection(address: usize) -> Option<u32> {
+    use bun_windows_sys::kernel32::{
+        MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_GUARD, PAGE_NOACCESS, VirtualQuery,
+    };
+    // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
+    // a valid representation.
+    let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { crate::ffi::zeroed_unchecked() };
+    // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
+    // only inspects the address-space mapping at `address`.
+    let rc = unsafe {
+        VirtualQuery(
+            core::ptr::without_provenance(address),
+            &raw mut mbi,
+            core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+        )
+    };
+    (rc != 0 && mbi.State == MEM_COMMIT && mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0)
+        .then_some(mbi.Protect)
+}
+
+/// Whether `address` points into mapped code: an image `.text` section or a
+/// JIT/FFI allocation. Return addresses always do; the stack slots a derailed
+/// walk would otherwise report (JSValues, heap pointers, counters) never do.
+#[cfg(windows)]
+fn is_executable_memory(address: usize) -> bool {
+    use bun_windows_sys::kernel32::{
+        PAGE_EXECUTE, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY,
+    };
+    const EXECUTABLE: u32 =
+        PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    accessible_page_protection(address).is_some_and(|p| p & EXECUTABLE != 0)
+}
+
 fn is_valid_memory(address: usize) -> bool {
     let page_size = bun_alloc::page_size();
     let aligned_address = address & !(page_size - 1);
@@ -176,35 +216,16 @@ fn is_valid_memory(address: usize) -> bool {
     #[cfg(windows)]
     {
         use bun_windows_sys::kernel32::{
-            MEM_COMMIT, MEMORY_BASIC_INFORMATION, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE,
-            PAGE_EXECUTE_WRITECOPY, PAGE_GUARD, PAGE_NOACCESS, PAGE_READONLY, PAGE_READWRITE,
-            PAGE_WRITECOPY, VirtualQuery,
+            PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_READONLY,
+            PAGE_READWRITE, PAGE_WRITECOPY,
         };
-        // SAFETY: MEMORY_BASIC_INFORMATION is a plain Win32 POD; all-zeros is
-        // a valid representation.
-        let mut mbi: MEMORY_BASIC_INFORMATION = unsafe { crate::ffi::zeroed_unchecked() };
-        // SAFETY: `mbi` is a valid out-param of the size we pass; VirtualQuery
-        // only inspects the address-space mapping at `aligned_address`.
-        let rc = unsafe {
-            VirtualQuery(
-                core::ptr::without_provenance(aligned_address),
-                &raw mut mbi,
-                core::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
-            )
-        };
-        // "Not MEM_FREE" is not enough to make a read safe: MEM_RESERVE has no
-        // backing, and MEM_COMMIT pages can be PAGE_NOACCESS or PAGE_GUARD (the
-        // stack guard page after EXCEPTION_STACK_OVERFLOW is exactly this).
         const READABLE: u32 = PAGE_READONLY
             | PAGE_READWRITE
             | PAGE_WRITECOPY
             | PAGE_EXECUTE_READ
             | PAGE_EXECUTE_READWRITE
             | PAGE_EXECUTE_WRITECOPY;
-        rc != 0
-            && mbi.State == MEM_COMMIT
-            && mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD) == 0
-            && mbi.Protect & READABLE != 0
+        accessible_page_protection(aligned_address).is_some_and(|p| p & READABLE != 0)
     }
     #[cfg(not(windows))]
     {
@@ -338,6 +359,99 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
     n
 }
 
+#[cfg(windows)]
+fn context_pc_sp(ctx: &bun_windows_sys::CONTEXT) -> (u64, u64) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        (ctx.Rip, ctx.Rsp)
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        (ctx.Pc, ctx.Sp)
+    }
+}
+
+/// Step out of a leaf function (no unwind info because it never touches the
+/// stack): the return address is still where the call left it, `[Rsp]` on x64
+/// and `Lr` on ARM64 (`bl` pushes nothing, so `Sp` is correctly left alone).
+/// Only frame 0 can be a leaf; a return address never points into a function
+/// that makes no calls. Declines, leaving `ctx` untouched, when the slot does
+/// not hold a code address: the faulting code is then offlineasm (see
+/// [`unwind_frame_pointer`]) and the slot is scratch.
+#[cfg(windows)]
+fn unwind_leaf(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAccessor) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if ctx.Rsp & 7 != 0 {
+            return false;
+        }
+        let Some(return_pc) = ma.load_usize(ctx.Rsp as usize) else {
+            return false;
+        };
+        if !is_executable_memory(return_pc) {
+            return false;
+        }
+        ctx.Rip = return_pc as u64;
+        ctx.Rsp += 8;
+        true
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let _ = ma;
+        if ctx.Lr == ctx.Pc || !is_executable_memory(ctx.Lr as usize) {
+            return false;
+        }
+        ctx.Pc = ctx.Lr;
+        true
+    }
+}
+
+/// Step out of a frame that has no unwind info and is not a leaf. In bun that
+/// is JSC's offlineasm code (the LLInt opcode handlers and the `vmEntryTo*`
+/// trampolines carry no `.seh_*` directives, and for a PC inside the image
+/// `RtlLookupFunctionEntry` consults only its static `.pdata`) and tinycc's
+/// `bun:ffi` trampolines. Both keep the frame-pointer register (`rbp`/`x29`)
+/// on a frame whose first two slots are the caller's frame pointer and the
+/// return address: the `CallFrame` layout, which is also what the unwind info
+/// JSC registers for its JIT pool describes (`registerJITUnwindInfo` in
+/// WebKit's `ExecutableAllocator.cpp`). The Rtl unwinder restores that
+/// register when it steps out of a compiled frame, so it holds the right frame
+/// here however many C++ and JIT frames sat above. A frame pointer below the
+/// stack pointer, or with unreadable slots, holds something else: stop.
+#[cfg(windows)]
+fn unwind_frame_pointer(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAccessor) -> bool {
+    #[cfg(target_arch = "x86_64")]
+    let (frame, sp) = (ctx.Rbp, ctx.Rsp);
+    #[cfg(target_arch = "aarch64")]
+    let (frame, sp) = (ctx.Fp, ctx.Sp);
+    const SLOT: u64 = core::mem::size_of::<usize>() as u64;
+    if frame % SLOT != 0 || frame < sp {
+        return false;
+    }
+    let Some(caller_sp) = frame.checked_add(2 * SLOT) else {
+        return false;
+    };
+    let (Some(caller_frame), Some(return_pc)) = (
+        ma.load_usize(frame as usize),
+        ma.load_usize((frame + SLOT) as usize),
+    ) else {
+        return false;
+    };
+    #[cfg(target_arch = "x86_64")]
+    {
+        ctx.Rbp = caller_frame as u64;
+        ctx.Rip = return_pc as u64;
+        ctx.Rsp = caller_sp;
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        ctx.Fp = caller_frame as u64;
+        ctx.Pc = return_pc as u64;
+        ctx.Sp = caller_sp;
+    }
+    true
+}
+
 /// Capture a faulting thread's call stack from the fault context. `pc` is the
 /// exact faulting instruction (`ExceptionAddress` / `mcontext` PC) and becomes
 /// frame 0.
@@ -349,9 +463,13 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
 /// Windows: `fp` is the `*const CONTEXT` the VEH received (`EXCEPTION_POINTERS
 /// ::ContextRecord`). The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
 /// seeded from that context, so it starts at the fault frame and the handler's
-/// own frames are never in the chain. `rbp` is not a reliable frame pointer
-/// across the prebuilt JavaScriptCore/LLInt code, so an fp-walk would derail;
-/// `.pdata` is always emitted, so the Rtl unwinder works everywhere.
+/// own frames are never in the chain. Compiled code always has unwind info and
+/// JSC registers it for the JIT pool; the frames that lack it are JSC's
+/// offlineasm (LLInt, `vmEntryToJavaScript`), which every JS-initiated crash
+/// passes through, and those are stepped over via the frame pointer
+/// ([`unwind_frame_pointer`]). A pure frame-pointer walk is still not an
+/// option: the prebuilt C++ does not maintain one, and it is the Rtl unwinder
+/// stepping through those frames that keeps the frame-pointer register valid.
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
@@ -369,50 +487,27 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
         // valid for the duration of the handler. Copy so RtlVirtualUnwind can
         // mutate freely without touching the kernel's record.
         let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
+        let mut ma = MemoryAccessor::INIT;
         // Termination: on x64 RtlVirtualUnwind sets Pc = 0 at the end of the
         // chain; on ARM64 it can leave the CONTEXT entirely unchanged, so a
         // step that changed neither Pc nor Sp is also terminal. An Sp-only or
         // Pc-only check truncates legitimate stacks: an ARM64 fault at prolog
         // offset 0 (or a .pdata-bearing zero-stack leaf) sets Pc = Lr while
         // leaving Sp unchanged, and directly-recursive frames share a return
-        // Pc. The `n < out.len()` cap is the ultimate bound.
+        // Pc. A step that produces a non-code Pc has lost the chain (a smashed
+        // return address, or a fallback applied to a frame it does not fit);
+        // the trace ends at the last frame that was actually recovered rather
+        // than continuing into whatever the stack slots happen to hold. The
+        // `n < out.len()` cap is the ultimate bound.
         while n < out.len() {
-            #[cfg(target_arch = "x86_64")]
-            let (control_pc, control_sp) = (ctx.Rip, ctx.Rsp);
-            #[cfg(target_arch = "aarch64")]
-            let (control_pc, control_sp) = (ctx.Pc, ctx.Sp);
+            let (control_pc, control_sp) = context_pc_sp(&ctx);
             let mut image_base: u64 = 0;
             // SAFETY: `control_pc` is a code address from the fault context;
             // `image_base` is valid for write; history table may be null.
             let rf = unsafe {
                 ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
             };
-            if rf.is_null() {
-                // Leaf function with no `.pdata` entry: manually pop the
-                // return address. On x64 it is at `[Rsp]`; on ARM64 it is in
-                // `Lr`. An ARM64 leaf allocates no stack (bl does not push),
-                // so `Sp` is correctly left unchanged here.
-                #[cfg(target_arch = "x86_64")]
-                {
-                    if ctx.Rsp & 7 != 0 || !is_valid_memory(ctx.Rsp as usize) {
-                        break;
-                    }
-                    // SAFETY: is_valid_memory confirmed the page at `Rsp` is
-                    // committed and readable (not reserved/guard/noaccess),
-                    // and `Rsp` is 8-aligned.
-                    unsafe {
-                        ctx.Rip = *(ctx.Rsp as *const u64);
-                    }
-                    ctx.Rsp += 8;
-                }
-                #[cfg(target_arch = "aarch64")]
-                {
-                    if ctx.Lr == control_pc {
-                        break;
-                    }
-                    ctx.Pc = ctx.Lr;
-                }
-            } else {
+            if !rf.is_null() {
                 let mut handler_data: *mut core::ffi::c_void = core::ptr::null_mut();
                 let mut establisher_frame: u64 = 0;
                 // SAFETY: `rf` and `image_base` came from RtlLookupFunctionEntry
@@ -430,12 +525,16 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                         core::ptr::null_mut(),
                     );
                 }
+            } else if !(n == 1 && unwind_leaf(&mut ctx, &mut ma))
+                && !unwind_frame_pointer(&mut ctx, &mut ma)
+            {
+                break;
             }
-            #[cfg(target_arch = "x86_64")]
-            let (next_pc, next_sp) = (ctx.Rip, ctx.Rsp);
-            #[cfg(target_arch = "aarch64")]
-            let (next_pc, next_sp) = (ctx.Pc, ctx.Sp);
-            if next_pc == 0 || (next_pc == control_pc && next_sp == control_sp) {
+            let (next_pc, next_sp) = context_pc_sp(&ctx);
+            if next_pc == 0
+                || (next_pc == control_pc && next_sp == control_sp)
+                || !is_executable_memory(next_pc as usize)
+            {
                 break;
             }
             out[n] = next_pc as usize;

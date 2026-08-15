@@ -312,12 +312,13 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
         return bytes.toString("latin1");
       },
       // UTF-16 fast path: simdutf predicts three bytes per unit, 1.5x the cap.
-      utf16: () => "\\u65e5".repeat(${CAP_MB / 2} * MiB),
-      // UTF-16 slow path, N ASCII units behind a lone surrogate: simdutf's
-      // prediction (N + 2 bytes) is reserved fine, then the surrogate hands the
-      // chunk to the replacement encoder, whose first reservation (1.2 bytes per
-      // remaining unit, 1.2N + 3) does not fit.
-      utf16Invalid: () => "\\ud800" + "a".repeat(${CAP_MB - 0.25} * MiB),
+      utf16: () => Buffer.alloc(${CAP_MB} * MiB, "\\u65e5", "utf16le").toString("utf16le"),
+      // UTF-16 slow path, N ASCII units behind a lone surrogate (the surrogate
+      // makes the concatenation a 16-bit string): simdutf's prediction (N + 2
+      // bytes) is reserved fine, then the surrogate hands the chunk to the
+      // replacement encoder, whose first reservation (1.2 bytes per remaining
+      // unit, 1.2N + 3) does not fit.
+      utf16Invalid: () => "\\ud800" + Buffer.alloc(${CAP_MB - 0.25} * MiB, "a").toString("latin1"),
     };
     const describeError = e => ({ name: e.name, message: e.message });
     const SMALL = "ok\\u00e9";

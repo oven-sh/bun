@@ -4897,7 +4897,8 @@ pub(crate) fn write_file_with_source_destination(
 /// ## Errors
 /// - If `path_or_blob` is a detached blob
 /// ## Panics
-/// - If `path_or_blob` is a `Blob` backed by a byte store
+/// - If `path_or_blob` is a `Blob` backed by a byte store. A destination that
+///   comes from JS must go through [`write_destination_from_js`] first.
 pub(crate) fn write_file_internal(
     global_this: &JSGlobalObject,
     path_or_blob_: &mut PathOrBlob,
@@ -5232,6 +5233,21 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
     Ok(())
 }
 
+/// Parses the destination argument of `Bun.write` (shared by `Image.write`):
+/// a path, a file descriptor, or a `Bun.file()` / S3 blob. A `Blob` that is
+/// not backed by a file or S3 is rejected here; that is the precondition
+/// [`write_file_internal`] relies on for a `PathOrBlob::Blob` destination.
+pub(crate) fn write_destination_from_js(
+    global_this: &JSGlobalObject,
+    args: &mut jsc::ArgumentsSlice,
+) -> JsResult<PathOrBlob> {
+    let path_or_blob = PathOrBlob::from_js_no_copy(global_this, args)?;
+    if let PathOrBlob::Blob(ref blob) = path_or_blob {
+        validate_writable_blob(global_this, blob)?;
+    }
+    Ok(path_or_blob)
+}
+
 /// Applies a write-path `options.type` override to `blob`. Throws if the
 /// value is not a string; an invalid blob type is silently ignored.
 fn set_content_type_from_js(
@@ -5261,13 +5277,7 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
     // SAFETY: `bun_vm()` returns a live VM pointer for the calling JS context.
     let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments);
 
-    // accept a path or a blob
-    // `defer if (.path) path.deinit()` → `Drop for PathLike` (via PathOrBlob).
-    let mut path_or_blob = PathOrBlob::from_js_no_copy(global_this, &mut args)?;
-    // "Blob" must actually be a BunFile, not a webcore blob.
-    if let PathOrBlob::Blob(ref blob) = path_or_blob {
-        validate_writable_blob(global_this, blob)?;
-    }
+    let mut path_or_blob = write_destination_from_js(global_this, &mut args)?;
 
     let Some(data) = args.next_eat() else {
         return Err(global_this.throw_invalid_arguments(format_args!(

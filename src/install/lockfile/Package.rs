@@ -1843,8 +1843,7 @@ impl Package<u64> {
         }
 
         match dependency_version.tag {
-            // A manifest parsed out of the cache (`Features::NPM`) keeps folder paths
-            // relative to its package, like `Package::from_npm`; see `PackageInstaller`.
+            // Cache packages (`Features::NPM`) keep these package-relative, like `from_npm`.
             dependency::version::Tag::Folder
                 if features.is_main || features.is_workspace || features.is_folder =>
             {

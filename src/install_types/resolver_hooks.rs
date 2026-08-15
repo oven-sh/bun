@@ -1204,8 +1204,6 @@ pub struct Features {
     pub dev_dependencies: bool,
     pub is_main: bool,
     pub is_workspace: bool,
-    /// The package.json of a local `file:` folder dependency. With `is_main` and
-    /// `is_workspace`, the manifests whose folder paths are rebased onto the top-level dir.
     pub is_folder: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,

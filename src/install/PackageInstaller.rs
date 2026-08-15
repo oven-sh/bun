@@ -1847,8 +1847,8 @@ impl<'a> PackageInstaller<'a> {
                             );
                         }
 
-                        // One from `Package::from_npm` or a `Features::NPM` parse is relative to
-                        // the declaring package, which installs at `dirname(node_modules.path)`
+                        // One declared by a cache package (`from_npm`, `Features::NPM`) is
+                        // relative to that package, which installs at `dirname(node_modules.path)`
                         // because transitive folders never hoist.
                         let dir_name = {
                             let d = dirname::<platform::Auto>(self.node_modules.path.as_slice());

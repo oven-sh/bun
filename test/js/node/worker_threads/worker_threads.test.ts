@@ -444,8 +444,12 @@ test.concurrent("eval does not leak source code", async () => {
     stderr: "",
     exitCode: 0,
   });
-  // A retained source copy per worker would show up as at least this much growth.
-  expect(report.deltaMiB).toBeLessThan(report.eachSizeMiB * report.iterations);
+  // Retaining the copies measures as roughly eachSizeMiB * iterations, but often a
+  // little under it (480 to 515 on release builds with the revoke stubbed out), so
+  // the nominal size itself is not a usable bound. A healthy run measures about 0,
+  // give or take one copy that was still being torn down at either reading. The
+  // bound sits in the middle of that gap.
+  expect(report.deltaMiB).toBeLessThan((report.eachSizeMiB * report.iterations) / 2);
 });
 
 describe.concurrent("captured stdio backpressure", () => {
@@ -2698,9 +2702,10 @@ describe.concurrent("worker stop ordering as seen by the worker's own handlers",
     server.on("close", () => put(${TAG.serverClose}));
     const udp = dgram.createSocket("udp4"); udp.bind(0, "127.0.0.1"); udp.on("close", () => put(${TAG.udpClose}));
     const watcher = fs.watch(os.tmpdir(), () => {}); watcher.on("close", () => put(${TAG.watcherClose}));
-    // A timer that is firing when the stop arrives. It must not log: its ticks before
-    // the stop are legitimate and would fill the log, and a tick that terminate() cuts
-    // off between put()'s two Atomics calls would leave a half-written entry behind.
+    // A timer that is still firing when the stop arrives. It does not log: its ticks
+    // are legitimate right up to the stop, so logging them would only fill the log
+    // while a busy parent gets around to answering "ready", and give terminate()
+    // a put() to land in the middle of.
     setInterval(() => {}, 1).unref();
     const { port1, port2 } = new MessageChannel(); port1.on("message", () => {}); port1.on("close", () => put(${TAG.portClose})); globalThis.keepPeer = port2;
     Bun.serve({ port: 0, development: false, fetch: () => new Response("x") });

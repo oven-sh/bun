@@ -40,7 +40,7 @@ for (let i = 0; i < iterations; i++) {
   await reallyGC();
 }
 const after = rss();
-// Retaining the copies grows the process by at least eachSizeMiB per Worker
-// (around 503 MiB on macOS before they were released); the test fails the run
-// once deltaMiB reaches eachSizeMiB * iterations.
+// The copies have to be this large: allocations of this size go back to the OS
+// when freed, so a healthy run reads about 0 and retained copies read about
+// eachSizeMiB * iterations; the test draws the line between the two.
 console.log(JSON.stringify({ eachSizeMiB, iterations, deltaMiB: Math.round((after - before) / 1024 / 1024) }));

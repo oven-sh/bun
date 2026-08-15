@@ -4899,9 +4899,7 @@ void JSC__VM__releaseWeakRefs(JSC::VM* arg0)
     arg0->finalizeSynchronousJSExecution();
 }
 
-// A "name" redefined with Object.defineProperty (tsc's __setFunctionName, esbuild's and Bun's
-// __name) is what node displays; JSC's calculatedDisplayName() only looks at "displayName" and
-// the executable. "displayName" keeps its precedence.
+// A "name" set with Object.defineProperty, which JSC's calculatedDisplayName() does not consult.
 static WTF::String explicitFunctionName(JSC::VM& vm, JSC::JSFunction* function)
 {
     if (!function->displayName(vm).isEmpty()) {
@@ -4916,8 +4914,7 @@ static WTF::String explicitFunctionName(JSC::VM& vm, JSC::JSFunction* function)
     return WTF::String();
 }
 
-// The function JSObject::calculatedClassName() would name an object after: its own
-// "constructor" (prototype objects) or its prototype's (instances).
+// The constructor JSObject::calculatedClassName() names an object after.
 static JSC::JSFunction* constructorForClassName(JSC::VM& vm, JSC::JSObject* object)
 {
     JSC::JSValue constructor = object->getDirect(vm, vm.propertyNames->constructor);

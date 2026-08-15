@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -588,4 +588,56 @@ All files  |    0.00 |    0.00 |
 Ran 1 test across 1 file."
 `);
   expect(result.exitCode).toBe(0);
+});
+
+describe.concurrent("lcov reporter with a coverage directory longer than the path buffer", () => {
+  // The lcov.info path is built in a buffer of MAX_PATH_BYTES: 4096 on Linux,
+  // 1024 on macOS and 98302 on Windows. A command line cannot carry a value
+  // that long on Windows, but bunfig can hold a value of any length anywhere.
+  const files = {
+    "lib.ts": `export const covered = () => 1;`,
+    "covered.test.ts": `
+      import { test, expect } from "bun:test";
+      import { covered } from "./lib";
+      test("covered", () => { expect(covered()).toBe(1); });
+    `,
+  };
+
+  for (const [source, length] of [
+    ["--coverage-dir", 5000],
+    ["bunfig coverageDir", 100_000],
+  ] as const) {
+    test.skipIf(isWindows && length < 98302)(
+      `${source} of ${length} bytes is reported as an error instead of crashing`,
+      async () => {
+        const coverageDir = Buffer.alloc(length, "c").toString();
+        const viaBunfig = source === "bunfig coverageDir";
+        using dir = tempDir("coverage-dir-too-long", {
+          ...files,
+          ...(viaBunfig ? { "bunfig.toml": `[test]\ncoverageDir = "${coverageDir}"\n` } : {}),
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "test",
+            "--coverage",
+            "--coverage-reporter=lcov",
+            ...(viaBunfig ? [] : ["--coverage-dir", coverageDir]),
+          ],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("(pass) covered");
+        expect(stderr).toContain("Failed to create lcov file");
+        expect(stderr).toContain("ENAMETOOLONG");
+        expect(proc.signalCode).toBeNull();
+        expect(exitCode).toBe(1);
+      },
+    );
+  }
 });

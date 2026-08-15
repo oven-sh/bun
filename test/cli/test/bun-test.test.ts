@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1882,4 +1882,80 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+});
+
+describe.concurrent("bunfig [test] root", () => {
+  const passingTest = (name: string) => `import { test } from "bun:test"; test(${JSON.stringify(name)}, () => {});`;
+
+  test("only scans the configured directory", async () => {
+    using dir = tempDir("bunfig-root", {
+      "bunfig.toml": `[test]\nroot = "sub"\n`,
+      "top.test.ts": passingTest("top"),
+      "sub/inner.test.ts": passingTest("inner"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("inner.test.ts:");
+    expect(stderr).not.toContain("top.test.ts:");
+    expect(stderr).toContain("Ran 1 test across 1 file.");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a directory that does not exist is reported by its absolute path", async () => {
+    using dir = tempDir("bunfig-root-missing", {
+      "bunfig.toml": `[test]\nroot = "missing"\n`,
+      "top.test.ts": passingTest("top"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Failed to scan non-existent root directory for tests:");
+    expect(stderr).toContain(join(String(dir), "missing"));
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
+
+  // The root is joined onto the cwd in a buffer of MAX_PATH_BYTES (4096 on
+  // Linux, 1024 on macOS, 98302 on Windows), and bunfig can hold a value of
+  // any length. 100000 bytes overflows the buffer on every platform; 5000
+  // bytes still fits on Windows, where it is simply a directory that does not
+  // exist.
+  for (const length of [5000, 100_000]) {
+    test.skipIf(isWindows && length < 98302)(
+      `a root of ${length} bytes is reported like a directory that does not exist instead of crashing`,
+      async () => {
+        const root = Buffer.alloc(length, "r").toString();
+        using dir = tempDir("bunfig-root-too-long", {
+          "bunfig.toml": `[test]\nroot = "${root}"\n`,
+          "top.test.ts": passingTest("top"),
+        });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("Failed to scan non-existent root directory for tests:");
+        expect(stderr).toContain(root);
+        expect(proc.signalCode).toBeNull();
+        expect(exitCode).toBe(1);
+      },
+    );
+  }
 });

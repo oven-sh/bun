@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 
 // These tests drive real `bun install` runs against a mock registry, which is
 // slow under the debug/ASAN build — give them the same generous timeout the
@@ -2437,6 +2437,30 @@ describe("minimum-release-age", () => {
       await rm(`${dir}/node_modules`, { recursive: true, force: true });
     }
 
+    type InstallOptions = Parameters<typeof install>[1];
+    type InstallResult = Awaited<ReturnType<typeof install>>;
+
+    // `bun install` writes fetched manifests to the cache from a background
+    // thread and does not wait for that on exit, so a small install can finish
+    // before its manifests are on disk. Resolve from scratch until `manifests`
+    // of them are; every run has to produce the same result.
+    async function installUntilManifestsCached(
+      dir: string,
+      manifests: number,
+      expectResult: (result: InstallResult) => void,
+      options?: InstallOptions,
+    ) {
+      for (let attempt = 0; ; attempt++) {
+        expectResult(await install(dir, options));
+        const cached = (await readdir(`${dir}/.bun-cache`).catch((): string[] => [])).filter(name =>
+          name.endsWith(".npm"),
+        );
+        if (cached.length >= manifests) return;
+        if (attempt === 20) throw new Error(`only ${cached.length} of ${manifests} manifests were cached`);
+        await reResolve(dir);
+      }
+    }
+
     test.concurrent("declared by a registry package", async () => {
       using registry = serveRegistry();
       using dir = createProject(registry.origin, {
@@ -2535,17 +2559,18 @@ describe("minimum-release-age", () => {
       // stale manifest instead of from a fresh lookup.
       const staleManifests = { env: { BUN_MANIFEST_CACHE: "1" } };
 
-      let { stderr, exitCode } = await install(String(dir), staleManifests);
-      expect(stderr).toContain(blockedPeerWarning("2.0.0"));
-      expect(exitCode).toBe(0);
-      expect(registry.requests).toEqual(["/gated"]);
+      const expectWarnedAndLeftOut = ({ stderr, exitCode }: InstallResult) => {
+        expect(stderr).toContain(blockedPeerWarning("2.0.0"));
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      };
+
+      await installUntilManifestsCached(String(dir), 1, expectWarnedAndLeftOut, staleManifests);
+      expect(registry.requests).toContain("/gated");
 
       await reResolve(String(dir));
       registry.requests.length = 0;
-      ({ stderr, exitCode } = await install(String(dir), staleManifests));
-      expect(stderr).toContain(blockedPeerWarning("2.0.0"));
-      expect(stderr).not.toContain("error:");
-      expect(exitCode).toBe(0);
+      expectWarnedAndLeftOut(await install(String(dir), staleManifests));
       expect(registry.requests).toEqual([]);
     });
 
@@ -2558,14 +2583,14 @@ describe("minimum-release-age", () => {
         }),
       });
 
-      const expectBoundToInstalledVersion = ({ stderr, exitCode }: { stderr: string; exitCode: number }) => {
+      const expectBoundToInstalledVersion = ({ stderr, exitCode }: InstallResult) => {
         expect(stderr).toContain('warn: incorrect peer dependency "gated@1.0.0"');
         expect(stderr).not.toContain("blocked by minimum-release-age");
         expect(stderr).not.toContain("error:");
         expect(exitCode).toBe(0);
       };
 
-      expectBoundToInstalledVersion(await install(String(dir)));
+      await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion);
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain('"gated@1.0.0"');
 

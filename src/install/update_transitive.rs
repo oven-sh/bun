@@ -1327,6 +1327,8 @@ fn edges_on_instances(
         inst: u32,
         /// Slot of the instance the row currently resolves to, `u32::MAX` when unresolved or unplanned.
         res_slot: u32,
+        /// The version of the npm instance the row resolved to (live or snapshot).
+        locked: Option<Semver::Version>,
         catalog: bool,
         /// The effective version is an npm range (as opposed to a dist-tag).
         npm: bool,
@@ -1412,21 +1414,24 @@ fn edges_on_instances(
                     _ => continue,
                 };
                 let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
-                let mut res_slot = slot_of
-                    .get(resolutions[row] as usize)
-                    .copied()
-                    .unwrap_or(u32::MAX);
-                if (resolutions[row] as usize) >= packages_len {
-                    // The differ re-appends root rows unresolved; their pre-diff resolution lives in the snapshot.
-                    res_slot = snapshot_resolution(
+                // The differ re-appends root rows unresolved; their pre-diff resolution lives in the snapshot.
+                let locked_id = if (resolutions[row] as usize) < packages_len {
+                    Some(resolutions[row])
+                } else {
+                    snapshot_resolution(
                         direct_deps,
                         owner as PackageID,
                         deps[row].name_hash,
                         deps[row].behavior,
                     )
-                    .and_then(|resolved| slot_of.get(resolved as usize).copied())
+                };
+                let res_slot = locked_id
+                    .and_then(|id| slot_of.get(id as usize).copied())
                     .unwrap_or(u32::MAX);
-                }
+                let locked = locked_id.and_then(|id| {
+                    let res = &pkg_res[id as usize];
+                    (res.tag == ResolutionTag::Npm).then(|| res.npm().version)
+                });
                 for (i, inst) in instances.iter().enumerate() {
                     if name_hashes[inst.pkg_id as usize] == row_hash
                         && names.eql(pkg_names[inst.pkg_id as usize], buf, buf)
@@ -1435,6 +1440,7 @@ fn edges_on_instances(
                             dep_id: row as DependencyID,
                             inst: i as u32,
                             res_slot,
+                            locked,
                             catalog: deps[row].version.tag == DependencyVersionTag::Catalog,
                             npm: version.tag == DependencyVersionTag::Npm,
                         });
@@ -1489,8 +1495,8 @@ fn edges_on_instances(
             KeepLocked::No
         } else if has_targets && in_targets && row.npm {
             KeepLocked::Range
-        } else if !has_targets && !row.npm && row.inst == row.res_slot {
-            KeepLocked::Current
+        } else if !has_targets && !row.npm {
+            row.locked.map_or(KeepLocked::No, KeepLocked::Version)
         } else {
             KeepLocked::No
         };
@@ -1499,13 +1505,13 @@ fn edges_on_instances(
     InstanceEdges { followers, direct }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum KeepLocked {
     No,
     /// The highest loaded instance the row's range accepts keeps the row when it is ahead.
     Range,
-    /// The instance under evaluation is the row's own locked one; it keeps the row when ahead.
-    Current,
+    /// The row's own locked version keeps it when ahead of the lookup.
+    Version(Semver::Version),
 }
 
 /// Mirrors `locked_version_in_lockfile`: the highest loaded npm instance the row's range accepts.
@@ -1613,7 +1619,7 @@ fn direct_row_stays(
     found.is_some_and(|found| {
         let locked = match keep {
             KeepLocked::No => None,
-            KeepLocked::Current => Some(current),
+            KeepLocked::Version(locked) => Some(locked),
             KeepLocked::Range => locked_in_lockfile(lockfile, dep_id),
         };
         if let Some(locked) = locked {

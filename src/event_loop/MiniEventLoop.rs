@@ -427,7 +427,7 @@ bun_io::link_impl_EventLoopCtx! {
             (*this).after_event_loop_callback = cb;
             (*this).after_event_loop_callback_ctx = ctx;
         },
-        pipe_read_scratch() => &raw mut (*this).pipe_read_scratch,
+        pipe_read_scratch() => &raw const (*this).pipe_read_scratch,
     }
 }
 

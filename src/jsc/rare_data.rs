@@ -654,8 +654,8 @@ impl RareData {
     }
 
     // ── lazy-init: misc heap slots ────────────────────────────────────────
-    pub fn pipe_read_scratch(&mut self) -> &mut bun_event_loop::PipeReadScratch {
-        &mut self.pipe_read_scratch
+    pub fn pipe_read_scratch(&self) -> &bun_event_loop::PipeReadScratch {
+        &self.pipe_read_scratch
     }
 
     /// Take the padded-frame scratch out of its slot (lazily allocated). By value rather

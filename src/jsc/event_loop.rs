@@ -165,7 +165,7 @@ impl JSGlobalObject {
     /// JSC microtask queue, and nothing else. No timers, no I/O, no deferred
     /// tasks, so this cannot re-enter the event loop.
     ///
-    /// `Err` means the drain found (and took) this VM's termination: the loop stands down.
+    /// `Err` means the drain met this VM's termination; it is left pending for the caller's landing frame.
     pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), Stopped> {
         jsc::mark_binding();
         match JSC__JSGlobalObject__drainMicrotasks(self) {
@@ -703,7 +703,8 @@ impl EventLoop {
                 .drain_microtasks_with_global(global, global_vm)
                 .is_err()
             {
-                // The checkpoint met the VM's termination (and landed it): the turn is over.
+                // The checkpoint met the VM's termination: this is its landing frame, and the turn is over.
+                crate::task::termination_landed(global);
                 self.entered_event_loop_count -= 1;
                 return;
             }

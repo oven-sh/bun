@@ -113,21 +113,32 @@ void SigintWatcher::signalReceived()
 
 void SigintWatcher::registerReceiver(SigintReceiver* receiver)
 {
-    WTF::Locker lock(m_receiversMutex);
-    if (m_receivers.isEmpty())
+    WTF::Locker transition(m_installMutex);
+    bool wasEmpty;
+    {
+        WTF::Locker lock(m_receiversMutex);
+        wasEmpty = m_receivers.isEmpty();
+        m_receivers.append(receiver);
+    }
+    if (wasEmpty)
         install();
-    m_receivers.append(receiver);
 }
 
 void SigintWatcher::unregisterReceiver(SigintReceiver* receiver)
 {
-    WTF::Locker lock(m_receiversMutex);
-    auto index = m_receivers.reverseFind(receiver);
-    ASSERT(index != notFound);
-    if (index == notFound)
-        return;
-    m_receivers.removeAt(index);
-    if (m_receivers.isEmpty())
+    WTF::Locker transition(m_installMutex);
+    bool nowEmpty;
+    {
+        WTF::Locker lock(m_receiversMutex);
+        auto index = m_receivers.reverseFind(receiver);
+        ASSERT(index != notFound);
+        if (index == notFound)
+            return;
+        m_receivers.removeAt(index);
+        nowEmpty = m_receivers.isEmpty();
+    }
+    // Not under m_receiversMutex: uninstall() joins the signal thread, which takes it in signalAll().
+    if (nowEmpty)
         uninstall();
 }
 

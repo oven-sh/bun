@@ -29,9 +29,10 @@ private:
     std::atomic_bool m_installed = false;
     std::atomic_flag m_waiting {};
     Semaphore m_semaphore;
-    // Guards m_receivers and the install()/uninstall() transitions its emptiness drives; receivers register
-    // concurrently from worker threads.
+    // Receivers register concurrently from worker threads. m_receiversMutex guards the list (the signal thread
+    // takes it too); m_installMutex serialises the install()/uninstall() transitions its emptiness drives.
     WTF::Lock m_receiversMutex;
+    WTF::Lock m_installMutex;
     WTF::Vector<SigintReceiver*, 4> m_receivers;
 
     bool signalAll();

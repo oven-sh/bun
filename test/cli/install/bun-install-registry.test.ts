@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, mkdirSync } from "fs";
-import { cp, exists, lstat, mkdir, readlink, rm, writeFile } from "fs/promises";
+import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunExe,
@@ -3280,6 +3280,266 @@ describe("binaries", () => {
     const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
+  });
+
+  describe("bin values longer than the path buffer", () => {
+    // Longer than the path buffer (MAX_PATH_BYTES: 96 KiB on Windows, 4 KiB on
+    // Linux, 1 KiB on macOS), so on every platform the linker cannot even build
+    // the target path.
+    const longValue = Buffer.alloc(100_000, "b").toString();
+    // Also longer than the buffer as written, but normalizes to a short path.
+    const longNormalizingValue = Buffer.alloc(20_000 * "x/../".length, "x/../").toString() + "normalizing-bin.js";
+    const script = (name: string) => `#!/usr/bin/env node\nconsole.log("${name}")`;
+    const binDir = () => join(packageDir, "node_modules", ".bin");
+    const binEntries = (...names: string[]) =>
+      names.flatMap(name => (isWindows ? [`${name}.bunx`, `${name}.exe`] : [name])).sort();
+
+    async function run(args: string[], { cwd = packageDir, env: runEnv = env } = {}) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: runEnv,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out, err, exitCode };
+    }
+    const install = (linker: "hoisted" | "isolated") => run(["install", `--linker=${linker}`]);
+
+    for (const linker of ["hoisted", "isolated"] as const) {
+      test(`file targets are skipped like missing bins (${linker})`, async () => {
+        // A target this long cannot exist, and the linker silently skips a bin
+        // whose target does not exist, so these install without output and the
+        // other bins are still linked. Covers the string, single-entry and
+        // multi-entry forms of "bin", which are linked by separate code paths.
+        await Promise.all([
+          write(
+            packageJson,
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                "long-file-bin": "./long-file-bin",
+                "long-named-bin": "./long-named-bin",
+                "long-map-bin": "./long-map-bin",
+                "normalizing-bin": "./normalizing-bin",
+              },
+            }),
+          ),
+          write(
+            join(packageDir, "long-file-bin", "package.json"),
+            JSON.stringify({ name: "long-file-bin", version: "1.0.0", bin: longValue }),
+          ),
+          write(
+            join(packageDir, "long-named-bin", "package.json"),
+            JSON.stringify({ name: "long-named-bin", version: "1.0.0", bin: { "long-named-bin": longValue } }),
+          ),
+          write(
+            join(packageDir, "long-map-bin", "package.json"),
+            JSON.stringify({
+              name: "long-map-bin",
+              version: "1.0.0",
+              bin: { "long-map-bin-1": longValue, "long-map-bin-2": "long-map-bin-2.js" },
+            }),
+          ),
+          write(join(packageDir, "long-map-bin", "long-map-bin-2.js"), script("long-map-bin-2")),
+          write(
+            join(packageDir, "normalizing-bin", "package.json"),
+            JSON.stringify({
+              name: "normalizing-bin",
+              version: "1.0.0",
+              bin: { "normalizing-bin": longNormalizingValue },
+            }),
+          ),
+          write(join(packageDir, "normalizing-bin", "normalizing-bin.js"), script("normalizing-bin")),
+        ]);
+
+        const expectBins = async () => {
+          expect(await readdirSorted(binDir())).toEqual(binEntries("long-map-bin-2", "normalizing-bin"));
+          if (linker === "hoisted") {
+            expect(join(binDir(), "long-map-bin-2")).toBeValidBin(join("..", "long-map-bin", "long-map-bin-2.js"));
+            expect(join(binDir(), "normalizing-bin")).toBeValidBin(join("..", "normalizing-bin", "normalizing-bin.js"));
+          }
+        };
+
+        let { out, err, exitCode } = await install(linker);
+        expect(err).not.toContain("error:");
+        expect(err).toContain("Saved lockfile");
+        expect(out).toContain("+ long-file-bin@long-file-bin");
+        expect(out).toContain("+ long-named-bin@long-named-bin");
+        expect(out).toContain("+ long-map-bin@long-map-bin");
+        expect(out).toContain("+ normalizing-bin@normalizing-bin");
+        expect(exitCode).toBe(0);
+        await expectBins();
+
+        // The lockfile stores the values as written, so linking from it hits the same paths.
+        await rm(binDir(), { recursive: true, force: true });
+        ({ err, exitCode } = await install(linker));
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        await expectBins();
+      });
+
+      test(`directories.bin fails with ENAMETOOLONG (${linker})`, async () => {
+        // The linker reports every failure to open a bin directory other than
+        // ENOENT, and ENAMETOOLONG is what the OS reports for a directory path it
+        // cannot address, so a value that does not fit gets the same error.
+        await Promise.all([
+          write(
+            packageJson,
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                "long-dir-bin": "./long-dir-bin",
+                "ok-bin": "./ok-bin",
+              },
+            }),
+          ),
+          write(
+            join(packageDir, "long-dir-bin", "package.json"),
+            JSON.stringify({ name: "long-dir-bin", version: "1.0.0", directories: { bin: longValue } }),
+          ),
+          write(
+            join(packageDir, "ok-bin", "package.json"),
+            JSON.stringify({ name: "ok-bin", version: "1.0.0", bin: { "ok-bin": "ok-bin.js" } }),
+          ),
+          write(join(packageDir, "ok-bin", "ok-bin.js"), script("ok-bin")),
+        ]);
+
+        const { err, exitCode } = await install(linker);
+        expect(err).toContain(
+          linker === "hoisted"
+            ? "error: Failed to link long-dir-bin: ENAMETOOLONG"
+            : "ENAMETOOLONG: failed to link binaries for package: long-dir-bin@",
+        );
+        expect(exitCode).toBe(1);
+
+        // The rest of the install still happens.
+        expect(await exists(join(packageDir, "node_modules", "ok-bin", "package.json"))).toBeTrue();
+        if (linker === "hoisted") {
+          expect(await exists(join(packageDir, "node_modules", "long-dir-bin", "package.json"))).toBeTrue();
+          expect(await readdirSorted(binDir())).toEqual(binEntries("ok-bin"));
+        }
+      });
+    }
+
+    // The entries of a bin directory are joined onto the directory's path as
+    // well, and so is the temporary file used to rewrite a CRLF shebang.
+    // Windows is skipped: its path buffer is far larger than any path the
+    // filesystem accepts, so these overflows cannot be set up there.
+    test.skipIf(isWindows)("entries of a directories.bin close to the path limit", async () => {
+      const maxPathBytes = isMacOS ? 1024 : 4096;
+      // The directory is 64 bytes below the limit, so it can be opened. Joined
+      // onto it, `short.js` fits, `crlfEntry` fits but the temporary file for its
+      // shebang (27 bytes longer) does not, and `longEntry` does not fit at all.
+      const binDirPath = join(packageDir, "node_modules", "deep-dir-bin", "bins");
+      const components: string[] = [];
+      let remaining = maxPathBytes - 64 - Buffer.byteLength(binDirPath);
+      while (remaining > 0) {
+        let len = Math.min(200, remaining - 1);
+        if (remaining - 1 - len === 1) len -= 1;
+        components.push(Buffer.alloc(len, "d").toString());
+        remaining -= 1 + len;
+      }
+      const crlfEntry = Buffer.alloc(49, "c").toString() + ".js";
+      const crlfScript = `#!/usr/bin/env node\r\nconsole.log("crlf")`;
+      const longEntry = Buffer.alloc(128, "e").toString();
+
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", workspaces: ["deep-dir-bin"] })),
+        write(
+          join(packageDir, "deep-dir-bin", "package.json"),
+          JSON.stringify({
+            name: "deep-dir-bin",
+            version: "1.0.0",
+            directories: { bin: join("bins", ...components) },
+          }),
+        ),
+      ]);
+      // The entries' absolute paths are too long for the OS to create them
+      // directly, so descend one component at a time.
+      const entries = { "short.js": script("short"), [crlfEntry]: crlfScript, [longEntry]: script("long") };
+      const { err: mkErr, exitCode: mkExitCode } = await run(
+        [
+          "-e",
+          `const fs = require("fs");
+           for (const component of process.argv.slice(1)) { fs.mkdirSync(component); process.chdir(component); }
+           for (const [name, contents] of Object.entries(${JSON.stringify(entries)})) fs.writeFileSync(name, contents);`,
+          "bins",
+          ...components,
+        ],
+        { cwd: join(packageDir, "deep-dir-bin") },
+      );
+      expect(mkErr).toBe("");
+      expect(mkExitCode).toBe(0);
+
+      try {
+        const { err, exitCode } = await install("hoisted");
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        expect(await readdirSorted(binDir())).toEqual([crlfEntry, "short.js"]);
+      } finally {
+        // Shorten the paths again so that ordinary tools can delete the directory.
+        await rename(
+          join(packageDir, "deep-dir-bin", "bins", components[0]),
+          join(packageDir, "deep-dir-bin", "bins", "d"),
+        );
+      }
+      // Linked, but left as it was since the shebang could not be rewritten in place.
+      expect(await file(join(packageDir, "deep-dir-bin", "bins", "d", ...components.slice(1), crlfEntry)).text()).toBe(
+        crlfScript,
+      );
+    });
+
+    test("bun link and bun unlink", async () => {
+      // `bun link` links a package's bins into the global bin directory with the
+      // same linker, and `bun unlink` is the only caller of its unlink side, which
+      // has to open the same bin directory.
+      const globalDir = join(packageDir, "global");
+      const globalEnv = {
+        ...env,
+        BUN_INSTALL: globalDir,
+        BUN_INSTALL_GLOBAL_DIR: join(globalDir, "install", "global"),
+        BUN_INSTALL_BIN: join(globalDir, "bin"),
+      };
+      const globalBins = () => readdirSorted(join(globalDir, "bin"));
+      await Promise.all([
+        write(
+          join(packageDir, "long-map-bin", "package.json"),
+          JSON.stringify({
+            name: "long-map-bin",
+            version: "1.0.0",
+            bin: { "long-map-bin-1": longValue, "long-map-bin-2": "long-map-bin-2.js" },
+          }),
+        ),
+        write(join(packageDir, "long-map-bin", "long-map-bin-2.js"), script("long-map-bin-2")),
+        write(
+          join(packageDir, "long-dir-bin", "package.json"),
+          JSON.stringify({ name: "long-dir-bin", version: "1.0.0", directories: { bin: longValue } }),
+        ),
+      ]);
+
+      let { out, err, exitCode } = await run(["link"], { cwd: join(packageDir, "long-map-bin"), env: globalEnv });
+      expect(err).not.toContain("error:");
+      expect(out).toContain('Success! Registered "long-map-bin"');
+      expect(exitCode).toBe(0);
+      expect(await globalBins()).toEqual(binEntries("long-map-bin-2"));
+
+      ({ out, exitCode } = await run(["unlink"], { cwd: join(packageDir, "long-map-bin"), env: globalEnv }));
+      expect(out).toContain('success: unlinked package "long-map-bin"');
+      expect(exitCode).toBe(0);
+      expect(await globalBins()).toEqual([]);
+
+      // The package is registered before its bins are linked, so the failed link
+      // still leaves something for `bun unlink` to remove.
+      ({ err, exitCode } = await run(["link"], { cwd: join(packageDir, "long-dir-bin"), env: globalEnv }));
+      expect(err).toContain("error: failed to link bin due to error ENAMETOOLONG");
+      expect(exitCode).toBe(1);
+
+      ({ out, exitCode } = await run(["unlink"], { cwd: join(packageDir, "long-dir-bin"), env: globalEnv }));
+      expect(out).toContain('success: unlinked package "long-dir-bin"');
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

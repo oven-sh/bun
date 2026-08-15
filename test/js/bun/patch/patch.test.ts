@@ -79,10 +79,11 @@ function removeCapacity(patch: any): any {
 
 describe("apply", () => {
   test("edgecase", async () => {
+    const oldcontents = "module.exports = x => x % 2 === 0;";
     const newcontents = "module.exports = x => x % 420 === 0;";
     await using tempdir2 = tempDir("patch-test2", {
       ".bun/install/cache/is-even@1.0.0": {
-        "index.js": "module.exports = x => x % 2 === 0;",
+        "index.js": oldcontents,
       },
     });
     await using tempdir = tempDir("patch-test", {
@@ -98,8 +99,12 @@ describe("apply", () => {
       tempdir,
     );
 
-    await apply(patchfile, `${tempdir}/node_modules/is-even`);
-    expect(await fs.readFile(`${tempdir}/node_modules/is-even/index.js`).then(b => b.toString())).toBe(newcontents);
+    // apply against the original (cache) contents, as `bun install` does
+    await using targetdir = tempDir("patch-test-target", {
+      "index.js": oldcontents,
+    });
+    await apply(patchfile, String(targetdir));
+    expect(await fs.readFile(`${targetdir}/index.js`, "utf8")).toBe(newcontents);
   });
 
   test("empty", async () => {
@@ -529,6 +534,91 @@ describe("apply", () => {
       await apply(patchfile, afolder);
 
       expect(await $`cat ${join(afolder, "hello.txt")}`.cwd(tempdir).text()).toBe(bfile);
+    });
+
+    // Patches produced by `yarn patch-commit` often have `+` start lines that
+    // don't account for lines added by earlier hunks. Hunks must be located by
+    // matching their `-` side context (like `git apply`), not by trusting the
+    // stated `+` offset.
+    test("hunk with stale + start line is placed by context", async () => {
+      const afile =
+        Array.from({ length: 12 }, (_, i) => `line${String(i + 1).padStart(2, "0")}`).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      // Hunk 1 adds 2 lines, so hunk 2's correct `+` start is 9. The header
+      // says 7 (stale), exactly as yarn patch-commit emits.
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,4 +1,6 @@",
+        " line01",
+        " line02",
+        "+INSERT-ONE",
+        "+INSERT-TWO",
+        " line03",
+        " line04",
+        "@@ -7,6 +7,7 @@",
+        " line07",
+        " line08",
+        "-line09",
+        "+line09-changed",
+        "+SECOND-MARKER",
+        " line10",
+        " line11",
+        " line12",
+        "",
+      ].join("\n");
+
+      await apply(patchfile, afolder);
+
+      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(
+        [
+          "line01",
+          "line02",
+          "INSERT-ONE",
+          "INSERT-TWO",
+          "line03",
+          "line04",
+          "line05",
+          "line06",
+          "line07",
+          "line08",
+          "line09-changed",
+          "SECOND-MARKER",
+          "line10",
+          "line11",
+          "line12",
+          "",
+        ].join("\n"),
+      );
+    });
+
+    test("hunk whose context matches nowhere fails instead of corrupting the file", async () => {
+      const afile = Array.from({ length: 30 }, (_, i) => `alpha${i}`).join("\n") + "\n";
+      await using tempdir = tempDir("patch-test", {
+        "a/hello.txt": afile,
+      });
+      const afolder = join(tempdir, "a");
+
+      const patchfile = [
+        "diff --git a/hello.txt b/hello.txt",
+        "--- a/hello.txt",
+        "+++ b/hello.txt",
+        "@@ -1,3 +1,4 @@",
+        " not-in-file-1",
+        " not-in-file-2",
+        "+NEW-LINE",
+        " not-in-file-3",
+        "",
+      ].join("\n");
+
+      expect(() => apply(patchfile, afolder)).toThrow();
+      // the file must be left untouched
+      expect(await fs.readFile(join(afolder, "hello.txt"), "utf8")).toBe(afile);
     });
   });
 

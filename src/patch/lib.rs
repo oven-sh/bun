@@ -340,8 +340,43 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
         debug_assert!(i == file_line_count);
     }
 
+    // Hunks are located by matching their context/deletion lines against the
+    // file (like `git apply` and `patch(1)`), not by trusting the stated `+`
+    // start: `yarn patch-commit` emits headers whose `+` starts don't account
+    // for lines added by earlier hunks, which used to silently land hunks at
+    // the wrong offset. The expected position is the `-` side start adjusted
+    // by the line delta of the hunks already applied, fuzz-searched nearby
+    // (same ±20 bound as patch-package). A hunk that matches nowhere fails
+    // the apply instead of corrupting the file.
+    let mut diff_offset: isize = 0;
     for hunk in &patch.hunks {
-        let mut line_cursor = (hunk.header.patched.start - 1) as usize;
+        let mut line_cursor = if hunk.header.original.len == 0 {
+            // Pure insertion with no context or deletions to anchor on; the
+            // header offset is all there is.
+            (hunk.header.patched.start - 1) as usize
+        } else {
+            let base = hunk.header.original.start as isize - 1 + diff_offset;
+            const MAX_FUZZ: isize = 20;
+            let mut found: Option<usize> = None;
+            let mut fuzz: isize = 0;
+            while fuzz.abs() <= MAX_FUZZ {
+                let candidate = base + fuzz;
+                if candidate >= 0 && hunk_matches_at(hunk, &lines, candidate as usize) {
+                    found = Some(candidate as usize);
+                    break;
+                }
+                fuzz = if fuzz < 0 { -fuzz } else { -fuzz - 1 };
+            }
+            match found {
+                Some(idx) => idx,
+                None => {
+                    return sys::Result::Err(
+                        sys::Error::from_code(sys::E::EINVAL, sys::Tag::fstatat)
+                            .with_path(file_path.as_bytes()),
+                    );
+                }
+            }
+        };
 
         // Validate hunk start position is within bounds
         if line_cursor > lines.len() {
@@ -355,8 +390,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
             let part: &PatchMutationPart = part;
             match part.ty {
                 PartType::Context => {
-                    // TODO: check if the lines match in the original file?
-
                     // Validate context lines exist
                     if line_cursor + part.lines.len() > lines.len() {
                         return sys::Result::Err(
@@ -378,13 +411,12 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 
                     lines.splice(line_cursor..line_cursor, part.lines.iter().copied());
                     line_cursor += part.lines.len();
+                    diff_offset += part.lines.len() as isize;
                     if part.no_newline_at_end_of_file {
                         let _ = lines.pop();
                     }
                 }
                 PartType::Deletion => {
-                    // TODO: check if the lines match in the original file?
-
                     // Validate deletion range is within bounds
                     if line_cursor + part.lines.len() > lines.len() {
                         return sys::Result::Err(
@@ -394,10 +426,10 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
                     }
 
                     lines.drain(line_cursor..line_cursor + part.lines.len());
+                    diff_offset -= part.lines.len() as isize;
                     if part.no_newline_at_end_of_file {
                         lines.push(b"");
                     }
-                    // line_cursor -= part.lines.len();
                 }
             }
         }
@@ -425,6 +457,32 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     }
 
     sys::Result::Ok(())
+}
+
+/// Whether `hunk`'s context and deletion lines match `lines` starting at
+/// `start`. Trailing whitespace is ignored per line, same as patch-package's
+/// `linesAreEqual`, so CRLF files match LF patch context.
+fn hunk_matches_at(hunk: &Hunk<'_>, lines: &[&[u8]], start: usize) -> bool {
+    let mut cursor = start;
+    for part in &hunk.parts {
+        match part.ty {
+            PartType::Insertion => {}
+            PartType::Context | PartType::Deletion => {
+                for patch_line in &part.lines {
+                    let Some(file_line) = lines.get(cursor) else {
+                        return false;
+                    };
+                    if strings::trim_right(file_line, WHITESPACE)
+                        != strings::trim_right(patch_line, WHITESPACE)
+                    {
+                        return false;
+                    }
+                    cursor += 1;
+                }
+            }
+        }
+    }
+    true
 }
 
 fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {

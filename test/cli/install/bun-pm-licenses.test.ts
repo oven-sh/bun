@@ -1290,6 +1290,13 @@ describe("bun pm licenses", () => {
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
+
+    // The empty listing keeps its message but drops the checked-count and timing.
+    const dir = await setup("hoisted", { "package.json": pkg({ devDependencies: { "no-deps": "1.0.0" } }) });
+    const [empty, emptyStderr, emptyExit] = await licenses(dir, "--prod", "--no-summary");
+    expect(empty).toBe("No packages to list\n");
+    expect(emptyStderr).toBe("");
+    expect(emptyExit).toBe(0);
   });
 
   test.concurrent("--silent still prints the listing but no diagnostics", async () => {

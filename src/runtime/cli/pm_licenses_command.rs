@@ -701,12 +701,18 @@ fn plural(n: usize) -> &'static str {
 
 fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
     if entries.is_empty() {
-        bun_core::pretty!(
-            "No packages to list <d>(checked {} package{} in bun.lock)<r> ",
-            checked,
-            plural(checked)
-        );
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("No packages to list");
+        if summary {
+            bun_core::pretty!(
+                " <d>(checked {} package{} in bun.lock)<r> ",
+                checked,
+                plural(checked)
+            );
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+        }
         bun_core::pretty!("\n");
         return;
     }

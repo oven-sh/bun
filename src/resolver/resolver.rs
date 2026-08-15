@@ -4360,9 +4360,9 @@ impl<'a> Resolver<'a> {
     }
 
     /// Loads `enclosing`'s referenced projects the first time a directory it does not cover
-    /// resolves through it. Not at parse time: the cwd's tsconfig is parsed on every startup,
-    /// usually without any of its references ever applying. `enclosing` is shared with every
-    /// other resolver thread, hence the `OnceLock`.
+    /// resolves through it (not at parse time: the cwd's tsconfig is parsed on every startup,
+    /// usually without any reference applying). The load runs under the resolver mutex like
+    /// every other `parse_tsconfig` caller; the `OnceLock` publishes it to lock-free readers.
     fn ensure_tsconfig_references(&mut self, enclosing: &'static TSConfigJSON, source_dir: &[u8]) {
         if enclosing.references.is_empty()
             || enclosing.reference_configs.get().is_some()
@@ -4370,6 +4370,8 @@ impl<'a> Resolver<'a> {
         {
             return;
         }
+        // Callers reach this right after a `dir_info_cached` lookup, so the mutex is not held.
+        let _unlock = self.mutex.lock_guard();
         enclosing
             .reference_configs
             .get_or_init(|| self.load_tsconfig_references(enclosing));

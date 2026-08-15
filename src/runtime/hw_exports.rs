@@ -304,11 +304,8 @@ mod sql_hooks {
 
 // ─── entry-point promise reactions (used by `--print`) ───────────────────────
 
-// HOST_EXPORT(Bun__onResolveEntryPointResult)
-pub fn on_resolve_entry_point_result(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> bun_jsc::JsResult<JSValue> {
+// A fulfilled value and a rejection reason are printed the same way, as `run_command.rs` does.
+fn print_entry_point_result_and_exit(global: &JSGlobalObject, callframe: &CallFrame) -> ! {
     let result = callframe.argument(0);
     // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
     // `message_with_type_and_level` (it always resolves the per-VM console via
@@ -324,7 +321,15 @@ pub fn on_resolve_entry_point_result(
         );
     }
     // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code))
+}
+
+// HOST_EXPORT(Bun__onResolveEntryPointResult)
+pub fn on_resolve_entry_point_result(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> bun_jsc::JsResult<JSValue> {
+    print_entry_point_result_and_exit(global, callframe)
 }
 
 // HOST_EXPORT(Bun__onRejectEntryPointResult)
@@ -332,22 +337,7 @@ pub fn on_reject_entry_point_result(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> bun_jsc::JsResult<JSValue> {
-    let result = callframe.argument(0);
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    print_entry_point_result_and_exit(global, callframe)
 }
 
 // ─── bindgenv2 dispatch shims (`bindgen_*_dispatch*`) ────────────────────────

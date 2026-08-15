@@ -175,6 +175,36 @@ describe("--print for cjs/esm", () => {
   });
 });
 
+// An uncaught exception stops the event loop while the printed promise is still
+// pending, so --print has to attach reactions to it. The timer that settles it is
+// created inside the throwing callback, so it cannot fire in the same timer batch
+// as the throw. Fulfillment and rejection are printed the same way; the exit code
+// comes from the uncaught exception.
+describe.concurrent.each([
+  { settle: "resolve", printed: "settled late" },
+  { settle: "reject", printed: "rejected late" },
+])("--print of a promise that $settle()s after the event loop stopped", ({ settle, printed }) => {
+  test(`prints ${JSON.stringify(printed)}`, async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--print",
+        `new Promise((resolve, reject) => setTimeout(() => {
+          setTimeout(() => ${settle}(${JSON.stringify(printed)}), 1);
+          throw new Error("loop killer");
+        }, 1))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`${printed}\n`);
+    expect(stderr).toContain("error: loop killer");
+    expect(exitCode).toBe(1);
+  });
+});
+
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');

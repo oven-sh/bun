@@ -1568,7 +1568,6 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
   const writer = Bun.file(fd).writer();
 
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
-  let totalBytesWritten = 0;
 
   try {
     for await (let chunk of iterable) {
@@ -1585,22 +1584,12 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: Abort
 
       const prom = writer.write(chunk);
       if (prom && $isPromise(prom)) {
-        totalBytesWritten += await prom;
-      } else {
-        totalBytesWritten += prom;
+        await prom;
       }
     }
   } finally {
     await writer.end();
   }
-
-  return totalBytesWritten;
-}
-
-// The only flag spellings whose `open` truncates. `r+` & co. overwrite in place,
-// so resizing the file down to the bytes we wrote would destroy the rest of it.
-function flagTruncates(flag): boolean {
-  return flag === "w" || flag === "w+" || flag === "wx" || flag === "wx+" || flag === "xw" || flag === "xw+";
 }
 
 // Node's fs/promises writeFile and appendFile also accept `data` as an iterable
@@ -1649,24 +1638,15 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, def
     throw $makeAbortError(undefined, { cause: signal.reason });
   }
 
-  let totalBytesWritten = 0;
-
   let error: Error | undefined;
 
   try {
-    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
+    await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
   } catch (err) {
     error = err as Error;
   }
 
-  // Handle cleanup outside of try-catch
   if (mustClose) {
-    if (flagTruncates(flag)) {
-      try {
-        await fs.ftruncate(fdOrPath, totalBytesWritten);
-      } catch {}
-    }
-
     await fs.close(fdOrPath);
   }
 

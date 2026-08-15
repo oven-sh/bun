@@ -652,8 +652,7 @@ describe("writeFile with a non-truncating flag", () => {
     expect(readFileSync(path, "utf8")).toBe("ZZ23456789");
   });
 
-  // An iterable `data` takes a separate slow path in fs.promises, with its own
-  // truncate.
+  // An iterable `data` takes a separate slow path in fs.promises.
   it.each(["r+", "rs+"])("promises.writeFile of an async iterable with flag %p overwrites in place", async flag => {
     const path = join(tmpdirSync(), "in-place-async-iter.txt");
     writeFileSync(path, "0123456789");
@@ -1023,6 +1022,40 @@ describe("promises.writeFile with iterable data and a Buffer or URL path", () =>
     await expect(promises.appendFile({} as any, data)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
     expect(pulled).toBe(false);
   });
+});
+
+// After writing, the iterable path used to ftruncate() the file to the sum of
+// the FileSink.write() return values. That sum over-counts once the sink starts
+// flushing (every 4 KiB, 16 KiB on Apple Silicon), so a stream of small chunks
+// came out padded with NUL bytes. The truncating flags already empty the file at
+// open, so the file has to end up exactly as long as the data.
+describe("promises.writeFile and appendFile of many small chunks", () => {
+  const chunk = Buffer.alloc(1024, "0123456789").toString();
+  const chunkCount = 32;
+  const expected = Buffer.alloc(chunk.length * chunkCount, chunk).toString();
+  function* chunks() {
+    for (let i = 0; i < chunkCount; i++) yield chunk;
+  }
+
+  const paths: [string, (p: string) => string | Buffer | URL][] = [
+    ["a string", p => p],
+    ["a Buffer", p => Buffer.from(p)],
+    ["a file URL", p => pathToFileURL(p)],
+  ];
+  const writers: [string, (path: string | Buffer | URL) => Promise<void>][] = [
+    ["promises.writeFile", path => promises.writeFile(path, chunks())],
+    ["promises.appendFile with flag 'w'", path => promises.appendFile(path, chunks(), { flag: "w" })],
+    ["promises.appendFile", path => promises.appendFile(path, chunks())],
+  ];
+
+  for (const [writerName, write] of writers) {
+    it.each(paths)(`${writerName} to %s writes exactly the data`, async (_, wrap) => {
+      using dir = tempDir("iterable-exact-size", {});
+      const path = join(String(dir), "out.txt");
+      await write(wrap(path));
+      expect(readFileSync(path, "utf8")).toBe(expected);
+    });
+  }
 });
 
 // A write that dies partway through must not leave the old tail sitting behind

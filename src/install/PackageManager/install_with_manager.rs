@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_collections::DynamicBitSet;
+use bun_collections::bit_set::Range as BitRange;
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -517,26 +518,39 @@ pub fn install_with_manager(
                     let invalidates_rows = (manager.summary.overrides_changed
                         && !all_name_hashes.is_empty())
                         || manager.summary.catalogs_changed;
-                    let mut pinned_rows = DynamicBitSet::default();
+                    let mut settled_rows = DynamicBitSet::default();
                     if bare_update {
                         transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
-                        pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
+                        settled_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
                     }
-
+                    if invalidates_rows {
+                        settle_rows_the_differ_handles(
+                            manager,
+                            &mut settled_rows,
+                            root.dependencies,
+                            off,
+                            &mapping,
+                        )?;
+                    }
                     // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
                     // which grows `buffers.dependencies` and may reallocate it.
                     // Iterate by index against a snapshot of the original length and
                     // copy each entry to the stack so neither the loop nor the callee
-                    // ever reads through a pointer into the old backing storage.
+                    // ever reads through a pointer into the old backing storage. One
+                    // snapshot serves both loops: rows appended while they run belong to
+                    // packages resolved just now, and the enqueue queues those itself.
+                    let dependencies_len = manager.lockfile.buffers.dependencies.len();
                     if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for dependency_i in 0..dependencies_len {
-                            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
+                            if settled_rows.is_set(dependency_i) {
                                 continue;
                             }
                             let dependency =
                                 manager.lockfile.buffers.dependencies[dependency_i].clone();
                             if all_name_hashes.binary_search(&dependency.name_hash).is_ok() {
+                                // A catalog row covered by a rule is done here; the catalogs
+                                // loop below leaves it alone.
+                                settled_rows.set(dependency_i);
                                 manager.lockfile.buffers.resolutions[dependency_i] =
                                     invalid_package_id;
                                 if let Err(err) = enqueue_dependency_with_main(
@@ -560,10 +574,9 @@ pub fn install_with_manager(
                             .append_catalog_valued_name_hashes(&mut catalog_overridden);
                         catalog_overridden.sort_unstable();
                         catalog_overridden.dedup();
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
                             let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
-                            if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
+                            if settled_rows.is_set(_dep_id) {
                                 continue;
                             }
                             let dep =
@@ -1588,6 +1601,41 @@ fn enqueue_transitive(
         return Ok(DynamicBitSet::default());
     }
     transitive.enqueue_tracked(manager)
+}
+
+/// Grows `settled` to cover every row and adds the rows the overrides/catalogs invalidation
+/// loops must not re-resolve because the differ already took them off the table: the rows
+/// the root owned before it was moved onto `new_root_rows_off..` (nothing owns them now), the
+/// new root rows left unmapped (the add/update pass enqueues those itself), and the current
+/// rows of the packages that pass reads from disk again (`DiffSummary::reread_in_place`).
+fn settle_rows_the_differ_handles(
+    manager: &PackageManager,
+    settled: &mut DynamicBitSet,
+    replaced_root_rows: lockfile::DependencySlice,
+    new_root_rows_off: u32,
+    mapping: &[PackageID],
+) -> crate::Result<()> {
+    let settle_slice = |settled: &mut DynamicBitSet, rows: lockfile::DependencySlice| {
+        settled.set_range_value(
+            BitRange {
+                start: rows.begin() as usize,
+                end: rows.end() as usize,
+            },
+            true,
+        );
+    };
+    settled.resize(manager.lockfile.buffers.dependencies.len(), false)?;
+    settle_slice(settled, replaced_root_rows);
+    for (i, &from) in mapping.iter().enumerate() {
+        if from == invalid_package_id {
+            settled.set(new_root_rows_off as usize + i);
+        }
+    }
+    let owned_rows = manager.lockfile.packages.items_dependencies();
+    for &package_id in &manager.summary.reread_in_place {
+        settle_slice(settled, owned_rows[package_id as usize]);
+    }
+    Ok(())
 }
 
 #[derive(Default)]

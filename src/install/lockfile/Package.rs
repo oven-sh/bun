@@ -923,6 +923,12 @@ pub struct DiffSummary {
     pub(crate) patched_dependencies_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
+
+    /// Packages behind root rows that are unchanged but left unmapped (a workspace whose own
+    /// dependencies changed, or any row under `bun update`): re-enqueueing such a `workspace:`,
+    /// `file:` or `link:` row reads the package from disk again and replaces it in place, so
+    /// the rows these packages own right now are about to be discarded.
+    pub(crate) reread_in_place: Vec<PackageID>,
 }
 
 impl DiffSummary {
@@ -950,6 +956,24 @@ impl DiffSummary {
             || self.overrides_changed
             || self.catalogs_changed
             || self.update > self.script_only_updates
+    }
+
+    /// Called for a root row that is unchanged but stays unmapped; see `reread_in_place`.
+    fn note_unmapped_unchanged_root_row(
+        &mut self,
+        dep: &Dependency,
+        resolution: PackageID,
+        packages_len: usize,
+    ) {
+        if matches!(
+            dep.version.tag,
+            dependency::version::Tag::Workspace
+                | dependency::version::Tag::Folder
+                | dependency::version::Tag::Symlink
+        ) && (resolution as usize) < packages_len
+        {
+            self.reread_in_place.push(resolution);
+        }
     }
 }
 
@@ -1438,6 +1462,13 @@ impl Diff {
                     {
                         // Listed as to be updated
                         summary.update += 1;
+                        if is_root {
+                            summary.note_unmapped_unchanged_root_row(
+                                from_dep,
+                                from_resolutions[i],
+                                from_lockfile.packages.len(),
+                            );
+                        }
                         continue;
                     }
                 }
@@ -1548,6 +1579,11 @@ impl Diff {
                         mapping[cur_to_i] = i as PackageID;
                         continue;
                     }
+                    summary.note_unmapped_unchanged_root_row(
+                        from_dep,
+                        from_resolutions[i],
+                        from_lockfile.packages.len(),
+                    );
                     if workspace_hooks_only {
                         summary.script_only_updates += 1;
                     }

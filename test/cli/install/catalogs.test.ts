@@ -1274,6 +1274,118 @@ describe("peer dependencies", () => {
     expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
   });
 
+  // When the catalog changes, every row declared through it is re-resolved. The differ has by then
+  // moved the root onto fresh rows and decided which rows the add/update pass re-enqueues or
+  // re-reads; none of those may be re-resolved as well, since each extra visit of a peer row binds
+  // it again and repeats its warning.
+  describe("a peer whose catalog range stops matching the installed version is checked once", () => {
+    const peerWarning = 'warn: incorrect peer dependency "no-deps@1.0.0"';
+    const peerWarnings = (err: string) => err.split(peerWarning).length - 1;
+
+    function rootWithPeer(peerSpec: string, fields: Record<string, unknown> = {}) {
+      return JSON.stringify({ name: "root", peerDependencies: { "no-deps": peerSpec }, ...fields });
+    }
+
+    async function installedAlone(packageJson: string) {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": packageJson },
+      });
+      const { err } = await install(packageDir, "hoisted");
+      expect(peerWarnings(err)).toBe(0);
+      expect((await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
+        "1.0.0",
+      );
+      return packageDir;
+    }
+
+    // Both project shapes below write linker=hoisted into bunfig.toml.
+    async function reinstall(dir: string, packageJson: string, command: "install" | "update" = "install") {
+      await Bun.write(join(dir, "package.json"), packageJson);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), command],
+        cwd: dir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [err, code] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(code).toBe(0);
+      return err;
+    }
+
+    // The inline row changes itself and is only ever re-enqueued by the add/update pass: the baseline.
+    test.concurrent.each([
+      [
+        "through the catalog",
+        (range: string) => rootWithPeer("catalog:", { workspaces: { catalog: { "no-deps": range } } }),
+      ],
+      ["inline", (range: string) => rootWithPeer(range)],
+    ])("root peer declared %s", async (_, packageJson) => {
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(peerWarnings(await reinstall(dir, packageJson("^1.0.1")))).toBe(1);
+    });
+
+    test.concurrent("root peer overridden to catalog:", async () => {
+      const packageJson = (range: string) =>
+        rootWithPeer("1.0.0", { overrides: { "no-deps": "catalog:" }, workspaces: { catalog: { "no-deps": range } } });
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(peerWarnings(await reinstall(dir, packageJson("^1.0.1")))).toBe(1);
+    });
+
+    test.concurrent("root peer overridden while the override's and the catalog's ranges change together", async () => {
+      const packageJson = (range: string) =>
+        rootWithPeer("catalog:", { overrides: { "no-deps": range }, workspaces: { catalog: { "no-deps": range } } });
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(peerWarnings(await reinstall(dir, packageJson("^1.0.1")))).toBe(1);
+    });
+
+    // The peer row itself changed too, so the add/update pass re-enqueues it.
+    test.concurrent("root peer moved to a catalog added by the same edit", async () => {
+      const dir = await installedAlone(rootWithPeer("catalog:", { workspaces: { catalog: { "no-deps": "1.0.0" } } }));
+      const edited = rootWithPeer("catalog:peers", {
+        workspaces: { catalog: { "no-deps": "1.0.0" }, catalogs: { peers: { "no-deps": "^1.0.1" } } },
+      });
+      expect(peerWarnings(await reinstall(dir, edited))).toBe(1);
+    });
+
+    async function workspaceRepo() {
+      const dir = await makeRepo({
+        rootDependencies: {},
+        catalog: { "no-deps": "1.0.0" },
+        peerSpec: "catalog:",
+        linker: "hoisted",
+      });
+      const { err } = await install(dir, "hoisted");
+      expect(peerWarnings(err)).toBe(0);
+      return dir;
+    }
+    const workspaceRoot = (range: string) =>
+      JSON.stringify(rootPackageJson({ rootDependencies: {}, catalog: { "no-deps": range } }));
+
+    // lib's own dependencies changed as well, so the add/update pass reads lib again and replaces its rows.
+    test.concurrent("workspace peer, with the workspace's dependencies edited in the same install", async () => {
+      const dir = await workspaceRepo();
+      await Bun.write(
+        join(dir, "packages", "lib", "package.json"),
+        JSON.stringify({
+          name: "lib",
+          peerDependencies: { "no-deps": "catalog:" },
+          devDependencies: { "a-dep": "1.0.1" },
+        }),
+      );
+      expect(peerWarnings(await reinstall(dir, workspaceRoot("^1.0.1")))).toBe(1);
+    });
+
+    // bun update leaves every root row, lib's workspace row included, to the add/update pass.
+    test.concurrent("workspace peer, on bun update", async () => {
+      const dir = await workspaceRepo();
+      expect(peerWarnings(await reinstall(dir, workspaceRoot("^1.0.1"), "update"))).toBe(1);
+    });
+  });
+
   // pnpm: deps-installer/test/catalogs.ts "frozen lockfile error is thrown if catalog config changes"
   test.concurrent("--frozen-lockfile fails when only a peer's catalog range changed", async () => {
     const dir = await makeRepo({ catalog: { "no-deps": ">=1.0.0" }, peerSpec: "catalog:", linker: "hoisted" });

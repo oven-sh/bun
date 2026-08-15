@@ -1290,6 +1290,48 @@ describe.concurrent("lockfile", () => {
     await installOk(dir, "--frozen-lockfile");
   });
 
+  // A changed rule re-resolves every row of the names it covers. The differ has by then moved the
+  // root onto fresh rows; the rows it replaced belong to nothing and must be left out.
+  describe.concurrent("the rows a changed rule re-resolves", () => {
+    test("a root peer the rule covers is bound, and warned about, once", async () => {
+      const pkg = (rule: string) => ({ peerDependencies: { "no-deps": "1.0.0" }, overrides: { "no-deps": rule } });
+      const dir = await project(pkg("1.0.0"));
+      const first = await installOk(dir);
+      expect(first.err).not.toContain("incorrect peer dependency");
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.0.0");
+      await write(join(dir, "package.json"), JSON.stringify({ name: "nested-overrides", ...pkg("^1.0.1") }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(occurrences(err, 'warn: incorrect peer dependency "no-deps@1.0.0"')).toBe(1);
+    });
+
+    // Only a row the root owns may point outside the project; the replaced copy of this row no longer does.
+    test("removing the rule for a file: dependency outside the project keeps installing it", async () => {
+      const { packageDir } = await registry.createTestDir({
+        files: {
+          "outside/package.json": JSON.stringify({ name: "outside", version: "1.0.0" }),
+          "project/package.json": JSON.stringify({
+            name: "project",
+            dependencies: { outside: "file:../outside" },
+            overrides: { outside: "file:../outside" },
+          }),
+        },
+      });
+      const dir = join(packageDir, "project");
+      await registry.writeBunfig(dir, { linker: "hoisted" });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "outside")).toBe("1.0.0");
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "project", dependencies: { outside: "file:../outside" } }),
+      );
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(await lock(dir)).not.toContain('"overrides"');
+      expect(await versionSeenBy(dir, undefined, "outside")).toBe("1.0.0");
+    });
+  });
+
   test("changing only the parent's range text is a frozen-lockfile change", async () => {
     const dir = await project({ dependencies: twoParents, overrides: { "one-fixed-dep@1": { "no-deps": "1.1.0" } } });
     await installOk(dir);

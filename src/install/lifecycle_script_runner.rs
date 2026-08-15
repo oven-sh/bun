@@ -1049,14 +1049,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// A script of an optional dependency failed: the package is deleted
-    /// instead of failing the install. Frees `self`.
+    /// Frees `self`.
     fn discard_failed_optional_package(&mut self) {
         let ctx = self.ctx.take();
         self.decrement_pending_script_tasks();
         self.deinit_and_delete_package();
-        // Deleting the package before the entries depending on it resume keeps
-        // them from linking its binaries.
+        // deleted first so the resumed dependents do not link its binaries
         if let Some(ctx) = ctx {
             ctx.installer_mut()
                 .on_optional_dependency_scripts_failed(ctx.entry_id);

@@ -112,9 +112,7 @@ pub trait EntryKindResolver {
 pub enum EntryKind {
     Dir,
     File,
-    /// A symlink whose target does not exist. `stat()` fails on it, so the
-    /// resolver treats the entry like it is not there at all (as Node does)
-    /// instead of resolving to a path that cannot be read.
+    /// A symlink to nothing; treated like a missing entry, as `stat()` would report it.
     Dangling,
 }
 

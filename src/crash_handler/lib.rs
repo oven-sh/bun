@@ -2782,10 +2782,10 @@ mod draft {
     /// information (PII). The stackframes point to Bun's open-source native code
     /// (not user code), and are safe to share publicly and with the Bun team.
     ///
-    /// The upload child outlives the crashing process, so it is given its own cwd
+    /// The upload child outlives the crashing process and is given its own cwd
     /// instead of inheriting ours: Windows refuses to delete a directory that is
-    /// some process's cwd, so whoever removes the crashed process's cwd after
-    /// seeing it exit would get EBUSY until the upload finishes.
+    /// some process's cwd, and whoever removes the crashed process's cwd after
+    /// seeing it exit would otherwise get EBUSY until the upload finishes.
     fn report(url: &[u8]) {
         if !is_reporting_enabled() {
             return;

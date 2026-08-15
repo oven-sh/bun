@@ -73,7 +73,6 @@
 "parallel_vecs:src/runtime/api/html_rewriter.rs" = 1
 "parallel_vecs:src/runtime/bake/dev_server/incremental_graph.rs" = 1
 "reimplemented_helper:src/runtime/api/bun/Terminal.rs" = 1
-"reimplemented_helper:src/runtime/ffi/abi_type.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
 "same_match_twice:src/runtime/api/YAMLObject.rs" = 1
 "same_match_twice:src/runtime/api/bun/h2_frame_parser.rs" = 1

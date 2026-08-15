@@ -1439,6 +1439,56 @@ export function unescapeGitHubActionProperty(string) {
 }
 
 /**
+ * @typedef {object} GitHubActionCommand
+ * @property {string} command `error` for `::error ...::...`
+ * @property {Record<string, string>} properties decoded, e.g. `{ file, line, col, title }`
+ * @property {string} message decoded
+ */
+
+/**
+ * Parses a workflow command line, `::error file=a.ts,line=1,col=2,title=t::message`,
+ * the way the GitHub Actions runner does: the command and its properties end at the
+ * first `::` after the leading one, properties are separated by `,` and each value
+ * starts after the first `=` of its property (the value itself may contain `=`), and
+ * values and message are decoded as above.
+ *
+ * https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
+ *
+ * @param {string} line
+ * @returns {GitHubActionCommand | undefined} undefined if the line is not a workflow command
+ */
+export function parseGitHubActionCommand(line) {
+  if (!line.startsWith("::")) {
+    return undefined;
+  }
+  const end = line.indexOf("::", 2);
+  if (end === -1) {
+    return undefined;
+  }
+
+  const header = line.slice(2, end);
+  const space = header.indexOf(" ");
+  const command = space === -1 ? header : header.slice(0, space);
+  if (!command) {
+    return undefined;
+  }
+
+  /** @type {Record<string, string>} */
+  const properties = {};
+  if (space !== -1) {
+    for (const property of header.slice(space + 1).split(",")) {
+      const equals = property.indexOf("=");
+      if (equals <= 0) {
+        continue;
+      }
+      properties[property.slice(0, equals)] = unescapeGitHubActionProperty(property.slice(equals + 1));
+    }
+  }
+
+  return { command, properties, message: unescapeGitHubAction(line.slice(end + 2)) };
+}
+
+/**
  * @param {string} string
  * @returns {string}
  */
@@ -2797,25 +2847,13 @@ export function parseAnnotations(content) {
       return { lines, match };
     };
 
-    // GitHub Actions workflow command, e.g. what `bun test` prints for a failure
-    // when GITHUB_ACTIONS is set, or a step's `echo "::error::message"`:
+    // GitHub Actions workflow command, e.g. what bun prints for an error when
+    // GITHUB_ACTIONS is set, or a step's `echo "::error::message"`:
     //   ::error file=a.test.ts,line=3,col=5,title=error: boom::Expected: 1%0A    at ...
-    // As in the runner, the properties are optional and end at the first `::`
-    // (only the message may contain an unescaped `::`), and a property splits at
-    // its first `=`.
-    // https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
-    const githubAnnotation = line.match(/^::(error|warning|notice|debug)(?: (.*?))?::(.*)$/);
-    if (githubAnnotation) {
-      const [, level, properties = "", message] = githubAnnotation;
-      /** @type {Record<string, string>} */
-      const attributes = {};
-      for (const property of properties.split(",")) {
-        const separator = property.indexOf("=");
-        if (separator > 0) {
-          attributes[property.slice(0, separator)] = unescapeGitHubActionProperty(property.slice(separator + 1));
-        }
-      }
-      const { file, line, col, title } = attributes;
+    const githubAnnotation = parseGitHubActionCommand(line);
+    if (githubAnnotation && /^(error|warning|notice|debug)$/.test(githubAnnotation.command)) {
+      const { command: level, properties, message } = githubAnnotation;
+      const { file, line, col, title } = properties;
 
       const annotation = parseAnnotation({
         level,
@@ -2823,7 +2861,7 @@ export function parseAnnotations(content) {
         filename: file,
         line,
         column: col,
-        content: unescapeGitHubAction(message),
+        content: message,
       });
       annotations.push(annotation);
       continue;

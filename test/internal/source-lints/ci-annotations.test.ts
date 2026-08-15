@@ -247,6 +247,17 @@ describe("GitHub Actions workflow commands", () => {
       },
     ]);
   });
+
+  test("other commands and non-commands are not annotations", () => {
+    const output = [
+      "::group::build",
+      "::set-output name=x::1",
+      "::error file=a.ts", // no closing `::`
+      "::errors::not a command",
+      "::endgroup::",
+    ].join("\n");
+    expect(parseAnnotations(output).annotations).toEqual([]);
+  });
 });
 
 describe("other sources", () => {

@@ -2909,20 +2909,22 @@ pub mod bv2_impl {
             // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
             // the resolver lives in `transpiler` which outlives `self` (same `'a`).
             this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
-            this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
-
             // Cross-chunk imports/exports are only generated for ESM (see
-            // computeCrossChunkDependencies). Reject other formats up front
-            // rather than panicking later. Matches esbuild.
+            // computeCrossChunkDependencies), so splitting any other format
+            // would panic in the linker. Build tools commonly pass one
+            // `splitting` setting to every format they emit, so this is a
+            // warning that drops the option rather than a build error.
             if this.transpiler.options.code_splitting
                 && this.transpiler.options.output_format != options::Format::Esm
             {
-                this.transpiler.log_mut().add_error(
+                this.transpiler.options.code_splitting = false;
+                this.transpiler.log_mut().add_warning(
                     None,
                     bun_ast::Loc::EMPTY,
-                    "Code splitting is currently only supported when format is set to \"esm\"",
+                    b"Code splitting is currently only supported when format is set to \"esm\"; it has been disabled for this build",
                 );
             }
+            this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
             this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
             this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;

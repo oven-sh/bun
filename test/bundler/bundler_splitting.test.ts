@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 const env = {
@@ -402,4 +402,93 @@ describe("bundler", () => {
     }
     expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
   }, 60_000);
+
+  // Only ESM chunks can import each other. Tools such as bunup pass the same
+  // `splitting` setting to every format they emit, so a non-ESM format drops
+  // the option with a warning instead of failing the build (and instead of the
+  // linker panic from https://github.com/oven-sh/bun/issues/32395).
+  describe("splitting with a non-esm format is ignored with a warning", () => {
+    const warning =
+      'Code splitting is currently only supported when format is set to "esm"; it has been disabled for this build';
+    const files = {
+      "shared.js": `export const shared = "shared";`,
+      "a.js": `import { shared } from "./shared"; console.log("a", shared);`,
+      "b.js": `import { shared } from "./shared"; console.log("b", shared);`,
+    };
+
+    async function runOutputs(outDir: string) {
+      const out: Record<string, string> = {};
+      for (const name of ["a.js", "b.js"]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(outDir, name)],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+        out[name] = stdout;
+      }
+      return out;
+    }
+
+    describe.each(["cjs", "iife"] as const)("format %s", format => {
+      test.concurrent("bun build", async () => {
+        using dir = tempDir("splitting-non-esm-cli", files);
+        const root = String(dir);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--splitting", `--format=${format}`, "--outdir=out", "./a.js", "./b.js"],
+          env: bunEnv,
+          cwd: root,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(`warn: ${warning}`);
+        expect(stdout).toContain("a.js");
+        expect(exitCode).toBe(0);
+
+        // No shared chunk: each entry point gets its own copy of shared.js.
+        expect(readdirSync(join(root, "out")).sort()).toEqual(["a.js", "b.js"]);
+        expect(await runOutputs(join(root, "out"))).toEqual({ "a.js": "a shared\n", "b.js": "b shared\n" });
+      });
+
+      test.concurrent("Bun.build", async () => {
+        using dir = tempDir("splitting-non-esm-api", files);
+        const root = String(dir);
+
+        const build = await Bun.build({
+          entrypoints: [join(root, "a.js"), join(root, "b.js")],
+          outdir: join(root, "out"),
+          splitting: true,
+          format,
+        });
+        expect(build.logs.map(log => [log.level, log.message])).toEqual([["warn", warning]]);
+        expect(build.success).toBe(true);
+
+        expect(build.outputs.map(output => [output.kind, basename(output.path)]).sort()).toEqual([
+          ["entry-point", "a.js"],
+          ["entry-point", "b.js"],
+        ]);
+        expect(await runOutputs(join(root, "out"))).toEqual({ "a.js": "a shared\n", "b.js": "b shared\n" });
+      });
+    });
+
+    test.concurrent("esm still splits without a warning", async () => {
+      using dir = tempDir("splitting-esm-api", files);
+      const root = String(dir);
+
+      const build = await Bun.build({
+        entrypoints: [join(root, "a.js"), join(root, "b.js")],
+        outdir: join(root, "out"),
+        splitting: true,
+        format: "esm",
+      });
+      expect(build.logs).toEqual([]);
+      expect(build.outputs.map(output => output.kind).sort()).toEqual(["chunk", "entry-point", "entry-point"]);
+      expect(await runOutputs(join(root, "out"))).toEqual({ "a.js": "a shared\n", "b.js": "b shared\n" });
+    });
+  });
 });

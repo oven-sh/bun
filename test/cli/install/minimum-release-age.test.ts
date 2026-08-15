@@ -2357,16 +2357,18 @@ describe("minimum-release-age", () => {
 
   // A required peer that nothing in the tree provides and that no published
   // version satisfies only warns and stays unresolved (bun-lock.test.ts, "peer
-  // no published version satisfies"). A peer whose only satisfying versions
-  // are blocked by the age gate has to end up the same way, on every path that
-  // can report the blocked lookup.
-  describe("peer dependencies", () => {
+  // no published version satisfies"). A peer whose satisfying versions are all
+  // blocked by the age gate has to end up the same way on every path that can
+  // report the blocked lookup, and each of those paths has to give the other
+  // dependency kinds the same answer as well.
+  describe("every satisfying version blocked", () => {
     const AGE_GATE = 3 * SECONDS_PER_DAY;
+    const blockedSuffix = `(blocked by minimum-release-age: ${AGE_GATE} seconds)`;
     const blockedPeerWarning = (range: string, name = "gated") =>
-      `warn: No version matching "${range}" found for peer dependency "${name}" (blocked by minimum-release-age: ${AGE_GATE} seconds)`;
+      `warn: No version matching "${range}" found for peer dependency "${name}" ${blockedSuffix}`;
 
-    // gated@2.0.0 is the only version the peers below accept and it is inside
-    // the age window; every version of `fresh` is inside it.
+    // gated@2.0.0 is the only version the dependencies below accept and it is
+    // inside the age window; every version of `fresh` is inside it.
     const registryPackages: Record<
       string,
       { time: Record<string, string>; peerDependencies?: Record<string, string> }
@@ -2461,7 +2463,7 @@ describe("minimum-release-age", () => {
       }
     }
 
-    test.concurrent("declared by a registry package", async () => {
+    test.concurrent("peer declared by a registry package", async () => {
       using registry = serveRegistry();
       using dir = createProject(registry.origin, {
         "package.json": JSON.stringify({ name: "app", dependencies: { "needs-gated": "1.0.0" } }),
@@ -2499,7 +2501,7 @@ describe("minimum-release-age", () => {
       expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
     });
 
-    test.concurrent("declared by the root package and a workspace (range, exact pin, dist-tag)", async () => {
+    test.concurrent("peers declared by the root package and a workspace (range, exact pin, dist-tag)", async () => {
       using registry = serveRegistry();
       using dir = createProject(registry.origin, {
         "package.json": JSON.stringify({
@@ -2549,60 +2551,86 @@ describe("minimum-release-age", () => {
       expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
     });
 
-    test.concurrent("exact pin answered from an expired cached manifest", async () => {
+    // An exact pin whose cached manifest has expired is answered from that
+    // manifest instead of being looked up again, which is a separate place the
+    // blocked version gets reported from. BUN_MANIFEST_CACHE=1 keeps writing
+    // the cache but treats everything in it as expired, so the second install
+    // of `gated@2.0.0` (declared as `group`) takes that path; it has to say the
+    // same thing the first install said from the fresh manifest.
+    const staleManifests = { env: { BUN_MANIFEST_CACHE: "1" } };
+    async function expectSameAnswerFromExpiredManifest(
+      group: "dependencies" | "optionalDependencies" | "peerDependencies",
+      expectResult: (result: InstallResult) => void,
+    ) {
       using registry = serveRegistry();
       using dir = createProject(registry.origin, {
-        "package.json": JSON.stringify({ name: "app", peerDependencies: { gated: "2.0.0" } }),
+        "package.json": JSON.stringify({ name: "app", [group]: { gated: "2.0.0" } }),
       });
-      // Keeps writing manifests to the cache but treats every cached one as
-      // expired, which is how an exact pin ends up being answered from the
-      // stale manifest instead of from a fresh lookup.
-      const staleManifests = { env: { BUN_MANIFEST_CACHE: "1" } };
 
-      const expectWarnedAndLeftOut = ({ stderr, exitCode }: InstallResult) => {
-        expect(stderr).toContain(blockedPeerWarning("2.0.0"));
-        expect(stderr).not.toContain("error:");
-        expect(exitCode).toBe(0);
-      };
-
-      await installUntilManifestsCached(String(dir), 1, expectWarnedAndLeftOut, staleManifests);
+      await installUntilManifestsCached(String(dir), 1, expectResult, staleManifests);
       expect(registry.requests).toContain("/gated");
 
       await reResolve(String(dir));
       registry.requests.length = 0;
-      expectWarnedAndLeftOut(await install(String(dir), staleManifests));
+      expectResult(await install(String(dir), staleManifests));
       expect(registry.requests).toEqual([]);
-    });
+    }
 
-    test.concurrent("bound to the version already in the tree, with and without a warm manifest cache", async () => {
-      using registry = serveRegistry();
-      using dir = createProject(registry.origin, {
-        "package.json": JSON.stringify({
-          name: "app",
-          dependencies: { gated: "^1.0.0", "needs-gated": "1.0.0" },
-        }),
-      });
-
-      const expectBoundToInstalledVersion = ({ stderr, exitCode }: InstallResult) => {
-        expect(stderr).toContain('warn: incorrect peer dependency "gated@1.0.0"');
-        expect(stderr).not.toContain("blocked by minimum-release-age");
+    test.concurrent("peer exact pin answered from an expired cached manifest", async () => {
+      await expectSameAnswerFromExpiredManifest("peerDependencies", ({ stderr, exitCode }) => {
+        expect(stderr).toContain(blockedPeerWarning("2.0.0"));
         expect(stderr).not.toContain("error:");
         expect(exitCode).toBe(0);
-      };
-
-      await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion);
-      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain('"gated@1.0.0"');
-
-      // With both manifests in the cache the peer is looked up synchronously
-      // while regular dependencies are still being resolved, before the pass
-      // that binds peers to what the tree contains.
-      await reResolve(String(dir));
-      registry.requests.length = 0;
-      expectBoundToInstalledVersion(await install(String(dir)));
-      expect(registry.requests).toEqual([]);
-      expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
+      });
     });
+
+    test.concurrent("regular exact pin answered from an expired cached manifest", async () => {
+      await expectSameAnswerFromExpiredManifest("dependencies", ({ stderr, exitCode }) => {
+        expect(stderr).toContain(`error: No version matching`);
+        expect(stderr).toContain(blockedSuffix);
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    test.concurrent("optional exact pin answered from an expired cached manifest", async () => {
+      await expectSameAnswerFromExpiredManifest("optionalDependencies", ({ stderr, exitCode }) => {
+        expect(stderr).not.toContain("error:");
+        expect(exitCode).toBe(0);
+      });
+    });
+
+    test.concurrent(
+      "peer bound to the version already in the tree, with and without a warm manifest cache",
+      async () => {
+        using registry = serveRegistry();
+        using dir = createProject(registry.origin, {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { gated: "^1.0.0", "needs-gated": "1.0.0" },
+          }),
+        });
+
+        const expectBoundToInstalledVersion = ({ stderr, exitCode }: InstallResult) => {
+          expect(stderr).toContain('warn: incorrect peer dependency "gated@1.0.0"');
+          expect(stderr).not.toContain("blocked by minimum-release-age");
+          expect(stderr).not.toContain("error:");
+          expect(exitCode).toBe(0);
+        };
+
+        await installUntilManifestsCached(String(dir), 2, expectBoundToInstalledVersion);
+        const lockfile = await Bun.file(`${dir}/bun.lock`).text();
+        expect(lockfile).toContain('"gated@1.0.0"');
+
+        // With both manifests in the cache the peer is looked up synchronously
+        // while regular dependencies are still being resolved, before the pass
+        // that binds peers to what the tree contains.
+        await reResolve(String(dir));
+        registry.requests.length = 0;
+        expectBoundToInstalledVersion(await install(String(dir)));
+        expect(registry.requests).toEqual([]);
+        expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
+      },
+    );
   });
 
   describe("clock skew scenarios", () => {

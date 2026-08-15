@@ -2800,7 +2800,9 @@ pub mod JSZstd {
             }
         };
 
-        JSValue::create_buffer(global_this, output.leak())
+        // A 0-byte result decoded via the streaming path still owns its 4 KiB growth
+        // buffer; no deallocator is registered for empty buffers, so shrink it away.
+        JSValue::create_buffer_from_box(global_this, output.into_boxed_slice())
     }
 
     // --- Async versions ---
@@ -2887,8 +2889,9 @@ pub mod JSZstd {
                 return Ok(());
             }
 
-            let output_slice = core::mem::take(&mut this.output);
-            let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
+            // `into_boxed_slice` for the same reason as in `decompress_sync`.
+            let output = core::mem::take(&mut this.output).into_boxed_slice();
+            let buffer_value = JSValue::create_buffer_from_box(global_this, output);
             promise.settle(global_this, buffer_value)?;
             Ok(())
         }

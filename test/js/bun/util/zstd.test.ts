@@ -87,6 +87,79 @@ describe("Zstandard compression", async () => {
     ).toBeLessThan(10);
   }, 60_000);
 
+  describe("frames without a content size in the header", () => {
+    // Such frames take the streaming path of bun_zstd::decompress_alloc, which grows the output in
+    // 4 KiB steps before knowing how much (if anything) the frame decodes to.
+    function frameWithoutContentSize(payload: Buffer) {
+      //   28 B5 2F FD - magic
+      //   00          - Frame_Header_Descriptor: FCS_flag=0, Single_Segment=0 → content size not present
+      //   58          - Window_Descriptor
+      // followed by a single raw (uncompressed) block marked as the last one:
+      // a 3-byte little-endian header of Block_Size << 3 | Last_Block, then the payload.
+      const block = Buffer.alloc(3);
+      block.writeUIntLE((payload.length << 3) | 1, 0, 3);
+      return Buffer.concat([Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0x00, 0x58]), block, payload]);
+    }
+    const emptyFrame = frameWithoutContentSize(Buffer.alloc(0));
+    const payload = Buffer.from("decoded without a content size");
+    const payloadFrame = frameWithoutContentSize(payload);
+
+    it("decompress to the frame's content", async () => {
+      expect(zstdDecompressSync(emptyFrame)).toEqual(Buffer.alloc(0));
+      expect(zstdDecompressSync(payloadFrame)).toEqual(payload);
+      expect(await zstdDecompress(emptyFrame)).toEqual(Buffer.alloc(0));
+      expect(await zstdDecompress(payloadFrame)).toEqual(payload);
+    });
+
+    // Without the fix, every decompression of a frame that decodes to 0 bytes leaked the 4 KiB
+    // output buffer (no deallocator is registered for an empty result), so each batch below grew
+    // RSS by ~40 MiB and the growth never converged.
+    const iterations = 10000;
+    const maxGrowthMiB = 10;
+    async function rssGrowthAfterWarmupMiB(batch: () => Promise<void> | void) {
+      async function measure() {
+        await batch();
+        Bun.gc(true);
+        return rss();
+      }
+      // Warm up until RSS stabilizes (allocator / ASAN quarantine reach steady state).
+      let prev = await measure();
+      let growthMiB = Infinity;
+      for (let round = 0; round < 5; round++) {
+        const cur = await measure();
+        growthMiB = (cur - prev) / 1024 / 1024;
+        prev = cur;
+        if (growthMiB < maxGrowthMiB) break;
+      }
+      return growthMiB;
+    }
+
+    it("zstdDecompressSync does not leak when the frame decompresses to 0 bytes", async () => {
+      const growthMiB = await rssGrowthAfterWarmupMiB(() => {
+        for (let i = 0; i < iterations; i++) {
+          zstdDecompressSync(emptyFrame);
+        }
+      });
+      expect(
+        growthMiB,
+        `RSS grew by ${growthMiB.toFixed(1)} MiB over ${iterations} empty zstdDecompressSync results after warmup`,
+      ).toBeLessThan(maxGrowthMiB);
+    }, 60_000);
+
+    it("zstdDecompress does not leak when the frame decompresses to 0 bytes", async () => {
+      const concurrency = 250;
+      const growthMiB = await rssGrowthAfterWarmupMiB(async () => {
+        for (let i = 0; i < iterations; i += concurrency) {
+          await Promise.all(Array.from({ length: concurrency }, () => zstdDecompress(emptyFrame)));
+        }
+      });
+      expect(
+        growthMiB,
+        `RSS grew by ${growthMiB.toFixed(1)} MiB over ${iterations} empty zstdDecompress results after warmup`,
+      ).toBeLessThan(maxGrowthMiB);
+    }, 60_000);
+  });
+
   // Test with known zstd-compressed data
   describe("zstd CLI compatibility", () => {
     for (const { name, compressed, original } of [

@@ -1768,15 +1768,25 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
 
-    // Resolve from scratch again. Both manifests are cached now, so the peer
-    // is looked up synchronously instead of through a network task.
-    await rm(lockfilePath);
-    await rm(join(String(dir), "node_modules"), { recursive: true });
-    registry.requests.length = 0;
-    ({ err } = await install(String(dir)));
-    expect(err).toContain(unmetPeerWarning);
+    // Resolve from scratch again with both manifests cached: the peer is then
+    // looked up synchronously instead of through a network task (the lookup that
+    // used to loop forever) and the registry is not contacted at all. A cache
+    // entry is written by a thread pool task that bun install does not wait for
+    // (#37203), and peer-target's manifest is the last thing the first install
+    // fetches, so on a heavily loaded machine about one install in ten exits
+    // before that entry is on disk. A resolve that had to fetch the manifest
+    // again writes the entry again, with the same small chance of losing it, so
+    // allow a few attempts.
+    for (let attempt = 1; ; attempt++) {
+      await rm(lockfilePath);
+      await rm(join(String(dir), "node_modules"), { recursive: true });
+      registry.requests.length = 0;
+      ({ err } = await install(String(dir)));
+      expect(err).toContain(unmetPeerWarning);
+      expect(await file(lockfilePath).text()).toBe(lockfile);
+      if (registry.requests.length === 0 || attempt === 5) break;
+    }
     expect(registry.requests).toEqual([]);
-    expect(await file(lockfilePath).text()).toBe(lockfile);
   });
 
   it.concurrent("declared by the root package and a workspace", async () => {

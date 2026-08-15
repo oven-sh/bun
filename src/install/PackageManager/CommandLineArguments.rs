@@ -50,9 +50,6 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
-// Same literal-only constraint: the default in this help text is a copy of
-// `DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL`, so the assert below keeps
-// the two from drifting apart again.
 const NETWORK_CONCURRENCY_PARAM: ParamType = clap::param!(
     "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 64)"
 );

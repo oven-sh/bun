@@ -83,7 +83,18 @@ public:
     }
 
     StrongRootBlock* next() const { return m_next.get(); }
-    void setNext(JSC::VM& vm, StrongRootBlock* next) { m_next.setMayBeNull(vm, this, next); }
+
+    // Reached from Bun__StrongRef__delete, which finalizers call while JSC is
+    // sweeping; WriteBarrier::setMayBeNull would validate `next` through
+    // classInfo(), which asserts during a sweep. The barrier itself is still
+    // required: acquire() links the reused (old) spare ahead of blocks
+    // allocated since the last collection, and the slot store that follows only
+    // remembers the block when the value is a cell.
+    void setNext(JSC::VM& vm, StrongRootBlock* next)
+    {
+        m_next.setWithoutWriteBarrier(next);
+        vm.writeBarrier(this, next);
+    }
 
     static StrongRootBlock* acquire(WebCore::JSVMClientData* clientData, JSC::VM& vm, unsigned& outFreeSlot);
     static void release(WebCore::JSVMClientData* clientData, JSC::VM& vm, StrongRootBlock* block);

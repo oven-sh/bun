@@ -117,8 +117,7 @@ pub enum FileKind {
 }
 
 impl FileKind {
-    /// Names the colliding files in `InsertionHandler::on_router_collision_error`:
-    /// "Multiple {collision_noun} matching the same route pattern is ambiguous".
+    /// The noun in "Multiple {} matching the same route pattern is ambiguous".
     pub(crate) fn collision_noun(self) -> &'static str {
         match self {
             FileKind::Page => "pages",

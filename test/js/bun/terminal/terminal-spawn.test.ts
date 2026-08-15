@@ -270,7 +270,7 @@ describe("Bun.Terminal subprocess integration", () => {
 
   async function sizeSeenBySubprocess(size: Pick<Bun.TerminalOptions, "cols" | "rows">): Promise<string> {
     let output = "";
-    const { promise, resolve } = Promise.withResolvers<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
 
     await using terminal = new Bun.Terminal({
       ...size,
@@ -279,6 +279,9 @@ describe("Bun.Terminal subprocess integration", () => {
         // Match the whole token: ConPTY's own escape sequences contain "]" too.
         const seen = output.match(/\[\d+x\d+\]/);
         if (seen) resolve(seen[0]);
+      },
+      exit() {
+        reject(new Error("terminal exited before reporting a size; output=" + JSON.stringify(output)));
       },
     });
 

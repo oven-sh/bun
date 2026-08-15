@@ -3247,8 +3247,6 @@ pub mod formatter {
         Ok(None)
     }
 
-    /// How React itself names a component: `displayName`, else the name
-    /// `[Function: x]` / `[class x]` print.
     pub fn jsx_component_tag_name(
         global_this: &JSGlobalObject,
         component: JSValue,

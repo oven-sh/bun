@@ -26,11 +26,19 @@ pub struct FakeTimers {
     now: Option<Timespec>,
     /// `Date.now()` minus `now.ms()`.
     date_now_offset: f64,
+    /// Bumped by every `useFakeTimers()`, so a drain loop can tell that a
+    /// callback it fired swapped in a fresh clock and stop driving it.
+    generation: u32,
 }
 
 impl FakeTimers {
     pub(crate) fn is_active(&self) -> bool {
         self.now.is_some()
+    }
+
+    fn generation() -> u32 {
+        // SAFETY: per-thread `timer::All`, live for the VM lifetime.
+        unsafe { (*timer_all()).fake_timers.generation }
     }
 
     fn set_now(&mut self, global: &JSGlobalObject, now: &Timespec, js: Option<f64>) {
@@ -129,8 +137,13 @@ impl ClearedTimers {
 }
 
 impl FakeTimers {
-    fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
+    /// Like Jest and Vitest, every `useFakeTimers()` installs a fresh clock:
+    /// timers pending on a previous fake clock are dropped, not carried over.
+    fn activate(&mut self, js_now: f64, global: &JSGlobalObject) -> ClearedTimers {
+        let cleared = self.clear();
+        self.generation = self.generation.wrapping_add(1);
         self.set_now(global, &Timespec::EPOCH, Some(js_now));
+        cleared
     }
 
     fn deactivate(&mut self, global: &JSGlobalObject) -> ClearedTimers {
@@ -209,9 +222,7 @@ impl FakeTimers {
         // before `EventLoopTimer::fire` re-enters it.
         let this = unsafe { &mut (*timer_all()).fake_timers };
         if Environment::CI_ASSERT {
-            let prev = this.now;
-            debug_assert!(prev.is_some());
-            debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
+            debug_assert!(this.now.is_some_and(|prev| !prev.greater(&now)));
         }
         this.set_now(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
@@ -226,7 +237,11 @@ impl FakeTimers {
 
     fn execute_until(global: &JSGlobalObject, until: Timespec) -> JsResult<()> {
         let all = timer_all();
+        let generation = Self::generation();
         'outer: loop {
+            if Self::generation() != generation {
+                break;
+            }
             let next = 'blk: {
                 // SAFETY: `all` is the live per-thread `All`; each borrow
                 // lasts one statement and none spans `fire`.
@@ -260,7 +275,8 @@ impl FakeTimers {
     }
 
     fn execute_all_timers(global: &JSGlobalObject) -> JsResult<()> {
-        while Self::execute_next(global)? {}
+        let generation = Self::generation();
+        while Self::execute_next(global)? && Self::generation() == generation {}
         Ok(())
     }
 }
@@ -335,8 +351,9 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         }
     }
 
-    // SAFETY: per-thread `timer::All`; `activate` does not re-enter `All`.
-    unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
+    // SAFETY: per-thread `timer::All`; the borrow ends before `release`.
+    let cleared = unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
+    cleared.release(global.bun_vm_ptr());
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
@@ -390,12 +407,14 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
     let target = current.add_ms_float(effective_advance);
 
+    let generation = FakeTimers::generation();
     let advanced = FakeTimers::execute_until(global, target);
     // SAFETY: per-thread `timer::All`; `set_now` does not re-enter `All`.
     let fake_timers = unsafe { &mut (*timer_all()).fake_timers };
-    // A fired callback may have called `useRealTimers()`; don't re-arm the
-    // clock behind its back.
-    if fake_timers.is_active() {
+    // Land on `target` only if this is still the clock we were advancing: a
+    // fired callback may have called `useRealTimers()` (or installed a fresh
+    // clock with `useFakeTimers()`).
+    if fake_timers.is_active() && fake_timers.generation == generation {
         fake_timers.set_now(global, &target, None);
     }
     advanced?;

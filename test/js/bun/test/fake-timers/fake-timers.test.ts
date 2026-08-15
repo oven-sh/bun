@@ -134,6 +134,7 @@ describe("advanceTimersByTime", () => {
   });
 
   test("useRealTimers() from a fired callback is not undone when the advance completes", () => {
+    const realBefore = performance.now();
     vi.useFakeTimers({ now: 0 });
     setTimeout(() => vi.useRealTimers(), 10);
     vi.advanceTimersByTime(100);
@@ -141,6 +142,49 @@ describe("advanceTimersByTime", () => {
     // Still on the real clock, not re-pinned to the fake epoch + 100ms.
     expect(Date.now()).toBeGreaterThan(1e12);
     expect(performance.now()).not.toBe(100);
+    expect(performance.now()).toBeGreaterThanOrEqual(realBefore);
+  });
+
+  test("useFakeTimers() from a fired callback installs a fresh clock the outer advance stops driving", () => {
+    vi.useFakeTimers({ now: 0 });
+    const fired: string[] = [];
+    setTimeout(() => {
+      fired.push("reinstall");
+      vi.useFakeTimers({ now: 5000 });
+      setTimeout(() => fired.push("on new clock"), 50);
+    }, 10);
+    setTimeout(() => fired.push("dropped with old clock"), 20);
+    vi.advanceTimersByTime(100);
+    // The outer advance belonged to the old clock: it neither fires timers on
+    // the new one nor moves it to the old target.
+    expect(fired).toEqual(["reinstall"]);
+    expect({ date: Date.now(), perf: performance.now(), count: vi.getTimerCount() }).toEqual({
+      date: 5000,
+      perf: 0,
+      count: 1,
+    });
+    vi.advanceTimersByTime(50);
+    expect(fired).toEqual(["reinstall", "on new clock"]);
+    expect(Date.now()).toBe(5050);
+  });
+});
+
+describe("useFakeTimers while already active", () => {
+  test("installs a fresh clock and drops timers pending on the old one", () => {
+    vi.useFakeTimers({ now: 1000 });
+    let fired = 0;
+    setTimeout(() => fired++, 10);
+    vi.advanceTimersByTime(5);
+    expect(vi.getTimerCount()).toBe(1);
+
+    vi.useFakeTimers({ now: 9000 });
+    expect({ date: Date.now(), perf: performance.now(), count: vi.getTimerCount() }).toEqual({
+      date: 9000,
+      perf: 0,
+      count: 0,
+    });
+    vi.runAllTimers();
+    expect(fired).toBe(0);
   });
 });
 describe("runOnlyPendingTimers", () => {

@@ -503,6 +503,141 @@ describe("transitive file dependencies of registry packages", () => {
     });
   });
 
+  // file-dep-with-peer-on-files@1.0.0 declares `"files": "file:the-files"` and depends on
+  // peer-on-files@1.0.0, which has an optional peer on `files` and ships an unrelated
+  // the-files folder of its own (registry/packages/create-file-dep-with-peer-packages.ts).
+  test("a folder is not bound to a peer dependency below the package containing it", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({ name: "contained-folder-peer", dependencies: { "file-dep-with-peer-on-files": "1.0.0" } }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const declaring = join(bunDir, "file-dep-with-peer-on-files@1.0.0", "node_modules");
+    const peer = join(bunDir, "peer-on-files@1.0.0", "node_modules");
+    expect(
+      await Promise.all([
+        readdirSorted(bunDir),
+        readdirSorted(declaring),
+        readlink(join(declaring, "files")),
+        file(join(declaring, "files", "index.js")).text(),
+        // nothing provides the peer, so it is not linked even though peer-on-files
+        // ships a folder with the declared path itself
+        readdirSorted(peer),
+      ]),
+    ).toEqual([
+      ["file-dep-with-peer-on-files@1.0.0", "node_modules", "peer-on-files@1.0.0"],
+      ["file-dep-with-peer-on-files", "files", "peer-on-files"],
+      join("file-dep-with-peer-on-files", "the-files"),
+      'module.exports = "the-files shipped by file-dep-with-peer-on-files";\n',
+      ["peer-on-files"],
+    ]);
+    const fromPeer = createRequire(join(peer, "peer-on-files", "package.json"));
+    expect(() => fromPeer.resolve("files")).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
+  });
+
+  test("a folder the root also declares: the root links its store entry, the package links its own copy, fresh and from bun.lock", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "shared-folder-row",
+          dependencies: {
+            "file-dep-with-peer-on-files": "1.0.0",
+            // normalizes to the-files, the path the registry package declares, so the
+            // two rows load from bun.lock as one folder package
+            "files": "file:./the-files",
+          },
+        }),
+      ),
+      write(join(packageDir, "the-files", "package.json"), JSON.stringify({ name: "files", version: "2.0.0" })),
+      write(join(packageDir, "the-files", "index.js"), 'module.exports = "the-files in the project";\n'),
+    ]);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    async function checkLayout() {
+      const entries = await readdirSorted(bunDir);
+      const declaring = join(
+        bunDir,
+        entries.find(entry => entry.startsWith("file-dep-with-peer-on-files@"))!,
+        "node_modules",
+      );
+      const peer = join(bunDir, entries.find(entry => entry.startsWith("peer-on-files@"))!, "node_modules");
+      expect(
+        await Promise.all([
+          entries.map(entry => entry.replace(/\+[0-9a-f]{16}$/, "")),
+          readlink(join(packageDir, "node_modules", "files")),
+          file(join(packageDir, "node_modules", "files", "index.js")).text(),
+          readlink(join(declaring, "files")),
+          file(join(declaring, "files", "index.js")).text(),
+          // the peer is satisfied by the root's folder, not by the copy inside its parent
+          readlink(join(peer, "files")),
+          file(join(peer, "files", "index.js")).text(),
+        ]),
+      ).toEqual([
+        ["file-dep-with-peer-on-files@1.0.0", "files@file+the-files", "node_modules", "peer-on-files@1.0.0"],
+        join(".bun", "files@file+the-files", "node_modules", "files"),
+        'module.exports = "the-files in the project";\n',
+        join("file-dep-with-peer-on-files", "the-files"),
+        'module.exports = "the-files shipped by file-dep-with-peer-on-files";\n',
+        join("..", "..", "files@file+the-files", "node_modules", "files"),
+        'module.exports = "the-files in the project";\n',
+      ]);
+      return entries;
+    }
+
+    await runBunInstall(bunEnv, packageDir);
+    const fresh = await checkLayout();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await checkLayout()).toEqual(fresh);
+  });
+
+  test("does not take the hoist slots of a real package with the same name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", publicHoistPattern: ["files"] },
+    });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "folder-hoist-slots",
+          // file-dep's `files` folder entry is created before mid's `files` below
+          dependencies: { "file-dep": "1.0.0", "mid": "file:./mid" },
+        }),
+      ),
+      write(
+        join(packageDir, "mid", "package.json"),
+        JSON.stringify({ name: "mid", version: "1.0.0", dependencies: { files: "npm:no-deps@1.0.0" } }),
+      ),
+    ]);
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    expect(
+      await Promise.all([
+        readdirSorted(bunDir),
+        // publicHoistPattern and the hidden fallback directory both hold no-deps
+        readlink(join(packageDir, "node_modules", "files")),
+        readdirSorted(join(bunDir, "node_modules")),
+        readlink(join(bunDir, "file-dep@1.0.0", "node_modules", "files")),
+        readlink(join(bunDir, "mid@file+mid", "node_modules", "files")),
+      ]),
+    ).toEqual([
+      ["file-dep@1.0.0", "mid@file+mid", "no-deps@1.0.0", "node_modules"],
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+      ["file-dep", "no-deps"],
+      join("file-dep", "the-files"),
+      join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"),
+    ]);
+  });
+
   test("a folder path escaping its package is refused when it comes from bun.lock", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
     await write(packageJson, JSON.stringify({ name: "escaping-folder", dependencies: { "file-dep": "1.0.0" } }));

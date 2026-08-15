@@ -283,12 +283,12 @@ pub mod entry {
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
 
-        /// A `file:` dependency declared by a registry, git or tarball package
-        /// (see `isolated_install::nested_folder_packages`). Its path is relative
-        /// to the declaring package, so the folder only exists inside each
-        /// dependent's own package directory: the entry gets no directory in the
-        /// store and no install task. Each dependent links it from inside its own
-        /// directory in `Installer::symlink_dependencies`.
+        /// A folder package that only registry, git or tarball packages declare
+        /// (`isolated_install::ContainedFolders::packages`). Its path is relative
+        /// to each of those packages, so there is nothing to install into the
+        /// store: the entry gets no directory, no task and no hoist slot. The
+        /// packages containing the folder link it from inside their own directory
+        /// in `Installer::symlink_dependencies`; nothing else depends on it.
         pub nested_folder: bool,
 
         pub peer_hash: PeerHash,

@@ -2277,24 +2277,31 @@ impl<'a> Installer<'a> {
                 let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
             }
 
+            let dep_node_id = self.store.entries.items_node_id()[dep.entry_id.get() as usize];
+            let dep_pkg_id = self.store.nodes.items_pkg_id()[dep_node_id.get() as usize];
+            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
+            let folder_is_inside_this_package = dep_res.tag == ResolutionTag::Folder
+                && super::folder_is_inside_package(lockfile, pkg_id, dep_pkg_id);
+            let dep_is_nested_folder =
+                self.store.entries.items_nested_folder()[dep.entry_id.get() as usize];
+            // `build_store` only binds a nested folder to the packages containing it.
+            debug_assert!(folder_is_inside_this_package || !dep_is_nested_folder);
+
             let mut dep_store_path = AutoAbsPath::init_top_level_dir();
-            if self.store.entries.items_nested_folder()[dep.entry_id.get() as usize] {
+            if folder_is_inside_this_package {
                 let Some(package_dir_name) = entry_node_modules_name else {
                     continue;
                 };
-                let dep_node_id = self.store.entries.items_node_id()[dep.entry_id.get() as usize];
-                let dep_pkg_id = self.store.nodes.items_pkg_id()[dep_node_id.get() as usize];
-                let folder = pkg_resolutions[dep_pkg_id as usize]
-                    .folder()
-                    .slice(string_buf);
                 if !self.append_nested_folder_path(
                     &mut dep_store_path,
                     entry_id,
                     package_dir_name,
-                    folder,
+                    dep_res.folder().slice(string_buf),
                 )? {
                     continue;
                 }
+            } else if dep_is_nested_folder {
+                continue;
             } else if uses_global_store {
                 debug_assert!(self.entry_uses_global_store(dep.entry_id));
                 self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
@@ -2808,10 +2815,10 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Appends the location of `folder`, a nested folder dependency
-    /// (`store::entry::Entry::nested_folder`) of `entry_id`, to `buf`: the
-    /// declared path resolved inside the entry's own package directory
-    /// (`package_dir_name` in the entry's store `node_modules`).
+    /// Appends the location of `folder`, a folder package the entry's own package
+    /// contains (`isolated_install::folder_is_inside_package`), to `buf`: the
+    /// declared path resolved inside the package directory (`package_dir_name` in
+    /// the entry's store `node_modules`).
     ///
     /// `Ok(false)` means there is nothing to link, which the hoisted installer
     /// treats the same way: the path leaves the package (rejected by the

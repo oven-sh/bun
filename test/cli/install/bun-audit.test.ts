@@ -752,10 +752,12 @@ describe("`bun audit`", () => {
   });
 });
 
-// Every audit line that names a registry prints it through the same redaction as the install error lines: an npm
-// token or UUID anywhere in the URL becomes `***`, a URL password one `*` per byte. These tests put the token in the
-// registry path because that reaches the audit command from every config source, while `user:password@` is split
-// out of the URL by some of them (`.npmrc`, bunfig registry strings) and kept by others (the env vars today).
+// Every audit line that names a registry prints it through the same redaction as the install error lines, which
+// replaces an npm token or UUID anywhere in the URL with `***`; the skipped-registry record (the warning and the
+// `unaudited` entries of `audit fix --json`) additionally leaves out credentials written into the URL itself. Most
+// of these tests put the token in the registry path because that reaches the audit command from every config
+// source, while `user:password@` is split out of the URL by some of them (`.npmrc`, bunfig registry strings) and
+// kept by others (the bunfig object form used below, the env vars today).
 describe("`bun audit` with a secret in the registry URL", () => {
   const SECRET = "npm_" + "secret".padEnd(36, "0");
   const BULK_PATH = "/-/npm/v1/security/advisories/bulk";
@@ -844,10 +846,9 @@ describe("`bun audit` with a secret in the registry URL", () => {
     expect(fix.exitCode).toBe(1);
   });
 
-  test.concurrent("the skipped registry warning and the --json unaudited entry mask the secret", async () => {
-    await using scoped = registryAnswering("not found", { status: 404 });
-    const { url, printed } = secretRegistry(scoped);
-    using dir = project({ "@foo/bar": "1.0.0" }, { ".npmrc": `@foo:registry=${url}\n` });
+  // `bun audit` and `bun audit fix --json` against a project whose only package comes from a scoped registry that
+  // answers 404, so both commands report that registry as skipped; `printed` is how it must be named.
+  async function expectSkippedRegistry(dir: string, printed: string) {
     const skipped = skippedWarning(printed, "404", "@foo/bar");
 
     const report = await auditAgainst(dir, registryHref(server));
@@ -870,6 +871,22 @@ describe("`bun audit` with a secret in the registry URL", () => {
       vulnerableAfterInstall: [],
     });
     expect(fix.exitCode).toBe(0);
+  }
+
+  test.concurrent("the skipped registry warning and the --json unaudited entry mask the secret", async () => {
+    await using scoped = registryAnswering("not found", { status: 404 });
+    const { url, printed } = secretRegistry(scoped);
+    using dir = project({ "@foo/bar": "1.0.0" }, { ".npmrc": `@foo:registry=${url}\n` });
+
+    await expectSkippedRegistry(dir, printed);
+  });
+
+  test.concurrent("the skipped registry warning and the --json unaudited entry leave out URL credentials", async () => {
+    await using scoped = registryAnswering("not found", { status: 404 });
+    const url = `${scoped.url.protocol}//alice:s3cret@${scoped.url.host}/`;
+    using dir = project({ "@foo/bar": "1.0.0" }, { "bunfig.toml": `[install.scopes]\nfoo = { url = "${url}" }\n` });
+
+    await expectSkippedRegistry(dir, registryHref(scoped));
   });
 });
 

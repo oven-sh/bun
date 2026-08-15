@@ -419,8 +419,11 @@ impl core::fmt::Display for SkipReason {
 fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::UnauditedRegistry {
     let mut reason_text: Vec<u8> = Vec::new();
     write!(&mut reason_text, "{reason}").expect("unreachable");
+    // Only ever reported, never requested: credentials configured inside the URL are left out,
+    // as in the registry line of `bun publish`.
+    let registry = URL::parse(&request.registry.href).href_without_auth();
     audit_fix::UnauditedRegistry {
-        registry: request.registry.href.clone(),
+        registry: Box::from(strings::without_trailing_slash(&registry)),
         packages: request
             .packages
             .iter()

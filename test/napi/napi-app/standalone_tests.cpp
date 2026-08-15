@@ -2654,6 +2654,9 @@ create_zero_length_external_buffer(const Napi::CallbackInfo &info) {
          "byte_length=%zu\n",
          slot, detached, arraybuffer_data == caller_pointer,
          arraybuffer_length);
+  // The driver's console.log output follows; the addon's CRT stdout is fully
+  // buffered on Windows when piped, so flush to keep the lines in order.
+  fflush(stdout);
   return buffer;
 }
 

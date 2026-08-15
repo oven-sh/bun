@@ -2134,8 +2134,15 @@ Socket.prototype.connect = function connect(...args) {
 
   if (!this._handle) {
     this._handle = newDetachedSocket(typeof this[bunTlsSymbol] === "function");
-    initSocketHandle(this);
   }
+  // Unlike node (where connecting a handle that is still connected fails with
+  // EISCONN), a handle whose previous connection is still open or half-closed is
+  // reused: doConnect closes that connection and connects the same handle again.
+  // The stream state has to be re-initialized for it as well, otherwise a
+  // connect() issued after end() but before the previous connection finished
+  // closing keeps its ended/finished state and the first write on the new
+  // connection fails with ERR_STREAM_WRITE_AFTER_END.
+  initSocketHandle(this);
 
   if (!pipe) {
     lookupAndConnect(this, options);
@@ -4261,10 +4268,13 @@ function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb:
   return arr;
 }
 
-// Called when creating new Socket, or when re-using a closed Socket
+// Called before every connect(): on a new Socket, and whenever a Socket is
+// re-used for another connection (after a close, or while the previous
+// connection is still being torn down).
 function initSocketHandle(self) {
   self._undestroy();
   self._sockname = null;
+  self._peername = null;
   self[kclosed] = false;
   self[kended] = false;
 

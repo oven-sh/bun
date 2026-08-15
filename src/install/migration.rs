@@ -409,7 +409,7 @@ fn migrate_npm_lockfile<'a>(
         this.verify_data()?;
     }
 
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
+    this.meta_hash = this.generate_meta_hash(false, this.packages.len());
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,

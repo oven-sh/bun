@@ -404,7 +404,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             let pm = unsafe { &mut *pm_ptr };
             let _ = pm
                 .lockfile
-                .has_meta_hash_changed(false, pm.lockfile.packages.len())?;
+                .has_meta_hash_changed(false, pm.lockfile.packages.len());
 
             {
                 Output::flush();
@@ -430,9 +430,12 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
             // SAFETY: pm_ptr is the unique owner; lockfile borrow released above.
             let pm = unsafe { &mut *pm_ptr };
-            let _ = pm
-                .lockfile
-                .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
+            {
+                let input = pm.lockfile.meta_hash_input(pm.lockfile.packages.len());
+                Output::flush();
+                let _buffering = Output::disable_buffering_scope();
+                Output::writer().write_all(input.written_slice())?;
+            }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
             if pm.options.positionals.len() > 1

@@ -1495,6 +1495,7 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ESUCCESS;
           }),
           poll_oneoff: (sin, sout, nsubscriptions, neventsPtr) => {
+            const pollEntryNs = BigInt(Bun.nanoseconds());
             let nevents = 0;
             let waitTimeNs = BigInt(0);
             let fd = -1;
@@ -1584,18 +1585,21 @@ var require_wasi = __commonJS({
                 return r;
               }
             }
-            if (waitTimeNs >= 1e6) {
-              const sleep = this.sleep;
-              if (sleep == null && !warnedAboutSleep) {
-                warnedAboutSleep = true;
-                console.log("(100% cpu burning waiting for stdin: please define a way to sleep!) ");
-              }
-              if (sleep != null) {
-                const ms = nsToMs(waitTimeNs);
-                sleep.$call(this, ms);
-              } else {
-                const end = BigInt(bindings.hrtime()) + waitTimeNs;
-                while (BigInt(bindings.hrtime()) < end) {}
+            if (waitTimeNs > 0) {
+              waitTimeNs -= BigInt(Bun.nanoseconds()) - pollEntryNs;
+              if (waitTimeNs >= 1e6) {
+                const sleep = this.sleep;
+                if (sleep == null && !warnedAboutSleep) {
+                  warnedAboutSleep = true;
+                  console.log("(100% cpu burning waiting for stdin: please define a way to sleep!) ");
+                }
+                if (sleep != null) {
+                  const ms = nsToMs(waitTimeNs);
+                  sleep.$call(this, ms);
+                } else {
+                  const end = BigInt(bindings.hrtime()) + waitTimeNs;
+                  while (BigInt(bindings.hrtime()) < end) {}
+                }
               }
             }
             return constants_1.WASI_ESUCCESS;

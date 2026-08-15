@@ -973,12 +973,15 @@ pub fn install_with_manager(
         manager.summary.add = manager.lockfile.packages.len() as u32;
     }
 
-    if manager.options.do_.save_yarn_lock() {
-        write_yarn_lock_with_progress(manager, log_level)?;
-    }
+    if !manager.options.dry_run {
+        if manager.options.do_.save_yarn_lock() {
+            write_yarn_lock_with_progress(manager, log_level)?;
+        }
 
-    if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
-        run_root_lifecycle_scripts(manager, ctx, log_level)?;
+        if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global
+        {
+            run_root_lifecycle_scripts(manager, ctx, log_level)?;
+        }
     }
 
     if log_level != Options::LogLevel::Silent {

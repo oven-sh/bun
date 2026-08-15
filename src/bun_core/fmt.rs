@@ -3353,9 +3353,7 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
         let bytes = s.as_bytes();
         let mut start = 0;
         let mut cursor = 0;
-        // The scan stops at every byte outside 0x20..=0x7E plus `\` (passed as the
-        // quote so nothing else is reported); stops that are not C0, DEL or a C1
-        // control (`C2 80..=C2 9F`) are skipped.
+        // `\` doubles as the quote char so the scan stops at nothing else extra.
         while let Some(offset) =
             strings::index_of_needs_escape_for_java_script_string(&bytes[cursor..], b'\\')
         {

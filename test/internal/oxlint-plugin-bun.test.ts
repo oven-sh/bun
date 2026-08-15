@@ -21,7 +21,9 @@ const RULE = "bun(no-duplicate-conditional-property-access)";
 // ASAN build; the rule is still enforced in CI by the Lint JavaScript
 // workflow (release bun), so skip here. Also skip if the repo's
 // devDependencies haven't been installed yet.
-const skip = isASAN || !existsSync(oxlintBin);
+// oxlint ships a prebuilt glibc binding; it cannot load under ASAN, on musl
+// (the OHOS sandbox runs musl), or when devDependencies are missing.
+const skip = isASAN || !existsSync(oxlintBin) || Bun.env.BUN_OHOS === "1";
 const describeOxlint = skip ? describe.skip : describe;
 
 async function runOxlint(files: Record<string, string>) {

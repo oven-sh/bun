@@ -72,19 +72,19 @@ static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream
     return nullptr;
 }
 
-// Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
-// stream's controller slot in their finally step, so a tee reaction queued before that
-// teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
+// Null-safe tee-branch controller recovery (same as JSReadRequest.cpp's): a torn-down branch has
+// no controller, and a tee whose construction was cut short after a branch queued its start
+// reaction has unset branches. Either way the branch is terminal; skip it.
 static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
 {
-    if (branch->m_controllerKind != ControllerKind::Default)
+    if (!branch || branch->m_controllerKind != ControllerKind::Default)
         return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
 }
 
 static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
 {
-    if (branch->m_controllerKind != ControllerKind::Byte)
+    if (!branch || branch->m_controllerKind != ControllerKind::Byte)
         return nullptr;
     return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
 }

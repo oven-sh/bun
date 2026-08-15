@@ -189,6 +189,21 @@ MessageEvent {
 
 exports[`snapshot records the matchers that were checked 9`] = `Any<String>`;
 
+exports[`snapshot records the matchers that were checked 10`] = `
+{
+  "current": {
+    "id": Any<Number>,
+  },
+  "log": [
+    {
+      "user": {
+        "id": 7,
+      },
+    },
+  ],
+}
+`;
+
 exports[`a matcher object checked through a getter is recorded on the object behind it 1`] = `
 Wrapper {
   "_user": {

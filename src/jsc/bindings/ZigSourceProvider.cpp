@@ -222,6 +222,7 @@ static WTF::String sourceCodeStringForBytecode(const uint8_t* inputSourceCode, s
         return WTF::String(std::span { reinterpret_cast<const Latin1Character*>(inputSourceCode), inputSourceCodeSize });
     case BytecodeSourceEncoding::Utf16: {
         // The bytes arrive in a byte buffer, so copy rather than alias them as char16_t.
+        RELEASE_ASSERT(inputSourceCodeSize % 2 == 0);
         std::span<char16_t> units;
         auto impl = WTF::StringImpl::tryCreateUninitialized(inputSourceCodeSize / 2, units);
         if (!impl)

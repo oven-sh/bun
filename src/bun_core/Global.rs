@@ -683,6 +683,7 @@ fn is_exiting() -> bool {
 // calls. `#[link_name]` avoids colliding with this module's own `pub fn exit`.
 #[allow(suspicious_runtime_symbol_definitions)] // signatures are ABI-identical; `safe fn` is intentional (above)
 unsafe extern "C" {
+    #[cfg(windows)]
     #[link_name = "abort"]
     safe fn libc_abort() -> !;
     #[link_name = "raise"]
@@ -735,9 +736,10 @@ pub fn raise_ignoring_panic_handler(sig: crate::SignalCode) -> ! {
     raise_ignoring_panic_handler_raw(sig as c_int)
 }
 
-/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state. Callers may
-/// forward any signal byte (incl. Linux RT signals 32..=64) that has no
-/// `crate::SignalCode` discriminant.
+/// Re-raise `sig` (raw `c_int`) after restoring TTY/crash state, or exit with
+/// `128 + sig` where the kernel refuses to deliver it (PID 1 of a pid
+/// namespace). Callers may forward any signal byte (incl. Linux RT signals
+/// 32..=64) that has no `crate::SignalCode` discriminant.
 pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     Output::flush();
     Output::source::stdio::restore();
@@ -796,11 +798,38 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
             sa.sa_flags = libc::SA_RESETHAND;
             let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
         }
+
+        // The signal mask survives execve, so a parent that had `sig` blocked
+        // started us with it blocked too; raise() would then only leave it
+        // pending.
+        // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
+        unsafe {
+            let mut set: libc::sigset_t = crate::ffi::zeroed();
+            libc::sigemptyset(&raw mut set);
+            libc::sigaddset(&raw mut set, sig);
+            let _ = libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
+        }
     }
 
-    // kill self — `raise`/`abort` have no preconditions (see `safe fn` decls above).
+    // kill self; `raise` has no preconditions (see the `safe fn` decl above).
     let _ = libc_raise(sig);
-    libc_abort();
+
+    #[cfg(not(windows))]
+    {
+        // Unblocked and at SIG_DFL, raise() only returns when this process is
+        // PID 1 of a pid namespace (the entrypoint of a container without an
+        // init): the kernel discards default-action signals sent to init,
+        // SIGABRT included, so abort() would end in its trap instruction and
+        // turn the child's signal into a SIGSEGV/SIGTRAP of our own. Report
+        // the signal the way a shell does instead.
+        exit((128 + sig) as u32)
+    }
+    #[cfg(windows)]
+    {
+        // The CRT's raise() ignores SIGTERM and rejects signals it does not
+        // know, so returning from it is routine here.
+        libc_abort()
+    }
 }
 
 #[derive(Default)]

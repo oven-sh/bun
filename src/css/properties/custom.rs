@@ -908,6 +908,7 @@ impl UnresolvedColor {
                     css_parser::to_css::integer(conv(*g), dest)?;
                     dest.delim(b',', false)?;
                     css_parser::to_css::integer(conv(*b), dest)?;
+                    dest.delim(b',', false)?;
                     alpha.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
                     return Ok(());

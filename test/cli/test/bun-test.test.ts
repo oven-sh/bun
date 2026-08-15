@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1884,9 +1884,10 @@ describe.concurrent("test file discovery (scanner)", () => {
   });
 
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
-  // 4096 on Linux, 1024 on macOS. On Windows it is 32767*3+1 bytes, more than
-  // a command line or an NT path can hold, so the overflow is unreachable there.
-  const maxPathBytes = isMacOS ? 1024 : 4096;
+  // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
+  // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so
+  // the overflow is unreachable there.
+  const maxPathBytes = isLinux ? 4096 : 1024;
   const existsTest = `import { test } from "bun:test"; test("exists", () => {});`;
 
   for (const [kind, prefix, len] of [

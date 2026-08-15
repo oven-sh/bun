@@ -47,9 +47,7 @@ pub struct ScanEntry {
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ScanError {
-    /// Scan entrypoint file/directory does not exist, or its absolute path
-    /// does not fit in a `PathBuffer`. Not returned when a subdirectory is
-    /// scanned but does not exist.
+    /// The entrypoint does not exist or does not fit a `PathBuffer`; never returned for subdirectories.
     #[error("DoesNotExist")]
     DoesNotExist,
     #[error("OutOfMemory")]

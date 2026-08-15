@@ -13,13 +13,14 @@ import { $, generateHeapSnapshot } from "bun";
 const script = Buffer.alloc(1024 * 1024, "bun!").toString();
 
 // Bytes reported by every cell named `className`: its instances plus its
-// prototype, which reports a few bytes of its own. `nodes` holds four numbers
-// per cell: id, size, index into nodeClassNames, flags.
+// prototype, which reports a few bytes of its own. Each cell's entry in
+// `nodes` starts with id, size, index into nodeClassNames.
 function reportedSize(className: string): number {
-  const { nodes, nodeClassNames } = generateHeapSnapshot();
+  const { nodes, nodeClassNames, type } = generateHeapSnapshot();
+  const nodeStride = type === "GCDebugging" ? 7 : 4;
   const classNameIndex = nodeClassNames.indexOf(className);
   let size = 0;
-  for (let i = 0; i < nodes.length; i += 4) {
+  for (let i = 0; i < nodes.length; i += nodeStride) {
     if (nodes[i + 2] === classNameIndex) size += nodes[i + 1];
   }
   return size;

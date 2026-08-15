@@ -921,33 +921,28 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
     }
 }
 
-/// Coordinator-side SIGINT/SIGTERM handling. The signal handler only sets a
-/// flag and wakes the event loop; `Coordinator::drive` checks the flag and
-/// tears down workers itself so we don't do non-signal-safe work in the
-/// handler. Linux PDEATHSIG and the Windows Job Object are the safety net for
-/// when the coordinator can't run this (SIGKILL).
+/// Coordinator-side SIGINT/SIGTERM handling. The handler sets a flag and wakes
+/// the event loop; `Coordinator::drive` checks the flag between polls and tears
+/// down workers itself, so nothing non-signal-safe runs in the handler. The
+/// wakeup is what makes the flag visible promptly: the poll retries on EINTR,
+/// so without it an idle coordinator sees the flag only at its next
+/// housekeeping timer, up to ~1s later. Linux PDEATHSIG and the Windows Job
+/// Object are the safety net for when the coordinator can't run this (SIGKILL).
 pub(crate) mod abort_handler {
     use super::*;
 
     pub(crate) static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
 
-    /// The loop `Coordinator::drive` parks in. Published by `install`, cleared
-    /// by `uninstall`; the loop itself lives until process exit.
+    /// Set by `install`, cleared by `uninstall`. The uws loop is process-lifetime.
     static LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
 
-    /// Signal context on POSIX, the console control thread on Windows. The flag
-    /// alone is not enough: `drive` reads it between polls and the poll retries
-    /// on EINTR, so an idle coordinator would only notice it when the next
-    /// housekeeping timer (~1s) fired. `us_wakeup_loop` is an atomic add plus an
-    /// eventfd write / mach_msg / kevent / uv_async_send, so it is safe to call
-    /// from here and makes the poll return immediately.
+    /// Signal context on POSIX; the console control thread on Windows.
     fn request_abort() {
         SHOULD_ABORT.store(true, Ordering::Release);
         let loop_ = LOOP.load(Ordering::Acquire);
         if !loop_.is_null() {
-            // SAFETY: `install` published the live per-process uws loop, which
-            // outlives the coordinator; the raw extern forms no `&mut Loop`, so
-            // it cannot alias the tick the main thread is inside of.
+            // SAFETY: the loop is process-lifetime, and the raw extern is the
+            // thread-safe entry point (no `&mut Loop` formed off the main thread).
             unsafe { bun_uws::us_wakeup_loop(loop_) };
         }
     }
@@ -992,8 +987,7 @@ pub(crate) mod abort_handler {
         }
     }
 
-    /// `loop_` is the loop `Coordinator::drive` will tick; it must already be
-    /// set up (`EventLoop::ensure_waker`) so the handler has something to wake.
+    /// `loop_` is the loop `Coordinator::drive` ticks (`ensure_waker` already run).
     pub(crate) fn install(loop_: *mut bun_uws::Loop) -> Guard {
         LOOP.store(loop_, Ordering::Release);
         #[cfg(unix)]

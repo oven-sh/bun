@@ -20,8 +20,8 @@ use ::bun_install_types::resolver_hooks as Install;
 use ::bun_install_types::resolver_hooks::{AutoInstaller, Resolution};
 use ::bun_semver as Semver;
 
-// LAYERING: `PackageManager.initWithRuntime` lives in
-// `bun_install`, which depends on this crate. The lazy-init body is defined
+// LAYERING: `PackageManager.initWithRuntime` and `Dependency.parse` live in
+// `bun_install`, which depends on this crate. Both bodies are defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
 // `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
@@ -37,6 +37,16 @@ unsafe extern "Rust" {
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader>,
     ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
+
+    /// `Dependency.parse` with no `PackageManager` (it only uses one to record
+    /// `npm:` aliases). See [`Resolver::parse_dependency`].
+    safe fn __bun_resolver_parse_dependency(
+        name: Semver::String,
+        name_hash: Install::PackageNameHash,
+        version: &[u8],
+        sliced: &Semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+    ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
@@ -860,6 +870,26 @@ impl<'a> Resolver<'a> {
         // singleton, live for the resolver's lifetime once installed; `&mut
         // self` ⇒ exclusive access to the only Rust handle.
         self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+    }
+
+    /// Parses one package.json dependency value (`"^1.0.0"`, `"npm:foo@1"`,
+    /// `"file:../foo"`, ...). Goes through the package manager when it already
+    /// exists so `npm:` aliases get recorded; otherwise parses standalone. The
+    /// package manager is created lazily by the first bare import, so the
+    /// project's own package.json normally takes the second path, and the
+    /// versions recorded there are what auto-install resolves against.
+    pub(crate) fn parse_dependency(
+        &mut self,
+        name: Semver::String,
+        name_hash: Install::PackageNameHash,
+        version: &[u8],
+        sliced: &Semver::SlicedString,
+        log: Option<&mut bun_ast::Log>,
+    ) -> Option<Dependency::Version> {
+        match self.auto_installer() {
+            Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
+            None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
+        }
     }
 
     /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
@@ -3014,7 +3044,8 @@ impl<'a> Resolver<'a> {
                             };
                         }
 
-                        if let Some(id) = manager!().lockfile_resolve(esm.name, &dependency_version)
+                        if let Some(id) =
+                            manager!().lockfile_resolve(esm.name, &dependency_version, string_buf)
                         {
                             resolved_package_id = id;
                         }
@@ -3540,7 +3571,11 @@ impl<'a> Resolver<'a> {
             };
         }
         // we should never be trying to resolve a dependency that is already resolved
-        debug_assert!(pm!().lockfile_resolve(esm.name, &version).is_none());
+        debug_assert!(
+            pm!()
+                .lockfile_resolve(esm.name, &version, version_buf)
+                .is_none()
+        );
 
         // Add the containing package to the lockfile
 

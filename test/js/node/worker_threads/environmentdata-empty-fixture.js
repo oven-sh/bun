@@ -1,20 +1,28 @@
-// when the main thread's environmentData has not been set up (because worker_threads was not imported)
-// child threads should still be able to use environmentData
+// When the main thread never imported worker_threads (so its environmentData was
+// never set up), child threads must still be able to use environmentData. The
+// main thread therefore only uses the web Worker global, and prints what the
+// innermost thread read.
 
 const innerWorkerSrc = /* js */ `
-  const assert = require("assert");
-  const { getEnvironmentData } = require("worker_threads");
-  assert.strictEqual(getEnvironmentData("foo"), "bar");
+  const { getEnvironmentData, parentPort } = require("worker_threads");
+  parentPort.postMessage({ foo: getEnvironmentData("foo") });
 `;
 
 const outerWorkerSrc = /* js */ `
   const { Worker, setEnvironmentData } = require("worker_threads");
   setEnvironmentData("foo", "bar");
-  new Worker(${"`"}${innerWorkerSrc}${"`"}, { eval: true }).on("error", e => {
+  const inner = new Worker(${"`"}${innerWorkerSrc}${"`"}, { eval: true });
+  inner.on("message", m => postMessage(m));
+  inner.on("error", e => {
     throw e;
   });
 `;
 
-new Worker("data:text/javascript," + outerWorkerSrc).addEventListener("error", e => {
+const outer = new Worker("data:text/javascript," + outerWorkerSrc);
+outer.addEventListener("message", e => {
+  console.log(JSON.stringify(e.data));
+  outer.terminate();
+});
+outer.addEventListener("error", e => {
   throw e;
 });

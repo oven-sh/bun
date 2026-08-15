@@ -524,12 +524,8 @@ impl Linker {
         Ok(())
     }
 
-    /// `import_record` is a `node:` specifier that is not a builtin. Same text as
-    /// `ResolveMessage::fmt`: files transpiled off the JS thread skip this linker
-    /// and get their error from the runtime resolve hook instead.
-    ///
-    /// Takes the disjoint pieces explicitly rather than `&mut self` plus
-    /// overlapping sub-borrows of `result`.
+    // Same text as `ResolveMessage::fmt`: files transpiled off the JS thread skip
+    // this linker and get this error from the runtime resolve hook instead.
     fn when_builtin_not_found(
         log: &mut Log,
         import_record: &mut ImportRecord,

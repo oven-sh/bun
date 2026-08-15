@@ -613,9 +613,6 @@ impl CompileC {
         &mut self,
         global_this: &JSGlobalObject,
     ) -> crate::Result<NonNull<TCC::State>> {
-        // Without the bundled headers even `#include <stddef.h>` fails, so
-        // failing to stage them is the compile error; reporting it here gives
-        // the cause instead of TinyCC's later "include file not found".
         let compiler_rt = match CompilerRT::dirs() {
             Ok(dirs) => dirs,
             Err(err) => {
@@ -2277,8 +2274,7 @@ struct CompilerRtDirs {
 }
 
 // Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + leak. A failure is kept too: staging is attempted once per
-// process and every `cc()` call reports the same error.
+// `static mut` + leak.
 static COMPILER_RT_DIRS: OnceLock<bun_sys::Maybe<CompilerRtDirs>> = OnceLock::new();
 
 struct CompilerRtSources;
@@ -2308,7 +2304,6 @@ impl CompilerRtSources {
 }
 
 impl CompilerRT {
-    /// The staged headers, or the error that stopped them from being staged.
     fn dirs() -> Result<&'static CompilerRtDirs, &'static bun_sys::Error> {
         COMPILER_RT_DIRS
             .get_or_init(Self::create_compiler_rt_dir)
@@ -2330,8 +2325,6 @@ impl CompilerRT {
         Self::populate_compiler_rt_dir(&bun_cc)
     }
 
-    /// Create and open a private directory with a random name under `tmpdir`,
-    /// drawing another name when the first ones are taken.
     fn create_fresh_compiler_rt_dir(tmpdir: &bun_sys::Dir) -> bun_sys::Maybe<bun_sys::Dir> {
         let dir_flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOFOLLOW;
         let mut attempts_left = 8;
@@ -2371,9 +2364,7 @@ impl CompilerRT {
         }
     }
 
-    /// Stage every header into `bun_cc`. Fails on the first entry that could
-    /// not be written -- e.g. a pre-planted symlinked entry refused by the
-    /// no-follow write.
+    /// Stage every header into `bun_cc`.
     fn populate_compiler_rt_dir(bun_cc: &bun_sys::Dir) -> bun_sys::Maybe<CompilerRtDirs> {
         for (name, source) in CompilerRtSources::SOURCES {
             Self::write_compiler_rt_file(bun_cc, name.as_bytes(), source)?;

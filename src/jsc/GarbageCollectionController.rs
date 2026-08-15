@@ -177,11 +177,6 @@ impl GarbageCollectionController {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(ticks);
             if this.gc_repeating_timer_fast.get() && ticks >= 30 {
-                // Counter is cleared here so that if growth cancels reduction
-                // mode on the next tick we re-count 30 stable ticks instead of
-                // immediately requesting another Full.
-                this.heap_size_didnt_change_for_repeating_timer_ticks_count
-                    .set(0);
                 this.idle_full_gcs_fired.set(1);
                 jsc_vm.collect_async_full();
             } else {

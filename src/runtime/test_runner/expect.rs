@@ -471,10 +471,9 @@ impl Expect {
         }
     }
 
-    /// Blocks until a promise a matcher needs the outcome of settles. Returns `false` instead once
-    /// the test or hook it runs in has timed out (or is otherwise over, see
-    /// [`bun_test::WaitingEntry`]): a promise that never settles must fail that test, not hang
-    /// `bun test`. Throws only when the VM is being stopped.
+    /// `VirtualMachine::wait_for_promise` that returns `false` instead once the entry the matcher runs
+    /// in is over ([`bun_test::WaitingEntry`]), so a promise that never settles fails the test instead
+    /// of hanging `bun test`. Throws only for a VM stop.
     fn wait_for_promise(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<bool> {
         let waiting_entry = bun_test::WaitingEntry::current();
         global_this

@@ -100,9 +100,8 @@ pub struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub(crate) on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
-    /// Matcher waits on the stack (`bun_test::WaitingEntry`) holding `on_stack_entry`'s
-    /// callback blocked underneath them. While non-zero, JS reaching a matcher is a
-    /// continuation of something, not that callback's own synchronous code.
+    /// `bun_test::WaitingEntry`s on the stack holding `on_stack_entry`'s callback blocked,
+    /// so that while non-zero, JS reaching a matcher is a continuation, not that callback.
     pub(crate) blocking_matcher_waits: core::cell::Cell<u32>,
 }
 

@@ -1537,39 +1537,30 @@ impl RefData {
     }
 }
 
-/// The test or hook on whose behalf a matcher is about to tick the event loop until a promise
-/// settles (`.resolves`, `.rejects`, `toThrow()` on an async function, an async `expect.extend`
-/// matcher), polled between the ticks so that a promise which never settles fails that entry with
-/// its timeout instead of ticking forever. Attributed the way the `expect()` call itself is: to the
-/// callback on the stack, else to whatever the runner is executing, so a continuation of an entry
-/// the runner already gave up on is charged to whatever runs now, as its `expect()` calls are.
+/// What ends a matcher's wait for a promise (`.resolves`, `toThrow()` on an async function, an async
+/// `expect.extend` matcher) short of it settling; polled between the wait's ticks, since a promise
+/// that never settles has to fail the entry with its timeout. Attributed the way `expect()` itself is.
 pub(crate) struct WaitingEntry {
     buntest: BunTestPtr,
     ends_when: EndsWhen,
 }
 
-/// With a callback on the stack the runner is blocked underneath the matcher (`BunTest::run` is
-/// re-entrancy guarded), so the matcher has to watch the deadlines itself; reached from a
-/// continuation with nothing blocked underneath, the runner keeps running during the ticks and
-/// gives entries up exactly as if they were still awaiting, so the matcher only has to notice.
+/// The first two hold a callback on the stack, which `BunTest::run` (re-entrancy guarded) cannot give
+/// up, so they watch deadlines themselves; the others only notice what the running runner did meanwhile.
 enum EndsWhen {
-    /// The callback on the stack is this entry's own. Once the matcher gives up, the callback
-    /// completes and the runner evaluates the entry's timeout as for any callback that overran.
+    /// The on-stack callback's own code; once the matcher throws, the runner evaluates its overrun as usual.
     EntryTimedOut(NonNull<ExecutionEntry>),
-    /// The callback on the stack is itself blocked in a matcher, so this is some continuation of
-    /// an entry of the active group, and which one is unknown. Whichever it is has timed out once
-    /// every entry still executing in the group has.
+    /// The on-stack callback is itself blocked in a matcher, so this is some continuation of the group,
+    /// which one unknown: done once every entry still executing in it has timed out.
     GroupTimedOut,
-    /// A continuation of this entry; the runner is live. Ends as soon as [`RefDataValue::entry`]
-    /// no longer finds the entry: right away for a continuation that outlived its file (`Done`).
+    /// A continuation of this entry: done once [`RefDataValue::entry`] no longer finds it (at once after `Done`).
     RunnerGaveEntryUp(RefDataValue),
-    /// A continuation of some entry of this concurrent group; the runner is live.
+    /// A continuation of some entry of this concurrent group.
     GroupOver(usize),
 }
 
 impl WaitingEntry {
-    /// `None` when nothing that has a timeout is running: no test file at all (`bun:test`'s
-    /// `expect` in a plain script or a preload), or the describe callbacks of the collection phase.
+    /// `None` outside a test file's execution phase (plain scripts, preloads, describe callbacks): no timeouts there.
     pub(crate) fn current() -> Option<Self> {
         let buntest = clone_active_strong()?;
         let execution = &buntest.execution;
@@ -1619,9 +1610,8 @@ impl WaitingEntry {
                         })
                 });
                 if group_timed_out {
-                    // What `Execution::handle_timeout` queues when the timer fires, which it may
-                    // not have yet. Queued ahead of the completion the matcher's error is about to
-                    // produce, it gets the entry reported as timed out, not as failed by that error.
+                    // What the timer's `handle_timeout` queues (it may not have fired yet), ahead of the
+                    // failure the matcher's error is about to produce, so the entry reports as timed out.
                     buntest.add_result(RefDataValue::Start);
                 }
                 group_timed_out

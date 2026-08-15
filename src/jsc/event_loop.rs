@@ -1023,11 +1023,8 @@ impl EventLoop {
             .map(|_settled| ())
     }
 
-    /// [`Self::wait_for_promise`] for a waiter with a deadline of its own (a
-    /// bun:test matcher inside a test that can time out): `give_up` is asked
-    /// before each tick, and the wait also returns, with `Ok(false)`, once it
-    /// answers `true` while the promise is still pending. `Ok(true)` means the
-    /// promise settled.
+    /// [`Self::wait_for_promise`] that also returns `Ok(false)` once `give_up`,
+    /// asked before each tick, says so; `Ok(true)` means the promise settled.
     pub fn wait_for_promise_or_give_up(
         &mut self,
         promise: jsc::AnyPromise,

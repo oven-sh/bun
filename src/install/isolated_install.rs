@@ -248,7 +248,7 @@ pub(crate) fn build_store(
     node_queue.push(QueuedNode {
         parent_id: store::node::Id::INVALID,
         dep_id: invalid_dependency_id,
-        pkg_id: 0,
+        pkg_id: PackageID::ROOT,
     });
 
     let mut dep_ids_sort_buf: Vec<DependencyID> = Vec::new();
@@ -303,16 +303,15 @@ pub(crate) fn build_store(
         let provides: DynamicBitSetList =
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
         for pkg_idx in 0..lockfile.packages.len() {
-            let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
-            let deps = pkg_dependency_slices[pkg_id as usize];
-            for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = _dep_id;
-                let dep = &dependencies[dep_id as usize];
+            let pkg_id = PackageID::try_from(pkg_idx).expect("int cast");
+            let deps = pkg_dependency_slices[pkg_id.index()];
+            for dep_id in deps.dependency_ids() {
+                let dep = &dependencies[dep_id.index()];
                 let Some(bit) = peer_name_idx.get_index(&dep.name_hash) else {
                     continue;
                 };
                 if dep.behavior.is_peer() {
-                    own_peers.set(pkg_id as usize, bit);
+                    own_peers.set(pkg_id.index(), bit);
                 } else if !is_filtered_dependency_or_workspace(
                     dep_id,
                     pkg_id,
@@ -322,7 +321,7 @@ pub(crate) fn build_store(
                     lockfile,
                     resolutions,
                 ) {
-                    provides.set(pkg_id as usize, bit);
+                    provides.set(pkg_id.index(), bit);
                 }
             }
         }
@@ -333,30 +332,29 @@ pub(crate) fn build_store(
         while changed {
             changed = false;
             for pkg_idx in 0..lockfile.packages.len() {
-                let pkg_id: PackageID = u32::try_from(pkg_idx).expect("int cast");
-                let deps = pkg_dependency_slices[pkg_id as usize];
+                let pkg_id = PackageID::try_from(pkg_idx).expect("int cast");
+                let deps = pkg_dependency_slices[pkg_id.index()];
 
-                scratch.copy_into(&own_peers.at(pkg_id as usize));
+                scratch.copy_into(&own_peers.at(pkg_id.index()));
 
-                for _dep_id in deps.begin()..deps.end() {
-                    let dep_id: DependencyID = _dep_id;
-                    let dep = &dependencies[dep_id as usize];
+                for dep_id in deps.dependency_ids() {
+                    let dep = &dependencies[dep_id.index()];
                     if dep.behavior.is_peer() {
                         if let Some(bit) = peer_name_idx.get_index(&dep.name_hash) {
                             for &child in &peer_targets[bit] {
-                                scratch.set_union(&leaking_peers.at(child as usize));
+                                scratch.set_union(&leaking_peers.at(child.index()));
                             }
                         }
                     } else {
-                        let res_pkg = resolutions[dep_id as usize];
+                        let res_pkg = resolutions[dep_id.index()];
                         if res_pkg != invalid_package_id {
-                            scratch.set_union(&leaking_peers.at(res_pkg as usize));
+                            scratch.set_union(&leaking_peers.at(res_pkg.index()));
                         }
                     }
                 }
-                scratch.set_exclude(&provides.at(pkg_id as usize));
+                scratch.set_exclude(&provides.at(pkg_id.index()));
 
-                let mut dst = leaking_peers.at(pkg_id as usize);
+                let mut dst = leaking_peers.at(pkg_id.index());
                 if !scratch.eql(&dst) {
                     dst.copy_into(&scratch);
                     changed = true;
@@ -371,12 +369,11 @@ pub(crate) fn build_store(
     let mut early_dedupe: HashMap<EarlyDedupeKey, store::node::Id> = HashMap::default();
 
     let mut root_declares_workspace = DynamicBitSet::init_empty(lockfile.packages.len())?;
-    for _dep_idx in pkg_dependency_slices[0].begin()..pkg_dependency_slices[0].end() {
-        let dep_idx: DependencyID = _dep_idx;
-        if !dependencies[dep_idx as usize].behavior.is_workspace() {
+    for dep_idx in pkg_dependency_slices[0].dependency_ids() {
+        if !dependencies[dep_idx.index()].behavior.is_workspace() {
             continue;
         }
-        let res = resolutions[dep_idx as usize];
+        let res = resolutions[dep_idx.index()];
         if res == invalid_package_id {
             continue;
         }
@@ -385,7 +382,7 @@ pub(crate) fn build_store(
         // so a `workspace:` reference must keep its dependencies.
         if is_filtered_dependency_or_workspace(
             dep_idx,
-            0,
+            PackageID::ROOT,
             workspace_filters,
             install_root_dependencies,
             manager,
@@ -399,7 +396,7 @@ pub(crate) fn build_store(
                 continue;
             }
         }
-        root_declares_workspace.set(res as usize);
+        root_declares_workspace.set(res.index());
     }
 
     let mut peer_dep_ids: Vec<DependencyID> = Vec::new();
@@ -438,8 +435,8 @@ pub(crate) fn build_store(
                         break 'check_cycle;
                     }
 
-                    let curr_dep = &dependencies[dep_id as usize];
-                    let entry_dep = &dependencies[entry.dep_id as usize];
+                    let curr_dep = &dependencies[dep_id.index()];
+                    let entry_dep = &dependencies[entry.dep_id.index()];
 
                     // ensure the dependency name is the same before skipping the cycle. if they aren't
                     // we lose dependency name information for the symlinks
@@ -458,15 +455,16 @@ pub(crate) fn build_store(
 
         let node_id: store::node::Id =
             store::node::Id::from(u32::try_from(nodes.len()).expect("int cast"));
-        let pkg_deps = pkg_dependency_slices[entry.pkg_id as usize];
+        let pkg_deps = pkg_dependency_slices[entry.pkg_id.index()];
 
         // for skipping dependnecies of workspace packages and the root package. the dependencies
         // of these packages should only be pulled in once, but we might need to create more than
         // one entry if there's multiple dependencies on the workspace or root package.
-        let mut skip_dependencies = entry.pkg_id == 0 && entry.dep_id != invalid_dependency_id;
+        let mut skip_dependencies =
+            entry.pkg_id == PackageID::ROOT && entry.dep_id != invalid_dependency_id;
 
         if entry.dep_id != invalid_dependency_id {
-            let entry_dep = &dependencies[entry.dep_id as usize];
+            let entry_dep = &dependencies[entry.dep_id.index()];
 
             // A `workspace:` protocol reference does not own the workspace's
             // dependencies when root also declares that workspace; the
@@ -474,7 +472,7 @@ pub(crate) fn build_store(
             // protocol reference is the only one and must keep them.)
             if entry_dep.version.tag == VersionTag::Workspace
                 && !entry_dep.behavior.is_workspace()
-                && root_declares_workspace.is_set(entry.pkg_id as usize)
+                && root_declares_workspace.is_set(entry.pkg_id.index())
             {
                 skip_dependencies = true;
             }
@@ -496,7 +494,7 @@ pub(crate) fn build_store(
                         0
                     } else {
                         'ctx: {
-                            let leaks = leaking_peers.at(entry.pkg_id as usize);
+                            let leaks = leaking_peers.at(entry.pkg_id.index());
                             if leaks.count() == 0 {
                                 break 'ctx 0;
                             }
@@ -510,7 +508,7 @@ pub(crate) fn build_store(
                                     let mut curr_id = entry.parent_id;
                                     while curr_id != store::node::Id::INVALID {
                                         for ids in &node_dependencies[curr_id.get() as usize] {
-                                            if dependencies[ids.dep_id as usize].name_hash
+                                            if dependencies[ids.dep_id.index()].name_hash
                                                 == peer_name_hash
                                             {
                                                 break 'resolved ids.pkg_id;
@@ -518,7 +516,7 @@ pub(crate) fn build_store(
                                         }
                                         for ids in &node_peers[curr_id.get() as usize].list {
                                             if !ids.auto_installed
-                                                && dependencies[ids.dep_id as usize].name_hash
+                                                && dependencies[ids.dep_id.index()].name_hash
                                                     == peer_name_hash
                                             {
                                                 break 'resolved ids.pkg_id;
@@ -552,7 +550,7 @@ pub(crate) fn build_store(
                     if dedupe_dep_id == invalid_dependency_id {
                         break 'dont_dedupe;
                     }
-                    let dedupe_dep = &dependencies[dedupe_dep_id as usize];
+                    let dedupe_dep = &dependencies[dedupe_dep_id.index()];
 
                     if dedupe_dep.name_hash != entry_dep.name_hash {
                         break 'dont_dedupe;
@@ -585,11 +583,11 @@ pub(crate) fn build_store(
                     let dedupe_peers: Vec<_> =
                         node_peers[dedupe_node_id.get() as usize].list.clone();
                     for peer in dedupe_peers {
-                        let peer_name_hash = dependencies[peer.dep_id as usize].name_hash;
+                        let peer_name_hash = dependencies[peer.dep_id.index()].name_hash;
                         let mut curr_id = entry.parent_id;
                         'walk: while curr_id != store::node::Id::INVALID {
                             for ids in &node_dependencies[curr_id.get() as usize] {
-                                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash {
+                                if dependencies[ids.dep_id.index()].name_hash == peer_name_hash {
                                     break 'walk;
                                 }
                             }
@@ -644,11 +642,7 @@ pub(crate) fn build_store(
         let queue_mark = node_queue.len();
 
         dep_ids_sort_buf.clear();
-        dep_ids_sort_buf.reserve(pkg_deps.len as usize);
-        for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-            let dep_id: DependencyID = _dep_id;
-            dep_ids_sort_buf.push(dep_id);
-        }
+        dep_ids_sort_buf.extend(pkg_deps.dependency_ids());
 
         // TODO: make this sort in an order that allows peers to be resolved last
         // and devDependency handling to match `hoistDependency`
@@ -672,7 +666,7 @@ pub(crate) fn build_store(
                 if node_id == store::node::Id::ROOT {
                     // TODO: print an error when scanner is actually a dependency of a workspace (we should not support this)
                     for &dep_id in &dep_ids_sort_buf {
-                        let pkg_id = resolutions[dep_id as usize];
+                        let pkg_id = resolutions[dep_id.index()];
                         if pkg_id == invalid_package_id {
                             continue;
                         }
@@ -707,8 +701,8 @@ pub(crate) fn build_store(
                     continue;
                 }
 
-                let pkg_id = resolutions[dep_id as usize];
-                let dep = &dependencies[dep_id as usize];
+                let pkg_id = resolutions[dep_id.index()];
+                let dep = &dependencies[dep_id.index()];
 
                 // TODO: handle duplicate dependencies. should be similar logic
                 // like we have for dev dependencies in `hoistDependency`
@@ -738,7 +732,7 @@ pub(crate) fn build_store(
                 // the package id for the chosen peer marked as a transitive peer. Nodes
                 // are deduplicated only if their package id and their transitive peer package
                 // ids are equal.
-                let peer_dep = &dependencies[peer_dep_id as usize];
+                let peer_dep = &dependencies[peer_dep_id.index()];
 
                 // TODO: double check this
                 // Start with the current package. A package
@@ -748,13 +742,13 @@ pub(crate) fn build_store(
                 visited_parent_node_ids.clear();
                 while curr_id != store::node::Id::INVALID {
                     for ids in &node_dependencies[curr_id.get() as usize] {
-                        let dep = &dependencies[ids.dep_id as usize];
+                        let dep = &dependencies[ids.dep_id.index()];
 
                         if dep.name_hash != peer_dep.name_hash {
                             continue;
                         }
 
-                        let res = &pkg_resolutions[ids.pkg_id as usize];
+                        let res = &pkg_resolutions[ids.pkg_id.index()];
 
                         if peer_dep.version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm
                         {
@@ -777,7 +771,7 @@ pub(crate) fn build_store(
 
                     let curr_peers = &node_peers[curr_id.get() as usize];
                     for ids in &curr_peers.list {
-                        let transitive_peer_dep = &dependencies[ids.dep_id as usize];
+                        let transitive_peer_dep = &dependencies[ids.dep_id.index()];
 
                         if transitive_peer_dep.name_hash != peer_dep.name_hash {
                             continue;
@@ -799,7 +793,7 @@ pub(crate) fn build_store(
                         // version. Only mark all parents if resolution is
                         // different from this transitive peer.
 
-                        let best_version = resolutions[peer_dep_id as usize];
+                        let best_version = resolutions[peer_dep_id.index()];
 
                         if best_version == invalid_package_id {
                             break 'resolved_pkg_id (invalid_package_id, true);
@@ -827,7 +821,7 @@ pub(crate) fn build_store(
                 }
 
                 // choose the current best version
-                break 'resolved_pkg_id (resolutions[peer_dep_id as usize], true);
+                break 'resolved_pkg_id (resolutions[peer_dep_id.index()], true);
             };
 
             if resolved_pkg_id == invalid_package_id {
@@ -920,8 +914,8 @@ pub(crate) fn build_store(
                     }
                 }
                 if info.dep_id != invalid_dependency_id && curr_dep_id != invalid_dependency_id {
-                    let curr_dep = &dependencies[curr_dep_id as usize];
-                    let existing_dep = &dependencies[info.dep_id as usize];
+                    let curr_dep = &dependencies[curr_dep_id.index()];
+                    let existing_dep = &dependencies[info.dep_id.index()];
 
                     if existing_dep.version.tag == VersionTag::Workspace
                         && curr_dep.version.tag == VersionTag::Workspace
@@ -952,7 +946,7 @@ pub(crate) fn build_store(
                     let parents = &mut entry_parents[info.entry_id.get() as usize];
 
                     if curr_dep_id != invalid_dependency_id
-                        && dependencies[curr_dep_id as usize].behavior.is_workspace()
+                        && dependencies[curr_dep_id.index()].behavior.is_workspace()
                     {
                         parents.push(entry.entry_parent_id);
                         continue 'next_entry;
@@ -983,9 +977,9 @@ pub(crate) fn build_store(
             }
             let mut hasher = Wyhash11::init(0);
             for peer_ids in peers.slice() {
-                let pkg_name = pkg_names[peer_ids.pkg_id as usize];
+                let pkg_name = pkg_names[peer_ids.pkg_id.index()];
                 hasher.update(pkg_name.slice(string_buf));
-                let pkg_res = &pkg_resolutions[peer_ids.pkg_id as usize];
+                let pkg_res = &pkg_resolutions[peer_ids.pkg_id.index()];
                 res_fmt_buf.clear();
                 write!(
                     &mut res_fmt_buf,
@@ -1002,7 +996,7 @@ pub(crate) fn build_store(
 
         let new_entry_is_root = new_entry_dep_id == invalid_dependency_id;
         let new_entry_is_workspace = !new_entry_is_root
-            && dependencies[new_entry_dep_id as usize].version.tag == VersionTag::Workspace;
+            && dependencies[new_entry_dep_id.index()].version.tag == VersionTag::Workspace;
 
         let new_entry_dependencies: store::entry::Dependencies =
             if dedupe_entry.found_existing && new_entry_is_workspace {
@@ -1024,7 +1018,7 @@ pub(crate) fn build_store(
                 break 'hoisted false;
             }
 
-            let dep_name = dependencies[new_entry_dep_id as usize]
+            let dep_name = dependencies[new_entry_dep_id.index()]
                 .name
                 .slice(string_buf);
 
@@ -1059,7 +1053,7 @@ pub(crate) fn build_store(
         if let Some(entry_parent_id) = entry.entry_parent_id.try_get() {
             'skip_adding_dependency: {
                 if new_entry_dep_id != invalid_dependency_id
-                    && dependencies[new_entry_dep_id as usize]
+                    && dependencies[new_entry_dep_id.index()]
                         .behavior
                         .is_workspace()
                 {
@@ -1084,13 +1078,13 @@ pub(crate) fn build_store(
                 if new_entry_dep_id != invalid_dependency_id {
                     if entry.entry_parent_id == store::entry::Id::ROOT {
                         // make sure direct dependencies are not replaced
-                        let dep_name = dependencies[new_entry_dep_id as usize]
+                        let dep_name = dependencies[new_entry_dep_id.index()]
                             .name
                             .slice(string_buf);
                         public_hoisted.put(dep_name, ())?;
                     } else {
                         // transitive dependencies (also direct dependencies of workspaces!)
-                        let dep_name = dependencies[new_entry_dep_id as usize]
+                        let dep_name = dependencies[new_entry_dep_id.index()]
                             .name
                             .slice(string_buf);
                         if let Some(public_hoist_pattern) = &manager.options.public_hoist_pattern {
@@ -1233,7 +1227,7 @@ pub(crate) fn install_isolated_packages(
                         let node_id = entry_node_ids[entry_idx];
                         let pkg_id = node_pkg_ids[node_id.get() as usize];
                         let dep_id = node_dep_ids[node_id.get() as usize];
-                        let pkg_res = &pkg_resolutions[pkg_id as usize];
+                        let pkg_res = &pkg_resolutions[pkg_id.index()];
 
                         let eligible = match pkg_res.tag {
                             ResolutionTag::Npm
@@ -1252,7 +1246,7 @@ pub(crate) fn install_isolated_packages(
                                     let name_version: &[u8] = match write!(
                                         &mut cursor,
                                         "{}@{}",
-                                        BStr::new(pkg_names[pkg_id as usize].slice(string_buf)),
+                                        BStr::new(pkg_names[pkg_id.index()].slice(string_buf)),
                                         pkg_res.fmt(string_buf, bun_fmt::PathSep::Posix),
                                     ) {
                                         Ok(()) => {
@@ -1287,13 +1281,13 @@ pub(crate) fn install_isolated_packages(
                                 // scripts" case in exchange for not needing a
                                 // lockfile-format change.
                                 let dep_name = if dep_id != invalid_dependency_id {
-                                    dependencies[dep_id as usize].name.slice(string_buf)
+                                    dependencies[dep_id.index()].name.slice(string_buf)
                                 } else {
-                                    pkg_names[pkg_id as usize].slice(string_buf)
+                                    pkg_names[pkg_id.index()].slice(string_buf)
                                 };
                                 if lockfile.has_trusted_dependency(
                                     dep_name,
-                                    pkg_names[pkg_id as usize].slice(string_buf),
+                                    pkg_names[pkg_id.index()].slice(string_buf),
                                     pkg_res,
                                 ) || trusted_from_update.contains(&pkg_id)
                                 {
@@ -1333,7 +1327,7 @@ pub(crate) fn install_isolated_packages(
                         // first project's bytes.
                         stack[top_idx]
                             .hasher
-                            .update(bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity));
+                            .update(bun_core::bytes_of(&pkg_metas[pkg_id.index()].integrity));
                     }
 
                     if states[entry_idx] == State::Ineligible {
@@ -1346,7 +1340,7 @@ pub(crate) fn install_isolated_packages(
                     while (stack[top_idx].next_dep as usize) < deps.len() {
                         let dep = &deps[stack[top_idx].next_dep as usize];
                         let dep_entry_idx = dep.entry_id.get() as usize;
-                        let dep_name_hash = dependencies[dep.dep_id as usize].name_hash;
+                        let dep_name_hash = dependencies[dep.dep_id.index()].name_hash;
                         match states[dep_entry_idx] {
                             State::Done => {
                                 stack[top_idx]
@@ -1520,8 +1514,8 @@ pub(crate) fn install_isolated_packages(
                                     sub.update(bun_core::bytes_of(
                                         &pkg_metas[node_pkg_ids
                                             [entry_node_ids[m as usize].get() as usize]
-                                            as usize]
-                                            .integrity,
+                                            .index()]
+                                        .integrity,
                                     ));
                                     let mut poisoned = false;
                                     for dep in entry_dependencies[m as usize].slice() {
@@ -1531,7 +1525,7 @@ pub(crate) fn install_isolated_packages(
                                             break;
                                         }
                                         let dep_name_hash =
-                                            dependencies[dep.dep_id as usize].name_hash;
+                                            dependencies[dep.dep_id.index()].name_hash;
                                         sub.update(bun_core::bytes_of(&dep_name_hash));
                                         sub.update(bun_core::bytes_of(&dh));
                                     }
@@ -1576,8 +1570,8 @@ pub(crate) fn install_isolated_packages(
                                     sub.update(bun_core::bytes_of(
                                         &pkg_metas[node_pkg_ids
                                             [entry_node_ids[m as usize].get() as usize]
-                                            as usize]
-                                            .integrity,
+                                            .index()]
+                                        .integrity,
                                     ));
                                     member_sub.push(sub.final_());
                                     for dep in entry_dependencies[m as usize].slice() {
@@ -1596,7 +1590,7 @@ pub(crate) fn install_isolated_packages(
                                         // different aliases must hash differently.
                                         let mut ext = Wyhash::init(0);
                                         ext.update(bun_core::bytes_of(
-                                            &dependencies[dep.dep_id as usize].name_hash,
+                                            &dependencies[dep.dep_id.index()].name_hash,
                                         ));
                                         ext.update(bun_core::bytes_of(&entry_hashes[di]));
                                         scc_ext.put(ext.final_(), ())?;
@@ -2118,9 +2112,9 @@ pub(crate) fn install_isolated_packages(
             let pkg_id = node_pkg_ids[node_id.get() as usize];
             let dep_id = node_dep_ids[node_id.get() as usize];
 
-            let pkg_name = pkg_names[pkg_id as usize];
-            let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
-            let pkg_res: Resolution = pkg_resolutions[pkg_id as usize];
+            let pkg_name = pkg_names[pkg_id.index()];
+            let pkg_name_hash = pkg_name_hashes[pkg_id.index()];
+            let pkg_res: Resolution = pkg_resolutions[pkg_id.index()];
 
             // Validate the package name and every dependency alias as
             // `node_modules/<name>` components before any filesystem work.
@@ -2132,7 +2126,7 @@ pub(crate) fn install_isolated_packages(
                     unsafe_folder_name = Some(name);
                 } else {
                     for dep in entry_dependencies[entry_id.get() as usize].slice() {
-                        let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id as usize]
+                        let dep_name = lockfile_ro.buffers.dependencies[dep.dep_id.index()]
                             .name
                             .slice(string_buf);
                         if !crate::package_installer::alias_is_safe_install_target(dep_name) {
@@ -2406,7 +2400,7 @@ pub(crate) fn install_isolated_packages(
 
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
-                    let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
+                    let dep = &lockfile_ro.buffers.dependencies[dep_id.index()];
 
                     match pkg_res_tag {
                         ResolutionTag::Npm => {

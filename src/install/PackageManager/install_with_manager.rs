@@ -381,7 +381,7 @@ pub fn install_with_manager(
                         )?;
                         lf.dependencies[off as usize + i] = cloned;
                         if mapping[i] != invalid_package_id {
-                            lf.resolutions[off as usize + i] = old_resolutions[mapping[i] as usize];
+                            lf.resolutions[off as usize + i] = old_resolutions[mapping[i].index()];
                         }
                     }
                     for (k, (dep, res)) in kept_pruned.into_iter().enumerate() {
@@ -502,7 +502,7 @@ pub fn install_with_manager(
                                     invalid_package_id;
                                 if let Err(err) = enqueue_dependency_with_main(
                                     manager,
-                                    dependency_i as u32,
+                                    DependencyID::from_index(dependency_i),
                                     &dependency,
                                     invalid_package_id,
                                     false,
@@ -523,12 +523,11 @@ pub fn install_with_manager(
                         catalog_overridden.dedup();
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
-                            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
+                            let dep_id = DependencyID::try_from(_dep_id).expect("int cast");
                             if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
                                 continue;
                             }
-                            let dep =
-                                manager.lockfile.buffers.dependencies[dep_id as usize].clone();
+                            let dep = manager.lockfile.buffers.dependencies[dep_id.index()].clone();
                             if dep.version.tag != DependencyVersionTag::Catalog
                                 && (catalog_overridden.is_empty()
                                     || catalog_overridden.binary_search(&dep.name_hash).is_err())
@@ -536,7 +535,7 @@ pub fn install_with_manager(
                                 continue;
                             }
 
-                            manager.lockfile.buffers.resolutions[dep_id as usize] =
+                            manager.lockfile.buffers.resolutions[dep_id.index()] =
                                 invalid_package_id;
                             if let Err(err) = enqueue_dependency_with_main(
                                 manager,
@@ -552,20 +551,19 @@ pub fn install_with_manager(
 
                     // Split this into two passes because the below may allocate memory or invalidate pointers
                     if manager.summary.add > 0 || manager.summary.update > 0 {
-                        let changes = mapping.len() as PackageID;
-                        let mut counter_i: PackageID = 0;
+                        let changes = mapping.len() as u32;
 
                         let _ = manager.get_cache_directory();
                         let _ = manager.get_temporary_directory();
 
-                        while counter_i < changes {
+                        for counter_i in 0..changes {
                             if mapping[counter_i as usize] == invalid_package_id {
-                                let dependency_i = counter_i + off;
+                                let dependency_i = DependencyID::new(counter_i + off);
                                 let dependency = manager.lockfile.buffers.dependencies
-                                    [dependency_i as usize]
-                                    .clone();
+                                    [dependency_i.index()]
+                                .clone();
                                 let resolution =
-                                    manager.lockfile.buffers.resolutions[dependency_i as usize];
+                                    manager.lockfile.buffers.resolutions[dependency_i.index()];
                                 if let Err(err) = enqueue_dependency_with_main(
                                     manager,
                                     dependency_i,
@@ -576,7 +574,6 @@ pub fn install_with_manager(
                                     add_dependency_error(manager, &dependency, err);
                                 }
                             }
-                            counter_i += 1;
                         }
                     }
 
@@ -1165,7 +1162,7 @@ fn print_install_summary(
             && (this.update_requests.is_empty() || this.subcommand == Subcommand::Update)
         {
             // Hot no-op path (install/fastify bench): kept inline.
-            let count = this.lockfile.packages.len() as PackageID;
+            let count = this.lockfile.packages.len() as u32;
             if count != install_summary.skipped {
                 bun_core::pretty!(
                     "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
@@ -1394,7 +1391,7 @@ pub(crate) fn get_workspace_filters(
         }
     };
     let filters = vec![WorkspaceFilter::from_ids(ids)];
-    let install_root_dependencies = WorkspaceFilter::is_selected(&filters, 0);
+    let install_root_dependencies = WorkspaceFilter::is_selected(&filters, PackageID::ROOT);
     Ok((filters, install_root_dependencies))
 }
 
@@ -1574,22 +1571,26 @@ fn enqueue_named_updates(
         }
         matched.set(request);
         if collect_latest_rows {
-            named.latest_rows.push(dependency_i as DependencyID);
+            named
+                .latest_rows
+                .push(DependencyID::from_index(dependency_i));
         }
         if package_id == invalid_package_id || dependency.behavior.is_bundled() {
             continue;
         }
         if dependency.behavior.is_peer() {
             if plannable_peers.is_set(dependency_i) {
-                peer_rows.push(dependency_i as DependencyID);
+                peer_rows.push(DependencyID::from_index(dependency_i));
             }
             continue;
         }
         manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
-        named.moved.push((dependency_i as DependencyID, package_id));
+        named
+            .moved
+            .push((DependencyID::from_index(dependency_i), package_id));
         if let Err(err) = enqueue_dependency_with_main(
             manager,
-            dependency_i as DependencyID,
+            DependencyID::from_index(dependency_i),
             &dependency,
             invalid_package_id,
             false,
@@ -1620,11 +1621,11 @@ fn index_of_named_update(
         return Some(i);
     }
     if package_id != invalid_package_id {
-        let name_hash = manager.lockfile.packages.items_name_hash()[package_id as usize];
+        let name_hash = manager.lockfile.packages.items_name_hash()[package_id.index()];
         if name_hash == dependency.name_hash {
             return None;
         }
-        let name = manager.lockfile.packages.items_name()[package_id as usize].slice(buf);
+        let name = manager.lockfile.packages.items_name()[package_id.index()].slice(buf);
         return manager.index_of_update_request(name_hash, name);
     }
     let realname = dependency.realname();
@@ -1734,9 +1735,9 @@ fn workspaces_reaching_request<'a>(
         let reached = reachable::packages_from(
             lockfile,
             all_resolutions,
-            &[importer as PackageID],
+            &[PackageID::from_index(importer)],
             false,
-            reachable::Options::all(0),
+            reachable::Options::all(PackageID::ROOT),
         );
         if (0..packages.len()).any(|pkg_id| owners.is_set(pkg_id) && reached.is_set(pkg_id)) {
             workspaces.push(name);
@@ -1768,7 +1769,8 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         None => workspaces.set(
             manager
                 .root_package_id
-                .get(lockfile, manager.workspace_name_hash) as usize,
+                .get(lockfile, manager.workspace_name_hash)
+                .index(),
         ),
         Some(targets) => {
             let buf = lockfile.buffers.string_bytes.as_slice();
@@ -1823,7 +1825,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             if entry_ptr.original_version.is_some() {
                 continue;
             }
-            let original_resolution: Resolution = resolutions[package_id as usize];
+            let original_resolution: Resolution = resolutions[package_id.index()];
             if original_resolution.tag != ResolutionTag::Npm {
                 continue;
             }
@@ -2009,11 +2011,11 @@ fn refresh_children_of_named(
         let pkg_res = lockfile.packages.items_resolution();
         latest_rows
             .iter()
-            .map(|&dep_id| resolutions[dep_id as usize])
+            .map(|&dep_id| resolutions[dep_id.index()])
             .filter(|&id| {
-                (id as usize) < pkg_res.len()
+                id.index() < pkg_res.len()
                     && !matches!(
-                        pkg_res[id as usize].tag,
+                        pkg_res[id.index()].tag,
                         ResolutionTag::Root | ResolutionTag::Workspace
                     )
             })

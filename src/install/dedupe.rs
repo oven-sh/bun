@@ -159,13 +159,13 @@ impl<'a> Pass<'a> {
                 if target == invalid_package_id {
                     continue;
                 }
-                let Some(&g) = group_of.get(target as usize) else {
+                let Some(&g) = group_of.get(target.index()) else {
                     continue;
                 };
                 if g == u32::MAX {
                     continue;
                 }
-                self.edges[g as usize].push((dep_id as DependencyID, direct));
+                self.edges[g as usize].push((DependencyID::from_index(dep_id), direct));
                 self.voted.set(pkg_id);
             }
         }
@@ -177,7 +177,7 @@ impl<'a> Pass<'a> {
             }
             self.candidates.clear();
             self.candidates
-                .extend(group.iter().copied().filter(|&id| live.is_set(id as usize)));
+                .extend(group.iter().copied().filter(|&id| live.is_set(id.index())));
             let n = self.candidates.len();
             if n < 2 {
                 continue;
@@ -198,8 +198,8 @@ impl<'a> Pass<'a> {
             self.required.unmanaged.set_all(false);
 
             for (e, &(dep_id, _)) in edges.iter().enumerate() {
-                let dep = &deps[dep_id as usize];
-                let target = cur[dep_id as usize];
+                let dep = &deps[dep_id.index()];
+                let target = cur[dep_id.index()];
                 let cur_c = self
                     .candidates
                     .iter()
@@ -208,7 +208,7 @@ impl<'a> Pass<'a> {
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
-                let range = if pinned.is_set(target as usize) || dep.behavior.is_bundled() {
+                let range = if pinned.is_set(target.index()) || dep.behavior.is_bundled() {
                     None
                 } else {
                     effective_npm_range(lockfile, dep_id, dep)
@@ -223,7 +223,7 @@ impl<'a> Pass<'a> {
                         let query = &range.npm().version;
                         for c in 0..n {
                             let id = self.candidates[c];
-                            if query.satisfies(pkg_res[id as usize].npm().version, buf, buf) {
+                            if query.satisfies(pkg_res[id.index()].npm().version, buf, buf) {
                                 self.sat.set(row + c);
                             }
                         }
@@ -265,7 +265,7 @@ impl<'a> Pass<'a> {
                     continue;
                 }
                 if let Some(p) = self.placement(e) {
-                    next[dep_id as usize] = self.candidates[p];
+                    next[dep_id.index()] = self.candidates[p];
                 }
             }
             self.edges[g] = edges;
@@ -299,8 +299,8 @@ pub(crate) fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
     let _ = write!(
         label,
         "{}@{}",
-        BStr::new(lockfile.packages.items_name()[id as usize].slice(buf)),
-        lockfile.packages.items_resolution()[id as usize]
+        BStr::new(lockfile.packages.items_name()[id.index()].slice(buf)),
+        lockfile.packages.items_resolution()[id.index()]
             .npm()
             .version
             .fmt(buf)
@@ -312,7 +312,7 @@ fn order_by_name_then_version(lockfile: &Lockfile, a: PackageID, b: PackageID) -
     let buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let pkg_res = lockfile.packages.items_resolution();
-    let (a, b) = (a as usize, b as usize);
+    let (a, b) = (a.index(), b.index());
     strings::order(names[a].slice(buf), names[b].slice(buf)).then_with(|| {
         pkg_res[a]
             .npm()
@@ -322,7 +322,9 @@ fn order_by_name_then_version(lockfile: &Lockfile, a: PackageID, b: PackageID) -
 }
 
 fn sort_by_name_then_version(lockfile: &Lockfile, ids: &mut [PackageID]) {
-    index_sort::sort_indices(ids, &mut |a, b| order_by_name_then_version(lockfile, a, b));
+    index_sort::sort_indices(bytemuck::cast_slice_mut(ids), &mut |a, b| {
+        order_by_name_then_version(lockfile, PackageID::new(a), PackageID::new(b))
+    });
 }
 
 // (name, removed version, surviving version(s) its dependents now resolve to)
@@ -354,7 +356,10 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         for id in 0..pkg_res.len() {
             if pkg_res[id].tag == ResolutionTag::Npm
                 && lockfile.patched_dependencies.contains(
-                    &bun_semver::string::Builder::string_hash(&label(lockfile, id as PackageID)),
+                    &bun_semver::string::Builder::string_hash(&label(
+                        lockfile,
+                        PackageID::from_index(id),
+                    )),
                 )
             {
                 pinned.set(id);
@@ -369,12 +374,12 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         let mut candidates: Vec<PackageID> = ids
             .iter()
             .copied()
-            .filter(|&id| pkg_res[id as usize].tag == ResolutionTag::Npm)
+            .filter(|&id| pkg_res[id.index()].tag == ResolutionTag::Npm)
             .collect();
         if candidates.len() < 2 {
             continue;
         }
-        index_sort::sort_indices(&mut candidates, &mut |a, b| {
+        index_sort::sort_indices(bytemuck::cast_slice_mut(&mut candidates), &mut |a, b| {
             pkg_res[b as usize]
                 .npm()
                 .version
@@ -382,7 +387,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                 .then(a.cmp(&b))
         });
         for &id in &candidates {
-            group_of[id as usize] = groups.len() as u32;
+            group_of[id.index()] = groups.len() as u32;
         }
         max_candidates = max_candidates.max(candidates.len());
         groups.push(candidates);
@@ -398,7 +403,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     // Re-pointing keeps an edge inside its group, so the initial per-group edge counts bound every pass.
     let mut edge_counts: Vec<u32> = vec![0; groups.len()];
     for &target in lockfile.buffers.resolutions.iter() {
-        if let Some(&g) = group_of.get(target as usize)
+        if let Some(&g) = group_of.get(target.index())
             && g != u32::MAX
         {
             edge_counts[g as usize] += 1;
@@ -409,7 +414,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     let initial = reachable(lockfile, &lockfile.buffers.resolutions);
     let patched: Vec<PackageID> = (0..pkg_res.len())
         .filter(|&p| pinned.is_set(p) && initial.is_set(p))
-        .map(|p| p as PackageID)
+        .map(PackageID::from_index)
         .collect();
     let mut kept: Vec<(PackageID, Vec<PackageID>)> = Vec::new();
 
@@ -439,14 +444,14 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         let orphaned: Vec<PackageID> = patched
             .iter()
             .copied()
-            .filter(|&p| !live.is_set(p as usize))
+            .filter(|&p| !live.is_set(p.index()))
             .collect();
         if orphaned.is_empty() {
             break (cur, live);
         }
         let before = kept.len();
         for &v in groups.iter().flatten() {
-            let i = v as usize;
+            let i = v.index();
             if !initial.is_set(i) || live.is_set(i) || pinned.is_set(i) {
                 continue;
             }
@@ -455,12 +460,12 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                 &lockfile.buffers.resolutions,
                 core::slice::from_ref(&v),
                 true,
-                crate::lockfile::reachable::Options::all(0),
+                crate::lockfile::reachable::Options::all(PackageID::ROOT),
             );
             let needed: Vec<PackageID> = orphaned
                 .iter()
                 .copied()
-                .filter(|&p| leads.is_set(p as usize))
+                .filter(|&p| leads.is_set(p.index()))
                 .collect();
             if !needed.is_empty() {
                 pinned.set(i);
@@ -500,7 +505,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         .iter()
         .flatten()
         .copied()
-        .filter(|&id| initial.is_set(id as usize) && !live.is_set(id as usize))
+        .filter(|&id| initial.is_set(id.index()) && !live.is_set(id.index()))
         .collect();
     if removed.is_empty() {
         return Report {
@@ -513,7 +518,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     sort_by_name_then_version(lockfile, &mut removed);
     let mut slot: Vec<u32> = vec![u32::MAX; pkg_res.len()];
     for (i, &id) in removed.iter().enumerate() {
-        slot[id as usize] = i as u32;
+        slot[id.index()] = i as u32;
     }
     let mut targets: Vec<Vec<PackageID>> = vec![Vec::new(); removed.len()];
     let original = lockfile.buffers.resolutions.as_slice();
@@ -522,7 +527,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
             continue;
         }
         for dep_id in slice.begin() as usize..slice.end() as usize {
-            let Some(&s) = slot.get(original[dep_id] as usize) else {
+            let Some(&s) = slot.get(original[dep_id].index()) else {
                 continue;
             };
             if s == u32::MAX {
@@ -541,23 +546,23 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         .zip(&targets)
         .map(|(&id, moved_to)| {
             let mut from: Vec<u8> = Vec::new();
-            let _ = write!(from, "{}", pkg_res[id as usize].npm().version.fmt(buf));
+            let _ = write!(from, "{}", pkg_res[id.index()].npm().version.fmt(buf));
             let mut survivors: Vec<PackageID> = moved_to.clone();
             index_sort::sort_vec_by(&mut survivors, |&a, &b| {
-                pkg_res[a as usize]
+                pkg_res[a.index()]
                     .npm()
                     .version
-                    .order(pkg_res[b as usize].npm().version, buf, buf)
+                    .order(pkg_res[b.index()].npm().version, buf, buf)
             });
             let mut to: Vec<u8> = Vec::new();
             for &c in &survivors {
                 if !to.is_empty() {
                     to.extend_from_slice(b", ");
                 }
-                let _ = write!(to, "{}", pkg_res[c as usize].npm().version.fmt(buf));
+                let _ = write!(to, "{}", pkg_res[c.index()].npm().version.fmt(buf));
             }
             (
-                Box::from(names[id as usize].slice(buf)),
+                Box::from(names[id.index()].slice(buf)),
                 from.into_boxed_slice(),
                 to.into_boxed_slice(),
             )
@@ -610,7 +615,7 @@ fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
     crate::lockfile::reachable::packages(
         lockfile,
         resolutions,
-        crate::lockfile::reachable::Options::all(0),
+        crate::lockfile::reachable::Options::all(PackageID::ROOT),
     )
 }
 

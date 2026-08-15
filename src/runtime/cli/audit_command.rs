@@ -324,11 +324,11 @@ fn build_dependency_tree(
         let res_slice = pkg_resolutions[pkg_idx].get(resolutions);
 
         for (_, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
-            if (resolved_pkg_id as usize) >= pkg_names.len() {
+            if resolved_pkg_id.index() >= pkg_names.len() {
                 continue;
             }
 
-            let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
+            let resolved_name = pkg_names[resolved_pkg_id.index()].slice(buf);
 
             // `StringHashMap::get_or_put` always boxes the key on miss.
             let result = dependency_tree.get_or_put(resolved_name)?;
@@ -475,7 +475,7 @@ fn collect_packages_for_audit(
     let mut ver_scratch: Vec<u8> = Vec::new();
 
     for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions.iter()).enumerate() {
-        if idx as u32 == root_id {
+        if idx == root_id.index() {
             continue;
         }
         if res.tag != ResolutionTag::Npm {
@@ -852,7 +852,7 @@ fn find_dependency_paths(
     let pkg_resolutions = packages.items_resolution();
     let pkg_deps = packages.items_dependencies();
 
-    let root_deps = pkg_deps[root_id as usize];
+    let root_deps = pkg_deps[root_id.index()];
     let dep_slice = root_deps.get(dependencies);
 
     for dependency in dep_slice {

@@ -815,7 +815,7 @@ impl PackageJSON {
                                         pm.lockfile_resolve(&package_json.name, &dependency_version)
                                     {
                                         package_json.package_manager_package_id = resolved;
-                                        if resolved > 0 {
+                                        if resolved != PackageID::ROOT {
                                             break 'update_dependencies;
                                         }
                                     }

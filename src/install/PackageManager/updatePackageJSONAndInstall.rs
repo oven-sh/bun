@@ -266,17 +266,17 @@ fn update_package_json_and_install_with_manager_with_updates(
             selected
                 .iter()
                 .map(|&id| super::UpdateTargetWorkspace {
-                    is_root: resolutions[id as usize].tag == crate::resolution::Tag::Root,
-                    name_hash: name_hashes[id as usize],
-                    name: Box::from(names[id as usize].slice(sbuf)),
+                    is_root: resolutions[id.index()].tag == crate::resolution::Tag::Root,
+                    name_hash: name_hashes[id.index()],
+                    name: Box::from(names[id.index()].slice(sbuf)),
                 })
                 .collect(),
         );
         if !filter_patterns.is_empty() {
             manager.filtered_link_targets = Some(workspace_selection::LinkTargets::from_importers(
                 selected.iter().map(|&id| {
-                    (resolutions[id as usize].tag != crate::resolution::Tag::Root)
-                        .then(|| name_hashes[id as usize])
+                    (resolutions[id.index()].tag != crate::resolution::Tag::Root)
+                        .then(|| name_hashes[id.index()])
                 }),
             ));
         }

@@ -35,7 +35,7 @@ impl Options {
     pub(crate) fn install(manager: &PackageManager) -> Options {
         let features = manager.options.local_package_features;
         Options {
-            root: 0,
+            root: PackageID::ROOT,
             dev: features.dev_dependencies,
             optional: features.optional_dependencies,
             peer: features.peer_dependencies,
@@ -79,7 +79,7 @@ pub fn packages_from(
 
 // Out-of-range ids (invalid_package_id) are treated as already seen.
 fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {
-    let index = id as usize;
+    let index = id.index();
     if seen.is_set_allow_out_of_bound(index, true) {
         return false;
     }
@@ -105,7 +105,7 @@ pub fn dev_packages_from(
     }
     let mut worklist: Vec<PackageID> = Vec::new();
     while let Some(importer) = importers.pop() {
-        let slice = walk.dep_slices[importer as usize];
+        let slice = walk.dep_slices[importer.index()];
         for dep_id in slice.begin() as usize..slice.end() as usize {
             let behavior = walk.deps[dep_id].behavior;
             let target = walk.resolutions[dep_id];
@@ -181,21 +181,21 @@ impl<'a> Walk<'a> {
     }
 
     fn admit(&self, target: PackageID, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
-        if seen.is_set_allow_out_of_bound(target as usize, true) {
+        if seen.is_set_allow_out_of_bound(target.index(), true) {
             return;
         }
         if let Some((cpu, os)) = self.options.platform
-            && self.metas[target as usize].is_disabled(cpu, os)
+            && self.metas[target.index()].is_disabled(cpu, os)
         {
             return;
         }
-        seen.set(target as usize);
+        seen.set(target.index());
         worklist.push(target);
     }
 
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
-            let slice = self.dep_slices[parent as usize];
+            let slice = self.dep_slices[parent.index()];
             for dep_id in slice.begin() as usize..slice.end() as usize {
                 if !(self.follow_all || self.follows(self.deps[dep_id].behavior)) {
                     continue;

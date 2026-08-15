@@ -688,7 +688,7 @@ fn settle_resolved_positional(
     quiet: bool,
 ) -> Decision {
     let name: &[u8] = request.get_resolved_name(lockfile);
-    let name_hash = lockfile.packages.items_name_hash()[request.package_id as usize];
+    let name_hash = lockfile.packages.items_name_hash()[request.package_id.index()];
     // SAFETY: same slot `edit` just wrote through; see the write in `edit_target`.
     let literal: &[u8] = unsafe { (*e_string).data }.slice();
 
@@ -1025,8 +1025,8 @@ pub(crate) fn edit_root_after_install(
         {
             if dep.version.tag != dependency::Tag::Catalog
                 || pkg_id == INVALID_PACKAGE_ID
-                || (pkg_id as usize) >= resolutions.len()
-                || resolutions[pkg_id as usize].tag != resolution::Tag::Npm
+                || pkg_id.index() >= resolutions.len()
+                || resolutions[pkg_id.index()].tag != resolution::Tag::Npm
             {
                 continue;
             }
@@ -1099,7 +1099,7 @@ pub(crate) fn edit_root_after_install(
                     &mut literal,
                     "{}{}",
                     if exact { "" } else { "^" },
-                    resolutions[pkg_id as usize].npm().version.fmt(buf)
+                    resolutions[pkg_id.index()].npm().version.fmt(buf)
                 )
                 .expect("infallible: in-memory write");
                 literal

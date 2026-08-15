@@ -55,7 +55,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         missing
             .iter()
             .copied()
-            .find(|&id| name_hashes[id as usize] == dep.name_hash)
+            .find(|&id| name_hashes[id.index()] == dep.name_hash)
     };
 
     let mut found = false;
@@ -70,7 +70,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         if silent {
             continue;
         }
-        let target = target as usize;
+        let target = target.index();
         debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
         bun_core::pretty_errorln!(
             "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
@@ -88,7 +88,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
             if silent {
                 continue;
             }
-            let target = target as usize;
+            let target = target.index();
             debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",

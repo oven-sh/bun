@@ -155,7 +155,7 @@ impl PmLicensesCommand {
         };
 
         let options = reachable::Options {
-            root: 0,
+            root: PackageID::ROOT,
             dev: features.dev_dependencies,
             optional: features.optional_dependencies,
             peer: features.peer_dependencies,
@@ -358,17 +358,17 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
     let mut it = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
     while let Some(folder) = it.next(None) {
         for &dep_id in folder.dependencies {
-            let pkg_id = resolutions[dep_id as usize];
-            if (pkg_id as usize) >= len || out[pkg_id as usize].is_some() {
+            let pkg_id = resolutions[dep_id.index()];
+            if pkg_id.index() >= len || out[pkg_id.index()].is_some() {
                 continue;
             }
             let relative_path = folder.relative_path.as_bytes();
-            let alias = dependencies[dep_id as usize].name.slice(buf);
+            let alias = dependencies[dep_id.index()].name.slice(buf);
             let mut location: Vec<u8> = Vec::with_capacity(relative_path.len() + 1 + alias.len());
             location.extend_from_slice(relative_path);
             location.push(bun_paths::SEP);
             location.extend_from_slice(alias);
-            out[pkg_id as usize] = Some(location.into_boxed_slice());
+            out[pkg_id.index()] = Some(location.into_boxed_slice());
         }
     }
 

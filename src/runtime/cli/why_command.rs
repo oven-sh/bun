@@ -396,7 +396,7 @@ impl WhyCommand {
 
             for (dep_idx, dependency) in dependencies.iter().enumerate() {
                 let target_id = resolutions[dep_idx];
-                if target_id as usize >= packages.len() {
+                if target_id.index() >= packages.len() {
                     continue;
                 }
 
@@ -473,7 +473,7 @@ impl WhyCommand {
         }
 
         for target_version in &target_versions {
-            let target_name = pkg_names[target_version.pkg_id as usize].slice(string_bytes);
+            let target_name = pkg_names[target_version.pkg_id.index()].slice(string_bytes);
             bun_core::prettyln!(
                 "<b>{}@{}<r>",
                 BStr::new(target_name),

@@ -136,6 +136,8 @@ pub mod layout_asserts {
     // ── leaf POD shared by both formats ──────────────────────────────────
     pin!(bun_semver::String, size = 8, align = 1); // [8]u8
     pin!(bun_semver::ExternalString, size = 16, align = 8); // String + u64
+    pin!(crate::PackageID, size = 4, align = 4); // u32 (`resolutions` buffer, `Meta.id`)
+    pin!(crate::DependencyID, size = 4, align = 4); // u32 (`hoisted_dependencies` buffer, `Tree`)
     pin!(crate::ExternalSlice<u8>, size = 8, align = 4); // u32 off + u32 len
     pin!(crate::ExternalStringMap, size = 16, align = 4);
     pin!(crate::integrity::Integrity, size = 65, align = 1); // u8 tag + [64]u8

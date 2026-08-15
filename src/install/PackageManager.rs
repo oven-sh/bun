@@ -279,7 +279,7 @@ pub type PatchTaskQueue = UnboundedQueue<PatchTask /* , .next */>;
 pub type AsyncNetworkTaskQueue = UnboundedQueue<NetworkTask /* , .next */>;
 
 pub(crate) type SuccessFn = fn(&mut PackageManager, DependencyID, PackageID);
-pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, PackageID, Error);
+pub(crate) type FailFn = fn(&mut PackageManager, &Dependency, DependencyID, Error);
 
 // Default to a maximum of 64 simultaneous HTTP requests for bun install if no proxy is specified
 // if a proxy IS specified, default to 64. We have different values because we might change this in the future.
@@ -2167,7 +2167,7 @@ pub fn init(
             crate::resolvers::folder_resolver::hash(normalized),
             FolderResolutionEntry {
                 abs_path: Box::<[u8]>::from(&*normalized),
-                resolution: FolderResolution::PackageId(0),
+                resolution: FolderResolution::PackageId(PackageID::ROOT),
             },
         )?;
         // normalized.deinit() → Drop (stack buffer)

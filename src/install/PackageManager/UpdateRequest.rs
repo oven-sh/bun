@@ -119,7 +119,7 @@ impl UpdateRequest {
         if self.package_id == INVALID_PACKAGE_ID {
             None
         } else {
-            Some(lockfile.packages.items_name()[self.package_id as usize].slice(self.version_buf()))
+            Some(lockfile.packages.items_name()[self.package_id.index()].slice(self.version_buf()))
         }
     }
 

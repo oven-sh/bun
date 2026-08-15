@@ -221,7 +221,7 @@ impl OutdatedCommand {
 
         for item in outdated_items {
             if item.is_catalog {
-                let dep = &dependencies[item.dep_id as usize];
+                let dep = &dependencies[item.dep_id.index()];
                 let name_hash = hash(dep.name.slice(string_buf));
                 let catalog = *dep.version.catalog();
                 let catalog_name = catalog.slice(string_buf);
@@ -251,7 +251,7 @@ impl OutdatedCommand {
                 continue;
             }
 
-            let dep = &dependencies[item.dep_id as usize];
+            let dep = &dependencies[item.dep_id.index()];
             let name_hash = hash(dep.name.slice(string_buf));
             let catalog = *dep.version.catalog();
             let catalog_name = catalog.slice(string_buf);
@@ -283,7 +283,7 @@ impl OutdatedCommand {
                 if i > 0 {
                     workspace_names.extend_from_slice(b", ");
                 }
-                let workspace_name = pkg_names[workspace_id as usize].slice(string_buf);
+                let workspace_name = pkg_names[workspace_id.index()].slice(string_buf);
                 workspace_names.extend_from_slice(workspace_name);
             }
             workspace_names.push(b')');
@@ -358,15 +358,14 @@ impl OutdatedCommand {
         let mut outdated_ids: Vec<OutdatedInfo> = Vec::new();
 
         for &workspace_pkg_id in workspace_pkg_ids {
-            let pkg_deps =
-                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
-            for dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
+            let pkg_deps = manager.lockfile.packages.items_dependencies()[workspace_pkg_id.index()];
+            for dep_id in pkg_deps.dependency_ids() {
+                let package_id = manager.lockfile.buffers.resolutions[dep_id.index()];
                 if package_id == bun_install::INVALID_PACKAGE_ID {
                     continue;
                 }
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                let dep = &manager.lockfile.buffers.dependencies[dep_id.index()];
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
                 else {
                     continue;
@@ -376,7 +375,7 @@ impl OutdatedCommand {
                 {
                     continue;
                 }
-                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
+                let resolution = manager.lockfile.packages.items_resolution()[package_id.index()];
                 if resolution.tag != resolution::Tag::Npm {
                     continue;
                 }
@@ -408,7 +407,7 @@ impl OutdatedCommand {
                 }
 
                 let package_name =
-                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
+                    manager.lockfile.packages.items_name()[package_id.index()].slice(string_buf);
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
                 let Some(manifest) = manager.manifests.by_name_allow_expired(
@@ -507,8 +506,8 @@ impl OutdatedCommand {
                 version_buf.clear();
 
                 let workspace_name = manager.lockfile.packages.items_name()
-                    [workspace_pkg_id as usize]
-                    .slice(string_buf);
+                    [workspace_pkg_id.index()]
+                .slice(string_buf);
                 if workspace_name.len() > max_workspace {
                     max_workspace = workspace_name.len();
                 }
@@ -599,14 +598,14 @@ impl OutdatedCommand {
                 let dep_id = item.dep_id;
 
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                let dep = &manager.lockfile.buffers.dependencies[dep_id.index()];
                 if !dep.behavior.includes(group_behavior) {
                     continue;
                 }
 
                 let package_name =
-                    manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
-                let resolution = manager.lockfile.packages.items_resolution()[package_id as usize];
+                    manager.lockfile.packages.items_name()[package_id.index()].slice(string_buf);
+                let resolution = manager.lockfile.packages.items_resolution()[package_id.index()];
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 let mut expired = false;
@@ -757,7 +756,7 @@ impl OutdatedCommand {
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
                         names
                     } else {
-                        manager.lockfile.packages.items_name()[item.workspace_pkg_id as usize]
+                        manager.lockfile.packages.items_name()[item.workspace_pkg_id.index()]
                             .slice(string_buf)
                     };
                     bun_core::pretty!("{}", BStr::new(workspace_name));

@@ -432,8 +432,8 @@ pub mod entry {
                 f,
                 "{}",
                 fmt_store_key(
-                    pkgs.items_name()[pkg_id as usize],
-                    &pkgs.items_resolution()[pkg_id as usize],
+                    pkgs.items_name()[pkg_id.index()],
+                    &pkgs.items_resolution()[pkg_id.index()],
                     self.lockfile.buffers.string_bytes.as_slice(),
                 )
             )?;
@@ -538,16 +538,16 @@ pub mod entry {
             }
 
             let dependencies = self.dependencies;
-            let l_dep = &dependencies[l_item.dep_id as usize];
-            let r_dep = &dependencies[r_item.dep_id as usize];
+            let l_dep = &dependencies[l_item.dep_id.index()];
+            let r_dep = &dependencies[r_item.dep_id.index()];
 
             l_dep.name_hash == r_dep.name_hash
         }
 
         fn order(&self, l: DependenciesItem, r: DependenciesItem) -> Ordering {
             let dependencies = self.dependencies;
-            let l_dep = &dependencies[l.dep_id as usize];
-            let r_dep = &dependencies[r.dep_id as usize];
+            let l_dep = &dependencies[l.dep_id.index()];
+            let r_dep = &dependencies[r.dep_id.index()];
 
             if l.entry_id == r.entry_id && l_dep.name_hash == r_dep.name_hash {
                 return Ordering::Equal;
@@ -621,7 +621,7 @@ pub mod node {
         fn default() -> Self {
             Self {
                 dep_id: INVALID_DEPENDENCY_ID,
-                pkg_id: 0,
+                pkg_id: PackageID::ROOT,
                 parent_id: Id::INVALID,
                 dependencies: Vec::new(),
                 peers: Peers::EMPTY,
@@ -657,8 +657,8 @@ pub mod node {
 
             let string_buf = self.string_buf;
             let pkg_names = self.pkg_names;
-            let l_pkg_name = pkg_names[l_pkg_id as usize];
-            let r_pkg_name = pkg_names[r_pkg_id as usize];
+            let l_pkg_name = pkg_names[l_pkg_id.index()];
+            let r_pkg_name = pkg_names[r_pkg_id.index()];
 
             l_pkg_name.order(r_pkg_name, string_buf, string_buf)
         }

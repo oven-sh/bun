@@ -48,14 +48,14 @@ impl PackageManager {
     pub(crate) fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
         let count = self.lockfile.packages.len();
         self.ensure_preinstall_state_list_capacity(count);
-        self.preinstall_state[package_id as usize] = value;
+        self.preinstall_state[package_id.index()] = value;
     }
 
     pub(crate) fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        if (package_id as usize) >= self.preinstall_state.len() {
+        if package_id.index() >= self.preinstall_state.len() {
             return PreinstallState::Unknown;
         }
-        self.preinstall_state[package_id as usize]
+        self.preinstall_state[package_id.index()]
     }
 
     /// A separate `lockfile` parameter would always be `manager.lockfile` at every call
@@ -443,7 +443,8 @@ impl PackageManager {
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id = self
                 .root_package_id
-                .get(&self.lockfile, self.workspace_name_hash) as usize;
+                .get(&self.lockfile, self.workspace_name_hash)
+                .index();
             let root_deps = self.lockfile.packages.items_dependencies()[root_id];
             let mut dep_id = root_deps.off;
             let end = dep_id.saturating_add(root_deps.len);
@@ -478,7 +479,7 @@ fn add_package_to_set(
     }
     let mut stack: Vec<PackageID> = vec![package_id];
     while let Some(current) = stack.pop() {
-        let dependencies_slice = lockfile.packages.items_dependencies()[current as usize];
+        let dependencies_slice = lockfile.packages.items_dependencies()[current.index()];
         let begin = dependencies_slice.off;
         let end = begin.saturating_add(dependencies_slice.len);
         let mut dep_id = begin;

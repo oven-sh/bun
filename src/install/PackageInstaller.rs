@@ -312,7 +312,7 @@ fn find_native_binlink_target_tree(
             .dependencies
             .get(hoisted_deps)
             .iter()
-            .any(|&dep_id| resolutions[dep_id as usize] == target_pkg_id)
+            .any(|&dep_id| resolutions[dep_id.index()] == target_pkg_id)
     };
 
     for t in trees {
@@ -593,13 +593,13 @@ impl<'a> PackageInstaller<'a> {
         let mut deferred: Vec<DependencyID> = Vec::new();
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
-            debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.as_slice().len());
-            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+            debug_assert!(dep_id.index() < lockfile.buffers.dependencies.as_slice().len());
+            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id.index()];
             debug_assert!(package_id != invalid_package_id);
-            let bin = self.bins[package_id as usize];
+            let bin = self.bins[package_id.index()];
             debug_assert!(bin.tag != bin::Tag::None);
 
-            let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
+            let alias = lockfile.buffers.dependencies.as_slice()[dep_id.index()]
                 .name
                 .slice(string_buf);
             let package_name_ = strings::StringOrTinyString::init(alias);
@@ -614,7 +614,7 @@ impl<'a> PackageInstaller<'a> {
                     break 'native_binlink_optimization;
                 }
                 // Check for native binlink optimization
-                let name_hash = pkg_name_hashes[package_id as usize];
+                let name_hash = pkg_name_hashes[package_id.index()];
                 if let Some(optimizer) =
                     manager
                         .postinstall_optimizer
@@ -629,7 +629,7 @@ impl<'a> PackageInstaller<'a> {
                             let target_os = manager.options.os;
                             if let Some(replacement_pkg_id) =
                                 PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                                    pkg_resolutions_lists[package_id as usize]
+                                    pkg_resolutions_lists[package_id.index()]
                                         .get(pkg_resolutions_buffer),
                                     pkg_metas,
                                     target_cpu,
@@ -666,7 +666,7 @@ impl<'a> PackageInstaller<'a> {
                                 }
 
                                 let replacement_name =
-                                    pkg_names[replacement_pkg_id as usize].slice(string_buf);
+                                    pkg_names[replacement_pkg_id.index()].slice(string_buf);
                                 target_package_name =
                                     strings::StringOrTinyString::init(replacement_name);
                                 can_retry_without_native_binlink_optimization = true;
@@ -920,8 +920,8 @@ impl<'a> PackageInstaller<'a> {
                 let resolutions = self.resolutions;
                 for context in core::mem::take(&mut self.trees[i].pending_installs) {
                     let package_id = self.lockfile().buffers.resolutions.as_slice()
-                        [context.dependency_id as usize];
-                    let name = self.names[package_id as usize];
+                        [context.dependency_id.index()];
+                    let name = self.names[package_id.index()];
                     self.node_modules.tree_id = context.tree_id;
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
@@ -937,7 +937,7 @@ impl<'a> PackageInstaller<'a> {
                         package_id,
                         log_level,
                         name,
-                        &resolutions[package_id as usize],
+                        &resolutions[package_id.index()],
                     );
                 }
             }
@@ -1102,8 +1102,8 @@ impl<'a> PackageInstaller<'a> {
         data: &ExtractData,
         log_level: Options::LogLevel,
     ) {
-        let package_id = self.lockfile().buffers.resolutions.as_slice()[dependency_id as usize];
-        let name = self.names[package_id as usize];
+        let package_id = self.lockfile().buffers.resolutions.as_slice()[dependency_id.index()];
+        let name = self.names[package_id.index()];
 
         // const resolution = &this.resolutions[package_id];
         // const task_id = switch (resolution.tag) {
@@ -1120,8 +1120,8 @@ impl<'a> PackageInstaller<'a> {
         // the lockfile gets re-saved with the hash.
         if data.integrity.tag.is_supported() {
             let pkg_metas = self.lockfile_mut().packages.items_meta_mut();
-            if !pkg_metas[package_id as usize].integrity.tag.is_supported() {
-                pkg_metas[package_id as usize].integrity = data.integrity;
+            if !pkg_metas[package_id.index()].integrity.tag.is_supported() {
+                pkg_metas[package_id.index()].integrity = data.integrity;
                 self.manager_mut()
                     .options
                     .enable
@@ -1158,7 +1158,7 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 };
                 let callback_package_id =
-                    self.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
+                    self.lockfile().buffers.resolutions.as_slice()[context.dependency_id.index()];
                 self.node_modules.tree_id = context.tree_id;
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
                 self.node_modules.path.clone_from(&context.path);
@@ -1173,7 +1173,7 @@ impl<'a> PackageInstaller<'a> {
                     callback_package_id,
                     log_level,
                     name,
-                    &resolutions[callback_package_id as usize],
+                    &resolutions[callback_package_id.index()],
                 );
             }
             self.node_modules = prev_node_modules;
@@ -1201,10 +1201,10 @@ impl<'a> PackageInstaller<'a> {
     ) -> usize {
         debug_assert!(resolution_tag != resolution::Tag::Root);
         debug_assert!(resolution_tag != resolution::Tag::Workspace);
-        debug_assert!(package_id != 0);
+        debug_assert!(package_id != PackageID::ROOT);
         let mut count: usize = 0;
         let scripts = 'brk: {
-            let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
+            let scripts = self.lockfile().packages.items_scripts()[package_id.index()];
             if scripts.filled {
                 break 'brk scripts;
             }
@@ -1287,7 +1287,7 @@ impl<'a> PackageInstaller<'a> {
             };
         }
 
-        let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize].name;
+        let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id.index()].name;
 
         // The alias is used as a path relative to `node_modules` for delete,
         // rename, and create operations. Refuse anything that could escape it.
@@ -1325,7 +1325,7 @@ impl<'a> PackageInstaller<'a> {
             unsafe { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
         };
 
-        let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
+        let pkg_name_hash = self.pkg_name_hashes[package_id.index()];
 
         let mut resolution_buf = [0u8; 512];
         let mut resolution_spill = Vec::new();
@@ -1489,7 +1489,7 @@ impl<'a> PackageInstaller<'a> {
                             // override was written by the user and is trusted the same
                             // as a direct dependency of the root.
                             let dep = &self.lockfile().buffers.dependencies.as_slice()
-                                [dependency_id as usize];
+                                [dependency_id.index()];
                             !self.lockfile().overrides.contains_name(
                                 dep.name_hash,
                                 dep.name.slice(string_buf!()),
@@ -1914,15 +1914,15 @@ impl<'a> PackageInstaller<'a> {
 
             match install_result {
                 package_install::InstallResult::Success => {
-                    let is_duplicate = self.successfully_installed.is_set(package_id as usize);
+                    let is_duplicate = self.successfully_installed.is_set(package_id.index());
                     self.summary.success += (!is_duplicate) as u32;
-                    self.successfully_installed.set(package_id as usize);
+                    self.successfully_installed.set(package_id.index());
 
                     if log_level.show_progress() {
                         self.node.complete_one();
                     }
 
-                    if self.bins[package_id as usize].tag != bin::Tag::None {
+                    if self.bins[package_id.index()].tag != bin::Tag::None {
                         self.trees[self.current_tree_id as usize]
                             .binaries
                             .add(dependency_id)
@@ -1930,7 +1930,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     let dep =
-                        &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
+                        &self.lockfile().buffers.dependencies.as_slice()[dependency_id.index()];
                     let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
@@ -1976,8 +1976,8 @@ impl<'a> PackageInstaller<'a> {
                                         version_buf: string_buf!(),
                                     },
                                     self.lockfile().packages.items_resolutions()
-                                        [package_id as usize]
-                                        .get(self.lockfile().buffers.resolutions.as_slice()),
+                                        [package_id.index()]
+                                    .get(self.lockfile().buffers.resolutions.as_slice()),
                                     self.lockfile().packages.items_meta(),
                                     self.manager().options.cpu,
                                     self.manager().options.os,
@@ -2034,7 +2034,7 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            if !is_trusted && self.metas[package_id as usize].has_install_script() {
+                            if !is_trusted && self.metas[package_id.index()].has_install_script() {
                                 // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                                 // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
                                 let mut folder_path =
@@ -2099,7 +2099,7 @@ impl<'a> PackageInstaller<'a> {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: <b>{}<r> \"link:{}\" not found (try running 'bun link' in the intended package's folder)<r>",
                             cause.err.name(),
-                            bstr::BStr::new(self.names[package_id as usize].slice(string_buf!())),
+                            bstr::BStr::new(self.names[package_id.index()].slice(string_buf!())),
                         );
                         self.summary.fail += 1;
                     } else if resolution.tag == resolution::Tag::Folder
@@ -2134,7 +2134,7 @@ impl<'a> PackageInstaller<'a> {
                                             "EACCES",
                                             "Permission denied while installing <b>{}<r>",
                                             (bstr::BStr::new(
-                                                self.names[package_id as usize].slice(
+                                                self.names[package_id.index()].slice(
                                                     self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
                                             ),),
@@ -2152,7 +2152,7 @@ impl<'a> PackageInstaller<'a> {
                                             "EACCES",
                                             "Permission denied while installing <b>{}<r>",
                                             (bstr::BStr::new(
-                                                self.names[package_id as usize].slice(
+                                                self.names[package_id.index()].slice(
                                                     self.lockfile().buffers.string_bytes.as_slice(),
                                                 ),
                                             ),),
@@ -2194,7 +2194,7 @@ impl<'a> PackageInstaller<'a> {
                             "EACCES",
                             "Permission denied while installing <b>{}<r>",
                             (bstr::BStr::new(
-                                self.names[package_id as usize].slice(string_buf!()),
+                                self.names[package_id.index()].slice(string_buf!()),
                             ),),
                         );
 
@@ -2206,7 +2206,7 @@ impl<'a> PackageInstaller<'a> {
                             (
                                 bstr::BStr::new(cause.step.name()),
                                 bstr::BStr::new(
-                                    self.names[package_id as usize].slice(string_buf!()),
+                                    self.names[package_id.index()].slice(string_buf!()),
                                 ),
                             ),
                         );
@@ -2241,7 +2241,7 @@ impl<'a> PackageInstaller<'a> {
 
             self.summary.skipped += 1;
 
-            if self.bins[package_id as usize].tag != bin::Tag::None {
+            if self.bins[package_id.index()].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries
                     .add(dependency_id)
@@ -2261,7 +2261,7 @@ impl<'a> PackageInstaller<'a> {
             // `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
             // No early returns after this point, so manual calls at end are equivalent.
 
-            let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
+            let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id.index()];
             let dep_behavior = dep.behavior;
             let truncated_dep_name_hash: TruncatedPackageNameHash =
                 dep.name_hash as TruncatedPackageNameHash;
@@ -2315,7 +2315,7 @@ impl<'a> PackageInstaller<'a> {
                                 },
                                 version_buf: string_buf!(),
                             },
-                            self.lockfile().packages.items_resolutions()[package_id as usize]
+                            self.lockfile().packages.items_resolutions()[package_id.index()]
                                 .get(self.lockfile().buffers.resolutions.as_slice()),
                             self.lockfile().packages.items_meta(),
                             self.manager().options.cpu,
@@ -2408,7 +2408,7 @@ impl<'a> PackageInstaller<'a> {
         resolution: &Resolution,
     ) -> bool {
         let mut scripts: PackageScripts =
-            self.lockfile().packages.items_scripts()[package_id as usize];
+            self.lockfile().packages.items_scripts()[package_id.index()];
         let log = self.manager().log_mut();
         let scripts_list = match scripts.get_list(
             log,
@@ -2503,9 +2503,9 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub(crate) fn install_package(&mut self, dep_id: DependencyID, log_level: Options::LogLevel) {
-        let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id as usize];
+        let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id.index()];
 
-        let name = self.names[package_id as usize];
+        let name = self.names[package_id.index()];
         // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out so the
         // `&Resolution` argument borrows the local, not `*self`, across the
         // `&mut self` call.
@@ -2518,7 +2518,7 @@ impl<'a> PackageInstaller<'a> {
             package_id,
             log_level,
             name,
-            &resolutions[package_id as usize],
+            &resolutions[package_id.index()],
         );
     }
 }

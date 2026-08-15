@@ -922,7 +922,7 @@ pub fn path_for_resolution<'a>(
     match resolution.tag {
         ResolutionTag::Npm => {
             let npm = *resolution.npm();
-            let package_name_ = this.lockfile.packages.items_name()[package_id as usize];
+            let package_name_ = this.lockfile.packages.items_name()[package_id.index()];
             // borrowck — `path_for_cached_npm_path` reborrows `this`
             // mutably (for `get_cache_directory`), so the `&this.lockfile`
             // borrow can't be held across it. Copy the name out first.

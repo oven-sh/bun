@@ -775,7 +775,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             dependencies: Default::default(),
             resolutions: Default::default(),
             meta: PackageMeta {
-                id: 0,
+                id: PackageID::ROOT,
                 origin: Origin::Local,
                 arch: npm::Architecture::ALL,
                 os: npm::OperatingSystem::ALL,
@@ -802,13 +802,14 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
     };
 
-    let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
+    let mut yarn_entry_to_package_id: Vec<PackageID> =
+        vec![PackageID::default(); yarn_lock.entries.len()];
 
     let mut package_versions: StringHashMap<VersionInfo> = StringHashMap::new();
 
     let mut scoped_packages: StringHashMap<Vec<VersionInfo>> = StringHashMap::new();
 
-    let mut next_package_id: PackageID = 1; // 0 is root
+    let mut next_package_id: u32 = 1; // 0 is root
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let mut is_npm_alias = false;
@@ -862,7 +863,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 }
 
                 if !found_new {
-                    let package_id = next_package_id;
+                    let package_id = PackageID::new(next_package_id);
                     next_package_id += 1;
                     list.push(VersionInfo {
                         yarn_idx,
@@ -884,7 +885,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 yarn_entry_to_package_id[yarn_idx] = existing.package_id;
             }
         } else {
-            let package_id = next_package_id;
+            let package_id = PackageID::new(next_package_id);
             next_package_id += 1;
             yarn_entry_to_package_id[yarn_idx] = package_id;
             package_versions.put(
@@ -931,13 +932,13 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             };
         let package_id = yarn_entry_to_package_id[yarn_idx];
 
-        if (package_id as usize) < package_id_to_yarn_idx.len()
-            && package_id_to_yarn_idx[package_id as usize] != usize::MAX
+        if package_id.index() < package_id_to_yarn_idx.len()
+            && package_id_to_yarn_idx[package_id.index()] != usize::MAX
         {
             continue;
         }
 
-        package_id_to_yarn_idx[package_id as usize] = yarn_idx;
+        package_id_to_yarn_idx[package_id.index()] = yarn_idx;
 
         let name_to_use: &[u8] = 'blk: {
             if entry.commit.is_some() && entry.git_repo_name.is_some() {
@@ -1182,7 +1183,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     this.packages.items_dependencies_mut()[0] =
         lockfile::DependencySlice::new(0, actual_root_dep_count);
     this.packages.items_resolutions_mut()[0] =
-        lockfile::DependencyIDSlice::new(0, actual_root_dep_count);
+        lockfile::PackageIDSlice::new(0, actual_root_dep_count);
 
     dependencies_buf = &mut dependencies_buf[actual_root_dep_count as usize..];
     resolutions_buf = &mut resolutions_buf[actual_root_dep_count as usize..];
@@ -1266,18 +1267,16 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         // dependencies_start/dependencies_buf.as_ptr() are within the same allocation
         let deps_len = (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
         let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
-        this.packages.items_dependencies_mut()[package_id as usize] =
-            lockfile::DependencySlice::new(
-                u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
-                u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
-            );
+        this.packages.items_dependencies_mut()[package_id.index()] = lockfile::DependencySlice::new(
+            u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
+            u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
+        );
         let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
         let res_len = (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
-        this.packages.items_resolutions_mut()[package_id as usize] =
-            lockfile::DependencyIDSlice::new(
-                u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
-                u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
-            );
+        this.packages.items_resolutions_mut()[package_id.index()] = lockfile::PackageIDSlice::new(
+            u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
+            u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
+        );
     }
 
     let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
@@ -1350,7 +1349,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
                         if found {
                             let dep_package_id = yarn_entry_to_package_id[idx];
-                            package_dependents[dep_package_id as usize].push(parent_package_id);
+                            package_dependents[dep_package_id.index()].push(parent_package_id);
                             break;
                         }
                     }
@@ -1373,7 +1372,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             for spec in entry.specs.iter() {
                 if *spec == dep_spec.as_slice() {
                     let dep_package_id = yarn_entry_to_package_id[idx];
-                    package_dependents[dep_package_id as usize].push(0); // 0 is root package
+                    package_dependents[dep_package_id.index()].push(PackageID::ROOT);
                     break;
                 }
             }
@@ -1439,8 +1438,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_names[package_id as usize].is_empty() {
-            package_names[package_id as usize] = Entry::get_name_from_spec(entry.specs[0]);
+        if package_names[package_id.index()].is_empty() {
+            package_names[package_id.index()] = Entry::get_name_from_spec(entry.specs[0]);
         }
     }
 
@@ -1452,7 +1451,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         if package_id == install::INVALID_PACKAGE_ID {
             continue;
         }
-        let base_name = package_names[package_id as usize];
+        let base_name = package_names[package_id.index()];
 
         for dep_entry in yarn_lock.entries.iter() {
             if let Some(deps) = &dep_entry.dependencies {
@@ -1471,7 +1470,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         if package_id == install::INVALID_PACKAGE_ID {
             continue;
         }
-        let base_name = package_names[package_id as usize];
+        let base_name = package_names[package_id.index()];
 
         if root_packages.get(base_name).is_none() {
             root_packages.put(base_name, package_id)?;
@@ -1487,7 +1486,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         if package_id == install::INVALID_PACKAGE_ID {
             continue;
         }
-        let base_name = package_names[package_id as usize];
+        let base_name = package_names[package_id.index()];
 
         if let Some(root_pkg_id) = root_packages.get(base_name).copied() {
             if root_pkg_id == package_id {
@@ -1508,7 +1507,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 for (dep_name_key, _) in deps.iter() {
                     if dep_name_key.as_ref() == base_name {
                         if dep_package_id != package_id {
-                            let parent_name = package_names[dep_package_id as usize];
+                            let parent_name = package_names[dep_package_id.index()];
 
                             let mut potential_name = Vec::new();
                             write!(
@@ -1542,7 +1541,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
 
         if scoped_name.is_none() {
-            let pkg_resolution = this.packages.get(package_id as usize).resolution;
+            let pkg_resolution = this.packages.get(package_id.index()).resolution;
             let version_str: Vec<u8> = match pkg_resolution.tag {
                 ResolutionTag::Npm => 'brk: {
                     let mut version_buf = [0u8; 64];
@@ -1670,7 +1669,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         root_deps_off,
         u32::try_from(root_dependencies.len()).expect("int cast"),
     );
-    this.packages.items_resolutions_mut()[0] = lockfile::DependencyIDSlice::new(
+    this.packages.items_resolutions_mut()[0] = lockfile::PackageIDSlice::new(
         root_resolutions_off,
         u32::try_from(root_dependencies.len()).expect("int cast"),
     );
@@ -1894,11 +1893,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        this.packages.items_dependencies_mut()[package_id as usize] =
+        this.packages.items_dependencies_mut()[package_id.index()] =
             lockfile::DependencySlice::new(deps_off, dep_count);
 
-        this.packages.items_resolutions_mut()[package_id as usize] =
-            lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
+        this.packages.items_resolutions_mut()[package_id.index()] =
+            lockfile::PackageIDSlice::new(resolutions_off, dep_count);
     }
 
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as

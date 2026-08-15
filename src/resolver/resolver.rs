@@ -3117,7 +3117,9 @@ impl<'a> Resolver<'a> {
                                                 dependency_id,
                                                 resolved_package_id,
                                                 &resolution,
-                                                Install::TaskCallbackContext { root_request_id: 0 },
+                                                Install::TaskCallbackContext {
+                                                    root_request_id: Install::PackageID::ROOT,
+                                                },
                                                 None,
                                             )
                                         {
@@ -3588,7 +3590,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
+        if input_package_id == Install::INVALID_PACKAGE_ID
+            || input_package_id == Install::PackageID::ROOT
+        {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
             match pm!().enqueue_dependency_to_root(esm.name, &version, version_buf, behavior) {

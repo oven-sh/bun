@@ -515,7 +515,7 @@ impl PendingWrite {
             .filter(|pending| pending.received.contains(&request))
             .filter_map(|pending| {
                 let id = lockfile.get_workspace_package_id(pending.target.name_hash);
-                (pending.target.name_hash.is_none() || id != 0).then_some(id)
+                (pending.target.name_hash.is_none() || id != PackageID::ROOT).then_some(id)
             })
             .collect()
     }

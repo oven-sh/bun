@@ -206,7 +206,7 @@ where
                 package_index::Entry::Id(id) => *id,
                 package_index::Entry::Ids(ids) => ids.as_slice()[0],
             };
-            let name = this.packages.items_name()[first_id as usize].slice(sb);
+            let name = this.packages.items_name()[first_id.index()].slice(sb);
             w.object_field(name)?;
             match entry {
                 package_index::Entry::Id(id) => w.write(*id)?,
@@ -272,8 +272,8 @@ where
 
                 for tree_dep_id in tree.dependencies.get(hoisted_deps) {
                     let tree_dep_id = *tree_dep_id;
-                    let dep = &dependencies[tree_dep_id as usize];
-                    let package_id = resolutions[tree_dep_id as usize];
+                    let dep = &dependencies[tree_dep_id.index()];
+                    let package_id = resolutions[tree_dep_id.index()];
 
                     w.object_field(dep.name.slice(sb))?;
                     {
@@ -308,7 +308,13 @@ where
         for dep_id in 0..dependencies.len() {
             let dep = &dependencies[dep_id];
             let res = resolutions[dep_id];
-            json_stringify_dependency(this, w, u32::try_from(dep_id).expect("int cast"), dep, res)?;
+            json_stringify_dependency(
+                this,
+                w,
+                DependencyID::try_from(dep_id).expect("int cast"),
+                dep,
+                res,
+            )?;
         }
 
         let _ = w.end_array();
@@ -591,6 +597,19 @@ macro_rules! json_scalar_uint {
     )+};
 }
 json_scalar_uint!(u8, u16, u32, u64, usize);
+
+impl JsonScalar for PackageID {
+    #[inline]
+    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
+        self.get().write_json(out, opts);
+    }
+}
+impl JsonScalar for DependencyID {
+    #[inline]
+    fn write_json(&self, out: &mut Vec<u8>, opts: WriteStreamOptions) {
+        self.get().write_json(out, opts);
+    }
+}
 
 impl JsonScalar for &[u8] {
     fn write_json(&self, out: &mut Vec<u8>, _: WriteStreamOptions) {

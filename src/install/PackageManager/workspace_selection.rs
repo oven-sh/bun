@@ -338,7 +338,7 @@ impl WorkspaceGraph {
                 if dep.behavior == Behavior::WORKSPACE {
                     continue;
                 }
-                let Some(&to) = candidate_of.get(dep_pkg as usize) else {
+                let Some(&to) = candidate_of.get(dep_pkg.index()) else {
                     continue;
                 };
                 if to == u32::MAX || to == from {
@@ -397,7 +397,7 @@ pub fn select_lockfile_workspaces(
         .iter()
         .enumerate()
         .filter(|(_, res)| matches!(res.tag, ResolutionTag::Root | ResolutionTag::Workspace))
-        .map(|(pkg_id, _)| pkg_id as PackageID)
+        .map(|(pkg_id, _)| PackageID::from_index(pkg_id))
         .collect();
 
     if patterns.is_empty() {
@@ -416,7 +416,7 @@ pub fn select_lockfile_workspaces(
     let dirs: Vec<Box<[u8]>> = ids
         .iter()
         .map(|&pkg_id| {
-            let res = &pkg_resolutions[pkg_id as usize];
+            let res = &pkg_resolutions[pkg_id.index()];
             let rel: &[u8] = match res.tag {
                 ResolutionTag::Workspace => res.workspace().slice(string_buf),
                 _ => b".",
@@ -434,9 +434,9 @@ pub fn select_lockfile_workspaces(
         .iter()
         .zip(&dirs)
         .map(|(&pkg_id, dir)| Candidate {
-            name: pkg_names[pkg_id as usize].slice(string_buf),
+            name: pkg_names[pkg_id.index()].slice(string_buf),
             abs_posix_dir: dir,
-            is_root: pkg_resolutions[pkg_id as usize].tag == ResolutionTag::Root,
+            is_root: pkg_resolutions[pkg_id.index()].tag == ResolutionTag::Root,
         })
         .collect();
 
@@ -444,7 +444,7 @@ pub fn select_lockfile_workspaces(
         let hashes: Vec<Option<PackageNameHash>> = candidates
             .iter()
             .zip(&ids)
-            .map(|(c, &pkg_id)| (!c.is_root).then(|| name_hashes[pkg_id as usize]))
+            .map(|(c, &pkg_id)| (!c.is_root).then(|| name_hashes[pkg_id.index()]))
             .collect();
         WorkspaceGraph::from_lockfile(lockfile, &hashes)
     });
@@ -527,7 +527,7 @@ impl LinkTargets {
                 }
                 _ => false,
             })
-            .map(|i| i as PackageID)
+            .map(PackageID::from_index)
             .collect()
     }
 }

@@ -103,7 +103,7 @@ impl UpdateScope<'_> {
                         names[id].slice(buf),
                     )
             })
-            .map(|id| id as PackageID)
+            .map(PackageID::from_index)
             .collect();
         // The root's `workspaces` listing is not a dependency edge; a `workspace:` dependency between members is.
         reachable::packages_from(
@@ -111,7 +111,7 @@ impl UpdateScope<'_> {
             lockfile.buffers.resolutions.as_slice(),
             &roots,
             false,
-            reachable::Options::all(0),
+            reachable::Options::all(PackageID::ROOT),
         )
     }
 
@@ -390,9 +390,9 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             .ids
             .into_iter()
             .map(|id| UpdateTargetWorkspace {
-                is_root: resolutions[id as usize].tag == ResolutionTag::Root,
-                name_hash: name_hashes[id as usize],
-                name: Box::from(names[id as usize].slice(buf)),
+                is_root: resolutions[id.index()].tag == ResolutionTag::Root,
+                name_hash: name_hashes[id.index()],
+                name: Box::from(names[id.index()].slice(buf)),
             })
             .collect()
     });
@@ -439,7 +439,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 let target = resolutions[i];
                 if target == invalid_package_id
                     || matches!(
-                        pkg_res[target as usize].tag,
+                        pkg_res[target.index()].tag,
                         ResolutionTag::Root | ResolutionTag::Workspace
                     )
                 {
@@ -450,7 +450,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 if owner_is_ws && !selects(groups, dep.behavior) {
                     continue;
                 }
-                let real = pkg_names[target as usize].slice(buf);
+                let real = pkg_names[target.index()].slice(buf);
                 let alias = dep.name.slice(buf);
                 let mut positive_hit = patterns.iter().all(|p| p.negated);
                 let mut excluded = false;
@@ -470,7 +470,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 if positive_hit
                     && !excluded
                     && decided
-                        .insert(pkg_name_hashes[target as usize], ())
+                        .insert(pkg_name_hashes[target.index()], ())
                         .is_none()
                 {
                     // The named path matches `npm:` aliases through the real name, so the real name reaches both spellings.

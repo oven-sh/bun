@@ -222,7 +222,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             installer.current_tree_id = ctx.tree_id;
                             let pkg_id = apply.pkg_id;
                             let resolution =
-                                &manager.lockfile.packages.items_resolution()[pkg_id as usize];
+                                &manager.lockfile.packages.items_resolution()[pkg_id.index()];
 
                             installer.install_package_with_name_and_resolution::<false, false>(
                                 ctx.dependency_id,
@@ -277,7 +277,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let entry_id = task.entry_id;
                     let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
                     let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
-                    let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
+                    let dep = &installer.lockfile().buffers.dependencies[dep_id.index()];
                     let optional = dep.behavior.contains(Behavior::OPTIONAL);
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is
@@ -725,8 +725,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 &task.url_buf,
                             );
                         } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
+                            let package_id =
+                                manager.lockfile.buffers.resolutions[extract.dependency_id.index()];
                             C::on_package_download_error_pkg(
                                 extract_ctx,
                                 package_id,
@@ -814,8 +814,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 &task.url_buf,
                             );
                         } else {
-                            let package_id = manager.lockfile.buffers.resolutions
-                                [extract.dependency_id as usize];
+                            let package_id =
+                                manager.lockfile.buffers.resolutions[extract.dependency_id.index()];
                             C::on_package_download_error_pkg(
                                 extract_ctx,
                                 package_id,
@@ -1058,7 +1058,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 };
                 let dependency_id = tarball.dependency_id;
-                let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
+                let mut package_id = manager.lockfile.buffers.resolutions[dependency_id.index()];
                 // SAFETY: `tarball` borrows `task.request` which is reborrowed
                 // `&mut` below; the backing `StringOrTinyString` lives in the
                 // pooled `Task` for the whole iteration and is not mutated.
@@ -1188,8 +1188,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 bun_install::TaskCallbackContext::Dependency(id)
                                 | bun_install::TaskCallbackContext::RootDependency(id) => {
                                     let version = &mut manager.lockfile.buffers.dependencies
-                                        [id as usize]
-                                        .version;
+                                        [id.index()]
+                                    .version;
                                     match version.tag {
                                         bun_install::DependencyVersionTag::Git => {
                                             version.git_mut().package_name = pkg.name;
@@ -1222,7 +1222,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     manager.task_queue.get_mut(&Task::Id::for_manifest(
                         manager
                             .lockfile
-                            .str(&manager.lockfile.packages.items_name()[package_id as usize]),
+                            .str(&manager.lockfile.packages.items_name()[package_id.index()]),
                     ))
                 {
                     // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
@@ -1274,11 +1274,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     bun_install::TaskCallbackContext::Dependency(id) => *id,
                                     _ => continue,
                                 };
-                                let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
+                                let pkg_id = manager.lockfile.buffers.resolutions[dep_id.index()];
                                 if pkg_id == INVALID_PACKAGE_ID {
                                     continue;
                                 }
-                                let res = &pkg_resolutions[pkg_id as usize];
+                                let res = &pkg_resolutions[pkg_id.index()];
                                 if res.tag != bun_install::ResolutionTag::Git {
                                     continue;
                                 }
@@ -1350,14 +1350,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // so the `&manager.lockfile` borrow doesn't extend across
                         // the `&mut manager` calls below.
                         let (dep_name_handle, is_required) = {
-                            let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                            let dep = &manager.lockfile.buffers.dependencies[dep_id.index()];
                             (dep.name, dep.behavior.is_required())
                         };
-                        let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
+                        let pkg_id = manager.lockfile.buffers.resolutions[dep_id.index()];
                         if pkg_id == INVALID_PACKAGE_ID {
                             continue;
                         }
-                        let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
+                        let res = manager.lockfile.packages.items_resolution()[pkg_id.index()];
                         if res.tag != bun_install::ResolutionTag::Git {
                             continue;
                         }
@@ -1516,7 +1516,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     // SAFETY: this branch is only reached for
                                     // git dependencies — `version.tag == Git`.
                                     let repo = unsafe {
-                                        &mut *manager.lockfile.buffers.dependencies[id as usize]
+                                        &mut *manager.lockfile.buffers.dependencies[id.index()]
                                             .version
                                             .value
                                             .git
@@ -1623,13 +1623,11 @@ pub fn flush_patch_task_queue(this: &mut PackageManager) {
 
 fn do_flush_dependency_queue(this: &mut PackageManager) {
     while let Some(dependencies_list) = this.lockfile.scratch.dependency_list_queue.read_item() {
-        let mut i: u32 = dependencies_list.off;
-        let end = dependencies_list.off + dependencies_list.len;
-        while i < end {
-            let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
-            let resolution = this.lockfile.buffers.resolutions[i as usize];
-            let _ = enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
-            i += 1;
+        for dep_id in dependencies_list.dependency_ids() {
+            let dependency = this.lockfile.buffers.dependencies[dep_id.index()].clone();
+            let resolution = this.lockfile.buffers.resolutions[dep_id.index()];
+            let _ =
+                enqueue::enqueue_dependency_with_main(this, dep_id, &dependency, resolution, false);
         }
     }
 

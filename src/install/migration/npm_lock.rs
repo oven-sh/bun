@@ -153,7 +153,7 @@ pub(super) fn migrate_packages(
     migrator.build_index()?;
 
     let root_id = migrator.build_package(0, false, DepTag::Npm)?;
-    debug_assert_eq!(root_id, 0);
+    debug_assert_eq!(root_id, PackageID::ROOT);
 
     let mut cursor = 0;
     while cursor < migrator.queue.len() {
@@ -416,10 +416,10 @@ impl<'a> Migrator<'a> {
                 );
                 // A bundled copy carries no `resolved`/`integrity`; a registry copy of the same version does.
                 if res.tag == resolution::Tag::Npm && meta.integrity.tag.is_supported() {
-                    let existing_meta = &mut self.this.packages.items_meta_mut()[existing as usize];
+                    let existing_meta = &mut self.this.packages.items_meta_mut()[existing.index()];
                     if !existing_meta.integrity.tag.is_supported() {
                         existing_meta.integrity = meta.integrity;
-                        self.this.packages.items_resolution_mut()[existing as usize] = res;
+                        self.this.packages.items_resolution_mut()[existing.index()] = res;
                     }
                 }
                 self.entry_package_ids[j as usize] = existing;
@@ -428,7 +428,7 @@ impl<'a> Migrator<'a> {
             }
         }
 
-        let id = self.this.packages.len() as PackageID;
+        let id = PackageID::from_index(self.this.packages.len());
         meta.id = id;
         let bin_value = Self::parse_bin(self.this, pkg, name)?;
 
@@ -675,7 +675,7 @@ impl<'a> Migrator<'a> {
         let start = self.this.buffers.dependencies.len();
         debug_assert_eq!(start, self.this.buffers.resolutions.len());
 
-        let res_tag = self.this.packages.items_resolution()[id as usize].tag;
+        let res_tag = self.this.packages.items_resolution()[id.index()].tag;
         let is_local = matches!(res_tag, resolution::Tag::Root | resolution::Tag::Workspace);
         let bundle = if is_local {
             Bundle::None
@@ -818,8 +818,8 @@ impl<'a> Migrator<'a> {
                 ExternalSlice::new(start as u32, len as u32),
             )
         };
-        self.this.packages.items_dependencies_mut()[id as usize] = deps_slice;
-        self.this.packages.items_resolutions_mut()[id as usize] = res_slice;
+        self.this.packages.items_dependencies_mut()[id.index()] = deps_slice;
+        self.this.packages.items_resolutions_mut()[id.index()] = res_slice;
         Ok(())
     }
 
@@ -916,7 +916,7 @@ impl<'a> Migrator<'a> {
         }
         let id = self.entry_package_ids[t as usize];
         if id != INVALID_PACKAGE_ID {
-            return self.this.packages.items_resolution()[id as usize].tag
+            return self.this.packages.items_resolution()[id.index()].tag
                 == resolution::Tag::Folder;
         }
         let pkg = entry_object(entry);

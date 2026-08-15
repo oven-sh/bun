@@ -69,17 +69,18 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
     let mut all_requested_versions_buf: Vec<dependency::Version> =
         Vec::with_capacity(resolutions_buffer.len());
 
-    let package_count = names.len() as PackageID;
-    let mut alphabetized_names: Vec<PackageID> = vec![0; (package_count - 1) as usize];
+    let package_count = names.len();
+    let mut alphabetized_names: Vec<PackageID> = vec![PackageID::default(); package_count - 1];
 
     let string_buf: &[u8] = this.lockfile.buffers.string_bytes.as_slice();
 
     // First, we need to build a map of all requested versions
     // This is so we can print requested versions
     {
-        let mut i: PackageID = 1;
-        while i < package_count {
-            alphabetized_names[(i - 1) as usize] = i;
+        // Package 0 is the root, which yarn.lock does not list.
+        for index in 1..package_count {
+            let i = PackageID::from_index(index);
+            alphabetized_names[index - 1] = i;
 
             let mut resolutions = resolutions_buffer;
             let mut dependencies = dependencies_buffer;
@@ -108,8 +109,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
                 });
             }
             requested_versions.insert(i, (requested_version_start, j));
-
-            i += 1;
         }
     }
 
@@ -124,10 +123,10 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
 
     // When printing, we start at 1
     for &i in alphabetized_names.iter() {
-        let name: &[u8] = names[i as usize].slice(string_buf);
-        let resolution = &resolved[i as usize];
-        let meta = &metas[i as usize];
-        let dependencies: &[Dependency] = dependency_lists[i as usize].get(dependencies_buffer);
+        let name: &[u8] = names[i.index()].slice(string_buf);
+        let resolution = &resolved[i.index()];
+        let meta = &metas[i.index()];
+        let dependencies: &[Dependency] = dependency_lists[i.index()].get(dependencies_buffer);
         let version_formatter = resolution.fmt(string_buf, bun_core::fmt::PathSep::Posix);
 
         // This prints:

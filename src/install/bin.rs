@@ -715,8 +715,8 @@ impl PriorityQueueContext {
         // `BackRef<Vec>` (header) on every compare instead of caching a slice.
         let deps = self.dependencies.as_slice();
         let buf = self.string_buf.as_slice();
-        let a_name = deps[a as usize].name.slice(buf);
-        let b_name = deps[b as usize].name.slice(buf);
+        let a_name = deps[a.index()].name.slice(buf);
+        let b_name = deps[b.index()].name.slice(buf);
         strings::order(a_name, b_name)
     }
 }

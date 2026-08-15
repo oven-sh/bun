@@ -98,10 +98,10 @@ impl PostinstallOptimizer {
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency.
         for &resolution in resolutions {
-            if (resolution as usize) >= metas.len() {
+            if resolution.index() >= metas.len() {
                 continue;
             }
-            let meta: &Meta = &metas[resolution as usize];
+            let meta: &Meta = &metas[resolution.index()];
             if meta.arch == npm::Architecture::ALL || meta.os == npm::OperatingSystem::ALL {
                 continue;
             }

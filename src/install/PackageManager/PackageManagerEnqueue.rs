@@ -105,9 +105,11 @@ pub fn enqueue_dependency_list(
 
     // we have to be very careful with pointers here
     while i < end {
-        let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
-        let resolution = this.lockfile.buffers.resolutions[i as usize];
-        if let Err(err) = enqueue_dependency_with_main(this, i, &dependency, resolution, false) {
+        let dep_id = DependencyID::new(i);
+        let dependency = this.lockfile.buffers.dependencies[dep_id.index()].clone();
+        let resolution = this.lockfile.buffers.resolutions[dep_id.index()];
+        if let Err(err) = enqueue_dependency_with_main(this, dep_id, &dependency, resolution, false)
+        {
             let path_sep = match dependency.version.tag {
                 dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
                 _ => bun_fmt::PathSep::Any,
@@ -169,10 +171,10 @@ pub fn enqueue_tarball_for_download(
         return Ok(());
     }
 
-    let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+    let is_required = this.lockfile.buffers.dependencies[dependency_id.index()]
         .behavior
         .is_required();
-    let package = *this.lockfile.packages.get(package_id as usize);
+    let package = *this.lockfile.packages.get(package_id.index());
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
@@ -225,7 +227,7 @@ pub fn enqueue_tarball_for_reading(
         return;
     }
 
-    let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
+    let integrity = this.lockfile.packages.items_meta()[package_id.index()].integrity;
 
     let task = enqueue_local_tarball(
         this,
@@ -301,7 +303,7 @@ pub fn enqueue_git_for_checkout(
             return;
         }
 
-        let dep = this.lockfile.buffers.dependencies[dependency_id as usize].clone();
+        let dep = this.lockfile.buffers.dependencies[dependency_id.index()].clone();
         let task = enqueue_git_clone(this, clone_id, alias, &repository, &dep, resolution, None);
         this.task_batch.push(ThreadPool::Batch::from(task));
     }
@@ -368,10 +370,10 @@ pub fn enqueue_package_for_download(
         return Ok(());
     }
 
-    let is_required = this.lockfile.buffers.dependencies[dependency_id as usize]
+    let is_required = this.lockfile.buffers.dependencies[dependency_id.index()]
         .behavior
         .is_required();
-    let package = *this.lockfile.packages.get(package_id as usize);
+    let package = *this.lockfile.packages.get(package_id.index());
 
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
@@ -411,7 +413,7 @@ pub fn enqueue_dependency_to_root(
     version_buf: &[u8],
     behavior: Behavior,
 ) -> DependencyToEnqueue {
-    let dep_id = 'brk: {
+    let dep_index: usize = 'brk: {
         let str_buf = this.lockfile.buffers.string_bytes.as_slice();
         for (id, dep) in this.lockfile.buffers.dependencies.iter().enumerate() {
             if !strings::eql_long(dep.name.slice(str_buf), name, true) {
@@ -449,13 +451,14 @@ pub fn enqueue_dependency_to_root(
         lf.resolutions.push(invalid_package_id);
         debug_assert!(lf.dependencies.len() == lf.resolutions.len());
         break 'brk index;
-    } as DependencyID;
+    };
+    let dep_id = DependencyID::from_index(dep_index);
 
-    if this.lockfile.buffers.resolutions[dep_id as usize] == invalid_package_id {
+    if this.lockfile.buffers.resolutions[dep_id.index()] == invalid_package_id {
         // Copy to the stack: `enqueueDependencyWithMainAndSuccessFn` can call
         // `Lockfile.Package.fromNPM`, which grows `buffers.dependencies` and
         // would invalidate a pointer taken directly into it.
-        let dependency = this.lockfile.buffers.dependencies[dep_id as usize].clone();
+        let dependency = this.lockfile.buffers.dependencies[dep_id.index()].clone();
         if let Err(err) = enqueue_dependency_with_main_and_success_fn(
             this,
             dep_id,
@@ -470,7 +473,7 @@ pub fn enqueue_dependency_to_root(
         }
     }
 
-    let resolution_id = match this.lockfile.buffers.resolutions[dep_id as usize] {
+    let resolution_id = match this.lockfile.buffers.resolutions[dep_id.index()] {
         id if id == invalid_package_id => 'brk: {
             this.drain_dependency_list();
 
@@ -538,7 +541,7 @@ pub fn enqueue_dependency_to_root(
                 return DependencyToEnqueue::Failure(err);
             }
 
-            break 'brk this.lockfile.buffers.resolutions[dep_id as usize];
+            break 'brk this.lockfile.buffers.resolutions[dep_id.index()];
         }
         // we managed to synchronously resolve the dependency
         pkg_id => pkg_id,
@@ -549,7 +552,7 @@ pub fn enqueue_dependency_to_root(
     }
 
     DependencyToEnqueue::Resolution {
-        resolution: this.lockfile.packages.items_resolution()[resolution_id as usize],
+        resolution: this.lockfile.packages.items_resolution()[resolution_id.index()],
         package_id: resolution_id,
     }
 }
@@ -615,9 +618,9 @@ fn resolve_from_appended_task(
     id: DependencyID,
 ) -> Option<PackageID> {
     let &pkg_id = this.appended_task_packages.get(&task_id)?;
-    let pkg_name = this.lockfile.packages.items_name()[pkg_id as usize];
-    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
-    let v = &mut this.lockfile.buffers.dependencies[id as usize].version;
+    let pkg_name = this.lockfile.packages.items_name()[pkg_id.index()];
+    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id.index()];
+    let v = &mut this.lockfile.buffers.dependencies[id.index()].version;
     // The buffer row can hold a different tag than the enqueue arm when the
     // dependency comes from `overrides`.
     match v.tag {
@@ -1230,8 +1233,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             }
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-                let needs_ctx =
-                    this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
+                let needs_ctx = this.lockfile.buffers.resolutions[id.index()] == invalid_package_id;
 
                 // An already-resolved dependency (install-phase re-enqueue
                 // after the shared clone finished) is pinned: its install
@@ -1240,8 +1242,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 let pinned: Option<Vec<u8>> = if needs_ctx {
                     None
                 } else {
-                    let pkg_id = this.lockfile.buffers.resolutions[id as usize];
-                    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
+                    let pkg_id = this.lockfile.buffers.resolutions[id.index()];
+                    let pkg_res = this.lockfile.packages.items_resolution()[pkg_id.index()];
                     // SAFETY: tag checked — `value.git` is the active union arm.
                     (pkg_res.tag == ResolutionTag::Git)
                         .then(|| this.lockfile.str(&pkg_res.git().resolved).to_vec())
@@ -1351,7 +1353,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
             }
 
-            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+            if this.lockfile.buffers.resolutions[id.index()] == invalid_package_id {
                 if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
                     success_fn(this, id, pkg_id);
                     return Ok(());
@@ -1557,7 +1559,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 );
             }
 
-            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+            if this.lockfile.buffers.resolutions[id.index()] == invalid_package_id {
                 if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
                     success_fn(this, id, pkg_id);
                     return Ok(());
@@ -1862,7 +1864,7 @@ pub fn enqueue_git_checkout(
             },
             apply_patch_task: if let Some((h, patch_hash)) = patch {
                 let dep_name_hash =
-                    this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
+                    this.lockfile.buffers.dependencies[dependency_id.index()].name_hash;
                 let pkg_id = match this
                     .lockfile
                     .package_index
@@ -1911,7 +1913,7 @@ fn enqueue_local_tarball(
             break 'tarball_path (path, true);
         }
 
-        let workspace_res = this.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
+        let workspace_res = this.lockfile.packages.items_resolution()[workspace_pkg_id.index()];
         if workspace_res.tag != ResolutionTag::Workspace {
             break 'tarball_path (path, true);
         }
@@ -2091,7 +2093,7 @@ fn get_or_put_resolved_package_with_find_result(
             this.kept_patched.push(id);
             success_fn(this, dependency_id, id);
             return Ok(Some(ResolvedPackageResult {
-                package: *this.lockfile.packages.get(id as usize),
+                package: *this.lockfile.packages.get(id.index()),
                 is_first_time: false,
                 task: None,
             }));
@@ -2131,7 +2133,7 @@ fn get_or_put_resolved_package_with_find_result(
     ) {
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
-            package: *this.lockfile.packages.get(id as usize),
+            package: *this.lockfile.packages.get(id.index()),
             is_first_time: false,
             task: None,
         }));
@@ -2287,18 +2289,18 @@ fn get_or_put_resolved_package(
             match index {
                 PackageIndexEntry::Id(existing_id) => {
                     let existing_id = *existing_id;
-                    if (existing_id as usize) < resolutions.len() {
-                        let existing_resolution = resolutions[existing_id as usize];
+                    if existing_id.index() < resolutions.len() {
+                        let existing_resolution = resolutions[existing_id.index()];
                         if resolution_satisfies_dependency(this, &existing_resolution, version) {
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
+                                package: *this.lockfile.packages.get(existing_id.index()),
                                 ..Default::default()
                             }));
                         }
 
-                        let res_tag = resolutions[existing_id as usize].tag;
+                        let res_tag = resolutions[existing_id.index()].tag;
                         let ver_tag = version.tag;
                         if (res_tag == ResolutionTag::Npm
                             && ver_tag == dependency::version::Tag::Npm)
@@ -2307,7 +2309,7 @@ fn get_or_put_resolved_package(
                             || (res_tag == ResolutionTag::Github
                                 && ver_tag == dependency::version::Tag::Github)
                         {
-                            let existing_package = this.lockfile.packages.get(existing_id as usize);
+                            let existing_package = this.lockfile.packages.get(existing_id.index());
                             this.log_mut().add_warning_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -2325,7 +2327,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, existing_id);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
+                                package: *this.lockfile.packages.get(existing_id.index()),
                                 ..Default::default()
                             }));
                         }
@@ -2333,21 +2335,21 @@ fn get_or_put_resolved_package(
                 }
                 PackageIndexEntry::Ids(list) => {
                     for &existing_id in list.iter() {
-                        if (existing_id as usize) < resolutions.len() {
-                            let existing_resolution = resolutions[existing_id as usize];
+                        if existing_id.index() < resolutions.len() {
+                            let existing_resolution = resolutions[existing_id.index()];
                             if resolution_satisfies_dependency(this, &existing_resolution, version)
                             {
                                 success_fn(this, dependency_id, existing_id);
                                 return Ok(Some(ResolvedPackageResult {
-                                    package: *this.lockfile.packages.get(existing_id as usize),
+                                    package: *this.lockfile.packages.get(existing_id.index()),
                                     ..Default::default()
                                 }));
                             }
                         }
                     }
 
-                    if (list[0] as usize) < resolutions.len() {
-                        let res_tag = resolutions[list[0] as usize].tag;
+                    if list[0].index() < resolutions.len() {
+                        let res_tag = resolutions[list[0].index()].tag;
                         let ver_tag = version.tag;
                         if (res_tag == ResolutionTag::Npm
                             && ver_tag == dependency::version::Tag::Npm)
@@ -2358,7 +2360,7 @@ fn get_or_put_resolved_package(
                         {
                             let existing_package_id = list[0];
                             let existing_package =
-                                this.lockfile.packages.get(existing_package_id as usize);
+                                this.lockfile.packages.get(existing_package_id.index());
                             this.log_mut().add_warning_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -2376,7 +2378,7 @@ fn get_or_put_resolved_package(
                             success_fn(this, dependency_id, list[0]);
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_package_id as usize),
+                                package: *this.lockfile.packages.get(existing_package_id.index()),
                                 ..Default::default()
                             }));
                         }
@@ -2386,9 +2388,9 @@ fn get_or_put_resolved_package(
         }
     }
 
-    if (resolution as usize) < this.lockfile.packages.len() {
+    if resolution.index() < this.lockfile.packages.len() {
         return Ok(Some(ResolvedPackageResult {
-            package: *this.lockfile.packages.get(resolution as usize),
+            package: *this.lockfile.packages.get(resolution.index()),
             ..Default::default()
         }));
     }
@@ -2421,7 +2423,7 @@ fn get_or_put_resolved_package(
                         // make sure verifyResolutions sees this resolution as a valid package id
                         success_fn(this, dependency_id, workspace_package_id);
                         return Ok(Some(ResolvedPackageResult {
-                            package: *this.lockfile.packages.get(workspace_package_id as usize),
+                            package: *this.lockfile.packages.get(workspace_package_id.index()),
                             is_first_time: false,
                             task: None,
                         }));
@@ -2581,7 +2583,7 @@ fn get_or_put_resolved_package(
                                     package: *this
                                         .lockfile
                                         .packages
-                                        .get(workspace_package_id as usize),
+                                        .get(workspace_package_id.index()),
                                     is_first_time: false,
                                     task: None,
                                 }));
@@ -2745,7 +2747,7 @@ fn get_or_put_resolved_package(
                     };
                     success_fn(this, dependency_id, workspace_package_id);
                     return Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(workspace_package_id as usize),
+                        package: *this.lockfile.packages.get(workspace_package_id.index()),
                         ..Default::default()
                     }));
                 }
@@ -2825,7 +2827,7 @@ fn resolved_folder_package(
     };
     success_fn(this, dependency_id, package_id);
     Ok(Some(ResolvedPackageResult {
-        package: *this.lockfile.packages.get(package_id as usize),
+        package: *this.lockfile.packages.get(package_id.index()),
         is_first_time,
         task: None,
     }))
@@ -2867,7 +2869,7 @@ fn locked_version_of_invoking_workspace_row<'a>(
         return None;
     }
     let own_rows = this.root_package_id.id?;
-    if !this.lockfile.packages.items_dependencies()[own_rows as usize].contains(dependency_id) {
+    if !this.lockfile.packages.items_dependencies()[own_rows.index()].contains(dependency_id) {
         return None;
     }
     let entry = this
@@ -2898,8 +2900,8 @@ fn locked_version_in_lockfile<'a>(
     candidates
         .iter()
         .copied()
-        .filter(|&id| id < lockfile.loaded_package_count)
-        .map(|id| &pkg_res[id as usize])
+        .filter(|&id| id.get() < lockfile.loaded_package_count)
+        .map(|id| &pkg_res[id.index()])
         .filter(|res| res.tag == ResolutionTag::Npm)
         .map(|res| res.npm().version)
         .find(|&locked| range.satisfies(locked, buf, buf))
@@ -2928,7 +2930,7 @@ fn patched_package_satisfying(
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
     candidates.iter().copied().find(|&id| {
-        let res = &pkg_res[id as usize];
+        let res = &pkg_res[id.index()];
         res.tag == ResolutionTag::Npm
             && res.satisfies_dependency_version(version, buf, buf)
             && lockfile

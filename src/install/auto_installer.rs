@@ -137,7 +137,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_package_dependencies(&self, id: PackageID) -> hooks::DependencySlice {
-        let s = self.lockfile.packages.get(id as usize).dependencies;
+        let s = self.lockfile.packages.get(id.index()).dependencies;
         // `lockfile::DependencySlice` and `hooks::DependencySlice` are both
         // `ExternalSlice<Dependency>` (same `Dependency` after MOVE_DOWN), so
         // this is a no-op; spelled via `new` for nominal-type clarity.
@@ -145,12 +145,12 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_package_resolutions(&self, id: PackageID) -> hooks::ResolutionSlice {
-        let s = self.lockfile.packages.get(id as usize).resolutions;
+        let s = self.lockfile.packages.get(id.index()).resolutions;
         hooks::ResolutionSlice::new(s.off, s.len)
     }
 
     fn lockfile_package_resolution(&self, id: PackageID) -> hooks::Resolution {
-        resolution_to_hooks(&self.lockfile.packages.get(id as usize).resolution)
+        resolution_to_hooks(&self.lockfile.packages.get(id.index()).resolution)
     }
 
     fn lockfile_dependencies_buf(&self) -> &[hooks::Dependency] {

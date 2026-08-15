@@ -429,7 +429,7 @@ impl Default for PendingResolution {
         Self {
             esm: Default::default(),
             dependency: Default::default(),
-            root_dependency_id: Install::INVALID_PACKAGE_ID,
+            root_dependency_id: Install::INVALID_DEPENDENCY_ID,
             import_record_id: u32::MAX,
             string_buf: Vec::new(),
             tag: PendingResolutionTag::Download,

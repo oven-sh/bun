@@ -993,6 +993,7 @@ dependencies = [
  "bun_core",
  "bun_semver",
  "bun_wyhash",
+ "bytemuck",
  "const_format",
  "enum-map",
  "enumset",

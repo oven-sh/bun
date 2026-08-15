@@ -227,7 +227,7 @@ pub trait ResolverContext {
     }
     fn dep_id(&self) -> install::DependencyID {
         debug_assert!(false, "ResolverContext::dep_id called on non-git resolver");
-        0
+        install::DependencyID::default()
     }
     fn new_name(&self) -> &[u8] {
         b""
@@ -440,9 +440,9 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
             self.buf.slice(),
             self.resolutions.slice(),
         );
-        names[lhs as usize]
-            .order(names[rhs as usize], buf, buf)
-            .then_with(|| resolutions[lhs as usize].order(&resolutions[rhs as usize], buf, buf))
+        names[lhs.index()]
+            .order(names[rhs.index()], buf, buf)
+            .then_with(|| resolutions[lhs.index()].order(&resolutions[rhs.index()], buf, buf))
     }
 }
 
@@ -517,7 +517,7 @@ impl Package<u64> {
 
         let prev_len = new.buffers.dependencies.len() as u32;
         let end = prev_len + (old_dependencies.len() as u32);
-        let max_package_id = old.packages.len() as PackageID;
+        let old_packages_len = old.packages.len();
 
         // Grow both buffers by `old_dependencies.len()`, default-filling the
         // new tail. The zip-loops further below overwrite each slot with the
@@ -543,7 +543,7 @@ impl Package<u64> {
         // precomputed tail offset directly.
         let new_extern_strings_start = new.buffers.extern_strings.len() - new_extern_string_count;
 
-        let id = new.packages.len() as PackageID;
+        let id = PackageID::from_index(new.packages.len());
 
         // `appendPackageWithID` borrows `&mut Lockfile` whole, so build the
         // `Package` value and clone the dependency strings *first* (only needs
@@ -585,14 +585,14 @@ impl Package<u64> {
         // `self.meta.id` is range-checked at load time (bun.lockb.rs), but
         // defend here as well since an error returned from `clean_with_logger`
         // is not recoverable — it aborts the install instead of re-resolving.
-        if self.meta.id as usize >= package_id_mapping.len() {
+        if self.meta.id.index() >= package_id_mapping.len() {
             return Err(crate::Error::InvalidLockfile);
         }
-        package_id_mapping[self.meta.id as usize] = new_package.meta.id;
+        package_id_mapping[self.meta.id.index()] = new_package.meta.id;
 
         if cloner.manager.preinstall_state.len() > 0 {
-            cloner.manager.preinstall_state[new_package.meta.id as usize] =
-                cloner.old_preinstall_state[self.meta.id as usize];
+            cloner.manager.preinstall_state[new_package.meta.id.index()] =
+                cloner.old_preinstall_state[self.meta.id.index()];
         }
 
         cloner.trees_count += (old_resolutions.len() > 0) as u32;
@@ -606,14 +606,16 @@ impl Package<u64> {
             .zip(resolutions.iter_mut())
             .enumerate()
         {
-            if *old_resolution >= max_package_id {
+            if old_resolution.index() >= old_packages_len {
                 *resolution = invalid_package_id;
                 continue;
             }
 
             let pending = PendingResolution {
                 old_resolution: *old_resolution,
-                resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
+                resolve_id: install::DependencyID::new(
+                    new_package.resolutions.off + u32::try_from(i).expect("int cast"),
+                ),
             };
 
             // Peer slots must not keep their target alive; bound in `Cloner::flush`.
@@ -623,8 +625,8 @@ impl Package<u64> {
                 continue;
             }
 
-            let mapped = package_id_mapping[*old_resolution as usize];
-            if mapped < max_package_id {
+            let mapped = package_id_mapping[old_resolution.index()];
+            if mapped.index() < old_packages_len {
                 *resolution = mapped;
             } else {
                 cloner.clone_queue.push(pending);
@@ -1399,7 +1401,7 @@ impl Diff {
                         from_dep.name_hash,
                     )
                 {
-                    if (from_resolutions[i] as usize) < from_lockfile.packages.len() {
+                    if from_resolutions[i].index() < from_lockfile.packages.len() {
                         missing_workspaces.push(from_resolutions[i]);
                     }
                     if pm.options.enable.frozen_lockfile()
@@ -1512,7 +1514,7 @@ impl Diff {
                             .into();
                         survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
-                        let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
+                        let from_pkg = from_lockfile.packages.get(from_resolutions[i].index());
                         let diff = Self::generate_inner(
                             pm,
                             log,
@@ -1545,7 +1547,7 @@ impl Diff {
                     };
 
                     if update_mapping {
-                        mapping[cur_to_i] = i as PackageID;
+                        mapping[cur_to_i] = PackageID::from_index(i);
                         continue;
                     }
                     if workspace_hooks_only {
@@ -1567,9 +1569,9 @@ impl Diff {
             if !is_explicit_update_target {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
                     let from_res_id = from_resolutions[i];
-                    if (from_res_id as usize) < from_lockfile.packages.len() {
+                    if from_res_id.index() < from_lockfile.packages.len() {
                         let from_pkg_resolution =
-                            from_lockfile.packages.items_resolution()[from_res_id as usize];
+                            from_lockfile.packages.items_resolution()[from_res_id.index()];
                         let to_dep = &to_deps!()[cur_to_i];
                         if to_dep.version.tag == dependency::version::Tag::Npm
                             && from_pkg_resolution.tag == ResolutionTag::Npm
@@ -1579,7 +1581,7 @@ impl Diff {
                                 from_lockfile.buffers.string_bytes.as_slice(),
                             )
                         {
-                            mapping[cur_to_i] = i as PackageID;
+                            mapping[cur_to_i] = PackageID::from_index(i);
                             // Still counted as an update so `had_any_diffs`
                             // triggers the rebuild path; we just preserved
                             // the resolved package.
@@ -2208,7 +2210,7 @@ impl Package<u64> {
                 resolver.set_new_name(Repository::create_dependency_name_from_version_literal(
                     &repo,
                     string_builder.string_bytes.as_slice(),
-                    &lockfile.buffers.dependencies[resolver.dep_id() as usize],
+                    &lockfile.buffers.dependencies[resolver.dep_id().index()],
                 ));
 
                 string_builder.count(resolver.new_name());

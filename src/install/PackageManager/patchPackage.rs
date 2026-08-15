@@ -114,7 +114,7 @@ pub fn do_patch_commit(
     let workspace_package_id = manager
         .root_package_id
         .get(&lockfile, manager.workspace_name_hash);
-    let not_in_workspace_root = workspace_package_id != 0;
+    let not_in_workspace_root = workspace_package_id != PackageID::ROOT;
     // reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
     let mut argument_owned: Option<Box<[u8]>> = None;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
@@ -226,11 +226,11 @@ pub fn do_patch_commit(
                     );
                     Global::crash();
                 }
-                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
+                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(id.index()),
                 Some(PackageIndexEntry::Ids(ids)) => 'brk: {
                     let mut resolution_label = Vec::new();
                     for &id in ids.as_slice() {
-                        let pkg = *lockfile.packages.get(id as usize);
+                        let pkg = *lockfile.packages.get(id.index());
                         if print_resolution_label(
                             &mut resolution_label,
                             &pkg.resolution,
@@ -263,7 +263,7 @@ pub fn do_patch_commit(
             )
             .as_bytes()
             .to_vec();
-            break 'brk (changes_dir, *lockfile.packages.get(pkg_id as usize));
+            break 'brk (changes_dir, *lockfile.packages.get(pkg_id.index()));
         }
     };
 
@@ -711,7 +711,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let workspace_package_id = manager
         .root_package_id
         .get(&manager.lockfile, workspace_name_hash);
-    let not_in_workspace_root = workspace_package_id != 0;
+    let not_in_workspace_root = workspace_package_id != PackageID::ROOT;
     // reshaped for borrowck — owned buffer kept so `argument` can borrow it.
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
@@ -811,11 +811,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                         );
                         Global::crash();
                     }
-                    Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
+                    Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(id.index()),
                     Some(PackageIndexEntry::Ids(ids)) => 'id: {
                         let mut resolution_label = Vec::new();
                         for &id in ids.as_slice() {
-                            let pkg = *lockfile.packages.get(id as usize);
+                            let pkg = *lockfile.packages.get(id.index());
                             if print_resolution_label(
                                 &mut resolution_label,
                                 &pkg.resolution,
@@ -888,7 +888,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 );
 
                 let strbuf = manager.lockfile.buffers.string_bytes.as_slice();
-                let pkg = *manager.lockfile.packages.get(pkg_id as usize);
+                let pkg = *manager.lockfile.packages.get(pkg_id.index());
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
 
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
@@ -1275,13 +1275,13 @@ fn pkg_info_for_name_and_version(
         if pkg_id == invalid_package_id {
             continue;
         }
-        let pkg = *lockfile.packages.get(pkg_id as usize);
+        let pkg = *lockfile.packages.get(pkg_id.index());
         if let Some(v) = version {
             if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == v {
-                pairs.push((dep_id as DependencyID, pkg_id));
+                pairs.push((DependencyID::from_index(dep_id), pkg_id));
             }
         } else {
-            pairs.push((dep_id as DependencyID, pkg_id));
+            pairs.push((DependencyID::from_index(dep_id), pkg_id));
         }
     }
 
@@ -1391,7 +1391,7 @@ fn pkg_info_for_name_and_version(
             continue;
         }
 
-        let pkg = *lockfile.packages.get(pkgid as usize);
+        let pkg = *lockfile.packages.get(pkgid.index());
 
         bun_core::pretty_error!(
             "  {}@<blue>{}<r>\n",
@@ -1419,10 +1419,10 @@ fn path_argument_relative_to_root_workspace_package(
     workspace_package_id: PackageID,
     argument: &[u8],
 ) -> Option<Box<[u8]>> {
-    if workspace_package_id == 0 {
+    if workspace_package_id == PackageID::ROOT {
         return None;
     }
-    let workspace_res = &lockfile.packages.items_resolution()[workspace_package_id as usize];
+    let workspace_res = &lockfile.packages.items_resolution()[workspace_package_id.index()];
     let workspace_str = *workspace_res.workspace();
     let rel_path: &[u8] = workspace_str.slice(lockfile.buffers.string_bytes.as_slice());
     Some(Box::<[u8]>::from(resolve_path::join::<platform::Posix>(&[

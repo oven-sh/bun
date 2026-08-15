@@ -13,7 +13,10 @@ use super::{
 };
 use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
-use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
+use crate::{
+    Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_dependency_id,
+    invalid_package_id,
+};
 
 #[derive(Default)]
 pub struct Buffers {
@@ -369,8 +372,8 @@ impl Buffers {
         package_id: PackageID,
     ) -> crate::Result<DependencyID> {
         match package_id {
-            0 => return Ok(tree::ROOT_DEP_ID),
-            id if id == invalid_package_id => return Ok(invalid_package_id),
+            PackageID::ROOT => return Ok(tree::ROOT_DEP_ID),
+            id if id == invalid_package_id => return Ok(invalid_dependency_id),
             _ => {
                 // `dependency_visited` is captured once outside the loop
                 // instead of re-matched per iteration (borrowck).
@@ -383,7 +386,7 @@ impl Buffers {
                             }
                             visited.set(dep_id);
                         }
-                        return Ok(dep_id as DependencyID);
+                        return Ok(DependencyID::from_index(dep_id));
                     }
                 }
             }
@@ -472,14 +475,15 @@ pub(crate) fn load(
     }
     debug_assert!(external_dependency_list.len() == this.dependencies.len());
 
-    // Legacy tree structure stores package IDs instead of dependency IDs
+    // Legacy tree structure stores package IDs instead of dependency IDs, so the
+    // `dependency_id` slots just loaded actually hold package ids.
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
         let mut visited = Bitset::init_empty(this.dependencies.len())?;
         // Iterate by index so
         // `legacy_package_to_dependency_id` can borrow `&self` while we hold
         // `&mut this.trees[i]`.
         for i in 0..this.trees.len() {
-            let package_id = this.trees[i].dependency_id;
+            let package_id = PackageID::new(this.trees[i].dependency_id.get());
             this.trees[i].dependency_id =
                 this.legacy_package_to_dependency_id(Some(&mut visited), package_id)?;
         }
@@ -491,7 +495,7 @@ pub(crate) fn load(
             false,
         );
         for i in 0..this.hoisted_dependencies.len() {
-            let pid = this.hoisted_dependencies[i];
+            let pid = PackageID::new(this.hoisted_dependencies[i].get());
             this.hoisted_dependencies[i] =
                 this.legacy_package_to_dependency_id(Some(&mut visited), pid)?;
         }

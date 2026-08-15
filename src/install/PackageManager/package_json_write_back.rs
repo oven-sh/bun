@@ -246,7 +246,7 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
     let mut ids = vec![invalid_package_id; edited.len()];
     for (i, e) in edited.iter().enumerate() {
         if e.target.name_hash.is_none() {
-            ids[i] = 0;
+            ids[i] = PackageID::ROOT;
         }
     }
     let resolutions = lockfile.packages.items_resolution();
@@ -257,7 +257,7 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
         }
         for (i, e) in edited.iter().enumerate() {
             if ids[i] == invalid_package_id && e.target.name_hash == Some(name_hashes[pkg_id]) {
-                ids[i] = pkg_id as PackageID;
+                ids[i] = PackageID::from_index(pkg_id);
             }
         }
     }
@@ -289,7 +289,7 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
             continue;
         }
         let is_root = edited[*i].target.name_hash.is_none();
-        let row = manager.lockfile.packages.items_dependencies()[target_id as usize];
+        let row = manager.lockfile.packages.items_dependencies()[target_id.index()];
         let scratch_deps = pkg
             .dependencies
             .get(scratch.buffers.dependencies.as_slice());

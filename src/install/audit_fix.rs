@@ -315,7 +315,7 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
 
 fn importer_file(lockfile: &Lockfile, parent: PackageID) -> Option<Box<[u8]>> {
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let parent_res = &lockfile.packages.items_resolution()[parent as usize];
+    let parent_res = &lockfile.packages.items_resolution()[parent.index()];
     match parent_res.tag {
         ResolutionTag::Root => Some(Box::from(&b"package.json"[..])),
         ResolutionTag::Workspace => {
@@ -340,8 +340,8 @@ fn dependent_label(lockfile: &Lockfile, parent: PackageID) -> Box<[u8]> {
         return file;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let name = lockfile.packages.items_name()[parent as usize].slice(buf);
-    let res = &lockfile.packages.items_resolution()[parent as usize];
+    let name = lockfile.packages.items_name()[parent.index()].slice(buf);
+    let res = &lockfile.packages.items_resolution()[parent.index()];
     if res.tag != ResolutionTag::Npm {
         return Box::from(name);
     }
@@ -440,7 +440,7 @@ fn pin_for(
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
     let res = lockfile.packages.items_resolution();
-    let parent_res = &res[parent as usize];
+    let parent_res = &res[parent.index()];
     if !matches!(
         parent_res.tag,
         ResolutionTag::Root | ResolutionTag::Workspace
@@ -451,7 +451,7 @@ fn pin_for(
     if !is_alias
         && lockfile
             .overrides
-            .get(lockfile, dep_id as DependencyID, dep.name_hash)
+            .get(lockfile, DependencyID::from_index(dep_id), dep.name_hash)
             .is_some()
     {
         return None;
@@ -469,7 +469,7 @@ fn pin_for(
                 return None;
             }
             Some(PackageJsonEdit {
-                owner: 0,
+                owner: PackageID::ROOT,
                 file: Box::from(&b"package.json"[..]),
                 catalog: Some(Box::from(catalog_name)),
                 key,
@@ -535,7 +535,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             }
             instance_of[pkg_id] = instances.len() as u32;
             instances.push(Instance {
-                pkg_id: pkg_id as PackageID,
+                pkg_id: PackageID::from_index(pkg_id),
                 name: Box::from(names[pkg_id].slice(buf)),
                 name_hash: name_hashes[pkg_id],
                 from: fmt_version(current, buf),
@@ -550,7 +550,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             for (pkg_id, slice) in dep_slices.iter().enumerate() {
                 let end = (slice.end() as usize).min(deps.len());
                 for slot in &mut parent_of[(slice.begin() as usize).min(end)..end] {
-                    *slot = pkg_id as PackageID;
+                    *slot = PackageID::from_index(pkg_id);
                 }
             }
 
@@ -558,7 +558,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 if target == invalid_package_id {
                     continue;
                 }
-                let Some(&instance) = instance_of.get(target as usize) else {
+                let Some(&instance) = instance_of.get(target.index()) else {
                     continue;
                 };
                 if instance == u32::MAX || deps[dep_id].behavior.is_optional_peer() {
@@ -572,11 +572,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     pin = pin_for(lockfile, dep_id, dep, parent, false);
                 }
                 instances[instance as usize].edges.push(Edge {
-                    dep_id: dep_id as DependencyID,
+                    dep_id: DependencyID::from_index(dep_id),
                     parent,
                     range: crate::dedupe::effective_npm_range(
                         lockfile,
-                        dep_id as DependencyID,
+                        DependencyID::from_index(dep_id),
                         dep,
                     ),
                     literal: Box::from(dep.version.literal.slice(buf)),
@@ -1251,7 +1251,11 @@ fn live_edge(
     edge: PlannedEdge,
 ) -> Option<(DependencyID, Semver::String)> {
     let deps = lockfile.buffers.dependencies.as_slice();
-    let target = *lockfile.buffers.resolutions.get(edge.dep_id as usize)? as usize;
+    let target = lockfile
+        .buffers
+        .resolutions
+        .get(edge.dep_id.index())?
+        .index();
     let res = lockfile.packages.items_resolution().get(target)?;
     if res.tag != ResolutionTag::Npm
         || lockfile.packages.items_name_hash()[target] != pin.name_hash
@@ -1264,19 +1268,19 @@ fn live_edge(
     let Some(&slice) = lockfile
         .packages
         .items_dependencies()
-        .get(edge.parent as usize)
+        .get(edge.parent.index())
     else {
         return Some((edge.dep_id, pkg_name));
     };
     if slice.contains(edge.dep_id) {
         return Some((edge.dep_id, pkg_name));
     }
-    let planned = &deps[edge.dep_id as usize];
+    let planned = &deps[edge.dep_id.index()];
     let live = slice
         .get(deps)
         .iter()
         .position(|dep| dep.name_hash == planned.name_hash && dep.behavior == planned.behavior)?;
-    Some((slice.off + live as DependencyID, pkg_name))
+    Some((DependencyID::new(slice.off + live as u32), pkg_name))
 }
 
 /// Re-resolves the edge `dep_id` (which must currently resolve to an npm package) to exactly `to_version`.
@@ -1285,8 +1289,8 @@ pub(crate) fn enqueue_pinned(
     dep_id: DependencyID,
     to_version: Semver::Version,
 ) -> crate::Result<()> {
-    let target = manager.lockfile.buffers.resolutions[dep_id as usize];
-    let pkg_name = manager.lockfile.packages.items_name()[target as usize];
+    let target = manager.lockfile.buffers.resolutions[dep_id.index()];
+    let pkg_name = manager.lockfile.packages.items_name()[target.index()];
     enqueue_pinned_as(manager, dep_id, pkg_name, to_version)
 }
 
@@ -1296,7 +1300,7 @@ fn enqueue_pinned_as(
     pkg_name: Semver::String,
     to_version: Semver::Version,
 ) -> crate::Result<()> {
-    let row = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
+    let row = manager.lockfile.buffers.dependencies[dep_id.index()].clone();
     let pinned = Dependency {
         name: row.name,
         name_hash: row.name_hash,
@@ -1313,6 +1317,6 @@ fn enqueue_pinned_as(
             },
         },
     };
-    manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
+    manager.lockfile.buffers.resolutions[dep_id.index()] = invalid_package_id;
     enqueue_dependency_with_main(manager, dep_id, &pinned, invalid_package_id, false)
 }

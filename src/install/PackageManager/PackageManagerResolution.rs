@@ -9,7 +9,7 @@ use bun_semver::{SlicedString, String as SemverString};
 
 use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
 use crate::dependency;
-use crate::lockfile::{DependencyIDSlice, DependencySlice};
+use crate::lockfile::{DependencySlice, PackageIDSlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_package_id};
@@ -231,12 +231,12 @@ impl PackageManager {
                     self,
                 ) {
                     folder_resolver::FolderResolution::NewPackageId(id) => {
-                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
+                        let deps = self.lockfile.packages.items_dependencies()[id.index()];
                         super::enqueue_dependency_list(self, deps);
                         return Some(id);
                     }
                     folder_resolver::FolderResolution::PackageId(id) => {
-                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
+                        let deps = self.lockfile.packages.items_dependencies()[id.index()];
                         super::enqueue_dependency_list(self, deps);
                         return Some(id);
                     }
@@ -256,20 +256,18 @@ impl PackageManager {
 
     pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        debug_assert!(
-            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-        );
-        debug_assert!((package_id as usize) < self.lockfile.packages.len());
+        debug_assert!(dependency_id.index() < self.lockfile.buffers.resolutions.as_slice().len());
+        debug_assert!(package_id.index() < self.lockfile.packages.len());
         // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         let buffers = &mut self.lockfile.buffers;
-        buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
+        buffers.resolutions.as_mut_slice()[dependency_id.index()] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
-        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id as usize];
+        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id.index()];
         if dep.name.is_empty()
             || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
         {
-            dep.name = self.lockfile.packages.items_name()[package_id as usize];
-            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
+            dep.name = self.lockfile.packages.items_name()[package_id.index()];
+            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id.index()];
         }
     }
 
@@ -279,34 +277,32 @@ impl PackageManager {
         package_id: PackageID,
     ) {
         // reshaped for borrowck — capture lengths before mutable borrows.
+        debug_assert!(dependency_id.index() < self.lockfile.buffers.resolutions.as_slice().len());
+        debug_assert!(package_id.index() < self.lockfile.packages.len());
         debug_assert!(
-            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-        );
-        debug_assert!((package_id as usize) < self.lockfile.packages.len());
-        debug_assert!(
-            self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]
+            self.lockfile.buffers.resolutions.as_slice()[dependency_id.index()]
                 == invalid_package_id
         );
         let buffers = &mut self.lockfile.buffers;
-        buffers.resolutions.as_mut_slice()[dependency_id as usize] = package_id;
+        buffers.resolutions.as_mut_slice()[dependency_id.index()] = package_id;
         let string_buf = buffers.string_bytes.as_slice();
-        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id as usize];
+        let dep = &mut buffers.dependencies.as_mut_slice()[dependency_id.index()];
         if dep.name.is_empty()
             || dep.name.slice(string_buf) == dep.version.literal.slice(string_buf)
         {
-            dep.name = self.lockfile.packages.items_name()[package_id as usize];
-            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id as usize];
+            dep.name = self.lockfile.packages.items_name()[package_id.index()];
+            dep.name_hash = self.lockfile.packages.items_name_hash()[package_id.index()];
         }
     }
 
     pub(crate) fn verify_resolutions(&mut self, log_level: LogLevel) {
         let lockfile = &self.lockfile;
-        let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
+        let resolutions_lists: &[PackageIDSlice] = lockfile.packages.items_resolutions();
         let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();
         let pkg_resolutions = lockfile.packages.items_resolution();
         let dependencies_buffer = lockfile.buffers.dependencies.as_slice();
         let resolutions_buffer = lockfile.buffers.resolutions.as_slice();
-        let end: PackageID = lockfile.packages.len() as PackageID;
+        let end = lockfile.packages.len();
 
         let mut any_failed = false;
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -321,7 +317,7 @@ impl PackageManager {
             let dep_slice = dependency_list.get(dependencies_buffer);
             debug_assert_eq!(res_slice.len(), dep_slice.len());
             for (package_id, failed_dep) in res_slice.iter().copied().zip(dep_slice.iter()) {
-                if package_id < end {
+                if package_id.index() < end {
                     continue;
                 }
 

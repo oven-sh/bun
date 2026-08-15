@@ -174,7 +174,7 @@ impl OverrideMap {
         name_hash: PackageNameHash,
     ) -> Option<&'s ScopedOverride> {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+        let declared = &lockfile.buffers.dependencies[dependency_id.index()].version;
         let mut owner: Option<Option<(PackageNameHash, Option<SemverVersion>)>> = None;
         let mut best: Option<(&'s ScopedOverride, u8)> = None;
 
@@ -249,7 +249,7 @@ impl OverrideMap {
         if owner_id == invalid_package_id {
             return None;
         }
-        let owner_id = owner_id as usize;
+        let owner_id = owner_id.index();
         let owner_name_hash = lockfile.packages.items_name_hash()[owner_id];
         let resolution = &lockfile.packages.items_resolution()[owner_id];
         let owner_version = match resolution.tag {
@@ -272,17 +272,17 @@ impl OverrideMap {
                 if end > index.by_dep.len() {
                     index.by_dep.resize(end, invalid_package_id);
                 }
-                index.by_dep[begin..end].fill(pkg_id as PackageID);
+                index.by_dep[begin..end].fill(PackageID::from_index(pkg_id));
             }
             index.packages_indexed = dep_slices.len();
         }
         let owner = index
             .by_dep
-            .get(dependency_id as usize)
+            .get(dependency_id.index())
             .copied()
             .unwrap_or(invalid_package_id);
         debug_assert!(
-            owner == invalid_package_id || dep_slices[owner as usize].contains(dependency_id)
+            owner == invalid_package_id || dep_slices[owner.index()].contains(dependency_id)
         );
         owner
     }

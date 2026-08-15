@@ -25,12 +25,117 @@ use bun_semver::{
 
 // ─── Identity / sentinel ──────────────────────────────────────────────────
 
-pub type PackageID = u32;
-pub type DependencyID = u32;
+/// Index into the lockfile's package list (`Lockfile.packages`).
+///
+/// Distinct from [`DependencyID`] so that the two kinds of index cannot be
+/// mixed up: `resolutions[dep_id]` is a `PackageID`, and the package columns
+/// are indexed by `PackageID`. Both are serialized into `bun.lockb` as the
+/// bare `u32` (`#[repr(transparent)]`).
+///
+/// `Default` is id 0 (the root package), matching the zero-initialised `u32`
+/// it replaced; "no package" is [`PackageID::INVALID`].
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct PackageID(u32);
+
+/// Index into the lockfile's dependency buffer (`Lockfile.buffers.dependencies`).
+/// The same index into `Lockfile.buffers.resolutions` gives the [`PackageID`]
+/// the dependency resolved to.
+///
+/// `Default` is id 0, matching the zero-initialised `u32` it replaced; "no
+/// dependency" is [`DependencyID::INVALID`].
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct DependencyID(u32);
+
+macro_rules! impl_id {
+    ($name:ident) => {
+        impl $name {
+            pub const INVALID: Self = Self(u32::MAX);
+
+            #[inline]
+            pub const fn new(id: u32) -> Self {
+                Self(id)
+            }
+
+            /// Truncating, like the `as u32` casts at the sites that build an
+            /// id from a buffer position. Use `try_from` for a checked build.
+            #[inline]
+            pub const fn from_index(index: usize) -> Self {
+                Self(index as u32)
+            }
+
+            #[inline]
+            pub const fn get(self) -> u32 {
+                self.0
+            }
+
+            #[inline]
+            pub const fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
+
+        // SAFETY: `#[repr(transparent)]` over `u32`.
+        unsafe impl bytemuck::Zeroable for $name {}
+        // SAFETY: `#[repr(transparent)]` over `u32` (Pod).
+        unsafe impl bytemuck::Pod for $name {}
+
+        impl TryFrom<usize> for $name {
+            type Error = core::num::TryFromIntError;
+
+            #[inline]
+            fn try_from(index: usize) -> Result<Self, Self::Error> {
+                u32::try_from(index).map(Self)
+            }
+        }
+
+        // Ids are already well distributed, so maps keyed by them use the
+        // identity context like the `u32` keys did.
+        impl bun_collections::array_hash_map::ArrayHashContext<$name>
+            for bun_collections::ArrayIdentityContext
+        {
+            #[inline]
+            fn hash(&self, key: &$name) -> u32 {
+                key.0
+            }
+
+            #[inline]
+            fn eql(&self, a: &$name, b: &$name, _b_index: usize) -> bool {
+                a == b
+            }
+        }
+
+        // Formats as the bare number, exactly like the `u32` this replaced, so
+        // log lines and debug dumps are unchanged.
+        impl core::fmt::Debug for $name {
+            #[inline]
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                core::fmt::Debug::fmt(&self.0, f)
+            }
+        }
+
+        impl core::fmt::Display for $name {
+            #[inline]
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                core::fmt::Display::fmt(&self.0, f)
+            }
+        }
+    };
+}
+
+impl_id!(PackageID);
+impl_id!(DependencyID);
+
+impl PackageID {
+    /// The root package (the project being installed) is always package 0.
+    pub const ROOT: Self = Self(0);
+}
+
 pub type PackageNameHash = u64;
 pub type TruncatedPackageNameHash = u32;
-pub const INVALID_PACKAGE_ID: PackageID = PackageID::MAX;
-pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::MAX;
+pub const INVALID_PACKAGE_ID: PackageID = PackageID::INVALID;
+pub const INVALID_DEPENDENCY_ID: DependencyID = DependencyID::INVALID;
 
 // ─── ExternalSlice ────────────────────────────────────────────────────────
 // An `(off, len)` index pair into a
@@ -103,11 +208,6 @@ impl<T> ExternalSlice<T> {
     }
 
     #[inline]
-    pub fn contains(self, id: u32) -> bool {
-        id >= self.off && (id as u64) < self.len as u64 + self.off as u64
-    }
-
-    #[inline]
     pub fn get(self, in_: &[T]) -> &[T] {
         // Compute the sum in usize so
         // the release-mode clamp applies instead of a debug u32-overflow panic.
@@ -159,6 +259,32 @@ pub type ExternalPackageNameHashList = ExternalSlice<PackageNameHash>;
 pub type VersionSlice = ExternalSlice<SemverVersion>;
 pub type DependencySlice = ExternalSlice<Dependency>;
 pub type ResolutionSlice = ExternalSlice<PackageID>;
+
+// A package's `dependencies` and `resolutions` slices cover the same positions
+// of the parallel `buffers.dependencies` / `buffers.resolutions` buffers, so
+// the positions either slice covers are `DependencyID`s.
+macro_rules! impl_dependency_id_range {
+    ($($slice:ty),* $(,)?) => {$(
+        impl $slice {
+            /// The ids of the dependencies this slice covers, in buffer order.
+            #[inline]
+            pub fn dependency_ids(
+                self,
+            ) -> impl DoubleEndedIterator<Item = DependencyID> + ExactSizeIterator {
+                (self.begin()..self.end()).map(DependencyID::new)
+            }
+
+            /// Is `id` one of the dependencies this slice covers?
+            #[inline]
+            pub fn contains(self, id: DependencyID) -> bool {
+                let id = id.get();
+                id >= self.off && (id as u64) < self.len as u64 + self.off as u64
+            }
+        }
+    )*};
+}
+
+impl_dependency_id_range!(DependencySlice, ResolutionSlice);
 
 // ─── Dependency / Behavior ────────────────────────────────────────────────
 
@@ -1288,7 +1414,7 @@ impl Features {
 
 #[derive(Default, Clone, Copy)]
 pub struct TaskCallbackContext {
-    pub root_request_id: u32,
+    pub root_request_id: PackageID,
 }
 
 /// Opaque

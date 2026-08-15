@@ -501,7 +501,7 @@ impl Queue {
         // reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
             for pending in module.parse_result.pending_imports.iter() {
-                if resolution_ids.slice()[pending.root_dependency_id as usize] != package_id {
+                if resolution_ids.slice()[pending.root_dependency_id.index()] != package_id {
                     continue;
                 }
                 let import_record_id = pending.import_record_id;
@@ -549,10 +549,10 @@ impl Queue {
                 for tag_i in 0..tags_len {
                     let root_id = pending_imports[tag_i].root_dependency_id;
                     let resolution_ids = pm.lockfile.buffers.resolutions.as_slice();
-                    if root_id as usize >= resolution_ids.len() {
+                    if root_id.index() >= resolution_ids.len() {
                         continue;
                     }
-                    let package_id = resolution_ids[root_id as usize];
+                    let package_id = resolution_ids[root_id.index()];
 
                     match pending_imports[tag_i].tag {
                         bun_resolver::PendingResolutionTag::Resolve => {
@@ -579,7 +579,7 @@ impl Queue {
                         continue;
                     }
 
-                    let package = pm.lockfile.packages.get(package_id as usize);
+                    let package = pm.lockfile.packages.get(package_id.index());
                     debug_assert!(package.resolution.tag != install::resolution::Tag::Root);
 
                     let mut name_and_version_hash: Option<u64> = None;

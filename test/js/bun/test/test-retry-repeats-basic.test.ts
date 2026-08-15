@@ -37,6 +37,13 @@ async function runRetryFixture(name: string, source: string) {
 // In each fixture below, attempt 1 times out while waiting on something that
 // attempt 2 completes as soon as it starts. Attempt 1's late completion must
 // not count as the completion of attempt 2.
+//
+// The ordering does not depend on timers: attempt 1's completion is queued while
+// attempt 2's body is still on the stack (synchronously by done(), or in the
+// microtask drain that follows the body), and the runner consumes it in the same
+// step, before anything attempt 2 scheduled can run. On an unfixed runner attempt
+// 2 is therefore reported as passed before its own timer fires; the timers only
+// keep attempt 2 alive past that point.
 
 test.concurrent("a late resolve from a timed-out attempt does not complete the retry", async () => {
   const { stdout, stderr, exitCode } = await runRetryFixture(

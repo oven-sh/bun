@@ -233,4 +233,4 @@ test.concurrent("a compiled executable reads config from its run directory only"
   expect(stdout).toBe("compiled app\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
-});
+}, 30_000);

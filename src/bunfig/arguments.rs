@@ -154,7 +154,9 @@ enum PackageJson {
     Workspaces(Vec<Box<[u8]>>),
 }
 
-/// Classifies `dir/package.json`; an unparseable file counts as `Plain`.
+/// Classifies `dir/package.json`; an unparseable file counts as `Plain`, as
+/// does a `workspaces` value without a pattern array (yarn per-member
+/// nohoist), so such members still inherit their workspace root.
 fn read_package_json(dir: &[u8]) -> PackageJson {
     let mut name_buf = PathBuffer::uninit();
     let json_path: &ZStr = resolve_path::join_abs_string_buf_z::<platform::Auto>(

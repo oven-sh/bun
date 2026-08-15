@@ -39,6 +39,10 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     JSString* jsString = nullptr;
     // ReplacingInvalidSequences matches how v8 behaves here
     auto string = Zig::convertUTF8ToString(span);
+    if (string.isNull() && length > 0) [[unlikely]] {
+        // empty, like the too-long case above
+        return MaybeLocal<String>();
+    }
     switch (type) {
     case NewStringType::kNormal:
         jsString = JSC::jsString(vm, string);

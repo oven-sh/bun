@@ -43,6 +43,7 @@ impl YAML {
         cyclic_aliases: CyclicAliases,
     ) -> Result<Expr, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
+        source.check_parseable_len(log, "YAML document")?;
 
         let mut parser: Parser<Utf8> = Parser::init(bump, source.contents(), cyclic_aliases);
 
@@ -88,6 +89,13 @@ pub enum YamlParseError {
 }
 
 bun_core::oom_from_alloc!(YamlParseError);
+
+/// Already logged, like every other `SyntaxError`.
+impl From<bun_ast::SourceTooLarge> for YamlParseError {
+    fn from(_: bun_ast::SourceTooLarge) -> Self {
+        YamlParseError::SyntaxError
+    }
+}
 
 impl From<YamlParseError> for crate::Error {
     fn from(e: YamlParseError) -> Self {

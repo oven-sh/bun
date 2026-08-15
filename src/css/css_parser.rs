@@ -5537,8 +5537,10 @@ impl<'a> CopyOnWriteStr<'a> {
 // ───────────────────────────── color ─────────────────────────────
 
 pub mod color {
-    /// The opaque alpha value of 1.0.
-    pub(crate) const OPAQUE: f32 = 1.0;
+    use crate::values::color::RGBA;
+
+    /// The alpha channel of a fully opaque color.
+    pub(crate) const OPAQUE: u8 = 255;
 
     #[derive(Debug, strum::IntoStaticStr)]
     pub enum ColorError {
@@ -5727,29 +5729,39 @@ pub mod color {
     }
 
     /// Parse a color hash, without the leading '#' character.
-    pub(crate) fn parse_hash_color(value: &[u8]) -> Option<(u8, u8, u8, f32)> {
+    pub(crate) fn parse_hash_color(value: &[u8]) -> Option<RGBA> {
         parse_hash_color_impl(value).ok()
     }
 
-    pub(crate) fn parse_hash_color_impl(value: &[u8]) -> Result<(u8, u8, u8, f32), ColorError> {
+    pub(crate) fn parse_hash_color_impl(value: &[u8]) -> Result<RGBA, ColorError> {
         let pair = |i: usize| {
             bun_core::fmt::hex_pair_value(value[i], value[i + 1]).ok_or(ColorError::Parse)
         };
         match value.len() {
-            8 => Ok((pair(0)?, pair(2)?, pair(4)?, pair(6)? as f32 / 255.0)),
-            6 => Ok((pair(0)?, pair(2)?, pair(4)?, OPAQUE)),
-            4 => Ok((
-                from_hex(value[0])? * 17,
-                from_hex(value[1])? * 17,
-                from_hex(value[2])? * 17,
-                (from_hex(value[3])? * 17) as f32 / 255.0,
-            )),
-            3 => Ok((
-                from_hex(value[0])? * 17,
-                from_hex(value[1])? * 17,
-                from_hex(value[2])? * 17,
-                OPAQUE,
-            )),
+            8 => Ok(RGBA {
+                red: pair(0)?,
+                green: pair(2)?,
+                blue: pair(4)?,
+                alpha: pair(6)?,
+            }),
+            6 => Ok(RGBA {
+                red: pair(0)?,
+                green: pair(2)?,
+                blue: pair(4)?,
+                alpha: OPAQUE,
+            }),
+            4 => Ok(RGBA {
+                red: from_hex(value[0])? * 17,
+                green: from_hex(value[1])? * 17,
+                blue: from_hex(value[2])? * 17,
+                alpha: from_hex(value[3])? * 17,
+            }),
+            3 => Ok(RGBA {
+                red: from_hex(value[0])? * 17,
+                green: from_hex(value[1])? * 17,
+                blue: from_hex(value[2])? * 17,
+                alpha: OPAQUE,
+            }),
             _ => Err(ColorError::Parse),
         }
     }

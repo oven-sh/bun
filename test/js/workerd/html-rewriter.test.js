@@ -2002,16 +2002,21 @@ describe("streamed input pacing", () => {
     expect(seen()).toBe(count);
   });
 
-  it("a locked but idle reader holds the input", async () => {
+  // Progress is driven by the reader's pulls: one read yields one chunk and
+  // leaves the rest of the document unread until the next.
+  it("a locked reader paces the input by its reads", async () => {
     const { res, seen } = transformInput();
     const reader = res.body.getReader();
-    for (let i = 0; i < 5; i++) await setImmediatePromise();
+    const first = await reader.read();
     const held = seen();
     expect(held).toBeLessThan(count);
-    for (let i = 0; i < 5; i++) await setImmediatePromise();
-    expect(seen()).toBe(held);
+    const second = await reader.read();
+    expect(seen()).toBeGreaterThan(held);
+    expect(seen()).toBeLessThan(count);
     reader.releaseLock();
-    expect(await readAll(res.body)).toBe(rewritten);
+    const rest = await readAll(res.body);
+    expect(Buffer.concat([first.value, second.value]).toString() + rest).toBe(rewritten);
+    expect(seen()).toBe(count);
   });
 
   // With nothing reading the output the rewrite is a side effect the caller is

@@ -309,7 +309,12 @@ impl PmLicensesCommand {
         if json_output {
             print_json(&entries);
         } else {
-            print_text(&entries, flags.long, checked, pm.options.should_print_command_name());
+            print_text(
+                &entries,
+                flags.long,
+                checked,
+                pm.options.should_print_command_name(),
+            );
         }
 
         Output::flush();

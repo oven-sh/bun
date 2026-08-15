@@ -31,7 +31,7 @@ import { Glob } from "bun";
 import { expect, test } from "bun:test";
 import picomatch from "picomatch";
 
-const fuzz = fuzzEnv("BUN_GLOB_FUZZ", 0x676c6f62, 300);
+const fuzz = fuzzEnv("BUN_GLOB_FUZZ", 0x676c6f62, { release: 2000, debug: 200 });
 const PATHS_PER_PATTERN = 3;
 
 const PICOMATCH_OPTIONS = {
@@ -253,36 +253,40 @@ function mutatePath(rng: Rng, path: string[]): string[] {
   return out;
 }
 
-test(`Bun.Glob#match agrees with picomatch ${fuzz.label}`, () => {
-  const rng = new Rng(fuzz.seed);
-  let compared = 0;
-  let matched = 0;
-  for (let i = 0; i < fuzz.iters; i++) {
-    const basePath = genPath(rng);
-    const pattern = derivePattern(rng, basePath);
-    const reference = picomatch(pattern, PICOMATCH_OPTIONS);
-    const glob = new Glob(pattern);
+test(
+  `Bun.Glob#match agrees with picomatch ${fuzz.label}`,
+  () => {
+    const rng = new Rng(fuzz.seed);
+    let compared = 0;
+    let matched = 0;
+    for (let i = 0; i < fuzz.iters; i++) {
+      const basePath = genPath(rng);
+      const pattern = derivePattern(rng, basePath);
+      const reference = picomatch(pattern, PICOMATCH_OPTIONS);
+      const glob = new Glob(pattern);
 
-    const paths = [basePath];
-    while (paths.length < PATHS_PER_PATTERN) {
-      paths.push(rng.chance(0.7) ? mutatePath(rng, rng.pick(paths)) : genPath(rng));
-    }
-    for (const segments of paths) {
-      const path = segments.join("/");
-      if (path === pattern) continue;
-      const expected = reference(path);
-      const actual = glob.match(path);
-      compared++;
-      if (expected) matched++;
-      if (actual !== expected) {
-        throw new Error(
-          `new Bun.Glob(${JSON.stringify(pattern)}).match(${JSON.stringify(path)}) returned ${actual}, ` +
-            `picomatch says ${expected}. ${fuzz.repro(i)}`,
-        );
+      const paths = [basePath];
+      while (paths.length < PATHS_PER_PATTERN) {
+        paths.push(rng.chance(0.7) ? mutatePath(rng, rng.pick(paths)) : genPath(rng));
+      }
+      for (const segments of paths) {
+        const path = segments.join("/");
+        if (path === pattern) continue;
+        const expected = reference(path);
+        const actual = glob.match(path);
+        compared++;
+        if (expected) matched++;
+        if (actual !== expected) {
+          throw new Error(
+            `new Bun.Glob(${JSON.stringify(pattern)}).match(${JSON.stringify(path)}) returned ${actual}, ` +
+              `picomatch says ${expected}. ${fuzz.repro(i)}`,
+          );
+        }
       }
     }
-  }
-  console.log(`glob-differential-fuzz: ${fuzz.iters} patterns, ${compared} paths compared, ${matched} matched`);
-  expect(matched).toBeGreaterThan(0);
-  expect(matched).toBeLessThan(compared);
-}, fuzz.timeout);
+    console.log(`glob-differential-fuzz: ${fuzz.iters} patterns, ${compared} paths compared, ${matched} matched`);
+    expect(matched).toBeGreaterThan(0);
+    expect(matched).toBeLessThan(compared);
+  },
+  fuzz.timeout,
+);

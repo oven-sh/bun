@@ -1,17 +1,19 @@
 /**
  * Shared plumbing for the seeded differential fuzz tests (Bun.JSONC.parse vs
- * JSON.parse, node:path vs node, Bun.Glob vs picomatch, Bun.build sourcemaps vs
- * the `source-map` decoder, the transpiler printer vs acorn).
+ * JSON.parse, node:path vs node, Bun.Glob vs picomatch, Bun.build source maps
+ * vs the `source-map` decoder, the transpiler vs acorn and itself).
  *
- * Every oracle is deterministic for a seed, runs a few hundred iterations by
- * default, and puts the seed and iteration into each failure message, so a CI
- * failure replays locally and a long soak is one environment variable away:
+ * Every oracle generates its cases from one seeded generator, so case N is the
+ * same however many cases a run asks for, and every failure message carries the
+ * seed and the case number. A CI failure therefore replays locally with the two
+ * environment variables it prints, and a long soak is one variable away:
  *
- *     BUN_PATH_FUZZ_SEED=1234 bun bd test path-differential-fuzz
+ *     BUN_PATH_FUZZ_SEED=1234 BUN_PATH_FUZZ_ITERS=57 bun bd test path-differential-fuzz
  *     BUN_PATH_FUZZ_ITERS=20000 bun bd test path-differential-fuzz
  */
+import { isDebug } from "harness";
 
-/** mulberry32: a 32-bit seed is enough state, and it is fast under a debug JSC. */
+/** mulberry32: 32 bits of state is plenty, and it stays fast under a debug JSC. */
 export class Rng {
   private a: number;
   constructor(seed: number) {
@@ -62,34 +64,37 @@ export function envIters(name: string, fallback: number): number {
 export interface Fuzz {
   readonly seed: number;
   readonly iters: number;
-  /** Appended to the test name so a failure line shows the seed it ran with. */
+  /** Appended to the test name, so a failure line shows what the run used. */
   readonly label: string;
   /**
    * Third argument for `test()`: undefined (the runner's own per-test timeout)
    * unless the iteration count was raised for a soak, in which case the default
-   * budget is scaled up with it.
+   * run's budget is scaled up with it.
    */
   readonly timeout: number | undefined;
-  /** Replay instructions for a failure message. */
+  /** Replay instructions, for the failure message of case `iteration` (0-based). */
   repro(iteration: number): string;
 }
 
 /**
  * Reads `${prefix}_SEED` and `${prefix}_ITERS` (for example `BUN_GLOB_FUZZ_SEED`
- * and `BUN_GLOB_FUZZ_ITERS`), falling back to the given defaults. The default
- * iteration count is sized so the test takes a few seconds on a debug build.
+ * and `BUN_GLOB_FUZZ_ITERS`). The default iteration counts are sized for a few
+ * seconds of test time; a debug build's JavaScriptCore runs the generators and
+ * the reference implementations far slower, so it gets its own, smaller default.
  */
-export function fuzzEnv(prefix: string, defaultSeed: number, defaultIters: number): Fuzz {
+export function fuzzEnv(prefix: string, defaultSeed: number, defaultIters: { release: number; debug: number }): Fuzz {
   const seedName = `${prefix}_SEED`;
+  const itersName = `${prefix}_ITERS`;
   const seed = envSeed(seedName, defaultSeed);
-  const iters = envIters(`${prefix}_ITERS`, defaultIters);
+  const budget = isDebug ? defaultIters.debug : defaultIters.release;
+  const iters = envIters(itersName, budget);
   return {
     seed,
     iters,
     label: `(seed=${seed}, iters=${iters})`,
-    timeout: iters > defaultIters ? Math.ceil(iters / defaultIters) * 5_000 : undefined,
+    timeout: iters > budget ? Math.ceil(iters / budget) * 5_000 : undefined,
     repro(iteration: number): string {
-      return `seed=${seed} iteration=${iteration} (replay with ${seedName}=${seed})`;
+      return `seed=${seed} iteration=${iteration} (replay: ${seedName}=${seed} ${itersName}=${iteration + 1})`;
     },
   };
 }

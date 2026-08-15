@@ -22,7 +22,7 @@ import { bunEnv, nodeExe } from "harness";
 import path from "node:path";
 
 /** Each iteration is 24 calls (12 per namespace, see genCases). */
-const fuzz = fuzzEnv("BUN_PATH_FUZZ", 0x70617468, 150);
+const fuzz = fuzzEnv("BUN_PATH_FUZZ", 0x70617468, { release: 1000, debug: 100 });
 /** Iterations evaluated by one node child; a soak spawns one child per chunk. */
 const ITERS_PER_CHILD = 1000;
 
@@ -40,7 +40,7 @@ interface Case {
  * embedded through Function#toString, in the node child, so it must only use
  * its parameters and globals.
  */
-function evaluate(ns: path.PlatformPath, c: { fn: string; args: string[] }): string {
+function evaluate(ns: typeof path.posix, c: { fn: string; args: string[] }): string {
   try {
     if (c.fn === "format(parse())") return JSON.stringify(ns.format(ns.parse(c.args[0])));
     return JSON.stringify((ns as any)[c.fn](...c.args));
@@ -167,7 +167,9 @@ function genWin32Root(rng: Rng, kind: Win32Root, drives: readonly string[]): str
         (rng.chance(0.7) ? genSeparators(rng, WIN32_SEPARATORS) : "")
       );
     case "unc-server-only":
-      return rng.string(WIN32_SEPARATORS, 2) + rng.pick(UNC_SERVERS) + (rng.chance(0.5) ? rng.pick(WIN32_SEPARATORS) : "");
+      return (
+        rng.string(WIN32_SEPARATORS, 2) + rng.pick(UNC_SERVERS) + (rng.chance(0.5) ? rng.pick(WIN32_SEPARATORS) : "")
+      );
   }
 }
 
@@ -181,7 +183,7 @@ function genWin32Path(rng: Rng, kinds: readonly Win32Root[] = ANY_ROOT, drives: 
   return s;
 }
 
-function genSuffix(rng: Rng, p: string, ns: path.PlatformPath): string {
+function genSuffix(rng: Rng, p: string, ns: typeof path.posix): string {
   let suffix: string;
   switch (rng.int(4)) {
     case 0:
@@ -275,40 +277,49 @@ const node = nodeExe();
 // major is a meaningful oracle (the CI images install exactly that release).
 const wantedMajor = process.versions.node.split(".")[0];
 const nodeMajor =
-  node && Bun.spawnSync({ cmd: [node, "-p", "process.versions.node.split('.')[0]"], env: bunEnv }).stdout.toString().trim();
+  node &&
+  Bun.spawnSync({ cmd: [node, "-p", "process.versions.node.split('.')[0]"], env: bunEnv })
+    .stdout.toString()
+    .trim();
 
-test.skipIf(nodeMajor !== wantedMajor)(`node:path agrees with node ${fuzz.label}`, async () => {
-  const rng = new Rng(fuzz.seed);
-  let compared = 0;
-  for (let start = 0; start < fuzz.iters; start += ITERS_PER_CHILD) {
-    const cases: Case[] = [];
-    const iterationOf: number[] = [];
-    for (let i = start; i < Math.min(start + ITERS_PER_CHILD, fuzz.iters); i++) {
-      for (const ns of ["posix", "win32"] as const) {
-        for (const c of genCases(rng, ns)) {
-          cases.push(c);
-          iterationOf.push(i);
+test.skipIf(nodeMajor !== wantedMajor)(
+  `node:path agrees with node ${fuzz.label}`,
+  async () => {
+    const rng = new Rng(fuzz.seed);
+    let compared = 0;
+    for (let start = 0; start < fuzz.iters; start += ITERS_PER_CHILD) {
+      const cases: Case[] = [];
+      const iterationOf: number[] = [];
+      for (let i = start; i < Math.min(start + ITERS_PER_CHILD, fuzz.iters); i++) {
+        for (const ns of ["posix", "win32"] as const) {
+          for (const c of genCases(rng, ns)) {
+            cases.push(c);
+            iterationOf.push(i);
+          }
         }
       }
-    }
 
-    const bunResults = cases.map(c => evaluate(path[c.ns], c));
-    const { version, results: nodeResults } = await evaluateInNode(node!, cases);
-    expect(nodeResults).toHaveLength(cases.length);
+      const bunResults = cases.map(c => evaluate(path[c.ns], c));
+      const { version, results: nodeResults } = await evaluateInNode(node!, cases);
+      expect(nodeResults).toHaveLength(cases.length);
 
-    const mismatches: string[] = [];
-    for (let k = 0; k < cases.length && mismatches.length < 10; k++) {
-      if (bunResults[k] !== nodeResults[k]) {
-        mismatches.push(
-          `${describeCall(cases[k])}\n    bun:  ${bunResults[k]}\n    node: ${nodeResults[k]}\n    ${fuzz.repro(iterationOf[k])}`,
+      const mismatches: string[] = [];
+      for (let k = 0; k < cases.length && mismatches.length < 10; k++) {
+        if (bunResults[k] !== nodeResults[k]) {
+          mismatches.push(
+            `${describeCall(cases[k])}\n    bun:  ${bunResults[k]}\n    node: ${nodeResults[k]}\n    ${fuzz.repro(iterationOf[k])}`,
+          );
+        }
+      }
+      if (mismatches.length > 0) {
+        throw new Error(
+          `node:path disagrees with node v${version} (first ${mismatches.length}):\n  ${mismatches.join("\n  ")}`,
         );
       }
+      compared += cases.length;
     }
-    if (mismatches.length > 0) {
-      throw new Error(`node:path disagrees with node v${version} (first ${mismatches.length}):\n  ${mismatches.join("\n  ")}`);
-    }
-    compared += cases.length;
-  }
-  console.log(`path-differential-fuzz: ${compared} calls agree with node (${fuzz.iters} iterations)`);
-  expect(compared).toBeGreaterThan(0);
-}, fuzz.timeout);
+    console.log(`path-differential-fuzz: ${compared} calls agree with node (${fuzz.iters} iterations)`);
+    expect(compared).toBeGreaterThan(0);
+  },
+  fuzz.timeout,
+);

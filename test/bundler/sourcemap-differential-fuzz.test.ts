@@ -11,8 +11,8 @@ import { tempDir } from "harness";
 import { join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 
-const PROGRAMS_PER_BUILD = 4;
-/** Each build takes the next of these in turn, so the default run covers every one once. */
+const PROGRAMS_PER_BUILD = 2;
+/** Each build takes the next of these in turn; the defaults below are multiples of a full rotation. */
 const BUILD_OPTIONS: Partial<Parameters<typeof Bun.build>[0]>[] = [
   { format: "esm" },
   { format: "iife" },
@@ -21,15 +21,16 @@ const BUILD_OPTIONS: Partial<Parameters<typeof Bun.build>[0]>[] = [
   { format: "esm", minify: { whitespace: true } },
   { format: "iife", minify: { whitespace: true } },
 ];
-const fuzz = fuzzEnv("BUN_SOURCEMAP_FUZZ", 0x736d6170, PROGRAMS_PER_BUILD * BUILD_OPTIONS.length);
+const ROTATION = PROGRAMS_PER_BUILD * BUILD_OPTIONS.length;
+const fuzz = fuzzEnv("BUN_SOURCEMAP_FUZZ", 0x736d6170, { release: ROTATION * 5, debug: ROTATION });
 
-/** Text that never contains an identifier: comments and strings are built from it. */
+/** Comment and string contents; must not contain any generated identifier (or `console`/`log`). */
 const FILLER = ["日本語", "🎉", "é", "...", "1 + 1", "*", "'", '"', "\\u00e9", "中文 text", "ñ"];
 const IDENTIFIERS = /[A-Za-z_$][\w$]*/g;
 const IDENTIFIER_AT = /[A-Za-z_$][\w$]*/y;
 
 interface Module {
-  /** Path relative to the build root, e.g. "p3/dep0.js"; also how the map must name it. */
+  /** Path relative to the build root, e.g. "p3/dep0.js"; the map's `sources` entry for it ends with this. */
   file: string;
   source: string;
 }
@@ -279,7 +280,9 @@ async function checkProgram(program: Program, generated: string, map: any, stats
     for (const file of originals.keys()) {
       if (source === file || source.endsWith("/" + file)) return file;
     }
-    throw new Error(`map names source ${JSON.stringify(source)}, which is not one of ${[...originals.keys()]}. ${repro}`);
+    throw new Error(
+      `map names source ${JSON.stringify(source)}, which is not one of ${[...originals.keys()]}. ${repro}`,
+    );
   };
 
   for (let i = 0; i < map.sources.length; i++) {
@@ -307,8 +310,13 @@ async function checkProgram(program: Program, generated: string, map: any, stats
       }
       const key = `${m.generatedLine}:${m.generatedColumn}`;
       const previous = atGenerated.get(key);
-      if (previous !== undefined && (previous.file !== file || previous.line !== m.originalLine || previous.column !== m.originalColumn)) {
-        throw new Error(`same generated position also maps to ${previous.file}:${previous.line}:${previous.column}: ${where()}`);
+      if (
+        previous !== undefined &&
+        (previous.file !== file || previous.line !== m.originalLine || previous.column !== m.originalColumn)
+      ) {
+        throw new Error(
+          `same generated position also maps to ${previous.file}:${previous.line}:${previous.column}: ${where()}`,
+        );
       }
       atGenerated.set(key, { file, line: m.originalLine, column: m.originalColumn, name: m.name });
     });
@@ -329,52 +337,57 @@ async function checkProgram(program: Program, generated: string, map: any, stats
           );
         }
         // Bun does not emit names today; if it starts to, the name must be this identifier.
-        if (mapping.name !== null) expect(mapping.name, `name of mapping at ${lineNumber}:${match.index}. ${repro}`).toBe(word);
+        if (mapping.name !== null)
+          expect(mapping.name, `name of mapping at ${lineNumber}:${match.index}. ${repro}`).toBe(word);
       }
     }
   });
 }
 
-test(`Bun.build source maps point every mapped identifier back at itself ${fuzz.label}`, async () => {
-  const rng = new Rng(fuzz.seed);
-  const generator = new ProgramGenerator(rng);
-  const stats: Stats = { mappings: 0, identifiers: 0 };
+test(
+  `Bun.build source maps point every mapped identifier back at itself ${fuzz.label}`,
+  async () => {
+    const rng = new Rng(fuzz.seed);
+    const generator = new ProgramGenerator(rng);
+    const stats: Stats = { mappings: 0, identifiers: 0 };
 
-  for (let first = 0; first < fuzz.iters; first += PROGRAMS_PER_BUILD) {
-    const options = BUILD_OPTIONS[(first / PROGRAMS_PER_BUILD) % BUILD_OPTIONS.length];
-    const programs: Program[] = [];
-    const files: Record<string, string> = {};
-    for (let i = first; i < Math.min(first + PROGRAMS_PER_BUILD, fuzz.iters); i++) {
-      const program = generator.program(`p${i}`);
-      programs.push(program);
-      for (const module of program.modules) files[module.file] = module.source;
+    for (let first = 0; first < fuzz.iters; first += PROGRAMS_PER_BUILD) {
+      const options = BUILD_OPTIONS[(first / PROGRAMS_PER_BUILD) % BUILD_OPTIONS.length];
+      const programs: Program[] = [];
+      const files: Record<string, string> = {};
+      for (let i = first; i < Math.min(first + PROGRAMS_PER_BUILD, fuzz.iters); i++) {
+        const program = generator.program(`p${i}`);
+        programs.push(program);
+        for (const module of program.modules) files[module.file] = module.source;
+      }
+      using dir = tempDir("sourcemap-fuzz", files);
+
+      const build = await Bun.build({
+        ...options,
+        entrypoints: programs.map(p => join(String(dir), p.entry)),
+        root: String(dir),
+        sourcemap: "external",
+      });
+
+      for (const [offset, program] of programs.entries()) {
+        const iteration = first + offset;
+        const repro = `${fuzz.repro(iteration)} options=${JSON.stringify(options)}`;
+        const js = build.outputs.find(o => o.kind === "entry-point" && o.path.replace(/^\.\//, "") === program.entry);
+        expect(js, `no output for ${program.entry} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
+        // Paired by path rather than through `js.sourcemap`, which with several
+        // entrypoints currently points at the wrong artifact (handed off separately).
+        const map = build.outputs.find(o => o.kind === "sourcemap" && o.path === js!.path + ".map");
+        expect(map, `no source map for ${js!.path} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
+        await checkProgram(program, await js!.text(), await map!.json(), stats, repro);
+      }
     }
-    using dir = tempDir("sourcemap-fuzz", files);
 
-    const build = await Bun.build({
-      ...options,
-      entrypoints: programs.map(p => join(String(dir), p.entry)),
-      root: String(dir),
-      sourcemap: "external",
-    });
-
-    for (const [offset, program] of programs.entries()) {
-      const iteration = first + offset;
-      const repro = `${fuzz.repro(iteration)} options=${JSON.stringify(options)}`;
-      const js = build.outputs.find(o => o.kind === "entry-point" && o.path.replace(/^\.\//, "") === program.entry);
-      expect(js, `no output for ${program.entry} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
-      // Paired by path rather than through `js.sourcemap`, which with several
-      // entrypoints currently points at the wrong artifact (handed off separately).
-      const map = build.outputs.find(o => o.kind === "sourcemap" && o.path === js!.path + ".map");
-      expect(map, `no source map for ${js!.path} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
-      await checkProgram(program, await js!.text(), await map!.json(), stats, repro);
-    }
-  }
-
-  console.log(
-    `sourcemap-differential-fuzz: ${fuzz.iters} programs, ${stats.mappings} mappings in range, ${stats.identifiers} identifiers mapped to themselves`,
-  );
-  // Guards against the check silently going vacuous: every program has at least
-  // a console.log line worth of mapped identifiers.
-  expect(stats.identifiers).toBeGreaterThan(fuzz.iters * 4);
-}, fuzz.timeout);
+    console.log(
+      `sourcemap-differential-fuzz: ${fuzz.iters} programs, ${stats.mappings} mappings in range, ${stats.identifiers} identifiers mapped to themselves`,
+    );
+    // Guards against the check silently going vacuous: every program has at least
+    // a console.log line worth of mapped identifiers.
+    expect(stats.identifiers).toBeGreaterThan(fuzz.iters * 4);
+  },
+  fuzz.timeout,
+);

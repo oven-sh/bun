@@ -2828,9 +2828,7 @@ fn locked_version_in_lockfile<'a>(
         .map(|locked| (locked, buf))
 }
 
-/// The package of the row's name to bind a deferred peer row to, and whether it satisfies the row.
-/// Mirrors `resolve_peer_dep_version_based`, which rebinds the row on load: first satisfying
-/// candidate, else the highest one or nothing.
+/// The package to bind a deferred peer row to and whether it satisfies the row; the highest-or-nothing fallback is what `resolve_peer_dep_version_based` rebinds to on load.
 fn existing_peer_target(
     this: &PackageManager,
     name_hash: PackageNameHash,
@@ -2900,10 +2898,7 @@ fn bind_existing_peer(
     }
 }
 
-/// `row` is a root or workspace `peerDependencies` entry whose range was rewritten past
-/// `package_id`, the copy bun.lock only holds for peer rows (typically this entry's own earlier
-/// install); the entry resolves afresh instead. A package's own peer rows never do: a copy resolved
-/// for them alone is not placed in the tree.
+/// `row` is a root or workspace `peerDependencies` entry and `package_id` a copy bun.lock holds for peer rows only (usually this entry's own earlier install); a package's peer rows never qualify, a copy resolved for them alone is not placed.
 fn would_revive_leftover(
     lockfile: &Lockfile::Lockfile,
     row: DependencyID,

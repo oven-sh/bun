@@ -9,7 +9,11 @@ namespace Bun {
 class JSCommonJSExtensions : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    // put() and deleteProperty() below mirror every assignment into the native
+    // loader table. Without ProhibitsPropertyCaching, the second assignment from
+    // the same call site is served by an inline cache (a plain store into the
+    // object) and never reaches put(), so the loader table keeps the old handler.
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut | JSC::ProhibitsPropertyCaching;
     ~JSCommonJSExtensions();
 
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> m_registeredFunctions;

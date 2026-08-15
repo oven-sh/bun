@@ -1,6 +1,7 @@
 import assert from "assert";
-import { expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { tempDir } from "harness";
+import Module from "node:module";
 import path from "path";
 
 test("require.extensions shape makes sense", () => {
@@ -162,6 +163,126 @@ test("wrapping an existing extension but it's secretly sync esm", () => {
     require.extensions[".cjs"] = original;
   }
 });
+// Every assignment in these tests is executed more than once from the same
+// statement (a loop body or a helper function), which is how install()/revert()
+// helpers in packages like pirates, @babel/register and ts-node assign to
+// require.extensions. The second execution of a statement is the one that used
+// to be served by the property inline cache instead of reaching the loader.
+describe("assigning require.extensions repeatedly from one statement", () => {
+  test("a builtin extension can be overridden again after it was restored", () => {
+    using dir = tempDir("require-extensions-reoverride", {
+      "a.js": `module.exports = "a";`,
+      "b.js": `module.exports = "b";`,
+      "c.js": `module.exports = "c";`,
+    });
+    const original = require.extensions[".js"]!;
+    const rounds: { file: string; invoked: boolean; exports: unknown }[] = [];
+    try {
+      for (const file of ["a.js", "b.js", "c.js"]) {
+        let invoked = false;
+        require.extensions[".js"] = function (module, filename) {
+          invoked = true;
+          original(module, filename);
+        };
+        const exports = require(path.join(String(dir), file));
+        rounds.push({ file, invoked, exports });
+        require.extensions[".js"] = original;
+      }
+    } finally {
+      require.extensions[".js"] = original;
+    }
+    expect(rounds).toEqual([
+      { file: "a.js", invoked: true, exports: "a" },
+      { file: "b.js", invoked: true, exports: "b" },
+      { file: "c.js", invoked: true, exports: "c" },
+    ]);
+  });
+
+  test("an override that throws is invoked again by the next require of the same file", () => {
+    using dir = tempDir("require-extensions-throwing-override", {
+      "mod.js": `exports.foo = 1;`,
+    });
+    const file = path.join(String(dir), "mod.js");
+    const original = require.extensions[".js"]!;
+    const rounds: { invoked: boolean; outcome: string; cached: boolean }[] = [];
+    try {
+      for (let i = 0; i < 3; i++) {
+        let invoked = false;
+        require.extensions[".js"] = function () {
+          invoked = true;
+          throw new Error("rejected by override");
+        };
+        let outcome: string;
+        try {
+          require(file);
+          outcome = "loaded";
+        } catch (e) {
+          outcome = (e as Error).message;
+        }
+        rounds.push({ invoked, outcome, cached: file in require.cache });
+        require.extensions[".js"] = original;
+      }
+    } finally {
+      require.extensions[".js"] = original;
+      delete require.cache[file];
+    }
+    const expected = { invoked: true, outcome: "rejected by override", cached: false };
+    expect(rounds).toEqual([expected, expected, expected]);
+  });
+
+  test("restoring the builtin loader through a helper unregisters the current override", () => {
+    using dir = tempDir("require-extensions-restore-helper", {
+      "a.js": `module.exports = "a";`,
+    });
+    const original = require.extensions[".js"]!;
+    const calls: string[] = [];
+    function restore() {
+      require.extensions[".js"] = original;
+    }
+    try {
+      require.extensions[".js"] = function (module, filename) {
+        calls.push("first");
+        original(module, filename);
+      };
+      restore();
+      require.extensions[".js"] = function (module, filename) {
+        calls.push("second");
+        original(module, filename);
+      };
+      restore();
+
+      expect(require.extensions[".js"]).toBe(original);
+      expect(require(path.join(String(dir), "a.js"))).toBe("a");
+      expect(calls).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("re-registering a custom extension through a helper dispatches to the latest handler", () => {
+    using dir = tempDir("require-extensions-reregister", {
+      "one.reregistered": "",
+      "two.reregistered": "",
+      "three.reregistered": "",
+    });
+    function register(tag: string) {
+      Module._extensions[".reregistered"] = function (module) {
+        module.exports = tag;
+      };
+    }
+    const loaded: string[] = [];
+    try {
+      for (const tag of ["one", "two", "three"]) {
+        register(tag);
+        loaded.push(require(path.join(String(dir), `${tag}.reregistered`)));
+      }
+    } finally {
+      delete Module._extensions[".reregistered"];
+    }
+    expect(loaded).toEqual(["one", "two", "three"]);
+  });
+});
+
 test("mutating extensions is banned by some files", () => {
   // vercel is not allowed to mutate require.extensions
   const files = ["node_modules/next/dist/build/next-config-ts/index.js", "node_modules/@meteorjs/babel/index.js"];

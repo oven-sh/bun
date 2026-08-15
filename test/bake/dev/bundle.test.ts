@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
+import { isWindows } from "harness";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -863,5 +864,48 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});
+
+// Resolution failures are tracked so the import is retried when its directory
+// changes (Resolver.bust_dir_cache_from_specifier, then
+// DirectoryWatchStore.track_resolution_failure). Both joined the importer's
+// directory with the specifier into a fixed-size path buffer; a specifier that
+// did not fit aborted the whole process with
+// "panic: range end index N out of range for slice of length M" instead of
+// reporting the unresolved import. The buffer is MAX_PATH_BYTES: 4 KiB on
+// Linux, 1 KiB on macOS and about 96 KiB on Windows.
+const specifierLongerThanPathBuffer = Buffer.alloc((isWindows ? 96 : 4) * 1024 + 1024, "a").toString();
+
+devTest("unresolvable relative import longer than the path buffer is a bundling error", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import './${specifierLongerThanPathBuffer}';
+      console.log('loaded');
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("index.ts", `console.log('fixed');`);
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+
+// A CSS url() without "./" skips the resolver's directory cache busting, so
+// this only reaches DirectoryWatchStore.track_resolution_failure.
+devTest("unresolvable css url() longer than the path buffer is a bundling error", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["styles.css"] }),
+    "styles.css": `
+      body {
+        background-image: url(${specifierLongerThanPathBuffer});
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `body { color: blue; }`);
+    expect((await dev.fetch("/")).status).toBe(200);
   },
 });

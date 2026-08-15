@@ -466,6 +466,50 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+async function readUntil(stream: ReadableStream<Uint8Array>, needle: string): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  try {
+    while (!output.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed before ${JSON.stringify(needle)} appeared. Output:\n${output}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return output;
+}
+
+test("--watch reports an unresolvable relative import longer than the path buffer and keeps watching", async () => {
+  // When watching, an unresolved relative import busts the resolver's directory
+  // cache for the path it would have resolved to. That path used to be joined
+  // into a 4 KiB buffer, so a longer specifier aborted the process with
+  // "panic: range end index N out of range for slice of length 4095".
+  const specifier = "./" + Buffer.alloc(5 * 1024, "a").toString();
+  using dir = tempDir("build-watch-long-specifier", {
+    "entry.ts": `import "${specifier}";\nconsole.log("entry");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--watch", "entry.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  await readUntil(proc.stderr, `error: Could not resolve: "${specifier}"`);
+  expect(proc.exitCode).toBeNull();
+
+  // The failed build left the watcher running: fixing the file triggers a rebuild.
+  await Bun.write(path.join(String(dir), "entry.ts"), `console.log("fixed");`);
+  expect(await readUntil(proc.stdout, "entry.js")).toContain("Bundled 1 module");
+  expect(await Bun.file(path.join(String(dir), "dist", "entry.js")).text()).toContain("fixed");
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

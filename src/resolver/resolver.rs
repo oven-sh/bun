@@ -102,18 +102,6 @@ mod bun_paths {
             |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
     }
-    pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
-        // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
-        // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
-        // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
-        // pass exactly one part). Re-erase to `'static` so the resolver can hold it
-        // across `&mut self` calls.
-        let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(
-            cwd, part
-        ));
-        // SAFETY: see NOTE — slice borrows threadlocal storage, valid 'static per-thread.
-        unsafe { bun_ptr::detach_lifetime(s) }
-    }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
     }
@@ -2482,11 +2470,15 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        let joined = bun_paths::join_abs(
-            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
-            bun_paths::Platform::AUTO,
-            specifier,
-        );
+        // `specifier` is arbitrary source text. A path that does not fit in a
+        // path buffer cannot be in either cache, so there is nothing to bust.
+        let source_dir = bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+            bun_paths::platform::Auto,
+        >(source_dir, &mut buf.0, &[specifier]) else {
+            return false;
+        };
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);

@@ -814,14 +814,10 @@ impl BunTest {
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
         let first_call = !unsafe { core::mem::replace(&mut (*this).called, true) };
-        // Only the first done() reports its error; a repeated call is a no-op as in Bun 1.2.20
-        // (Jest: "Expected done to be called once, but it was called multiple times.").
+        // Only the first done() reports its error; repeated calls are no-ops (Bun 1.2.20 behavior).
         if first_call && was_error {
-            // done(err) fails the entry this `done` was created for, like a throw or rejection
-            // from the same callback would. Keyed by that entry's own RefDataValue it lands on
-            // the right sequence inside a concurrent group too, and is rejected as stale once
-            // the entry has finished. The generic `uncaught_exception` route attributes by
-            // `get_current_state_data()`, which can do neither.
+            // Key the failure by this `done`'s own entry, not get_current_state_data():
+            // in a concurrent group the "current" entry can be a different test.
             // SAFETY: see above; both fields are read before any JS can run.
             let (buntest, owner) = unsafe { ((*this).buntest_weak.upgrade(), (*this).owner.clone()) };
             match buntest {

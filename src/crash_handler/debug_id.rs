@@ -1,16 +1,7 @@
-//! The identifier the linker stamps into both the executable and its debug
-//! info: the PDB GUID in the PE CodeView record on Windows, the GNU build-id
-//! note on ELF, `LC_UUID` on Mach-O. Unlike the git sha it names one specific
-//! link: a commit can be published as several links of one platform (an x64
-//! and an x64-baseline zip, a re-run release step), and symbolizing a trace
-//! against the other link's debug info produces plausible-looking nonsense.
-//! The trace string carries this id so bun.report can check the debug file it
-//! picked. Bytes are kept in the order the platform's tools print them
-//! (`dumpbin`, `readelf -n`, `dwarfdump --uuid`), so the hex in a trace string
-//! compares directly against their output.
-//!
-//! Runs inside the crash handler: reads only the loader-mapped image headers,
-//! bounds-checks every offset, and does not allocate.
+//! The id the linker stamps into both the executable and its debug info (PDB
+//! GUID, GNU build-id, `LC_UUID`), in the byte order `dumpbin` / `readelf -n` /
+//! `dwarfdump --uuid` print it. Read from the mapped image headers inside the
+//! crash handler, so every offset is bounds-checked and nothing allocates.
 
 use bun_collections::BoundedArray;
 
@@ -19,9 +10,7 @@ pub(crate) const MAX_LEN: usize = 20;
 
 pub(crate) type DebugId = BoundedArray<u8, MAX_LEN>;
 
-/// The debug id of the image whose frames the trace string encodes as bare
-/// image-relative addresses (see `StackLine::from_address`), or `None` when
-/// the image does not carry one.
+/// The id of the image whose frames `StackLine` encodes as bare addresses.
 pub(crate) fn of_running_executable() -> Option<DebugId> {
     #[cfg(windows)]
     {
@@ -66,9 +55,8 @@ fn pe_codeview_guid() -> Option<DebugId> {
     }
 
     let range = bun_sys::windows::exe_image_range();
-    // SAFETY: the loader maps the exe's headers and sections contiguously over
-    // `range` (base..base + SizeOfImage) for the lifetime of the process, and
-    // `Image` checks every offset against that length before reading it.
+    // SAFETY: the loader keeps base..base + SizeOfImage mapped for the life of
+    // the process; `Image` bounds-checks every read against it.
     let image = Image(unsafe {
         core::slice::from_raw_parts(range.start as *const u8, range.end - range.start)
     });
@@ -77,8 +65,7 @@ fn pe_codeview_guid() -> Option<DebugId> {
     if image.bytes(nt_headers, 4)? != b"PE\0\0" {
         return None;
     }
-    // Signature(4) + IMAGE_FILE_HEADER(20), then IMAGE_OPTIONAL_HEADER64 with
-    // NumberOfRvaAndSizes at +108 and the 8-byte DataDirectory entries at +112.
+    // IMAGE_OPTIONAL_HEADER64: NumberOfRvaAndSizes at +108, DataDirectory at +112.
     let optional_header = nt_headers + 4 + 20;
     if image.u16(optional_header)? != 0x20B {
         return None;
@@ -97,8 +84,7 @@ fn pe_codeview_guid() -> Option<DebugId> {
             let codeview = image.u32(entry + 20)? as usize;
             if codeview != 0 && image.bytes(codeview, 4)? == b"RSDS" {
                 let guid = image.bytes(codeview + 4, 16)?;
-                // GUID {u32, u16, u16, [u8; 8]} is stored little-endian; emit
-                // the byte order of its textual form.
+                // The first three GUID fields are little-endian in memory.
                 let mut id = [0u8; 16];
                 id[0..4].copy_from_slice(&[guid[3], guid[2], guid[1], guid[0]]);
                 id[4..6].copy_from_slice(&[guid[5], guid[4]]);
@@ -124,13 +110,13 @@ fn macho_uuid() -> Option<DebugId> {
         uuid: [u8; 16],
     }
 
-    // Image 0 is the main executable, the image `StackLine` encodes as bare addresses.
+    // Image 0 is the main executable, the one `StackLine` encodes as bare addresses.
     let header = bun_sys::c::_dyld_get_image_header(0);
     if header.is_null() {
         return None;
     }
-    // SAFETY: dyld keeps the main executable's header and the `sizeofcmds`
-    // bytes of load commands following it mapped for the process lifetime.
+    // SAFETY: dyld keeps the main executable's header and its `sizeofcmds`
+    // bytes of load commands mapped for the life of the process.
     let (ncmds, load_commands) = unsafe {
         let header_ref = &*header;
         (
@@ -163,8 +149,7 @@ fn elf_gnu_build_id() -> Option<DebugId> {
         result: Option<DebugId>,
     }
 
-    // Same shape as `bun_sys::elf::find_loaded_module`: the object whose PT_LOAD
-    // covers an address inside this binary is the one whose notes to read.
+    // As in `bun_sys::elf::find_loaded_module`: the object whose PT_LOAD covers `address`.
     extern "C" fn callback(
         info: *mut libc::dl_phdr_info,
         _size: libc::size_t,
@@ -172,8 +157,7 @@ fn elf_gnu_build_id() -> Option<DebugId> {
     ) -> c_int {
         // SAFETY: `data` is the `&mut Ctx` handed to dl_iterate_phdr below.
         let ctx = unsafe { bun_core::callback_ctx::<Ctx>(data) };
-        // SAFETY: dl_iterate_phdr passes a valid info pointer whose dlpi_phdr
-        // points to dlpi_phnum program headers.
+        // SAFETY: dl_iterate_phdr passes a valid info whose dlpi_phdr has dlpi_phnum entries.
         let (base, phdrs) = unsafe {
             let info = &*info;
             (
@@ -191,10 +175,8 @@ fn elf_gnu_build_id() -> Option<DebugId> {
             return 0;
         }
         for phdr in phdrs.iter().filter(|phdr| phdr.p_type == PT_NOTE) {
-            // SAFETY: a PT_NOTE segment lies inside one of the object's mapped
-            // PT_LOAD segments, so `p_memsz` bytes are readable at
-            // `base + p_vaddr` while the object is loaded, and the main
-            // executable is never unloaded.
+            // SAFETY: PT_NOTE lies inside a PT_LOAD of this object, which is the
+            // main executable and therefore stays mapped.
             let notes = unsafe {
                 core::slice::from_raw_parts(
                     base.wrapping_add(phdr.p_vaddr as usize) as *const u8,
@@ -220,9 +202,8 @@ fn elf_gnu_build_id() -> Option<DebugId> {
     ctx.result
 }
 
-/// Each note in a PT_NOTE segment is an `Elf64_Nhdr` (namesz, descsz, type as
-/// native-endian u32s) followed by the name and the descriptor, each padded to
-/// a multiple of 4 bytes.
+/// Notes are `Elf64_Nhdr {namesz, descsz, type}` followed by the name and the
+/// descriptor, each padded to 4 bytes.
 #[cfg(not(any(windows, target_os = "macos")))]
 fn gnu_build_id_note(mut notes: &[u8]) -> Option<DebugId> {
     const NT_GNU_BUILD_ID: u32 = 3;

@@ -550,14 +550,9 @@ describe("automatic crash reporter", () => {
   }
 });
 
-// A trace string names the build it came from. The sha alone is not enough:
-// one commit can be published as more than one link of the same platform
-// (the x64 and x64-baseline zips, or a re-run of the release step), and
-// bun.report symbolizing against the wrong link's debug info produces
-// plausible-looking nonsense. So after the sha the string carries the id the
-// linker stamped into the executable and its debug info. Layout (must stay in
-// sync with `encode_trace_string` in src/crash_handler/lib.rs and bun.report's
-// lib/parser.ts):
+// One commit can be published as several links of the same platform (x64 and
+// x64-baseline), so after the sha the trace string carries the id the linker
+// stamped into the executable. Layout (`encode_trace_string` in src/crash_handler/lib.rs):
 //
 //   {platform}{command}4{sha7}{build flags VLQ}{id byte count VLQ}{id hex}{features 2 VLQs}{frames}A{reason}
 describe.concurrent("trace string identifies the build", () => {

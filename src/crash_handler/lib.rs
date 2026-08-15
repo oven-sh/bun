@@ -6,8 +6,7 @@
 //!
 //! - What version and commit of Bun captured the backtrace.
 //! - The platform the backtrace was captured on.
-//! - The debug id of the executable, naming the exact link of that commit
-//!   whose debug info the addresses below must be remapped with.
+//! - The debug id of the executable, i.e. which link of that commit it is.
 //! - The list of addresses with ASLR removed, ready to be remapped.
 //! - If panicking, the message that was panicked with.
 //!
@@ -2398,19 +2397,13 @@ mod draft {
         };
     }
 
-    /// Note to the decoder on how to process this string. This ensures backwards
-    /// compatibility with older versions of the tracestring. Must be kept in
-    /// sync with `lib/parser.ts` in bun.report.
+    /// Note to the decoder (bun.report's `lib/parser.ts`) on how to process this string.
     ///
     /// '1' - original. uses 7 char hash with VLQ encoded stack-frames
     /// '2' - same as '1' but this build is known to be a canary build
-    /// '3' - defined by the decoder (build flags + fault registers), never emitted
-    /// '4' - '1' with two fields between the hash and the features: one VLQ of
-    ///       `BuildFlags` (replaces the '1'/'2' split), then the executable's
-    ///       debug id as a VLQ byte count followed by that many bytes in
-    ///       lowercase hex (count 0 when the executable has none). Hex rather
-    ///       than VLQs so the id can be compared with `readelf -n` / `dumpbin`
-    ///       / `dwarfdump --uuid` output straight from the URL.
+    /// '3' - decoder-only (build flags + fault registers), never emitted
+    /// '4' - '1' plus, after the hash: a `BuildFlags` VLQ, then the debug id as a
+    ///       VLQ byte count and that many bytes of lowercase hex (0 bytes if none)
     const VERSION_CHAR: &str = "4";
 
     bitflags::bitflags! {

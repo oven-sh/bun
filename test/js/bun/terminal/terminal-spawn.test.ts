@@ -268,6 +268,37 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(output).toContain("rows=45");
   });
 
+  async function sizeSeenBySubprocess(size: Pick<Bun.TerminalOptions, "cols" | "rows">): Promise<string> {
+    let output = "";
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    await using terminal = new Bun.Terminal({
+      ...size,
+      data(_term, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("]")) resolve();
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('[' + process.stdout.columns + 'x' + process.stdout.rows + ']')"],
+      env: bunEnv,
+      terminal,
+    });
+
+    await promise;
+    await proc.exited;
+    return output.match(/\[\d+x\d+\]/)?.[0] ?? output;
+  }
+
+  test("null cols/rows leave the default size in place", async () => {
+    expect(await sizeSeenBySubprocess({ cols: null, rows: null } as any)).toBe("[80x24]");
+  });
+
+  test("cols/rows given as numeric strings are coerced", async () => {
+    expect(await sizeSeenBySubprocess({ cols: "101", rows: "31" } as any)).toBe("[101x31]");
+  });
+
   test("exit callback fires after close", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     const terminal = new Bun.Terminal({

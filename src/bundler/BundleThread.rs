@@ -150,6 +150,9 @@ impl<C: CompletionStruct> BundleThread<C> {
         let ptr = SendPtr(instance);
         let thread = std::thread::Builder::new()
             .name("Bundler".into())
+            // The linker's per-edge graph walks recurse deeply; Rust's 2 MiB
+            // default is not enough (Zig's std.Thread default was 16 MiB).
+            .stack_size(16 * 1024 * 1024)
             .spawn(move || {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`

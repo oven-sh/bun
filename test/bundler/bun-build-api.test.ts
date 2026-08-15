@@ -43,6 +43,24 @@ describe("Bun.build", () => {
     expect(await build.outputs[0].text()).toEqualIgnoringWhitespace(".hello{color:#00f}.hi{color:red}\n");
   });
 
+  test("css @import chain of 1000 files does not overflow the bundle thread stack", async () => {
+    const files: Record<string, string> = {};
+    const n = 1000;
+    for (let i = 0; i < n; i++) {
+      files[`c${i}.css`] = (i + 1 < n ? `@import "./c${i + 1}.css";\n` : "") + `.a${i} { color: red; }\n`;
+    }
+    const dir = tempDirWithFiles("bun-build-api-css-chain", files);
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "c0.css")],
+      write: false,
+    });
+
+    expect(build.success).toBe(true);
+    expect(build.outputs).toHaveLength(1);
+    expect(await build.outputs[0].text()).toContain(`.a${n - 1}`);
+  });
+
   test("bytecode works", async () => {
     const dir = tempDirWithFiles("bun-build-api-bytecode", {
       "package.json": `{}`,

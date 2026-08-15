@@ -163,7 +163,7 @@ fn find_source_mapping_url(source: &[u8]) -> Option<&[u8]> {
         return None;
     }
 
-    let last_line_start = match body.iter().rposition(|&b| b == b'\n') {
+    let last_line_start = match bun_core::strings::last_index_of_char(body, b'\n') {
         Some(i) => i + 1,
         None => 0,
     };
@@ -208,7 +208,7 @@ fn parse_data_url(url: &[u8]) -> Option<Box<InputSourceMap>> {
     while !rest.is_empty() && rest[0] == b';' {
         let after = &rest[1..];
         // Advance past one parameter up to the next ';' or ','.
-        let param_end = after.iter().position(|&b| b == b';' || b == b',')?;
+        let param_end = bun_core::strings::index_of_any(after, b";,")?;
         let param = &after[..param_end];
         if param == b"base64" {
             is_base64 = true;

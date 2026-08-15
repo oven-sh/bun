@@ -1881,7 +1881,6 @@ fn parse_data_loader<'a>(
             let options = bun_parsers::xml::Options {
                 compact: true,
                 encoding: bun_parsers::xml::InputEncoding::File,
-                arrays: bun_parsers::xml::Arrays::Repeated,
             };
             bun_core::analytics::Features::xml_parse_inc();
             match bun_parsers::xml::XML::parse(source, log, arena, options) {

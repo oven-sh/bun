@@ -62,6 +62,8 @@ describe("input types", () => {
 
   test("options must be an object; compact must be a boolean", () => {
     expect(() => XML.parse("<a/>", 1 as any)).toThrow(TypeError);
+    // A function is not read as options: the position is reserved for a reviver.
+    expect(() => XML.parse("<a/>", ((k: string, v: unknown) => v) as any)).toThrow(TypeError);
     expect(() => XML.parse("<a/>", { compact: "no" } as any)).toThrow(TypeError);
     expect(XML.parse("<a/>", null as any)).toEqual({ a: "" });
     expect(XML.parse("<a/>", {})).toEqual({ a: "" });
@@ -125,39 +127,6 @@ describe("compact shape", () => {
       const compact = (XML.parse(doc) as any).a;
       expect(typeof compact === "string" ? compact : (compact["#text"] ?? "")).toBe(joined);
     }
-  });
-
-  test("arrays: forced for every child, or by name; never the root", () => {
-    const doc = `<r><a>1</a><b><a>2</a><a>3</a></b><c x="1">t</c></r>`;
-    expect(XML.parse(doc, { arrays: true })).toEqual({
-      r: { a: ["1"], b: [{ a: ["2", "3"] }], c: [{ "@x": "1", "#text": "t" }] },
-    });
-    expect(XML.parse(doc, { arrays: ["a", "c", "r"] })).toEqual({
-      r: { a: ["1"], b: { a: ["2", "3"] }, c: [{ "@x": "1", "#text": "t" }] },
-    });
-    expect(XML.parse(doc, { arrays: [] })).toEqual(XML.parse(doc));
-    expect(XML.parse(doc, { arrays: false })).toEqual(XML.parse(doc));
-    expect(XML.parse(`<s:a xmlns:s="u"><s:b/></s:a>`, { arrays: ["s:b"] })).toEqual({
-      "s:a": { "@xmlns:s": "u", "s:b": [""] },
-    });
-    expect(XML.parse(Buffer.from(`<r><é/></r>`), { arrays: ["é"] })).toEqual({ r: { é: [""] } });
-    expect(XML.parse(`<r><é/></r>`, { arrays: ["é"] })).toEqual({ r: { é: [""] } });
-    expect(XML.parse(`<r><é/><\u{1F600}/></r>`, { arrays: ["é"] })).toEqual({ r: { é: [""], "\u{1F600}": "" } });
-    // Names are compared as code units, so a 16-bit string whose element names begin
-    // with U+xx23 (the low byte of "#") is not mistaken for "#text".
-    expect(XML.parse(`<r é="丣"><У/><أ>1</أ><b/></r>`, { arrays: true })).toEqual({
-      r: { "@é": "丣", У: [""], أ: ["1"], b: [""] },
-    });
-    expect(XML.parse(`<r é="丣"><У/><b/></r>`, { arrays: ["У"] })).toEqual({ r: { "@é": "丣", У: [""], b: "" } });
-    // #text itself is never wrapped, in any encoding.
-    expect(XML.parse(`<r é="丣">t<b/></r>`, { arrays: true })).toEqual({ r: { "@é": "丣", "#text": "t", b: [""] } });
-    expect(XML.parse(Buffer.from(`<r>t<b/></r>`), { arrays: true })).toEqual({ r: { "#text": "t", b: [""] } });
-    // Ignored for the tree shape.
-    expect(XML.parse(`<r><a/></r>`, { compact: false, arrays: true }).children).toEqual([
-      { name: "a", attributes: {}, children: [] },
-    ]);
-    expect(() => XML.parse(doc, { arrays: "a" } as any)).toThrow(TypeError);
-    expect(() => XML.parse(doc, { arrays: [1] } as any)).toThrow(TypeError);
   });
 
   test("CDATA and references are just text", () => {

@@ -855,7 +855,7 @@ declare module "bun" {
      *   sit between child elements (layout).
      * - any other key — a child element name, holding that child's
      *   {@link Value}, or an array of them when the name occurs more than once
-     *   in this element (or is selected by {@link ParseOptions.arrays}).
+     *   in this element.
      *
      * Keys are in document order: attributes first, then child names and
      * `"#text"` in order of first appearance. `@` and `#` cannot begin an XML
@@ -928,22 +928,6 @@ declare module "bun" {
        * @default true
        */
       compact?: boolean;
-
-      /**
-       * Compact shape only: child elements that are always delivered as arrays
-       * even where they occur once — `true` for every child element, or the
-       * element names (as written, prefix included) to treat that way. The
-       * root element is never wrapped. By default a name holds an array only in
-       * a parent where it occurs more than once, so a list of one and a list of
-       * two have different types; use this for elements you iterate.
-       *
-       * @example
-       * ```ts
-       * XML.parse(`<feed><entry><id>1</id></entry></feed>`).feed.entry            // { id: "1" }
-       * XML.parse(`<feed><entry><id>1</id></entry></feed>`, { arrays: ["entry"] }) // .feed.entry: [ { id: "1" } ]
-       * ```
-       */
-      arrays?: boolean | string[];
     }
 
     /**

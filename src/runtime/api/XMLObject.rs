@@ -5,7 +5,7 @@
 //! `{ [root]: value }` where an element with no attributes and no child
 //! elements is its text, exactly, and otherwise an object with `"@name"`
 //! attribute keys, one key per distinct child element name (an array when
-//! the name repeats or `arrays` lists it), and `"#text"` — or, with
+//! the name repeats), and `"#text"` — or, with
 //! `{ compact: false }`, the node tree `{ name, attributes, children }` whose
 //! children also include `{ comment }` and `{ target, data }`. `stringify`
 //! accepts either shape and always emits well-formed XML or throws.
@@ -29,50 +29,19 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
 
 #[bun_jsc::host_fn]
 pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // A function here is reserved for a reviver; reject it rather than read
+    // it as an options object with no keys.
     let options = frame.argument(1);
-    let mut compact = true;
-    // `arrays`: `true` for every child element, or the element names.
-    let mut arrays_all = false;
-    let mut array_names: Vec<Box<[u8]>> = Vec::new();
-    if options.is_object() {
-        compact = options
+    let compact = if options.is_undefined_or_null() {
+        true
+    } else if options.is_object() && !options.is_callable() {
+        options
             .get_boolean_strict(global, "compact")?
-            .unwrap_or(true);
-        if let Some(arrays) = options.get(global, "arrays")? {
-            if arrays.is_boolean() {
-                arrays_all = arrays.as_boolean();
-            } else if arrays.is_array() {
-                let mut iter = arrays.array_iterator(global)?;
-                while let Some(name) = iter.next()? {
-                    if !name.is_string() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "XML.parse: 'arrays' must be a boolean or an array of element names"
-                        )));
-                    }
-                    array_names.push(
-                        name.to_bun_string(global)?
-                            .to_utf8_bytes()
-                            .into_boxed_slice(),
-                    );
-                }
-            } else if !arrays.is_undefined_or_null() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "XML.parse: 'arrays' must be a boolean or an array of element names"
-                )));
-            }
-        }
-    } else if !options.is_undefined_or_null() {
+            .unwrap_or(true)
+    } else {
         return Err(
             global.throw_invalid_arguments(format_args!("XML.parse options must be an object"))
         );
-    }
-    let name_refs: Vec<&[u8]> = array_names.iter().map(|n| &n[..]).collect();
-    let arrays = if arrays_all {
-        xml::Arrays::All
-    } else if name_refs.is_empty() {
-        xml::Arrays::Repeated
-    } else {
-        xml::Arrays::Names(&name_refs)
     };
 
     // Bytes (TypedArray, ArrayBuffer, DataView, Blob) go through BOM /
@@ -94,11 +63,7 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 super::SourceEncoding::Utf16Text => xml::InputEncoding::Text,
             };
             bun_core::analytics::Features::xml_parse_inc();
-            let options = xml::Options {
-                compact,
-                encoding,
-                arrays,
-            };
+            let options = xml::Options { compact, encoding };
             let mut result = if source_encoding == super::SourceEncoding::Utf16Text {
                 // The scaffold hands the string's code units over as bytes.
                 let units: &[u16] = bytemuck::cast_slice(&source.contents);
@@ -118,7 +83,6 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 let options = xml::Options {
                     compact,
                     encoding: xml::InputEncoding::Text,
-                    arrays,
                 };
                 result = XML::parse(&utf8_source, log, arena, options);
             }

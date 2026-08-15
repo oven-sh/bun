@@ -51,7 +51,7 @@ By default the result is a **compact object** keyed by element name — the `@at
 - The result has one key, the root element's name.
 - An element with no attributes and no child elements becomes its character data — a string, `""` when empty (`<paid/>` and `<paid></paid>` are the same thing in XML).
 - Any other element becomes an object: a `"@name"` key per attribute, then one key per distinct child element name and a `"#text"` key for the element's own text, in the order each first appears.
-- A child name holds an **array** when that name occurs more than once in the element, in document order; otherwise it holds the single value. See [`arrays`](#always-arrays) to make this stable.
+- A child name holds an **array** when that name occurs more than once in the element, in document order; otherwise it holds the single value. See [One or many](#one-or-many).
 - **`compact` changes the structure, never the values.** Text is returned as written — leading, trailing and internal whitespace included, CDATA sections and entity references already expanded, line ends normalized to `\n` — exactly what the tree shape would give for the same element. Having one `"#text"` per element forces two structural things: an element's text runs are concatenated, and a whitespace-only run sitting between child elements (the document's layout) is left out. If your documents are hand-formatted (`<name>\n  value\n</name>`), trim where you read.
 - All values are strings. Nothing is coerced to numbers, booleans, or `null`.
 - Names are kept as written, namespace prefix included (`"soap:Body"`); `xmlns` declarations are ordinary attributes.
@@ -86,18 +86,16 @@ console.log(p);
 
 Every element is `{ name, attributes, children }` (both always present). `children` holds, in order: text as strings (exact, whitespace-only runs included, adjacent text merged), child elements, comments as `{ comment }`, and processing instructions as `{ target, data }` — tell them apart by which key an object has. That is everything XML element content can contain. As in the compact shape, the declaration, the DOCTYPE, and anything before or after the root element are not represented.
 
-#### Always-arrays
+#### One or many
 
-In the compact shape a list of one and a list of two have different types (`entry: {…}` vs `entry: [{…}, {…}]`). For elements you iterate, say so:
+In the compact shape a list of one and a list of two have different types (`entry: {…}` vs `entry: [{…}, {…}]`), and an element that is usually a string becomes an object when it carries an attribute (`<title>` vs `<title type="html">`). Read values you iterate, or that may grow attributes, defensively:
 
 ```ts
-const { feed } = XML.parse(atom, { arrays: ["entry", "link", "category"] });
-for (const entry of feed.entry) { … }          // always an array, even with one <entry>
+const entries = [feed.entry ?? []].flat(); // always an array
+const title = typeof e.title === "string" ? e.title : (e.title["#text"] ?? "");
 ```
 
-`arrays: true` makes every child element an array. Names are matched as written (prefix included); the root element is never wrapped; `"@attr"` and `"#text"` are never arrays. The option does nothing in the tree shape, where `children` is always an array.
-
-An element that is usually a string can still turn into an object when it carries an attribute (`<title>` vs `<title type="html">`); read such values with `typeof v === "string" ? v : v["#text"] ?? ""`.
+The tree shape has neither ambiguity: `children` is always an array and every element is an object.
 
 #### Input types and encodings
 
@@ -183,16 +181,16 @@ The second parameter is reserved and must be `null` or `undefined`.
 
 `Bun.XML` is a value transform like `JSON.parse`, not an event (SAX/expat-style) or DOM API, and it is not a drop-in replacement for any npm package — those packages are not drop-in for each other either. Its compact shape is the `@attr` / `#text` convention that xmltodict, Json.NET and most others share, so moving over is mostly a matter of key names:
 
-|                                 | `Bun.XML.parse`                                             | fast-xml-parser                                             | xml2js                                   |
-| ------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
-| attributes                      | `"@id"`                                                     | dropped by default; `"@_id"` with `ignoreAttributes: false` | grouped under `$`                        |
-| text beside attributes/children | `"#text"`                                                   | `"#text"`                                                   | `_`                                      |
-| repeated child                  | array; single child is not (see [`arrays`](#always-arrays)) | same (`isArray`)                                            | everything is an array (`explicitArray`) |
-| values                          | always strings, exactly as written                          | `"007"` → `7`, `"true"` → `true`, trimmed, by default       | strings                                  |
-| namespaces                      | names as written (`"itunes:title"`), `xmlns` as attributes  | same by default                                             | same by default                          |
-| attribute order                 | document order                                              | document order                                              | document order                           |
-| comments / PIs                  | only in the tree shape                                      | opt-in keys                                                 | dropped                                  |
-| not well-formed input           | `SyntaxError`                                               | usually accepted                                            | error                                    |
+|                                 | `Bun.XML.parse`                                            | fast-xml-parser                                             | xml2js                                   |
+| ------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- | ---------------------------------------- |
+| attributes                      | `"@id"`                                                    | dropped by default; `"@_id"` with `ignoreAttributes: false` | grouped under `$`                        |
+| text beside attributes/children | `"#text"`                                                  | `"#text"`                                                   | `_`                                      |
+| repeated child                  | array; a single child is not ([One or many](#one-or-many)) | same (`isArray` opts in)                                    | everything is an array (`explicitArray`) |
+| values                          | always strings, exactly as written                         | `"007"` → `7`, `"true"` → `true`, trimmed, by default       | strings                                  |
+| namespaces                      | names as written (`"itunes:title"`), `xmlns` as attributes | same by default                                             | same by default                          |
+| attribute order                 | document order                                             | document order                                              | document order                           |
+| comments / PIs                  | only in the tree shape                                     | opt-in keys                                                 | dropped                                  |
+| not well-formed input           | `SyntaxError`                                              | usually accepted                                            | error                                    |
 
 ---
 

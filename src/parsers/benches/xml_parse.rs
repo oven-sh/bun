@@ -130,7 +130,6 @@ fn maybe_loop() {
                 let opts = xml::Options {
                     compact: imp == "bun_compact",
                     encoding: xml::InputEncoding::Bytes,
-                    arrays: xml::Arrays::Repeated,
                 };
                 let e = xml::XML::parse(&source, &mut log, &bump, opts).expect("parse");
                 std::hint::black_box(&e);
@@ -179,7 +178,6 @@ fn bench_xml(c: &mut Criterion) {
                     let opts = xml::Options {
                         compact,
                         encoding: xml::InputEncoding::Bytes,
-                        arrays: xml::Arrays::Repeated,
                     };
                     let e = xml::XML::parse(&source, &mut log, &bump, opts).unwrap_or_else(|_| {
                         panic!(

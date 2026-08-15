@@ -6,8 +6,6 @@ expectType(doc).is<XML.Document>();
 expectType(Bun.XML.parse("<a/>")).is<XML.Document>();
 expectType(XML.parse(new Uint8Array())).is<XML.Document>();
 expectType(XML.parse("<a/>", { compact: true })).is<XML.Document>();
-expectType(XML.parse("<a/>", { arrays: ["b"] })).is<XML.Document>();
-expectType(XML.parse("<a/>", { arrays: true, compact: true })).is<XML.Document>();
 expectType(XML.parse("<a/>", { compact: false })).is<XML.Node>();
 expectType(XML.parse("<a/>", { compact: false }).children).is<
   Array<string | XML.Node | XML.Comment | XML.ProcessingInstruction>
@@ -38,8 +36,8 @@ for (const c of XML.parse("<a/>", { compact: false }).children) {
 XML.parse({});
 // @ts-expect-error
 XML.parse("<a/>", { compact: "no" });
-// @ts-expect-error
-XML.parse("<a/>", { arrays: "item" });
+// @ts-expect-error - reserved for a reviver, not accepted yet
+XML.parse("<a/>", (key: string, value: unknown) => value);
 
 expectType(XML.stringify({ a: { "@id": "1", b: ["x"] } })).is<string>();
 expectType(XML.stringify({ name: "a", attributes: {}, children: ["x"] } satisfies XML.Node, null, 2)).is<string>();

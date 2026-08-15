@@ -46,23 +46,10 @@ const STOP_SKIPPED: u8 = CLASS_ALWAYS;
 pub struct XML;
 
 #[derive(Copy, Clone)]
-pub struct Options<'o> {
+pub struct Options {
     /// Build the compact object shape (`true`) or the node tree (`false`).
     pub compact: bool,
     pub encoding: InputEncoding,
-    /// Compact shape only: which child elements are always arrays.
-    pub arrays: Arrays<'o>,
-}
-
-/// See `Options::arrays`.
-#[derive(Copy, Clone)]
-pub enum Arrays<'o> {
-    /// Only names that repeat within their parent (the default).
-    Repeated,
-    /// Every child element.
-    All,
-    /// These element names (UTF-8), wherever they appear as a child.
-    Names(&'o [&'o [u8]]),
 }
 
 /// What the bytes handed to the parser are, which decides how much of
@@ -95,7 +82,7 @@ impl XML {
         source: &'a Source,
         log: &mut Log,
         bump: &'a Bump,
-        options: Options<'_>,
+        options: Options,
     ) -> crate::Result<Expr> {
         let contents: &'a [u8] = source.contents.as_ref();
         Self::parse_units(source, contents, log, bump, options)
@@ -109,7 +96,7 @@ impl XML {
         units: &'a [u16],
         log: &mut Log,
         bump: &'a Bump,
-        mut options: Options<'_>,
+        mut options: Options,
     ) -> crate::Result<Expr> {
         options.encoding = InputEncoding::Text;
         Self::parse_units(source, units, log, bump, options)
@@ -120,7 +107,7 @@ impl XML {
         contents: &'a [U],
         log: &mut Log,
         bump: &'a Bump,
-        options: Options<'_>,
+        options: Options,
     ) -> crate::Result<Expr> {
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
@@ -132,11 +119,8 @@ impl XML {
             E::StrEncoding::Utf8
         };
         let result = if options.compact {
-            let sink = CompactSink::new(
-                tape,
-                ForcedArrays::new::<U>(options.arrays, options.encoding),
-            );
-            Parser::new(source, contents, log, bump, options, sink).parse_document()
+            Parser::new(source, contents, log, bump, options, CompactSink::new(tape))
+                .parse_document()
         } else {
             Parser::new(source, contents, log, bump, options, NodeSink::new(tape)).parse_document()
         };
@@ -2577,53 +2561,7 @@ struct CompactSink<'a, U: Unit> {
     gathered: Vec<E::JsonValue>,
     gathered_locs: Vec<Loc>,
     group_index: HashMap<&'a [u8], u32>,
-    forced: ForcedArrays,
     root: Option<(&'a [U], E::JsonValue, Loc)>,
-}
-
-/// `Options::arrays`, with the names in the tape's encoding.
-pub struct ForcedArrays {
-    active: bool,
-    all: bool,
-    names: HashMap<Box<[u8]>, ()>,
-    /// `#text` in the tape's encoding: staged among the children, never wrapped.
-    text_key: &'static [u8],
-}
-
-impl ForcedArrays {
-    fn new<U: Unit>(arrays: Arrays<'_>, encoding: InputEncoding) -> ForcedArrays {
-        let mut names = HashMap::default();
-        if let Arrays::Names(list) = arrays {
-            for &name in list {
-                let text = core::str::from_utf8(name).unwrap_or("");
-                let key: Box<[u8]> = if U::WIDE {
-                    let units: Vec<u16> = text.encode_utf16().collect();
-                    Box::from(bytemuck::cast_slice::<u16, u8>(&units))
-                } else if encoding == InputEncoding::Latin1 {
-                    // A name Latin-1 cannot spell cannot occur in the document.
-                    if text.chars().any(|c| c as u32 > 0xFF) {
-                        continue;
-                    }
-                    text.chars().map(|c| c as u8).collect()
-                } else {
-                    Box::from(name)
-                };
-                let _ = names.insert(key, ());
-            }
-        }
-        let all = matches!(arrays, Arrays::All);
-        ForcedArrays {
-            active: all || !names.is_empty(),
-            all,
-            names,
-            text_key: U::bytes(U::KEY_TEXT),
-        }
-    }
-
-    #[inline]
-    fn forces(&self, key: &[u8]) -> bool {
-        (self.all || self.names.contains_key(key)) && key != self.text_key
-    }
 }
 
 /// An open element. Its properties are staged on `Tape::props` from
@@ -2663,8 +2601,6 @@ struct Group {
     /// While gathering a repeated group: the next free slot of its run in
     /// `CompactSink::gathered`.
     cursor: u32,
-    /// Listed in `Options::arrays`: an array even as a singleton.
-    forced: bool,
 }
 
 /// Up to this many child properties, a repeat is found by comparing names
@@ -2676,7 +2612,7 @@ fn is_ws_only<U: Unit>(text: &[U]) -> bool {
 }
 
 impl<'a, U: Unit> CompactSink<'a, U> {
-    fn new(tape: Tape<'a>, forced: ForcedArrays) -> Self {
+    fn new(tape: Tape<'a>) -> Self {
         CompactSink {
             stack: Vec::with_capacity(64),
             text_runs: Vec::with_capacity(tape.items.capacity()),
@@ -2687,7 +2623,6 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             gathered: Vec::new(),
             gathered_locs: Vec::new(),
             group_index: HashMap::default(),
-            forced,
             root: None,
         }
     }
@@ -2715,8 +2650,8 @@ impl<'a, U: Unit> CompactSink<'a, U> {
     }
 
     /// Folds the child properties staged from `mark` so each name keeps one
-    /// property, in order of first occurrence, a repeated (or forced) name
-    /// holding the array of its values.
+    /// property, in order of first occurrence, a repeated name holding the
+    /// array of its values.
     #[inline]
     fn fold_repeats(&mut self, mark: usize) {
         let children = &self.tape.props[mark..];
@@ -2758,19 +2693,10 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         self.fold_repeats_slow(mark);
     }
 
-    /// `fold_repeats` proper; also the entry point when `Options::arrays` is
-    /// in force, since singletons may need wrapping too.
     #[cold]
     fn fold_repeats_slow(&mut self, mark: usize) {
         let children = &self.tape.props[mark..];
         let n = children.len();
-        let forced = &self.forced;
-        let mut any_forced = false;
-        let mut forces = |key: &[u8]| {
-            let f = forced.active && forced.forces(key);
-            any_forced |= f;
-            f
-        };
         // Group by name.
         self.groups.clear();
         self.group_of.clear();
@@ -2789,7 +2715,6 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                     first: i as u32,
                     count: 1,
                     cursor: 0,
-                    forced: forces(name),
                 });
             }
         } else {
@@ -2803,7 +2728,6 @@ impl<'a, U: Unit> CompactSink<'a, U> {
                         first: i as u32,
                         count: 0,
                         cursor: 0,
-                        forced: forces(child.key.slice()),
                     });
                 }
                 self.groups[g as usize].count += 1;
@@ -2811,28 +2735,14 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             }
         }
         if self.groups.len() == n {
-            // No repeats: wrap the forced singletons where they stand.
-            if any_forced {
-                for (i, g) in self.groups.iter().enumerate() {
-                    if g.forced {
-                        let prop = &mut self.tape.props[mark + i];
-                        prop.value = E::JsonValue::Array(Tape::array_of(
-                            self.tape.tape,
-                            core::slice::from_ref(&prop.value),
-                            core::slice::from_ref(&self.tape.prop_locs[mark + i]),
-                            prop.key_loc,
-                        ));
-                    }
-                }
-            }
             return;
         }
-        // Lay the values of array-valued names out group by group and cut
-        // one array per group.
+        // Lay the values of repeated names out group by group and cut one
+        // array per repeated group.
         let mut next = 0u32;
         for g in self.groups.iter_mut() {
             g.cursor = next;
-            if g.count > 1 || g.forced {
+            if g.count > 1 {
                 next += g.count;
             }
         }
@@ -2842,7 +2752,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         self.gathered_locs.resize(next as usize, Loc::EMPTY);
         for (i, &g) in self.group_of.iter().enumerate() {
             let group = &mut self.groups[g as usize];
-            if group.count > 1 || group.forced {
+            if group.count > 1 {
                 self.gathered[group.cursor as usize] = children[i].value;
                 self.gathered_locs[group.cursor as usize] = self.tape.prop_locs[mark + i];
                 group.cursor += 1;
@@ -2852,7 +2762,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
         // property is never behind its final slot, so this is in place).
         for (slot, g) in self.groups.iter().enumerate() {
             let mut prop = self.tape.props[mark + g.first as usize];
-            if g.count > 1 || g.forced {
+            if g.count > 1 {
                 let run = (g.cursor - g.count) as usize..g.cursor as usize;
                 prop.value = E::JsonValue::Array(Tape::array_of(
                     self.tape.tape,
@@ -2973,9 +2883,7 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
                 let text = self.concat_text(text_mark, true);
                 self.tape.props[frame.text_prop as usize].value = Tape::str(text);
             }
-            if self.forced.active {
-                self.fold_repeats_slow(children_mark);
-            } else if self.tape.props.len() > children_mark + 1 {
+            if self.tape.props.len() > children_mark + 1 {
                 self.fold_repeats(children_mark);
             }
             E::JsonValue::Object(self.tape.object_from(frame.props_mark as usize, frame.loc))
@@ -3177,7 +3085,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
         contents: &'a [U],
         log: &'log mut Log,
         bump: &'a Bump,
-        options: Options<'_>,
+        options: Options,
         sink: S,
     ) -> Self {
         Parser {

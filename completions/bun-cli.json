@@ -2269,14 +2269,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2528,14 +2528,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false

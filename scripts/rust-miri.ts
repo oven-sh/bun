@@ -46,6 +46,7 @@ const MIRI_CRATES = [
   "bun_ptr",
   "bun_resolve_builtins",
   "bun_shell_parser",
+  "bun_simdutf_sys",
   "bun_threading",
   "bun_wyhash",
 ];

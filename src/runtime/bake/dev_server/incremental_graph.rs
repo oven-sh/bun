@@ -207,11 +207,7 @@ enum FreeCssMode {
     IgnoreCss,
 }
 
-/// Whether the file `insert_stale_extra` adds is a route. On the server this
-/// sets `File::is_route`, which makes `trace_dependencies` look the file up in
-/// `DevServer::route_lookup`, so callers passing `Route` must register it
-/// there. The client graph ignores it; HTML routes are found through
-/// `File::html_route_bundle_index`.
+/// `Route` on the server must also be registered in `DevServer::route_lookup`.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum RouteKind {
     NotRoute,
@@ -1300,9 +1296,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     /// `IncrementalGraph(side).insertStaleExtra` (spec :1300).
-    ///
-    /// `graph` is `Client` on the client graph; on the server graph it picks
-    /// which of the two server graphs (`Server` = RSC, `Ssr`) the file is in.
     pub(crate) fn insert_stale_extra(
         &mut self,
         abs_path: &[u8],

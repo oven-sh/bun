@@ -1861,8 +1861,8 @@ impl PathOrBlob {
         ))
     }
 
-    /// Panics on a detached or non-file `Blob`; the only caller, the POSIX
-    /// `Bun.write` fast path, has already rejected both.
+    /// Panics unless a `Blob` here is file-backed (`write_file_internal`'s
+    /// documented precondition; its POSIX fast path is the only caller).
     #[cfg(not(windows))]
     pub(crate) fn pathlike(&self) -> &PathOrFileDescriptor {
         match self {

@@ -2137,8 +2137,8 @@ fn get_or_put_resolved_package_with_find_result(
     // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here and
     // `package` was returned by value above, so nothing aliases the lockfile.
     let lockfile = unsafe { &mut *(*this_ptr).lockfile };
-    if lockfile.is_workspace_dependency(dependency_id)
-        || (version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact())
+    if (version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact())
+        || lockfile.is_workspace_dependency(dependency_id)
     {
         lockfile.mark_local_pin(package.meta.id);
     }

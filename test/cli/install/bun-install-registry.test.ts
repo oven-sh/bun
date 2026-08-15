@@ -4662,7 +4662,11 @@ describe("hoisting", async () => {
     const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(out).toContain("packages installed");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "3 packages installed",
+    ]);
     expect(await file(join(packageDir, "node_modules", "hoist-lockfile-shared", "package.json")).json()).toMatchObject({
       name: "hoist-lockfile-shared",
       version: "1.0.2",

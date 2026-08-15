@@ -1267,6 +1267,61 @@ describe.concurrent("hand-edited bun.lock that lists workspaces but has no packa
   });
 });
 
+// The commands that only read the lockfile name the step that failed and stop, without touching the registry.
+describe.concurrent("a bun.lock that does not parse", () => {
+  const projectFiles = {
+    "package.json": JSON.stringify({ name: "unparsable-lockfile", dependencies: { "no-deps": "1.0.0" } }),
+    "bun.lock": "this is not a lockfile\n",
+  };
+
+  async function run(prefix: string, ...args: string[]) {
+    using dir = tempDir(prefix, projectFiles);
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out: normalizeBunSnapshot(out, String(dir)), err: normalizeBunSnapshot(err, String(dir)), exitCode };
+  }
+
+  it("bun outdated", async () => {
+    const { out, err, exitCode } = await run("unparsable-lockfile-outdated", "outdated");
+    expect(err).toMatchInlineSnapshot(`
+      "1 | this is not a lockfile
+          ^
+      error: Unexpected this
+          at bun.lock:1:1
+      error: failed to parse lockfile: ParserError"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun outdated <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("bun update --interactive", async () => {
+    const { out, err, exitCode } = await run("unparsable-lockfile-update-interactive", "update", "--interactive");
+    expect(err).toMatchInlineSnapshot(`
+      "1 | this is not a lockfile
+          ^
+      error: Unexpected this
+          at bun.lock:1:1
+      error: failed to parse lockfile: ParserError"
+    `);
+    expect(out).toMatchInlineSnapshot(`"bun update --interactive <version> (<revision>)"`);
+    expect(exitCode).toBe(1);
+  });
+
+  it("bun pm ls", async () => {
+    const { out, err, exitCode } = await run("unparsable-lockfile-pm-ls", "pm", "ls");
+    expect(err).toMatchInlineSnapshot(`"error: failed to parse lockfile: ParserError"`);
+    expect(out).toMatchInlineSnapshot(`""`);
+    expect(exitCode).toBe(1);
+  });
+});
+
 const makeInstallRunner = (cwd: string) => async (args: string[]) => {
   await using proc = spawn({
     cmd: [bunExe(), ...args],

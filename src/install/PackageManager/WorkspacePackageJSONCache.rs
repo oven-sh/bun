@@ -114,13 +114,35 @@ pub enum GetResult<'a> {
     ParseErr(Error),
 }
 
+/// The step of [`WorkspacePackageJSONCache::get_with_path`] that failed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GetStep {
+    Read,
+    Parse,
+}
+
+impl GetStep {
+    /// The word for the step in a "failed to ... package.json" message.
+    pub fn verb(self) -> &'static str {
+        match self {
+            GetStep::Read => "read",
+            GetStep::Parse => "parse",
+        }
+    }
+}
+
 impl<'a> GetResult<'a> {
-    pub(crate) fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
+    /// The entry, or the step that failed and its error.
+    pub fn entry(self) -> Result<&'a mut MapEntry, (GetStep, Error)> {
         match self {
             GetResult::Entry(entry) => Ok(entry),
-            GetResult::ReadErr(err) => Err(err),
-            GetResult::ParseErr(err) => Err(err),
+            GetResult::ReadErr(err) => Err((GetStep::Read, err)),
+            GetResult::ParseErr(err) => Err((GetStep::Parse, err)),
         }
+    }
+
+    pub(crate) fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
+        self.entry().map_err(|(_, err)| err)
     }
 }
 

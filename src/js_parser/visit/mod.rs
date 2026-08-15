@@ -232,10 +232,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Visits the initializer of a parameter, `for` loop declaration or destructuring
-    /// element. An anonymous class takes its name from the binding, but standard
-    /// decorator lowering rewrites it to `_class = class {}`, so the name is handed to
-    /// the lowering through `decorator_class_name` instead (see `e_class`).
+    /// Decorator lowering turns the initializer into `_class = class {}`, so an anonymous
+    /// class gets the binding's name through `decorator_class_name` (see `e_class`).
     pub(crate) fn visit_binding_initializer(
         &mut self,
         binding: BindingNodeIndex,

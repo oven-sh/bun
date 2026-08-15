@@ -352,7 +352,12 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
       // pass --bun.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
-      if (pkg.scripts?.build) {
+      // OHOS: bun-plugin-tailwind ships no openharmony native binding (only
+      // android-arm64, which fails to load), so the react templates' build
+      // script can never succeed there. init + typecheck still get covered.
+      const buildSkipped =
+        Bun.env.BUN_OHOS === "1" && (flag === "--react=tailwind" || flag === "--react=shadcn");
+      if (pkg.scripts?.build && !buildSkipped) {
         await using build = Bun.spawn({
           cmd: [bunExe(), "--bun", "run", "build"],
           cwd: temp,

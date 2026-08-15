@@ -14,8 +14,6 @@ public:
     SigintWatcher();
     ~SigintWatcher();
 
-    void install();
-    void uninstall();
     void signalReceived();
     // While registered, a SIGINT is recorded on the receiver and its VM's termination requested. The signal
     // handler is installed while at least one receiver is registered.
@@ -35,6 +33,8 @@ private:
     WTF::Lock m_installMutex;
     WTF::Vector<SigintReceiver*, 4> m_receivers;
 
+    void install();
+    void uninstall();
     bool signalAll();
 };
 

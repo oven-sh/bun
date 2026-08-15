@@ -87,12 +87,30 @@ void NodeVMRunTermination::finish(JSGlobalObject* errorRealm, ThrowScope& scope,
     // A run this one is nested in may have been cut short as well by now (its own deadline, its own SIGINT); its
     // request went with ours, so make it again — after building the error above, which a pending trap would
     // have cut short. That error is then just what the enclosing script sees while it unwinds.
+    if (enclosingRunCutShort())
+        vm.notifyNeedTermination();
+}
+
+const NodeVMRunTermination* NodeVMRunTermination::enclosingRunCutShort() const
+{
     for (auto* run = m_enclosing; run; run = run->m_enclosing) {
-        if (run->wasCutShort()) {
-            vm.notifyNeedTermination();
-            break;
-        }
+        if (run->wasCutShort())
+            return run;
     }
+    return nullptr;
+}
+
+JSObject* NodeVMRunTermination::cutShortByEnclosingRun(JSGlobalObject* errorRealm) const
+{
+    ASSERT(m_withdrawn);
+    if (wasCutShort() || !m_sigintVM.hasPendingTerminationException())
+        return nullptr;
+    const auto* run = enclosingRunCutShort();
+    if (!run)
+        return nullptr;
+    if (run->timedOut())
+        return createError(errorRealm, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, run->m_timeout->milliseconds(), "ms"_s));
+    return createError(errorRealm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
 }
 
 // Bun.spawnSync only blocks in waitpid (its fast path) when nothing can want to interrupt the script meanwhile.

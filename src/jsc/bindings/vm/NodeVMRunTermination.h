@@ -36,6 +36,11 @@ public:
     // caller's to propagate. Either way the caller follows with RETURN_IF_EXCEPTION.
     void finish(JSC::JSGlobalObject* errorRealm, JSC::ThrowScope&, JSC::JSGlobalObject* microtaskContext);
 
+    // After finish(): the run was unwound by the termination of a run it is nested in (that run's deadline
+    // fired or its SIGINT arrived while this one was on the stack). The termination is that run's and stays
+    // pending; a caller that keeps state past the unwind (a module mid-evaluation) records this error for it.
+    JSC::JSObject* cutShortByEnclosingRun(JSC::JSGlobalObject* errorRealm) const;
+
     bool hasTimeout() const { return m_timeout.has_value(); }
     NodeVMRunTermination* enclosing() const { return m_enclosing; }
 
@@ -43,6 +48,7 @@ private:
     void withdraw(); // stop listening: nothing of this run's can fire once it returns
     bool timedOut() const { return m_deadline && m_deadline->didFire(); }
     bool wasCutShort() const { return timedOut() || m_sigintReceived; }
+    const NodeVMRunTermination* enclosingRunCutShort() const;
 
     const std::optional<Seconds> m_timeout;
     RefPtr<JSC::TerminationDeadline> m_deadline;

@@ -212,6 +212,14 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         // This run's own termination becomes ERR_SCRIPT_EXECUTION_* here; that error, like a regular one,
         // marks the module errored and is rethrown by VM_RETURN_IF_EXCEPTION below.
         termination.finish(globalObject, scope, checkpointed);
+        // Unwound by the timeout / SIGINT of a module this one is a dependency of (evaluateDependencies runs
+        // each in its own scope): that termination keeps propagating to it, but this module's evaluation is
+        // over too — errored with the same kind of error, rather than left "evaluating" for good.
+        if (JSObject* error = termination.cutShortByEnclosingRun(globalObject)) {
+            status(Status::Errored);
+            m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
+            return {};
+        }
     }
 
     VM_RETURN_IF_EXCEPTION(scope, {});

@@ -65,7 +65,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // alloc, so reset the AST store on entry and exit.
     let _store_scope = DataStoreScope::new();
 
-    let json = bun_parsers::json::parse::<false>(&json_src, &mut log, &arena)
+    let json = bun_parsers::json::parse_json_into_arena(&json_src, &mut log, &arena)
         .map_err(|_| InvalidSourceMap)?;
 
     if let Some(version) = json.get(b"version") {
@@ -156,7 +156,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // slot in the output `sources[]`. Pass the real source count so
     // malformed maps hit `Fail` and we fall back cleanly.
     let sources_count_i32: i32 = i32::try_from(source_count).map_err(|_| InvalidSourceMap)?;
-    let map_data = match crate::mapping::parse(
+    let map_data = crate::mapping::parse(
         mappings_slice,
         None,
         sources_count_i32,
@@ -165,10 +165,8 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
             allow_names: false,
             sort: true,
         },
-    ) {
-        crate::ParseResult::Success(x) => x,
-        crate::ParseResult::Fail(_) => return Err(InvalidSourceMap),
-    };
+    )
+    .map_err(|_| InvalidSourceMap)?;
 
     let mut psm = map_data;
     psm.external_source_names = source_paths_slice;

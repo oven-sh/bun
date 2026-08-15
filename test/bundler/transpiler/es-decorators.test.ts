@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // ES standard decorators are used for .js files (always) and for .ts files
 // when experimentalDecorators is NOT set in tsconfig.
@@ -27,6 +28,21 @@ async function runDecorator(code: string) {
     stderr: "pipe",
   });
 
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr: filterStderr(rawStderr), exitCode };
+}
+
+async function runDecoratorTS(code: string) {
+  using dir = tempDir("es-dec-ts", {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+    "test.ts": code,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
   const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
@@ -390,21 +406,6 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("hello bar\ndone\n");
       expect(exitCode).toBe(0);
     });
-
-    async function runDecoratorTS(code: string) {
-      using dir = tempDir("es-dec-ts", {
-        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-        "test.ts": code,
-      });
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test.ts"],
-        env: bunEnv,
-        cwd: String(dir),
-        stderr: "pipe",
-      });
-      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr: filterStderr(rawStderr), exitCode };
-    }
 
     test("non-null assertion in decorator member expression", async () => {
       const { stdout, stderr, exitCode } = await runDecoratorTS(`
@@ -1208,6 +1209,248 @@ describe("ES Decorators", () => {
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("undefined\nworld\n");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  // Lowering a class expression produces `(_dec = [...], _x = new WeakMap, _init = ...,
+  // _class = class { ... }, __decorateElement(...), _class)` plus a declaration of the
+  // temporaries, and the class keeps reading them whenever it is constructed. A parameter
+  // default value or an instance field initializer is evaluated once per call or per
+  // construction while the statement around it runs once, so the temporaries have to be
+  // declared per evaluation as well; hoisting a single `var` next to the statement made
+  // every class created there use the storage of the most recent evaluation.
+  describe("class expressions evaluated once per call or per construction", () => {
+    // `dec` gives each class it decorates a distinct id, which instances receive through
+    // addInitializer (kept in the lowering's `_init`); `accessor x` keeps its value in the
+    // lowering's per-class WeakMap. `report` constructs an instance of each class only
+    // after both classes exist, when a class reading another evaluation's temporaries
+    // either throws from the WeakMap lookup or receives the other evaluation's id.
+    const prelude = `
+      let evaluations = 0;
+      function dec(_value, ctx) {
+        const id = ++evaluations;
+        ctx.addInitializer(function () { this.id = id; });
+      }
+      function report(K1, K2) {
+        const a = new K1(), b = new K2();
+        a.x += "!";
+        console.log(JSON.stringify([K1 !== K2, evaluations, a.id, b.id, a.x, b.x]));
+      }
+    `;
+    const body = `{ @dec accessor x = "x" }`;
+    const firstReport = [true, 2, 1, 2, "x!", "x"];
+    const secondReport = [true, 4, 3, 4, "x!", "x"];
+    const reports = (stdout: string) =>
+      stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line));
+
+    test.concurrent("default parameter of a function declaration", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`${prelude}
+        function make(K = class ${body}) { return K; }
+        report(make(), make());
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("default parameter of an arrow function", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`${prelude}
+        const make = (K = class ${body}) => K;
+        report(make(), make());
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("default parameters of a constructor and of a method", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`${prelude}
+        class Factory {
+          constructor(K = class ${body}) { this.K = K; }
+          make(K = class ${body}) { return K; }
+        }
+        const first = new Factory(), second = new Factory();
+        report(first.K, second.K);
+        report(first.make(), second.make());
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport, secondReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("default value inside a destructured parameter", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`${prelude}
+        function make({ K = class ${body} } = {}) { return K; }
+        report(make(), make());
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("instance field initializer", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`${prelude}
+        class Outer {
+          inner = class ${body};
+        }
+        report(new Outer().inner, new Outer().inner);
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("instance field initializer in a TypeScript file", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`${prelude}
+        class Outer {
+          inner: any = class ${body};
+        }
+        report(new Outer().inner, new Outer().inner);
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The outer class has an `accessor`, so it is lowered too and its initializer is moved
+    // into the outer constructor; the inner class must stay self-contained through that.
+    test.concurrent("instance accessor initializer of a class that is lowered itself", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`${prelude}
+        class Outer {
+          accessor inner = class ${body};
+        }
+        report(new Outer().inner, new Outer().inner);
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The decorated class is in a static initializer, which by itself runs with the class
+    // around it, but that class is a parameter default and so is created once per call.
+    test.concurrent("static initializer of a class expression that is a parameter default", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`${prelude}
+        function make(Holder = class { static inner = class ${body}; }) { return Holder.inner; }
+        report(make(), make());
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport]);
+      expect(exitCode).toBe(0);
+    });
+
+    // Member initializers of a top-level enum are visited before the module's statement
+    // list exists, so there is nothing to hoist into.
+    test.concurrent("initializer of a top-level enum", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`${prelude}
+        let K1: any, K2: any;
+        enum E {
+          A = ((K1 = class ${body}), 1),
+          B = ((K2 = class ${body}), 2),
+        }
+        report(K1, K2);
+        console.log(JSON.stringify([E.A, E.B]));
+      `);
+      expect(stderr).toBe("");
+      expect(reports(stdout)).toEqual([firstReport, [1, 2]]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The temporaries are declared inside an arrow function wrapped around the lowered
+    // expression, so `this`, `super` and `arguments` of the surrounding code must still be
+    // what the decorator expressions of the class see.
+    test.concurrent("decorator expressions still see this, super and arguments", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const seen = [];
+        function tagged(tag) {
+          return function (_value, ctx) { seen.push(tag + ":" + ctx.name); };
+        }
+        class Base {
+          baseTag() { return "super"; }
+        }
+        class Outer extends Base {
+          tag = "this";
+          inner = class {
+            @tagged(this.tag) accessor viaThis = 1;
+            @tagged(super.baseTag()) accessor viaSuper = 2;
+          };
+        }
+        function make(K = class { @tagged("arguments:" + arguments.length) accessor x = 3 }) { return K; }
+        const inner = new (new Outer().inner)();
+        const k = new (make())();
+        console.log(JSON.stringify([seen, inner.viaThis, inner.viaSuper, k.x]));
+      `);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([["this:viaThis", "super:viaSuper", "arguments:0:x"], 1, 2, 3]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("temporaries are declared inside the expression only where the statement does not run per evaluation", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const lower = (code: string) => {
+        const output = transpiler.transformSync(`function dec() {}\n${code}`);
+        expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+        return output;
+      };
+      const hoistedToModule = /^var [^\n]*\b_init\b/m;
+      const declaredInWrapper = /\(\(\) => \{\s+var [^\n]*\b_init\b[^\n]*;\s+return /;
+
+      for (const code of [
+        `function make(K = class { @dec accessor x = 0 }) { return K; }`,
+        `class Outer { inner = class { @dec accessor x = 0 }; }`,
+      ]) {
+        const output = lower(code);
+        expect(output).toMatch(declaredInWrapper);
+        expect(output).not.toMatch(hoistedToModule);
+      }
+
+      // The statement these belong to runs exactly as often as the expression does.
+      for (const code of [
+        `const K = class { @dec accessor x = 0 };`,
+        `class Outer { static inner = class { @dec accessor x = 0 }; }`,
+        `class Outer { [class { @dec accessor x = 0 }.name]() {} }`,
+      ]) {
+        const output = lower(code);
+        expect(output).toMatch(hoistedToModule);
+        expect(output).not.toMatch(declaredInWrapper);
+      }
+
+      // A function body nested inside an initializer is a statement list of its own again.
+      const nestedBody = lower(`class Outer { make = () => { const K = class { @dec accessor x = 0 }; return K; }; }`);
+      expect(nestedBody).toMatch(/\n\s+var [^\n]*\b_init\b/);
+      expect(nestedBody).not.toMatch(hoistedToModule);
+      expect(nestedBody).not.toMatch(declaredInWrapper);
+    });
+
+    test.concurrent("Bun.build output, plain and minified", async () => {
+      using dir = tempDir("es-dec-per-evaluation-build", {
+        "entry.js": `${prelude}
+          function makeA(K = class ${body}) { return K; }
+          function makeB(K = class ${body}) { return K; }
+          class Outer { inner = class ${body}; }
+          report(makeA(), makeB());
+          report(makeA(), new Outer().inner);
+        `,
+      });
+
+      for (const minify of [false, true]) {
+        const outdir = join(String(dir), minify ? "out-minified" : "out");
+        const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir, target: "bun", minify });
+        expect(result.success).toBe(true);
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), join(outdir, "entry.js")],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(filterStderr(rawStderr)).toBe("");
+        expect(reports(stdout)).toEqual([firstReport, secondReport]);
+        expect(exitCode).toBe(0);
+      }
     });
   });
 });

@@ -36,18 +36,28 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // `pub fn run_tasks` wrapper here had no callers and aliased the same body —
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
+unsafe extern "C" {
+    safe fn Bun__VM__terminationLanded(global: &JSGlobalObject);
+}
+
+/// A landing frame took the VM's TerminationException: drop it (it has unwound what it was for) and, if
+/// the VM's stop requested it, forbid execution from here on (see `Bun__VM__terminationLanded`).
+#[inline]
+pub fn termination_landed(global: &JSGlobalObject) {
+    Bun__VM__terminationLanded(global)
+}
+
 /// The fold: what a dispatcher does with the exception a callback it invoked left pending — report it
-/// as uncaught, or, if what came back is the VM's termination, stand the loop down
-/// (WebCore: `isTerminationException(returned)`). When this runs as the outermost frame (a foreign
-/// trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
+/// as uncaught, or, if what came back is the VM's termination, take it and stand the loop down
+/// (WebCore: `isTerminationException(returned)`; nothing is left pending either way). When this runs
+/// as the outermost frame (a foreign trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
 /// checkpoint over the pending exception, so it runs here once the exception is taken; beneath
 /// another dispatch or a host function that checkpoint is still the outer frame's.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
-        // It stays pending for the frames still to unwind and the loop to stand down on.
-        global.vm().keep_termination_requested();
+        termination_landed(global);
         return Err(Stopped);
     }
     let vm = global.bun_vm();

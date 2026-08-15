@@ -424,8 +424,8 @@ impl ServerWebSocket {
 
         self.update_flags(|f| f.set_opened(false));
 
-        if on_open_handler.is_empty_or_undefined_or_null() || global_object.has_exception() {
-            return Ok(()); // see `on_message` for the pending-exception case
+        if on_open_handler.is_empty_or_undefined_or_null() {
+            return Ok(());
         }
 
         let this_value = self
@@ -494,11 +494,6 @@ impl ServerWebSocket {
             return Ok(());
         }
         let global_object = self.handler().global_object();
-        // Delivered while the worker's termination (or a nested frame's exception) is already
-        // pending: no script runs over it, and it is not this dispatch's to claim (see `on_close`).
-        if global_object.has_exception() {
-            return Ok(());
-        }
         // This is the start of a task.
         let vm = self.handler().vm();
 
@@ -575,9 +570,6 @@ impl ServerWebSocket {
         let on_error = handler.on_error;
         if !on_drain.is_empty() {
             let global_object = handler.global_object();
-            if global_object.has_exception() {
-                return Ok(()); // see `on_message`
-            }
 
             let args = [self
                 .this_value
@@ -623,9 +615,6 @@ impl ServerWebSocket {
             return Ok(());
         }
         let global_this = handler.global_object();
-        if global_this.has_exception() {
-            return Ok(()); // see `on_message`
-        }
 
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
@@ -657,9 +646,6 @@ impl ServerWebSocket {
         }
 
         let global_this = handler.global_object();
-        if global_this.has_exception() {
-            return Ok(()); // see `on_message`
-        }
         let vm = handler.vm();
 
         // This is the start of a task.

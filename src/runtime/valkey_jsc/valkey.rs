@@ -636,12 +636,11 @@ impl ValkeyClient {
             return Ok(());
         }
         let global = self.global_object();
-        if global.has_exception() && !global.has_pending_termination_exception() {
+        if global.has_exception() {
             // A caller is unwinding an exception (it holds the `Err` for it). Closing now could run
             // the close event — user script — on top of it, and whatever that left pending would be
             // indistinguishable from the caller's; close from the task queue instead, where the
-            // event's result is folded as a top-level callback's. (Not for a stopped worker's
-            // termination: that stays pending for good, and no script runs under it anyway.)
+            // event's result is folded as a top-level callback's.
             self.parent().close_socket_next_tick();
             return Ok(());
         }

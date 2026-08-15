@@ -75,10 +75,9 @@ pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
 pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
     crate::mark_binding!();
 
-    if value.is_termination_exception() {
-        // The caller stands down and leaves it pending (see `report_error_or_terminate`).
-        global.vm().keep_termination_requested();
-    } else {
+    // A TerminationException is not an error to report, and not this frame's to take: it stays pending for
+    // the frames still unwinding above the caller, up to the landing frame (WebCore::reportException alike).
+    if !value.is_termination_exception() {
         let _ = global
             .bun_vm()
             .as_mut()

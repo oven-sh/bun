@@ -165,7 +165,7 @@ impl JSGlobalObject {
     /// JSC microtask queue, and nothing else. No timers, no I/O, no deferred
     /// tasks, so this cannot re-enter the event loop.
     ///
-    /// `Err` means the drain found this VM's termination: the loop stands down (the exception stays pending).
+    /// `Err` means the drain found (and took) this VM's termination: the loop stands down.
     pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), Stopped> {
         jsc::mark_binding();
         match JSC__JSGlobalObject__drainMicrotasks(self) {
@@ -180,8 +180,9 @@ impl JSGlobalObject {
 /// code -- ticks, task completions, waits, "should I enter JS?" -- returns to say "stand down". Only
 /// loop-level code reads the gate (`script_allowed`) and speaks `Stopped`; code inside a JS operation
 /// (`JsResult`) only ever sees exceptions. A boundary that entered JS produces `Stopped` when the
-/// exception it takes is the termination (WebCore: `isTerminationException(returned)`); the opposite
-/// crossing -- a stop that must become a `JsError` -- is [`Stopped::throw`], never an implicit `From`.
+/// exception it takes is the termination (WebCore: `isTerminationException(returned)`) -- and takes it:
+/// nothing stays pending past a landing frame; the stop itself is the closed gate. The opposite crossing
+/// -- a stop that must become a `JsError` -- is [`Stopped::throw`], never an implicit `From`.
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 #[error("Stopped")]
 pub struct Stopped;
@@ -440,8 +441,8 @@ impl EventLoop {
         // process-lifetime `VirtualMachine`); short-lived `&mut` only.
         unsafe { (*this).enter() };
         if let Err(err) = callback.call(global_object, this_value, arguments) {
-            // A top-level call: reported here; a stop stays pending for the
-            // caller's gates and its dispatcher's fold.
+            // A top-level call: reported (or, for the VM's termination, taken) here; the caller reads
+            // the gate, not a pending exception, to know the VM has stopped.
             let _ = crate::task::report_error_or_terminate(global_object, err);
         }
         // Force a re-escape between the JS call and the post-call `exit()` so
@@ -483,15 +484,11 @@ impl EventLoop {
 
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> u32 {
         let mut counter: u32 = 0;
-        // On `Stopped`, report 0 so the `while tick_with_count() > 0`
-        // drain loops in `tick()` / `tick_tasks_only()` stop immediately. The
-        // termination exception is left on the VM (`tryClearException` never
-        // clears it), so continuing to drain would re-enter
-        // `executeCallImpl` with an exception pending and trip its
-        // `scope.assertNoException()` RELEASE_ASSERT. `tick()` observes the
-        // pending exception via `scope.has_exception()` on the next line and
-        // returns.
+        // On `Stopped` — a task's fold or the checkpoint after it met the VM's termination — this is
+        // the landing frame: take it (a fold already has; the drain leaves it to us) and report 0 so
+        // the `while tick_with_count() > 0` loops in `tick()` / `tick_tasks_only()` stop.
         if tick_queue_with_count(self, virtual_machine, &mut counter).is_err() {
+            crate::task::termination_landed(self.global_ref());
             return 0;
         }
         counter
@@ -698,14 +695,16 @@ impl EventLoop {
             if self
                 .drain_microtasks_with_global(global, global_vm)
                 .is_err()
-                || scope.has_exception()
             {
-                // Every task's exception was folded by the drain above; one
-                // still pending here escaped whoever produced it.
-                debug_assert!(
-                    global.has_pending_termination_exception(),
-                    "a task returned Ok with a JS exception pending"
-                );
+                // The checkpoint met the VM's termination; this is its landing frame.
+                crate::task::termination_landed(global);
+                self.entered_event_loop_count -= 1;
+                return;
+            }
+            if scope.has_exception() {
+                // Every task's exception was folded above; one still pending here escaped whoever
+                // produced it.
+                debug_assert!(false, "a task returned Ok with a JS exception pending");
                 self.entered_event_loop_count -= 1;
                 return;
             }
@@ -767,24 +766,12 @@ impl EventLoop {
     #[cold]
     #[inline(never)]
     unsafe fn release_task_unrun(&mut self, task: Task) {
-        if let Some(global) = self.global {
-            // A release may build JS objects (settle a promise nobody can observe) beneath a
-            // DeferTermination scope; the stopped VM's TerminationException stays pending across
-            // all of them, so keep JSC's request flag paired with it (an earlier release that
-            // reached a VM entry had it reset).
-            // SAFETY: set at VM init; live for the loop's lifetime.
-            unsafe { global.as_ref() }.vm().keep_termination_requested();
-        }
         // SAFETY: fn contract.
         unsafe { __bun_release_task_unrun(task) };
         if let Some(global) = self.global {
             // SAFETY: set at VM init; live for the loop's lifetime.
             let global = unsafe { global.as_ref() };
-            // Not the stopped worker's own TerminationException, which stays
-            // pending throughout teardown and is nothing to report — and a
-            // refusal can come from a finalizer inside the VM's last sweep,
-            // where taking and inspecting it would touch a cell mid-sweep.
-            if global.has_exception() && !global.has_pending_termination_exception() {
+            if global.has_exception() {
                 let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
             }
         }

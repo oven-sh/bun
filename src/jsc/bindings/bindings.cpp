@@ -6593,15 +6593,6 @@ extern "C" bool JSGlobalObject__clearExceptionExceptTermination(JSC::JSGlobalObj
     return DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).clearExceptionExceptTermination();
 }
 
-// The embedder keeps a TerminationException pending past the VM entry that threw it (a stopped VM draining or
-// tearing down): keep the request flag JSC pairs with it too — the outermost VMEntryScope exit resets it once
-// the trap has been handled — so DeferTermination scopes suspend and re-throw it instead of asserting/dropping it.
-extern "C" void JSC__VM__keepTerminationRequested(JSC::VM* vm)
-{
-    if (vm->hasPendingTerminationException() && !vm->hasTerminationRequest())
-        vm->setHasTerminationRequest();
-}
-
 extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
@@ -6805,18 +6796,20 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
     return operationMathPow(x, y);
 }
 
-// A stopped worker's TerminationException is kept pending after the JS entry it unwound has
-// returned, until teardown clears or re-arms it (Bun__GlobalObject__clearExceptionsForExit /
-// Zig__GlobalObject__forbidExecution). JSC resets its "termination in progress" flag when the
-// outermost VMEntryScope exits and expects the two to agree while the exception is pending
-// (VMTraps::deferTerminationSlow, VM::setException); its own clients never keep the exception past
-// that point without also ceasing to touch the VM. Called where an entry has just come back with an
-// exception: keep the flag for as long as we keep the exception.
-extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject* globalObject)
+// A dispatcher's landing frame has just taken this VM's TerminationException back from the entry it made:
+// the script it interrupted is unwound, so the exception has done its job and is dropped here rather than
+// left in the VM (JSC resets its own "termination in progress" state at the outermost VMEntryScope for the
+// same reason, and asserts that nobody keeps the exception past it). If the VM's stop is what requested it,
+// no script runs from here on: that is carried by the script gate and executionForbidden — what the
+// native→JS boundary consults — not by an exception left pending (WebCore's forbidExecution() model).
+extern "C" void Bun__VM__terminationLanded(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (vm.hasPendingTerminationException() && !vm.hasTerminationRequest()) [[unlikely]]
-        vm.setHasTerminationRequest();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    ASSERT(!scope.exception() || vm.isTerminationException(scope.exception()));
+    scope.clearException();
+    if (!WebCore::clientData(vm)->scriptAllowed())
+        vm.setExecutionForbidden();
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

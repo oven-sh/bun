@@ -14,7 +14,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
 
-extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject*);
+extern "C" void Bun__VM__terminationLanded(JSC::JSGlobalObject*);
 
 namespace Bun {
 using namespace JSC;
@@ -65,8 +65,11 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
         (void)scope.tryClearException();
-        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-        Bun__VM__keepTerminationRequestWithPendingException(globalObject);
+        // A timer callback is dispatched straight from the loop: this is its landing frame.
+        if (vm.isTerminationException(exception))
+            Bun__VM__terminationLanded(globalObject);
+        else
+            Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;
     }
 

@@ -299,7 +299,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // Ensure "exports" is included if the current output format needs it
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1049-L1051
                 if flags.force_include_exports_for_entry_point {
-                    // result intentionally discarded
                     chunk_meta.imports.put(
                         deps.exports_refs[chunk.entry_point.source_index() as usize],
                         (),
@@ -309,7 +308,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                 // Include the wrapper if present
                 // https://github.com/evanw/esbuild/blob/v0.27.2/internal/linker/linker.go#L1053-L1056
                 if flags.wrap != WrapKind::None {
-                    // result intentionally discarded
                     chunk_meta.imports.put(
                         deps.wrapper_refs[chunk.entry_point.source_index() as usize],
                         (),

@@ -350,7 +350,7 @@ pub mod Runtime {
             sorted.sort_unstable();
             let mut set = StringSet::new();
             for flag in sorted {
-                let _ = set.insert(flag);
+                set.insert(flag);
             }
             Some(Box::new(set))
         }

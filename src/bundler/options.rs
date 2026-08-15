@@ -1421,12 +1421,7 @@ impl<'a> BundleOptions<'a> {
             rewrite_jest_for_tests: self.rewrite_jest_for_tests,
             macro_remap: self.macro_remap.clone(),
             no_macros: self.no_macros,
-            conditions: ESMConditions {
-                default: self.conditions.default.clone(),
-                import: self.conditions.import.clone(),
-                require: self.conditions.require.clone(),
-                style: self.conditions.style.clone(),
-            },
+            conditions: self.conditions.clone(),
             tree_shaking: self.tree_shaking,
             tree_shaking_override: self.tree_shaking_override,
             code_splitting: self.code_splitting,

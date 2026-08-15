@@ -970,7 +970,7 @@ impl Parser<'_> {
             // First definition wins
             let label = norm_label.into_boxed_slice();
             if !self.ref_def_labels.contains(&label) {
-                let _ = self.ref_def_labels.insert(&label);
+                self.ref_def_labels.insert(&label);
                 self.ref_defs.push(crate::ref_defs::RefDef {
                     dest: dest_dupe,
                     title: title_dupe,

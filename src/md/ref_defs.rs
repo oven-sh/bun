@@ -424,7 +424,7 @@ impl Parser<'_> {
                 }
                 let label = norm_label.into_boxed_slice();
                 if !self.ref_def_labels.contains(&label) {
-                    let _ = self.ref_def_labels.insert(&label);
+                    self.ref_def_labels.insert(&label);
                     // Dupe dest and title since they point into self.buffer which gets reused
                     let dest_dupe: Box<[u8]> = Box::from(result.dest);
                     let title_dupe: Box<[u8]> = Box::from(result.title);

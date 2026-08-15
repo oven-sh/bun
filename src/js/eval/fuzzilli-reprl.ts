@@ -7,6 +7,9 @@ const REPRL_CWFD = 101; // Control write FD
 const REPRL_DRFD = 102; // Data read FD
 
 const fs = require("node:fs");
+// Captured before any fuzzed script runs: require is exposed on globalThis
+// below, so a script could otherwise replace require("bun:jsc").drainMicrotasks.
+const { drainMicrotasks } = require("bun:jsc");
 
 // Make common Node modules available
 globalThis.require = require;
@@ -42,6 +45,29 @@ if (responseBytes !== 4) {
   throw new Error(`REPRL handshake failed: expected 4 bytes, got ${responseBytes}`);
 }
 
+// Status of the script currently being executed; also set by the listeners below.
+let exit_code = 0;
+
+function reportUncaught(error) {
+  let message;
+  try {
+    message = `${error}`;
+  } catch {
+    // Coercing the thrown value threw. As the uncaughtException listener this
+    // function must not throw itself: that would exit the process.
+    message = "<unprintable>";
+  }
+  // Print uncaught exception like workerd does
+  console.log(`uncaught:${message}`);
+  exit_code = 1;
+}
+
+// An exception thrown from a microtask or a rejection nobody handles is not
+// thrown out of drainMicrotasks() below; it is delivered through these events,
+// so they are what fails a script whose error only surfaces asynchronously.
+process.on("uncaughtException", reportUncaught);
+process.on("unhandledRejection", reportUncaught);
+
 // Main REPRL loop
 while (true) {
   // Read command
@@ -74,15 +100,20 @@ while (true) {
   const script = script_data.toString("utf8");
 
   // Execute script
-  let exit_code = 0;
+  exit_code = 0;
   try {
     // Use indirect eval to execute in global scope
     (0, eval)(script);
   } catch (_e) {
-    // Print uncaught exception like workerd does
-    console.log(`uncaught:${_e}`);
-    exit_code = 1;
+    reportUncaught(_e);
   }
+
+  // This loop never yields to the event loop, so the promise reactions, await
+  // continuations and nextTicks the script queued only run if drained here,
+  // before its status and resetCoverage(), so that their coverage, crashes and
+  // failures are attributed to it (as the jsc shell's REPRL loop does). Drained
+  // even if the script threw, so nothing it queued runs as part of the next one.
+  drainMicrotasks();
 
   // Send status back (4 bytes: exit code in REPRL format)
   // Format: lower 8 bits = signal number, next 8 bits = exit code

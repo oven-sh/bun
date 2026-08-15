@@ -68,18 +68,10 @@ enum RewriteKind<'r> {
     LowerSuper(SuperLowering<'r>),
 }
 
-/// Rewrites `super.x` inside a method body that is being moved out of the
-/// class into a plain function expression, where `super` is a syntax error.
-/// Accesses become `__superGet(home, this, key)` / `__superSet(...)` /
-/// `__superWrapper(...)._`, where `home` is the method's [[HomeObject]]: the
-/// class for static members, its prototype otherwise.
-///
-/// `class_ref` is the temporary holding the class. It is allocated by the
-/// first access that needs it; `lower_impl` then declares it and binds it from
-/// a static block at the top of the class body. Classes whose lowered methods
-/// never use `super` get neither.
+/// `super.x` in a method body that is leaving the class body, where `super` is a syntax error.
 #[derive(Clone, Copy)]
 struct SuperLowering<'r> {
+    /// Allocated by the first access; `lower_impl` then declares it and binds it to the class.
     class_ref: &'r Cell<Option<Ref>>,
     is_static: bool,
 }
@@ -435,11 +427,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Generic tree rewriter ────────────────────────────
 
-    /// Walks the parts of an expression that evaluate in the enclosing
-    /// function's `this`/`super` context: arrow functions are entered,
-    /// non-arrow functions and the members of nested classes are not
-    /// (`ReplaceRef` enters those too, since a ref identifies one binding no
-    /// matter how deeply it is referenced).
     fn rewrite_expr(&mut self, expr: &mut Expr, kind: RewriteKind<'_>) {
         match kind {
             RewriteKind::ReplaceRef { old, new } => {
@@ -557,9 +544,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The extends clause and computed keys of a nested class evaluate in the
-    /// enclosing context; everything else in its body has its own `this` and
-    /// [[HomeObject]].
+    /// Only the extends clause and computed keys evaluate in the enclosing `this`/`super` context.
     fn rewrite_class(&mut self, class: &mut G::Class, kind: RewriteKind<'_>) {
         if let Some(ext) = &mut class.extends {
             self.rewrite_expr(ext, kind);
@@ -593,8 +578,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Default values and computed keys are the only expressions inside a
-    /// binding pattern.
     fn rewrite_binding(&mut self, binding: &mut js_ast::Binding, kind: RewriteKind<'_>) {
         match &mut binding.data {
             js_ast::b::B::BIdentifier(_) | js_ast::b::B::BMissing(_) => {}
@@ -618,9 +601,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// The head of `for (target in/of …)`: a declaration, or an expression
-    /// statement wrapping an assignment target.
     fn rewrite_for_head(&mut self, init: &mut Stmt, kind: RewriteKind<'_>) {
+        // `for (super.x of …)`: the head is written to, not read.
         if let (RewriteKind::LowerSuper(ctx), js_ast::StmtData::SExpr(mut target)) =
             (kind, init.data)
         {
@@ -632,8 +614,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── `super` property access lowering ─────────────────
 
-    /// Entry point for a private method, getter, or setter whose function
-    /// value is leaving the class body.
     fn lower_super_in_extracted_method(&mut self, value: &mut Expr, ctx: SuperLowering<'_>) {
         let js_ast::ExprData::EFunction(func) = value.data else {
             return;
@@ -643,8 +623,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.rewrite_stmts(func.func.body.stmts.slice_mut(), kind);
     }
 
-    /// For `super.name` / `super[expr]`, returns the property key (a string
-    /// literal, or `expr` after rewriting it). `None` for any other expression.
+    /// The key of `super.name` / `super[expr]`; `None` for any other expression.
     fn super_member_key(&mut self, expr: Expr, ctx: SuperLowering<'_>) -> Option<Expr> {
         match expr.data {
             js_ast::ExprData::EDot(dot)
@@ -668,9 +647,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `_home` (static members) or `_home.prototype` (instance members): the
-    /// object whose prototype `super` looks up properties on. Allocates the
-    /// temporary on first use.
+    /// The method's [[HomeObject]]: `_home` for static members, `_home.prototype` otherwise.
     fn super_home_expr(&mut self, ctx: SuperLowering<'_>, l: bun_ast::Loc) -> Expr {
         let class_ref = match ctx.class_ref.get() {
             Some(r) => r,
@@ -715,11 +692,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.call_rt(l, b"__superSet", &[home, this_e, key, value])
     }
 
-    /// `__superWrapper(home, this, key)._`: an accessor property standing in
-    /// for the `super` reference wherever the syntax needs an assignable
-    /// expression (`super.x += 1`, `super.x++`, destructuring targets, for-in/of
-    /// heads). Reads and writes go through the wrapper's getter and setter, so
-    /// the operator itself keeps its native semantics.
+    /// `__superWrapper(home, this, key)._`: an assignable accessor, so `+=`, `++` and
+    /// destructuring keep their native semantics and evaluate the key once.
     fn super_wrapper_expr(&mut self, ctx: SuperLowering<'_>, key: Expr, l: bun_ast::Loc) -> Expr {
         let home = self.super_home_expr(ctx, l);
         let this_e = self.new_expr(E::This {}, l);
@@ -735,11 +709,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Rewrites the `super` access forms whose replacement depends on the
-    /// parent node. Returns true when `expr` (including its children) has been
-    /// handled; false hands the node to the generic traversal, which reaches
-    /// any `super.x` in plain value position through the `super_member_key`
-    /// check at the top.
+    /// Returns false when `expr` is not a `super` form, leaving it to the generic traversal.
     fn lower_super_in_expr(&mut self, expr: &mut Expr, ctx: SuperLowering<'_>) -> bool {
         let kind = RewriteKind::LowerSuper(ctx);
         let loc = expr.loc;
@@ -858,10 +828,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// `expr` is assigned to rather than read: an element of a destructuring
-    /// assignment pattern or a for-in/of head. A `super` member here becomes the
-    /// assignable `__superWrapper(...)._`; nested patterns are walked
-    /// position by position; anything else is an ordinary expression.
+    /// `expr` is written to, not read: a destructuring assignment target or a for-in/of head.
     fn lower_super_in_assign_target(&mut self, expr: &mut Expr, ctx: SuperLowering<'_>) {
         let kind = RewriteKind::LowerSuper(ctx);
         let loc = expr.loc;
@@ -2394,14 +2361,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // A lowered method body used `super`: `var _home;` next to the other
-        // temporaries, bound by the first element of the class body so that it
-        // is set before any static initializer can call the method, and
-        // unaffected by class decorators replacing the class binding later.
         if let Some(home_ref) = super_home_ref.get() {
             prefix_stmts.insert(0, p.var_decl(home_ref, None, loc));
             let this_e = p.new_expr(E::This {}, loc);
             let capture = p.assign_to(home_ref, this_e, loc);
+            // First in the body: static initializers may call the method; unlike the
+            // class binding, this is not reassigned when a class decorator replaces the class.
             static_private_add_blocks.insert(0, p.make_static_block(capture, loc));
         }
 

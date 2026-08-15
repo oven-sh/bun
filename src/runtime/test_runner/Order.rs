@@ -251,13 +251,17 @@ impl AllOrderResult {
     pub(crate) const EMPTY: AllOrderResult = AllOrderResult { start: 0, end: 0 };
 
     pub(crate) fn set_failure_skip_to(&self, this: &mut Order) {
-        if self.start == 0 && self.end == 0 {
+        if self.start == self.end {
             return;
         }
         let skip_to = this.groups.len();
         for group in &mut this.groups[self.start..self.end] {
             group.failure_skip_to = skip_to;
         }
+        // The skipped range ends with the last group scheduled so far. A concurrent test scheduled
+        // after it must open a new group instead of extending that one, or a failing hook would skip
+        // it too even though it belongs to an enclosing scope.
+        this.previous_group_was_concurrent = false;
     }
 }
 

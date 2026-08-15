@@ -648,13 +648,17 @@ it("bun pm migrate", async () => {
   expect(hash).toMatchSnapshot();
 });
 
-test.skipIf(isWindows)("bun pm hash reports a failed write to stdout", async () => {
+// `hash-string` prints nothing for a lockfile with a single package, so the
+// fixture carries one dependency.
+test.skipIf(isWindows).each(["hash", "hash-string"])("bun pm %s reports a failed write to stdout", async subcommand => {
+  const dep = "github:example/repo#abc1234";
   using dir = tempDir("pm-hash-write-failed", {
-    "package.json": JSON.stringify({ name: "pm-hash-write-failed", version: "1.0.0" }),
+    "package.json": JSON.stringify({ name: "pm-hash-write-failed", version: "1.0.0", dependencies: { dep } }),
     "bun.lock": JSON.stringify({
       lockfileVersion: 1,
-      workspaces: { "": { name: "pm-hash-write-failed" } },
-      packages: {},
+      configVersion: 1,
+      workspaces: { "": { name: "pm-hash-write-failed", dependencies: { dep } } },
+      packages: { dep: [`dep@${dep}`, {}, "example-repo-abc1234"] },
     }),
   });
 
@@ -662,7 +666,7 @@ test.skipIf(isWindows)("bun pm hash reports a failed write to stdout", async () 
   const stdoutFd = openSync("/dev/null", "r");
   try {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "pm", "hash"],
+      cmd: [bunExe(), "pm", subcommand],
       cwd: String(dir),
       stdin: "ignore",
       stdout: stdoutFd,

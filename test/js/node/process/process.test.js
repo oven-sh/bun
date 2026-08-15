@@ -426,32 +426,74 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
-it("process.env reads are never stale after a write (JIT inline-cache soundness)", async () => {
-  // process.env only sets OverridesPut (not ProhibitsPropertyCaching), so
-  // reads hit the ordinary self-access IC. This test verifies that writes
-  // through the overridden put() still invalidate that IC: same-key Replace,
-  // delete-then-set, and a hot read loop that FTL constant-folds before a
-  // single write. Spawned so the subprocess gets its own tier-up.
+it("process.env coerces to string on every execution of the same assignment", () => {
+  // The first execution of an assignment goes through JSEnvironmentVariableMap::put,
+  // which ToStrings the value like node's EnvSetter. JSC then wants to cache the
+  // site as a plain store that never calls put() again; process.env must opt out
+  // of that caching or the second/third execution stores the raw value.
+  const computedKey = "BUN_TEST_ENV_REPEATED_BYVAL";
+  process.env.BUN_TEST_ENV_REPEATED_EXISTING = "preset";
+  try {
+    const fresh = [];
+    const existing = [];
+    const byVal = [];
+    const objects = [];
+    for (let i = 0; i < 4; i++) {
+      process.env.BUN_TEST_ENV_REPEATED_FRESH = i;
+      fresh.push(process.env.BUN_TEST_ENV_REPEATED_FRESH);
+      process.env.BUN_TEST_ENV_REPEATED_EXISTING = i;
+      existing.push(process.env.BUN_TEST_ENV_REPEATED_EXISTING);
+      process.env[computedKey] = i;
+      byVal.push(process.env[computedKey]);
+      process.env.BUN_TEST_ENV_REPEATED_OBJECT = { toString: () => "object-" + i };
+      objects.push(process.env.BUN_TEST_ENV_REPEATED_OBJECT);
+    }
+    expect({ fresh, existing, byVal, objects }).toEqual({
+      fresh: ["0", "1", "2", "3"],
+      existing: ["0", "1", "2", "3"],
+      byVal: ["0", "1", "2", "3"],
+      objects: ["object-0", "object-1", "object-2", "object-3"],
+    });
+  } finally {
+    delete process.env.BUN_TEST_ENV_REPEATED_FRESH;
+    delete process.env.BUN_TEST_ENV_REPEATED_EXISTING;
+    delete process.env[computedKey];
+    delete process.env.BUN_TEST_ENV_REPEATED_OBJECT;
+  }
+});
+
+it("process.env reads are never stale and writes always coerce across JIT tiers", async () => {
+  // process.env sets ProhibitsPropertyCaching (JSEnvironmentVariableMap.h), so
+  // neither reads nor writes to it may be served by an inline cache or folded by
+  // the DFG. writeAndRead() and readHot() are called often enough to be compiled
+  // by every tier (FTL lands around call 10000 in a debug build): every call of
+  // the write must reach put() (and ToString) and every read must see the latest
+  // value, including one written after the read site went hot. Then
+  // delete-then-set by value. Spawned so the subprocess gets its own tier-up.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
       `
         const env = process.env;
-        const N = 100000;
-        for (let i = 0; i < N; i++) {
-          const expected = "v" + i;
-          env.PROBE_KEY = expected;
-          if (env.PROBE_KEY !== expected) throw new Error("same-key stale at " + i + ": " + env.PROBE_KEY);
+        const N = 30000;
+        function writeAndRead(value) {
+          env.PROBE_KEY = value;
+          return env.PROBE_KEY;
         }
-        env.PROBE_KEY = 42;
-        if (env.PROBE_KEY !== "42") throw new Error("coerce: " + env.PROBE_KEY);
+        for (let i = 0; i < N; i++) {
+          const stored = writeAndRead(i);
+          if (stored !== String(i)) throw new Error("call " + i + " stored " + typeof stored + " " + stored);
+        }
+        function readHot() {
+          return env.HOT;
+        }
         env.HOT = "initial";
-        let sink = "";
-        for (let i = 0; i < 2 * N; i++) sink = env.HOT;
-        if (sink !== "initial") throw new Error("hot warmup: " + sink);
+        for (let i = 0; i < N; i++) {
+          if (readHot() !== "initial") throw new Error("hot warmup at " + i + ": " + readHot());
+        }
         env.HOT = "changed";
-        if (env.HOT !== "changed") throw new Error("hot post-write: " + env.HOT);
+        if (readHot() !== "changed") throw new Error("hot post-write: " + readHot());
         const key = "PROBE_BYVAL";
         for (let i = 0; i < 2000; i++) {
           env[key] = "b" + i;

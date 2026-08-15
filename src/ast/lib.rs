@@ -2306,6 +2306,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     Cow::Owned(v)
 }
 
+/// In range for every position in a source that passed [`Source::check_parseable_len`].
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
     Loc {
@@ -2553,6 +2554,10 @@ impl LineColumnTracker {
     }
 }
 
+/// Returned by [`Source::check_parseable_len`] once it has logged the error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTooLarge;
+
 impl Source {
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
@@ -2560,6 +2565,23 @@ impl Source {
     #[inline]
     pub fn contents(&self) -> &[u8] {
         &self.contents
+    }
+
+    /// Positions are `i32` [`Loc`]s, so no parser can take a longer source.
+    pub const MAX_PARSEABLE_LEN: usize = i32::MAX as usize;
+
+    /// Parsers call this before reading a source, whichever way it reached them.
+    pub fn check_parseable_len(&self, log: &mut Log, what: &str) -> Result<(), SourceTooLarge> {
+        if self.contents.len() <= Self::MAX_PARSEABLE_LEN {
+            return Ok(());
+        }
+        // Without a position: finding the line of one would scan the oversized source.
+        log.add_error_fmt(
+            Some(self),
+            Loc::EMPTY,
+            format_args!("{what} is too large to parse (2 GiB maximum)"),
+        );
+        Err(SourceTooLarge)
     }
 
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {

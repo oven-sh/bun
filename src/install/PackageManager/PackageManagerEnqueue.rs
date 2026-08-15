@@ -2282,107 +2282,30 @@ fn get_or_put_resolved_package(
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
-        if let Some(index) = this.lockfile.package_index.get(&name_hash) {
-            let resolutions = this.lockfile.packages.items_resolution();
-            match index {
-                PackageIndexEntry::Id(existing_id) => {
-                    let existing_id = *existing_id;
-                    if (existing_id as usize) < resolutions.len() {
-                        let existing_resolution = resolutions[existing_id as usize];
-                        if resolution_satisfies_dependency(this, &existing_resolution, version) {
-                            success_fn(this, dependency_id, existing_id);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-
-                        let res_tag = resolutions[existing_id as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
-                            let existing_package = this.lockfile.packages.get(existing_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
-                            success_fn(this, dependency_id, existing_id);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                }
-                PackageIndexEntry::Ids(list) => {
-                    for &existing_id in list.iter() {
-                        if (existing_id as usize) < resolutions.len() {
-                            let existing_resolution = resolutions[existing_id as usize];
-                            if resolution_satisfies_dependency(this, &existing_resolution, version)
-                            {
-                                success_fn(this, dependency_id, existing_id);
-                                return Ok(Some(ResolvedPackageResult {
-                                    package: *this.lockfile.packages.get(existing_id as usize),
-                                    ..Default::default()
-                                }));
-                            }
-                        }
-                    }
-
-                    if (list[0] as usize) < resolutions.len() {
-                        let res_tag = resolutions[list[0] as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
-                            let existing_package_id = list[0];
-                            let existing_package =
-                                this.lockfile.packages.get(existing_package_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
-                            success_fn(this, dependency_id, list[0]);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_package_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                }
+        if let Some((existing_id, satisfied)) = existing_peer_target(this, name_hash, version) {
+            if !satisfied {
+                let existing_package = this.lockfile.packages.get(existing_id as usize);
+                this.log_mut().add_warning_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "incorrect peer dependency \"{}@{}\"",
+                        existing_package
+                            .name
+                            .fmt(this.lockfile.buffers.string_bytes.as_slice()),
+                        existing_package.resolution.fmt(
+                            this.lockfile.buffers.string_bytes.as_slice(),
+                            bun_fmt::PathSep::Auto
+                        ),
+                    ),
+                );
             }
+            success_fn(this, dependency_id, existing_id);
+            return Ok(Some(ResolvedPackageResult {
+                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                package: *this.lockfile.packages.get(existing_id as usize),
+                ..Default::default()
+            }));
         }
     }
 
@@ -2906,13 +2829,62 @@ fn locked_version_in_lockfile<'a>(
         .map(|locked| (locked, buf))
 }
 
-fn resolution_satisfies_dependency(
+/// Phase two of peer resolution: the package a peer row binds to among those of its name already
+/// in the lockfile (`package_index` lists the highest first). The first one the range accepts
+/// wins; failing that the highest candidate is bound anyway when it is of the row's kind, flagged
+/// `false` so the caller warns "incorrect peer dependency". Candidates `is_stale_peer_target`
+/// rejects are left out of that fallback, so a row they no longer satisfy resolves afresh.
+fn existing_peer_target(
     this: &PackageManager,
-    resolution: &Resolution,
-    dependency: &dependency::Version,
-) -> bool {
-    let buf = this.lockfile.buffers.string_bytes.as_slice();
-    resolution.satisfies_dependency_version(dependency, buf, buf)
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<(PackageID, bool)> {
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let mut in_lockfile = candidates
+        .iter()
+        .copied()
+        .filter(|&id| (id as usize) < pkg_res.len());
+    if let Some(id) = in_lockfile
+        .clone()
+        .find(|&id| pkg_res[id as usize].satisfies_dependency_version(version, buf, buf))
+    {
+        return Some((id, true));
+    }
+    let id = in_lockfile.find(|&id| !is_stale_peer_target(lockfile, id))?;
+    let same_kind = matches!(
+        (pkg_res[id as usize].tag, version.tag),
+        (ResolutionTag::Npm, dependency::version::Tag::Npm)
+            | (ResolutionTag::Git, dependency::version::Tag::Git)
+            | (ResolutionTag::Github, dependency::version::Tag::Github)
+    );
+    same_kind.then_some((id, false))
+}
+
+/// A package loaded from bun.lock that no non-peer row resolves to any more: it was only ever
+/// installed for peer rows, typically a root or workspace `peerDependencies` entry whose range has
+/// since been rewritten (`bun update -i`, `bun update <name>@<version>`, an edit followed by
+/// `bun install`), so it provides nothing and binding the rewritten row back to it would only
+/// keep the stale version and warn about it. Rows of packages the clean pass is about to drop
+/// still count, which errs toward binding as before; packages appended during this resolve never
+/// qualify, so a fresh install binds exactly as it always did.
+fn is_stale_peer_target(lockfile: &Lockfile::Lockfile, id: PackageID) -> bool {
+    if id >= lockfile.loaded_package_count {
+        return false;
+    }
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let mut owned_rows = lockfile
+        .packages
+        .items_dependencies()
+        .iter()
+        .zip(lockfile.packages.items_resolutions())
+        .flat_map(|(dep_slice, res_slice)| {
+            dep_slice.get(deps).iter().zip(res_slice.get(resolutions))
+        });
+    !owned_rows.any(|(dep, &resolved)| resolved == id && !dep.behavior.is_peer())
 }
 
 fn patched_package_satisfying(

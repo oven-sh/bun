@@ -2083,7 +2083,7 @@ async function stalePeerEntry() {
   return dir;
 }
 
-// A root peerDependencies entry is never re-resolved by `bun update`; a pattern still counts it as a match, a group selector does not.
+// A root peerDependencies entry whose locked version still satisfies it is never re-resolved by `bun update`; a pattern still counts it as a match, a group selector does not.
 test.concurrent("a pattern matches a peerDependencies entry", async () => {
   const dir = await stalePeerEntry();
   const packageJsonBefore = await packageJsonText(dir);
@@ -2117,6 +2117,83 @@ test.concurrent("`bun update --dev` with only a stale peerDependencies entry has
   const packageJsonBefore = await packageJsonText(dir);
   await expectNothingToUpdate(dir, noneSelected(2, "selected by --dev"), "--dev");
   expect(await packageJsonText(dir)).toBe(packageJsonBefore);
+});
+
+// Once its range stops accepting the locked version, a peer entry nothing else depends on resolves afresh. The locked
+// package used to be bound anyway (it has the entry's name) with an "incorrect peer dependency" warning, and the named
+// path then wrote the range back down to it.
+test.concurrent("`bun update <name>@<version>` moves a peerDependencies entry nothing else depends on", async () => {
+  const dir = await stalePeerEntry();
+  const { stdout, stderr, exitCode } = await run(dir, "update", "no-deps@2.0.0");
+  expectMoved(stdout, "no-deps", "1.0.0", "2.0.0");
+  expectCleanStderr(stderr);
+  expect(await packageJsonOf(dir)).toStrictEqual(withPeer("^1.0.1", "^2.0.0"));
+  expect((await lock(dir)).workspaces[""].peerDependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent(
+  "`bun install` moves a peerDependencies entry nothing else depends on once its range is edited",
+  async () => {
+    const dir = await stalePeerEntry();
+    await write(join(dir, "package.json"), stringify(withPeer("^1.0.1", "^1.1.0")));
+    const stderr = await install(dir);
+    expectCleanStderr(stderr);
+    expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+    expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+    await frozen(dir);
+  },
+);
+
+// devDependencies provides no-deps@1.1.0, so the peer entry keeps pointing at it and the warning is the right answer.
+test.concurrent("a peerDependencies entry another group provides keeps following that group", async () => {
+  const provided = (peerRange: string) => ({
+    name: "foo",
+    devDependencies: { "no-deps": "^1.0.0" },
+    peerDependencies: { "no-deps": peerRange },
+  });
+  const dir = await setup({ "package.json": provided("^1.0.0") });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  await write(join(dir, "package.json"), stringify(provided("^2.0.0")));
+  const stderr = await install(dir);
+  expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  await frozen(dir);
+});
+
+// peer-deps-fixed@1.0.0 declares peer `no-deps: ^1.0.0`, strict-peer-dep@1.0.0 declares `no-deps: ^2.0.0`, nothing provides it.
+// Swapping one for the other leaves bun.lock holding the no-deps the old one auto-installed; only that old peer row still points at it.
+test.concurrent("a package's peer entry skips the no-deps its replaced sibling auto-installed", async () => {
+  const dir = await setup({ "package.json": pkgJson({ "peer-deps-fixed": "1.0.0" }) });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  await write(join(dir, "package.json"), stringify(pkgJson({ "strict-peer-dep": "1.0.0" })));
+  const stderr = await install(dir);
+  expectCleanStderr(stderr);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect(await lockedVersions(dir, "peer-deps-fixed")).toStrictEqual([]);
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  await frozen(dir);
+});
+
+// Without a lockfile the no-deps the first peer row installs is all the second one can bind to; that still dedupes onto it
+// and warns. Which row goes first follows the order the two manifests arrive in, so only the single copy is pinned down.
+test.concurrent("on a fresh install two peer entries nothing provides still share one no-deps", async () => {
+  const { packageDir: dir } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+    files: { "package.json": stringify(pkgJson({ "peer-deps-fixed": "1.0.0", "strict-peer-dep": "1.0.0" })) },
+  });
+  const stderr = await install(dir, ...linkerArgs({}));
+  const [version] = await lockedVersions(dir, "no-deps");
+  expect(["1.1.0", "2.0.0"]).toContain(version);
+  expect(stderr).toContain(`warn: incorrect peer dependency "no-deps@${version}"`);
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual([version]);
+  expect(await installedVersion(dir, "no-deps")).toBe(version);
+  await frozen(dir);
 });
 
 // pkg1 has a stale entry in every group; pkg2 only in dependencies; the root has none.
@@ -2381,6 +2458,51 @@ test.concurrent("`bun update -i --latest` honours an entry toggled back to its i
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
   expect(await installedVersion(dir, "dep-with-tags")).toBe("1.0.1");
   expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// Offered as `a-dep` (dependencies), then the `no-deps` peer row showing Current 1.0.0, Target 1.1.0, Latest 2.0.0.
+test.concurrent("`bun update -i` installs the Target version a peerDependencies row shows", async () => {
+  const dir = await stalePeerEntry();
+  const { stderr, exitCode } = await runInteractive(dir, "j \r");
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
+  expect(await packageJsonOf(dir)).toStrictEqual(withPeer("^1.0.1", "^1.1.0"));
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  expect(await lockedVersions(dir, "a-dep")).toStrictEqual(["1.0.1"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+// With 1.1.0 locked, the row's Target equals Current, so selecting it takes the Latest column.
+const PEER_ONLY = (range: string) => ({ name: "foo", peerDependencies: { "no-deps": range } });
+
+test.concurrent("`bun update -i` installs the Latest version a peerDependencies row shows", async () => {
+  const dir = await setup({ "package.json": PEER_ONLY("^1.0.0") });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  const { stderr, exitCode } = await runInteractive(dir, " \r");
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
+  expect(await packageJsonOf(dir)).toStrictEqual(PEER_ONLY("^2.0.0"));
+  expect((await lock(dir)).workspaces[""].peerDependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
+  expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  await frozen(dir);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("`bun update -i -r` installs the version a workspace member's peerDependencies row shows", async () => {
+  const pkg1 = (range: string) => ({ name: "pkg1", version: "1.0.0", peerDependencies: { "no-deps": range } });
+  const dir = await setup({ "package.json": ROOT, "packages/pkg1/package.json": pkg1("^1.0.0") });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
+  const { stderr, exitCode } = await runInteractive(dir, " \r", "-r");
+  expect(stderr).not.toContain("error:");
+  expect(stderr).not.toContain("warn:");
+  expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(pkg1("^2.0.0"));
+  expect((await lock(dir)).workspaces["packages/pkg1"].peerDependencies).toStrictEqual({ "no-deps": "^2.0.0" });
+  expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
   await frozen(dir);
   expect(exitCode).toBe(0);
 });

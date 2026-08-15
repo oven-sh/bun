@@ -785,16 +785,19 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).not.toContain("is not in patchedDependencies");
+      expect(stderr).toContain("copied pnpm.patchedDependencies to patchedDependencies in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(`"patchedDependencies": {\n    "no-deps@1.0.1": "patches/no-deps.patch",\n  }`);
 
+      // The pnpm section keeps its bare key so pnpm still applies the patch; only bun's copy is keyed by version.
       const packageJson = await Bun.file(join(packageDir, "package.json")).json();
       expect(packageJson).toStrictEqual({
         name: "patch-path-in-package-json",
         dependencies: { "no-deps": "^1.0.0" },
+        pnpm: { patchedDependencies: { "no-deps": "patches/no-deps.patch" } },
         patchedDependencies: { "no-deps@1.0.1": "patches/no-deps.patch" },
       });
 
@@ -2463,12 +2466,13 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).not.toContain("warn:");
-      expect(stderr).toContain("moved pnpm.overrides to overrides in package.json");
+      expect(stderr).toContain("copied pnpm.overrides to overrides in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
         name: "overrides-unsupported",
+        pnpm: { overrides },
         overrides,
       });
 
@@ -2536,7 +2540,7 @@ importers:
       const deep = await migrate(String(tooDeep));
 
       expect(deep.stderr).not.toContain("warn:");
-      expect(deep.stderr).toContain("moved pnpm.overrides to overrides in package.json");
+      expect(deep.stderr).toContain("copied pnpm.overrides to overrides in package.json");
       expect(deep.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(deep.exitCode).toBe(0);
       expect(await bunLockOf(String(tooDeep))).not.toContain("a>b");
@@ -2546,6 +2550,43 @@ importers:
       expect(install.stderr).toContain(`warn: Bun currently only supports one level of nested "overrides"`);
       expect(install.stderr).toMatch(/package\.json:\d+:\d+/);
       expect(install.stderr.split("warn:").length - 1).toBe(1);
+      expect(install.exitCode).toBe(0);
+    });
+
+    // pnpm reads `pnpm.overrides`, not the root `overrides` bun reads, so a repo that is only trying bun keeps working with pnpm.
+    test.concurrent.each([
+      ["no root overrides", undefined],
+      ["existing root overrides", { "pre-existing": "3.0.0" }],
+    ])("pnpm.overrides are copied, not removed (%s)", async (_, rootOverrides) => {
+      const pnpm = { overrides: { "from-package-json": "1.0.0" }, onlyBuiltDependencies: ["esbuild"] };
+      // quoted: the yaml parser copies quoted scalars out of the source text, plain ones are sliced from it
+      const workspaceYaml = "overrides:\n  from-workspace-yaml: '2.0.0'\n";
+      using dir = tempDir("pnpm-v9-overrides-kept", {
+        "package.json": JSON.stringify({ name: "overrides-kept", overrides: rootOverrides, pnpm }),
+        "pnpm-workspace.yaml": workspaceYaml,
+        "pnpm-lock.yaml": overridesLockfile(`  from-package-json: 1.0.0
+  from-workspace-yaml: 2.0.0`),
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain(
+        "copied pnpm.overrides to overrides, pnpm-workspace.yaml overrides to overrides in package.json",
+      );
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "overrides-kept",
+        overrides: { ...rootOverrides, "from-package-json": "1.0.0", "from-workspace-yaml": "2.0.0" },
+        pnpm,
+      });
+      expect(await Bun.file(join(String(dir), "pnpm-workspace.yaml")).text()).toBe(workspaceYaml);
+
+      const install = await run(String(dir), "install");
+
+      expect(install.stderr).not.toContain("warn:");
       expect(install.exitCode).toBe(0);
     });
 
@@ -2648,6 +2689,50 @@ importers:
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(`"catalog": {\n    "no-deps": "^1.0.0",\n  }`);
       expect(bunLock).toContain(`"no-deps@1.0.1"`);
+    });
+
+    // After resolving, `bun update` edits the cached root package.json the migration rewrote moments earlier; the
+    // cached tree used to still point at the pre-migration file contents (a use-after-free under ASAN).
+    test("bun update in the same run as the migration keeps the copied catalog", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: join(import.meta.dir, "pnpm/v9-catalog-default"),
+      });
+
+      const { stderr, exitCode } = await run(packageDir, "update");
+
+      expect(stderr).toContain("copied pnpm-workspace.yaml to workspaces in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+        name: "v9-catalog-default",
+        version: "1.0.0",
+        dependencies: { "no-deps": "catalog:default" },
+        workspaces: { catalog: { "no-deps": "^1.0.0" } },
+      });
+      // the update itself still happened: ^1.0.0 moves from the locked 1.0.1 to the registry's 1.1.0
+      expect(await bunLockOf(packageDir)).toContain(`"no-deps@1.1.0"`);
+    });
+
+    test("bun add in the same run as the migration writes both the new dependency and the copied catalog", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: join(import.meta.dir, "pnpm/v9-catalog-default"),
+      });
+
+      const { stderr, exitCode } = await run(packageDir, "add", "one-dep");
+
+      expect(stderr).toContain("copied pnpm-workspace.yaml to workspaces in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+        name: "v9-catalog-default",
+        version: "1.0.0",
+        dependencies: { "no-deps": "catalog:default", "one-dep": "^1.0.0" },
+        workspaces: { catalog: { "no-deps": "^1.0.0" } },
+      });
     });
 
     // pnpm/pnpm#10456: `pnpm remove` can drop the catalogs: section while importers still say catalog:

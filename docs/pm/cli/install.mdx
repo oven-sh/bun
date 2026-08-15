@@ -548,7 +548,7 @@ catalogs:
     babel: ^7.0.0
 ```
 
-Bun moves the workspace packages list and catalogs to the `workspaces` field in `package.json`:
+Bun copies the workspace packages list and catalogs to the `workspaces` field in `package.json`:
 
 ```json package.json icon="file-json"
 {
@@ -583,11 +583,12 @@ Dependencies using pnpm's `catalog:` protocol are preserved:
 
 ### Configuration Migration
 
-Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pnpm-workspace.yaml`:
+Bun copies the following pnpm configuration into the fields it reads itself:
 
-- **Overrides**: Moved from `pnpm.overrides` to root-level `overrides` in `package.json`
-- **Patched Dependencies**: Moved from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
-- **Workspace Overrides**: Applied from `pnpm-workspace.yaml` to root `package.json`
+- **Overrides**: Copied from `pnpm.overrides` in `package.json` and from `overrides` in `pnpm-workspace.yaml` to root-level `overrides` in `package.json`
+- **Patched Dependencies**: Copied from `pnpm.patchedDependencies` in `package.json` and from `patchedDependencies` in `pnpm-workspace.yaml` to root-level `patchedDependencies` in `package.json`
+
+The `pnpm` section of `package.json` is left as it is, so the repository keeps working for anyone still running `pnpm install` on it.
 
 ### Requirements and limitations
 
@@ -598,7 +599,7 @@ Bun migrates the following pnpm configuration from both `pnpm-lock.yaml` and `pn
 - Relative `link:` dependencies and git dependencies with a sub-directory (`resolution.path`) are not supported
 - If migration fails for any of these reasons, Bun prints why and resolves from scratch instead
 
-After migration, you can safely remove `pnpm-lock.yaml` and `pnpm-workspace.yaml` files.
+Once you no longer need pnpm, you can remove `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and the `pnpm` section of `package.json`. Bun reads none of them after the migration, so changes made to them later are not picked up.
 
 ---
 

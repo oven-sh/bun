@@ -1,0 +1,49 @@
+{
+	"name": "bundled-with-optional",
+	"versions": {
+		"1.0.0": {
+			"name": "bundled-with-optional",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"optionalDependencies": {
+				"a-dep": "1.0.1",
+				"basic-1": "1.0.0"
+			},
+			"bundleDependencies": [
+				"no-deps",
+				"a-dep"
+			],
+			"_id": "bundled-with-optional@1.0.0",
+			"integrity": "sha512-2h1wxQF17tpxHhBUpqQ10gBwuTzeqLkKKqjChDpIYRFKZFW+p0fqMQX/VN/Xxn6/TYz8+M84vWFkUNruCEF4fg==",
+			"shasum": "ca6fb22e675ca5390b1b083d9756d181c6590ec1",
+			"dist": {
+				"integrity": "sha512-2h1wxQF17tpxHhBUpqQ10gBwuTzeqLkKKqjChDpIYRFKZFW+p0fqMQX/VN/Xxn6/TYz8+M84vWFkUNruCEF4fg==",
+				"shasum": "ca6fb22e675ca5390b1b083d9756d181c6590ec1",
+				"tarball": "http://localhost:4873/bundled-with-optional/-/bundled-with-optional-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-12-30T18:14:22.143Z",
+		"created": "2024-12-30T18:14:22.143Z",
+		"1.0.0": "2024-12-30T18:14:22.143Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bundled-with-optional-1.0.0.tgz": {
+			"shasum": "ca6fb22e675ca5390b1b083d9756d181c6590ec1",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bundled-with-optional",
+	"readme": ""
+}

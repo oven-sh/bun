@@ -2275,6 +2275,29 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   return outPath;
 }
 
+/**
+ * Runs bun as if on a filesystem whose readdir does not report entry types
+ * (FUSE, some NFS servers, XFS formatted with `ftype=0`), without needing such a
+ * mount: `env()` preloads a shim that zeroes `d_type` in every `getdents64`
+ * record. The shim prints `marker` to stderr the first time it does so; assert
+ * on it, otherwise a test here passes vacuously if bun ever stops issuing
+ * `getdents64` through libc's `syscall()` wrapper, which is what the shim hooks.
+ */
+const dtUnknownReaddirMarker = "dt-unknown-readdir-shim: rewrote getdents64 d_type";
+export const dtUnknownReaddir = {
+  /** Linux with a C compiler; `skipIf(!dtUnknownReaddir.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  marker: dtUnknownReaddirMarker,
+  env(): NodeJS.Dict<string> {
+    const shim = compileFixture(join(import.meta.dir, "fixtures", "dt-unknown-readdir-shim.c"), {
+      flags: [`-DMARKER="${dtUnknownReaddirMarker}"`, "-ldl"],
+    });
+    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+  },
+};
+
 export const rss: () => number =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? (Bun.unsafe.memoryFootprint as () => number)

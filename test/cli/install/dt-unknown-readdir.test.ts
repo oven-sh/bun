@@ -1,106 +1,24 @@
 // Some filesystems (FUSE, NFS, XFS formatted with ftype=0) do not fill in
-// d_type, so every readdir entry comes back as DT_UNKNOWN. `bun pm pack` and
-// `bun publish` must still pack those entries. A FUSE mount needs /dev/fuse, so
-// instead an LD_PRELOAD shim zeroes d_type in every getdents64 record: bun
-// issues getdents64 through libc's syscall(2) wrapper, which the shim
-// interposes. The shim announces itself on stderr the first time it rewrites a
-// record so the tests can tell that bun's readdir actually went through it
-// (if bun ever stops using the libc wrapper, this file needs a real DT_UNKNOWN
-// filesystem instead of silently passing).
+// d_type, so every readdir entry comes back as DT_UNKNOWN. The package manager
+// commands must behave as they do elsewhere; `dtUnknownReaddir` (harness)
+// simulates such a filesystem with an LD_PRELOAD shim.
 import { readTarball } from "bun:internal-for-testing";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { symlink, writeFile } from "node:fs/promises";
+import { describe, expect, test } from "bun:test";
+import { bunExe, dtUnknownReaddir, tempDir } from "harness";
+import { readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
-const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-
-const SHIM_MARKER = "dt-unknown-shim: rewrote getdents64 d_type";
-
-const SHIM_C = /* c */ `
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <stdarg.h>
-#include <stdint.h>
-#include <string.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-
-static long (*real_syscall)(long, long, long, long, long, long, long);
-static int announced;
-
-long syscall(long number, ...) {
-  va_list ap;
-  long a, b, c, d, e, f;
-  va_start(ap, number);
-  a = va_arg(ap, long);
-  b = va_arg(ap, long);
-  c = va_arg(ap, long);
-  d = va_arg(ap, long);
-  e = va_arg(ap, long);
-  f = va_arg(ap, long);
-  va_end(ap);
-  if (!real_syscall) {
-    real_syscall = (long (*)(long, long, long, long, long, long, long))dlsym(RTLD_NEXT, "syscall");
-  }
-  long rc = real_syscall(number, a, b, c, d, e, f);
-  if (number != SYS_getdents64 || rc <= 0) return rc;
-  if (!announced) {
-    announced = 1;
-    static const char marker[] = "${SHIM_MARKER}\\n";
-    if (write(2, marker, sizeof(marker) - 1) < 0) {}
-  }
-  // struct linux_dirent64 { u64 d_ino; s64 d_off; u16 d_reclen; u8 d_type; char d_name[]; }
-  unsigned char *buf = (unsigned char *)b;
-  for (long off = 0; off + 19 <= rc;) {
-    uint16_t reclen;
-    memcpy(&reclen, buf + off + 16, sizeof(reclen));
-    if (reclen == 0) break;
-    buf[off + 18] = 0; /* DT_UNKNOWN */
-    off += reclen;
-  }
-  return rc;
-}
-`;
-
-let shimDir: ReturnType<typeof tempDir> | undefined;
-let shimPath: string;
-
-beforeAll(async () => {
-  if (!isLinux || !cc) return;
-  shimDir = tempDir("dt-unknown-shim", { "shim.c": SHIM_C });
-  shimPath = join(String(shimDir), "shim.so");
-  await using proc = Bun.spawn({
-    cmd: [cc, "-shared", "-fPIC", "-o", shimPath, join(String(shimDir), "shim.c"), "-ldl"],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) {
-    throw new Error(`shim compile failed: ${stderr || stdout}`);
-  }
-});
-
-afterAll(() => {
-  shimDir?.[Symbol.dispose]();
-});
-
-function shimEnv() {
-  return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shimPath}:${bunEnv.LD_PRELOAD}` : shimPath };
-}
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
-    env: shimEnv(),
+    env: dtUnknownReaddir.env(),
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain(SHIM_MARKER);
+  expect(stderr).toContain(dtUnknownReaddir.marker);
   expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
 }
 
@@ -110,7 +28,7 @@ function packedPaths(tarball: string): string[] {
     .sort();
 }
 
-describe.skipIf(!isLinux || !cc)("pack on a filesystem whose readdir reports DT_UNKNOWN", () => {
+describe.skipIf(!dtUnknownReaddir.available)("pack on a filesystem whose readdir reports DT_UNKNOWN", () => {
   test.concurrent("packs the project tree", async () => {
     using dir = tempDir("dt-unknown-tree", {
       "package.json": JSON.stringify({ name: "dt-unknown-tree", version: "1.0.0" }),
@@ -232,5 +150,24 @@ describe.skipIf(!isLinux || !cc)("pack on a filesystem whose readdir reports DT_
       "package/index.js",
       "package/package.json",
     ]);
+  });
+});
+
+describe.skipIf(!dtUnknownReaddir.available)("install on a filesystem whose readdir reports DT_UNKNOWN", () => {
+  // Folder dependencies are installed by walking the folder (walker_skippable
+  // with resolve_unknown_entry_types), so subdirectories must still be entered.
+  test.concurrent("installs every file of a folder dependency", async () => {
+    using dir = tempDir("dt-unknown-install", {
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "dep/index.js": "",
+      "dep/lib/a.js": "",
+      "dep/lib/nested/b.js": "",
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { dep: "file:../dep" } }),
+    });
+
+    await run(join(String(dir), "app"), "install", "--no-summary");
+
+    const installed = await readdir(join(String(dir), "app", "node_modules", "dep"), { recursive: true });
+    expect(installed.sort()).toEqual(["index.js", "lib", "lib/a.js", "lib/nested", "lib/nested/b.js", "package.json"]);
   });
 });

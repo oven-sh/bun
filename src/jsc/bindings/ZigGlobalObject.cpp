@@ -3710,8 +3710,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     JSC::Identifier resolved = resolveModuleSpecifier(globalObject, key, referrer);
     RETURN_IF_EXCEPTION(scope, resolved);
 
-    // Resolution is the step the loader runs right before it looks the key up
-    // in its registry, for static imports, import() and entry points alike.
+    // The only host hook that runs before the registry lookup for static imports as well as import().
     Bun::evictFetchFailedModuleRegistryEntry(loader, resolved);
     return resolved;
 }

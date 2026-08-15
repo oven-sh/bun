@@ -655,24 +655,18 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// JSC keeps the registry entry of a module whose fetch was rejected (transpile
-// errors, a failing plugin) and settles every later load of the key with
-// JSModuleLoader::duplicateError's copy of the stored error, which keeps only
-// its type and message: an AggregateError of build errors loses `errors`, a
-// SystemError its `code`. Such an entry has no module record, so nothing is
-// linked against it and it can simply be dropped; the load that follows fetches
-// the module again and gets the complete error of its own attempt, or the
-// module if the file was fixed in the meantime, as in Node. Entries that failed
-// to link or evaluate do hold a record and stay cached, as the spec requires.
+// JSC settles every later load of a FetchFailed key with JSModuleLoader::duplicateError's
+// copy of the stored error, which keeps only its type and message (an AggregateError of
+// build errors loses `errors`). Such an entry holds no module record, so dropping it only
+// makes the next load fetch the module again, as Node does; link and evaluation failures
+// hold a record and stay cached as the spec requires.
 void evictFetchFailedModuleRegistryEntry(JSC::JSModuleLoader* moduleLoader, const JSC::Identifier& key)
 {
     using Type = JSC::ScriptFetchParameters::Type;
-    // JavaScript first: resolving an import of an already loaded module, the
-    // common case, then stops at the first lookup.
+    // JavaScript first so that the common case, a loaded module, stops after one lookup.
     static constexpr Type types[] = { Type::JavaScript, Type::None, Type::JSON, Type::WebAssembly, Type::HostDefined };
 
-    // removeEntry() drops every (key, type) variant at once, so only do it when
-    // all of them are fetch failures.
+    // removeEntry() drops every type variant of the key, so all of them must have failed.
     auto& moduleMap = moduleLoader->moduleMap();
     bool fetchFailed = false;
     for (Type type : types) {
@@ -712,8 +706,7 @@ JSValue fetchCommonJSModule(
 
     BunString specifier = Bun::toString(specifierWtfString);
 
-    // Every branch below that ends in provideFetch() or $requireESM would
-    // otherwise replay an earlier failed fetch of this key.
+    // Before the virtual module branches too: their provideFetch() is a no-op on a failed entry.
     auto moduleKey = JSC::Identifier::fromString(vm, specifierWtfString);
     evictFetchFailedModuleRegistryEntry(globalObject->moduleLoader(), moduleKey);
 

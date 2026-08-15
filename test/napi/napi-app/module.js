@@ -1457,6 +1457,7 @@ nativeTests.test_create_reference_primitive_by_version = () => {
     ["string", "s"],
     ["bigint", 7n],
     ["symbol", Symbol("sym")],
+    ["registered symbol", Symbol.for("test_create_reference_primitive")],
     ["object", { a: 1 }],
     ["function", () => 0],
   ];
@@ -1465,8 +1466,10 @@ nativeTests.test_create_reference_primitive_by_version = () => {
     [8, v8],
   ]) {
     for (const [name, value] of cases) {
-      const { status, roundTrip, declared: d } = addon.create_ref(value);
-      console.log(`declared=${declared} header=${d} ${name}: status=${status} roundTrip=${roundTrip}`);
+      const { status, roundTrip, heldAtZero, reref, declared: d } = addon.create_ref(value);
+      let line = `declared=${declared} header=${d} ${name}: status=${status}`;
+      if (status === 0) line += ` roundTrip=${roundTrip} heldAtZero=${heldAtZero} reref=${reref}`;
+      console.log(line);
     }
   }
 };

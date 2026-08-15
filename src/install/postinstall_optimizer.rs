@@ -98,9 +98,11 @@ impl PostinstallOptimizer {
     ) -> Option<PackageID> {
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency. The glibc and musl variants of a
-        // package share os/cpu, and only the one that gets installed may be linked to;
-        // these are optional dependencies, which is exactly where libc is enforced
-        // (`Libc::for_dependency`), so checking it here agrees with what is installed.
+        // package share os/cpu, so libc decides between them. Unlike when installing
+        // (`Libc::for_dependency`), it is checked whatever kind of dependency the variant
+        // is: a match is installed either way, and a variant declaring another libc is
+        // not the binary for this target even if a regular dependency installs it; with
+        // no match the package's own bin and scripts are used, as for any other package.
         for &resolution in resolutions {
             if (resolution as usize) >= metas.len() {
                 continue;

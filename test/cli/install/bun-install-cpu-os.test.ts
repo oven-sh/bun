@@ -223,56 +223,33 @@ describe("bun install --cpu and --os flags", () => {
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-multi-cpu"]);
   });
 
-  it("should error on invalid CPU architecture", async () => {
+  // A negated unknown name is just as much of a typo as a plain one.
+  it.each([
+    ["--cpu", "invalid-cpu", "Invalid CPU architecture: 'invalid-cpu'"],
+    ["--cpu", "!invalid-cpu", "Invalid CPU architecture: '!invalid-cpu'"],
+    ["--os", "invalid-os", "Invalid operating system: 'invalid-os'"],
+    ["--os", "!invalid-os", "Invalid operating system: '!invalid-os'"],
+  ])("should error on %s %s", async (flag, value, message) => {
     await writeFile(
       join(package_dir, "package.json"),
       JSON.stringify({
-        name: "test-invalid-cpu",
+        name: "test-invalid-platform",
         version: "1.0.0",
         dependencies: {},
       }),
     );
 
     const { stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--cpu", "invalid-cpu"],
+      cmd: [bunExe(), "install", flag, value],
       cwd: package_dir,
       env: bunEnv,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
 
-    const exitCode = await exited;
-    const stderrText = await stderr.text();
-
+    const [stderrText, exitCode] = await Promise.all([stderr.text(), exited]);
+    expect(stderrText).toContain(message);
     expect(exitCode).toBe(1);
-    expect(stderrText).toContain("Invalid CPU architecture");
-    expect(stderrText).toContain("invalid-cpu");
-  });
-
-  it("should error on invalid OS", async () => {
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
-        name: "test-invalid-os",
-        version: "1.0.0",
-        dependencies: {},
-      }),
-    );
-
-    const { stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--os", "invalid-os"],
-      cwd: package_dir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    const exitCode = await exited;
-    const stderrText = await stderr.text();
-
-    expect(exitCode).toBe(1);
-    expect(stderrText).toContain("Invalid operating system");
-    expect(stderrText).toContain("invalid-os");
   });
 
   it("should skip installing packages with negated CPU/OS", async () => {
@@ -769,10 +746,14 @@ describe("bun install --libc flag and the libc field", () => {
     );
   });
 
-  // The same spellings --os and --cpu accept: `*` for every value, a repeated flag, and `!name`.
+  // The same spellings --os and --cpu accept: `*` or `any` for every value, a repeated flag, and `!name`.
   it.each([
     [
       ["--libc", "*"],
+      ["dep-glibc", "dep-musl"],
+    ],
+    [
+      ["--libc", "any"],
       ["dep-glibc", "dep-musl"],
     ],
     [
@@ -1057,11 +1038,12 @@ describe("bun install --libc flag and the libc field", () => {
     expect(await lockfileEntry("dep-musl")).toContain(`{ "libc": "musl" }`);
   });
 
-  it("should error on invalid libc", async () => {
+  // None of these may silently turn into "every libc".
+  it.each(["bionic", "!bionic", "!", ""])("should error on --libc %p", async value => {
     await writePackageJson({});
 
     const { stderr, exited } = spawn({
-      cmd: [bunExe(), "install", "--libc", "bionic"],
+      cmd: [bunExe(), "install", `--libc=${value}`],
       cwd: package_dir,
       env: bunEnv,
       stdout: "ignore",
@@ -1069,7 +1051,7 @@ describe("bun install --libc flag and the libc field", () => {
     });
 
     const [stderrText, exitCode] = await Promise.all([stderr.text(), exited]);
-    expect(stderrText).toContain("Invalid libc: 'bionic'. Valid values are: *, any, glibc, musl.");
+    expect(stderrText).toContain(`Invalid libc: '${value}'. Valid values are: *, any, glibc, musl.`);
     expect(exitCode).toBe(1);
   });
 });

@@ -758,7 +758,7 @@ describe.each([
       ].join("\n"),
     },
   ],
-])("%s migration keeps the libc of registry packages", (_lockfile, lockfileFiles) => {
+])("%s migration keeps the libc of registry packages", (lockfile, lockfileFiles) => {
   test.concurrent("bun.lock records it", async () => {
     await using testDir = tempDir("migrate-libc", {
       "package.json": JSON.stringify({ name: "repro", dependencies: { "native-musl": "1.0.0", a: "file:vendor/a" } }),
@@ -767,7 +767,8 @@ describe.each([
       ...lockfileFiles,
     });
 
-    const { exitCode } = await install(testDir, "--lockfile-only");
+    const { stderr, exitCode } = await install(testDir, "--lockfile-only");
+    expect(stderr).toContain(`migrated lockfile from ${lockfile}`);
     expect(exitCode).toBe(0);
 
     const lines = (await Bun.file(join(testDir, "bun.lock")).text()).split("\n").map(line => line.trim());

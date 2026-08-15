@@ -139,6 +139,9 @@ _bun_completions() {
         --linker)
             COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
             return;;
+        --libc)
+            COMPREPLY=( $(compgen -W "glibc musl" -- "${cur_word}") );
+            return;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;

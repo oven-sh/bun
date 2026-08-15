@@ -34,8 +34,10 @@ fn pretty_help(text: &str) {
 
 /// `--cpu` / `--os` / `--libc`: each may be repeated, values combine like the
 /// package.json arrays they filter against (`!name` negates, `*` or `any`
-/// allows everything). `None` when the flag was not passed. Unknown names are
-/// fatal; `any` and `none` are accepted as-is.
+/// allows everything, `none` is accepted as-is). `None` when the flag was not
+/// passed. `Negatable::apply` tolerates unknown names because a package.json
+/// may name a platform this build does not know; on the command line an
+/// unknown name, negated or not, is a typo and fatal.
 fn parse_platform_flag<T: Npm::NegatableEnum>(
     values: &[&[u8]],
     what: &str,
@@ -46,17 +48,20 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
     }
     let mut negatable = Npm::Negatable::<T>::default();
     for &value in values {
-        negatable.apply(value);
-
-        if value == b"*" {
-            negatable.had_wildcard = true;
-            negatable.had_unrecognized_values = false;
-        } else if negatable.had_unrecognized_values && value != b"any" && value != b"none" {
-            Output::err_generic(
-                "Invalid {}: '{}'. Valid values are: *, any, {}. Use !name to negate.",
-                (what, bstr::BStr::new(value), valid_names),
-            );
-            Global::crash();
+        match value {
+            b"*" => negatable.had_wildcard = true,
+            b"any" | b"none" => negatable.apply(value),
+            _ => {
+                let name = value.strip_prefix(b"!").unwrap_or(value);
+                if T::lookup_name(name).is_none() {
+                    Output::err_generic(
+                        "Invalid {}: '{}'. Valid values are: *, any, {}. Use !name to negate.",
+                        (what, bstr::BStr::new(value), valid_names),
+                    );
+                    Global::crash();
+                }
+                negatable.apply(value);
+            }
         }
     }
     Some(negatable.combine())

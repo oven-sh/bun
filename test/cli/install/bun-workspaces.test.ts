@@ -233,6 +233,94 @@ test.concurrent("allowing negative workspace patterns", async () => {
   });
 });
 
+// pnpm and npm accept workspace members whose package.json has no "name" (vite's
+// pnpm-workspace.yaml matches dozens of test fixtures shaped like `{"type":"module"}`).
+describe("workspace member package.json without a name", () => {
+  const skippedWarning =
+    'warn: Skipping workspace "packages/fixture": its package.json has no "name", so its dependencies will not be installed\n';
+
+  async function setupMonorepo(packageDir: string, workspaces: string[], fixturePackageJson: object) {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          workspaces,
+          dependencies: {
+            pkg1: "workspace:*",
+          },
+        }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+      write(join(packageDir, "packages", "fixture", "package.json"), JSON.stringify(fixturePackageJson)),
+    ]);
+  }
+
+  async function expectFixtureSkipped(packageDir: string) {
+    expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+      name: "pkg1",
+      version: "1.0.0",
+    });
+    expect(await exists(join(packageDir, "node_modules", "fixture"))).toBeFalse();
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain('"packages/pkg1"');
+    expect(lockfile).not.toContain("packages/fixture");
+  }
+
+  const patterns = {
+    glob: ["packages/*"],
+    listed: ["packages/pkg1", "packages/fixture"],
+  };
+
+  for (const [kind, workspaces] of Object.entries(patterns)) {
+    test.concurrent(`is skipped (${kind})`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      await setupMonorepo(packageDir, workspaces, { type: "module" });
+
+      // runBunInstall asserts nothing was warned about.
+      await runBunInstall(env, packageDir);
+      await expectFixtureSkipped(packageDir);
+    });
+
+    test.concurrent(`is skipped with a warning when it declares dependencies (${kind})`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      // Resolving this dependency would fail the install, so a successful install
+      // proves the fixture's dependencies were never looked at.
+      await setupMonorepo(packageDir, workspaces, { devDependencies: { "doesnt-exist-oops": "1.2.3" } });
+
+      const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+      expect(err).toContain(skippedWarning);
+      expect(err.split(skippedWarning)).toHaveLength(2);
+      await expectFixtureSkipped(packageDir);
+    });
+  }
+
+  test.concurrent("an empty name counts as no name", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setupMonorepo(packageDir, patterns.glob, { name: "", dependencies: { "doesnt-exist-oops": "1.2.3" } });
+
+    const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+    expect(err).toContain(skippedWarning);
+    await expectFixtureSkipped(packageDir);
+  });
+
+  test.concurrent("does not stop a member from finding the workspace root", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setupMonorepo(packageDir, patterns.glob, { dependencies: { "doesnt-exist-oops": "1.2.3" } });
+
+    const { err } = await runBunInstall(env, join(packageDir, "packages", "pkg1"), { allowWarnings: true });
+
+    expect(await exists(join(packageDir, "packages", "pkg1", "bun.lock"))).toBeFalse();
+    // Both the root lookup and the root package.json parse scan the workspaces; only the latter warns.
+    expect(err.split(skippedWarning)).toHaveLength(2);
+    await expectFixtureSkipped(packageDir);
+  });
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

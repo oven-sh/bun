@@ -133,11 +133,6 @@ pub fn detect_and_load_other_lockfile<'a>(
                                 "Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
                             );
                         }
-                        MigratePnpmLockfileError::WorkspaceNameMissing => {
-                            bun_core::warn!(
-                                "pnpm-lock.yaml migration failed due to missing workspace name.",
-                            );
-                        }
                         MigratePnpmLockfileError::YamlParseError => {
                             bun_core::warn!("Failed to parse pnpm-lock.yaml.");
                         }

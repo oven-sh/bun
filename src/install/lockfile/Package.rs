@@ -2465,6 +2465,8 @@ impl Package<u64> {
             }
         }
 
+        workspace_names.warn_skipped(log);
+
         if FEATURES.trusted_dependencies {
             if let Some(q) = json.as_property(b"trustedDependencies") {
                 let count = match &q.expr.data {

@@ -226,12 +226,12 @@ it("process.env.TZ writes inside a worker do not change the main thread's timezo
 
 it("a main-thread process.env.TZ change reaches a worker's no-argument Date toLocale*String formatters on its next turn", async () => {
   // A worker only takes over a time zone change when it next enters JS from
-  // its event loop. This pins down what happens to the three per-global
-  // formatters a worker builds in between: while it is still inside the run of
-  // the script that was blocked across the change it keeps seeing its old zone
-  // everywhere (the formatters included), and on the next turn those
-  // formatters have to be rebuilt together with the rest of its time zone
-  // state instead of staying pinned to the zone they were built in.
+  // its event loop. This pins down what happens to its three per-global
+  // formatters around that: the ones built before the change, and anything
+  // touched while it is still inside the script run that was blocked across
+  // the change, keep agreeing with the old zone it still sees everywhere else,
+  // and on the next turn they have to be rebuilt together with the rest of its
+  // time zone state instead of staying pinned to the zone they were built in.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -244,6 +244,7 @@ it("a main-thread process.env.TZ change reaches a worker's no-argument Date toLo
             const { parentPort, workerData: gate } = require("node:worker_threads");
             const d = new Date(Date.UTC(2024, 5, 15, 20, 0));
             const snapshot = () => ({
+              zone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
               noArg: [d.toLocaleString(), d.toLocaleDateString(), d.toLocaleTimeString()],
               fresh: [
                 d.toLocaleString(undefined, {}),
@@ -251,15 +252,14 @@ it("a main-thread process.env.TZ change reaches a worker's no-argument Date toLo
                 d.toLocaleTimeString(undefined, {}),
               ],
             });
-            // Resolve this thread's zone so the worker has time zone state of
-            // its own, then block inside this same run while the main thread
-            // changes TZ.
-            const zoneBefore = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+            // Build the formatters under the starting zone, then block inside
+            // this same run while the main thread changes TZ.
+            const primed = snapshot();
             parentPort.postMessage("ready");
             Atomics.wait(gate, 0, 0);
             const midRun = snapshot();
             parentPort.once("message", () => {
-              parentPort.postMessage({ zoneBefore, midRun, nextTurn: snapshot() });
+              parentPort.postMessage({ primed, midRun, nextTurn: snapshot() });
             });
           \`,
           { eval: true, workerData: gate },
@@ -289,13 +289,21 @@ it("a main-thread process.env.TZ change reaches a worker's no-argument Date toLo
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const { zoneBefore, midRun, nextTurn } = JSON.parse(stdout);
-  expect(zoneBefore).toBe("America/Los_Angeles");
+  const { primed, midRun, nextTurn } = JSON.parse(stdout);
+  // The zones show which state the worker was in at each point: the blocked
+  // run really did still see the old zone, the next turn really has the new one.
+  expect([primed.zone, midRun.zone, nextTurn.zone]).toEqual([
+    "America/Los_Angeles",
+    "America/Los_Angeles",
+    "Asia/Tokyo",
+  ]);
+  expect(primed.noArg).toEqual(primed.fresh);
   expect(midRun.noArg).toEqual(midRun.fresh);
   expect(nextTurn.noArg).toEqual(nextTurn.fresh);
   // June 15th 13:00 in Los Angeles versus June 16th 05:00 in Tokyo: the next
-  // turn has to differ from the blocked run in all three methods.
-  expect(nextTurn.fresh.map((s, i) => s !== midRun.fresh[i])).toEqual([true, true, true]);
+  // turn has to differ from what was built before the change in all three
+  // methods.
+  expect(nextTurn.noArg.map((s, i) => s !== primed.noArg[i])).toEqual([true, true, true]);
   expect(exitCode).toBe(0);
 });
 

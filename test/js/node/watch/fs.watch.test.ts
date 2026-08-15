@@ -639,26 +639,32 @@ describe("fs.watch", () => {
   // but 10s+ on overlayfs and ~30s on the alpine CI lanes' root filesystem, so
   // the tree goes on a tmpfs mount when there is one: the test's own tmpdir if
   // that already is one, else /dev/shm, else the tmpdir anyway.
-  function makeOverflowTree(tmpdir: string): string {
-    let treeDir: string | undefined;
+  function makeOverflowTree(tmpdir: string): { path: string } & Disposable {
+    let onTmpfs: string | undefined;
     for (const base of [tmpdir, "/dev/shm"]) {
       try {
         const { type, files, ffree } = fs.statfsSync(base);
         // files === 0 is a tmpfs mounted without an inode limit.
         if (type !== TMPFS_MAGIC || (files !== 0 && ffree < overflowDirCount + 1024)) continue;
-        treeDir = fs.mkdtempSync(path.join(base, "fs-watch-overflow-"));
+        onTmpfs = fs.mkdtempSync(path.join(base, "fs-watch-overflow-"));
         break;
       } catch {}
     }
-    treeDir ??= fs.mkdtempSync(path.join(tmpdir, "tree-"));
-    // One recursive mkdirSync per chain of `depth` nested directories: a flat
-    // loop is one native call per directory, which dominates in debug builds.
-    const depth = 16;
-    const chain = Array(depth - 1).fill("d");
-    for (let i = 0; i * depth < overflowDirCount; i++) {
-      fs.mkdirSync(path.join(treeDir, "c" + i, ...chain), { recursive: true });
+    const treeDir = onTmpfs ?? fs.mkdtempSync(path.join(tmpdir, "tree-"));
+    const tree = { path: treeDir, [Symbol.dispose]: () => fs.rmSync(treeDir, { recursive: true, force: true }) };
+    try {
+      // One recursive mkdirSync per chain of `depth` nested directories: a flat
+      // loop is one native call per directory, which dominates in debug builds.
+      const depth = 16;
+      const chain = Array(depth - 1).fill("d");
+      for (let i = 0; i * depth < overflowDirCount; i++) {
+        fs.mkdirSync(path.join(treeDir, "c" + i, ...chain), { recursive: true });
+      }
+    } catch (err) {
+      tree[Symbol.dispose]();
+      throw err;
     }
-    return treeDir;
+    return tree;
   }
 
   // The timeout is for the non-tmpfs fallback, which takes tens of seconds
@@ -668,7 +674,7 @@ describe("fs.watch", () => {
     async () => {
       using dir = tempDir("fs-watch-overflow", { "observed": {} });
       const observedDir = path.join(String(dir), "observed");
-      const treeDir = makeOverflowTree(String(dir));
+      using tree = makeOverflowTree(String(dir));
 
       // Every event both watchers deliver, so the final toEqual also proves the
       // tree's IN_IGNORED storm stays invisible to watchers of other paths. The
@@ -709,7 +715,7 @@ describe("fs.watch", () => {
         });
       try {
         // This close() is what overflows the queue; see overflowDirCount.
-        fs.watch(treeDir, { recursive: true }, () => {}).close();
+        fs.watch(tree.path, { recursive: true }, () => {}).close();
         await bothDelivered(1);
         // Overflow means events were lost, not that the watchers stopped working.
         // By the time it reached JS the reader had drained the queue, so this
@@ -729,7 +735,6 @@ describe("fs.watch", () => {
       } finally {
         closing = true;
         for (const w of watchers) w.close();
-        fs.rmSync(treeDir, { recursive: true, force: true });
       }
     },
     90_000,
@@ -1034,6 +1039,12 @@ describe("fs.promises.watch", () => {
     }
     throw new Error("watcher ended without an event");
   }
+  // Re-creating the file on every tick instead of overwriting it keeps the
+  // first delivered event a rename even if the watcher only arms after tick 1.
+  const recreate = (file: string) => () => {
+    fs.rmSync(file, { force: true });
+    fs.writeFileSync(file, "hello");
+  };
 
   test("should work with symlink -> symlink -> dir", async () => {
     const filepath = path.join(testDir, "sym-symlink-indirect");
@@ -1046,7 +1057,7 @@ describe("fs.promises.watch", () => {
     const indirect_sym = path.join(testDir, "sym-symlink-to-symlink-dir");
     await fs.promises.symlink(filepath, indirect_sym);
 
-    const touch = () => fs.writeFileSync(path.join(indirect_sym, "hello.txt"), "hello");
+    const touch = recreate(path.join(indirect_sym, "hello.txt"));
     expect(await firstEvent(indirect_sym, touch)).toEqual(["rename", "hello.txt"]);
   });
 
@@ -1059,7 +1070,7 @@ describe("fs.promises.watch", () => {
     fs.mkdirSync(dest, { recursive: true });
     await fs.promises.symlink(dest, filepath);
 
-    const touch = () => fs.writeFileSync(path.join(filepath, "hello.txt"), "hello");
+    const touch = recreate(path.join(filepath, "hello.txt"));
     expect(await firstEvent(filepath, touch)).toEqual(["rename", "hello.txt"]);
   });
 

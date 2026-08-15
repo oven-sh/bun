@@ -649,3 +649,75 @@ describe("color-mix() percentage range", () => {
     expect(color(input, "css")).toBe(expected);
   });
 });
+
+// css-color-4 #interpolation-space and #powerless: converting an operand into the
+// interpolation space leaves its channels alone (out-of-gamut values are interpolated
+// as-is); a hue the conversion makes powerless becomes missing and is taken from the
+// other operand. An operand written in that space is mixed as written.
+describe("color-mix() operand conversion", () => {
+  test.each([
+    // color(display-p3 0 1 0) is color(srgb -0.511605 1.01827 -0.310675); these used to come
+    // out as each other's result (#4d9654 and #0b9b0b).
+    ["color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+    ["color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "#0b9b0b"],
+    ["color-mix(in srgb, color(srgb -0.5 1.5 -0.5), color(srgb 0.5 0.5 0.5))", "#0f0"],
+    ["color-mix(in srgb-linear, color(srgb-linear 1.5 0 0), white)", "color(srgb-linear 1.25 .5 .5)"],
+    // Hue made powerless by the conversion.
+    ["color-mix(in lch, lab(50% 0 0), lch(50% 50 120))", "lch(50% 25 120)"],
+    ["color-mix(in lch, black, lch(50% 50 120))", "lch(25% 25 120)"],
+    ["color-mix(in oklch, white, oklch(50% 0.2 120))", "oklch(75% .1 120)"],
+    ["color-mix(in oklch, oklab(50% 0 0), black)", "oklch(25% 0 none)"],
+    // Powerless components written out stay in effect.
+    ["color-mix(in lch, lch(50% 0 200), lch(50% 50 120))", "lch(50% 25 160)"],
+    ["color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120))", "oklch(50% .1 160)"],
+    ["color-mix(in hsl, hsl(120 none 50%), hsl(200 100% 50%))", "#0fa"],
+    ["color-mix(in hwb, hwb(120 50% none), hwb(200 0% 40%))", "#40997b"],
+    ["color-mix(in lab, lab(0% 30 40), lab(50% 50 -20))", "lab(25% 40 10)"],
+    // Lightness does not make anything powerless.
+    ["color-mix(in lab, black, lab(50% 50 -20))", "lab(25% 25 -10)"],
+    ["color-mix(in hsl, red, white)", "#df9f9f"],
+    ["color-mix(in hsl, hsl(200 100% 50%), black)", "#204a60"],
+  ])("%s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  // Rows of WPT css/css-color/parsing/color-computed-color-mix-function.html; the first two
+  // are also the worked example in css-color-5. The hue is the interesting part: white and
+  // black convert to a powerless hue, so the result takes the hue of the chromatic operand.
+  // Lightness and chroma go through cbrt()/pow(), hence the tolerance.
+  function lch(input: string): number[] {
+    const css = color(input, "css") as string;
+    expect(css).toMatch(/^(ok)?lch\(/);
+    return css.match(/-?[\d.]+(e-?\d+)?/g)!.map(Number);
+  }
+
+  test.each([
+    ["color-mix(in lch, white, blue)", [64.78, 65.6, 301.36]],
+    ["color-mix(in oklch, white, blue)", [72.6, 0.1566, 264.05]],
+    ["color-mix(in lch, red, black)", [27.15, 53.43, 40.86]],
+    ["color-mix(in lch, red, white)", [77.15, 53.43, 40.86]],
+    ["color-mix(in oklch, red, black)", [31.4, 0.1289, 29.23]],
+    ["color-mix(in oklch, red, white)", [81.4, 0.1289, 29.23]],
+  ])("%s", (input, [l, c, h]) => {
+    const [actualL, actualC, actualH] = lch(input);
+    expect(actualL).toBeCloseTo(l, 1);
+    expect(actualC).toBeCloseTo(c, c < 1 ? 3 : 1);
+    expect(actualH).toBeCloseTo(h, 1);
+  });
+
+  test("greys converted into lch keep no hue of their own", () => {
+    expect(lch("color-mix(in lch, gray, lch(50% 50 120))")[2]).toBe(120);
+    expect(lch("color-mix(in oklch, gray, oklch(50% 0.2 120))")[2]).toBe(120);
+    expect(lch("color-mix(in lch, white, lch(50% 50 120))")[2]).toBe(120);
+  });
+
+  test("the mixed color is what the other output formats convert", () => {
+    expect(color("color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "hex")).toBe("#0b9b0b");
+    expect(color("color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4))", "{rgb}")).toEqual({
+      r: 11,
+      g: 155,
+      b: 11,
+    });
+    expect(color("color-mix(in lch, black, lch(50% 50 120))", "hex")).toBe(color("lch(25% 25 120)", "hex"));
+  });
+});

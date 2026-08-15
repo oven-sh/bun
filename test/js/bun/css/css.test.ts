@@ -7538,6 +7538,240 @@ describe("css tests", () => {
     );
   });
 
+  // color-mix() converts its operands into the interpolation color space. Per css-color-4 the
+  // conversion leaves the channels alone, even when they end up outside the gamut of that
+  // space (#interpolation-space); the one thing it changes is that a hue made powerless by the
+  // conversion (the converted color is achromatic, within the epsilon of the space) becomes
+  // missing and is taken from the other operand (#powerless). An operand written directly in
+  // the interpolation space is mixed exactly as written. Unless a comment says otherwise the
+  // expected values are also lightningcss output; where they differ, the values follow the spec
+  // text and the WPT color-computed-color-mix-function tests.
+  describe("color-mix() operand conversion", () => {
+    describe("out-of-gamut operands are interpolated as written", () => {
+      // color(display-p3 0 1 0) is color(srgb -0.511605 1.01827 -0.310675), so both spellings
+      // mix to the same color. These used to come out swapped: the display-p3 operand was gamut
+      // mapped to #00f942 first (#4d9654, which is still what lightningcss produces) while the
+      // color(srgb) operand was not (#0b9b0b).
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.51 1.018 -0.31), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 0.6 0.2 0.4), color(display-p3 0 1 0)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.51 1.018 -0.31) 25%, color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#526739}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 25%, color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#526739}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.51 1.018 -0.31 / 0.5), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#3b792abf}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 none 1 0), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:#0b9b0b}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 1 0 1)) }",
+        ".foo{color:#4a655c}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(rec2020 0 1 0), color(srgb 0.8 0.2 0.6)) }",
+        ".foo{color:#01a020}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, lab(80% -120 80), color(srgb 0.8 0.2 0.6)) }",
+        ".foo{color:#189337}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, light-dark(color(display-p3 0 1 0), color(srgb 1.13 0.2 0)), color(srgb 0.6 0.2 0.4)) }",
+        ".foo{color:light-dark(#0b9b0b,#d33)}",
+      );
+
+      // Out-of-range channels cancel out or add up during interpolation.
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb -0.5 1.5 -0.5), color(srgb 0.5 0.5 0.5)) }",
+        ".foo{color:#0f0}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 1.5 -0.5 -0.5), color(srgb 0.5 0.5 0.5)) }",
+        ".foo{color:red}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 2 0 0) 25%, color(srgb 0 1 1)) }",
+        ".foo{color:#80bfbf}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb 1.13 0 0), color(srgb 0.5 1 1)) }",
+        ".foo{color:#d08080}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb-linear 1.5 0 0), white) }",
+        ".foo{color:color(srgb-linear 1.25 .5 .5)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb-linear -0.5 1.5 -0.5), color(srgb-linear 0.5 0.5 0.5)) }",
+        ".foo{color:color(srgb-linear 0 1 0)}",
+      );
+      // color(srgb 1.13 0 0) is color(srgb-linear 1.32166 0 0); lightningcss maps it first.
+      minify_test(
+        ".foo { color: color-mix(in srgb-linear, color(srgb 1.13 0 0), color(srgb-linear 0 0.5 0.5)) }",
+        ".foo{color:color(srgb-linear .660828 .25 .25)}",
+      );
+
+      // The result is still gamut mapped when it is converted to an rgb color.
+      minify_test(".foo { color: color-mix(in srgb, color(srgb none 2 0), rgb(0 255 0)) }", ".foo{color:#fff}");
+      minify_test(".foo { color: color-mix(in srgb, color(srgb 1.13 0 0), white) }", ".foo{color:#ff8886}");
+      minify_test(".foo { color: color-mix(in srgb, red, blue) }", ".foo{color:purple}");
+    });
+
+    describe("a hue made powerless by the conversion is taken from the other operand", () => {
+      minify_test(".foo { color: color-mix(in lch, lab(50% 0 0), lch(50% 50 120)) }", ".foo{color:lch(50% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, lch(50% 50 120), lab(50% 0 0)) }", ".foo{color:lch(50% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, white, lch(50% 50 120)) }", ".foo{color:lch(75% 25 120)}");
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(50% 0 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .1 120)}",
+      );
+      minify_test(".foo { color: color-mix(in oklch, white, oklch(50% 0.2 120)) }", ".foo{color:oklch(75% .1 120)}");
+      // Black too, but its zero chroma still counts (lightningcss: lch(25% 50 120), oklch(25% .2 120)).
+      minify_test(".foo { color: color-mix(in lch, black, lch(50% 50 120)) }", ".foo{color:lch(25% 25 120)}");
+      minify_test(".foo { color: color-mix(in lch, lch(50% 50 120), black) }", ".foo{color:lch(25% 25 120)}");
+      minify_test(".foo { color: color-mix(in oklch, black, oklch(50% 0.2 120)) }", ".foo{color:oklch(25% .1 120)}");
+      // Both hues missing: the result has none as well.
+      minify_test(".foo { color: color-mix(in lch, lab(50% 0 0), black) }", ".foo{color:lch(25% 0 none)}");
+      minify_test(".foo { color: color-mix(in oklch, oklab(50% 0 0), black) }", ".foo{color:oklch(25% 0 none)}");
+      // Greys converted into hsl/hwb already get a missing hue from the rgb conversion.
+      minify_test(".foo { color: color-mix(in hsl, gray, hsl(200 100% 50%)) }", ".foo{color:#4095bf}");
+      minify_test(".foo { color: color-mix(in hwb, gray, hwb(200 0% 0%)) }", ".foo{color:#4095c0}");
+
+      // The powerless hue epsilons of css-color-4: lch C <= 0.0015, oklch C <= 0.000004,
+      // hsl S <= 0.001%, hwb W + B >= 99.999%. (lightningcss only treats exactly 0 as powerless.)
+      minify_test(
+        ".foo { color: color-mix(in lch, lab(50% 0.001 0), lch(50% 50 120)) }",
+        ".foo{color:lch(50% 25.0005 120)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in lch, lab(50% 0.002 0), lch(50% 50 120)) }",
+        ".foo{color:lch(50% 25.001 60)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(50% 0.000002 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .100001 120)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(50% 0.00001 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .100005 60)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hsl, color(srgb 0.5 0.5 0.500001), hsl(0 100% 50%)) }",
+        ".foo{color:#bf4040}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hsl, color(srgb 0.5 0.5 0.5001), hsl(0 100% 50%)) }",
+        ".foo{color:#bf40bf}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hwb, color(srgb 0.5 0.5 0.500001), hwb(0 0% 0%)) }",
+        ".foo{color:#bf4040}",
+      );
+      minify_test(".foo { color: color-mix(in hwb, color(srgb 0.5 0.5 0.5001), hwb(0 0% 0%)) }", ".foo{color:#bf40bf}");
+    });
+
+    describe("an operand written in the interpolation space keeps its powerless components", () => {
+      minify_test(".foo { color: color-mix(in lch, lch(50% 0 200), lch(50% 50 120)) }", ".foo{color:lch(50% 25 160)}");
+      minify_test(
+        ".foo { color: color-mix(in lch, lch(50% 0.001 200), lch(50% 50 120)) }",
+        ".foo{color:lch(50% 25.0005 160)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(50% 0 200), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(50% .1 160)}",
+      );
+      // hsl()/hwb() with a none component stay in hsl/hwb instead of becoming an rgb color.
+      minify_test(".foo { color: color-mix(in hsl, hsl(240 0% none), hsl(0 100% 50%)) }", ".foo{color:#bf40bf}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 0% none), hsl(200 100% 50%)) }", ".foo{color:#40bf95}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 none 100%), hsl(200 100% 50%)) }", ".foo{color:#80ffd5}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(120 none 50%), hsl(200 100% 50%)) }", ".foo{color:#0fa}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), hsl(120 none 50%)) }", ".foo{color:#0fa}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 none 100%), hwb(200 0% 0%)) }", ".foo{color:#008055}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 50% none), hwb(200 0% 40%)) }", ".foo{color:#40997b}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(200 0% 40%), hwb(120 50% none)) }", ".foo{color:#40997b}");
+      // Without none, hsl() is an rgb color, so it is converted and its hue is powerless.
+      minify_test(".foo { color: color-mix(in hsl, hsl(240 0% 50%), hsl(0 100% 50%)) }", ".foo{color:#bf4040}");
+    });
+
+    describe("nothing else becomes missing", () => {
+      // css-color-4 no longer makes any channel powerless at 0% or 100% lightness, and lab/oklab
+      // have no powerless channels at all, so black and white contribute their zero chroma like
+      // any other color (WPT: color-mix(in hsl, red, white) is rgb(87.5% 62.5% 62.5%) and
+      // color-mix(in hsl, white, blue) is rgb(62.5% 62.5% 87.5%)). lightningcss still applies the
+      // old rules and gives lab(25% 50 -20), #ff8080 and #005580 for the first mixes below.
+      minify_test(".foo { color: color-mix(in lab, black, lab(50% 50 -20)) }", ".foo{color:lab(25% 25 -10)}");
+      minify_test(".foo { color: color-mix(in hsl, red, white) }", ".foo{color:#df9f9f}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), black) }", ".foo{color:#204a60}");
+      minify_test(".foo { color: color-mix(in lab, lab(50% 50 -20), black) }", ".foo{color:lab(25% 25 -10)}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, black, oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .05 -.025)}",
+      );
+      minify_test(".foo { color: color-mix(in hsl, red, black) }", ".foo{color:#602020}");
+      minify_test(".foo { color: color-mix(in hsl, white, blue) }", ".foo{color:#9f9fdf}");
+      minify_test(".foo { color: color-mix(in hsl, white 10%, blue) }", ".foo{color:#2525f4}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(200 100% 50%), white) }", ".foo{color:#9fcadf}");
+      minify_test(".foo { color: color-mix(in hwb, red, white) }", ".foo{color:#ff8080}");
+      minify_test(".foo { color: color-mix(in hwb, red, black) }", ".foo{color:maroon}");
+      minify_test(".foo { color: color-mix(in hwb, white, blue) }", ".foo{color:#8080ff}");
+
+      // 0% lightness operands, converted (lightningcss: lab(25% 50 -20), lch(25% 50 120)) and as written.
+      minify_test(".foo { color: color-mix(in lab, lch(0% 30 0), lab(50% 50 -20)) }", ".foo{color:lab(25% 40 -10)}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklch(0% 0.1 0), oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .1 -.025)}",
+      );
+      minify_test(".foo { color: color-mix(in lch, lab(0% 30 0), lch(50% 50 120)) }", ".foo{color:lch(25% 40 60)}");
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklab(0% 0.1 0), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(25% .15 60)}",
+      );
+      minify_test(".foo { color: color-mix(in lab, lab(0% 30 40), lab(50% 50 -20)) }", ".foo{color:lab(25% 40 10)}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklab(0% 0.1 0.1), oklab(50% 0.1 -0.05)) }",
+        ".foo{color:oklab(25% .1 .025)}",
+      );
+      minify_test(".foo { color: color-mix(in lch, lch(0% 30 40), lch(50% 50 120)) }", ".foo{color:lch(25% 40 80)}");
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(0% 0.1 40), oklch(50% 0.2 120)) }",
+        ".foo{color:oklch(25% .15 80)}",
+      );
+
+      // transparent is black with alpha 0; premultiplication makes its channels irrelevant.
+      minify_test(".foo { color: color-mix(in srgb, red 50%, transparent) }", ".foo{color:#ff000080}");
+      minify_test(".foo { color: color-mix(in hsl, hsl(40 80% 60%) 50%, transparent) }", ".foo{color:#ebb44780}");
+      minify_test(
+        ".foo { color: color-mix(in oklab, oklab(60% 0.1 0.1) 50%, transparent) }",
+        ".foo{color:oklab(60% .1 .1/.5)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in oklch, oklch(60% 0.1 40) 50%, transparent) }",
+        ".foo{color:oklch(60% .1 40/.5)}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in lch, lch(60% 40 40) 50%, transparent) }",
+        ".foo{color:lch(60% 40 40/.5)}",
+      );
+    });
+  });
+
   describe("page", () => {
     minify_test("@page { margin: 1em }", "@page{margin:1em}");
     minify_test("@page :left { margin: 1em }", "@page:left{margin:1em}");

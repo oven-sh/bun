@@ -763,13 +763,7 @@ impl CssColor {
         method: HueInterpolationMethod,
     ) -> Option<CssColor>
     where
-        T: Colorspace
-            + ColorGamut
-            + Interpolate
-            + Into<OKLCH>
-            + From<OKLCH>
-            + Into<OKLAB>
-            + 'static,
+        T: Interpolate + 'static,
     {
         if matches!(self, CssColor::CurrentColor) || matches!(other, CssColor::CurrentColor) {
             return None;
@@ -801,7 +795,8 @@ impl CssColor {
             });
         }
 
-        fn check_converted<T: 'static>(color: &CssColor) -> Option<bool> {
+        /// Whether `color` is already specified in the interpolation color space `T`.
+        fn is_in_space<T: 'static>(color: &CssColor) -> Option<bool> {
             use core::any::TypeId;
             debug_assert!(!matches!(
                 color,
@@ -819,20 +814,13 @@ impl CssColor {
             }
         }
 
-        let converted_first = check_converted::<T>(self)?;
-        let converted_second = check_converted::<T>(other)?;
+        let converted_first = !is_in_space::<T>(self)?;
+        let converted_second = !is_in_space::<T>(other)?;
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
+        // Out-of-gamut operands stay as-is: https://www.w3.org/TR/css-color-4/#interpolation-space
         let mut first_color = T::try_from_css_color(self)?;
         let mut second_color = T::try_from_css_color(other)?;
-
-        if converted_first && !first_color.in_gamut() {
-            first_color = map_gamut(first_color);
-        }
-
-        if converted_second && !second_color.in_gamut() {
-            second_color = map_gamut(second_color);
-        }
 
         // https://www.w3.org/TR/css-color-4/#powerless
         if converted_first {
@@ -1521,7 +1509,7 @@ macro_rules! define_colorspace {
         types = ($ta:expr, $tb:expr, $tc:expr);
         gamut = $gamut:ident;
         premultiply = $pre:ident;
-        powerless = $pow:ident;
+        powerless = $pow:ident $(($eps:literal))?;
         into_css = $into_css:expr;
     ) => {
         $(#[$meta])*
@@ -1553,7 +1541,7 @@ macro_rules! define_colorspace {
         }
 
         define_colorspace!(@gamut $gamut $name { $a, $b, $c });
-        define_colorspace!(@interp $pre $pow $name { $a, $b, $c });
+        define_colorspace!(@interp $pre $pow $(($eps))? $name { $a, $b, $c });
     };
 
     // Gamut variants
@@ -1598,7 +1586,7 @@ macro_rules! define_colorspace {
     (@gamut none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
     // Interpolate / premultiply / powerless variants
-    (@interp rectangular $pow:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {
+    (@interp rectangular $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl Interpolate for $name {
             fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
                 let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
@@ -1620,10 +1608,10 @@ macro_rules! define_colorspace {
                     self.alpha *= alpha_multiplier;
                 }
             }
-            define_colorspace!(@powerless $pow $name { $a, $b, $c });
+            define_colorspace!(@powerless $pow $(($eps))? $name { $a, $b, $c });
         }
     };
-    (@interp polar $pow:ident $name:ident { $h:ident, $a:ident, $b:ident }) => {
+    (@interp polar $pow:ident $(($eps:literal))? $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl Interpolate for $name {
             fn interpolate(&self, p1: f32, other: &Self, p2: f32) -> Self {
                 let (a, b, c, alpha) = lerp_components(self, p1, other, p2);
@@ -1644,30 +1632,16 @@ macro_rules! define_colorspace {
                     self.alpha *= alpha_multiplier;
                 }
             }
-            define_colorspace!(@powerless $pow $name { $h, $a, $b });
+            define_colorspace!(@powerless $pow $(($eps))? $name { $h, $a, $b });
         }
     };
-    (@interp none $pow:ident $name:ident { $a:ident, $b:ident, $c:ident }) => {};
+    (@interp none $pow:ident $(($eps:literal))? $name:ident { $a:ident, $b:ident, $c:ident }) => {};
 
+    // $eps is the space's "powerless hue ε" (https://www.w3.org/TR/css-color-4/#powerless).
     (@powerless none $name:ident { $a:ident, $b:ident, $c:ident }) => {};
-    (@powerless lab $name:ident { $l:ident, $a:ident, $b:ident }) => {
+    (@powerless lch($eps:literal) $name:ident { $l:ident, $c:ident, $h:ident }) => {
         fn adjust_powerless_components(&mut self) {
-            // If the lightness of a LAB color is 0%, both the a and b components are powerless.
-            if self.$l.abs() < f32::EPSILON {
-                self.$a = f32::NAN;
-                self.$b = f32::NAN;
-            }
-        }
-    };
-    (@powerless lch $name:ident { $l:ident, $c:ident, $h:ident }) => {
-        fn adjust_powerless_components(&mut self) {
-            // If the chroma of an LCH color is 0%, the hue component is powerless.
-            // If the lightness of an LCH color is 0%, both the hue and chroma components are powerless.
-            if self.$c.abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-            }
-            if self.$l.abs() < f32::EPSILON {
-                self.$c = f32::NAN;
+            if self.$c <= $eps {
                 self.$h = f32::NAN;
             }
         }
@@ -1675,27 +1649,19 @@ macro_rules! define_colorspace {
             method.interpolate(&mut self.$h, &mut other.$h);
         }
     };
-    (@powerless hsl $name:ident { $h:ident, $s:ident, $l:ident }) => {
+    (@powerless hsl($eps:literal) $name:ident { $h:ident, $s:ident, $l:ident }) => {
         fn adjust_powerless_components(&mut self) {
-            // If the saturation of an HSL color is 0%, then the hue component is powerless.
-            // If the lightness of an HSL color is 0% or 100%, both the saturation and hue components are powerless.
-            if self.$s.abs() < f32::EPSILON {
+            if self.$s <= $eps {
                 self.$h = f32::NAN;
-            }
-            if self.$l.abs() < f32::EPSILON || (self.$l - 1.0).abs() < f32::EPSILON {
-                self.$h = f32::NAN;
-                self.$s = f32::NAN;
             }
         }
         fn adjust_hue(&mut self, other: &mut Self, method: HueInterpolationMethod) {
             method.interpolate(&mut self.$h, &mut other.$h);
         }
     };
-    (@powerless hwb $name:ident { $h:ident, $w:ident, $b:ident }) => {
+    (@powerless hwb($eps:literal) $name:ident { $h:ident, $w:ident, $b:ident }) => {
         fn adjust_powerless_components(&mut self) {
-            // If white+black is equal to 100% (after normalization), it defines an achromatic color,
-            // i.e. some shade of gray, without any hint of the chosen hue. In this case, the hue component is powerless.
-            if (self.$w + self.$b - 1.0).abs() < f32::EPSILON {
+            if self.$w + self.$b >= 1.0 - $eps {
                 self.$h = f32::NAN;
             }
         }
@@ -1715,7 +1681,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_NUM);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lab;
+    powerless = none;
     into_css = |c: &LAB| CssColor::Lab(Box::new(LABColor::Lab(*c)));
 }
 
@@ -1746,7 +1712,8 @@ define_colorspace! {
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
     premultiply = polar;
-    powerless = hsl;
+    // css-color-4: S <= 0.001 (of 100)
+    powerless = hsl(0.00001);
     into_css = |c: &HSL| CssColor::Rgba(RGBA::from(*c));
 }
 
@@ -1756,7 +1723,8 @@ define_colorspace! {
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
     premultiply = polar;
-    powerless = hwb;
+    // css-color-4: W + B >= 99.999 (of 100)
+    powerless = hwb(0.00001);
     into_css = |c: &HWB| CssColor::Rgba(RGBA::from(*c));
 }
 
@@ -1838,7 +1806,8 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lch;
+    // css-color-4: C <= 0.0015
+    powerless = lch(0.0015);
     into_css = |c: &LCH| CssColor::Lab(Box::new(LABColor::Lch(*c)));
 }
 
@@ -1848,7 +1817,7 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_NUM);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lab;
+    powerless = none;
     into_css = |c: &OKLAB| CssColor::Lab(Box::new(LABColor::Oklab(*c)));
 }
 
@@ -1858,7 +1827,8 @@ define_colorspace! {
     types = (CT_PCT, CT_NUM, CT_ANG);
     gamut = unbounded;
     premultiply = rectangular;
-    powerless = lch;
+    // css-color-4: C <= 0.000004
+    powerless = lch(0.000004);
     into_css = |c: &OKLCH| CssColor::Lab(Box::new(LABColor::Oklch(*c)));
 }
 

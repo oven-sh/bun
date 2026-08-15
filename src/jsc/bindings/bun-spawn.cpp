@@ -247,10 +247,8 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
-    // The child execs with nothing blocked, like posix_spawnattr_reset_signals
-    // (the libc posix_spawn path) and libuv, rather than with whatever this
-    // thread inherited or has blocked: a blocked signal survives execve, so
-    // the child would silently never receive it.
+    // What the child execs with. Empty rather than this thread's mask, like
+    // libuv and posix_spawnattr_reset_signals: the mask survives execve.
     sigemptyset(&childmask);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)

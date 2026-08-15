@@ -101,7 +101,7 @@ fn color_int_from_js(
 }
 
 // https://github.com/tmux/tmux/blob/dae2868d1227b95fd076fb4a5efa6256c7245943/colour.c#L44-L55
-pub mod ansi256 {
+pub(crate) mod ansi256 {
     use std::io::Write as _;
 
     const Q2C: [u32; 6] = [0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff];
@@ -294,21 +294,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 }
             }
         } else if args[0].is_object() {
-            let r = color_int_from_js(
-                global,
-                args[0].get(global, b"r")?.unwrap_or(JSValue::ZERO),
-                "r",
-            )?;
-            let g = color_int_from_js(
-                global,
-                args[0].get(global, b"g")?.unwrap_or(JSValue::ZERO),
-                "g",
-            )?;
-            let b = color_int_from_js(
-                global,
-                args[0].get(global, b"b")?.unwrap_or(JSValue::ZERO),
-                "b",
-            )?;
+            let r = color_int_from_js(global, args[0].get(global, b"r")?.unwrap_or_default(), "r")?;
+            let g = color_int_from_js(global, args[0].get(global, b"g")?.unwrap_or_default(), "g")?;
+            let b = color_int_from_js(global, args[0].get(global, b"b")?.unwrap_or_default(), "b")?;
 
             let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                 'brk2: {

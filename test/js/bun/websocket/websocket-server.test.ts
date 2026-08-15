@@ -1452,6 +1452,55 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
   expect(server.subscriberCount("boop")).toBe(0);
 });
 
+it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {
+  // req.url and req.headers are lifted lazily from the uws request. upgrade()
+  // detaches that context, so fields not touched before the call must be
+  // snapshotted onto the Request at detach time (same as the async path).
+  let captured: { ok: boolean; url: string; host: string | null; ua: string | null; headerCount: number } | undefined;
+
+  await using server = serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch(req, srv) {
+      const ok = srv.upgrade(req);
+      captured = {
+        ok,
+        url: req.url,
+        host: req.headers.get("host"),
+        ua: req.headers.get("user-agent"),
+        headerCount: [...req.headers].length,
+      };
+      if (ok) return;
+      return new Response("no", { status: 400 });
+    },
+    websocket: {
+      open(ws) {
+        ws.close();
+      },
+      message() {},
+    },
+  });
+
+  const done = Promise.withResolvers<void>();
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/some/path?q=1`, {
+    headers: { "user-agent": "bun-test" },
+  });
+  // close fires on both the happy path and a failed handshake, so the
+  // expect() below always runs and shows `captured` instead of timing out.
+  ws.onerror = () => done.resolve();
+  ws.onclose = () => done.resolve();
+  await done.promise;
+
+  expect(captured).toEqual({
+    ok: true,
+    url: `http://127.0.0.1:${server.port}/some/path?q=1`,
+    host: `127.0.0.1:${server.port}`,
+    ua: "bun-test",
+    headerCount: expect.any(Number),
+  });
+  expect(captured!.headerCount).toBeGreaterThan(0);
+});
+
 // Regression: onUpgrade stored the ZigString returned by FetchHeaders.fastGet()
 // (which borrows directly from the header map entry's WTF::StringImpl) and then
 // called fastRemove(), which frees that StringImpl when the map holds the only

@@ -170,6 +170,28 @@ bun_core::opaque_extern!(
     pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
+pub mod socket_transfer {
+    use super::LIBUS_SOCKET_DESCRIPTOR;
+    use core::ffi::{c_char, c_int, c_uint, c_void};
+    unsafe extern "C" {
+        pub safe fn bsd_socket_export_size() -> c_int;
+        pub fn bsd_socket_export(
+            fd: LIBUS_SOCKET_DESCRIPTOR,
+            target_pid: c_uint,
+            info_out: *mut c_void,
+        ) -> c_int;
+        pub fn bsd_socket_import(info: *mut c_void, err: *mut c_int) -> LIBUS_SOCKET_DESCRIPTOR;
+        pub safe fn bsd_close_socket(fd: LIBUS_SOCKET_DESCRIPTOR);
+        pub fn bsd_create_bound_socket(
+            host: *const c_char,
+            port: c_int,
+            options: c_int,
+            out_port: *mut c_int,
+            error: *mut c_int,
+        ) -> LIBUS_SOCKET_DESCRIPTOR;
+    }
+}
+
 // ── UpgradedDuplex (cycle-break shim) ────────────────────────────────────────
 // The full `UpgradedDuplex` lives in `bun_runtime::socket` (T6); `socket.rs`
 // here dispatches to it from the low-tier `InternalSocket` enum. To avoid an
@@ -199,62 +221,67 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
 }
 impl UpgradedDuplex {
     #[inline]
-    pub fn ssl_error(&self) -> us_bun_verify_error_t {
+    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
         UpgradedDuplex__ssl_error(self)
     }
     #[inline]
-    pub fn is_established(&self) -> bool {
+    pub(crate) fn is_established(&self) -> bool {
         UpgradedDuplex__is_established(self)
     }
     #[inline]
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         UpgradedDuplex__is_closed(self)
     }
     #[inline]
-    pub fn is_shutdown(&self) -> bool {
+    pub(crate) fn is_shutdown(&self) -> bool {
         UpgradedDuplex__is_shutdown(self)
     }
     #[inline]
-    pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = UpgradedDuplex__ssl(self);
         if p.is_null() { None } else { Some(p) }
     }
     #[inline]
-    pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
+    pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
         UpgradedDuplex__set_timeout(self, seconds)
     }
     #[inline]
-    pub fn flush(&mut self) {
+    pub(crate) fn flush(&mut self) {
         UpgradedDuplex__flush(self)
     }
     #[inline]
-    pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
         // the call, and `(data.as_ptr(), data.len())` is a valid readable region
         // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
         // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
         // the call, and `(data.as_ptr(), data.len())` is a valid readable region
         // borrowed for the call's duration; the callee only reads from it.
         unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         UpgradedDuplex__shutdown(self)
     }
     #[inline]
-    pub fn shutdown_read(&mut self) {
+    pub(crate) fn shutdown_read(&mut self) {
         UpgradedDuplex__shutdown_read(self)
     }
     #[inline]
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         UpgradedDuplex__close(self)
+    }
+    #[inline]
+    pub(crate) fn abandon_js_side(&mut self) {
+        UpgradedDuplex__abandon_js_side(self)
     }
 }
 
@@ -287,60 +314,60 @@ unsafe extern "C" {
 #[cfg(windows)]
 impl WindowsNamedPipe {
     #[inline]
-    pub fn ssl_error(&self) -> us_bun_verify_error_t {
+    pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
         WindowsNamedPipe__ssl_error(self)
     }
     #[inline]
-    pub fn is_established(&self) -> bool {
+    pub(crate) fn is_established(&self) -> bool {
         WindowsNamedPipe__is_established(self)
     }
     #[inline]
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         WindowsNamedPipe__is_closed(self)
     }
     #[inline]
-    pub fn is_shutdown(&self) -> bool {
+    pub(crate) fn is_shutdown(&self) -> bool {
         WindowsNamedPipe__is_shutdown(self)
     }
     #[inline]
-    pub fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
+    pub(crate) fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let p = WindowsNamedPipe__ssl(self);
         if p.is_null() { None } else { Some(p) }
     }
     #[inline]
-    pub fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
+    pub(crate) fn set_timeout(&mut self, seconds: core::ffi::c_uint) {
         WindowsNamedPipe__set_timeout(self, seconds)
     }
     #[inline]
-    pub fn flush(&mut self) {
+    pub(crate) fn flush(&mut self) {
         WindowsNamedPipe__flush(self)
     }
     #[inline]
-    pub fn encode_and_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
         unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn raw_write(&mut self, data: &[u8]) -> i32 {
+    pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
         unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
-    pub fn shutdown(&mut self) {
+    pub(crate) fn shutdown(&mut self) {
         WindowsNamedPipe__shutdown(self)
     }
     #[inline]
-    pub fn shutdown_read(&mut self) {
+    pub(crate) fn shutdown_read(&mut self) {
         WindowsNamedPipe__shutdown_read(self)
     }
     #[inline]
-    pub fn close(&mut self) {
+    pub(crate) fn close(&mut self) {
         WindowsNamedPipe__close(self)
     }
     #[inline]
-    pub fn pause_stream(&mut self) -> bool {
+    pub(crate) fn pause_stream(&mut self) -> bool {
         WindowsNamedPipe__pause_stream(self)
     }
     #[inline]
-    pub fn resume_stream(&mut self) -> bool {
+    pub(crate) fn resume_stream(&mut self) -> bool {
         WindowsNamedPipe__resume_stream(self)
     }
 }
@@ -415,6 +442,9 @@ pub mod fault_inject {
     /// (`uv_poll_init_socket` on Windows, `EPOLL_CTL_ADD` / `kevent` on
     /// epoll/kqueue).
     pub const POLL_START: c_int = 11;
+    /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
+    /// payload in the `on_session`/`on_keylog` dispatch.
+    pub const SESSION_BUFFER: c_int = 12;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;
@@ -435,6 +465,8 @@ pub mod fault_inject {
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
         pub safe fn us_fault_clear(syscall: c_int);
         pub safe fn us_fault_clear_all();
+        pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
+        -> c_int;
     }
 }
 pub use socket::{
@@ -453,7 +485,6 @@ pub use socket_kind::SocketKind;
 pub use timer::Timer;
 #[cfg(not(windows))]
 pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows
-pub use app::uws_app_t;
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
 pub use listen_socket::ListenSocket;

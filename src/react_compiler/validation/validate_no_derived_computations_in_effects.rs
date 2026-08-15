@@ -1161,7 +1161,7 @@ fn validate_effect(
 
 /// Non-experimental version of the derived-computations-in-effects validation.
 /// Records errors directly on the Environment (matching TS `env.recordError()` behavior).
-pub fn validate_no_derived_computations_in_effects(
+pub(crate) fn validate_no_derived_computations_in_effects(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerError> {
@@ -1435,10 +1435,7 @@ fn non_exp_value_operands(value: &InstructionValue) -> Vec<IdentifierId> {
         InstructionValue::CallExpression { callee, args, .. } => {
             let mut op_ids = vec![callee.identifier];
             for a in args {
-                match a {
-                    PlaceOrSpread::Place(p) => op_ids.push(p.identifier),
-                    PlaceOrSpread::Spread(s) => op_ids.push(s.place.identifier),
-                }
+                op_ids.push(a.place().identifier)
             }
             op_ids
         }
@@ -1450,10 +1447,7 @@ fn non_exp_value_operands(value: &InstructionValue) -> Vec<IdentifierId> {
         } => {
             let mut op_ids = vec![receiver.identifier, property.identifier];
             for a in args {
-                match a {
-                    PlaceOrSpread::Place(p) => op_ids.push(p.identifier),
-                    PlaceOrSpread::Spread(s) => op_ids.push(s.place.identifier),
-                }
+                op_ids.push(a.place().identifier)
             }
             op_ids
         }

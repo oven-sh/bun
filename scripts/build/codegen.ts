@@ -16,21 +16,19 @@
  *
  * ## Undeclared outputs
  *
- * Several scripts emit MORE files than they report:
- *   - bindgen.ts emits Generated<Name>.h per namespace (only .cpp declared)
- *   - bindgenv2 emits Generated<Type>.h per type (list-outputs skips .h)
- *   - generate-node-errors.ts emits ErrorCode.d.ts (not declared)
- *   - bundle-modules.ts emits eval/ subdir, BunBuiltinNames+extras.h, etc.
+ * Every generated file that is compiled or #included must be a declared
+ * output of its step. Compiles only order-depend on codegen (bun.ts); the
+ * depfile is what rebuilds them when a generated header changes, and a
+ * depfile entry does that within the same run only if it names a declared
+ * output, which ninja re-stats after the step ran. A file no edge declares
+ * is stat'd once at startup, so a compile that includes it picks up a rerun
+ * of the step one build late. That is why emitBindgen/emitBindgenV2 declare
+ * the per-file Generated*.h headers and not just the .cpp that gets compiled.
  *
- * It WORKS because:
- *   1. The declared .cpp outputs guarantee the step runs before compile
- *   2. Compilation emits .d depfiles that track the .h files for NEXT build
- *   3. PCH order-depends on ALL codegen outputs; every cxx() waits on PCH
- *      → all codegen completes before any compile, undeclared .h exist
- *
- * Fixing properly (declaring all outputs) would require patching the
- * src/codegen/ scripts to report everything — changing contract with
- * existing tooling.
+ * Files nothing compiles may stay undeclared (.d.ts twins, bundle-modules'
+ * eval/ dir, JSSink.lut.txt consumed within its own step). The remaining
+ * #included exception is BunBuiltinNames+extras.h from bundle-functions.ts,
+ * reached through the PCH.
  */
 
 import { spawnSync } from "node:child_process";
@@ -44,6 +42,7 @@ import { writeIfChanged } from "./fs.ts";
 import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
+import { generateXmlByteClass } from "./xmlByteClass.ts";
 
 // The individual emit functions take these four params. Bundled to keep
 // signatures short.
@@ -290,10 +289,13 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   o.all.push(jsonByteClass.h, jsonByteClass.rs);
   o.rustInputs.push(jsonByteClass.rs);
   o.cppHeaders.push(jsonByteClass.h);
+  const xmlByteClass = generateXmlByteClass(cfg);
+  o.all.push(xmlByteClass.h, xmlByteClass.rs);
+  o.rustInputs.push(xmlByteClass.rs);
+  o.cppHeaders.push(xmlByteClass.h);
 
   emitBunError(ctx);
   emitStringMaps(ctx);
-  emitFallbackDecoder(ctx);
   emitRuntimeJs(ctx);
   emitNodeFallbacks(ctx);
   emitErrorCode(ctx);
@@ -417,35 +419,6 @@ function emitBunError({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
 }
 
-function emitFallbackDecoder({ n, cfg, o, dirStamp }: Ctx): void {
-  const src = resolve(cfg.cwd, "src", "fallback.ts");
-  const out = resolve(cfg.codegenDir, "fallback-decoder.js");
-
-  n.build({
-    outputs: [out],
-    rule: "esbuild",
-    inputs: [src],
-    implicitInputs: [o.rootInstall],
-    orderOnlyInputs: [dirStamp],
-    vars: {
-      cwd: cfg.cwd,
-      desc: "fallback-decoder.js",
-      args: shJoin(cfg, [
-        src,
-        `--outfile=${out}`,
-        "--target=esnext",
-        "--bundle",
-        "--format=iife",
-        "--platform=browser",
-        "--minify",
-      ]),
-    },
-  });
-
-  o.all.push(out);
-  o.rustInputs.push(out);
-}
-
 function emitRuntimeJs({ n, cfg, o, dirStamp }: Ctx): void {
   const src = resolve(cfg.cwd, "src", "runtime.bun.js");
   const out = resolve(cfg.codegenDir, "runtime.out.js");
@@ -542,9 +515,12 @@ function emitNodeFallbacks({ n, cfg, sources, o, dirStamp }: Ctx): void {
  * Output lands **in-tree** as `<dir>/<stem>.generated.rs` (checked in) so
  * plain `cargo check` / rust-analyzer work without `BUN_CODEGEN_DIR` or a
  * per-crate `build.rs`. The `.string-map.ts` is the source of truth; the
- * `.generated.rs` is a deterministic artifact whose drift is caught by
- * `bun run codegen:verify` in CI (format job). `restat = 1` on the codegen
- * rule + `writeIfNotChanged` in the script keep this a no-op when unchanged.
+ * `.generated.rs` is a deterministic artifact. A stale checked-in copy is
+ * regenerated and pushed back to the PR by the autofix workflow
+ * (.github/workflows/format.yml runs `codegen:string-maps` with the
+ * formatters); `bun run codegen:verify` is the local equivalent. `restat = 1`
+ * on the codegen rule + `writeIfNotChanged` in the script keep this a no-op
+ * when unchanged.
  */
 function emitStringMaps({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "generate-string-map.ts");
@@ -648,13 +624,12 @@ function emitHostExports({ n, cfg, sources, o, dirStamp }: Ctx): void {
   // the two crates so unrelated edits (e.g. src/bundler) don't re-run the
   // scrape. restat=1 + writeIfNotChanged means a no-marker-change edit
   // produces identical output and the cargo step is pruned.
-  const rsInputs = sources.rust.filter(
-    p =>
-      p.endsWith(".rs") &&
-      (p.includes(`${cfg.cwd}/src/runtime/`.replace(/\//g, "/")) ||
-        p.includes(`${cfg.cwd}/src/jsc/`.replace(/\//g, "/"))) &&
-      !p.endsWith("generated_host_exports.rs"),
-  );
+  const slashed = (p: string) => p.replace(/\\/g, "/");
+  const scrapeDirs = [slashed(`${cfg.cwd}/src/runtime/`), slashed(`${cfg.cwd}/src/jsc/`)];
+  const rsInputs = sources.rust.filter(p => {
+    const q = slashed(p);
+    return q.endsWith(".rs") && scrapeDirs.some(d => q.includes(d)) && !q.endsWith("generated_host_exports.rs");
+  });
 
   n.build({
     outputs: [output],
@@ -821,7 +796,8 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   }
 }
 
-function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
+/** Exported (with emitBindgen) for test/internal/build-codegen-declared-outputs.test.ts. */
+export function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgenv2", "script.ts");
 
   // The script's output set depends on which NamedTypes the .bindv2.ts files
@@ -853,7 +829,8 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
   assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
 
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp"));
+  const headerOutputs = allOutputs.filter(p => p.endsWith(".h"));
+  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".h"));
   assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
   n.build({
@@ -876,18 +853,24 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   o.all.push(...allOutputs);
   o.bindgenV2Cpp.push(...cppOutputs);
+  o.cppHeaders.push(...headerOutputs);
 }
 
-function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
+export function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "bindgen.ts");
 
   const cppOut = resolve(cfg.codegenDir, "GeneratedBindings.cpp");
+  // Plus one header per .bind.ts (node_os.bind.ts → GeneratedNodeOs.h), which
+  // hand-written .cpp files include; see "Undeclared outputs" above.
+  const headers = sources.bindgen.map(src =>
+    resolve(cfg.codegenDir, `Generated${pascalCase(basename(src, ".bind.ts"))}.h`),
+  );
 
-  // bindgen.ts scans src/ for .bind.ts files itself — this list is only for
-  // ninja dependency tracking. New .bind.ts files need a reconfigure to be
-  // picked up (next glob gets them).
+  // bindgen.ts scans src/ for .bind.ts files itself; this list only tells
+  // ninja the inputs and which headers come out. New .bind.ts files need a
+  // reconfigure to be picked up (next glob gets them).
   n.build({
-    outputs: [cppOut],
+    outputs: [cppOut, ...headers],
     rule: "codegen",
     inputs: [script, ...sources.bindgen],
     orderOnlyInputs: [dirStamp],
@@ -898,8 +881,14 @@ function emitBindgen({ n, cfg, sources, o, dirStamp }: Ctx): void {
     },
   });
 
-  o.all.push(cppOut);
+  o.all.push(cppOut, ...headers);
   o.cppSources.push(cppOut);
+  o.cppHeaders.push(...headers);
+}
+
+/** Same transform as `pascal()` in src/codegen/bindgen-lib-internal.ts: `node_os` → `NodeOs`. */
+function pascalCase(s: string): string {
+  return s[0]!.toUpperCase() + s.slice(1).replace(/[_-](\w)?/g, (_, c?: string) => c?.toUpperCase() ?? "");
 }
 
 function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {

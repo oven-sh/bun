@@ -32,7 +32,7 @@ use crate::hir::{
 
 /// Main entry point: propagate scope dependencies through the HIR.
 /// Corresponds to TS `propagateScopeDependenciesHIR(fn)`.
-pub fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Environment) {
     let used_outside_declaring_scope = find_temporaries_used_outside_declaring_scope(func, env);
     let temporaries = collect_temporaries_sidemap(func, env, &used_outside_declaring_scope);
 
@@ -254,16 +254,6 @@ fn is_load_context_mutable(
         }
     }
     false
-}
-
-/// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
-fn convert_hoisted_lvalue_kind(kind: InstructionKind) -> Option<InstructionKind> {
-    match kind {
-        InstructionKind::HoistedLet => Some(InstructionKind::Let),
-        InstructionKind::HoistedConst => Some(InstructionKind::Const),
-        InstructionKind::HoistedFunction => Some(InstructionKind::Function),
-        _ => None,
-    }
 }
 
 /// Recursive implementation. Corresponds to TS `collectTemporariesSidemapImpl`.
@@ -2087,7 +2077,7 @@ fn handle_instruction(
         }
         InstructionValue::DeclareLocal { lvalue, .. }
         | InstructionValue::DeclareContext { lvalue, .. } => {
-            if convert_hoisted_lvalue_kind(lvalue.kind).is_none() {
+            if lvalue.kind.unhoisted().is_none() {
                 let scope_stack_copy = ctx.scope_stack.clone();
                 ctx.declare(
                     lvalue.place.identifier,

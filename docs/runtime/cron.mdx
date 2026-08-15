@@ -119,7 +119,7 @@ console.log(next); // => next local midnight
 
 ### Time zone
 
-Schedules are interpreted in the system's **local time zone** — the same way crontab, launchd, and Windows Task Scheduler read them. The OS-level form and the in-process callback form fire at the same wall-clock time.
+Bun interprets schedules in the system's **local time zone**, the same way crontab, launchd, and Windows Task Scheduler read them. The OS-level form and the in-process callback form fire at the same wall-clock time.
 
 To override, pass an IANA time-zone name as `{ tz }` to `Bun.cron.parse()` or the in-process `Bun.cron(schedule, handler, options)`:
 
@@ -138,14 +138,14 @@ DST transitions:
 
 ### Day-of-month and day-of-week interaction
 
-When **both** day-of-month and day-of-week are specified (neither is `*`), the expression matches when **either** condition is true. This follows the [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) standard.
+When you specify **both** day-of-month and day-of-week (neither is `*`), the expression matches when **either** condition is true. This follows the [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) standard.
 
 ```ts
 // Fires on the 15th of every month OR every Friday
 Bun.cron.parse("0 0 15 * FRI");
 ```
 
-When only one is specified (the other is `*`), only that field is used for matching.
+When you specify only one (the other is `*`), Bun uses only that field for matching.
 
 ---
 
@@ -159,7 +159,7 @@ const job = Bun.cron("*/5 * * * *", async () => {
 });
 ```
 
-In-process scheduling is the lightweight option for long-running servers and workers — no system cron daemon required, works the same on every platform, and shares state (database pools, caches, module-level variables) between invocations.
+In-process scheduling is the lightweight option for long-running servers and workers. It requires no system cron daemon, works the same on every platform, and shares state (database pools, caches, module-level variables) between invocations.
 
 |                              | In-process                       | [OS-level](#bun-cron-path-schedule-title-os-level) |
 | ---------------------------- | -------------------------------- | -------------------------------------------------- |
@@ -174,14 +174,14 @@ In-process scheduling is the lightweight option for long-running servers and wor
 | Parameter  | Type                         | Description                                                                                                                                                                  |
 | ---------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                   |
-| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise — the next fire is not scheduled until it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
+| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise; Bun schedules the next fire only once it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
 | `options`  | `{ tz?: string }`            | IANA time-zone name to interpret the schedule in (defaults to the system zone).                                                                                              |
 
 Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid, the time-zone name is unknown, or the expression has no future occurrences, like `"0 0 30 2 *"` (February 30th).
 
 ### No-overlap guarantee
 
-The next fire time is computed only after the handler — including any returned `Promise` — settles. If your handler takes 90 seconds and the schedule is `* * * * *`, the second fire is the first minute boundary _after_ the handler finishes, not 60 seconds after the first fire. Invocations never stack.
+Bun computes the next fire time only after the handler and any returned `Promise` settle. If your handler takes 90 seconds and the schedule is `* * * * *`, the second fire is the first minute boundary _after_ the handler finishes, not 60 seconds after the first fire. Invocations never stack.
 
 ### Error handling
 
@@ -202,7 +202,7 @@ Bun.cron("* * * * *", async () => {
 
 ### `bun --hot`
 
-Under `bun --hot`, all in-process cron jobs are stopped immediately before the module graph re-evaluates. Every `Bun.cron()` call still in your source then re-registers. Editing the schedule, editing the handler, or deleting the line entirely all take effect on save without leaking timers.
+Under `bun --hot`, Bun stops all in-process cron jobs immediately before the module graph re-evaluates. Every `Bun.cron()` call still in your source then re-registers. Editing the schedule, editing the handler, or deleting the line entirely all take effect on save without leaking timers.
 
 ### The `CronJob` handle
 
@@ -239,7 +239,7 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 | `schedule` | `string` | Cron expression or nickname                                |
 | `title`    | `string` | Unique job identifier (alphanumeric, hyphens, underscores) |
 
-Re-registering with the same `title` overwrites the existing job in-place — the old schedule is replaced, not duplicated.
+Re-registering with the same `title` overwrites the existing job in-place. Bun replaces the old schedule instead of duplicating it.
 
 ```ts
 await Bun.cron("./worker.ts", "0 * * * *", "my-job"); // every hour
@@ -268,7 +268,7 @@ The handler can be `async`. Bun waits for the returned promise to settle before 
 
 ### Linux
 
-Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to register jobs. Each job is stored as a line in your user's crontab with a `# bun-cron: <title>` marker comment above it.
+Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to register jobs. Bun stores each job as a line in your user's crontab with a `# bun-cron: <title>` marker comment above it.
 
 The crontab entry looks like:
 
@@ -310,13 +310,13 @@ crontab -l | grep -v "# bun-cron:" | grep -v "\-\-cron-title=" | crontab -
 
 ### macOS
 
-Bun uses [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) to register jobs. Each job is installed as a plist file at:
+Bun uses [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) to register jobs. Bun installs each job as a plist file at:
 
 ```
 ~/Library/LaunchAgents/bun.cron.<title>.plist
 ```
 
-The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported — Bun expands them into multiple `StartCalendarInterval` dicts as a Cartesian product.
+The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported. Bun expands them into multiple `StartCalendarInterval` dicts as a Cartesian product.
 
 **Viewing registered jobs:**
 
@@ -354,17 +354,17 @@ rm ~/Library/LaunchAgents/bun.cron.weekly-report.plist
 
 ### Windows
 
-Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) with XML-based task definitions. Each job is registered as a scheduled task named `bun-cron-<title>` using [`CalendarTrigger`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element) elements and [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) patterns.
+Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) with XML-based task definitions. Bun registers each job as a scheduled task named `bun-cron-<title>` using [`CalendarTrigger`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element) elements and [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) patterns.
 
 Most cron expressions are fully supported, including `@daily`, `@weekly`, `@monthly`, `@yearly`, ranges (`1-5`), lists (`1,15`), named days/months, and day-of-month patterns.
 
 #### User context
 
-Bun registers tasks with the [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored.
+Bun registers tasks with the [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in. Linux `crontab` behaves the same way. No password is stored.
 
 TCP/IP networking (`fetch()`, HTTP, WebSocket, database connections) works normally. The only restriction is that S4U tasks cannot access [Windows-authenticated network resources](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks) (SMB file shares, mapped drives, Kerberos/NTLM services).
 
-On headless servers and CI environments where the current user's [Security Identifier (SID)](https://learn.microsoft.com/en-us/windows/security/identity-protection/access-control/security-identifiers) cannot be resolved — such as service accounts created by [NSSM](https://nssm.cc/) or similar tools — `Bun.cron()` fails with an error explaining the issue. To work around this, either run Bun as a regular user account, or create the scheduled task manually with `schtasks /create /xml <file> /tn <name> /ru SYSTEM /f`.
+On some headless servers and CI environments, the current user's [Security Identifier (SID)](https://learn.microsoft.com/en-us/windows/security/identity-protection/access-control/security-identifiers) cannot be resolved, for example with service accounts created by [NSSM](https://nssm.cc/) or similar tools. In that case, `Bun.cron()` fails with an error explaining the issue. To work around this, either run Bun as a regular user account, or create the scheduled task manually with `schtasks /create /xml <file> /tn <name> /ru SYSTEM /f`.
 
 #### Trigger limit
 

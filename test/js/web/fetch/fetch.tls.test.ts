@@ -195,6 +195,83 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  // A second fetch to the same origin after `Connection: close` has to open a
+  // fresh TLS connection (no keep-alive socket to reuse). With a client-side
+  // session cache, that connect offers the ticket from the first handshake and
+  // the server observes a resumed session; without one, it's a full handshake.
+  // TLS 1.2 delivers the session inside SSL_do_handshake (before
+  // checkServerIdentity runs), TLS 1.3 as a post-handshake NewSessionTicket;
+  // both paths must cache. Each fixture run exercises every scenario against
+  // its own server (fresh port) so the cache key keeps them isolated.
+  describe("client-side TLS session resumption", () => {
+    const fixture = join(import.meta.dir, "fetch.tls.session-resumption-fixture.ts");
+    async function run(version: string, env: Record<string, string> = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, version],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toMatch(/AddressSanitizer|ERROR: (Leak|Thread)Sanitizer/);
+      expect(stdout.trim()).toStartWith("{");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout.trim()) as {
+        default: boolean[];
+        mismatch: boolean[];
+        checkServerIdentity: boolean[];
+        portIsolation: { a: boolean[]; b: boolean[] };
+        hostIsolation: boolean[];
+      };
+    }
+
+    // Each run starts six TLS servers and performs ~12 handshakes in a
+    // debug+ASAN subprocess, which can exceed the default timeout when all
+    // four run under `describe.concurrent`.
+    const timeout = isASAN ? 20_000 : 10_000;
+    for (const version of ["TLSv1.2", "TLSv1.3"]) {
+      it(
+        `caches only verified sessions keyed on (host, port) (${version})`,
+        async () => {
+          const r = await run(version);
+          expect({
+            default: r.default,
+            checkServerIdentity: r.checkServerIdentity,
+            portIsolation: r.portIsolation,
+            hostIsolation: r.hostIsolation,
+          }).toEqual({
+            // Second fresh connect to the same origin resumes.
+            default: [false, true],
+            // A JS checkServerIdentity callback is excluded (verdict arrives
+            // off-thread after on_handshake), so the second fetch sees no
+            // cached ticket.
+            checkServerIdentity: [false, false],
+            // Same hostname + SSLConfig, different port: no resumption.
+            portIsolation: { a: [false], b: [false] },
+            // Same port + SSLConfig, different connect hostname: no resumption.
+            hostIsolation: [false, false],
+          });
+          // A handshake rejected by checkServerIdentity (trusted chain, wrong
+          // SAN) must not seed the cache. The fixture asserts each fetch
+          // rejects with ERR_TLS_CERT_ALTNAME_INVALID; the client may RST
+          // before the server completes its side of a TLS 1.3 handshake, so
+          // fewer than two entries is acceptable.
+          expect(r.mismatch).not.toContain(true);
+        },
+        timeout,
+      );
+
+      it(
+        `is disabled by BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE (${version})`,
+        async () => {
+          const r = await run(version, { BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE: "1" });
+          expect(r.default).toEqual([false, false]);
+        },
+        timeout,
+      );
+    }
+  });
+
   // Covers a family of HTTP-thread crashes (sentry BUN-2WC6 and siblings) where
   // a certificate identity failure during a handshake completed from the
   // SSL_read path, racing aborts, idle timeouts, and keepalive churn, caused a
@@ -487,6 +564,59 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
+  it("honors a tls.ciphers list on the request", async () => {
+    let secureConnections = 0;
+    const server = tls.createServer(
+      {
+        key: validTls.key,
+        cert: validTls.cert,
+        ciphers: "ECDHE-RSA-AES128-GCM-SHA256",
+        maxVersion: "TLSv1.2",
+      },
+      socket => {
+        secureConnections++;
+        const chunks: Buffer[] = [];
+        socket.on("data", chunk => {
+          chunks.push(chunk);
+          if (Buffer.concat(chunks).includes("\r\n\r\n")) {
+            socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+        socket.on("error", () => {});
+      },
+    );
+    server.on("tlsClientError", () => {});
+    try {
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      server.listen(0, onListening);
+      await listening;
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const url = `https://127.0.0.1:${port}/`;
+
+      const matching = await fetch(url, {
+        keepalive: false,
+        tls: { ca: validTls.cert, ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+      });
+      expect(await matching.text()).toBe("ok");
+      expect(matching.status).toBe(200);
+      expect(secureConnections).toBe(1);
+
+      let err: unknown;
+      try {
+        await fetch(url, {
+          keepalive: false,
+          tls: { ca: validTls.cert, ciphers: "ECDHE-RSA-AES256-GCM-SHA384" },
+        });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(Error);
+      expect(secureConnections).toBe(1);
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch with self-sign certificate tls + rejectUnauthorized: false should not throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];
@@ -545,6 +675,71 @@ describe.concurrent("fetch-tls", () => {
       expect(exitCode2).toBe(1);
     });
   });
+
+  for (const mode of ["main thread", "SHARE_ENV worker"]) {
+    it(`delete process.env.NODE_TLS_REJECT_UNAUTHORIZED restores certificate verification (${mode})`, async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: CERT_EXPIRED,
+        fetch() {
+          return new Response("Hello World");
+        },
+      });
+      const steps = `
+        async function attempt() {
+          try {
+            const res = await fetch(process.env.SERVER, { keepalive: false });
+            return await res.text();
+          } catch (e) {
+            return e.code;
+          }
+        }
+        async function run() {
+          const out = [];
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+          out.push(await attempt());
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+          out.push(String(process.env.NODE_TLS_REJECT_UNAUTHORIZED));
+          out.push(await attempt());
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+          out.push(await attempt());
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "1";
+          out.push(await attempt());
+          return out;
+        }
+      `;
+      const script =
+        mode === "SHARE_ENV worker"
+          ? `
+        const { Worker, SHARE_ENV } = require("worker_threads");
+        const worker = new Worker(
+          ${JSON.stringify(steps + `run().then(out => require("worker_threads").parentPort.postMessage(out));`)},
+          { eval: true, env: SHARE_ENV },
+        );
+        worker.on("message", out => console.log(JSON.stringify(out)));
+        worker.on("error", e => { console.error(e); process.exit(1); });
+        worker.on("exit", code => { if (code !== 0) process.exit(code); });
+      `
+          : steps + `console.log(JSON.stringify(await run()));`;
+      const { NODE_TLS_REJECT_UNAUTHORIZED: _, ...env } = bunEnv as Record<string, string | undefined>;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...env, SERVER: `https://127.0.0.1:${server.port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout ? JSON.parse(stdout) : stderr).toEqual([
+        "Hello World",
+        "undefined",
+        "CERT_HAS_EXPIRED",
+        "Hello World",
+        "CERT_HAS_EXPIRED",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+  }
 
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({

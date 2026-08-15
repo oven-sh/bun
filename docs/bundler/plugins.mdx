@@ -12,9 +12,9 @@ Plugins intercept imports and perform custom loading logic, such as reading file
 Plugins register callbacks that run at various points in the lifecycle of a bundle:
 
 - `onStart()`: Run once the bundler has started a bundle
-- `onResolve()`: Run before a module is resolved
-- `onLoad()`: Run before a module is loaded
-- `onBeforeParse()`: Run zero-copy native addons in the parser thread before a file is parsed
+- `onResolve()`: Run before the bundler resolves a module
+- `onLoad()`: Run before the bundler loads a module
+- `onBeforeParse()`: Run zero-copy native addons in the parser thread before the bundler parses a file
 - `onEnd()`: Run after the bundle is complete
 
 ## Reference
@@ -106,7 +106,7 @@ Other common namespaces are:
 onStart(callback: () => void): Promise<void> | void;
 ```
 
-Registers a callback to be run when the bundler starts a new bundle.
+Registers a callback that runs when the bundler starts a new bundle.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import { plugin } from "bun";
@@ -174,11 +174,11 @@ onResolve(
 
 To bundle your project, Bun walks down the dependency tree of all modules in your project. For each imported module, Bun has to find and read that module. The "finding" part is known as "resolving" a module.
 
-The `onResolve()` plugin lifecycle callback configures how a module is resolved.
+The `onResolve()` plugin lifecycle callback configures how Bun resolves a module.
 
 The first argument to `onResolve()` is an object with a `filter` and `namespace` property. The `filter` is a regular expression run on the import string. Together, these select which modules your custom resolution logic applies to.
 
-The second argument to `onResolve()` is a callback that runs for each module import Bun finds that matches the filter and namespace defined in the first argument.
+The second argument to `onResolve()` is a callback. Bun runs the callback for each module import it finds that matches the filter and namespace defined in the first argument.
 
 The callback receives the path to the matching module and can return a new path for the module. Bun reads the contents of the new path and parses it as a module.
 
@@ -257,7 +257,7 @@ This plugin transforms all imports of the form `import env from "env"` into a Ja
 
 #### .defer()
 
-One of the arguments passed to the `onLoad` callback is a `defer` function. It returns a Promise that resolves once all other modules have been loaded. Await it when a module's contents depend on other modules.
+One of the arguments passed to the `onLoad` callback is a `defer` function. It returns a Promise that resolves once Bun has loaded all other modules. Await it when a module's contents depend on other modules.
 
 <Accordion title="Example: tracking and reporting unused exports">
 
@@ -303,17 +303,17 @@ plugin({
 
 </Accordion>
 
-<Warning>The `.defer()` function can only be called once per `onLoad` callback.</Warning>
+<Warning>You can call the `.defer()` function only once per `onLoad` callback.</Warning>
 
 ## Native plugins
 
 Bun's bundler is written in native code and uses multiple threads to load and parse modules in parallel. JavaScript plugins run on a single thread, because JavaScript itself is single-threaded.
 
-Native plugins are NAPI modules that expose lifecycle hooks as C ABI functions. They can run on multiple threads, so they run much faster than JavaScript plugins, and they skip work such as the UTF-8 -> UTF-16 conversion needed to pass strings to JavaScript.
+Native plugins are NAPI modules that expose lifecycle hooks as C ABI functions. They can run on multiple threads, so they run much faster than JavaScript plugins. They also skip work such as the UTF-8 -> UTF-16 conversion needed to pass strings to JavaScript.
 
 These lifecycle hooks are available to native plugins:
 
-- `onBeforeParse()`: Called on any thread before a file is parsed by Bun's bundler.
+- `onBeforeParse()`: Called on any thread before Bun's bundler parses a file.
 
 To create a native plugin, export a C ABI function that matches the signature of the native lifecycle hook you want to implement.
 
@@ -414,7 +414,7 @@ It receives the file's contents and can optionally return new source code.
 onEnd(callback: (result: BuildOutput) => void | Promise<void>): void;
 ```
 
-Registers a callback to be run after the bundle is complete. The callback receives the [`BuildOutput`](/docs/bundler#outputs) object containing the build results, including output files and any build messages.
+Registers a callback that runs after the bundle is complete. The callback receives the [`BuildOutput`](/docs/bundler#outputs) object containing the build results, including output files and any build messages.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 const result = await Bun.build({

@@ -100,7 +100,7 @@ fn map_err(rc: i32) -> BackendError {
     }
 }
 
-pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let mut w: u32 = 0;
     let mut h: u32 = 0;
     // Phase 1: dimensions only (out=null) so we can allocate in the global

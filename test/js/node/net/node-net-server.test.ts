@@ -1,5 +1,5 @@
 import { realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -18,18 +18,18 @@ describe("net.createServer listen", () => {
     done();
   });
 
+  // No secondary setTimeout deadline: the test runner already bounds each test,
+  // and a real listen failure reaches done() via the 'error' listener below.
+  const failOnError = (server: Server, done: (err?: unknown) => void) => (err: unknown) => {
+    server.close();
+    done(err);
+  };
+
   it("should listen on IPv6 by default", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -46,18 +46,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on IPv4", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -75,73 +67,45 @@ describe("net.createServer listen", () => {
   });
 
   it("should call listening", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
 
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-
-    server.on("error", closeAndFail).on(
+    server.on("error", failOnError(server, done)).on(
       "listening",
       mustCall(() => {
-        clearTimeout(timeout);
         server.close();
         done();
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
-
     server.listen(0, "0.0.0.0");
   });
 
   it("should provide listening property", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
     expect(server.listening).toBeFalse();
 
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-
-    server.on("error", closeAndFail).on(
+    server.on("error", failOnError(server, done)).on(
       "listening",
       mustCall(() => {
         expect(server.listening).toBeTrue();
-        clearTimeout(timeout);
         server.close();
         expect(server.listening).toBeFalse();
         done();
       }),
     );
 
-    timeout = setTimeout(closeAndFail, 100);
-
     server.listen(0, "0.0.0.0");
   });
 
   it("should listen on localhost", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -159,18 +123,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on localhost", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -186,18 +142,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen without port or host", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       mustCall(() => {
@@ -213,18 +161,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should listen on unix domain socket", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       socket_domain,
@@ -238,17 +178,10 @@ describe("net.createServer listen", () => {
   });
 
   it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {
-    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+    const { mustCall } = createCallCheckCtx(done);
 
     const server: Server = createServer();
-    let timeout: Timer;
-    const closeAndFail = () => {
-      clearTimeout(timeout);
-      server.close();
-      mustNotCall()();
-    };
-    server.on("error", closeAndFail);
-    timeout = setTimeout(closeAndFail, 100);
+    server.on("error", failOnError(server, done));
 
     server.listen(
       0,
@@ -695,4 +628,37 @@ describe("accepted socket event-loop hold matches Node (per-connection KeepAlive
       `),
     ).toEqual({ stdout: "fast", exitCode: 0, failureDetail: "" });
   });
+});
+
+// The Windows named-pipe listener never stripped libuv's own loop ref from its
+// uv_pipe_t (uv_listen marks the handle active+ref'd), so server.unref()
+// dropped the Listener's KeepAlive but the uv handle still pinned
+// uv_loop_alive and the process never exited. TCP and unix-socket listeners go
+// through usockets, which unrefs its uv handles up front.
+it("server.unref() on a pipe/unix-socket listener lets the process exit", async () => {
+  // The child exits without close() (natural exit is the observable), so the
+  // unix socket file must live in a tempDir the parent disposes.
+  using dir = tempDir("server-unref", {});
+  const listenPath =
+    process.platform === "win32"
+      ? "\\\\.\\pipe\\bun-server-unref-" + process.pid + "-" + Math.random().toString(36).slice(2)
+      : join(String(dir), "server-unref.sock");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const server = require("net").createServer();
+      server.listen(process.env.SERVER_UNREF_LISTEN_PATH, () => server.unref());
+      setTimeout(() => { process.stdout.write("HUNG"); process.exit(1); }, 4000).unref();
+      `,
+    ],
+    env: { ...bunEnv, SERVER_UNREF_LISTEN_PATH: listenPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(exitCode === 0 ? "" : stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

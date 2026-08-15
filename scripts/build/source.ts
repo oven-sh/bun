@@ -669,21 +669,14 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
 // ───────────────────────────────────────────────────────────────────────────
 
 /**
- * Path to a dep's source tree. Does NOT handle in-tree sources — use
- * the per-dep `srcDir` computed in resolveDep() for that.
- * Both "github-archive" and "local" sources live here — the difference is
- * whether WE manage it (fetch + .ref stamp) or the USER manages it.
+ * Path to a dep's source tree: its `--local-deps` checkout if redirected,
+ * else vendor/<name>/. Cross-dep references (lsquic's -I into boringssl,
+ * boringssl's nasm -I) go through here so they follow a redirect too. Does
+ * NOT handle in-tree sources or WebKit's $BUN_WEBKIT_PATH — use the per-dep
+ * `srcDir` computed in resolveDep() for those.
  */
 export function depSourceDir(cfg: Config, name: string): string {
-  return resolve(cfg.vendorDir, name);
-}
-
-/**
- * Path to a dep's fetch stamp. Used by rust-only mode to depend on lolhtml's
- * source being on disk without resolving the full dep graph.
- */
-export function depSourceStamp(cfg: Config, name: string): string {
-  return resolve(depSourceDir(cfg, name), ".ref");
+  return cfg.localDeps[name] ?? resolve(cfg.vendorDir, name);
 }
 
 /**
@@ -692,6 +685,28 @@ export function depSourceStamp(cfg: Config, name: string): string {
  */
 export function depBuildDir(cfg: Config, name: string): string {
   return resolve(cfg.buildDir, "deps", name);
+}
+
+/**
+ * The dep's source, with `--local-deps` applied: a dep named there is
+ * redirected from its pinned github-archive tarball to the local checkout.
+ * Only github-archive sources can be redirected — prebuilt/in-tree deps
+ * have their own switches (e.g. `--webkit=local`).
+ */
+export function depSource(cfg: Config, dep: Dependency): Source {
+  const source = dep.source(cfg);
+  const localPath = cfg.localDeps[dep.name];
+  if (localPath === undefined) return source;
+  assert(
+    source.kind === "github-archive",
+    `--local-deps: ${dep.name} has a ${source.kind} source; only github-archive deps can be redirected`,
+    dep.name === "WebKit" ? { hint: "Use --webkit=local (and $BUN_WEBKIT_PATH) for WebKit" } : {},
+  );
+  return {
+    kind: "local",
+    path: localPath,
+    hint: `--local-deps points ${dep.name} at ${localPath} — clone ${source.repo} there`,
+  };
 }
 
 /**
@@ -711,7 +726,7 @@ export function resolveDep(
     return null;
   }
 
-  const source = dep.source(cfg);
+  const source = depSource(cfg, dep);
   const buildSpec = dep.build(cfg);
   const provides = dep.provides(cfg);
 
@@ -768,7 +783,7 @@ export function resolveDep(
   // For github-archive: this runs fetchCli which downloads/extracts/patches.
   // For local/in-tree: source is already on disk; we use a sentinel file
   //   (CMakeLists.txt) as the stamp. Editing it → reconfigure.
-  let sourceStamp: string;
+  let sourceStamp: string | undefined;
   if (source.kind === "github-archive") {
     sourceStamp = emitFetch(n, cfg, dep.name, source, patches, [...resolvedSources, ...directSources]);
   } else {
@@ -776,7 +791,9 @@ export function resolveDep(
     // as the stamp — touching it triggers reconfigure/rebuild.
     //   cmake deps → CMakeLists.txt (in sourceSubdir if set, e.g. zstd)
     //   cargo deps → Cargo.toml (in manifestDir)
-    //   header-only → source dir itself (no build = no manifest needed)
+    //   direct/header-only → none: the sources are on disk before ninja
+    //     starts, so the compiler depfiles see edits directly. (Stamping the
+    //     directory would rebuild the PCH whenever a top-level entry moved.)
     let stampDir: string;
     let stampFile: string;
     if (buildSpec.kind === "nested-cmake") {
@@ -789,10 +806,10 @@ export function resolveDep(
       stampDir = srcDir;
       stampFile = "";
     }
-    sourceStamp = stampFile ? resolve(stampDir, stampFile) : stampDir;
+    sourceStamp = stampFile ? resolve(stampDir, stampFile) : undefined;
 
     const modeName = source.kind === "in-tree" ? "in-tree" : "local";
-    assert(existsSync(sourceStamp), `${modeName} dep "${dep.name}" source not found at ${stampDir}`, {
+    assert(existsSync(sourceStamp ?? stampDir), `${modeName} dep "${dep.name}" source not found at ${stampDir}`, {
       hint:
         source.kind === "in-tree"
           ? `Expected ${stampFile || "source"} at ${source.path}/ — check deps/${dep.name}.ts`
@@ -827,7 +844,7 @@ export function resolveDep(
   if (buildSpec.kind === "nested-cmake") {
     const result = emitNestedCmake(n, cfg, dep.name, buildSpec, {
       srcDir,
-      sourceStamp,
+      sourceStamp: sourceStamp!, // .ref or CMakeLists.txt — always set for cmake deps
       provides,
       fetchDepStamps,
       // Local-mode deps: always re-invoke inner build. We can't track
@@ -838,7 +855,7 @@ export function resolveDep(
     libs = result.libs;
     outputs = result.libs;
   } else if (buildSpec.kind === "cargo") {
-    const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp });
+    const result = emitCargo(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp: sourceStamp! }); // .ref or Cargo.toml
     libs = result.libs;
     outputs = result.libs;
   } else if (buildSpec.kind === "direct") {
@@ -850,11 +867,11 @@ export function resolveDep(
     // are link inputs, not include-order dependencies).
     outputs = result.headerOutputs;
   } else {
-    // No build step. Source stamp is the only output. For deps with
-    // provides.sources (picohttpparser), emitBun adds a phony pointing at
-    // the compiled .o files so `--target <name>` actually compiles them.
+    // No build step. The fetch stamp (if any) is the only output. For deps
+    // with provides.sources (picohttpparser), emitBun adds a phony pointing
+    // at the compiled .o files so `--target <name>` actually compiles them.
     libs = [];
-    outputs = [sourceStamp];
+    outputs = sourceStamp === undefined ? [] : [sourceStamp];
   }
 
   // ─── Resolve include paths ───
@@ -1458,7 +1475,8 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
 
 interface EmitDirectInput {
   srcDir: string;
-  sourceStamp: string;
+  /** Fetch `.ref` stamp; undefined for local/in-tree sources (already on disk). */
+  sourceStamp: string | undefined;
   fetchDepStamps: string[];
 }
 
@@ -1514,7 +1532,7 @@ function emitDirect(
   // Sources must exist before compile attempts. sourceStamp (or the fetch
   // .ref) is order-only: we don't want every .o recompiling when the stamp
   // mtime bumps but the .c files are unchanged — the depfile knows better.
-  const orderOnly = [sourceStamp, ...fetchDepStamps];
+  const orderOnly = [...(sourceStamp === undefined ? [] : [sourceStamp]), ...fetchDepStamps];
 
   // ─── Generated headers (optional) ───
   // Literal-string headers are written at configure time via writeIfChanged
@@ -1636,8 +1654,8 @@ function emitDirect(
   n.phony(name, objects);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
   // ready. For no-archive direct deps that's the generated header set
-  // (subst/literal/codegen) plus the source stamp — not the .o files.
-  return { libs: [], objects, headerOutputs: [...generated, sourceStamp] };
+  // (subst/literal/codegen) plus the fetch stamp — not the .o files.
+  return { libs: [], objects, headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp] };
 }
 
 /**

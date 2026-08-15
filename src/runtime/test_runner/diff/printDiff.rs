@@ -10,12 +10,12 @@ use bun_core::strings;
 type Dmp = diff_match_patch::DiffMatchPatch<u8>;
 type DmpUsize = diff_match_patch::DiffMatchPatch<usize>;
 
-pub struct DiffConfig {
-    pub min_bytes_before_chunking: usize,
-    pub chunk_context_lines: usize,
-    pub enable_ansi_colors: bool,
-    pub truncate_threshold: usize,
-    pub truncate_context: usize,
+pub(crate) struct DiffConfig {
+    pub(crate) min_bytes_before_chunking: usize,
+    pub(crate) chunk_context_lines: usize,
+    pub(crate) enable_ansi_colors: bool,
+    pub(crate) truncate_threshold: usize,
+    pub(crate) truncate_context: usize,
 }
 
 impl DiffConfig {
@@ -37,7 +37,7 @@ fn remove_trailing_newline(text: &[u8]) -> &[u8] {
     &text[0..text.len() - 1]
 }
 
-pub fn print_diff_main(
+pub(crate) fn print_diff_main(
     not: bool,
     received_slice: &[u8],
     expected_slice: &[u8],
@@ -149,7 +149,7 @@ pub fn print_diff_main(
 
         for diff_segment in &diff_segments {
             if diff_segment.mode == DiffSegmentMode::Equal {
-                for line in diff_segment.removed.split(|&b| b == b'\n') {
+                for line in strings::split(diff_segment.removed, b"\n") {
                     new_diff_segments.push(DiffSegment {
                         removed: line,
                         inserted: line,
@@ -288,12 +288,12 @@ pub enum DiffSegmentMode {
 // (tracked by `'a`).
 #[derive(Copy, Clone)]
 pub struct DiffSegment<'a> {
-    pub removed: &'a [u8],
-    pub inserted: &'a [u8],
-    pub mode: DiffSegmentMode,
-    pub removed_line_count: usize,
-    pub inserted_line_count: usize,
-    pub skip: bool,
+    pub(crate) removed: &'a [u8],
+    pub(crate) inserted: &'a [u8],
+    pub(crate) mode: DiffSegmentMode,
+    pub(crate) removed_line_count: usize,
+    pub(crate) inserted_line_count: usize,
+    pub(crate) skip: bool,
 }
 
 fn print_diff_footer(
@@ -336,14 +336,14 @@ fn print_diff_footer(
 
 #[derive(Clone, Copy)]
 pub struct PrefixStyle {
-    pub msg: &'static str,
-    pub color: &'static str,
+    pub(crate) msg: &'static str,
+    pub(crate) color: &'static str,
 }
 
 #[derive(Clone, Copy)]
 pub struct Style {
-    pub prefix: PrefixStyle,
-    pub text_color: &'static str,
+    pub(crate) prefix: PrefixStyle,
+    pub(crate) text_color: &'static str,
 }
 
 fn print_line_prefix(
@@ -420,7 +420,7 @@ fn print_segment(
     config: &DiffConfig,
     style: Style,
 ) -> std::fmt::Result {
-    let mut lines = text.split(|&b| b == b'\n');
+    let mut lines = strings::split(text, b"\n");
 
     print_truncated_line(lines.next().unwrap(), writer, config, style)?;
 
@@ -598,7 +598,7 @@ fn print_modified_segment(
     Ok(())
 }
 
-pub fn print_hunk_header(
+pub(crate) fn print_hunk_header(
     writer: &mut impl Write,
     config: &DiffConfig,
     original_line_number: usize,
@@ -626,7 +626,7 @@ pub fn print_hunk_header(
     }
 }
 
-pub fn print_diff(
+pub(crate) fn print_diff(
     writer: &mut impl Write,
     diff_segments: &[DiffSegment<'_>],
     config: &DiffConfig,

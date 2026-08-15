@@ -79,16 +79,6 @@ function DOMJITType(type) {
   }[type];
 }
 
-function DOMJITReturnType(type) {
-  return {
-    ["bool"]: "bool",
-    ["int"]: "int32_t",
-    ["JSUint8Array"]: "JSC::JSUint8Array*",
-    ["JSString"]: "JSString*",
-    ["JSValue"]: "EncodedJSValue",
-  }[type];
-}
-
 function DOMJITFunctionDeclaration(jsClassName, fnName, symName, { args, returns, pure = false }) {
   const argNames = args.map((arg, i) => `${argTypeName(arg)} arg${i}`);
   const formattedArgs = argNames.length > 0 ? `, ${argNames.join(", ")}` : "";
@@ -290,17 +280,6 @@ function propRow(
 
   throw "Unsupported property";
 }
-function ownRow(
-  symbolName: (a: string, b: string) => string,
-  typeName: string,
-  name: string,
-  prop: Field,
-  isWrapped = true,
-  defaultPropertyAttributes,
-  supportsObjectCreate = false,
-) {
-  throw "Unsupported property";
-}
 
 export function generateHashTable(nameToUse, symbolName, typeName, obj, props = {}, wrapped) {
   const rows = [];
@@ -493,7 +472,6 @@ ${generateHashTable(
   true,
 )}
 
-
 const ClassInfo ${proto}::s_info = { "${typeName}"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${proto}) };
 
 ${renderFieldsImpl(protoSymbolName, typeName, obj, protoFields, obj.values || [])}
@@ -508,8 +486,6 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     }${specialSymbols}${staticPrototypeValues}
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
-
-
 
 `;
 }
@@ -689,7 +665,6 @@ ${
 }
 }
 
-
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -755,7 +730,6 @@ ${
   }`
     : ""
 }
-
 
       `
   );
@@ -1346,7 +1320,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     weakOwner = `
     JSC::Weak<${name}> m_weakThis;
 
-
     static bool hasPendingActivity(void* ctx);
 
     class Owner final : public JSC::WeakHandleOwner {
@@ -1376,12 +1349,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
       }
       `;
   }
-  var suffix = "";
-
-  if (obj.getInternalProperties) {
-    suffix += `JSC::JSValue getInternalProperties(JSC::VM &vm, JSC::JSGlobalObject *globalObject, ${name}*);`;
-  }
-
   const final = obj.final ?? true;
 
   return `
@@ -1507,7 +1474,6 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
         ${callbacks ? renderCallbacksHeader(typeName, obj.callbacks) : ""}
         ${obj.valuesArray ? "WTF::FixedVector<JSC::WriteBarrier<JSC::Unknown>> jsvalueArray;" : ""}
     };
-    ${suffix}
   `.trim();
 }
 
@@ -1536,7 +1502,6 @@ function generateClassImpl(typeName, obj: ClassDefinition) {
     construct,
     estimatedSize,
     hasPendingActivity = false,
-    getInternalProperties = false,
     callbacks = {},
     own,
   } = obj;
@@ -1611,8 +1576,6 @@ DEFINE_VISIT_CHILDREN(${name});
 
 ${renderCallbacksCppImpl(typeName, callbacks)}
 
-
-
         `.trim();
   }
 
@@ -1633,17 +1596,6 @@ ${renderCallbacksCppImpl(typeName, callbacks)}
         return ${symbolName(typeName, "hasPendingActivity")}(ctx);
     }
 `;
-  }
-
-  if (getInternalProperties) {
-    externs += `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${symbolName(typeName, "getInternalProperties")}(void* ptr, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue thisValue);`;
-    output += `
-    JSC::JSValue getInternalProperties(JSC::VM &, JSC::JSGlobalObject *globalObject, ${name}* castedThis)
-    {
-      return JSValue::decode(${symbolName(typeName, "getInternalProperties")}(castedThis->impl(), globalObject, JSValue::encode(castedThis)));
-    }
-
-    `;
   }
 
   if (obj.hasOwnProperties()) {
@@ -1842,7 +1794,13 @@ ${
 
 JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
 {
-    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${obj.forBind ? "globalObject->functionPrototype()" : "globalObject->objectPrototype()"});
+    auto *structure = ${prototypeName(typeName)}::createStructure(vm, globalObject, ${
+      obj.forBind
+        ? "globalObject->functionPrototype()"
+        : obj.prototypeBase === "Error"
+          ? "globalObject->errorPrototype()"
+          : "globalObject->objectPrototype()"
+    });
     structure->setMayBePrototype(true);
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
@@ -1926,8 +1884,6 @@ ${
 }
 
 ${DEFINE_VISIT_CHILDREN}
-
-
 
     `.trim();
 
@@ -2233,7 +2189,6 @@ function generateRust(
     values = [],
     hasPendingActivity = false,
     structuredClone = false,
-    getInternalProperties = false,
     rustPath,
     sharedThis = true,
   } = {} as ClassDefinition,
@@ -2269,6 +2224,7 @@ function generateRust(
     // be `extern "sysv64"` on win-x64. `jsc_host_abi!` does the cfg-split.
     thunks.push(
       `bun_jsc::jsc_host_abi! {\n` +
+        `    #[allow(dead_code, unreachable_pub, unused)]\n` +
         `    #[unsafe(no_mangle)]\n` +
         `    pub unsafe fn ${sym}${sig} {\n` +
         `    ${body}\n` +
@@ -2281,8 +2237,8 @@ function generateRust(
   // host-fn now receives `&${T}` (no `noalias` on the LLVM arg, so re-entrant
   // JS that re-derives `&Self` from the wrapper's `m_ctx` cannot miscompile).
   // `sharedThis: false` remains an explicit opt-out for types that have not
-  // yet migrated their fields to `Cell`/`JsCell`. `_shared` helpers live in
-  // `src/jsc/host_fn.rs` alongside the legacy `&mut` originals.
+  // yet migrated their fields to `Cell`/`JsCell`; only the `_getter`/`_setter`
+  // (no `this`) `&mut` helpers survive in `src/jsc/host_fn.rs` for it.
   const recv = sharedThis ? `&${T}` : `&mut ${T}`;
   const helper = (base: string) => (sharedThis ? `host_fn::${base}_shared` : `host_fn::${base}`);
 
@@ -2296,7 +2252,7 @@ function generateRust(
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));
     thunks.push(
-      `#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
+      `#[allow(dead_code, unreachable_pub, unused)]\n#[unsafe(no_mangle)]\npub static ${symbolName(typeName, "ZigStructSize")}: usize = core::mem::size_of::<${T}>();`,
     );
   }
 
@@ -2339,14 +2295,6 @@ function generateRust(
     );
   }
 
-  if (getInternalProperties) {
-    thunk(
-      symbolName(typeName, "getInternalProperties"),
-      `(this: ${recv}, global: &JSGlobalObject, this_value: JSValue) -> JSValue`,
-      `    ${helper("host_fn_internal_props")}(this, global, this_value, |t, g, v| ${T}::get_internal_properties(t, g, v))`,
-    );
-  }
-
   // ── proto getters / setters / fns ────────────────────────────────────────
   // Closure form (`|t, g, c| T::method(t, g, c)`) rather than bare `T::method`
   // so `&mut T → &T` autoref/coercion applies — many user impls take `&self`.
@@ -2359,13 +2307,17 @@ function generateRust(
       const g = accessor ? accessor.getter : getter;
       const s = accessor ? accessor.setter : setter;
 
+      if (thisValue && !sharedThis && (names.getter || names.setter)) {
+        throw new Error(`${typeName}.${name}: \`this: true\` accessors require \`sharedThis: true\``);
+      }
+
       if (names.getter) {
         const id = rustSnakeIdent(g);
         thunk(
           names.getter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
           thisValue
-            ? `    ${helper("host_fn_getter_this")}(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
+            ? `    host_fn::host_fn_getter_this_shared(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
             : `    ${helper("host_fn_getter")}(this, global, |t, g| ${T}::${id}(t, g))`,
         );
       }
@@ -2376,7 +2328,7 @@ function generateRust(
           names.setter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject, value: JSValue) -> bool`,
           thisValue
-            ? `    ${helper("host_fn_setter_this")}(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
+            ? `    host_fn::host_fn_setter_this_shared(this, this_value, global, value, |t, tv, g, v| ${T}::${id}(t, tv, g, v))`
             : `    ${helper("host_fn_setter")}(this, global, value, |t, g, v| ${T}::${id}(t, g, v))`,
         );
       }
@@ -2512,7 +2464,8 @@ function generateRust(
   // Calling convention: every C++ definition uses `extern JSC_CALLCONV` =
   // `extern "C" SYSV_ABI` on Windows, so import them via `jsc_abi_extern!`
   // (sysv64 on win-x64, "C" elsewhere).
-  const jsModule = `pub mod js_${typeName} {
+  const jsModule = `#[allow(dead_code, unreachable_pub, unused)]
+pub mod js_${typeName} {
     use super::*;
     bun_jsc::jsc_abi_extern! {
         safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
@@ -2565,6 +2518,7 @@ ${gcAccessors}
 /// Native backing type for \`JS${typeName}.m_ctx\`. Re-export of the real
 /// struct so the thunks below call its inherent methods directly. A missing
 /// method is a compile error — fix it in \`${rustPath}\`, not here.
+#[allow(dead_code, unreachable_pub, unused)]
 pub use ${rustPath} as ${typeName};
 
 ${thunks.join("\n\n")}
@@ -2588,16 +2542,21 @@ const RUST_GENERATED_CLASSES_HEADER = `// Auto-generated by src/codegen/generate
 // Windows), so the file uses \`bun_jsc::jsc_host_abi!\` / \`jsc_abi_extern!\`
 // for the cfg-split.
 
+#[allow(dead_code, unreachable_pub, unused)]
 use core::ffi::c_void;
+#[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, JsFinalize as _};
 
 /// \`SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)\`
+#[allow(dead_code, unreachable_pub, unused)]
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub type WriteBytesFn = unsafe extern "sysv64" fn(*mut c_void, *const u8, u32);
+#[allow(dead_code, unreachable_pub, unused)]
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type WriteBytesFn = unsafe extern "C" fn(*mut c_void, *const u8, u32);
 
 /// \`JSC::PropertyName\` — opaque pointer-sized handle (UniquedStringImpl*).
+#[allow(dead_code, unreachable_pub, unused)]
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct PropertyName(pub *const c_void);
@@ -2630,7 +2589,6 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noCo
                        )}::createConstructor(init.vm, init.global, init.prototype));`
                  }
               });
-
 
       `.trim();
 }
@@ -3199,7 +3157,6 @@ export function generateBuiltinTypes(classes: ClassDefinition[]): string {
   // --- Assemble Final File Content ---
   return `// GENERATED CODE - DO NOT MODIFY BY HAND
 // Generated by generate-classes.ts
-
 
 /**
  * Type definitions for Bun's built-in classes implemented in Zig.

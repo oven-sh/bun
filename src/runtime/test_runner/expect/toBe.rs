@@ -7,7 +7,7 @@ use super::Expect;
 impl Expect {
     /// Object.is()
     #[bun_jsc::host_fn(method)]
-    pub fn to_be(
+    pub(crate) fn to_be(
         &self,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,

@@ -58,7 +58,7 @@ extern "C" JSC::JSPromise* BakeLoadModuleByKey(GlobalObject* global, JSC::JSStri
   return JSC::loadAndEvaluateModule(global, key->getString(global), nullptr, nullptr);
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunString source) {
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(JSC::JSGlobalObject* global, BunString source) {
   JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -80,7 +80,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(GlobalObject* global, BunS
   return JSC::JSValue::encode(result);
 }
 
-extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject* global, BunString source, const char* sourceMapJSONPtr, size_t sourceMapJSONLength) {
+extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(JSC::JSGlobalObject* global, BunString source, const char* sourceMapJSONPtr, size_t sourceMapJSONLength) {
   JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
 

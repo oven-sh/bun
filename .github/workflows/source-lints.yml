@@ -14,6 +14,8 @@ on:
     paths:
       - "src/**/*.rs"
       - "src/jsc/bindings/**"
+      - "src/runtime/bake/*.cpp"
+      - "src/runtime/bake/*.h"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "scripts/utils.mjs"
@@ -29,6 +31,8 @@ on:
     paths:
       - "src/**/*.rs"
       - "src/jsc/bindings/**"
+      - "src/runtime/bake/*.cpp"
+      - "src/runtime/bake/*.h"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "scripts/utils.mjs"

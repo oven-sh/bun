@@ -1833,7 +1833,7 @@ describe("ES Decorators", () => {
       expect(statement).toContain("_home = this;");
       expect(statement).toMatch(/__superGet\w*\(_home, C, "x"\)/);
       expect(statement).toMatch(/__superGet\w*\(_home, C, "m"\)\.call\(C, 1\)/);
-      expect(statement).not.toContain("super.");
+      expect(statement).not.toMatch(/\bsuper\b/);
 
       const expression = transpiler.transformSync(`
         function dec() {}
@@ -1842,7 +1842,7 @@ describe("ES Decorators", () => {
         };
       `);
       expect(expression).toMatch(/__superGet\w*\(_home, _class, key\)/);
-      expect(expression).not.toContain("super.");
+      expect(expression).not.toMatch(/\bsuper\b/);
 
       const withoutSuper = transpiler.transformSync(`
         function dec() {}

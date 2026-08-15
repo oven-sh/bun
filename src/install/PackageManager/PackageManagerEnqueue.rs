@@ -1965,23 +1965,20 @@ fn enqueue_local_tarball(
     unsafe { &raw mut (*task).threadpool_task }
 }
 
-/// The directory `path` is relative to when that is not the top-level dir: the workspace or
-/// `file:` folder package whose package.json wrote it. An edge whose own specifier is not
-/// `path` got it from the root's overrides / resolutions / catalogs, so it stays relative
-/// to the top-level dir.
+/// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.
 fn local_tarball_base_dir<'a>(
     lockfile: &'a Lockfile::Lockfile,
     dependency_id: DependencyID,
     path: &[u8],
 ) -> Option<&'a [u8]> {
     let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
-    if declared.tag != dependency::version::Tag::Tarball {
-        return None;
-    }
-    let dependency::tarball::Uri::Local(declared_path) = &declared.tarball().uri else {
-        return None;
-    };
-    if lockfile.str(declared_path) != path {
+    let declared_by_parent = declared.tag == dependency::version::Tag::Tarball
+        && matches!(
+            &declared.tarball().uri,
+            dependency::tarball::Uri::Local(declared_path) if lockfile.str(declared_path) == path
+        );
+    if !declared_by_parent {
+        // Overrides, resolutions and catalogs are all written in the root package.json.
         return None;
     }
 

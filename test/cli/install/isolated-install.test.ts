@@ -2886,6 +2886,43 @@ test("invalid --linker value is echoed back in the error", async () => {
   expect(exitCode).toBe(1);
 });
 
+test("store build timings are printed by --verbose only", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "store-timings",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  async function install(...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stderr;
+  }
+
+  const verbose = await install("--verbose");
+  expect(verbose).toMatch(/^Resolved peers \[\S+\]$/m);
+  expect(verbose).toMatch(/^Created store \[\S+\]$/m);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  const quiet = await install();
+  expect(quiet).not.toContain("Resolved peers");
+  expect(quiet).not.toContain("Created store");
+});
+
 describe("hoist", () => {
   // `node_modules/.bun/node_modules` holds a symlink to every installed
   // package and sits on the upward resolution path of every store entry, so

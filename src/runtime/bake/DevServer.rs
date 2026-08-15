@@ -908,7 +908,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // `debug_assert!` does not evaluate its argument in release. Hoist
         // the side-effecting `insert_stale`
         // out so the refresh runtime is registered at index 0 in all builds.
-        let idx = dev.client_graph.insert_stale(&rfr.import_source, false)?;
+        let idx = dev
+            .client_graph
+            .insert_stale(&rfr.import_source, bake::Graph::Client)?;
         debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0));
     }
 
@@ -951,8 +953,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             // SAFETY: `server_graph` is disjoint from `framework`.
             let server_file = unsafe { &mut (*dev_ptr).server_graph }.insert_stale_extra(
                 &fsr.entry_server,
-                false,
-                true,
+                bake::Graph::Server,
+                incremental_graph::RouteKind::Route,
             )?;
 
             types.push(framework_router::Type {
@@ -974,7 +976,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 client_file: if let Some(client) = &fsr.entry_client {
                     Some(to_opaque_file_id::<{ bake::Side::Client }>(
                         // SAFETY: `client_graph` is disjoint from `framework`.
-                        unsafe { &mut (*dev_ptr).client_graph }.insert_stale(client, false)?,
+                        unsafe { &mut (*dev_ptr).client_graph }
+                            .insert_stale(client, bake::Graph::Client)?,
                     ))
                 } else {
                     None
@@ -5000,12 +5003,10 @@ impl DevServer {
         let _g = self.graph_safety_lock.guard();
 
         let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
-            let idx = self.client_graph.insert_stale(abs_path, false)?;
+            let idx = self.client_graph.insert_stale(abs_path, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
         } else {
-            let idx = self
-                .server_graph
-                .insert_stale(abs_path, graph == bake::Graph::Ssr)?;
+            let idx = self.server_graph.insert_stale(abs_path, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
         };
         let current_bundle = self
@@ -5224,9 +5225,11 @@ impl DevServer {
                     // R-2: shared deref — only `bundle.path` is read; mutation of
                     // `dev_server_id` goes through the `Cell` `index_location` above.
                     let html_ref = unsafe { &*html };
-                    let incremental_graph_index =
-                        self.client_graph
-                            .insert_stale_extra(&html_ref.bundle.path, false, true)?;
+                    let incremental_graph_index = self.client_graph.insert_stale_extra(
+                        &html_ref.bundle.path,
+                        bake::Graph::Client,
+                        incremental_graph::RouteKind::Route,
+                    )?;
                     let file = &mut self.client_graph.bundled_files.values_mut()
                         [incremental_graph_index.get() as usize];
                     file.html_route_bundle_index = Some(bundle_index);
@@ -5847,7 +5850,11 @@ impl DevServer {
     ) -> crate::Result<OpaqueFileId> {
         let index = self
             .server_graph
-            .insert_stale_extra(abs_path, false, true)
+            .insert_stale_extra(
+                abs_path,
+                bake::Graph::Server,
+                incremental_graph::RouteKind::Route,
+            )
             .map_err(crate::Error::from)?;
         self.route_lookup.put(
             index,
@@ -5878,10 +5885,7 @@ impl DevServer {
         // TODO: maybe this should track the error, send over HmrSocket?
         Output::err_generic(
             "Multiple {} matching the same route pattern is ambiguous",
-            (match ty {
-                framework_router::FileKind::Page => "pages",
-                framework_router::FileKind::Layout => "layout",
-            },),
+            (ty.collision_noun(),),
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", bstr::BStr::new(rel_path));
         let mut buf = paths::path_buffer_pool::get();

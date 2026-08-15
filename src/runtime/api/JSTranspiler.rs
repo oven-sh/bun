@@ -5,7 +5,7 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::node::{Encoding, StringOrBuffer};
+use crate::node::{Encoding, Flavor, StringObjects, StringOrBuffer};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
@@ -1392,13 +1392,12 @@ impl JSTranspiler {
             ));
         };
 
-        let allow_string_object = true;
         let Some(code) = StringOrBuffer::from_js_with_encoding_maybe_async(
             global,
             code_arg,
             Encoding::Utf8,
-            true,
-            allow_string_object,
+            Flavor::Async,
+            StringObjects::Allow,
         )?
         else {
             return Err(global.throw_invalid_argument_type(
@@ -1415,7 +1414,7 @@ impl JSTranspiler {
             code = StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes));
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`
-        // (is_async=true) already protected; adopt into a `ThreadSafe` so any
+        // (`Flavor::Async`) already protected; adopt into a `ThreadSafe` so any
         // early-return drop unprotects. `TransformTask::create` takes the guard.
         let code = bun_jsc::ThreadSafe::adopt(code);
 

@@ -6,7 +6,7 @@ use bun_jsc::{
     JsThread,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{Flavor, StringObjects, StringOrBuffer};
 
 use crate::crypto::evp::{self, Algorithm};
 
@@ -68,7 +68,7 @@ impl PBKDF2 {
     pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
-        is_async: bool,
+        flavor: Flavor,
     ) -> JsResult<PBKDF2> {
         let [arg0, arg1, arg2, arg3, arg4, arg5] = call_frame.arguments_as_array::<6>();
 
@@ -181,17 +181,16 @@ impl PBKDF2 {
         };
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
-            if global_this.has_exception() && is_async {
+            if global_this.has_exception() && flavor == Flavor::Async {
                 bun_jsc::Unprotect::unprotect(out);
             }
         });
 
-        let allow_string_object = true;
         guard.salt = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg1,
-            is_async,
-            allow_string_object,
+            flavor,
+            StringObjects::Allow,
         )? {
             Some(v) => v,
             None => {
@@ -210,8 +209,8 @@ impl PBKDF2 {
         guard.password = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg0,
-            is_async,
-            allow_string_object,
+            flavor,
+            StringObjects::Allow,
         )? {
             Some(v) => v,
             None => {
@@ -227,13 +226,13 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
-        if !is_async {
+        if flavor == Flavor::Sync {
             if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
                 buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
             }
         }
 
-        if is_async {
+        if flavor == Flavor::Async {
             if !arg5.is_function() {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"callback",
@@ -260,7 +259,7 @@ impl bun_jsc::Unprotect for PBKDF2 {
 
 /// `crypto.pbkdf2` off the JS thread.
 pub(crate) struct Pbkdf2Job {
-    /// `from_js(.., is_async=true)` protected the input buffers; the
+    /// `from_js(.., Flavor::Async)` protected the input buffers; the
     /// [`bun_jsc::ThreadSafe`] releases that with the job.
     pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
@@ -316,7 +315,7 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> JSValue 
     Job::<Pbkdf2Job>::schedule(
         &cx,
         Pbkdf2Job {
-            // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
+            // `from_js(.., Flavor::Async)` already protected — adopt, don't re-protect.
             pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
             err: false,

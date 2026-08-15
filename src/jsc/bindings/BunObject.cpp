@@ -483,7 +483,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(data), length });
+            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(data), length });
             if (str.isNull()) {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -582,7 +582,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen });
+            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(sliceData), sliceLen });
             if (str.isNull()) {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};

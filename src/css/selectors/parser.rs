@@ -673,11 +673,19 @@ fn parse_selector<Impl: BunSelectorImpl>(
         }
     }
 
-    let has_pseudo_element = state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT)
-        || state.contains(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT);
-    let slotted = state.contains(SelectorParsingState::AFTER_SLOTTED);
-    let part = state.contains(SelectorParsingState::AFTER_PART);
-    let result = builder.build(has_pseudo_element, slotted, part);
+    let mut flags = SelectorFlags::empty();
+    if state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT)
+        || state.contains(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT)
+    {
+        flags |= SelectorFlags::HAS_PSEUDO;
+    }
+    if state.contains(SelectorParsingState::AFTER_SLOTTED) {
+        flags |= SelectorFlags::HAS_SLOTTED;
+    }
+    if state.contains(SelectorParsingState::AFTER_PART) {
+        flags |= SelectorFlags::HAS_PART;
+    }
+    let result = builder.build(flags);
     Ok(GenericSelector {
         specificity_and_flags: result.specificity_and_flags,
         components: result.components,
@@ -1883,7 +1891,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         } else {
             builder.push_simple_selector(component);
         }
-        let result = builder.build(false, false, false);
+        let result = builder.build(SelectorFlags::empty());
         Self {
             specificity_and_flags: result.specificity_and_flags,
             components: result.components,

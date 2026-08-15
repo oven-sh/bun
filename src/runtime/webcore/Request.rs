@@ -870,7 +870,7 @@ impl Request {
     /// request-target instead of pasting the client bytes into the URL. A value inside the
     /// set can still be rejected by the URL parser (`host:abc`, bad percent-encoding); the
     /// callers apply the same fallback in that case.
-    pub(crate) fn is_valid_host_header(host: &[u8]) -> bool {
+    fn is_valid_host_header(host: &[u8]) -> bool {
         !host.is_empty()
             && host.iter().all(|&c| {
                 c.is_ascii_alphanumeric()

@@ -1167,12 +1167,10 @@ impl FrameworkRouter {
                 }
             };
             if let Some(aliased_route) = aliased_route {
-                // A route enters the maps only right before its page is stored
-                // below, and files are never removed, so the page is still there.
                 *out_colliding_file_id = self
                     .route_ptr(aliased_route)
                     .file_page
-                    .expect("aliased route has a page");
+                    .expect("routes in the url maps have a page");
                 return Err(InsertError::RouteCollision);
             }
         }
@@ -1665,14 +1663,14 @@ impl FrameworkRouter {
                         }
 
                         if param_count > MatchedParams::MAX_COUNT {
-                            log.write(format_args!(
-                                "Pattern cannot have more than {} params",
-                                MatchedParams::MAX_COUNT
-                            ));
-                            // The handlers print the log against `full_rel_path`
-                            // (`TinyLog::print`), so underline all of it.
-                            log.cursor_at = 0;
-                            log.cursor_len = u32::try_from(full_rel_path.len()).expect("int cast");
+                            log.fail(
+                                format_args!(
+                                    "Pattern cannot have more than {} params",
+                                    MatchedParams::MAX_COUNT
+                                ),
+                                0,
+                                full_rel_path.len(),
+                            );
                             ctx.on_router_syntax_error(full_rel_path, log)?;
                             arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;

@@ -576,8 +576,7 @@ pub mod bv2_impl {
         /// `EntryPointMap`.
         /// Lives in the bundler (lower tier) so both `bun_runtime::bake::production`
         /// and `BundleV2::generate_from_bake_production_cli` share ONE nominal type
-        /// (PORTING.md §Layering). Router integration (`InsertionHandler`) lives in
-        /// `bun_runtime::bake::production::RouteScan`, which fills this map.
+        /// (PORTING.md §Layering).
         pub mod production {
             use super::Side;
 

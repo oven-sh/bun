@@ -1376,11 +1376,8 @@ extern "C" fn BakeProdResolve(
 pub use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
-/// Route scan callbacks for the production build: every route file becomes a
-/// server entry point. The scan keeps going after reporting an invalid or
-/// colliding route file, so the errors are counted here and `build_with_vm`
-/// fails the build once every route file has been reported. (The dev server
-/// only logs these, since it keeps serving the routes that did resolve.)
+/// Route scan callbacks for `bun build --app`: route files become server entry
+/// points, and reported errors are counted so the build fails after the scan.
 struct RouteScan<'a> {
     entry_points: &'a mut EntryPointMap,
     error_count: usize,

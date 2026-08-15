@@ -646,7 +646,7 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
-  describe.concurrent("route scan errors", () => {
+  describe("route scan errors", () => {
     async function build(dir: string) {
       const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
         .cwd(dir)

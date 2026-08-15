@@ -4967,11 +4967,8 @@ void Process::finishCreation(JSC::VM& vm)
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
 
-    // Node's worker threads have no process._debugProcess & co. These are own
-    // properties rather than processObjectTable entries because deleting a
-    // static-table property makes JSC reify every lazy property in the table
-    // (the stdio streams, env, versions, config, ...): exactly the work a
-    // worker's startup is supposed to skip.
+    // Main-thread-only in node. Own properties, not processObjectTable entries:
+    // deleting a table entry in workers would reify every lazy property of process.
     if (!WebCore::clientData(vm)->isWorkerVM()) {
         auto* globalObject = this->globalObject();
         for (auto name : { "_debugProcess"_s, "_debugEnd"_s, "_startProfilerIdleNotifier"_s, "_stopProfilerIdleNotifier"_s })

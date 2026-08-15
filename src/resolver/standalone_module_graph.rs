@@ -27,4 +27,8 @@ pub trait StandaloneModuleGraph: Send + Sync {
     /// so `process.execArgv` (lower-tier `bun_jsc` callers holding only the
     /// trait object) can read it without downcasting to the concrete graph.
     fn compile_exec_argv(&self) -> &[u8];
+    /// Drop the resident pages of the embedded modules' source and bytecode;
+    /// they fault back in from the executable if needed again. Exposed via the
+    /// trait so the idle GC timer in `bun_jsc` can call it.
+    fn release_module_pages(&self);
 }

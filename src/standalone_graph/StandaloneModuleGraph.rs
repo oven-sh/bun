@@ -35,9 +35,10 @@ bun_opaque::opaque_ffi! {
 pub struct StandaloneModuleGraph {
     /// Raw view over the serialized graph (`[0, offsets.byte_count)`). Stored as a
     /// raw fat pointer — NOT `&'static [u8]` — because `byte_count` covers the
-    /// bytecode/module_info subranges that JSC mutates in place via
+    /// bytecode/module_info subranges handed to JSC as a mutable span via
     /// `File.bytecode`. Holding a `&'static [u8]` over those bytes would freeze
-    /// them under Stacked/Tree Borrows and make the later foreign write UB.
+    /// them under Stacked/Tree Borrows and make a foreign write UB. (In practice
+    /// nothing writes: `release_module_pages` relies on the pages staying clean.)
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
@@ -316,6 +317,10 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn compile_exec_argv(&self) -> &[u8] {
         self.compile_exec_argv
     }
+
+    fn release_module_pages(&self) {
+        StandaloneModuleGraph::release_module_pages(self)
+    }
 }
 
 #[repr(C)]
@@ -368,6 +373,12 @@ mod macho {
     // the symbol's only consumer.
     unsafe extern "C" {
         pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
+        /// `ranges` is `count` pairs of `(start, len)`; returns the bytes remapped.
+        pub(super) fn Bun__StandaloneModuleGraph__remapRanges(
+            exe_fd: bun_core::FdNative,
+            ranges: *const usize,
+            count: usize,
+        ) -> usize;
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
@@ -448,8 +459,8 @@ mod elf {
         // `dlpi_addr` of the object containing BUN_COMPILED itself; for
         // non-PIE it is 0.
         // Format at target: [u64 payload_len][payload bytes]
-        // Synthesize a `*mut u8` directly so the provenance carries write
-        // permission for the in-place bytecode mutation done by JSC.
+        // Synthesize a `*mut u8` directly so the provenance carries the write
+        // permission of the mutable span the bytecode is handed to JSC as.
         let load_bias =
             bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
         let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
@@ -472,7 +483,8 @@ pub struct File {
     pub cached_blob: Option<NonNull<Blob>>,
     pub encoding: Encoding,
     pub wtf_string: BunString,
-    // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
+    // BACKREF into the embedded section; handed to JSC as a mutable span, but
+    // only ever read (`release_module_pages` remaps it out from under JSC).
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
@@ -647,8 +659,8 @@ impl StandaloneModuleGraph {
         }
 
         // This function hands out read-only subslices
-        // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, which JSC
-        // mutates in place) into the same allocation. We must not derive the writable
+        // (name/contents/sourcemap) AND writable subslices (bytecode/module_info, handed to
+        // JSC as mutable spans) into the same allocation. We must not derive the writable
         // ones from a `&[u8]` reborrow (writing through const-derived provenance is UB), and we
         // must not hold a long-lived `&[u8]` that *spans* a writable subrange (a foreign write
         // would invalidate it under Stacked/Tree Borrows). Keep `(raw_ptr, raw_len)` raw and
@@ -710,8 +722,8 @@ impl StandaloneModuleGraph {
                         LazySourceMap::None
                     },
                     bytecode: if module.bytecode.length > 0 {
-                        // SAFETY: section bytes are a writable 'static allocation; JSC mutates
-                        // bytecode in place. Subrange is in-bounds (serialized by to_bytes) and
+                        // SAFETY: section bytes are a writable 'static allocation handed to JSC
+                        // as a mutable span. Subrange is in-bounds (serialized by to_bytes) and
                         // disjoint from every read-only subslice handed out above — no
                         // `&[u8]` is ever formed over this range.
                         unsafe { slice_to_mut(raw_ptr, raw_len, module.bytecode) }
@@ -773,7 +785,7 @@ impl StandaloneModuleGraph {
 
 /// Read-only subslice helper. Builds a `&'static [u8]` over the *subrange only* so no
 /// shared reference ever spans the writable bytecode/module_info regions of the same
-/// allocation (which would be invalidated by JSC's in-place writes).
+/// allocation (which a write through their mutable spans would invalidate).
 ///
 /// SAFETY: caller guarantees `base[..len]` is a live 'static allocation and
 /// `[ptr.offset, ptr.offset + ptr.length)` is in-bounds and never written through a
@@ -2235,81 +2247,108 @@ impl StandaloneModuleGraph {
         }
     }
 
-    /// Hint to the kernel that the embedded `__BUN`/`.bun` source pages are
-    /// unlikely to be accessed again after the entrypoint has been parsed.
-    /// The pages are clean file-backed COW, so any later read (lazy require,
-    /// stack-trace source lookup) faults back in transparently from the
-    /// executable on disk. Only applies when running as a compiled
-    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
-    /// skips the hint.
-    pub fn hint_source_pages_dont_need() {
-        #[cfg(windows)]
+    /// Drops the resident pages of the embedded section, except those holding
+    /// files that are exposed as plain files (assets, client-side chunks): those
+    /// may be read repeatedly, whereas JSC copies what it decodes out of a
+    /// module's source/bytecode, so once a module has been evaluated its pages
+    /// are dead weight until a lazily-called function is decoded (or a stack
+    /// trace reads the source), and those fault back in from the executable.
+    ///
+    /// Called after the entrypoint has been evaluated and again from the idle
+    /// GC timer, since each newly decoded function drags its whole page back in.
+    /// `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1` disables it.
+    pub fn release_module_pages(&self) {
+        #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
         {
-            return;
-        }
-
-        #[cfg(not(windows))]
-        {
-            let (base, len): (*mut u8, usize) = {
-                #[cfg(target_os = "macos")]
-                {
-                    match macho::get_data() {
-                        Some(b) => b,
-                        None => return,
-                    }
-                }
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                {
-                    match elf::get_data() {
-                        Some(b) => b,
-                        None => return,
-                    }
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
-                {
-                    return;
-                }
+            if self.files.is_empty()
+                || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
+                    .get()
+                    .unwrap_or(false)
+            {
+                return;
+            }
+            #[cfg(target_os = "macos")]
+            let Some((base, len)) = macho::get_data() else {
+                return;
+            };
+            #[cfg(not(target_os = "macos"))]
+            let Some((base, len)) = elf::get_data() else {
+                return;
             };
 
-            #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
-            {
-                if len == 0
-                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
-                        .get()
-                        .unwrap_or(false)
-                {
-                    return;
-                }
+            let page: usize = bun_alloc::page_size();
+            let round_up = |addr: usize| (addr + page - 1) & !(page - 1);
+            let round_down = |addr: usize| addr & !(page - 1);
 
-                let page: usize = bun_alloc::page_size();
-                let start = (base as usize) & !(page - 1);
-                let end_unaligned = base as usize + len;
-                let end = (end_unaligned + page - 1) & !(page - 1);
-
-                // This is a best-effort hint, so call libc madvise directly and
-                // just log on failure rather than treating errors as fatal.
-                // SAFETY: start..end covers a mapped range of the executable image.
-                let rc = unsafe {
-                    libc::madvise(
-                        start as *mut core::ffi::c_void,
-                        end - start,
-                        libc::MADV_DONTNEED,
-                    )
-                };
-                if rc != 0 {
-                    bun_core::scoped_log!(
-                        StandaloneModuleGraph,
-                        "hintSourcePagesDontNeed: madvise failed errno={}",
-                        bun_sys::last_errno()
-                    );
-                    return;
+            // Byte ranges that must stay mapped as-is; everything between them
+            // is released in maximal page-aligned runs.
+            let mut keep: Vec<(usize, usize)> = self
+                .files
+                .values()
+                .iter()
+                .filter(|file| file.appears_in_embedded_files_array())
+                .map(|file| {
+                    let start = file.contents.as_bytes().as_ptr() as usize;
+                    (start, start + file.contents.len())
+                })
+                .collect();
+            keep.sort_unstable();
+            let mut runs: Vec<[usize; 2]> = Vec::with_capacity(keep.len() + 1);
+            let section_end = base as usize + len;
+            let mut cursor = round_up(base as usize);
+            for (start, end) in keep.into_iter().chain([(section_end, section_end)]) {
+                let run_end = round_down(start);
+                if run_end > cursor {
+                    runs.push([cursor, run_end - cursor]);
                 }
-                bun_core::scoped_log!(
-                    StandaloneModuleGraph,
-                    "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
-                    end - start
-                );
+                cursor = cursor.max(round_up(end));
             }
+            #[cfg(target_os = "macos")]
+            let released = if runs.is_empty() {
+                0
+            } else {
+                // On XNU, madvise(DONTNEED/FREE/FREE_REUSABLE) and msync are only
+                // paging hints for file-backed memory; the pages stay resident.
+                // Re-mapping the same bytes of the executable over the range is
+                // the one thing that actually drops them.
+                let Ok(path) = bun_core::self_exe_path() else {
+                    return;
+                };
+                let Ok(exe) =
+                    bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
+                else {
+                    return;
+                };
+                // SAFETY: every run lies inside the mapped `__BUN` segment.
+                unsafe {
+                    macho::Bun__StandaloneModuleGraph__remapRanges(
+                        exe.handle().native(),
+                        runs.as_ptr().cast(),
+                        runs.len(),
+                    )
+                }
+            };
+            #[cfg(not(target_os = "macos"))]
+            let released = {
+                let mut released = 0usize;
+                for &[start, run_len] in &runs {
+                    // SAFETY: every run lies inside the mapped `.bun` segment.
+                    let rc = unsafe {
+                        libc::madvise(start as *mut core::ffi::c_void, run_len, libc::MADV_DONTNEED)
+                    };
+                    if rc == 0 {
+                        released += run_len;
+                    }
+                }
+                released
+            };
+            bun_core::scoped_log!(
+                StandaloneModuleGraph,
+                "releaseModulePages: released {} of {} bytes in {} ranges",
+                released,
+                len,
+                runs.len()
+            );
         }
     }
 }

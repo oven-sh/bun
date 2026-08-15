@@ -1,4 +1,4 @@
-//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory (and, in a compiled binary, drops the embedded module pages JSC has decoded since the last tick). Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::cell::Cell;
 use core::ffi::c_int;
@@ -145,6 +145,13 @@ impl GarbageCollectionController {
         }
         let prev_heap_size = this.gc_last_heap_size.get();
         this.perform_gc();
+        // SAFETY: per fn contract.
+        let vm_ref = unsafe { &*vm };
+        if vm_ref.is_main_thread && !vm_ref.is_watcher_enabled() {
+            if let Some(graph) = vm_ref.standalone_module_graph {
+                graph.release_module_pages();
+            }
+        }
         if prev_heap_size == this.gc_last_heap_size.get() {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count

@@ -1092,11 +1092,70 @@ struct BlobHeader {
 
 #if OS(DARWIN)
 
+#include <libproc.h>
+#include <mach-o/dyld.h>
+#include <mach-o/ldsyms.h>
+#include <mach-o/loader.h>
+#include <sys/mman.h>
+#include <sys/proc_info.h>
+
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
     return &BUN_COMPILED.size;
+}
+
+// Replaces page-aligned ranges of the __BUN segment with fresh private
+// mappings of the same bytes of the executable, which is the only way to drop
+// the resident pages on XNU (madvise/msync only reprioritize file-backed
+// pages). Refuses unless the segment is currently backed by the file open on
+// `exeFd`, so a binary that was replaced on disk after exec is never mapped in.
+// `ranges` is `count` pairs of (start, len); returns the bytes remapped.
+static const segment_command_64* findBunSegment()
+{
+    const uint8_t* command = reinterpret_cast<const uint8_t*>(&_mh_execute_header) + sizeof(mach_header_64);
+    for (uint32_t i = 0; i < _mh_execute_header.ncmds; i++) {
+        const auto* header = reinterpret_cast<const load_command*>(command);
+        if (header->cmd == LC_SEGMENT_64) {
+            const auto* segment = reinterpret_cast<const segment_command_64*>(header);
+            if (strncmp(segment->segname, "__BUN", sizeof(segment->segname)) == 0)
+                return segment;
+        }
+        command += header->cmdsize;
+    }
+    return nullptr;
+}
+
+extern "C" size_t Bun__StandaloneModuleGraph__remapRanges(int exeFd, const size_t* ranges, size_t count)
+{
+    const segment_command_64* segment = findBunSegment();
+    if (!segment || count == 0)
+        return 0;
+    uintptr_t segmentStart = segment->vmaddr + _dyld_get_image_vmaddr_slide(0);
+
+    struct proc_regionwithpathinfo region;
+    if (proc_pidinfo(getpid(), PROC_PIDREGIONPATHINFO, segmentStart, &region, sizeof(region)) != sizeof(region))
+        return 0;
+    struct stat st;
+    if (fstat(exeFd, &st) != 0)
+        return 0;
+    const auto& backing = region.prp_vip.vip_vi.vi_stat;
+    if (backing.vst_ino == 0 || backing.vst_ino != st.st_ino || backing.vst_dev != static_cast<uint32_t>(st.st_dev))
+        return 0;
+
+    size_t remapped = 0;
+    for (size_t i = 0; i < count; i++) {
+        uintptr_t start = ranges[2 * i];
+        size_t len = ranges[2 * i + 1];
+        if (start < segmentStart || len > segment->filesize || start - segmentStart > segment->filesize - len)
+            continue;
+        off_t fileOffset = segment->fileoff + (start - segmentStart);
+        void* addr = reinterpret_cast<void*>(start);
+        if (mmap(addr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, exeFd, fileOffset) == addr)
+            remapped += len;
+    }
+    return remapped;
 }
 
 #else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach

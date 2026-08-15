@@ -1466,10 +1466,12 @@ impl Run<'_> {
 
         // Initial synchronous evaluation of the entrypoint is done (TLA may
         // still be pending and will resolve in the loop below); the embedded
-        // source pages are off the hot path now. Skip under --watch/--hot
+        // module pages are off the hot path now. Skip under --watch/--hot
         // since those re-read source on every reload.
         if !vm.is_watcher_enabled() {
-            bun_standalone_graph::Graph::hint_source_pages_dont_need();
+            if let Some(graph) = vm.standalone_module_graph {
+                graph.release_module_pages();
+            }
         }
 
         // ── core run-loop ──────────────────────────────────────────────────

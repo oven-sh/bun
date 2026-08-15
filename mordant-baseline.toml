@@ -50,7 +50,6 @@
 "arg_named_like_other_param:src/runtime/cli/install_completions_command.rs" = 4
 "arg_named_like_other_param:src/runtime/cli/open.rs" = 1
 "arg_named_like_other_param:src/runtime/cli/pack_command.rs" = 1
-"arg_named_like_other_param:src/runtime/node/path.rs" = 2
 "bare_bool_args:src/runtime/api.rs" = 2
 "bare_bool_args:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "bare_bool_args:src/runtime/bake/dev_server/incremental_graph.rs" = 1

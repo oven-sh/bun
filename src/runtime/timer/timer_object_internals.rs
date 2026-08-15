@@ -703,6 +703,11 @@ impl TimerObjectInternals {
 
             if is_timer_done {
                 s.set_enable_keeping_event_loop_alive(vm, false);
+                // A `setInterval` keeps its wrapper Strong across the callback
+                // (it normally reschedules); one retired here without going
+                // through `cancel()` must drop that pin or the wrapper never
+                // finalizes. No-op for the already-Weak paths.
+                s.this_value.with_mut(|r| r.downgrade());
                 // The timer will not be re-entered into the event loop at this point.
                 s.deref();
             }

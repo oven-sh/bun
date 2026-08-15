@@ -200,6 +200,31 @@ describe("advanceTimersByTime", () => {
     clearInterval(interval);
   });
 
+  // A setInterval retired from inside its own callback — because the callback
+  // swapped the fake clock, or cleared `_repeat` — is out of every heap and
+  // unreachable from JS, so its Timeout wrapper must be collectable. It used
+  // to stay pinned by the native side for the rest of the process.
+  test("a setInterval retired from inside its own callback does not leak its Timeout", () => {
+    const N = 200;
+    const liveTimeouts = () => {
+      Bun.gc(true);
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.Timeout ?? 0;
+    };
+    const before = liveTimeouts();
+    for (let i = 0; i < N; i++) {
+      vi.useFakeTimers({ now: 0 });
+      // Fires first (insertion order) while the clock is still the same.
+      setInterval(function (this: any) {
+        this._repeat = null;
+      }, 10);
+      setInterval(() => vi.useFakeTimers({ now: 1 }), 10);
+      vi.advanceTimersByTime(10);
+      vi.useRealTimers();
+    }
+    expect(liveTimeouts() - before).toBeLessThan(2 * N * 0.1);
+  });
+
   test("a firing setInterval whose callback calls useRealTimers() does not escape onto the real clock", async () => {
     vi.useFakeTimers({ now: 0 });
     let fired = 0;

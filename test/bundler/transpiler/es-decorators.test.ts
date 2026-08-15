@@ -1263,6 +1263,12 @@ describe("ES Decorators", () => {
           out.plainFunction = plain();
           out.typeofGet = typeof super.f;
           out.privateOperands = [super[this.#keyName], super.f(this.#v, this.#p())];
+          let deleteKeyEvals = 0;
+          try {
+            out.deleteSuper = delete super[(deleteKeyEvals++, "probe")];
+          } catch (e) {
+            out.deleteSuper = [e.constructor.name, deleteKeyEvals, probeReads];
+          }
           return out;
         }
         #keyName = "readonly";
@@ -1285,12 +1291,14 @@ describe("ES Decorators", () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(value, ctx) { return value; }
         let self, selfClass;
+        let probeReads = 0;
         class Base {
           get x() { return this._x; }
           set x(v) { this._x = v; }
           get y() { return this._y; }
           set y(v) { this._y = v; }
           get readonly() { return "ro"; }
+          get probe() { probeReads++; }
           f(...args) { return [this === self, ...args]; }
           tag(strings, ...subs) { return [strings.raw.join("|"), ...subs]; }
           static get sx() { return this._sx; }
@@ -1340,6 +1348,8 @@ describe("ES Decorators", () => {
             plainFunction: true,
             typeofGet: "function",
             privateOperands: ["ro", [true, 42, "p"]],
+            // The key is evaluated, the inherited getter is not, and the delete throws.
+            deleteSuper: ["ReferenceError", 1, 0],
           },
           acc: 32,
         },

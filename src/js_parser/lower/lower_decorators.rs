@@ -71,7 +71,7 @@ enum RewriteKind<'r> {
 /// `super.x` in a method body that is leaving the class body, where `super` is a syntax error.
 #[derive(Clone, Copy)]
 struct SuperLowering<'r> {
-    /// Allocated by the first access; `lower_impl` then declares it and binds it to the class.
+    /// Bound inside the class body: the class binding itself is reassigned by class decorators.
     class_ref: &'r Cell<Option<Ref>>,
     is_static: bool,
 }
@@ -692,8 +692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.call_rt(l, b"__superSet", &[home, this_e, key, value])
     }
 
-    /// `__superWrapper(home, this, key)._`: an assignable accessor, so `+=`, `++` and
-    /// destructuring keep their native semantics and evaluate the key once.
+    /// `__superWrapper(...)._` is assignable, so `+=`, `++` and patterns keep their native semantics.
     fn super_wrapper_expr(&mut self, ctx: SuperLowering<'_>, key: Expr, l: bun_ast::Loc) -> Expr {
         let home = self.super_home_expr(ctx, l);
         let this_e = self.new_expr(E::This {}, l);
@@ -780,14 +779,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             },
             // super.x++ → __superWrapper(...)._++
+            // delete super.x → __superDelete("x"), which throws like the native form does
             js_ast::ExprData::EUnary(mut unary) => {
-                if js_ast::OpCode::unary_assign_target(unary.op) != js_ast::AssignTarget::Update {
+                let is_update =
+                    js_ast::OpCode::unary_assign_target(unary.op) == js_ast::AssignTarget::Update;
+                if !is_update && unary.op != js_ast::OpCode::UnDelete {
                     return false;
                 }
                 let Some(key) = self.super_member_key(unary.value, ctx) else {
                     return false;
                 };
-                unary.value = self.super_wrapper_expr(ctx, key, unary.value.loc);
+                if is_update {
+                    unary.value = self.super_wrapper_expr(ctx, key, unary.value.loc);
+                } else {
+                    *expr = self.call_rt(loc, b"__superDelete", &[key]);
+                }
                 true
             }
             // super.tag`…` → __superGet(...).bind(this)`…`
@@ -2365,8 +2371,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             prefix_stmts.insert(0, p.var_decl(home_ref, None, loc));
             let this_e = p.new_expr(E::This {}, loc);
             let capture = p.assign_to(home_ref, this_e, loc);
-            // First in the body: static initializers may call the method; unlike the
-            // class binding, this is not reassigned when a class decorator replaces the class.
+            // First in the body: a static initializer may already call a lowered method.
             static_private_add_blocks.insert(0, p.make_static_block(capture, loc));
         }
 

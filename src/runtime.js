@@ -250,6 +250,9 @@ export var __superWrapper = (home, obj, key) => ({
     __superSet(home, obj, key, value);
   },
 });
+export var __superDelete = key => {
+  throw ReferenceError("Cannot delete super property " + String(key));
+};
 
 export var __decoratorStart = base => [, , , __create(base?.[__knownSymbol("metadata")] ?? null)];
 var __decoratorStrings = ["class", "method", "getter", "setter", "accessor", "field", "value", "get", "set"];

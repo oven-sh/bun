@@ -2604,10 +2604,11 @@ importers:
         stderr: "pipe",
         ...unprivileged,
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toContain("warn: failed to write package.json (EACCES): pnpm.overrides to overrides not moved");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stdout).toBe("");
       expect(exitCode).toBe(0);
       expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
       expect(overridesSection(await bunLockOf(String(dir)))).toMatchInlineSnapshot(`

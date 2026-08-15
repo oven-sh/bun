@@ -59,6 +59,9 @@ const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b"
 
 const NPM_TASK_ARGS: &[&[u8]] = &[b"run"];
 
+/// A task command containing one of these is a path, spawned as written.
+const TASK_PATH_SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
 fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMClient>) {
     let task = strings::trim(task_, b" \n\r\t");
     if task.is_empty() {
@@ -97,7 +100,7 @@ fn exec_task(task_: &[u8], cwd: &[u8], path_env: &[u8], npm_client: Option<NPMCl
             Ok(exec_path) => Some(exec_path),
             Err(err) => return print_task_error(task, err),
         }
-    } else if npm_client.is_some() || strings::contains_char(argv[0], b'/') {
+    } else if npm_client.is_some() || strings::contains_any(argv[0], TASK_PATH_SEPARATORS) {
         None
     } else {
         match which_for_spawn(&mut *exec_path_buf, path_env, cwd, argv[0]) {

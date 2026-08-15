@@ -675,6 +675,86 @@ describe("Valkey: Recovering After fail()", () => {
     });
   });
 
+  // A tls config whose certificates do not parse fails the attempt before
+  // anything is dialed, so no server is involved in these.
+  const badTls = { tls: { ca: "not a certificate" }, autoReconnect: false };
+
+  test.each([
+    ["connect()", (client: RedisClient) => client.connect()],
+    ["a command", (client: RedisClient) => client.ping()],
+  ])("a tls config that fails to load is reported from the event loop when %s starts the attempt", async (_, start) => {
+    const client = new RedisClient("rediss://127.0.0.1:1", badTls);
+    try {
+      let closes = 0;
+      const closed = Promise.withResolvers<Error & { code: string }>();
+      client.onclose = err => {
+        closes++;
+        closed.resolve(err);
+      };
+      const attempt = start(client);
+      // Not from inside the call that started the attempt: an onclose that
+      // dials again from there would recurse straight back into the failure.
+      expect(closes).toBe(0);
+      await expect(attempt).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      expect(await closed.promise).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      expect({ closes, connected: client.connected }).toEqual({ closes: 1, connected: false });
+      await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("a tls config failure is still reported for a client that nothing but the pending attempt references", async () => {
+    // Once connect() has returned, the report that is on its way is all that
+    // still needs the client. A client collected before it arrives would never
+    // settle its attempt (this test would then time out). Several clients
+    // because the most recent one tends to survive a collection anyway.
+    let closes = 0;
+    const attempts: Promise<string>[] = [];
+    for (let i = 0; i < 3; i++) {
+      const client = new RedisClient("rediss://127.0.0.1:1", badTls);
+      client.onclose = () => closes++;
+      attempts.push(
+        client.connect().then(
+          () => "connected",
+          (err: Error & { code: string }) => `rejected: ${err.code}`,
+        ),
+      );
+      Bun.gc(true);
+    }
+    const outcomes = await Promise.all(attempts);
+    expect({ outcomes, closes }).toEqual({
+      outcomes: Array(3).fill("rejected: ERR_REDIS_CONNECTION_CLOSED"),
+      closes: 3,
+    });
+  });
+
+  test("an onclose that throws after a tls config failure is reported as an uncaught exception", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.on("uncaughtException", err => console.log("uncaught", err.message));
+        const client = new Bun.RedisClient("rediss://127.0.0.1:1", ${JSON.stringify(badTls)});
+        client.onclose = () => { throw new Error("from onclose"); };
+        const attempt = client.connect();
+        console.log("connect() returned");
+        await attempt.catch(err => console.log("connect rejected", err.code));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "connect() returned\nuncaught from onclose\nconnect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("a connect() issued from onclose is not fed the replies left over from the failed connection", async () => {
     // With a database in the URL, HELLO and SELECT are written together, so a
     // server that rejects HELLO delivers both error replies in one read.

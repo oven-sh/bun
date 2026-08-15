@@ -84,12 +84,8 @@ public:
 
     StrongRootBlock* next() const { return m_next.get(); }
 
-    // Reached from Bun__StrongRef__delete, which finalizers call while JSC is
-    // sweeping; WriteBarrier::setMayBeNull would validate `next` through
-    // classInfo(), which asserts during a sweep. The barrier itself is still
-    // required: acquire() links the reused (old) spare ahead of blocks
-    // allocated since the last collection, and the slot store that follows only
-    // remembers the block when the value is a cell.
+    // Not setMayBeNull(): its GC-validation path reads next->classInfo(), which
+    // JSC forbids while sweeping, and finalizers release Strongs mid-sweep.
     void setNext(JSC::VM& vm, StrongRootBlock* next)
     {
         m_next.setWithoutWriteBarrier(next);

@@ -192,7 +192,6 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
     if (!stream) [[unlikely]]
         return;
     stream->m_nativePtr.set(globalObject->vm(), stream, jsNumber(-1));
-    stream->m_nativeType = 0;
     stream->m_disturbed = true;
 }
 

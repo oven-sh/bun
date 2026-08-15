@@ -56,7 +56,6 @@ using namespace JSC;
     macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
-    macro(bunNativeType) \
     macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
@@ -76,7 +75,6 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
-    macro(disturbed) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \

@@ -103,10 +103,9 @@ impl readable_stream::SourceContext for ByteStream {
 }
 
 // SAFETY: `ByteStream` is always the `context` field of a `Source`
-// (ReadableStream.NewSource); never constructed standalone. `parent` returns
-// `*mut Source` (not `&mut`) — retained for the `finalize` (GC-teardown) path
-// only; all host-fn-reachable callers use `parent_const`.
-bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
+// (ReadableStream.NewSource); never constructed standalone. Everything it
+// touches on the `Source` is a `Cell`, so the `&Source` arm suffices.
+bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
     #[inline]
@@ -227,11 +226,16 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
-    /// Take the buffered bytes without signalling the producer; the caller
-    /// writes them to the sink before [`Self::signal_drained`].
+    /// Take the unread buffered bytes (`buffer[offset..]`) without signalling
+    /// the producer; the caller writes them to the sink before
+    /// [`Self::signal_drained`].
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
-        self.offset.set(0);
-        Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()))
+        let consumed = self.offset.replace(0);
+        let mut list = self.buffer.replace(Vec::new());
+        if consumed > 0 {
+            list.drain(..consumed);
+        }
+        Vec::<u8>::move_from_list(list)
     }
 
     /// Called by native fast-paths after wiring `self.sink`. Restores
@@ -690,11 +694,14 @@ impl ByteStream {
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
-        if !self.buffer.get().is_empty() {
+        let drained = self.take_buffer();
+        if !drained.is_empty() {
+            // After taking, as in `on_pull`: the producer decides whether to
+            // resume from `buffer.len()`, and anything it emits inline queues
+            // behind these bytes for the next pull.
             self.signal_drained();
-            return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
-        Vec::<u8>::default()
+        drained
     }
 
     /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].

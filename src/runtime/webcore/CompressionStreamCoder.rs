@@ -5,9 +5,16 @@
 //! `TransformStream` whose transform step feeds bytes into a codec and
 //! enqueues whatever comes out. The C++ `JSCompressionStream` /
 //! `JSDecompressionStream` cells own one `CompressionStreamCoder` via a
-//! `void*` and drive it per chunk through the three `extern "C"` fns at the
-//! bottom of this file; the TransformStream machinery already handles
-//! backpressure, so this layer is a pure `bytes in → bytes out` pump.
+//! `void*` and drive it through the `extern "C"` fns at the bottom of this
+//! file.
+//!
+//! TransformStream backpressure only applies between chunks, and one chunk can
+//! expand without bound (a few hundred bytes of brotli decode to gigabytes), so
+//! a chunk is transformed in steps of bounded output
+//! ([`CompressionStreamCoder::step`]). The C++ arm
+//! (`JSCompressionStreamShared.cpp`) delivers each step's output and steps
+//! again once the consumer has room; in between, the coder keeps the chunk's
+//! unconsumed input ([`Pending`]).
 
 use core::ffi::c_int;
 use core::ptr::{self, NonNull};
@@ -53,7 +60,36 @@ impl Format {
     }
 }
 
+/// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
+
+/// Room for one codec call: grows `out` by up to [`CHUNK`], clamped to `cap`.
+fn spare(out: &mut Vec<u8>, cap: usize) -> &mut [core::mem::MaybeUninit<u8>] {
+    debug_assert!(out.len() < cap);
+    let budget = cap - out.len();
+    out.reserve(budget.min(CHUNK));
+    let spare = out.spare_capacity_mut();
+    let len = spare.len().min(budget);
+    &mut spare[..len]
+}
+
+/// The rest of a chunk (or flush) whose last step stopped at the output cap.
+/// Copied, not borrowed: user code runs between steps and may detach the chunk.
+struct Pending {
+    input: Vec<u8>,
+    pos: usize,
+    finish: bool,
+    /// Per-step output bound, fixed by the chunk's first step.
+    cap: usize,
+}
+
+enum Progress {
+    Done,
+    /// Stopped at the output cap; `consumed` bytes of this step's input are used up.
+    More {
+        consumed: usize,
+    },
+}
 
 enum Backend {
     Deflate(Box<zlib::z_stream>),
@@ -89,9 +125,12 @@ pub struct CompressionStreamCoder {
     /// ends with <4 bytes after frame-complete we cannot tell which yet.
     zstd_head: [u8; 4],
     zstd_head_len: u8,
-    /// Output buffer for `transform`. Reused across chunks; `transform` clears
-    /// it on entry.
-    out: Vec<u8>,
+    /// The stream's `highWaterMark`: output bound of one step. A chunk larger
+    /// than this may produce up to its own size per step (the bound is on
+    /// expansion), so a big chunk still finishes in a step or two.
+    high_water_mark: usize,
+    /// Set while a chunk's transform spans steps; `None` between chunks.
+    pending: Option<Pending>,
 }
 
 // SAFETY: the z_stream / Brotli*Instance / ZSTD_*Ctx handles are single-owner
@@ -135,7 +174,11 @@ enum CodecError {
 }
 
 impl CompressionStreamCoder {
-    fn new(format: Format, decompress: bool) -> Result<Box<Self>, CodecError> {
+    fn new(
+        format: Format,
+        decompress: bool,
+        high_water_mark: usize,
+    ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
                 let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
@@ -211,7 +254,8 @@ impl CompressionStreamCoder {
             ended: false,
             zstd_head: [0; 4],
             zstd_head_len: 0,
-            out: Vec::new(),
+            high_water_mark,
+            pending: None,
         }))
     }
 
@@ -229,19 +273,75 @@ impl CompressionStreamCoder {
                     .all(|(a, b)| *a == b))
     }
 
-    /// Feed one chunk (or the final empty flush) and collect every byte the
-    /// codec produces into `self.out` (cleared on entry). `finish` drives the
-    /// codec to completion and performs the "unexpected end of file" /
-    /// "trailing junk" checks.
-    fn transform(&mut self, input: &[u8], finish: bool) -> Result<(), CodecError> {
-        let out = &mut self.out;
+    /// One step of the chunk (or, with `finish`, the final flush) in progress:
+    /// collects at most `max(high_water_mark, chunk length)` bytes into `out` and
+    /// returns `true` if the codec stopped at that cap, in which case the caller
+    /// must step again (with no input) before feeding the next chunk.
+    fn step(&mut self, input: &[u8], finish: bool, out: &mut Vec<u8>) -> Result<bool, CodecError> {
         out.clear();
+        if let Some(mut pending) = self.pending.take() {
+            debug_assert!(input.is_empty());
+            return match self.run(
+                &pending.input[pending.pos..],
+                pending.finish,
+                true,
+                pending.cap,
+                out,
+            )? {
+                Progress::Done => Ok(false),
+                Progress::More { consumed } => {
+                    pending.pos += consumed;
+                    self.pending = Some(pending);
+                    Ok(true)
+                }
+            };
+        }
+        // Zstd decode: re-attach the frame magic the previous chunk ended inside of.
+        let joined;
+        let bytes: &[u8] = if self.zstd_head_len > 0 {
+            joined = [&self.zstd_head[..self.zstd_head_len as usize], input].concat();
+            self.zstd_head_len = 0;
+            &joined
+        } else {
+            input
+        };
+        let cap = self.high_water_mark.max(input.len());
+        match self.run(bytes, finish, false, cap, out)? {
+            Progress::Done => Ok(false),
+            Progress::More { consumed } => {
+                self.pending = Some(Pending {
+                    input: bytes[consumed..].to_vec(),
+                    pos: 0,
+                    finish,
+                    cap,
+                });
+                Ok(true)
+            }
+        }
+    }
+
+    /// Drives the codec until the chunk is done or `out` holds `cap` bytes.
+    /// A `continuing` step (not the chunk's first) calls the codec even with no
+    /// input left, to drain the output it is holding.
+    fn run(
+        &mut self,
+        input: &[u8],
+        finish: bool,
+        continuing: bool,
+        cap: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<Progress, CodecError> {
         match &mut self.backend {
             Backend::Deflate(s) => {
                 // `avail_in` is `uInt`; clamp and refill so a ≥4 GiB chunk
                 // isn't silently truncated by the `as u32` cast.
                 let mut remaining = input;
                 loop {
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input.len() - remaining.len(),
+                        });
+                    }
                     let take = remaining.len().min(u32::MAX as usize);
                     let tail = remaining.len() > take;
                     let flush = if finish && !tail {
@@ -251,8 +351,7 @@ impl CompressionStreamCoder {
                     };
                     s.next_in = remaining.as_ptr();
                     s.avail_in = take as u32;
-                    out.reserve(CHUNK);
-                    let spare = out.spare_capacity_mut();
+                    let spare = spare(out, cap);
                     s.next_out = spare.as_mut_ptr().cast();
                     s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
@@ -267,34 +366,41 @@ impl CompressionStreamCoder {
                     remaining = &remaining[consumed..];
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
-                        zlib::ReturnCode::StreamEnd => break,
+                        zlib::ReturnCode::StreamEnd => return Ok(Progress::Done),
                         _ => return Err(CodecError::Message("deflate failed")),
                     }
                     if s.avail_out != 0 && remaining.is_empty() {
-                        break;
+                        return Ok(Progress::Done);
                     }
                 }
             }
             Backend::Inflate { state: s, gzip } => {
                 let gzip = *gzip;
-                // `self.ended` = "the last inflate returned StreamEnd" = "at a
-                // member boundary". For gzip, a following chunk starts the next
-                // member; for deflate/deflate-raw it is trailing junk.
-                if self.ended && !input.is_empty() {
-                    if !gzip {
-                        return Err(CodecError::TrailingJunk);
+                if !continuing {
+                    // `self.ended` = "the last inflate returned StreamEnd" = "at
+                    // a member boundary". For gzip, a following chunk starts the
+                    // next member; for deflate/deflate-raw it is trailing junk.
+                    if self.ended && !input.is_empty() {
+                        if !gzip {
+                            return Err(CodecError::TrailingJunk);
+                        }
+                        // SAFETY: `s` is an initialized inflate stream.
+                        if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
+                            return Err(CodecError::Message("inflate failed"));
+                        }
+                        self.ended = false;
                     }
-                    // SAFETY: `s` is an initialized inflate stream.
-                    if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
-                        return Err(CodecError::Message("inflate failed"));
+                    if input.is_empty() && (self.ended || !finish) {
+                        return Ok(Progress::Done);
                     }
-                    self.ended = false;
-                }
-                if input.is_empty() && (self.ended || !finish) {
-                    return Ok(());
                 }
                 let mut remaining = input;
                 loop {
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input.len() - remaining.len(),
+                        });
+                    }
                     let take = remaining.len().min(u32::MAX as usize);
                     let tail = remaining.len() > take;
                     let flush = if finish && !tail {
@@ -304,8 +410,7 @@ impl CompressionStreamCoder {
                     };
                     s.next_in = remaining.as_ptr();
                     s.avail_in = take as u32;
-                    out.reserve(CHUNK);
-                    let spare = out.spare_capacity_mut();
+                    let spare = spare(out, cap);
                     s.next_out = spare.as_mut_ptr().cast();
                     s.avail_out = spare.len().min(u32::MAX as usize) as u32;
                     let before = s.avail_out;
@@ -326,20 +431,18 @@ impl CompressionStreamCoder {
                         }
                         zlib::ReturnCode::StreamEnd => {
                             self.ended = true;
-                            if !remaining.is_empty() {
-                                if gzip {
-                                    // SAFETY: `s` is an initialized inflate stream.
-                                    if unsafe { zlib::inflateReset(&raw mut **s) }
-                                        != zlib::ReturnCode::Ok
-                                    {
-                                        return Err(CodecError::Message("inflate failed"));
-                                    }
-                                    self.ended = false;
-                                    continue;
-                                }
+                            if remaining.is_empty() {
+                                return Ok(Progress::Done);
+                            }
+                            if !gzip {
                                 return Err(CodecError::TrailingJunk);
                             }
-                            break;
+                            // SAFETY: `s` is an initialized inflate stream.
+                            if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
+                                return Err(CodecError::Message("inflate failed"));
+                            }
+                            self.ended = false;
+                            continue;
                         }
                         zlib::ReturnCode::NeedDict => {
                             return Err(CodecError::Message("Missing dictionary"));
@@ -350,7 +453,7 @@ impl CompressionStreamCoder {
                         if finish && !self.ended {
                             return Err(CodecError::Message("unexpected end of file"));
                         }
-                        break;
+                        return Ok(Progress::Done);
                     }
                 }
             }
@@ -363,8 +466,12 @@ impl CompressionStreamCoder {
                 let mut next_in: *const u8 = input.as_ptr();
                 let mut avail_in: usize = input.len();
                 loop {
-                    out.reserve(CHUNK);
-                    let spare = out.spare_capacity_mut();
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input.len() - avail_in,
+                        });
+                    }
+                    let spare = spare(out, cap);
                     let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
                     let mut avail_out: usize = spare.len();
                     let before = avail_out;
@@ -388,7 +495,7 @@ impl CompressionStreamCoder {
                         return Err(CodecError::Message("brotli encode failed"));
                     }
                     if avail_in == 0 && avail_out != 0 {
-                        break;
+                        return Ok(Progress::Done);
                     }
                 }
             }
@@ -397,13 +504,17 @@ impl CompressionStreamCoder {
                     if !input.is_empty() {
                         return Err(CodecError::TrailingJunk);
                     }
-                    return Ok(());
+                    return Ok(Progress::Done);
                 }
                 let mut next_in: *const u8 = input.as_ptr();
                 let mut avail_in: usize = input.len();
                 loop {
-                    out.reserve(CHUNK);
-                    let spare = out.spare_capacity_mut();
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input.len() - avail_in,
+                        });
+                    }
+                    let spare = spare(out, cap);
                     let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
                     let mut avail_out: usize = spare.len();
                     let before = avail_out;
@@ -427,15 +538,15 @@ impl CompressionStreamCoder {
                             if avail_in != 0 {
                                 return Err(CodecError::TrailingJunk);
                             }
-                            break;
+                            return Ok(Progress::Done);
                         }
                         brotli::BrotliDecoderResult::needs_more_input => {
                             if finish {
                                 return Err(CodecError::Message("unexpected end of file"));
                             }
-                            break;
+                            return Ok(Progress::Done);
                         }
-                        brotli::BrotliDecoderResult::needs_more_output => continue,
+                        brotli::BrotliDecoderResult::needs_more_output => {}
                         brotli::BrotliDecoderResult::err => {
                             // SAFETY: `p` is a live decoder; the error string is a
                             // static C string owned by the brotli library.
@@ -459,8 +570,12 @@ impl CompressionStreamCoder {
                     pos: 0,
                 };
                 loop {
-                    out.reserve(CHUNK);
-                    let spare = out.spare_capacity_mut();
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input_buf.pos,
+                        });
+                    }
+                    let spare = spare(out, cap);
                     let mut output_buf = zstd::ZSTD_outBuffer {
                         dst: spare.as_mut_ptr().cast(),
                         size: spare.len(),
@@ -483,33 +598,23 @@ impl CompressionStreamCoder {
                         return Err(CodecError::Message("zstd encode failed"));
                     }
                     if input_buf.pos == input_buf.size && (!finish || remaining == 0) {
-                        break;
+                        return Ok(Progress::Done);
                     }
                 }
             }
             Backend::ZstdDecode(p) => {
-                // A zstd stream is one or more concatenated frames (RFC 8878
-                // §3.1, including skippable frames). After a frame completes,
-                // the next bytes must be another frame magic; a chunk boundary
-                // may fall inside that 4-byte magic, which `zstd_head` carries.
-                let joined;
-                let bytes: &[u8] = if self.zstd_head_len > 0 {
-                    joined = [&self.zstd_head[..self.zstd_head_len as usize], input].concat();
-                    self.zstd_head_len = 0;
-                    &joined
-                } else {
-                    input
-                };
+                // After a frame completes, whatever follows must be another frame
+                // magic (see `zstd_head`); `step` has already re-attached a split one.
                 let mut input_buf = zstd::ZSTD_inBuffer {
-                    src: bytes.as_ptr().cast(),
-                    size: bytes.len(),
+                    src: input.as_ptr().cast(),
+                    size: input.len(),
                     pos: 0,
                 };
                 loop {
                     if self.ended {
-                        let rest = &bytes[input_buf.pos..];
+                        let rest = &input[input_buf.pos..];
                         if rest.is_empty() {
-                            break;
+                            return Ok(Progress::Done);
                         }
                         let head = &rest[..rest.len().min(4)];
                         if !Self::is_zstd_frame_prefix(head) {
@@ -521,7 +626,7 @@ impl CompressionStreamCoder {
                             }
                             self.zstd_head[..head.len()].copy_from_slice(head);
                             self.zstd_head_len = head.len() as u8;
-                            break;
+                            return Ok(Progress::Done);
                         }
                         // SAFETY: `p` is a live DCtx.
                         unsafe {
@@ -532,8 +637,12 @@ impl CompressionStreamCoder {
                         };
                         self.ended = false;
                     }
-                    out.reserve(CHUNK);
-                    let spare = out.spare_capacity_mut();
+                    if out.len() >= cap {
+                        return Ok(Progress::More {
+                            consumed: input_buf.pos,
+                        });
+                    }
+                    let spare = spare(out, cap);
                     let mut output_buf = zstd::ZSTD_outBuffer {
                         dst: spare.as_mut_ptr().cast(),
                         size: spare.len(),
@@ -562,12 +671,11 @@ impl CompressionStreamCoder {
                         if finish {
                             return Err(CodecError::Message("unexpected end of file"));
                         }
-                        break;
+                        return Ok(Progress::Done);
                     }
                 }
             }
         }
-        Ok(())
     }
 }
 
@@ -584,13 +692,13 @@ unsafe impl Send for AsyncInput {}
 
 /// The pin + GC protection on a chunk whose bytes went to the pool; released
 /// on drop (JS thread, with the job's Js side).
-pub(crate) struct PinnedChunk(JSValue);
+pub(crate) struct PinnedChunk(bun_jsc::ArrayBuffer);
 // SAFETY: pin/protect on a heap cell; gone with the heap.
 unsafe impl bun_jsc::job::JsAffine for PinnedChunk {}
 impl Drop for PinnedChunk {
     fn drop(&mut self) {
-        self.0.unpin_array_buffer();
-        self.0.unprotect();
+        self.0.unpin();
+        self.0.value.unprotect();
     }
 }
 
@@ -605,7 +713,7 @@ impl AsyncInput {
             // A resizable non-shared backing can `mprotect()` pages out on
             // `resize()`; pinning does not block that, so spill to a copy.
             if buf.resizable && !buf.shared {
-                chunk.unpin_array_buffer();
+                buf.unpin();
                 return (Self::Owned(fallback.to_vec()), None);
             }
             chunk.protect();
@@ -614,7 +722,7 @@ impl AsyncInput {
                     ptr: buf.ptr,
                     len: buf.byte_len,
                 },
-                Some(PinnedChunk(chunk)),
+                Some(PinnedChunk(buf)),
             );
         }
         (Self::Owned(fallback.to_vec()), None)
@@ -641,11 +749,12 @@ impl AsyncInput {
 pub extern "C" fn CompressionStreamCoder__create(
     format: u8,
     decompress: bool,
+    high_water_mark: usize,
 ) -> *mut CompressionStreamCoder {
     let Some(format) = Format::from_u8(format) else {
         return ptr::null_mut();
     };
-    match CompressionStreamCoder::new(format, decompress) {
+    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1)) {
         Ok(b) => Box::into_raw(b),
         Err(_) => ptr::null_mut(),
     }
@@ -662,9 +771,9 @@ pub extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCo
     }
 }
 
-/// Runs one transform step. Returns a fresh `Uint8Array` on success, or
-/// `JSValue::zero` with a `TypeError` thrown on `global` on failure.
-/// `input` may be null iff `input_len == 0`.
+/// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
+/// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
+/// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transform(
@@ -673,32 +782,37 @@ pub extern "C" fn CompressionStreamCoder__transform(
     input: *const u8,
     input_len: usize,
     finish: bool,
+    more: &mut bool,
 ) -> JSValue {
     let slice = if input.is_null() {
         &[][..]
     } else {
         // SAFETY: the caller passes a BufferSource's bytes; `slice` does not
-        // escape this call.
+        // escape this call (`step` copies whatever it leaves unconsumed).
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
+    let rare = global.bun_vm().as_mut().rare_data();
+    let mut out = rare.take_compression_scratch();
     // SAFETY: `this` is the live coder owned by the calling JS cell; it is
     // only driven from the JS thread, so the call-scoped `&mut *this` has no
-    // alias. No JS runs between `transform` and `take` below.
-    match unsafe { (*this).transform(slice, finish) } {
-        Ok(()) => {
-            // SAFETY: as above.
-            let out = unsafe { core::mem::take(&mut (*this).out) };
+    // alias.
+    let result = match unsafe { (*this).step(slice, finish, &mut out) } {
+        Ok(has_more) => {
+            *more = has_more;
             if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
-                JSUint8Array::from_bytes(global, out.into())
+                JSUint8Array::from_bytes_copy(global, &out)
             }
         }
         Err(e) => {
+            *more = false;
             throw_codec_error(global, e);
             JSValue::ZERO
         }
-    }
+    };
+    rare.put_back_compression_scratch(out);
+    result
 }
 
 fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
@@ -727,11 +841,9 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
     let _ = global.throw_value(codec_error_to_js(global, &e));
 }
 
-/// Runs one transform step and writes the output straight to a native JSSink
-/// (`m_sinkPtr`), so the chunk never becomes a `JSUint8Array`. Returns the
-/// sink's `write_bytes` result (see nativeSinkWriteIsBackpressure for the
-/// backpressure-signal shapes), `undefined` for an empty output, or
-/// `JSValue::zero` with an exception pending on `global` on codec failure.
+/// [`CompressionStreamCoder__transform`], but the output is written to the
+/// native JSSink `sink_ptr`: returns the sink's `write` result (see
+/// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transformInto(
@@ -742,6 +854,7 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
     finish: bool,
     sink_id: u8,
     sink_ptr: *mut core::ffi::c_void,
+    more: &mut bool,
 ) -> JSValue {
     let slice = if input.is_null() {
         &[][..]
@@ -749,61 +862,67 @@ pub extern "C" fn CompressionStreamCoder__transformInto(
         // SAFETY: as in `CompressionStreamCoder__transform`.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
+    let rare = global.bun_vm().as_mut().rare_data();
+    let mut out = rare.take_compression_scratch();
     // SAFETY: as in `CompressionStreamCoder__transform`.
-    match unsafe { (*this).transform(slice, finish) } {
-        Ok(()) => {
-            // SAFETY: as above; the sink copies before returning.
-            let out = unsafe { &(*this).out };
-            if out.is_empty() {
-                return JSValue::UNDEFINED;
+    let result = match unsafe { (*this).step(slice, finish, &mut out) } {
+        Ok(has_more) => {
+            *more = has_more;
+            'write: {
+                let Some(sink_ptr) = NonNull::new(sink_ptr).filter(|_| !out.is_empty()) else {
+                    break 'write JSValue::UNDEFINED;
+                };
+                // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
+                // copies what it needs before returning.
+                let handle =
+                    unsafe { crate::webcore::sink::sink_handle_from_id(sink_id, sink_ptr) };
+                if handle.is_none() {
+                    break 'write JSValue::UNDEFINED;
+                }
+                handle
+                    .write(&crate::webcore::streams::Result::Temporary(
+                        bun_ptr::RawSlice::new(&out),
+                    ))
+                    .to_js(global)
             }
-            let Some(sink_ptr) = NonNull::new(sink_ptr) else {
-                return JSValue::UNDEFINED;
-            };
-            // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
-            // copies what it needs before returning.
-            let handle = unsafe { crate::webcore::sink::sink_handle_from_id(sink_id, sink_ptr) };
-            if handle.is_none() {
-                return JSValue::UNDEFINED;
-            }
-            handle
-                .write(&crate::webcore::streams::Result::Temporary(
-                    bun_ptr::RawSlice::new(out),
-                ))
-                .to_js(global)
         }
         Err(e) => {
+            *more = false;
             throw_codec_error(global, e);
             JSValue::ZERO
         }
-    }
+    };
+    rare.put_back_compression_scratch(out);
+    result
 }
 
 // ─── off-thread path (chunks > kAsyncCodecThreshold) ───────────────────────
 
 unsafe extern "C" {
-    /// JS-thread completion hook in `JSCompressionStreamShared.cpp`. Copies
-    /// `out[..out_len]` into the sink / a fresh Uint8Array before it clears
-    /// `m_asyncCodecInFlight` (so a deferred coder release cannot free the
-    /// bytes under it), then settles the stream's `m_asyncCodecPromise`.
+    /// JS-thread completion in `JSCompressionStreamShared.cpp`: consumes
+    /// `out[..out_len]` before anything may release or re-dispatch the coder.
     fn Bun__CompressionStream__deliverAsync(
         global: &JSGlobalObject,
         stream_cell: JSValue,
         out: *const u8,
         out_len: usize,
+        more: bool,
         error: JSValue,
     );
 }
 
-/// One large `CompressionStream`/`DecompressionStream` chunk transformed off
-/// the JS thread.
+/// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
+/// off the JS thread.
 pub struct CompressionAsyncCtx {
     /// Holds one coder reference (taken in `CompressionStreamCoder__transformAsync`,
     /// released by `Drop`); see [`CompressionStreamCoder::ref_count`]. TransformStream
     /// serializes writes, so nothing else touches it while the pool has it.
     coder: *mut CompressionStreamCoder,
+    /// Empty on a continuation step: the coder holds the chunk's tail.
     input: AsyncInput,
     finish: bool,
+    out: Vec<u8>,
+    more: bool,
     error: Option<CodecError>,
 }
 
@@ -824,7 +943,7 @@ unsafe impl Send for CompressionAsyncCtx {}
 pub struct CompressionAsyncJs {
     /// GC root for the `JSTransformStream` cell; its `m_asyncCodecInFlight`
     /// flag defers the eager ClearAlgorithms release while this task holds it,
-    /// and its `m_asyncCodecPromise` WriteBarrier keeps the pending
+    /// and its `m_codecPromise` WriteBarrier keeps the pending
     /// transform-algorithm promise alive.
     stream: Strong,
     _pin: Option<PinnedChunk>,
@@ -837,7 +956,10 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         // SAFETY: `coder` is kept alive by the reference this ctx holds (the
         // cell's finalizer only releases its own); see the field doc.
-        this.error = unsafe { (*this.coder).transform(this.input.slice(), this.finish) }.err();
+        match unsafe { (*this.coder).step(this.input.slice(), this.finish, &mut this.out) } {
+            Ok(more) => this.more = more,
+            Err(e) => this.error = Some(e),
+        }
         Some(done)
     }
 
@@ -848,22 +970,26 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
     ) -> bun_jsc::JsResult<()> {
         let global = cx.global();
         let (out, out_len, err) = match &this.error {
-            None => {
-                // SAFETY: `this` holds a coder reference until it drops at the
-                // end of this fn, so `coder` (and its `out` buffer) stay live
-                // while `Bun__CompressionStream__deliverAsync` copies.
-                let coder = unsafe { &*this.coder };
-                (coder.out.as_ptr(), coder.out.len(), JSValue::ZERO)
-            }
+            None => (this.out.as_ptr(), this.out.len(), JSValue::ZERO),
             Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, e)),
         };
-        // SAFETY: FFI into `JSCompressionStreamShared.cpp`; the callee copies
-        // `out[..out_len]` before releasing the coder.
-        unsafe { Bun__CompressionStream__deliverAsync(global, js.stream.get(), out, out_len, err) };
+        // SAFETY: FFI into `JSCompressionStreamShared.cpp`; see above.
+        unsafe {
+            Bun__CompressionStream__deliverAsync(
+                global,
+                js.stream.get(),
+                out,
+                out_len,
+                this.more,
+                err,
+            )
+        };
         Ok(())
     }
 }
 
+/// Schedules one off-thread step; a continuation step passes no chunk and no
+/// input (the coder kept the tail).
 #[unsafe(no_mangle)]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn CompressionStreamCoder__transformAsync(
@@ -893,6 +1019,8 @@ pub extern "C" fn CompressionStreamCoder__transformAsync(
             coder: this,
             input,
             finish,
+            out: Vec::new(),
+            more: false,
             error: None,
         },
         CompressionAsyncJs {

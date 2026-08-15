@@ -226,8 +226,13 @@ pub struct PendingValue {
     /// runs after the data is available.
     pub(crate) on_receive_value: Option<fn(ctx: NonNull<c_void>, value: &mut Value)>,
 
-    /// conditionally runs when requesting data
-    /// used in HTTP server to ignore request bodies unless asked for it
+    /// A consumer that wants the whole body (`.text()`/`.json()`/…,
+    /// `Bun.write`) has started waiting on it without realising a stream.
+    /// Producers use it to stop holding data back (the server ignores request
+    /// bodies until asked; HTMLRewriter stops pacing its input). The producer
+    /// may resolve or fail this body synchronously from inside the call —
+    /// replacing the `Value` this `PendingValue` lives in — so callers install
+    /// their `promise`/`on_receive_value` first and touch nothing afterwards.
     pub(crate) on_start_buffering: Option<fn(ctx: NonNull<c_void>)>,
     pub(crate) on_start_streaming: Option<fn(ctx: NonNull<c_void>) -> DrainResult>,
     pub(crate) on_readable_stream_available:
@@ -420,9 +425,10 @@ impl PendingValue {
             promise_value.protect();
 
             if let Some(on_start_buffering) = self.on_start_buffering.take() {
-                // `task` is the live request-ctx pointer registered alongside
-                // this callback in `prepare_js_request_context`.
-                on_start_buffering(self.task.unwrap());
+                // Last use of `self`: the producer may settle the body (and so
+                // replace `*self`) before this returns.
+                let task = self.task.unwrap();
+                on_start_buffering(task);
             }
             Ok(promise_value)
         }

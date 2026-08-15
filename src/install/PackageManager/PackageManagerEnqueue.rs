@@ -20,9 +20,9 @@ use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, UpdateRequest,
-    determine_preinstall_state, get_cache_directory, get_preinstall_state, get_temporary_directory,
-    run_tasks, set_preinstall_state,
+    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
+    get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
+    set_preinstall_state,
 };
 use crate::package_manager_task as Task;
 use crate::patch_install::EnqueueAfterState;
@@ -710,7 +710,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             && (dependency.version.tag != dependency::version::Tag::Npm
                 || !dependency.version.npm().is_alias)
         {
-            if let Some(new) = this.lockfile.overrides.get(name_hash) {
+            if let Some(new) = this.lockfile.overrides.get(&this.lockfile, id, name_hash) {
                 bun_output::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
@@ -799,6 +799,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         this.log_mut()
                     .add_error_fmt(
@@ -819,6 +821,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
@@ -1638,6 +1642,24 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     }
 }
 
+/// Unmet peers stay unresolved instead of failing the install; see `may_stay_unresolved`.
+#[cold]
+#[inline(never)]
+fn warn_unmet_peer_dependency(
+    this: &PackageManager,
+    name: SemverString,
+    version: &dependency::Version,
+) {
+    bun_ast::add_warning_pretty!(
+        this.log_mut(),
+        None,
+        bun_ast::Loc::EMPTY,
+        "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
+        bstr::BStr::new(this.lockfile.str(&version.literal)),
+        bstr::BStr::new(this.lockfile.str(&name)),
+    );
+}
+
 /// Allocate and initialise an `.extract` Task for an npm tarball.
 /// Shared by the buffered path (`enqueueExtractNPMPackage`) and the
 /// streaming path (`createExtractTaskForStreaming`) so both produce
@@ -2039,14 +2061,13 @@ fn get_or_put_resolved_package_with_find_result(
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
         && if !this.update_requests.is_empty() {
-            // `bun update <name>`: every `<name>` slot, else other resolutions stay pinned.
-            UpdateRequest::contains_name(
-                &this.update_requests,
-                dependency.name_hash,
-                dependency
-                    .name
-                    .slice(this.lockfile.buffers.string_bytes.as_slice()),
-            )
+            // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
+            let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+            (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
+                || (name_hash != dependency.name_hash
+                    && this.is_update_request(name_hash, name.slice(string_buf))))
+                && crate::update_scope::UpdateScope::of(&*this)
+                    .contains_dependency(&this.lockfile, dependency_id)
         } else if let Some(targets) = this.update_target_workspaces.as_deref() {
             // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
             dependency.version.tag == dependency::version::Tag::Catalog
@@ -2063,6 +2084,19 @@ fn get_or_put_resolved_package_with_find_result(
                 || unsafe { &*(*this_ptr).lockfile }
                     .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
+
+    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
+    if should_update && !behavior.is_peer() {
+        if let Some(id) = patched_package_satisfying(this, name_hash, version) {
+            this.kept_patched.push(id);
+            success_fn(this, dependency_id, id);
+            return Ok(Some(ResolvedPackageResult {
+                package: *this.lockfile.packages.get(id as usize),
+                is_first_time: false,
+                task: None,
+            }));
+        }
+    }
 
     // Was this package already allocated? Let's reuse the existing one.
     //
@@ -2555,7 +2589,8 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    if behavior.is_peer() {
+                    // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
+                    if behavior.is_peer() && !install_peer {
                         return Ok(None);
                     }
 
@@ -2565,6 +2600,22 @@ fn get_or_put_resolved_package(
                         _ => unreachable!(),
                     };
                 }
+            };
+
+            let find_result = if version_was_replaced {
+                find_result
+            } else {
+                let locked = if latest_for_target {
+                    locked_version_in_lockfile(this, name_hash, version)
+                } else {
+                    locked_version_of_invoking_workspace_row(
+                        this,
+                        dependency,
+                        dependency_id,
+                        version,
+                    )
+                };
+                keep_locked_if_ahead(manifest, find_result, &locked)
             };
 
             // reshaped for borrowck — `manifest`/`find_result`
@@ -2677,24 +2728,7 @@ fn get_or_put_resolved_package(
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Workspace => {
             if !behavior.is_workspace() && !this.lockfile.is_workspace_dependency(dependency_id) {
@@ -2749,24 +2783,7 @@ fn get_or_put_resolved_package(
                 this,
             );
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Symlink => {
             // reshaped for borrowck — `link_dir` / `symlink_path`
@@ -2788,28 +2805,105 @@ fn get_or_put_resolved_package(
                 this,
             );
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
 
         _ => Ok(None),
     }
+}
+
+fn resolved_folder_package(
+    this: &mut PackageManager,
+    res: FolderResolutionValue,
+    dependency_id: DependencyID,
+    success_fn: SuccessFn,
+) -> crate::Result<Option<ResolvedPackageResult>> {
+    let (package_id, is_first_time) = match res {
+        FolderResolutionValue::Err(err) => return Err(err),
+        FolderResolutionValue::PackageId(package_id) => (package_id, false),
+        FolderResolutionValue::NewPackageId(package_id) => (package_id, true),
+    };
+    success_fn(this, dependency_id, package_id);
+    Ok(Some(ResolvedPackageResult {
+        package: *this.lockfile.packages.get(package_id as usize),
+        is_first_time,
+        task: None,
+    }))
+}
+
+/// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
+fn keep_locked_if_ahead<'m>(
+    manifest: &'m Npm::PackageManifest,
+    found: Npm::FindResult<'m>,
+    locked: &Option<(Semver::Version, &[u8])>,
+) -> Npm::FindResult<'m> {
+    let &Some((locked, locked_buf)) = locked else {
+        return found;
+    };
+    if found
+        .version
+        .order(locked, &manifest.string_buf, locked_buf)
+        != core::cmp::Ordering::Less
+    {
+        return found;
+    }
+    manifest.find_by_version(locked).unwrap_or(found)
+}
+
+/// Bare `bun update --latest` in a workspace: the row was rewritten to a dist-tag before install, so its locked version lives in `updating_packages`; rows that were dist-tag literals in package.json follow the tag.
+fn locked_version_of_invoking_workspace_row<'a>(
+    this: &'a PackageManager,
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    version: &dependency::Version,
+) -> Option<(Semver::Version, &'a [u8])> {
+    if version.tag != dependency::version::Tag::DistTag
+        || !this.to_update
+        || !this
+            .options
+            .do_
+            .contains(crate::package_manager::options::Do::UPDATE_TO_LATEST)
+    {
+        return None;
+    }
+    let own_rows = this.root_package_id.id?;
+    if !this.lockfile.packages.items_dependencies()[own_rows as usize].contains(dependency_id) {
+        return None;
+    }
+    let entry = this
+        .updating_packages
+        .get(this.lockfile.str(&dependency.name))?;
+    if dependency::version::Tag::infer(&entry.original_version_literal)
+        == dependency::version::Tag::DistTag
+    {
+        return None;
+    }
+    Some((entry.original_version?, &entry.original_version_string_buf))
+}
+
+/// `bun update -r/--filter --latest`: the row still carries its package.json range, so its locked version is the lockfile-loaded instance that range accepts (`package_index` lists highest first); dist-tag rows follow the tag.
+fn locked_version_in_lockfile<'a>(
+    this: &'a PackageManager,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<(Semver::Version, &'a [u8])> {
+    if version.tag != dependency::version::Tag::Npm {
+        return None;
+    }
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let range = &version.npm().version;
+    candidates
+        .iter()
+        .copied()
+        .filter(|&id| id < lockfile.loaded_package_count)
+        .map(|id| &pkg_res[id as usize])
+        .filter(|res| res.tag == ResolutionTag::Npm)
+        .map(|res| res.npm().version)
+        .find(|&locked| range.satisfies(locked, buf, buf))
+        .map(|locked| (locked, buf))
 }
 
 fn resolution_satisfies_dependency(
@@ -2819,6 +2913,30 @@ fn resolution_satisfies_dependency(
 ) -> bool {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     resolution.satisfies_dependency_version(dependency, buf, buf)
+}
+
+fn patched_package_satisfying(
+    this: &PackageManager,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<PackageID> {
+    let lockfile: &Lockfile::Lockfile = &this.lockfile;
+    if lockfile.patched_dependencies.count() == 0 {
+        return None;
+    }
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    candidates.iter().copied().find(|&id| {
+        let res = &pkg_res[id as usize];
+        res.tag == ResolutionTag::Npm
+            && res.satisfies_dependency_version(version, buf, buf)
+            && lockfile
+                .patched_dependencies
+                .contains(&Semver::string::Builder::string_hash(
+                    &crate::dedupe::label(lockfile, id),
+                ))
+    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -74,7 +74,8 @@ impl<T: fmt::Display> Err<T> {
             data: bun_ast::Data {
                 location: match &self.loc {
                     Some(loc) => Some(loc.to_location(source)?),
-                    None => None,
+                    // Errors about the stylesheet as a whole still name the file.
+                    None => bun_ast::Location::init_or_null(Some(source), bun_ast::Range::NONE),
                 },
                 text: text.into(),
             },
@@ -296,6 +297,8 @@ pub enum ParserError {
         expected: Str,
         received: Str,
     },
+    /// The input is longer than [`crate::css_parser::MAX_INPUT_LEN`].
+    input_too_large,
 }
 
 impl fmt::Display for ParserError {
@@ -326,6 +329,7 @@ impl fmt::Display for ParserError {
             Self::unexpected_value { expected, received } => {
                 write!(f, "Expected {}, received {}", bs(*expected), bs(*received))
             }
+            Self::input_too_large => f.write_str("CSS file is too large to parse (2 GiB maximum)"),
         }
     }
 }

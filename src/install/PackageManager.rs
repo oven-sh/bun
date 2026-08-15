@@ -1579,7 +1579,10 @@ pub fn init(
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
         let child_json: bun_sys::File = 'child: {
-            let need_write = subcommand.writes_package_json(cli.positionals.len() > 1);
+            // --dry-run and --no-save clear `Do::WRITE_PACKAGE_JSON` once the options load.
+            let need_write = subcommand.writes_package_json(cli.positionals.len() > 1)
+                && !cli.dry_run
+                && !cli.no_save;
 
             loop {
                 let mut package_json_path_buf = PathBuffer::uninit();

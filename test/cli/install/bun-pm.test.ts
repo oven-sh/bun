@@ -965,7 +965,8 @@ describe.skipIf(isWindows)("read-only package.json", () => {
   }
 
   // An installed project whose package.json was made read-only afterwards. `dep` is a
-  // local dependency whose postinstall was blocked, so there is something to trust.
+  // local dependency whose postinstall was blocked, so there is something to trust; `other`
+  // is a local package that is not a dependency yet, so there is something to add.
   async function installedProject() {
     const dir = tempDir("pm-read-only-package-json", {
       "package.json": JSON.stringify({ name: "read-only", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
@@ -974,6 +975,7 @@ describe.skipIf(isWindows)("read-only package.json", () => {
         version: "1.0.0",
         scripts: { postinstall: "echo ran > ran.txt" },
       }),
+      "other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
     });
     const unprivileged = unprivilegedSpawnOptions(String(dir));
     const project = {
@@ -1047,7 +1049,7 @@ describe.skipIf(isWindows)("read-only package.json", () => {
     using project = await installedProject();
 
     const results: { args: string[]; out: string; err: string; exitCode: number }[] = [];
-    for (const args of [["add", "other"], ["remove", "dep"], ["update"]]) {
+    for (const args of [["add", "./other"], ["remove", "dep"], ["update"]]) {
       const [out, err, exitCode] = await project.run(...args);
       results.push({ args, out, err, exitCode });
     }
@@ -1060,10 +1062,36 @@ describe.skipIf(isWindows)("read-only package.json", () => {
       exitCode: 1,
     };
     expect(results).toEqual([
-      { args: ["add", "other"], ...refused },
+      { args: ["add", "./other"], ...refused },
       { args: ["remove", "dep"], ...refused },
       { args: ["update"], ...refused },
     ]);
+  });
+
+  // --dry-run and --no-save turn the same commands into readers of package.json.
+  test("--dry-run and --no-save do not need a writable package.json", async () => {
+    using project = await installedProject();
+    const packageJson = join(project.dir, "package.json");
+    const packageJsonBefore = await Bun.file(packageJson).text();
+
+    const results: { args: string[]; err: string; exitCode: number }[] = [];
+    for (const args of [
+      ["add", "./other", "--dry-run"],
+      ["remove", "dep", "--dry-run"],
+      ["update", "--dry-run"],
+      ["add", "./other", "--no-save"],
+    ]) {
+      const [, err, exitCode] = await project.run(...args);
+      results.push({ args, err, exitCode });
+    }
+
+    expect(results).toEqual([
+      { args: ["add", "./other", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["remove", "dep", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["update", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["add", "./other", "--no-save"], err: "", exitCode: 0 },
+    ]);
+    expect(await Bun.file(packageJson).text()).toBe(packageJsonBefore);
   });
 
   test("a read-only root package.json is still found from a workspace member", async () => {

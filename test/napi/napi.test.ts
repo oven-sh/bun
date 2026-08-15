@@ -386,10 +386,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
     });
-
-    it("aborts like Node when data is NULL but length is not 0", async () => {
-      await checkBothFail("test_external_buffer_null_data_nonzero_length", []);
-    });
   });
 
   describe("napi_create_external_arraybuffer", () => {
@@ -409,19 +405,29 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
     });
+  });
 
-    it("aborts like Node when external_data is NULL but byte_length is not 0", async () => {
-      await checkBothFail("test_external_arraybuffer_null_data_nonzero_length", []);
+  describe("external buffer constructors given a NULL pointer", () => {
+    it.each([
+      "napi_create_external_buffer",
+      "napi_create_external_arraybuffer",
+      "node_api_create_external_sharedarraybuffer",
+    ])("%s aborts like Node when the length is not 0", async name => {
+      await checkBothFail("test_external_buffer_null_data_nonzero_length", [name]);
     });
 
-    it("NULL data: the checks Node runs first still return a status, and length 0 is still accepted", async () => {
+    it("the checks Node runs first still return a status, and length 0 is still accepted", async () => {
       const result = await checkSameOutput("test_external_buffer_null_data_status_paths", []);
       expect(result).toMatchInlineSnapshot(`
         "napi_create_external_buffer(NULL, 64) with pending exception: status=10
         napi_create_external_arraybuffer(NULL, 64) with pending exception: status=10
+        node_api_create_external_sharedarraybuffer(NULL, 64) with pending exception: status=10
         napi_create_external_buffer(NULL, 64) with result=NULL: status=1
-        napi_create_external_arraybuffer(NULL, 0): status=0 detached=1 data_is_input=1 byte_length=0
-        napi_create_external_arraybuffer(ptr, 0): status=0 detached=0 data_is_input=1 byte_length=0"
+        node_api_create_external_sharedarraybuffer(NULL, 64) with result=NULL: status=1
+        napi_create_external_arraybuffer(NULL, 0): status=0 detached=1 view=throws
+        napi_create_external_arraybuffer(ptr, 0): status=0 detached=0 view=0
+        node_api_create_external_sharedarraybuffer(NULL, 0): status=0 detached=0 view=0
+        node_api_create_external_sharedarraybuffer(ptr, 0): status=0 detached=0 view=0"
       `);
     });
   });

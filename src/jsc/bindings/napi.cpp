@@ -1723,6 +1723,21 @@ extern "C" JS_EXPORT napi_status node_api_create_sharedarraybuffer(napi_env env,
     NAPI_RETURN_SUCCESS(env);
 }
 
+// Shared by the three constructors that wrap addon memory in a buffer
+// (node_api_create_external_sharedarraybuffer, napi_create_external_buffer,
+// napi_create_external_arraybuffer). Node aborts on this input in all three
+// (node::Buffer::New and V8's SharedArrayBuffer::New CHECK it). Letting it
+// through would produce a JSC::ArrayBuffer whose data() is null but whose
+// byteLength() is not 0. JSC reads a null data() as "detached" and every
+// detached buffer it produces itself has byteLength 0, so anything that takes
+// span() without re-checking (crypto.subtle.digest on the ArrayBuffer,
+// SharedArrayBuffer.prototype.slice, which has no detached state to check)
+// reads `length` bytes from address 0.
+static void checkExternalBufferData(const char* function, const void* data, size_t length)
+{
+    NAPI_RELEASE_ASSERT(data != nullptr || length == 0, "%s: data is NULL but length is %zu", function, length);
+}
+
 // SharedArrayBuffer backing stores can outlive the creating napi_env (they
 // may be posted to other agents), so Node-API specifies a finalizer with no
 // env parameter. This destructor mirrors NapiExternalBufferDestructor but
@@ -1760,16 +1775,41 @@ extern "C" JS_EXPORT napi_status node_api_create_external_sharedarraybuffer(napi
     NAPI_CHECK_ENV_NOT_IN_GC(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, !env->hasPendingException(), napi_pending_exception);
+    checkExternalBufferData("node_api_create_external_sharedarraybuffer", external_data, byte_length);
 
     Zig::GlobalObject* globalObject = toJS(env);
     JSC::VM& vm = JSC::getVM(globalObject);
+    auto* structure = globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared);
+
+    if (external_data == nullptr) {
+        // byte_length is 0 here. JSC has no shared-and-detached state: a null
+        // data pointer means detached, and makeShared() asserts it is not, so
+        // a zero-length SharedArrayBuffer needs a (one byte) allocation behind
+        // it, the same one node_api_create_sharedarraybuffer(env, 0, ...) makes.
+        // As in napi_create_external_buffer's empty case, finalize_cb then runs
+        // when the wrapper dies.
+        RefPtr<ArrayBuffer> arrayBuffer = ArrayBuffer::tryCreate(0, 1);
+        NAPI_RETURN_EARLY_IF_FALSE(env, arrayBuffer, napi_generic_failure);
+        arrayBuffer->makeShared();
+
+        auto* buffer = JSC::JSArrayBuffer::create(vm, structure, WTF::move(arrayBuffer));
+        if (finalize_cb) {
+            vm.heap.addFinalizer(buffer, [finalize_cb, finalize_hint](JSCell*) {
+                NAPI_LOG("external sharedarraybuffer finalizer (empty buffer)");
+                finalize_cb(nullptr, finalize_hint);
+            });
+        }
+
+        *result = toNapi(buffer, globalObject);
+        NAPI_RETURN_SUCCESS(env);
+    }
 
     Ref<NapiNoEnvExternalBufferDestructor> destructor = adoptRef(*new NapiNoEnvExternalBufferDestructor(finalize_cb, finalize_hint));
     auto* destructorPtr = destructor.ptr();
     auto arrayBuffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(external_data), byte_length }, WTF::move(destructor));
     arrayBuffer->makeShared();
 
-    auto* buffer = JSC::JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Shared), WTF::move(arrayBuffer));
+    auto* buffer = JSC::JSArrayBuffer::create(vm, structure, WTF::move(arrayBuffer));
     destructorPtr->arm();
 
     *result = toNapi(buffer, globalObject);
@@ -2400,18 +2440,6 @@ private:
     bool m_armed { false };
     bool m_finalized { false };
 };
-
-// Node CHECKs this in node::Buffer::New, which both external buffer
-// constructors go through, so the process aborts there too. Wrapping a null
-// pointer with a non-zero length would produce a JSC::ArrayBuffer whose data()
-// is null (which JSC reads as "detached") but whose byteLength() is not 0.
-// Every detached buffer JSC itself produces has byteLength 0, so code that
-// takes span() without re-checking (crypto.subtle.digest, for one) would read
-// `length` bytes from address 0.
-static void checkExternalBufferData(const char* function, const void* data, size_t length)
-{
-    NAPI_RELEASE_ASSERT(data != nullptr || length == 0, "%s: data is NULL but length is %zu", function, length);
-}
 
 extern "C" napi_status napi_create_external_buffer(napi_env env, size_t length,
     void* data,

@@ -161,41 +161,30 @@ pub fn install_with_manager(
                 let mut maybe_root = lockfile::Package::default();
 
                 // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-                let root_package_json_entry = match manager
-                    .workspace_package_json_cache
-                    .get_with_path(
+                let root_package_json_entry =
+                    match manager.workspace_package_json_cache.get_with_path(
                         manager.log_mut(),
                         root_package_json_path.as_bytes(),
                         Default::default(),
                     ) {
-                    WorkspacePackageJsonCacheResult::Entry(entry) => entry,
-                    WorkspacePackageJsonCacheResult::ReadErr(err) => {
-                        if manager.log_mut().errors > 0 {
-                            manager
-                                .log_mut()
-                                .print(std::ptr::from_mut(Output::error_writer()))?;
+                        WorkspacePackageJsonCacheResult::Entry(entry) => entry,
+                        WorkspacePackageJsonCacheResult::ReadErr(err) => {
+                            return Err(exit_for_root_package_json(
+                                manager,
+                                err,
+                                "read",
+                                root_package_json_path,
+                            ));
                         }
-                        Output::err(
-                            err,
-                            "failed to read '{}'",
-                            format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-                        );
-                        Global::exit(1);
-                    }
-                    WorkspacePackageJsonCacheResult::ParseErr(err) => {
-                        if manager.log_mut().errors > 0 {
-                            manager
-                                .log_mut()
-                                .print(std::ptr::from_mut(Output::error_writer()))?;
+                        WorkspacePackageJsonCacheResult::ParseErr(err) => {
+                            return Err(exit_for_root_package_json(
+                                manager,
+                                err,
+                                "parse",
+                                root_package_json_path,
+                            ));
                         }
-                        Output::err(
-                            err,
-                            "failed to parse '{}'",
-                            format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-                        );
-                        Global::exit(1);
-                    }
-                };
+                    };
 
                 // `Source` is not `Copy`, so
                 // clone it (cheap — `Source` is a few `Box<[u8]>` handles) so the
@@ -1883,6 +1872,29 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     }
 }
 
+/// Returns only when printing the log itself fails; otherwise exits.
+fn exit_for_root_package_json(
+    manager: &PackageManager,
+    err: crate::Error,
+    verb: &str,
+    root_package_json_path: &ZStr,
+) -> crate::Error {
+    if manager.log_mut().errors > 0 {
+        if let Err(print_err) = manager
+            .log_mut()
+            .print(std::ptr::from_mut(Output::error_writer()))
+        {
+            return print_err.into();
+        }
+    }
+    Output::err(
+        err,
+        "failed to {} '{}'",
+        (verb, bstr::BStr::new(root_package_json_path.as_bytes())),
+    );
+    Global::exit(1);
+}
+
 #[cold]
 #[inline(never)]
 fn create_new_lockfile_and_enqueue(
@@ -1928,30 +1940,20 @@ fn create_new_lockfile_and_enqueue(
     ) {
         WorkspacePackageJsonCacheResult::Entry(entry) => entry,
         WorkspacePackageJsonCacheResult::ReadErr(err) => {
-            if manager.log_mut().errors > 0 {
-                manager
-                    .log_mut()
-                    .print(std::ptr::from_mut(Output::error_writer()))?;
-            }
-            Output::err(
+            return Err(exit_for_root_package_json(
+                manager,
                 err,
-                "failed to read '{}'",
-                format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-            );
-            Global::exit(1);
+                "read",
+                root_package_json_path,
+            ));
         }
         WorkspacePackageJsonCacheResult::ParseErr(err) => {
-            if manager.log_mut().errors > 0 {
-                manager
-                    .log_mut()
-                    .print(std::ptr::from_mut(Output::error_writer()))?;
-            }
-            Output::err(
+            return Err(exit_for_root_package_json(
+                manager,
                 err,
-                "failed to parse '{}'",
-                format_args!("{}", bstr::BStr::new(root_package_json_path.as_bytes())),
-            );
-            Global::exit(1);
+                "parse",
+                root_package_json_path,
+            ));
         }
     };
 

@@ -46,6 +46,8 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
+        // It stays pending for the frames still to unwind and the loop to stand down on.
+        global.vm().keep_termination_requested();
         return Err(Stopped);
     }
     let vm = global.bun_vm();

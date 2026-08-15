@@ -6593,6 +6593,15 @@ extern "C" bool JSGlobalObject__clearExceptionExceptTermination(JSC::JSGlobalObj
     return DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm()).clearExceptionExceptTermination();
 }
 
+// The embedder keeps a TerminationException pending past the VM entry that threw it (a stopped VM draining or
+// tearing down): keep the request flag JSC pairs with it too — the outermost VMEntryScope exit resets it once
+// the trap has been handled — so DeferTermination scopes suspend and re-throw it instead of asserting/dropping it.
+extern "C" void JSC__VM__keepTerminationRequested(JSC::VM* vm)
+{
+    if (vm->hasPendingTerminationException() && !vm->hasTerminationRequest())
+        vm->setHasTerminationRequest();
+}
+
 extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());

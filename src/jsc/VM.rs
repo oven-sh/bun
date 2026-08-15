@@ -31,6 +31,7 @@ unsafe extern "C" {
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
+    safe fn JSC__VM__keepTerminationRequested(vm: &VM);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
@@ -104,6 +105,12 @@ impl VM {
 
     pub fn set_execution_forbidden(&self, forbidden: bool) {
         JSC__VM__setExecutionForbidden(self, forbidden)
+    }
+
+    /// A TerminationException this VM keeps pending past the entry that threw it keeps JSC's paired
+    /// termination-request flag with it (see `JSC__VM__keepTerminationRequested`).
+    pub fn keep_termination_requested(&self) {
+        JSC__VM__keepTerminationRequested(self)
     }
 
     pub fn execution_forbidden(&self) -> bool {

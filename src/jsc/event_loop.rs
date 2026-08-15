@@ -767,6 +767,14 @@ impl EventLoop {
     #[cold]
     #[inline(never)]
     unsafe fn release_task_unrun(&mut self, task: Task) {
+        if let Some(global) = self.global {
+            // A release may build JS objects (settle a promise nobody can observe) beneath a
+            // DeferTermination scope; the stopped VM's TerminationException stays pending across
+            // all of them, so keep JSC's request flag paired with it (an earlier release that
+            // reached a VM entry had it reset).
+            // SAFETY: set at VM init; live for the loop's lifetime.
+            unsafe { global.as_ref() }.vm().keep_termination_requested();
+        }
         // SAFETY: fn contract.
         unsafe { __bun_release_task_unrun(task) };
         if let Some(global) = self.global {

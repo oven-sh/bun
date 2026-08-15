@@ -364,8 +364,6 @@ pub enum MigratePnpmLockfileError {
     NonExistentWorkspaceDependency,
     #[error("RelativeLinkDependency")]
     RelativeLinkDependency,
-    #[error("WorkspaceNameMissing")]
-    WorkspaceNameMissing,
     #[error("DependencyLoop")]
     DependencyLoop,
     #[error("PnpmLockfileNotObject")]
@@ -770,9 +768,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
             let workspace_root = &importer_pkg_json.root;
 
-            let Some((name, _)) = get_string(workspace_root, b"name") else {
-                // we require workspace names.
-                return Err(MigratePnpmLockfileError::WorkspaceNameMissing);
+            // Nameless importers are skipped like `WorkspaceMap::process_workspace_name` skips them.
+            let Some((name, _)) =
+                get_string(workspace_root, b"name").filter(|(name, _)| !name.is_empty())
+            else {
+                continue;
             };
 
             let name_hash = semver::string::Builder::string_hash(name);

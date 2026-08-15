@@ -707,7 +707,7 @@ impl<'a> PackageInstaller<'a> {
                 let installed_from: Option<&[u8]> = {
                     let target_resolution = &pkg_resolutions[target_package_id as usize];
                     if target_resolution.tag == resolution::Tag::Folder {
-                        // Folder resolutions are relative to the root package.
+                        // Folders with bins are root- or workspace-declared, hence root-relative.
                         let mut folder = AutoAbsPathChecked::init_top_level_dir();
                         match folder.join(&[target_resolution.folder().slice(string_buf)]) {
                             Ok(()) => {

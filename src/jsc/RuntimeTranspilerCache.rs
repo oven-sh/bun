@@ -383,8 +383,7 @@ impl Entry {
             let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
-            let end_position =
-                Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
+            let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
 
             #[cfg(debug_assertions)]
             {
@@ -394,22 +393,12 @@ impl Entry {
                     // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
                     total += v.len as usize;
                 }
-                debug_assert!(end_position == total);
+                debug_assert!(file_len == total);
             }
-            debug_assert!(
-                end_position as i64
-                    == i64::try_from(
-                        sourcemap.len() + output_bytes.len() + Metadata::SIZE + esm_record.len()
-                    )
-                    .unwrap()
-            );
 
-            let _ = sys::preallocate_file(
-                tmpfile.fd.cast(),
-                0,
-                i64::try_from(end_position).expect("int cast"),
-            );
-            while (position as usize) < end_position {
+            let end_position = i64::try_from(file_len).expect("int cast");
+            let _ = sys::preallocate_file(tmpfile.fd.cast(), 0, end_position);
+            while position < end_position {
                 let written = sys::pwritev(tmpfile.fd, vecs, position)?;
                 if written == 0 {
                     return Err(crate::CrateError::WriteFailed);

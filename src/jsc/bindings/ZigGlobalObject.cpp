@@ -216,6 +216,7 @@
 #include <mutex>
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
+#include "bun_icu_memory.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -294,6 +295,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Config::enableRestrictedOptions();
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
+        Bun::installICUMemoryFunctions();
         WTF::initializeMainThread();
 
         // Use JSC::initialize with a callback to set Options during initialization.

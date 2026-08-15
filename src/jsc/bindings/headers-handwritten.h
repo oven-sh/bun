@@ -176,6 +176,7 @@ inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
+extern "C" void __attribute((__noreturn__)) Bun__outOfMemory();
 
 typedef struct ZigStackFramePosition {
     int32_t line_zero_based;

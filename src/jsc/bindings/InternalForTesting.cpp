@@ -6,6 +6,7 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
 #include "webcore/HTTPHeaderMap.h"
+#include "bun_icu_memory.h"
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
@@ -122,6 +123,24 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitMemoryPressure, (JSC::JSGlobalObject * g
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(Bun__MemoryPressure__isInstalled(defaultGlobalObject(globalObject))));
+}
+
+// Arms the ICU heap hook (bun_icu_memory.cpp): after `skip` more ICU
+// allocations succeed, the next one fails the way a null from malloc would,
+// so the calling process ends in Bun's out-of-memory report. Tests call this
+// in a child process right before the Intl operation they want to fail.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_failICUAllocation, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double skip = callFrame->argument(0).toIntegerOrInfinity(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!(skip >= 0 && skip <= static_cast<double>(INT32_MAX))) {
+        throwRangeError(globalObject, scope, "skip must be a non-negative integer"_s);
+        return {};
+    }
+    failICUAllocationForTesting(static_cast<size_t>(skip));
+    return encodedJSUndefined();
 }
 
 }

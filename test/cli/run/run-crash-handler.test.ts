@@ -1,6 +1,17 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isPosix,
+  isWindows,
+  mergeWindowEnvs,
+  tempDir,
+} from "harness";
 import { rmSync } from "node:fs";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
@@ -126,6 +137,71 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
     expect(proc.signalCode).toBe(expectedSignal);
     expect(exitCode).not.toBe(0);
     void stdout;
+  });
+});
+
+// ICU can only report a failed allocation when the failing call has a status
+// out-parameter. The clones that udat_format, udat_clone, ucal_clone and
+// ubrk_clone perform internally have none, so a null from malloc there used to
+// segfault inside ICU or hand back a formatter that prints the wrong thing.
+// Bun owns ICU's heap functions (src/jsc/bindings/bun_icu_memory.cpp), so a
+// failed ICU allocation now ends in the ordinary out-of-memory report.
+//
+// Each Intl object is built before the failure is armed so that it is the
+// per-call work, where those clones live, that loses an allocation; which of
+// its allocations fails (the first or the second) must not matter. macOS uses
+// the system ICU, whose allocator Bun leaves alone.
+describe.skipIf(isMacOS)("an allocation failure inside ICU is reported as out of memory", () => {
+  const operations = [
+    [
+      "Intl.DateTimeFormat#format",
+      `const dtf = new Intl.DateTimeFormat("en", { dateStyle: "full", timeStyle: "long", timeZone: "America/Los_Angeles" });
+       const value = new Date(1700000000000);`,
+      `dtf.format(value)`,
+    ],
+    [
+      "Intl.DateTimeFormat#format of a Temporal.PlainDate",
+      `const dtf = new Intl.DateTimeFormat("en", { timeZone: "UTC" });
+       const value = Temporal.PlainDate.from("2023-11-14");`,
+      `dtf.format(value)`,
+    ],
+    [
+      "Intl.DateTimeFormat#formatRange before the Gregorian changeover",
+      `const dtf = new Intl.DateTimeFormat("en", { timeZone: "UTC" });
+       const start = new Date(Date.UTC(1500, 0, 1)), end = new Date(Date.UTC(1500, 0, 2));`,
+      `dtf.formatRange(start, end)`,
+    ],
+    [
+      "Intl.Segmenter#segment",
+      `const segmenter = new Intl.Segmenter("en", { granularity: "word" });`,
+      `[...segmenter.segment("out of memory")].length`,
+    ],
+  ] as const;
+  const cases = operations.flatMap(([name, setup, operation]) =>
+    [1, 2].map(ordinal => [name, ordinal, setup, operation] as const),
+  );
+
+  test.concurrent.each(cases)("%s when its ICU allocation #%i fails", async (_name, ordinal, setup, operation) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { failICUAllocationForTesting } = require("bun:internal-for-testing");
+         ${setup}
+         failICUAllocationForTesting(${ordinal - 1});
+         console.log("survived:", ${operation});`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Bun has run out of memory");
+    expect(stderr).not.toContain("Segmentation fault");
+    expect(stdout).toBe("");
+    if (isPosix) expect(proc.signalCode).toBe("SIGABRT");
+    expect(exitCode).not.toBe(0);
   });
 });
 

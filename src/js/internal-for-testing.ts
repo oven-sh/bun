@@ -691,6 +691,19 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
+/**
+ * Makes the ICU allocation after the next `skip` (default 0) fail, exactly as
+ * if malloc had returned null inside ICU. The process then dies with Bun's
+ * out-of-memory report, so only call this in a child process, right before
+ * the Intl operation that should hit it. No-op on macOS, which uses the
+ * system ICU.
+ */
+export const failICUAllocationForTesting: (skip?: number) => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_failICUAllocation",
+  1,
+);
+
 export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
   $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 

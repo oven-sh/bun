@@ -42,8 +42,7 @@ impl From<StartManifestTaskError> for crate::Error {
     }
 }
 
-/// `is_required` decides how `run_tasks` logs a failed fetch: an error for a
-/// manifest the caller cannot do without, a warning for one it can skip.
+/// `is_required`: a failed fetch is logged as an error rather than a warning.
 fn start_manifest_task(
     manager: &mut PackageManager,
     pkg_name: &[u8],
@@ -92,18 +91,13 @@ fn start_manifest_task(
     Ok(())
 }
 
-/// A manifest that cannot be fetched is logged as an error only for a required
-/// dependency of `Ids`: those callers (`bun outdated`, `bun update -i`) answer
-/// for exactly those dependencies and report the failures with
-/// [`print_fetch_failures`]. `All` and `Exact` back best-effort passes whose
-/// callers skip what is missing, so theirs are warnings.
 #[derive(Clone, Copy)]
 pub enum Packages<'a> {
-    /// Every npm package in the lockfile (the backfill after a yarn/pnpm migration).
+    /// Every npm package in the lockfile; best-effort (the post-migration backfill), so failures are warnings.
     All,
-    /// The direct dependencies of these (workspace) packages.
+    /// The direct dependencies of these workspace packages; a required one failing is an error, see [`print_fetch_failures`].
     Ids(&'a [PackageID]),
-    /// The manifests of these packages themselves (by name), not of their dependencies.
+    /// The manifests of these packages themselves (by name), not of their dependencies; best-effort, so failures are warnings.
     Exact(&'a [PackageID]),
 }
 
@@ -371,11 +365,7 @@ pub fn populate_manifest_cache(
     Ok(())
 }
 
-/// Prints what a [`Packages::Ids`] pass logged (a `GET <url> - <status>` or
-/// `<error> downloading package manifest <name>` line per manifest it did not
-/// get) and returns whether any of it is an error, i.e. whether a required
-/// dependency's manifest is missing and the caller has to fail rather than
-/// pass that dependency off as up to date.
+/// Prints the fetch failures a [`Packages::Ids`] pass logged; true when one of them is a required dependency's.
 pub fn print_fetch_failures(manager: &PackageManager) -> crate::Result<bool> {
     let log = manager.log_mut();
     let failed_required = log.has_errors();

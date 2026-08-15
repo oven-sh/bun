@@ -717,8 +717,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return true;
         }
         match expr.data {
-            // super.f(...) → __superGet(...).call(this, ...)
-            // super.f?.(...) → __superGet(...)?.call(this, ...)
+            // super.f(...) → __superGet(...).call(this, ...), or ?.call(this, ...) for super.f?.(...)
             js_ast::ExprData::ECall(mut call) => {
                 let Some(key) = self.super_member_key(call.target, ctx) else {
                     return false;
@@ -779,7 +778,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             },
             // super.x++ → __superWrapper(...)._++
-            // delete super.x → __superDelete("x"), which throws like the native form does
             js_ast::ExprData::EUnary(mut unary) => {
                 let is_update =
                     js_ast::OpCode::unary_assign_target(unary.op) == js_ast::AssignTarget::Update;
@@ -792,6 +790,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_update {
                     unary.value = self.super_wrapper_expr(ctx, key, unary.value.loc);
                 } else {
+                    // delete super.x → __superDelete("x"), which throws like the native form
                     *expr = self.call_rt(loc, b"__superDelete", &[key]);
                 }
                 true

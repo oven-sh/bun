@@ -4949,8 +4949,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
         return;
     }
 
-    // The function's own name comes before Symbol.toStringTag: async and generator functions
-    // inherit "AsyncFunction" / "GeneratorFunction" / "AsyncGeneratorFunction" from their prototype.
+    // Name first: async and generator functions inherit a Symbol.toStringTag ("AsyncFunction", ...) from their prototype.
     if (JSC::JSFunction* function = dynamicDowncast<JSC::JSFunction>(obj)) {
         WTF::String actualName = function->name(vm);
         if (actualName.isEmpty() && !function->isHostOrBuiltinFunction()) {

@@ -969,9 +969,11 @@ impl Lockfile {
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
+        // A frozen install never saves, so dropping peer-held targets could only fail its check.
+        let keep_optional_peer_targets =
+            manager.options.enable.frozen_lockfile() || !manager.summary.changes_resolutions();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
-        let keep_optional_peer_targets = !manager.summary.changes_resolutions();
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,
@@ -1376,6 +1378,8 @@ impl Lockfile {
         {
             return Ok(());
         }
+        // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
+        manager.network_dedupe_map.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
         // `manifests` is a field of `manager`, and a `string_builder` is

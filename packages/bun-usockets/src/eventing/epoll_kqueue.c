@@ -693,30 +693,31 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     us_poll_start_rc(p, loop, events);
 }
 
-void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     int old_events = us_poll_events(p);
+    int rc = 0;
     if (old_events != events) {
 
         p->state.poll_type = us_internal_poll_type(p) | ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) | ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
 
 #ifdef LIBUS_USE_EPOLL
         struct epoll_event event;
+        event.events = events;
         if(!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
             /* See us_poll_start_rc: EPOLLHUP/EPOLLERR are implicit; never add
              * EPOLLRDHUP for an already-half-closed socket or the loop spins. */
-            events |= EPOLLHUP | EPOLLERR;
+            event.events |= EPOLLHUP | EPOLLERR;
         }
-        event.events = events;
         event.data.ptr = p;
-        int rc;
         do {
             rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, p->state.fd, &event);
         } while (IS_EINTR(rc));
-        /* A paused socket that hung up was taken out of epoll by the dispatcher; put it back. */
+        /* A paused socket that hung up was taken out of epoll by the dispatcher
+         * (loop.c); this is the resume putting it back. Registering anew can
+         * fail like any first registration, so it goes through the same path
+         * and the caller gets the verdict (us_socket_resume closes on it). */
         if (rc == -1 && errno == ENOENT) {
-            do {
-                rc = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
-            } while (IS_EINTR(rc));
+            rc = us_poll_start_rc(p, loop, events);
         }
 #else
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
@@ -724,6 +725,7 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         /* Set all removed events to null-polls in pending ready poll list */
         us_internal_loop_update_pending_ready_polls(loop, p, p, old_events, events);
     }
+    return rc;
 }
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {

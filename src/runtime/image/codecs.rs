@@ -776,8 +776,6 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     Ok(out)
 }
 
-/// Extract a `cw × ch` rectangle at `(x, y)`. Caller range-checks
-/// `x + cw <= sw` and `y + ch <= sh`.
 pub(crate) fn crop(
     src: &[u8],
     sw: u32,
@@ -803,8 +801,6 @@ pub(crate) fn crop(
     Ok(out)
 }
 
-/// Blit the `sw × sh` image at `(ox, oy)` onto a fresh `dw × dh` canvas
-/// painted with `bg`. Caller range-checks `ox + sw <= dw` and `oy + sh <= dh`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pad(
     src: &[u8],

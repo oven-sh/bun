@@ -2144,8 +2144,6 @@ fn resolve_resize(r: Resize, sw: u32, sh: u32) -> Result<ResolvedResize, codecs:
     } else {
         u32::try_from((0x3FFFFu64).min(1u64.max((r.w as u64) * (sh as u64) / (sw as u64)))).unwrap()
     };
-    // `cover`/`contain` need the original box after `w`/`h` are reshaped
-    // to the aspect-preserving scale.
     let box_w = w;
     let box_h = h;
     if r.fit != Fit::Fill {

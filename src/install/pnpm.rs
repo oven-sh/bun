@@ -768,8 +768,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
             let workspace_root = &importer_pkg_json.root;
 
-            // Same rule as the workspace scan (`WorkspaceMap::process_workspace_name`):
-            // a package.json without a name is not a workspace package.
+            // Nameless importers are skipped like `WorkspaceMap::process_workspace_name` skips them.
             let Some((name, _)) =
                 get_string(workspace_root, b"name").filter(|(name, _)| !name.is_empty())
             else {

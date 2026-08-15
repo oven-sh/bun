@@ -18,10 +18,8 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 pub(crate) struct WorkspaceMap {
     map: Map,
-    /// Nameless members that declare dependencies (which therefore won't be
-    /// installed). Warned about from the root package.json parse rather than
-    /// during the scan: migrations, `--filter` and locating the root from a
-    /// member dir scan too, and would repeat the warning within one command.
+    /// Nameless members whose dependencies are therefore not installed. Only the
+    /// root package.json parse reports them; the other scans of one command stay quiet.
     skipped_with_dependencies: Vec<Box<[u8]>>,
 }
 
@@ -36,9 +34,7 @@ pub struct Entry {
 
 enum Scanned {
     Workspace(Entry),
-    /// A matched package.json without a usable `"name"` (typically a test
-    /// fixture). Workspaces are linked and resolved by name, so it is not one;
-    /// pnpm and npm accept such members too, so it is skipped rather than an error.
+    /// No usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
     Nameless {
         declares_dependencies: bool,
     },
@@ -58,8 +54,7 @@ impl WorkspaceMap {
             Scanned::Nameless {
                 declares_dependencies,
             } => {
-                // Overlapping patterns match a directory more than once; named
-                // members collapse through `insert`, this list has to on its own.
+                // Overlapping patterns match the same directory more than once.
                 if declares_dependencies
                     && !self
                         .skipped_with_dependencies

@@ -2401,8 +2401,7 @@ pub type UnwrappedRequireIndexOptional =
 pub struct RequireString {
     pub import_record_index: u32,
 
-    /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an
-    /// import; `NONE` for a `require()` that stays a `require()`.
+    /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an import.
     pub unwrapped_id: UnwrappedRequireIndexOptional,
 }
 impl Default for RequireString {

@@ -84,8 +84,7 @@ public:
 
     StrongRootBlock* next() const { return m_next.get(); }
 
-    // Not setMayBeNull(): its GC-validation path reads next->classInfo(), which
-    // JSC forbids while sweeping, and finalizers release Strongs mid-sweep.
+    // Not setMayBeNull(): its GC validation reads next->classInfo(), which JSC forbids during the sweep that finalizers release Strongs from.
     void setNext(JSC::VM& vm, StrongRootBlock* next)
     {
         m_next.setWithoutWriteBarrier(next);

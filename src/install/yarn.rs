@@ -1053,9 +1053,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             } else if let Some(resolved) = entry.resolved.as_deref() {
                 let resolved = Entry::url_without_hash(resolved);
 
-                // Yarn v1 lockfiles legitimately contain entries without an integrity field
-                // (workspace deps, file:, codeload tarballs), so migration intentionally
-                // accepts off-registry tarball URLs without integrity instead of failing.
                 if is_direct_url_dep {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
@@ -1066,6 +1063,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let result =
                     Semver::Version::parse(version.sliced(this.buffers.string_bytes.as_slice()));
                 if !result.valid {
+                    // Yarn v1 lockfiles legitimately contain entries without an integrity field
+                    // (workspace deps, file:, codeload tarballs), so migration intentionally
+                    // accepts off-registry tarball URLs without integrity instead of failing.
                     if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
                         break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                             sbuf!().append(resolved)?,

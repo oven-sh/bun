@@ -2342,7 +2342,7 @@ describe("on() registrations", () => {
       if (i === count / 2) {
         // Neither of these may leave a half-registered record behind, or the
         // registrations after them would pair up with the wrong handlers.
-        expect(() => rw.on("p[", { element() {} })).toThrow();
+        expect(() => rw.on("p[", { element() {} })).toThrow(expect.objectContaining({ name: "HTMLRewriterError" }));
         expect(() => rw.on(`p[data-i="${i}"]`, { element: "not a function" })).toThrow("element must be a function");
       }
       if (i % 2 === 0) {

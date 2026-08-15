@@ -603,6 +603,65 @@ registry=https://somehost.com/org1/npm/registry/
     });
   });
 
+  describe("protocol-relative registry value", () => {
+    // `registry=//host/path/` is kept as written and matched against the credential
+    // keys by host and pathname. It used to parse with an empty host and `/host/path/`
+    // as its pathname, so no key could match it.
+    test.each([
+      ["host only", "//registry.example.com/", "//registry.example.com/"],
+      ["host with a port and a path", "//registry.example.com:8080/npm/", "//registry.example.com:8080/npm/"],
+      ["key without the trailing slash", "//registry.example.com:8080/npm/", "//registry.example.com:8080/npm"],
+    ])("_authToken is applied: %s", (_, registryUrl, key) => {
+      expect(loadNpmrc(`registry=${registryUrl}\n${key}:_authToken=rel-token\n`)).toEqual({
+        default_registry_url: registryUrl,
+        default_registry_token: "rel-token",
+        default_registry_username: "",
+        default_registry_password: "",
+        default_registry_email: "",
+      });
+    });
+
+    test.each([
+      ["a different port", "//registry.example.com:9090/npm/"],
+      ["a different host", "//other.example.com:8080/npm/"],
+      ["the host without the path", "//registry.example.com:8080/"],
+    ])("a key for %s is not applied", (_, key) => {
+      const result = loadNpmrc(`registry=//registry.example.com:8080/npm/\n${key}:_authToken=rel-token\n`);
+      expect(result.default_registry_url).toBe("//registry.example.com:8080/npm/");
+      expect(result.default_registry_token).toBe("");
+    });
+
+    test.each(["http://", "//"])("credentials embedded in a %sregistry value are split out of the URL", prefix => {
+      expect(loadNpmrc(`registry=${prefix}:embedded-token@registry.example.com/npm/\n`)).toEqual({
+        default_registry_url: "http://registry.example.com/npm/",
+        default_registry_token: "embedded-token",
+        default_registry_username: "",
+        default_registry_password: "",
+        default_registry_email: "",
+      });
+
+      expect(loadNpmrc(`registry=${prefix}embedded-user:embedded-password@registry.example.com/npm/\n`)).toEqual({
+        default_registry_url: "http://registry.example.com/npm/",
+        default_registry_token: "",
+        default_registry_username: "embedded-user",
+        default_registry_password: "embedded-password",
+        default_registry_email: "",
+      });
+    });
+  });
+
+  test.each(["a", "ab"])("a credential key for the host %j is applied to registry=http://<host>/", host => {
+    // The `//a/` key is stripped to `a/` before it is parsed. A second byte of `/` used to
+    // be taken as the start of a protocol-relative URL, leaving the key with an empty host.
+    expect(loadNpmrc(`registry=http://${host}/\n//${host}/:_authToken=${host}-token\n`)).toEqual({
+      default_registry_url: `http://${host}/`,
+      default_registry_token: `${host}-token`,
+      default_registry_username: "",
+      default_registry_password: "",
+      default_registry_email: "",
+    });
+  });
+
   it("does not print an undecodable _password value", async () => {
     const secret = "s!ecret!pass";
     using dir = tempDir("npmrc-password-decode", {
@@ -770,6 +829,47 @@ describe("--registry override", () => {
     expect(reqsB.map(r => r.auth)).toEqual(reqsB.map(() => null));
     expect(stdout).toContain("+ no-deps@1.0.0");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("protocol-relative registry", () => {
+  test("bun install rejects registry=//host:port/path/ instead of requesting http://localhost/host/", async () => {
+    // The `:port` used to be taken for a `:option=value` suffix of the pathname and the
+    // value rewritten to http://localhost/127.0.0.1/, so the manifest was requested from
+    // a different host on port 80. A scheme-less registry is not usable either way; the
+    // server only exists to show that the host actually named in the value is not hit.
+    let hits = 0;
+    await using named = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        hits++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const registryUrl = `//127.0.0.1:${named.port}/npm/`;
+
+    using dir = tempDir("npmrc-protocol-relative-registry", {
+      ".npmrc": `registry=${registryUrl}\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache"],
+      cwd: String(dir),
+      env: { ...env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(`Failed to join registry "${registryUrl}" and package "no-deps" URLs`);
+    expect(hits).toBe(0);
+    expect(exitCode).toBe(1);
   });
 });
 

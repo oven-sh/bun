@@ -179,11 +179,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// A temporary (`_init`, `_dec`, a member's `_name` WeakMap, ...) that the
-    /// lowering declares in the statement list it is lowering into, i.e. a
-    /// binding of the enclosing var-hoisting scope. The bundler's renamers
-    /// rename it from there; without a renamer, symbols print under their
-    /// original names, so `base` is only a request and `name_decorator_temps`
-    /// picks the final name once the whole file has been visited.
+    /// lowering declares in the statement list it is lowering into, with the
+    /// keyword `temp_decl_kind` picks. Either way it is registered with the
+    /// enclosing var-hoisting scope: a `let` lands in a block of that scope,
+    /// where a name unique across the scope is unique too. The bundler's
+    /// renamers rename it from there; without a renamer, symbols print under
+    /// their original names, so `base` is only a request and
+    /// `name_decorator_temps` picks the final name once the whole file has
+    /// been visited.
     fn new_temp(&mut self, base: &'a [u8]) -> Ref {
         debug_assert!(
             base.starts_with(b"_"),
@@ -265,12 +268,38 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         b"_accessor_storage"
     }
 
-    /// Single var declaration statement.
-    fn var_decl(&mut self, ref_: Ref, value: Option<Expr>, l: bun_ast::Loc) -> Stmt {
+    /// Keyword for the declarations of a class's temporaries.
+    ///
+    /// A class keeps reading them after it has been created: its constructor
+    /// runs `__runInitializers(_init, ..)` and `__privateAdd(this, _x, ..)`,
+    /// and the accessors `__decorateElement` installed hold the `_x` WeakMap
+    /// that was current when the class was decorated. Inside a loop body a
+    /// `var` is one binding for all iterations, so every class the loop creates
+    /// ends up reading the last iteration's temporaries; a `let` gives each
+    /// iteration its own. Outside a loop the statement list runs once per
+    /// function invocation either way, and `var` stays hoisted, so it is kept.
+    ///
+    /// Unlike a `var`, an initialized `let` is a candidate for the single-use
+    /// inlining in `visit_stmts`, which goes by `use_count_estimate`: with a
+    /// count of 1, `let _base = Base; let _init = __decoratorStart(_base)`
+    /// becomes `__decoratorStart(Base)` and the declaration `extends _base`
+    /// still needs is dropped. So every reference to a temporary is created
+    /// with `use_ref`, never as a bare `E::Identifier`.
+    fn temp_decl_kind(&self) -> S::Kind {
+        if self.fn_or_arrow_data_visit.is_inside_loop {
+            S::Kind::KLet
+        } else {
+            S::Kind::KVar
+        }
+    }
+
+    /// Declaration statement for one temporary.
+    fn temp_decl(&mut self, ref_: Ref, value: Option<Expr>, l: bun_ast::Loc) -> Stmt {
         let binding = self.b(B::Identifier { r#ref: ref_ }, l);
         let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
         self.s(
             S::Local {
+                kind: self.temp_decl_kind(),
                 decls,
                 ..Default::default()
             },
@@ -278,8 +307,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
-    /// Two-variable declaration statement.
-    fn var_decl2(
+    /// Declaration statement for two temporaries.
+    fn temp_decl2(
         &mut self,
         r1: Ref,
         v1: Option<Expr>,
@@ -301,6 +330,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ]);
         self.s(
             S::Local {
+                kind: self.temp_decl_kind(),
                 decls,
                 ..Default::default()
             },
@@ -987,8 +1017,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Drain receiver-capture temporaries created past `baseline` into a
-    /// single `var` declaration statement; `None` if none were created.
-    fn drain_capture_temp_decls(&mut self, baseline: usize, loc: bun_ast::Loc) -> Option<Stmt> {
+    /// single declaration statement; `None` if none were created.
+    fn drain_capture_temp_decls(
+        &mut self,
+        baseline: usize,
+        kind: S::Kind,
+        loc: bun_ast::Loc,
+    ) -> Option<Stmt> {
         let total = self.temp_refs_to_declare.len();
         if total == baseline {
             return None;
@@ -1006,6 +1041,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.temp_refs_to_declare.truncate(baseline);
         Some(self.s(
             S::Local {
+                kind,
                 decls: DeclList::from_bump_vec(capture_decls),
                 ..Default::default()
             },
@@ -1025,7 +1061,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         temps_before: usize,
         body_loc: bun_ast::Loc,
     ) -> js_ast::StmtNodeList {
-        let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, body_loc) else {
+        let Some(decl_stmt) = self.drain_capture_temp_decls(temps_before, S::Kind::KVar, body_loc)
+        else {
             return stmts;
         };
         let old_stmts = stmts.slice();
@@ -1325,7 +1362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 });
                 class_dec_assign_expr = Some(p.assign_to(cdr, arr, loc));
             } else {
-                class_dec_stmt = p.var_decl(cdr, Some(arr), loc);
+                class_dec_stmt = p.temp_decl(cdr, Some(arr), loc);
             }
         }
 
@@ -1351,7 +1388,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 );
-                pre_eval_stmts.push(p.var_decl(dec_ref, Some(arr), loc));
+                pre_eval_stmts.push(p.temp_decl(dec_ref, Some(arr), loc));
             }
             if prop.flags.contains(Flags::Property::IsComputed)
                 && prop.key.is_some()
@@ -1360,7 +1397,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let key_ref = p.new_temp(b"_computedKey");
                 computed_key_refs.insert(prop_idx, key_ref);
                 let key_loc = prop.key.expect("infallible: prop has key").loc;
-                pre_eval_stmts.push(p.var_decl(key_ref, prop.key, loc));
+                pre_eval_stmts.push(p.temp_decl(key_ref, prop.key, loc));
                 prop.key = Some(p.use_ref(key_ref, key_loc));
             }
         }
@@ -1408,13 +1445,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // ── Phase 3: __decoratorStart + base decls ───────
         let init_start_expr: Expr = {
             let base_expr = if let Some(br) = base_ref {
-                p.new_expr(
-                    E::Identifier {
-                        ref_: br,
-                        ..Default::default()
-                    },
-                    loc,
-                )
+                p.use_ref(br, loc)
             } else {
                 p.new_expr(E::Undefined {}, loc)
             };
@@ -1424,7 +1455,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut base_decl_stmt: Stmt = Stmt::empty();
         if !is_expr {
             if let Some(br) = base_ref {
-                base_decl_stmt = p.var_decl(br, class.extends, loc);
+                base_decl_stmt = p.temp_decl(br, class.extends, loc);
             }
         }
 
@@ -1439,7 +1470,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let init_decl_stmt: Stmt = if !is_expr {
-            p.var_decl(init_ref, Some(init_start_expr), loc)
+            p.temp_decl(init_ref, Some(init_start_expr), loc)
         } else {
             Stmt::empty()
         };
@@ -1553,9 +1584,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         if existing.is_none() {
                             let wse = p.new_weak_set_expr(loc);
-                            prefix_stmts.push(p.var_decl2(ws_ref, Some(wse), fn_ref, None, loc));
+                            prefix_stmts.push(p.temp_decl2(ws_ref, Some(wse), fn_ref, None, loc));
                         } else {
-                            prefix_stmts.push(p.var_decl(fn_ref, None, loc));
+                            prefix_stmts.push(p.temp_decl(fn_ref, None, loc));
                         }
 
                         // Assign function: _fn = function() { ... }
@@ -1590,7 +1621,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let wm_ref = p.new_temp(wm_nm);
                         private_lowered_map.insert(npriv_inner, PrivateLoweredInfo::new(wm_ref));
                         let wme = p.new_weak_map_expr(loc);
-                        prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+                        prefix_stmts.push(p.temp_decl(wm_ref, Some(wme), loc));
 
                         let init_val = prop
                             .initializer
@@ -1617,7 +1648,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let accessor_name = p.accessor_storage_base(prop.key);
                     let wm_ref = p.new_temp(accessor_name);
                     let wme = p.new_weak_map_expr(loc);
-                    prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+                    prefix_stmts.push(p.temp_decl(wm_ref, Some(wme), loc));
 
                     // Getter: get foo() { return __privateGet(this, _foo); }
                     let this_e = p.new_expr(E::This {}, loc);
@@ -1810,9 +1841,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if existing.is_none() {
                         let wse = p.new_weak_set_expr(loc);
-                        prefix_stmts.push(p.var_decl2(ws_ref, Some(wse), fn_ref, None, loc));
+                        prefix_stmts.push(p.temp_decl2(ws_ref, Some(wse), fn_ref, None, loc));
                     } else {
-                        prefix_stmts.push(p.var_decl(fn_ref, None, loc));
+                        prefix_stmts.push(p.temp_decl(fn_ref, None, loc));
                     }
                     dec_arg_count = 6;
                 } else if k == 5 {
@@ -1821,7 +1852,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     private_storage_ref = Some(wm_ref);
                     private_lowered_map.insert(priv_inner, PrivateLoweredInfo::new(wm_ref));
                     let wme = p.new_weak_map_expr(loc);
-                    prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+                    prefix_stmts.push(p.temp_decl(wm_ref, Some(wme), loc));
                     dec_arg_count = 5;
                 } else if k == 4 {
                     let nm = p.bump_name2(b"_", &private_orig[1..]);
@@ -1847,7 +1878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     );
                     let wme = p.new_weak_map_expr(loc);
-                    prefix_stmts.push(p.var_decl2(wm_ref, Some(wme), acc_ref, None, loc));
+                    prefix_stmts.push(p.temp_decl2(wm_ref, Some(wme), acc_ref, None, loc));
                     dec_arg_count = 6;
                 }
             } else if k == 4 {
@@ -1856,7 +1887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let wm_ref = p.new_temp(accessor_name);
                 private_extra_ref = Some(wm_ref);
                 let wme = p.new_weak_map_expr(loc);
-                prefix_stmts.push(p.var_decl(wm_ref, Some(wme), loc));
+                prefix_stmts.push(p.temp_decl(wm_ref, Some(wme), loc));
                 dec_arg_count = 6;
             }
 
@@ -1867,13 +1898,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 class_name_ref
             };
             let mut dec_args = BumpVec::with_capacity_in(dec_arg_count, bump);
-            dec_args.push(p.new_expr(
-                E::Identifier {
-                    ref_: init_ref,
-                    ..Default::default()
-                },
-                loc,
-            ));
+            dec_args.push(p.use_ref(init_ref, loc));
             dec_args.push(p.new_expr(E::Number::new(flags), loc));
             dec_args.push(if is_private {
                 let priv_ref = match &key_expr.data {
@@ -1893,6 +1918,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     loc,
                 )
+            } else if let Some(key_ref) = computed_key_refs.get(&prop_idx).copied() {
+                // `key_expr` is the reference Phase 2 recorded; this call is
+                // another one.
+                p.use_ref(key_ref, key_expr.loc)
             } else {
                 key_expr
             });
@@ -1943,23 +1972,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut prop_shallow = prop_copy(prop);
                 if is_private {
                     if let Some(ps_ref) = private_storage_ref {
-                        prop_shallow.key = Some(p.new_expr(
-                            E::Identifier {
-                                ref_: ps_ref,
-                                ..Default::default()
-                            },
-                            loc,
-                        ));
+                        prop_shallow.key = Some(p.use_ref(ps_ref, loc));
                     }
                 }
                 if let Some(pe_ref) = private_extra_ref {
-                    prop_shallow.value = Some(p.new_expr(
-                        E::Identifier {
-                            ref_: pe_ref,
-                            ..Default::default()
-                        },
-                        loc,
-                    ));
+                    prop_shallow.value = Some(p.use_ref(pe_ref, loc));
                 }
 
                 let is_accessor = k == 4;
@@ -2094,13 +2111,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
 
             let mut cls_dec_args = BumpVec::with_capacity_in(5, bump);
-            cls_dec_args.push(p.new_expr(
-                E::Identifier {
-                    ref_: init_ref,
-                    ..Default::default()
-                },
-                loc,
-            ));
+            cls_dec_args.push(p.use_ref(init_ref, loc));
             cls_dec_args.push(p.new_expr(E::Number::new(0.0), loc));
             cls_dec_args.push(p.new_expr(
                 E::EString {
@@ -2485,9 +2496,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // already declared there by `declare_capture_temps_in_fn_body`. Static
         // blocks, static initializers, and decorate expressions run at most
         // once per class evaluation; instance field initializers run once per
-        // construction and share the hoisted binding across constructions,
+        // construction and share the class's binding across constructions,
         // matching where esbuild declares these temps.
-        if let Some(decl_stmt) = p.drain_capture_temp_decls(temp_refs_before, loc) {
+        if let Some(decl_stmt) =
+            p.drain_capture_temp_decls(temp_refs_before, p.temp_decl_kind(), loc)
+        {
             prefix_stmts.push(decl_stmt);
         }
 
@@ -2571,11 +2584,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
             }
 
-            // Emit var declarations
+            // Declare the temporaries at the top of the enclosing statement
+            // list; the comma chain above assigns them.
             if !expr_var_decls.is_empty() {
                 let decls = DeclList::from_bump_vec(expr_var_decls);
                 let var_decl_stmt = p.s(
                     S::Local {
+                        kind: p.temp_decl_kind(),
                         decls,
                         ..Default::default()
                     },

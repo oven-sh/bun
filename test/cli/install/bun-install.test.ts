@@ -10009,6 +10009,214 @@ it("does not install transitive file: dependencies with overlong folder targets"
   expect(exitCode).toBe(1);
 });
 
+// The tarball form of the above. A `file:` tarball path is read relative to the
+// project (or to the workspace declaring it), which is only meaningful for the
+// package.json files that are part of the project. The same path declared by a
+// package bun extracts from the cache (registry, git, tarball) used to be read
+// from the project too, so a published package declaring `"x": "file:./x.tgz"`
+// got whatever `x.tgz` the project directory held, and with `file:../x.tgz` or
+// an absolute path any tarball on the machine, installed under its name.
+describe.concurrent("file: tarballs declared by a package installed from the cache", () => {
+  // Copied to every path the declaring package names; installing it is the bug.
+  const planted = join(import.meta.dir, "baz-0.0.3.tgz");
+  const plantedManifest = { name: "baz", version: "0.0.3", bin: { "baz-run": "index.js" } };
+
+  // The project is <root>/project so that `../outside.tgz` stays inside the temp dir.
+  function declaredTarballs(root: string): Record<string, string> {
+    return {
+      inside: "file:./inside.tgz",
+      outside: "file:../outside.tgz",
+      absolute: `file:${join(root, "absolute.tgz").replaceAll("\\", "/")}`,
+    };
+  }
+
+  function plantDeclaredTarballs(root: string) {
+    return Promise.all([
+      cp(planted, join(root, "project", "inside.tgz")),
+      cp(planted, join(root, "outside.tgz")),
+      cp(planted, join(root, "absolute.tgz")),
+    ]);
+  }
+
+  function rootPackageJson(dependencies: Record<string, string>, extra: object = {}) {
+    return JSON.stringify({ name: "my-app", version: "1.0.0", dependencies, ...extra });
+  }
+
+  // <root>/project depends on `bar@0.0.2` from the dummy registry, whose manifest
+  // for it carries `barManifest`. Returns the URLs the registry gets asked for.
+  async function writeRegistryProject(ctx: TestContext, root: string, barManifest: object, rootExtra: object = {}) {
+    const urls: string[] = [];
+    setContextHandler(ctx, dummyRegistryForContext(ctx, urls, { "0.0.2": barManifest }));
+    await write(join(root, "project", "package.json"), rootPackageJson({ bar: "0.0.2" }, rootExtra));
+    await write(join(root, "project", "bunfig.toml"), `[install]\nregistry = "${ctx.registry_url}"\n`);
+    return urls;
+  }
+
+  // Packs `manifest` as the package.json of an otherwise empty package into `tarball`.
+  async function packManifest(tarball: string, manifest: object) {
+    using work = tempDir("pack-manifest", { "package/package.json": JSON.stringify(manifest) });
+    await using tar = spawn({
+      cmd: ["tar", "-czf", tarball, "-C", String(work), "package"],
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [tarStderr, tarExitCode] = await Promise.all([tar.stderr.text(), tar.exited]);
+    if (tarExitCode !== 0) {
+      throw new Error(`tar exited with ${tarExitCode}: ${tarStderr}`);
+    }
+  }
+
+  async function install(root: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(root, "project"),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+    });
+    const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    return { err, out, exitCode };
+  }
+
+  // `declarer` is how bun prints the package declaring the tarballs.
+  async function expectRejected(root: string, declarer: string) {
+    const { err, out, exitCode } = await install(root);
+
+    const rejected = Object.entries(declaredTarballs(root));
+    const expected = [
+      ...rejected.map(
+        ([name, spec]) =>
+          `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`,
+      ),
+      ...rejected.map(([name, spec]) => `error: ${name}@${spec} failed to resolve`),
+    ];
+    // The rest of stderr is progress output ("Resolving dependencies", ...). The
+    // dependencies are reported in the declaring package's dependency order,
+    // which differs between a registry manifest and a package.json.
+    const errors = err.split(/\r?\n/).filter(line => line.startsWith("error:"));
+    expect(errors.sort()).toEqual(expected.sort());
+    expect(err).not.toContain("Saved lockfile");
+    expect(out).not.toContain("installed");
+    expect(await exists(join(root, "project", "node_modules"))).toBe(false);
+    expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  }
+
+  it("rejects the ones declared by a tarball dependency", async () => {
+    using dir = tempDir("local-tarballs-of-tarball-dep", {
+      "project/package.json": rootPackageJson({ bar: "file:./bar.tgz" }),
+    });
+    const root = String(dir);
+    await plantDeclaredTarballs(root);
+    await packManifest(join(root, "project", "bar.tgz"), {
+      name: "bar",
+      version: "0.0.2",
+      dependencies: declaredTarballs(root),
+    });
+
+    await expectRejected(root, "bar@./bar.tgz");
+  });
+
+  it("rejects the ones declared by a git dependency", async () => {
+    using dir = tempDir("local-tarballs-of-git-dep", {});
+    const root = String(dir);
+    await write(
+      join(root, "work", "package.json"),
+      JSON.stringify({ name: "bar", version: "0.0.2", dependencies: declaredTarballs(root) }),
+    );
+    const sha = await createDumbHttpGitRepo(root, {});
+    using server = serveDirectory(root);
+    const repo = `git+http://localhost:${server.port}/repo.git`;
+    await write(join(root, "project", "package.json"), rootPackageJson({ bar: repo }));
+    await plantDeclaredTarballs(root);
+
+    await expectRejected(root, `bar@${repo}#${sha}`);
+  });
+
+  it("rejects the ones declared by a registry package", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("local-tarballs-of-registry-dep", {});
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { dependencies: declaredTarballs(root) });
+      await plantDeclaredTarballs(root);
+
+      await expectRejected(root, "bar@0.0.2");
+    });
+  });
+
+  it("leaves the one a registry package declares as optional uninstalled", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("optional-local-tarball-of-registry-dep", {});
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, { optionalDependencies: { inside: "file:./inside.tgz" } });
+      await cp(planted, join(root, "project", "inside.tgz"));
+
+      const { err, out, exitCode } = await install(root);
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual(["bar"]);
+      const lockfile = await file(join(root, "project", "bun.lock")).text();
+      expect(lockfile).toContain('"bar": ["bar@0.0.2"');
+      expect(lockfile).not.toContain("baz@./inside.tgz");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // `overrides` / `resolutions` are written in the root package.json, so a tarball
+  // path coming from there is the project's own even when it replaces the
+  // dependency of a registry package.
+  for (const field of ["resolutions", "overrides"]) {
+    it(`installs the one a root "${field}" entry puts on a registry package's dependency`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        using dir = tempDir(`${field}-local-tarball-on-registry-dep`, {});
+        const root = String(dir);
+        const urls = await writeRegistryProject(
+          ctx,
+          root,
+          { dependencies: { vendored: "0.0.1" } },
+          { [field]: { vendored: "file:./vendored.tgz" } },
+        );
+        await cp(planted, join(root, "project", "vendored.tgz"));
+
+        const { err, out, exitCode } = await install(root);
+        expect(err).not.toContain("error:");
+        expect(out).toContain("2 packages installed");
+        expect(await file(join(root, "project", "node_modules", "vendored", "package.json")).json()).toEqual(
+          plantedManifest,
+        );
+        expect(urls.sort()).toEqual([`${ctx.registry_url}bar`, `${ctx.registry_url}bar-0.0.2.tgz`]);
+        expect(exitCode).toBe(0);
+      });
+    });
+  }
+
+  // A `file:` folder's package.json is part of the project like a workspace's, so
+  // it may declare local tarballs. The tarball is planted in both directories the
+  // path could be taken relative to; which one bun reads is not what this pins.
+  it("installs the one declared by a file: folder dependency", async () => {
+    using dir = tempDir("local-tarball-of-folder-dep", {
+      "project/package.json": rootPackageJson({ lib: "file:./vendor/lib" }),
+      "project/vendor/lib/package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { tool: "file:./tool.tgz" },
+      }),
+    });
+    const root = String(dir);
+    await Promise.all([
+      cp(planted, join(root, "project", "tool.tgz")),
+      cp(planted, join(root, "project", "vendor", "lib", "tool.tgz")),
+    ]);
+
+    const { err, out, exitCode } = await install(root);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("2 packages installed");
+    expect(await file(join(root, "project", "node_modules", "tool", "package.json")).json()).toEqual(plantedManifest);
+    expect(exitCode).toBe(0);
+  });
+});
+
 for (const field of ["resolutions", "overrides"]) {
   it(`installs a file: dependency pointing outside the project when it came from root package.json "${field}"`, async () => {
     // `overrides` / `resolutions` can only be declared in the root package.json,

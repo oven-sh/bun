@@ -1517,6 +1517,18 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let tarball = version.tarball();
+            if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
+                && !version_was_replaced
+                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
+                && !this.lockfile.packages.items_resolution()[declarer as usize]
+                    .tag
+                    .is_local_package()
+            {
+                if dependency.behavior.is_required() {
+                    reject_local_tarball_of_remote_package(this, declarer, dependency);
+                }
+                return Ok(());
+            }
             let res: Resolution = match &tarball.uri {
                 dependency::tarball::Uri::Local(path) => {
                     Resolution::init(ResolutionTagged::LocalTarball(*path))
@@ -1657,6 +1669,32 @@ fn warn_unmet_peer_dependency(
         "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
         bstr::BStr::new(this.lockfile.str(&version.literal)),
         bstr::BStr::new(this.lockfile.str(&name)),
+    );
+}
+
+/// `enqueue_local_tarball` reads the path relative to the project, which is what
+/// a manifest in the project means by it. A package extracted from the cache
+/// meant a file of its own, so its path must not be applied to the project;
+/// the project can still supply the dependency through `overrides`.
+#[cold]
+#[inline(never)]
+fn reject_local_tarball_of_remote_package(
+    this: &PackageManager,
+    declarer: PackageID,
+    dependency: &Dependency,
+) {
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let packages = this.lockfile.packages.slice();
+    this.log_mut().add_error_fmt(
+        None,
+        bun_ast::Loc::EMPTY,
+        format_args!(
+            "refusing to resolve \"{}@{}\" declared by {}@{}: local tarball dependencies are only allowed in the package.json files of this project",
+            bstr::BStr::new(dependency.name.slice(buf)),
+            bstr::BStr::new(dependency.version.literal.slice(buf)),
+            bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
+            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+        ),
     );
 }
 

@@ -7817,6 +7817,135 @@ describe("css tests", () => {
       );
     });
 
+    // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)
+    // are downleveled to the legacy comma syntax for targets without
+    // space-separated color notation. Every component, including the alpha,
+    // has to be comma separated there or the declaration is invalid.
+    describe("unresolved alpha downleveled to rgba()/hsla()", () => {
+      const legacyOnly = { chrome: 60 << 16 };
+      const modern = { chrome: 90 << 16 };
+
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha, 50%)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha, 50%));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / calc(var(--alpha) * 2)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, calc(var(--alpha) * 2));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(5% 50% 100% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(13, 128, 255, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { box-shadow: 0 0 4px rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            box-shadow: 0 0 4px rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(from light-dark(yellow, red) r g b / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(255, 255, 0, var(--alpha))) var(--buncss-dark, rgba(255, 0, 0, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: light-dark(rgb(12 34 56 / var(--alpha)), hsl(200 30% 40% / var(--alpha))); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(12, 34, 56, var(--alpha))) var(--buncss-dark, hsla(200, 30%, 40%, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+
+      // Targets that support the modern syntax keep it as written.
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsl(200 30% 40% / var(--alpha));
+          }
+        `,
+        modern,
+      );
+    });
+
     // Deeply nested @keyframes with invalid percentages
     describe("nested keyframes", () => {
       cssTest(

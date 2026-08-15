@@ -649,9 +649,11 @@ describe.concurrent("tarball integrity metadata forms", () => {
       tgz,
       sha512: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
       sha384: "sha384-" + createHash("sha384").update(tgz).digest("base64"),
+      sha1: "sha1-" + createHash("sha1").update(tgz).digest("base64"),
+      shasum: createHash("sha1").update(tgz).digest("hex"),
     };
   }
-  function serveManifest(integrity: string, tgz: Buffer) {
+  function serveManifest(dist: { integrity?: string; shasum?: string }, tgz: Buffer) {
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -666,7 +668,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
                 name: "pkg",
                 version: "1.0.0",
                 dist: {
-                  integrity,
+                  ...dist,
                   tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
                 },
               },
@@ -700,7 +702,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(`${other.sha512} ${real.sha384}`, real.tgz);
+    await using server = serveManifest({ integrity: `${other.sha512} ${real.sha384}` }, real.tgz);
     using dir = projectDir("integrity-multi-hash", server.port);
 
     await using proc = spawn({
@@ -720,7 +722,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(`${real.sha512} ${other.sha384}`, real.tgz);
+    await using server = serveManifest({ integrity: `${real.sha512} ${other.sha384}` }, real.tgz);
     using dir = projectDir("integrity-multi-hash-lock", server.port);
 
     await using proc = spawn({
@@ -743,7 +745,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(`${other.sha512}?vcs=git`, real.tgz);
+    await using server = serveManifest({ integrity: `${other.sha512}?vcs=git` }, real.tgz);
     using dir = projectDir("integrity-option-suffix", server.port);
 
     await using proc = spawn({
@@ -757,6 +759,94 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(stderr + stdout).toContain("Integrity check failed");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+
+  it("verifies the tarball against the manifest shasum when there is no integrity field", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest({ shasum: other.shasum }, real.tgz);
+    using dir = projectDir("integrity-shasum-mismatch", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).not.toContain("Unsupported or malformed integrity hash");
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+
+  it("falls back to the manifest shasum when the integrity field is unusable, without warning", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = serveManifest({ integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==", shasum: real.shasum }, real.tgz);
+    using dir = projectDir("integrity-shasum-fallback", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).not.toContain("Unsupported or malformed integrity hash");
+    expect(stdout).toContain("1 package installed");
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(real.sha1);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    // Same length as a sha1 hex digest, but not hex.
+    ["malformed shasum", { shasum: Buffer.alloc(40, "x").toString() }],
+    ["unsupported integrity algorithm", { integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==" }],
+    ["malformed integrity and empty shasum", { integrity: "sha512-!!!", shasum: "" }],
+  ] as const)("warns instead of silently skipping verification: %s", async (_label, dist) => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = serveManifest(dist, real.tgz);
+    using dir = projectDir("integrity-unusable", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).toContain(
+      "warn: Unsupported or malformed integrity hash in registry metadata for pkg@1.0.0; its tarball will not be verified",
+    );
+    expect(stdout).toContain("1 package installed");
+    // Nothing usable was advertised, so the lockfile carries no pin for it.
+    expect(await file(join(String(dir), "bun.lock")).text()).not.toMatch(/sha\d+-/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("stays quiet when the manifest advertises no hash at all", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = serveManifest({}, real.tgz);
+    using dir = projectDir("integrity-absent", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).not.toContain("Unsupported or malformed integrity hash");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
   });
 });
 

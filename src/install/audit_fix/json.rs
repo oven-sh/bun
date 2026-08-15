@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use bun_core::Output;
 
-use super::{FixOutcome, FixPlan, PackageJsonEdit};
+use super::{EditSite, FixOutcome, FixPlan, PackageJsonEdit};
 
 pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool) {
     let (fixed, remaining) = match outcome {
@@ -59,7 +59,12 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
             s(&mut out, &blocker.dependent);
             out.extend_from_slice(b",\"range\":");
             s(&mut out, &blocker.range);
-            let _ = write!(out, ",\"bundled\":{}}}", blocker.bundled);
+            let _ = write!(out, ",\"bundled\":{},\"override\":", blocker.bundled);
+            match &blocker.override_rule {
+                None => out.extend_from_slice(b"null"),
+                Some(rule) => s(&mut out, rule),
+            }
+            out.push(b'}');
         }
         out.extend_from_slice(b"]}");
     }
@@ -140,10 +145,15 @@ fn write_edit(out: &mut Vec<u8>, edit: &PackageJsonEdit) {
     out.extend_from_slice(b"{\"file\":");
     s(out, &edit.file);
     out.extend_from_slice(b",\"catalog\":");
-    match edit.catalog.as_deref() {
-        None => out.extend_from_slice(b"null"),
-        Some(b"") => out.extend_from_slice(b"\"default\""),
-        Some(catalog) => s(out, catalog),
+    match &edit.site {
+        EditSite::Catalog(catalog) if catalog.is_empty() => out.extend_from_slice(b"\"default\""),
+        EditSite::Catalog(catalog) => s(out, catalog),
+        EditSite::Dependencies | EditSite::Override(_) => out.extend_from_slice(b"null"),
+    }
+    out.extend_from_slice(b",\"override\":");
+    match &edit.site {
+        EditSite::Override(selector) => s(out, &selector.key(&edit.key)),
+        EditSite::Dependencies | EditSite::Catalog(_) => out.extend_from_slice(b"null"),
     }
     out.extend_from_slice(b",\"key\":");
     s(out, &edit.key);

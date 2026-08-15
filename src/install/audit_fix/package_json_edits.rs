@@ -1,4 +1,4 @@
-use bun_ast::{E, Expr};
+use bun_ast::{E, Expr, ExprData};
 use bun_collections::VecExt as _;
 use bun_collections::index_sort;
 use bun_core::strings;
@@ -8,7 +8,9 @@ use bun_semver::{PinnedVersion, Version};
 
 use crate::bun_fs::FileSystem;
 use crate::lockfile::CatalogMap;
+use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile_real::override_selector::{Selector, parse_package_segment, parse_selector};
 use crate::package_manager_real::add_remove_with_filter::{
     WorkspaceTarget, fetch_entry_root, root_package_json_path, store_entry,
 };
@@ -27,16 +29,92 @@ const DEPENDENCY_GROUPS: [&[u8]; 4] = [
 pub struct PackageJsonEdit {
     pub owner: PackageID,
     pub file: Box<[u8]>,
-    pub catalog: Option<Box<[u8]>>,
+    pub site: EditSite,
+    /// The package whose range is rewritten.
     pub key: Box<[u8]>,
     pub old_literal: Box<[u8]>,
     pub new_literal: Box<[u8]>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub enum EditSite {
+    /// `key` in whichever of the four dependency groups of `file` declares `old_literal`.
+    Dependencies,
+    /// `key` in this catalog of the root package.json; empty means the default catalog.
+    Catalog(Box<[u8]>),
+    /// The rule for `key` in the root package.json's `overrides` (or `resolutions`).
+    Override(OverrideSelector),
+}
+
+/// A rule of the root package.json's `overrides`/`resolutions` as `OverrideMap` normalizes it, minus the target name (the edit's `key`).
+#[derive(Clone, PartialEq, Eq)]
+pub struct OverrideSelector {
+    /// Name and declared range of the dependent the rule is scoped to; the range is empty when any version of it qualifies.
+    pub parent: Option<(Box<[u8]>, Box<[u8]>)>,
+    /// Empty when the rule applies whatever range the dependent declares.
+    pub target_range: Box<[u8]>,
+}
+
+impl OverrideSelector {
+    pub(super) fn from_rule(rule: OverrideRule<'_>, buf: &[u8]) -> OverrideSelector {
+        match rule {
+            OverrideRule::Flat(_) => OverrideSelector {
+                parent: None,
+                target_range: Box::default(),
+            },
+            OverrideRule::Scoped(rule) => OverrideSelector {
+                parent: rule.parent.as_ref().map(|parent| {
+                    (
+                        Box::from(parent.name.slice(buf)),
+                        Box::from(parent.version.literal.slice(buf)),
+                    )
+                }),
+                target_range: Box::from(rule.target_range.literal.slice(buf)),
+            },
+        }
+    }
+
+    /// A plain `"name": ...` rule, as opposed to one scoped to a parent or to a declared range.
+    pub fn is_bare(&self) -> bool {
+        self.parent.is_none() && self.target_range.is_empty()
+    }
+
+    /// The rule's key in the `parent@range>name@range` form bun.lock writes, which `overrides` also accepts.
+    pub fn key(&self, name: &[u8]) -> Box<[u8]> {
+        let mut out: Vec<u8> = Vec::new();
+        if let Some((parent, parent_range)) = &self.parent {
+            push_segment(&mut out, parent, parent_range);
+            out.push(b'>');
+        }
+        push_segment(&mut out, name, &self.target_range);
+        out.into_boxed_slice()
+    }
+
+    fn matches(&self, name: &[u8], selector: &Selector<'_>) -> bool {
+        selector.target.name == name
+            && selector.target.range == &*self.target_range
+            && match (&self.parent, &selector.parent) {
+                (None, None) => true,
+                (Some((parent, parent_range)), Some(declared)) => {
+                    declared.name == &**parent && declared.range == &**parent_range
+                }
+                _ => false,
+            }
+    }
+}
+
+fn push_segment(out: &mut Vec<u8>, name: &[u8], range: &[u8]) {
+    out.extend_from_slice(name);
+    if !range.is_empty() {
+        out.push(b'@');
+        out.extend_from_slice(range);
+    }
+}
+
 impl PackageJsonEdit {
     pub(crate) fn same_site(&self, other: &PackageJsonEdit) -> bool {
         self.owner == other.owner
-            && self.catalog == other.catalog
+            && self.site == other.site
             && self.key == other.key
             && self.old_literal == other.old_literal
     }
@@ -145,8 +223,8 @@ fn apply_to_target(
         let _guard = bun_ast::expr::Disabler::scope();
         let arena = &manager.ast_arena;
         for edit in edits {
-            match &edit.catalog {
-                None => {
+            match &edit.site {
+                EditSite::Dependencies => {
                     for group in DEPENDENCY_GROUPS {
                         let Some(mut query) = root.as_property(group) else {
                             continue;
@@ -154,12 +232,22 @@ fn apply_to_target(
                         rewrite_property(arena, &mut query.expr, edit);
                     }
                 }
-                Some(catalog) => for_each_catalog_object(&root, |catalog_name, mut object| {
-                    if CatalogMap::same_name(catalog_name, catalog) {
-                        rewrite_property(arena, &mut object, edit);
+                EditSite::Catalog(catalog) => {
+                    for_each_catalog_object(&root, |catalog_name, mut object| {
+                        if CatalogMap::same_name(catalog_name, catalog) {
+                            rewrite_property(arena, &mut object, edit);
+                        }
+                        Ok(())
+                    })?;
+                }
+                EditSite::Override(selector) => {
+                    let Some(mut rules) = override_rules(&root) else {
+                        continue;
+                    };
+                    if let Some(value) = override_rule_value(&mut rules, &edit.key, selector) {
+                        rewrite_value(arena, value, edit);
                     }
-                    Ok(())
-                })?,
+                }
             }
         }
     }
@@ -175,19 +263,128 @@ fn rewrite_property(arena: &bun_alloc::Arena, object: &mut Expr, edit: &PackageJ
         let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
             continue;
         };
-        if key != &*edit.key {
-            continue;
+        if key == &*edit.key {
+            rewrite_value(arena, &mut prop.value, edit);
         }
-        let Some(value) = prop.value.as_ref().and_then(Expr::as_utf8_string_literal) else {
+    }
+}
+
+fn rewrite_value(arena: &bun_alloc::Arena, value: &mut Option<Expr>, edit: &PackageJsonEdit) {
+    let Some(literal) = value.as_ref().and_then(Expr::as_utf8_string_literal) else {
+        return;
+    };
+    if strings::trim(literal, &strings::WHITESPACE_CHARS) != &*edit.old_literal {
+        return;
+    }
+    *value = Some(Expr::allocate(
+        arena,
+        E::EString::init(arena.alloc_slice_copy(&edit.new_literal)),
+        bun_ast::Loc::EMPTY,
+    ));
+}
+
+pub(super) fn root_package_json(manager: &mut PackageManager) -> Expr {
+    let target = WorkspaceTarget {
+        name: Box::default(),
+        name_hash: None,
+        package_json_path: root_package_json_path(),
+    };
+    fetch_entry_root(manager, &target)
+}
+
+struct OverrideRules {
+    object: Expr,
+    /// npm's `"parent": { "child": ... }` form is only read from `overrides` (`OverrideMap::parse_from_resolutions` skips object values).
+    nested: bool,
+}
+
+/// Same precedence as `OverrideMap::parse_append`: `overrides` wins even when `resolutions` is also present.
+fn override_rules(root: &Expr) -> Option<OverrideRules> {
+    if let Some(object) = root.get(b"overrides") {
+        return Some(OverrideRules {
+            object,
+            nested: true,
+        });
+    }
+    root.get(b"resolutions").map(|object| OverrideRules {
+        object,
+        nested: false,
+    })
+}
+
+/// What `name`'s rule `selector` is currently set to in the root package.json, or `None` when its value is not a range that can be rewritten in place (a `$ref`, for example).
+pub(super) fn override_literal(
+    root: &Expr,
+    name: &[u8],
+    selector: &OverrideSelector,
+) -> Option<Box<[u8]>> {
+    let mut rules = override_rules(root)?;
+    let value = override_rule_value(&mut rules, name, selector)?;
+    let literal = value.as_ref()?.as_utf8_string_literal()?;
+    Some(Box::from(strings::trim(
+        literal,
+        &strings::WHITESPACE_CHARS,
+    )))
+}
+
+/// The value slot of the entry declaring `selector` for `name`, whichever of the accepted key spellings (`a>b`, `a/b`, `**/b`, `{"a": {"b": ..}}`, `{"b": {".": ..}}`) it uses.
+fn override_rule_value<'a>(
+    rules: &'a mut OverrideRules,
+    name: &[u8],
+    selector: &OverrideSelector,
+) -> Option<&'a mut Option<Expr>> {
+    let nested = rules.nested;
+    let object = rules.object.data.e_object_mut()?;
+    for prop in object.properties.slice_mut() {
+        let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
             continue;
         };
-        if strings::trim(value, &strings::WHITESPACE_CHARS) != &*edit.old_literal {
+        let is_group = nested
+            && prop
+                .value
+                .as_ref()
+                .is_some_and(|value| matches!(value.data, ExprData::EObject(_)));
+        if !is_group {
+            if parse_selector(key).is_ok_and(|rule| selector.matches(name, &rule)) {
+                return Some(&mut prop.value);
+            }
             continue;
         }
-        prop.value = Some(Expr::allocate(
-            arena,
-            E::EString::init(arena.alloc_slice_copy(&edit.new_literal)),
-            bun_ast::Loc::EMPTY,
-        ));
+        let Ok(parent) = parse_package_segment(key) else {
+            continue;
+        };
+        let Some(group) = prop
+            .value
+            .as_mut()
+            .and_then(|value| value.data.e_object_mut())
+        else {
+            continue;
+        };
+        for child in group.properties.slice_mut() {
+            let Some(child_key) = child.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
+                continue;
+            };
+            let rule = if child_key == b"." {
+                Selector {
+                    parent: None,
+                    target: parent,
+                }
+            } else {
+                match parse_selector(child_key) {
+                    Ok(Selector {
+                        parent: None,
+                        target,
+                    }) => Selector {
+                        parent: Some(parent),
+                        target,
+                    },
+                    _ => continue,
+                }
+            };
+            if selector.matches(name, &rule) {
+                return Some(&mut child.value);
+            }
+        }
     }
+    None
 }

@@ -3,6 +3,7 @@ use core::mem::ManuallyDrop;
 use std::io::Write as _;
 
 use bstr::BStr;
+use bun_ast::Expr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, pretty, prettyln, strings};
 use bun_semver::query::Group;
@@ -10,6 +11,7 @@ use bun_semver::{self as Semver, SlicedString};
 
 use crate::dependency::Behavior;
 use crate::lockfile::Lockfile;
+use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
 use crate::npm::PackageManifest;
 use crate::package_manager::Options::{Do, Enable, LogLevel};
@@ -23,7 +25,7 @@ use crate::{
 
 mod json;
 mod package_json_edits;
-pub use package_json_edits::PackageJsonEdit;
+pub use package_json_edits::{EditSite, OverrideSelector, PackageJsonEdit};
 
 pub struct Advisory {
     pub package_name: Box<[u8]>,
@@ -52,11 +54,15 @@ pub struct PlannedEdge {
     pub parent: PackageID,
 }
 
+#[derive(PartialEq, Eq)]
 pub struct Blocker {
+    /// The dependent package or importer file; `package.json` when `override_rule` is set, since the range then comes from its `overrides`.
     pub dependent: Box<[u8]>,
     pub range: Box<[u8]>,
     pub bundled: bool,
     pub latest_fixes: bool,
+    /// Key of the `overrides` rule that holds the version, in the form `OverrideSelector::key` produces.
+    pub override_rule: Option<Box<[u8]>>,
 }
 
 pub struct BlockedFix {
@@ -182,9 +188,12 @@ pub struct FixOutcome {
 struct Edge {
     dep_id: DependencyID,
     parent: PackageID,
+    /// What the edge resolves against once overrides and catalogs are applied; `None` unless that is an npm range.
     range: Option<dependency::Version>,
+    /// The override rule's value when one applies, else the dependent's own specifier; shown when `range` is `None`.
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
+    override_rule: Option<Box<[u8]>>,
     bundled: bool,
     peer: bool,
     latest_fixes: bool,
@@ -427,41 +436,38 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
     Output::flush();
 }
 
+/// The root/workspace package.json (or catalog, or override rule) entry whose rewrite would move this edge: an exact pin, or with `latest` any npm range.
 fn pin_for(
     lockfile: &Lockfile,
-    dep_id: usize,
+    root_json: Option<&Expr>,
     dep: &Dependency,
     parent: PackageID,
+    rule: Option<OverrideRule<'_>>,
     latest: bool,
 ) -> Option<PackageJsonEdit> {
-    if parent == invalid_package_id || dep.behavior.is_bundled() || dep.behavior.is_workspace() {
+    if dep.behavior.is_bundled() || dep.behavior.is_workspace() {
         return None;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let res = lockfile.packages.items_resolution();
-    let parent_res = &res[parent as usize];
-    if !matches!(
-        parent_res.tag,
-        ResolutionTag::Root | ResolutionTag::Workspace
-    ) {
-        return None;
-    }
-    let is_alias = dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias;
-    if !is_alias
-        && lockfile
-            .overrides
-            .get(lockfile, dep_id as DependencyID, dep.name_hash)
-            .is_some()
-    {
-        return None;
-    }
-    let key: Box<[u8]> = Box::from(dep.name.slice(buf));
-    match dep.version.tag {
+    let name = dep.name.slice(buf);
+    let version = match rule {
+        Some(rule) => rule.version(),
+        None => {
+            if parent == invalid_package_id
+                || !matches!(
+                    lockfile.packages.items_resolution()[parent as usize].tag,
+                    ResolutionTag::Root | ResolutionTag::Workspace
+                )
+            {
+                return None;
+            }
+            &dep.version
+        }
+    };
+    match version.tag {
         DependencyVersionTag::Catalog => {
-            let catalog_name = dep.version.catalog().slice(buf);
-            let entry = lockfile
-                .catalogs
-                .find(buf, catalog_name, dep.name.slice(buf))?;
+            let catalog_name = version.catalog().slice(buf);
+            let entry = lockfile.catalogs.find(buf, catalog_name, name)?;
             if entry.version.tag != DependencyVersionTag::Npm
                 || (!latest && entry.version.npm().version.get_exact_version().is_none())
             {
@@ -470,24 +476,44 @@ fn pin_for(
             Some(PackageJsonEdit {
                 owner: 0,
                 file: Box::from(&b"package.json"[..]),
-                catalog: Some(Box::from(catalog_name)),
-                key,
+                site: EditSite::Catalog(Box::from(catalog_name)),
+                key: Box::from(name),
                 old_literal: Box::from(entry.version.literal.slice(buf)),
                 new_literal: Box::default(),
             })
         }
         DependencyVersionTag::Npm => {
             if !latest {
-                dep.version.npm().version.get_exact_version()?;
+                version.npm().version.get_exact_version()?;
             }
-            Some(PackageJsonEdit {
-                owner: parent,
-                file: importer_file(lockfile, parent)?,
-                catalog: None,
-                key,
-                old_literal: Box::from(dep.version.literal.slice(buf)),
-                new_literal: Box::default(),
-            })
+            let literal = version.literal.slice(buf);
+            match rule {
+                Some(rule) => {
+                    let selector = OverrideSelector::from_rule(rule, buf);
+                    let written =
+                        package_json_edits::override_literal(root_json?, name, &selector)?;
+                    // Differs when package.json spells the value as a `$ref` to a dependency; bun.lock stores what it resolved to.
+                    if *written != *strings::trim(literal, &strings::WHITESPACE_CHARS) {
+                        return None;
+                    }
+                    Some(PackageJsonEdit {
+                        owner: 0,
+                        file: Box::from(&b"package.json"[..]),
+                        site: EditSite::Override(selector),
+                        key: Box::from(name),
+                        old_literal: written,
+                        new_literal: Box::default(),
+                    })
+                }
+                None => Some(PackageJsonEdit {
+                    owner: parent,
+                    file: importer_file(lockfile, parent)?,
+                    site: EditSite::Dependencies,
+                    key: Box::from(name),
+                    old_literal: Box::from(literal),
+                    new_literal: Box::default(),
+                }),
+            }
         }
         _ => None,
     }
@@ -501,15 +527,12 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
 
     let mut instances: Vec<Instance> = Vec::new();
     let mut checked_names: HashMap<PackageNameHash, ()> = HashMap::new();
-    {
+    let instance_of: Vec<u32> = {
         let lockfile = &*manager.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let names = lockfile.packages.items_name();
         let name_hashes = lockfile.packages.items_name_hash();
         let res = lockfile.packages.items_resolution();
-        let dep_slices = lockfile.packages.items_dependencies();
-        let deps = lockfile.buffers.dependencies.as_slice();
-        let resolutions = lockfile.buffers.resolutions.as_slice();
 
         let mut instance_of: Vec<u32> = vec![u32::MAX; res.len()];
         for pkg_id in 0..res.len() {
@@ -543,49 +566,63 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 edges: Vec::new(),
             });
         }
+        instance_of
+    };
 
-        if !instances.is_empty() {
-            let mut parent_of: Vec<PackageID> = vec![invalid_package_id; deps.len()];
-            for (pkg_id, slice) in dep_slices.iter().enumerate() {
-                let end = (slice.end() as usize).min(deps.len());
-                for slot in &mut parent_of[(slice.begin() as usize).min(end)..end] {
-                    *slot = pkg_id as PackageID;
-                }
+    if !instances.is_empty() {
+        let root_json: Option<Expr> = (!manager.lockfile.overrides.is_empty())
+            .then(|| package_json_edits::root_package_json(manager));
+        let lockfile = &*manager.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let mut parent_of: Vec<PackageID> = vec![invalid_package_id; deps.len()];
+        for (pkg_id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+            let end = (slice.end() as usize).min(deps.len());
+            for slot in &mut parent_of[(slice.begin() as usize).min(end)..end] {
+                *slot = pkg_id as PackageID;
             }
+        }
 
-            for (dep_id, &target) in resolutions.iter().enumerate() {
-                if target == invalid_package_id {
-                    continue;
-                }
-                let Some(&instance) = instance_of.get(target as usize) else {
-                    continue;
-                };
-                if instance == u32::MAX || deps[dep_id].behavior.is_optional_peer() {
-                    continue;
-                }
-                let dep = &deps[dep_id];
-                let parent = parent_of[dep_id];
-                let mut pin = pin_for(lockfile, dep_id, dep, parent, true);
-                let latest_fixes = !latest && pin.is_some();
-                if latest_fixes {
-                    pin = pin_for(lockfile, dep_id, dep, parent, false);
-                }
-                instances[instance as usize].edges.push(Edge {
-                    dep_id: dep_id as DependencyID,
-                    parent,
-                    range: crate::dedupe::effective_npm_range(
-                        lockfile,
-                        dep_id as DependencyID,
-                        dep,
-                    ),
-                    literal: Box::from(dep.version.literal.slice(buf)),
-                    dependent: dependent_label(lockfile, parent),
-                    bundled: dep.behavior.is_bundled(),
-                    peer: dep.behavior.is_peer(),
-                    latest_fixes,
-                    pin,
-                });
+        for (dep_id, &target) in lockfile.buffers.resolutions.iter().enumerate() {
+            if target == invalid_package_id {
+                continue;
             }
+            let Some(&instance) = instance_of.get(target as usize) else {
+                continue;
+            };
+            if instance == u32::MAX || deps[dep_id].behavior.is_optional_peer() {
+                continue;
+            }
+            let dep = &deps[dep_id];
+            let parent = parent_of[dep_id];
+            // A bundled copy ships inside its dependent whatever an override says, so it stays attributed to the dependent.
+            let rule = if dep.behavior.is_bundled() {
+                None
+            } else {
+                crate::dedupe::applied_override(lockfile, dep_id as DependencyID, dep)
+            };
+            let mut pin = pin_for(lockfile, root_json.as_ref(), dep, parent, rule, true);
+            let latest_fixes = !latest && pin.is_some();
+            if latest_fixes {
+                pin = pin_for(lockfile, root_json.as_ref(), dep, parent, rule, false);
+            }
+            instances[instance as usize].edges.push(Edge {
+                dep_id: dep_id as DependencyID,
+                parent,
+                range: crate::dedupe::effective_npm_range(lockfile, dep_id as DependencyID, dep),
+                literal: Box::from(
+                    rule.map_or(&dep.version, OverrideRule::version)
+                        .literal
+                        .slice(buf),
+                ),
+                dependent: dependent_label(lockfile, parent),
+                override_rule: rule
+                    .map(|rule| OverrideSelector::from_rule(rule, buf).key(dep.name.slice(buf))),
+                bundled: dep.behavior.is_bundled(),
+                peer: dep.behavior.is_peer(),
+                latest_fixes,
+                pin,
+            });
         }
     }
 
@@ -854,13 +891,14 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             });
         }
 
-        let blockers: Vec<Blocker> = inst
-            .edges
-            .iter()
-            .zip(&target)
-            .filter(|(_, t)| t.is_none())
-            .map(|(edge, _)| Blocker {
-                dependent: edge.dependent.clone(),
+        let mut blockers: Vec<Blocker> = Vec::new();
+        for (edge, _) in inst.edges.iter().zip(&target).filter(|(_, t)| t.is_none()) {
+            let blocker = Blocker {
+                dependent: if edge.override_rule.is_some() {
+                    Box::from(&b"package.json"[..])
+                } else {
+                    edge.dependent.clone()
+                },
                 range: if edge.bundled {
                     inst.from.clone()
                 } else {
@@ -871,8 +909,13 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 },
                 bundled: edge.bundled,
                 latest_fixes: edge.latest_fixes,
-            })
-            .collect();
+                override_rule: edge.override_rule.clone(),
+            };
+            // Every edge a rule holds reports the same blocker.
+            if !blockers.contains(&blocker) {
+                blockers.push(blocker);
+            }
+        }
         if blockers.is_empty() {
             expected_gone.push((inst.name_hash, inst.from));
             continue;
@@ -941,10 +984,18 @@ impl FixPlan {
                 prettyln!("");
                 for edit in &fix.edits {
                     pretty!("    {}", BStr::new(&edit.file));
-                    match edit.catalog.as_deref() {
-                        None => {}
-                        Some(b"" | b"default") => pretty!(" (catalog)"),
-                        Some(catalog) => pretty!(" (catalog {})", BStr::new(catalog)),
+                    match &edit.site {
+                        EditSite::Dependencies => {}
+                        EditSite::Catalog(catalog) => match &**catalog {
+                            b"" | b"default" => pretty!(" (catalog)"),
+                            catalog => pretty!(" (catalog {})", BStr::new(catalog)),
+                        },
+                        EditSite::Override(selector) if selector.is_bare() => {
+                            pretty!(" (overrides)");
+                        }
+                        EditSite::Override(selector) => {
+                            pretty!(" (overrides {})", BStr::new(&selector.key(&edit.key)));
+                        }
                     }
                     prettyln!(
                         ": <d>{} {}<r> {}",
@@ -976,17 +1027,24 @@ impl FixPlan {
                 }
                 prettyln!("");
                 for blocker in &item.blockers {
-                    prettyln!(
+                    pretty!(
                         "    {} {} {}@{}",
                         BStr::new(&blocker.dependent),
                         if blocker.bundled {
                             "bundles"
+                        } else if blocker.override_rule.is_some() {
+                            "overrides"
                         } else {
                             "depends on"
                         },
                         BStr::new(&item.name),
                         BStr::new(&blocker.range)
                     );
+                    match &blocker.override_rule {
+                        Some(rule) if **rule != *item.name => pretty!(" ({})", BStr::new(rule)),
+                        _ => {}
+                    }
+                    prettyln!("");
                 }
                 if item.blockers.iter().any(|blocker| blocker.latest_fixes) {
                     prettyln!("    <cyan>bun audit fix --latest<r>");

@@ -78,16 +78,11 @@ fn format_variable_name(place: &Place, identifiers: &[Identifier]) -> String {
     }
 }
 
-/// Which function `get_context_reassignment` is walking: the outer function
-/// being validated, whose context variables it records, or a function
-/// expression nested in it, whose stores to those variables are the
-/// reassignments being looked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Nesting {
     Outer,
-    /// `is_async` is set if this function expression, or any function
-    /// expression enclosing it, is async.
     FunctionExpression {
+        /// Also set when a function expression enclosing this one is async.
         is_async: bool,
     },
 }

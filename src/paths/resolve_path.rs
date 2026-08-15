@@ -1302,8 +1302,7 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
 }
 
-/// [`normalize_buf`] into `buf` when the result is known to fit, otherwise into
-/// `spill` (grown as needed). `spill` is untouched in the common case.
+/// [`normalize_buf`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
 pub fn normalize_buf_spill<'a, P: PlatformT>(
     buf: &'a mut [u8],
     spill: &'a mut Vec<u8>,
@@ -1312,8 +1311,7 @@ pub fn normalize_buf_spill<'a, P: PlatformT>(
     normalize_buf::<P>(str, normalize_buf_or_spill(buf, spill, str))
 }
 
-/// [`normalize_buf_z`] into `buf` when the result is known to fit, otherwise
-/// into `spill` (grown as needed). `spill` is untouched in the common case.
+/// [`normalize_buf_z`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
 pub fn normalize_buf_z_spill<'a, P: PlatformT>(
     buf: &'a mut [u8],
     spill: &'a mut Vec<u8>,
@@ -1327,8 +1325,7 @@ fn normalize_buf_or_spill<'a>(
     spill: &'a mut Vec<u8>,
     str: &[u8],
 ) -> &'a mut [u8] {
-    // Normalizing grows a path by at most one byte (`""` -> `.`; on Windows
-    // `C:` -> `C:.` or a bare UNC volume gaining its separator), plus the NUL.
+    // Normalizing grows a path by at most one byte (`""` -> `.`, `C:` -> `C:.`), plus the NUL.
     let needed = str.len() + 2;
     if needed <= buf.len() {
         return buf;

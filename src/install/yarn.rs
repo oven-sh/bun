@@ -5,7 +5,7 @@ use std::io::Write as _;
 use crate::Error;
 use bun_collections::{HashMap, StringHashMap};
 use bun_install::bin::Bin;
-use bun_install::dependency::{self, Dependency, DependencyExt as _};
+use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 // `bun_install::lockfile` is the column-accessor stub used by the
@@ -137,6 +137,23 @@ impl<'a> Entry<'a> {
 
     pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
         version.starts_with(b"npm:")
+    }
+
+    /// Whether a registry package is behind this entry: one of its `name@<range>` specs asked a
+    /// registry for it by version range or dist-tag. `link:`, path, tarball and git specs get a
+    /// `version` line too, but no registry package. An `npm:` alias has one, but the migrator
+    /// names it from the entry's tarball URL, so an alias entry is not migratable without that.
+    pub(crate) fn is_registry_entry(&self) -> bool {
+        let mut asked_by_range = false;
+        for spec in &self.specs {
+            let name = Entry::get_name_from_spec(spec);
+            let range = spec.get(name.len() + 1..).unwrap_or(b"");
+            if Entry::is_npm_alias(range) {
+                return false;
+            }
+            asked_by_range |= DepTag::infer(range).is_npm();
+        }
+        asked_by_range
     }
 
     pub(crate) fn is_remote_tarball(version: &[u8]) -> bool {
@@ -1050,9 +1067,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                             sbuf!().append(resolved)?,
                         ));
                     }
-                } else if is_npm_alias || is_direct_url_dep {
-                    // Only the tarball URL says which package an alias resolved to, or where
-                    // a URL dependency is fetched from.
+                } else if !entry.is_registry_entry() {
                     break 'blk Resolution::default();
                 }
 

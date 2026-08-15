@@ -751,6 +751,699 @@ describe("text lockfile", () => {
     expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
   });
 
+  test("--frozen-lockfile fails when package.json gains a direct dependency that is already resolved transitively", async () => {
+    // one-dep@1.0.0 depends on no-deps@1.0.1, so no-deps is in the lock as a
+    // transitive. Adding no-deps as a direct dependency must fail under
+    // --frozen-lockfile even though the hoisted tree is unchanged.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0" },
+      }),
+    );
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    let err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(firstLockfile).toContain('"no-deps":');
+    expect(firstLockfile.replace(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
+
+    // Add no-deps as a direct dependency: the name is already in bun.lock's
+    // packages map but NOT in workspaces."".dependencies.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.1" },
+      }),
+    );
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(err).toContain(
+      "note: dependencies in package.json changed since bun.lock was saved (1 added, 0 removed, 0 updated)",
+    );
+    // bun.lock must not be rewritten on a failed frozen install
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
+
+    // A plain install would rewrite the lock (proves the lock really was stale).
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).not.toBe(firstLockfile);
+    expect(await exited).toBe(0);
+
+    // And once bun.lock is in sync, --frozen-lockfile succeeds again.
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+  });
+
+  test("--frozen-lockfile fails when a direct dependency present transitively is removed", async () => {
+    // The inverse: removing a direct dep whose package stays in the tree via a
+    // transitive edge must also fail frozen.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.1" },
+      }),
+    );
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    let err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "one-dep": "1.0.0" },
+      }),
+    );
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
+  });
+
+  // https://github.com/oven-sh/bun/issues/24223
+  test("--frozen-lockfile fails when a dependency's version literal changes but the locked resolution still satisfies it", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "no-deps": "^1.0.0" },
+      }),
+    );
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    let err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+    expect(await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      version: "1.1.0",
+    });
+
+    // ^1.1.0 is still satisfied by the locked 1.1.0, so the hoisted tree is
+    // unchanged, but the lockfile's stored spec no longer matches.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "no-deps": "^1.1.0" },
+      }),
+    );
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
+  });
+
+  // https://github.com/oven-sh/bun/issues/22689
+  test("--frozen-lockfile fails when a workspace package.json gains a dependency already resolved by another workspace", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+        }),
+      ),
+    ]);
+
+    let { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    let err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+
+    const firstLockfile = await Bun.file(join(packageDir, "bun.lock")).text();
+
+    // pkg2 now also depends on no-deps@1.0.0, which is already in the lock via pkg1.
+    await write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({
+        name: "pkg2",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    );
+
+    ({ stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    }));
+    err = await stderr.text();
+    expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(err).toContain(
+      "note: dependencies in packages/pkg2/package.json changed since bun.lock was saved (1 added, 0 removed, 0 updated)",
+    );
+    expect(err).not.toContain("dependencies in package.json");
+    expect(await Bun.file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+    expect(await exited).toBe(1);
+  });
+
+  async function install(...args: string[]) {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+    return { err, exitCode };
+  }
+
+  // Patches the package.json of no-deps@1.0.0.
+  const noDepsPatch = `diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,4 +1,5 @@
+ {
+     "name": "no-deps",
++    "patched": true,
+     "version": "1.0.0"
+ }
+`;
+
+  /** The dependency literals of the workspace package at `memberDir`, from whichever lockfile is on disk. */
+  function lockedWorkspaceDependencies(memberDir: string): Record<string, string> {
+    const lockfile = parseLockfile(packageDir) as any;
+    const member = lockfile.packages.find((pkg: any) => pkg.resolution.value === `workspace:${memberDir}`);
+    expect(member).toBeDefined();
+    return Object.fromEntries(
+      member.dependencies.map((id: number) => {
+        const dep = lockfile.dependencies.find((dep: any) => dep.id === id);
+        return [dep.name, dep.literal];
+      }),
+    );
+  }
+
+  // Members the root does not depend on through its "workspaces" entry (the
+  // root's own entry for the member wins in the first shape, only a sibling
+  // depends on it in the second) still have to be compared against their
+  // package.json. The dependency each member gains is already in the lockfile
+  // through the root, so nothing but that comparison can notice the change.
+  // The second shape cannot be written as bun.lock yet (the member and the
+  // registry package compete for the same key), so it runs with bun.lockb.
+  for (const [label, files, memberDir, gained, lockfileName, installArgs] of [
+    [
+      "a member kept only by an override on the root's entry for it",
+      {
+        "package.json": {
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0", pkg1: "^9.0.0" },
+          overrides: { pkg1: "workspace:*" },
+        },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0" },
+      },
+      "packages/pkg1",
+      { "no-deps": "1.0.0" },
+      "bun.lock",
+      ["--save-text-lockfile"],
+    ],
+    [
+      "a member only a sibling depends on, while the root depends on its published version",
+      {
+        "package.json": {
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "2.0.0", "a-dep": "1.0.1" },
+        },
+        "packages/a-dep/package.json": { name: "a-dep", version: "9.9.9" },
+        "packages/pkg1/package.json": { name: "pkg1", dependencies: { "a-dep": "workspace:*" } },
+      },
+      "packages/a-dep",
+      { "no-deps": "2.0.0" },
+      "bun.lockb",
+      [],
+    ],
+  ] as const) {
+    test(`--frozen-lockfile fails when ${label} gains a dependency (${lockfileName})`, async () => {
+      await Promise.all(
+        Object.entries(files).map(([path, json]) => write(join(packageDir, path), JSON.stringify(json))),
+      );
+      const memberPackageJson = join(packageDir, memberDir, "package.json");
+
+      let { err, exitCode } = await install(...installArgs);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      const firstLockfile = await file(join(packageDir, lockfileName)).bytes();
+      expect(lockedWorkspaceDependencies(memberDir)).toEqual({});
+
+      ({ err, exitCode } = await install());
+      expect(err).not.toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+
+      await write(
+        memberPackageJson,
+        JSON.stringify({ ...(await file(memberPackageJson).json()), dependencies: gained }),
+      );
+
+      ({ err, exitCode } = await install("--frozen-lockfile"));
+      expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(err).toContain(
+        `note: dependencies in ${memberDir}/package.json changed since ${lockfileName} was saved (1 added, 0 removed, 0 updated)`,
+      );
+      expect(err).not.toContain("dependencies in package.json");
+      expect(await file(join(packageDir, lockfileName)).bytes()).toEqual(firstLockfile);
+      expect(exitCode).toBe(1);
+
+      ({ err, exitCode } = await install());
+      expect(err).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+      expect(lockedWorkspaceDependencies(memberDir)).toEqual(gained);
+
+      ({ err, exitCode } = await install("--frozen-lockfile"));
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // trustedDependencies and patchedDependencies are applied from package.json
+  // and are not part of the frozen comparison (turbo prune drops them from
+  // bun.lock), so changing them passes --frozen-lockfile; a plain install then
+  // stores them. `stored` is what bun.lock contains afterwards: declaring
+  // trustedDependencies at all turns the default trusted list off, so the
+  // field is stored even when none of its names are.
+  const patched = { patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" } };
+  for (const [label, change, stored, installedPackageJson] of [
+    [
+      "an installed package added to trustedDependencies",
+      { trustedDependencies: ["no-deps"] },
+      { trustedDependencies: ["no-deps"] },
+      { version: "1.0.0" },
+    ],
+    ["an empty trustedDependencies", { trustedDependencies: [] }, { trustedDependencies: [] }, { version: "1.0.0" }],
+    [
+      "a trustedDependencies naming nothing installed",
+      { trustedDependencies: ["not-a-dependency"] },
+      { trustedDependencies: [] },
+      { version: "1.0.0" },
+    ],
+    ["an installed package added to patchedDependencies", patched, patched, { version: "1.0.0", patched: true }],
+  ] as const) {
+    test(`${label} passes --frozen-lockfile and is stored by the next install`, async () => {
+      const manifest = { name: "foo", dependencies: { "no-deps": "1.0.0" } };
+      await Promise.all([
+        write(packageJson, JSON.stringify(manifest)),
+        write(join(packageDir, "patches", "no-deps@1.0.0.patch"), noDepsPatch),
+      ]);
+
+      let { err, exitCode } = await install("--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      const firstLockfile = await file(join(packageDir, "bun.lock")).text();
+      expect(firstLockfile).not.toContain(Object.keys(change)[0]);
+
+      await write(packageJson, JSON.stringify({ ...manifest, ...change }));
+
+      ({ err, exitCode } = await install("--frozen-lockfile"));
+      expect(err).not.toContain("error:");
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(firstLockfile);
+      expect(exitCode).toBe(0);
+
+      ({ err, exitCode } = await install());
+      expect(err).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+      expect(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text())).toMatchObject(stored);
+      expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject(
+        installedPackageJson,
+      );
+
+      ({ err, exitCode } = await install("--frozen-lockfile"));
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  // `electron` is on the default trusted list; declaring trustedDependencies
+  // without it must keep its scripts blocked on installs from the lockfile too,
+  // which is only the case if bun.lock records the (effectively empty) field.
+  for (const trustedDependencies of [[], ["not-a-dependency"]]) {
+    test(`trustedDependencies ${JSON.stringify(trustedDependencies)} still disables the default trusted list when installing from bun.lock`, async () => {
+      await write(
+        packageJson,
+        JSON.stringify({ name: "foo", dependencies: { electron: "1.0.0" }, trustedDependencies }),
+      );
+      const preinstallMarker = join(packageDir, "node_modules", "electron", "preinstall.txt");
+
+      let { err, exitCode } = await install("--save-text-lockfile");
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await exists(preinstallMarker)).toBeFalse();
+      expect(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text())).toMatchObject({
+        trustedDependencies: [],
+      });
+
+      for (const args of [[], ["--frozen-lockfile"]]) {
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        ({ err, exitCode } = await install(...args));
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("Saved lockfile");
+        expect(exitCode).toBe(0);
+        expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+        expect(await exists(preinstallMarker)).toBeFalse();
+      }
+    });
+  }
+
+  // An npm package is trusted under its own name, not under the alias it is
+  // installed as, so that is the name bun.lock has to record: installs from
+  // the lockfile trust what it lists.
+  test("trustedDependencies naming the package behind an npm: alias is stored and stays trusted when installing from bun.lock", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: { "postinstall-alias": "npm:lifecycle-postinstall@1.0.0" },
+        trustedDependencies: ["lifecycle-postinstall"],
+      }),
+    );
+    const postinstallMarker = join(packageDir, "node_modules", "postinstall-alias", "postinstall.txt");
+
+    let { err, exitCode } = await install("--save-text-lockfile");
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(await exists(postinstallMarker)).toBeTrue();
+    expect(Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text())).toMatchObject({
+      trustedDependencies: ["lifecycle-postinstall"],
+    });
+
+    for (const args of [[], ["--frozen-lockfile"]]) {
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      ({ err, exitCode } = await install(...args));
+      expect(err).not.toContain("error:");
+      expect(err).not.toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+      expect(await exists(postinstallMarker)).toBeTrue();
+    }
+  });
+
+  // Stable repos whose lockfile is already up to date: a second install must
+  // not re-save it and --frozen-lockfile must pass. Each of these used to
+  // report a spurious manifest diff on every install with bun.lock, bun.lockb
+  // or both.
+  const upToDateShapes: [string, Record<string, object | string>][] = [
+    [
+      "workspace member depending on a sibling",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"] },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0", dependencies: { pkg2: "workspace:*" } },
+        "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0" },
+      },
+    ],
+    [
+      "root depending on workspace members",
+      {
+        "package.json": {
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { pkg1: "workspace:*" },
+          devDependencies: { pkg2: "^1.0.0" },
+        },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0" },
+        "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0" },
+      },
+    ],
+    [
+      "root entry for a member that is not linked, kept by an override",
+      {
+        "package.json": {
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { pkg1: "^9.0.0" },
+          overrides: { pkg1: "workspace:*" },
+        },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0" },
+      },
+    ],
+    [
+      "workspace member with a lifecycle script",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"] },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0", scripts: { postinstall: "exit 0" } },
+      },
+    ],
+    [
+      "trustedDependencies declared in a workspace member",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"] },
+        "packages/pkg1/package.json": {
+          name: "pkg1",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+          trustedDependencies: ["no-deps"],
+        },
+      },
+    ],
+    [
+      "sibling workspace in devDependencies and peerDependencies",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"] },
+        "packages/pkg1/package.json": {
+          name: "pkg1",
+          version: "1.0.0",
+          devDependencies: { pkg2: "workspace:*" },
+          peerDependencies: { pkg2: "*" },
+        },
+        "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0" },
+      },
+    ],
+    [
+      "sibling workspace linked through npm ranges in two dependency groups",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"] },
+        "packages/pkg1/package.json": {
+          name: "pkg1",
+          version: "1.0.0",
+          devDependencies: { pkg2: "^1.0.0" },
+          peerDependencies: { pkg2: "^1.0.0" },
+        },
+        "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0" },
+      },
+    ],
+    [
+      "star range on a sibling workspace without a version",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"] },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0", dependencies: { pkg2: "*" } },
+        "packages/pkg2/package.json": { name: "pkg2" },
+      },
+    ],
+    [
+      "npm: alias of a sibling workspace",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"] },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0", dependencies: { renamed: "npm:pkg2@*" } },
+        "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0" },
+      },
+    ],
+    [
+      "catalog entry pointing at a workspace",
+      {
+        "package.json": { name: "foo", workspaces: { packages: ["packages/*"], catalog: { pkg2: "workspace:*" } } },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0", dependencies: { pkg2: "catalog:" } },
+        "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0" },
+      },
+    ],
+    [
+      "override sending an unsatisfied range to a workspace",
+      {
+        "package.json": { name: "foo", workspaces: ["packages/*"], overrides: { pkg2: "workspace:*" } },
+        "packages/pkg1/package.json": { name: "pkg1", version: "1.0.0", dependencies: { pkg2: "^5.0.0" } },
+        "packages/pkg2/package.json": { name: "pkg2", version: "1.0.0" },
+      },
+    ],
+    [
+      "$reference override",
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "no-deps": "^1.0.0", "a-dep": "1.0.1" },
+          overrides: { "a-dep": "$no-deps" },
+        },
+      },
+    ],
+    // bun.lock only stores the entries of these two sections that match a
+    // package in the lockfile.
+    [
+      "trustedDependencies naming a package that is not installed",
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "no-deps": "1.0.0" },
+          trustedDependencies: ["no-deps", "not-a-dependency"],
+        },
+      },
+    ],
+    [
+      "trustedDependencies naming only packages that are not installed",
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "no-deps": "1.0.0" },
+          trustedDependencies: ["not-a-dependency"],
+        },
+      },
+    ],
+    [
+      "empty trustedDependencies",
+      { "package.json": { name: "foo", dependencies: { "no-deps": "1.0.0" }, trustedDependencies: [] } },
+    ],
+    [
+      "patchedDependencies entry for a version that is not installed",
+      {
+        "package.json": {
+          name: "foo",
+          dependencies: { "no-deps": "1.1.0" },
+          patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+        },
+        "patches/no-deps@1.0.0.patch": noDepsPatch,
+      },
+    ],
+  ];
+
+  // The bunfig written by createTestDir has saveTextLockfile = false, so a
+  // plain install writes bun.lockb.
+  for (const [lockfileName, installArgs] of [
+    ["bun.lock", ["--save-text-lockfile"]],
+    ["bun.lockb", []],
+  ] as const) {
+    for (const [label, files] of upToDateShapes) {
+      test(`--frozen-lockfile passes and nothing is re-saved (${lockfileName}): ${label}`, async () => {
+        await Promise.all(
+          Object.entries(files).map(([path, content]) =>
+            write(join(packageDir, path), typeof content === "string" ? content : JSON.stringify(content)),
+          ),
+        );
+
+        let { stderr, exited } = spawn({
+          cmd: [bunExe(), "install", ...installArgs],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "pipe",
+          env,
+        });
+        let err = await stderr.text();
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+        const firstLockfile = await Bun.file(join(packageDir, lockfileName)).bytes();
+
+        ({ stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "pipe",
+          env,
+        }));
+        err = await stderr.text();
+        expect(err).not.toContain("error:");
+        expect(err).not.toContain("Saved lockfile");
+        expect(await Bun.file(join(packageDir, lockfileName)).bytes()).toEqual(firstLockfile);
+        expect(await exited).toBe(0);
+
+        ({ stderr, exited } = spawn({
+          cmd: [bunExe(), "install", "--frozen-lockfile"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "pipe",
+          env,
+        }));
+        err = await stderr.text();
+        expect(err).not.toContain("error:");
+        expect(await exited).toBe(0);
+      });
+    }
+  }
+
   for (const omit of ["dev", "peer", "optional"]) {
     test(`resolvable lockfile with ${omit} dependencies disabled`, async () => {
       await Promise.all([
@@ -869,6 +1562,51 @@ describe("text lockfile", () => {
       firstLockfile,
     );
   });
+});
+
+// https://github.com/oven-sh/bun/issues/13823
+test("--frozen-lockfile fails when package.json gains a direct dependency already resolved transitively (bun.lockb)", async () => {
+  // bunfig has saveTextLockfile = false, so a plain install writes bun.lockb and
+  // the frozen check takes the has_meta_hash_changed branch.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "one-dep": "1.0.0" },
+    }),
+  );
+
+  let { stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  let err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
+  expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+  expect(await exited).toBe(0);
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.1" },
+    }),
+  );
+
+  ({ stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  }));
+  err = await stderr.text();
+  expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
+  expect(await exited).toBe(1);
 });
 
 test("--lockfile-only", async () => {
@@ -1037,6 +1775,7 @@ describe("frozen lockfile", () => {
       "Resolving dependencies
       Resolved, downloaded and extracted [4]
       error: lockfile had changes, but lockfile is frozen
+      note: dependencies in package.json changed since bun.lock was saved (1 added, 0 removed, 0 updated)
       note: try re-running without --frozen-lockfile and commit the updated lockfile"
     `);
     expect(exitCode).toBe(1);

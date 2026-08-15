@@ -776,20 +776,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let path_str = sbuf!(lockfile).append(importer_path)?;
             lockfile.workspace_paths.put(name_hash, path_str)?;
 
-            if let Some(version_expr) = value.get(b"version") {
-                let Some(version_raw) = as_string(&version_expr) else {
-                    return Err(invalid_pnpm_lockfile());
-                };
+            // pnpm-lock.yaml does not record importer versions; bun.lock does,
+            // and the loader needs them to tell linked ranges apart.
+            if let Some((version_raw, _)) = get_string(workspace_root, b"version") {
                 let version_str = sbuf!(lockfile).append(version_raw)?;
-
                 let parsed = semver::Version::parse(version_str.sliced(string_bytes!(lockfile)));
-                if !parsed.valid {
-                    return Err(invalid_pnpm_lockfile());
+                if parsed.valid && parsed.wildcard == semver::query::token::Wildcard::None {
+                    lockfile
+                        .workspace_versions
+                        .put(name_hash, parsed.version.min())?;
                 }
-
-                lockfile
-                    .workspace_versions
-                    .put(name_hash, parsed.version.min())?;
             }
         }
 

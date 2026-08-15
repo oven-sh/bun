@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
-use bun_collections::DynamicBitSet;
+use bun_collections::array_hash_map::MapEntry;
+use bun_collections::{ArrayHashMap, DynamicBitSet};
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -18,8 +19,8 @@ use crate::update_transitive::{
     plannable_peer_rows, print_kept_patched, redirect_moved_edges,
 };
 use crate::{
-    Dependency, DependencyID, Features, PackageID, PackageNameHash, PatchTask, Resolution,
-    invalid_package_id,
+    Dependency, DependencyID, Features, PackageID, PackageNameAndVersionHash, PackageNameHash,
+    PatchTask, Resolution, invalid_package_id,
 };
 // Bring the typed `items_<field>()` column accessors into scope for
 // `MultiArrayList<Package>` / `Slice<Package>`.
@@ -280,15 +281,37 @@ pub fn install_with_manager(
                 let (mut builder_, lf) = manager.lockfile.string_builder_split();
                 let builder = &mut builder_;
 
+                // Like the root scripts below, trusted and patched dependencies
+                // are taken from package.json whether or not the differ counted
+                // a change: it leaves out the entries a save would drop, and
+                // those still have to apply to whatever this install resolves.
+                //
+                // `ArrayHashMap::clone()` is an inherent fallible method,
+                // not the `Clone` trait, so
+                // `Option::clone` won't see it — map by hand.
+                *lf.trusted_dependencies = match &lockfile.trusted_dependencies {
+                    Some(td) => Some(td.clone()?),
+                    None => None,
+                };
+
                 if !had_any_diffs {
                     // always grab latest scripts for root package
                     maybe_root
                         .scripts
                         .count(&lockfile.buffers.string_bytes, builder);
+                    for patch_dep in lockfile.patched_dependencies.values() {
+                        builder.count(patch_dep.path.slice(&lockfile.buffers.string_bytes));
+                    }
                     builder.allocate()?;
                     lf.packages.items_scripts_mut()[0] = maybe_root
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
+                    copy_patched_dependencies(
+                        lf.patched_dependencies,
+                        &lockfile,
+                        builder,
+                        patched_dependencies_to_remove,
+                    );
                     builder.clamp();
                     if bare_update {
                         transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
@@ -370,14 +393,6 @@ pub fn install_with_manager(
                         builder,
                     )?;
 
-                    // `ArrayHashMap::clone()` is an inherent fallible method,
-                    // not the `Clone` trait, so
-                    // `Option::clone` won't see it — map by hand.
-                    *lf.trusted_dependencies = match &lockfile.trusted_dependencies {
-                        Some(td) => Some(td.clone()?),
-                        None => None,
-                    };
-
                     lf.dependencies.reserve(len as usize);
                     lf.resolutions.reserve(len as usize);
 
@@ -446,60 +461,12 @@ pub fn install_with_manager(
                         }
                     }
 
-                    // Update patched dependencies
-                    {
-                        for (key, value) in lockfile.patched_dependencies.iter() {
-                            let pkg_name_and_version_hash = *key;
-                            debug_assert!(value.patchfile_hash_is_null);
-                            let gop = lf.patched_dependencies.entry(pkg_name_and_version_hash);
-                            // ArrayHashMap getOrPut semantics → entry API approximation
-                            match gop {
-                                bun_collections::array_hash_map::MapEntry::Vacant(v) => {
-                                    // `PatchedDep` has private padding/hash fields,
-                                    // so the `..Default::default()` struct-update form is rejected
-                                    // outside its module. Build via `default()` + field stores.
-                                    let mut new = crate::lockfile_real::PatchedDep::default();
-                                    new.path = builder.append::<SemverString>(
-                                        value.path.slice(&lockfile.buffers.string_bytes),
-                                    );
-                                    new.set_patchfile_hash(None);
-                                    v.insert(new);
-                                    // gop.value_ptr.path = gop.value_ptr.path;
-                                }
-                                bun_collections::array_hash_map::MapEntry::Occupied(mut o) => {
-                                    if !strings::eql(
-                                        o.get().path.slice(builder.string_bytes.as_slice()),
-                                        value.path.slice(&lockfile.buffers.string_bytes),
-                                    ) {
-                                        o.get_mut().path = builder.append::<SemverString>(
-                                            value.path.slice(&lockfile.buffers.string_bytes),
-                                        );
-                                        o.get_mut().set_patchfile_hash(None);
-                                    }
-                                }
-                            }
-                        }
-
-                        let mut count: usize = 0;
-                        for (key, _) in lf.patched_dependencies.iter() {
-                            if !lockfile.patched_dependencies.contains_key(key) {
-                                count += 1;
-                            }
-                        }
-                        if count > 0 {
-                            patched_dependencies_to_remove.reserve(count);
-                            for (key, _) in lf.patched_dependencies.iter() {
-                                if !lockfile.patched_dependencies.contains_key(key) {
-                                    patched_dependencies_to_remove.insert(*key, ());
-                                }
-                            }
-                            let to_remove: Vec<u64> =
-                                patched_dependencies_to_remove.keys().to_vec();
-                            for hash in to_remove {
-                                let _ = lf.patched_dependencies.ordered_remove(&hash);
-                            }
-                        }
-                    }
+                    copy_patched_dependencies(
+                        lf.patched_dependencies,
+                        &lockfile,
+                        builder,
+                        patched_dependencies_to_remove,
+                    );
 
                     builder.clamp();
 
@@ -510,6 +477,36 @@ pub fn install_with_manager(
                     if bare_update {
                         transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
                         pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
+                    }
+
+                    // Workspace members whose package.json changed are re-read by
+                    // resolving one dependency on each of them again.
+                    let changed_workspace_ids: Vec<PackageID> = manager
+                        .summary
+                        .changed_workspaces
+                        .iter()
+                        .map(|workspace| workspace.package_id)
+                        .collect();
+                    for package_id in changed_workspace_ids {
+                        let Some(dependency_id) = manager
+                            .lockfile
+                            .dependency_to_reresolve_workspace(package_id)
+                        else {
+                            continue;
+                        };
+                        let dependency =
+                            manager.lockfile.buffers.dependencies[dependency_id as usize].clone();
+                        manager.lockfile.buffers.resolutions[dependency_id as usize] =
+                            invalid_package_id;
+                        if let Err(err) = enqueue_dependency_with_main(
+                            manager,
+                            dependency_id,
+                            &dependency,
+                            invalid_package_id,
+                            false,
+                        ) {
+                            add_dependency_error(manager, &dependency, err);
+                        }
                     }
 
                     // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
@@ -804,38 +801,44 @@ pub fn install_with_manager(
     if manager.options.enable.frozen_lockfile()
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
-        'frozen_lockfile: {
-            let changed_section = frozen_changed_section(manager, root_package_json_path);
-            if changed_section.is_none() {
-                if load_result.loaded_from_text_lockfile() {
-                    if bun_core::handle_oom(Lockfile::eql(
-                        &manager.lockfile,
-                        &lockfile_before_clean,
-                        lockfile_before_clean.loaded_package_count as usize,
-                    )) {
-                        break 'frozen_lockfile;
-                    }
-                } else if !(manager
-                    .lockfile
-                    .has_meta_hash_changed(
-                        PackageManager::verbose_install()
-                            || manager.options.do_.print_meta_hash_string(),
-                        packages_len_before_install,
-                    )
-                    .unwrap_or(false))
-                {
-                    break 'frozen_lockfile;
-                }
-            }
+        // `eql`/`has_meta_hash_changed` compare resolved packages only; a
+        // manifest change that resolves to packages already in the lockfile
+        // only shows up in the differ. trustedDependencies and
+        // patchedDependencies are applied from package.json either way and are
+        // dropped from bun.lock by tools like `turbo prune`, so they are not
+        // part of the comparison.
+        let manifests_changed = manager.summary.changes_dependencies();
+        let resolutions_changed = if load_result.loaded_from_text_lockfile() {
+            !bun_core::handle_oom(Lockfile::eql(
+                &manager.lockfile,
+                &lockfile_before_clean,
+                lockfile_before_clean.loaded_package_count as usize,
+            ))
+        } else {
+            manager
+                .lockfile
+                .has_meta_hash_changed(
+                    PackageManager::verbose_install()
+                        || manager.options.do_.print_meta_hash_string(),
+                    packages_len_before_install,
+                )
+                .unwrap_or(false)
+        };
 
+        if manifests_changed || resolutions_changed {
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
-                if let Some(section) = changed_section {
+                if manifests_changed {
+                    print_frozen_lockfile_manifest_changes(
+                        manager,
+                        root_package_json_path,
+                        loaded_lockfile_name(&load_result),
+                    );
+                } else {
                     bun_core::note!(
-                        "{} in package.json changed since {} was saved",
-                        section,
+                        "the packages resolved from the manifests differ from {}",
                         loaded_lockfile_name(&load_result)
                     );
                 }
@@ -1426,16 +1429,54 @@ pub(crate) fn get_workspace_filters(
     Ok((filters, install_root_dependencies))
 }
 
-fn frozen_changed_section(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-) -> Option<&'static str> {
-    if manager.summary.overrides_changed {
-        Some(overrides_field_name(manager, root_package_json_path))
-    } else if manager.summary.catalogs_changed {
-        Some("the catalog")
-    } else {
-        None
+/// Brings the loaded lockfile's `patchedDependencies` in line with the ones
+/// just parsed from package.json (`lockfile`); `builder` must already have
+/// room for their paths. The entries only the loaded lockfile has are queued
+/// in `patched_dependencies_to_remove` so the install un-patches them.
+fn copy_patched_dependencies(
+    loaded: &mut lockfile::PatchedDependenciesMap,
+    lockfile: &Lockfile,
+    builder: &mut lockfile::StringBuilder<'_>,
+    patched_dependencies_to_remove: &mut ArrayHashMap<PackageNameAndVersionHash, ()>,
+) {
+    for (key, value) in lockfile.patched_dependencies.iter() {
+        debug_assert!(value.patchfile_hash_is_null);
+        let path = value.path.slice(&lockfile.buffers.string_bytes);
+        match loaded.entry(*key) {
+            MapEntry::Vacant(v) => {
+                // `PatchedDep` has private padding/hash fields,
+                // so the `..Default::default()` struct-update form is rejected
+                // outside its module. Build via `default()` + field stores.
+                let mut new = lockfile::PatchedDep::default();
+                new.path = builder.append::<SemverString>(path);
+                new.set_patchfile_hash(None);
+                v.insert(new);
+            }
+            MapEntry::Occupied(mut o) => {
+                if !strings::eql(o.get().path.slice(builder.string_bytes.as_slice()), path) {
+                    o.get_mut().path = builder.append::<SemverString>(path);
+                    o.get_mut().set_patchfile_hash(None);
+                }
+            }
+        }
+    }
+
+    let count = loaded
+        .iter()
+        .filter(|(key, _)| !lockfile.patched_dependencies.contains_key(key))
+        .count();
+    if count > 0 {
+        patched_dependencies_to_remove.reserve(count);
+        for (key, _) in loaded.iter() {
+            if !lockfile.patched_dependencies.contains_key(key) {
+                patched_dependencies_to_remove.insert(*key, ());
+            }
+        }
+        let to_remove: Vec<PackageNameAndVersionHash> =
+            patched_dependencies_to_remove.keys().to_vec();
+        for hash in to_remove {
+            let _ = loaded.ordered_remove(&hash);
+        }
     }
 }
 
@@ -1515,6 +1556,53 @@ fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, e
 // hot verify-and-exit path during fat-LTO emission, so a no-op
 // `bun install` / `bun install --frozen-lockfile` (node_modules already up to
 // date) faults in far fewer distinct `.text` pages.
+
+#[cold]
+#[inline(never)]
+fn print_frozen_lockfile_manifest_changes(
+    manager: &mut PackageManager,
+    root_package_json_path: &ZStr,
+    lockfile_name: &str,
+) {
+    let summary = &manager.summary;
+    if summary.add > 0 || summary.root_remove > 0 || summary.update > 0 {
+        bun_core::note!(
+            "dependencies in package.json changed since {} was saved (<green>{}<r> added, <red>{}<r> removed, <cyan>{}<r> updated)",
+            lockfile_name,
+            summary.add,
+            summary.root_remove,
+            summary.update,
+        );
+    }
+    for workspace in summary
+        .changed_workspaces
+        .iter()
+        .filter(|workspace| workspace.dependencies_changed)
+    {
+        bun_core::note!(
+            "dependencies in {}/package.json changed since {} was saved (<green>{}<r> added, <red>{}<r> removed, <cyan>{}<r> updated)",
+            bstr::BStr::new(&workspace.path),
+            lockfile_name,
+            workspace.add,
+            workspace.remove,
+            workspace.update,
+        );
+    }
+    let catalogs_changed = summary.catalogs_changed;
+    if summary.overrides_changed {
+        bun_core::note!(
+            "{} in package.json changed since {} was saved",
+            overrides_field_name(manager, root_package_json_path),
+            lockfile_name
+        );
+    }
+    if catalogs_changed {
+        bun_core::note!(
+            "the catalog in package.json changed since {} was saved",
+            lockfile_name
+        );
+    }
+}
 
 #[cold]
 #[inline(never)]

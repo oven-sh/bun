@@ -907,10 +907,25 @@ pub struct AddedTrustedDependency {
     pub(crate) name: Box<[u8]>,
 }
 
+/// A workspace member whose package.json no longer matches its lockfile package.
+pub struct WorkspaceDiff {
+    /// The member's package in the lockfile the diff was generated from.
+    pub(crate) package_id: PackageID,
+    pub(crate) path: Box<[u8]>,
+    pub(crate) add: u32,
+    pub(crate) remove: u32,
+    pub(crate) update: u32,
+    /// False when only its lifecycle scripts changed.
+    pub(crate) dependencies_changed: bool,
+}
+
 #[derive(Default)]
 pub struct DiffSummary {
     pub(crate) add: u32,
+    /// On the root summary: distinct names removed across the root and every member.
     pub(crate) remove: u32,
+    /// Removed from the root package.json itself.
+    pub(crate) root_remove: u32,
     pub(crate) update: u32,
     pub(crate) script_only_updates: u32,
     pub(crate) overrides_changed: bool,
@@ -919,10 +934,16 @@ pub struct DiffSummary {
     pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
+    /// package.json declares `trustedDependencies`, which by itself turns the
+    /// default list off, but the lockfile does not record the field.
+    pub(crate) trusted_dependencies_declared: bool,
 
     pub(crate) patched_dependencies_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
+
+    /// Only populated on the root summary.
+    pub(crate) changed_workspaces: Vec<WorkspaceDiff>,
 }
 
 impl DiffSummary {
@@ -933,13 +954,13 @@ impl DiffSummary {
             || self.update > 0
             || self.overrides_changed
             || self.catalogs_changed
+            || !self.changed_workspaces.is_empty()
     }
 
     #[inline]
     pub(crate) fn has_diffs(&self) -> bool {
         self.changes_resolutions()
-            || self.added_trusted_dependencies.count() > 0
-            || self.removed_trusted_dependencies.count() > 0
+            || self.trusted_dependencies_changed()
             || self.patched_dependencies_changed
     }
 
@@ -950,6 +971,16 @@ impl DiffSummary {
             || self.overrides_changed
             || self.catalogs_changed
             || self.update > self.script_only_updates
+            || self
+                .changed_workspaces
+                .iter()
+                .any(|workspace| workspace.dependencies_changed)
+    }
+
+    pub(crate) fn trusted_dependencies_changed(&self) -> bool {
+        self.added_trusted_dependencies.count() > 0
+            || self.removed_trusted_dependencies.count() > 0
+            || self.trusted_dependencies_declared
     }
 }
 
@@ -1006,14 +1037,12 @@ impl Diff {
                 ),
             _ => true,
         };
-        // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
-        // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
-        // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
-        // (sort, recursive `generate`) don't conflict with these read views; the
-        // recursive call only sorts `overrides`/`catalogs` and never reallocates
-        // either lockfile's `buffers.dependencies`/`resolutions`, so the raw
-        // pointers remain valid for the loop body.
-        let mut to_deps: bun_ptr::RawSlice<Dependency> = to
+        // Held as raw fat pointers so the `&mut to_lockfile`/`&mut from_lockfile`
+        // reborrows below (sort, `diff_workspace_members`) don't conflict with
+        // these read views. `to_deps` is not used once the members have been
+        // parsed into `to_lockfile`, and nothing below reallocates
+        // `from_lockfile.buffers`, so the views stay valid where they are used.
+        let to_deps: bun_ptr::RawSlice<Dependency> = to
             .dependencies
             .get(to_lockfile.buffers.dependencies.as_slice())
             .into();
@@ -1035,21 +1064,24 @@ impl Diff {
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 
-        if lockfile::OverrideMap::changed(
-            &mut from_lockfile.overrides,
-            from_lockfile.buffers.string_bytes.as_slice(),
-            &mut to_lockfile.overrides,
-            to_lockfile.buffers.string_bytes.as_slice(),
-        ) {
-            summary.overrides_changed = true;
-
-            if PackageManager::verbose_install() {
-                bun_core::pretty_errorln!("Overrides changed since last install");
-            }
-        }
-
+        // Lockfile-wide sections are compared once, at the root; the caller
+        // applies changes to them across every package, so the per-member
+        // diffs in `diff_workspace_members` only compare dependency edges.
         let mut catalog_entries_skipped: Vec<Box<[u8]>> = Vec::new();
         if is_root {
+            if lockfile::OverrideMap::changed(
+                &mut from_lockfile.overrides,
+                from_lockfile.buffers.string_bytes.as_slice(),
+                &mut to_lockfile.overrides,
+                to_lockfile.buffers.string_bytes.as_slice(),
+            ) {
+                summary.overrides_changed = true;
+
+                if PackageManager::verbose_install() {
+                    bun_core::pretty_errorln!("Overrides changed since last install");
+                }
+            }
+
             let tolerate_catalog_subset = pm.options.enable.frozen_lockfile();
             'catalogs: {
                 // don't sort if lengths are different
@@ -1186,167 +1218,6 @@ impl Diff {
             }
         }
 
-        'trusted_dependencies: {
-            // trusted dependency diff
-            //
-            // situations:
-            // 1 - Both old lockfile and new lockfile use default trusted dependencies, no diffs
-            // 2 - Both exist, only diffs are from additions and removals
-            //
-            // 3 - Old lockfile has trusted dependencies, new lockfile does not. Added are dependencies
-            //     from default list that didn't exist previously. We need to be careful not to add these
-            //     to the new lockfile. Removed are dependencies from old list that
-            //     don't exist in the default list.
-            //
-            // 4 - Old lockfile used the default list, new lockfile has trusted dependencies. Added
-            //     are dependencies are all from the new lockfile. Removed is empty because the default
-            //     list isn't appended to the lockfile.
-
-            // 1
-            if from_lockfile.trusted_dependencies.is_none()
-                && to_lockfile.trusted_dependencies.is_none()
-            {
-                break 'trusted_dependencies;
-            }
-
-            // 2
-            if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_mut(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    // Empty name = legacy bun.lockb hash-only sentinel.
-                    let already_trusted = from_trusted_dependencies
-                        .get_mut(&to_trusted)
-                        .is_some_and(|from_name| {
-                            if from_name.is_empty() && !to_name.is_empty() {
-                                from_name.clone_from(to_name);
-                            }
-                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
-                        });
-                    if !already_trusted {
-                        summary.added_trusted_dependencies.put(
-                            to_trusted,
-                            AddedTrustedDependency {
-                                add_to_lockfile: true,
-                                name: to_name.clone(),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    let still_trusted =
-                        to_trusted_dependencies
-                            .get(&from_trusted)
-                            .is_some_and(|to_name| {
-                                from_name.is_empty()
-                                    || to_name.is_empty()
-                                    || **to_name == **from_name
-                            });
-                    if !still_trusted {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 3
-            if let (Some(from_trusted_dependencies), None) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for entry in default_trusted_dependencies::entries() {
-                    if !from_trusted_dependencies
-                        .contains(&(entry.hash as TruncatedPackageNameHash))
-                    {
-                        // although this is a new trusted dependency, it is from the default
-                        // list so it shouldn't be added to the lockfile
-                        summary.added_trusted_dependencies.put(
-                            entry.hash as TruncatedPackageNameHash,
-                            AddedTrustedDependency {
-                                add_to_lockfile: false,
-                                name: Box::from(entry.key),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 4
-            if let (None, Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // add all to trusted dependencies, even if they exist in default because they weren't in the
-                // lockfile originally
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    summary.added_trusted_dependencies.put(
-                        to_trusted,
-                        AddedTrustedDependency {
-                            add_to_lockfile: true,
-                            name: to_name.clone(),
-                        },
-                    )?;
-                }
-
-                {
-                    // removed
-                    // none
-                }
-
-                break 'trusted_dependencies;
-            }
-        }
-
-        summary.patched_dependencies_changed = 'patched_dependencies_changed: {
-            if from_lockfile.patched_dependencies.count()
-                != to_lockfile.patched_dependencies.count()
-            {
-                break 'patched_dependencies_changed true;
-            }
-            let iter = to_lockfile.patched_dependencies.iterator();
-            for entry in iter {
-                if let Some(val) = from_lockfile.patched_dependencies.get(&*entry.key_ptr) {
-                    if val
-                        .path
-                        .slice(from_lockfile.buffers.string_bytes.as_slice())
-                        != entry
-                            .value_ptr
-                            .path
-                            .slice(to_lockfile.buffers.string_bytes.as_slice())
-                    {
-                        break 'patched_dependencies_changed true;
-                    }
-                } else {
-                    break 'patched_dependencies_changed true;
-                }
-            }
-            for key in from_lockfile.patched_dependencies.keys() {
-                if !to_lockfile.patched_dependencies.contains(key) {
-                    break 'patched_dependencies_changed true;
-                }
-            }
-            false
-        };
-
         let mut missing_workspaces: Vec<PackageID> = Vec::new();
         let mut survivors: Vec<(String, DependencySlice)> = Vec::new();
         for (i, from_dep) in from_deps.iter().enumerate() {
@@ -1442,118 +1313,13 @@ impl Diff {
                     }
                 }
 
+                // Edges onto workspace members stay mapped even when the member
+                // changed: `diff_workspace_members` below reports it, and the
+                // install re-reads the member into the same package id.
                 if let Some(mapping) = id_mapping.as_deref_mut() {
-                    let mut workspace_hooks_only = false;
-                    let update_mapping = 'update_mapping: {
-                        if !is_root || !from_dep.behavior.is_workspace() {
-                            break 'update_mapping true;
-                        }
-
-                        let Some(workspace_path) = to_lockfile
-                            .workspace_paths
-                            .get(&from_dep.name_hash)
-                            .copied()
-                        else {
-                            break 'update_mapping false;
-                        };
-
-                        let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
-                        // defer package_json_path.deinit(); — Drop handles it
-
-                        let _ = package_json_path.append(
-                            workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()),
-                        );
-                        let _ = package_json_path.append(b"package.json");
-
-                        // `bun.sys.File.toSource` was removed from
-                        // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.
-                        // Route through the workspace cache's path-based getter
-                        // instead, which both reads and parses.
-                        let mut workspace_pkg = Package::default();
-
-                        // The cache entry borrows `pm.workspace_package_json_cache`;
-                        // capture a stable BACKREF to its `source` so the
-                        // `&mut pm` reborrow below doesn't conflict. The entry
-                        // lives in a `StringHashMap` whose backing storage is
-                        // not touched by `parse_with_json`.
-                        let (source_ref, json_root): (bun_ptr::ParentRef<bun_ast::Source>, Expr) =
-                            match pm
-                                .workspace_package_json_cache
-                                .get_with_path(
-                                    &mut *log,
-                                    package_json_path.slice(),
-                                    Default::default(),
-                                )
-                                .unwrap()
-                            {
-                                Ok(entry) => (bun_ptr::ParentRef::new(&entry.source), entry.root),
-                                Err(_) => break 'update_mapping false,
-                            };
-                        // BACKREF — entry storage is stable for the remainder
-                        // of this block (see note above).
-                        let source = source_ref.get();
-
-                        let mut resolver: () = ();
-                        workspace_pkg.parse_with_json::<()>(
-                            to_lockfile,
-                            pm,
-                            log,
-                            source,
-                            json_root,
-                            &mut resolver,
-                            Features::WORKSPACE,
-                        )?;
-
-                        // `parse_with_json` may have grown `to_lockfile.buffers
-                        // .dependencies` — re-derive the slice.
-                        to_deps = to
-                            .dependencies
-                            .get(to_lockfile.buffers.dependencies.as_slice())
-                            .into();
-                        survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
-
-                        let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
-                        let diff = Self::generate_inner(
-                            pm,
-                            log,
-                            from_lockfile,
-                            to_lockfile,
-                            &from_pkg,
-                            &workspace_pkg,
-                            update_requests,
-                            None,
-                            removed_names,
-                        )?;
-
-                        if pm.options.log_level.is_verbose()
-                            && (diff.add + diff.remove + diff.update) > 0
-                        {
-                            bun_core::pretty_errorln!(
-                                "Workspace package \"{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
-                                bstr::BStr::new(
-                                    workspace_path
-                                        .slice(to_lockfile.buffers.string_bytes.as_slice())
-                                ),
-                                diff.add,
-                                diff.remove,
-                                diff.update,
-                            );
-                        }
-
-                        workspace_hooks_only = !diff.changes_dependencies();
-                        !diff.changes_resolutions()
-                    };
-
-                    if update_mapping {
-                        mapping[cur_to_i] = i as PackageID;
-                        continue;
-                    }
-                    if workspace_hooks_only {
-                        summary.script_only_updates += 1;
-                    }
-                } else {
-                    continue;
+                    mapping[cur_to_i] = i as PackageID;
                 }
+                continue;
             }
 
             // Changed literal: keep the locked resolution while it still satisfies the new range (npm's sticky rule), unless this row is being updated.
@@ -1599,6 +1365,17 @@ impl Diff {
                 .saturating_sub(summary.remove as usize + summary.pruned_workspaces.len()),
         )) as u32;
         if is_root {
+            summary.root_remove = summary.remove;
+            Self::diff_workspace_members(
+                pm,
+                log,
+                from_lockfile,
+                to_lockfile,
+                update_requests,
+                removed_names,
+                &mut survivors,
+                &mut summary,
+            )?;
             summary.remove = removed_names.len() as u32;
         }
 
@@ -1644,7 +1421,9 @@ impl Diff {
             );
         }
 
-        if from.resolution.tag != ResolutionTag::Root {
+        // Only bun.lockb stores scripts (`filled`); bun.lock reads them from
+        // package.json at install time, so there is nothing to refresh.
+        if from.resolution.tag != ResolutionTag::Root && from.scripts.filled {
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
                 if !String::eql(
                     **to_hook,
@@ -1659,7 +1438,287 @@ impl Diff {
             }
         }
 
+        if is_root {
+            Self::compare_trusted_and_patched(from_lockfile, to_lockfile, &mut summary)?;
+        }
+
         Ok(summary)
+    }
+
+    /// The lockfile-wide sections that depend on the members having been
+    /// parsed: `to_lockfile` only holds every workspace's trusted dependencies
+    /// after `diff_workspace_members`.
+    fn compare_trusted_and_patched(
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &Lockfile,
+        summary: &mut DiffSummary,
+    ) -> crate::Result<()> {
+        'trusted_dependencies: {
+            // trusted dependency diff
+            //
+            // situations:
+            // 1 - Both old lockfile and new lockfile use default trusted dependencies, no diffs
+            // 2 - Both exist, only diffs are from additions and removals
+            //
+            // 3 - Old lockfile has trusted dependencies, new lockfile does not. Added are dependencies
+            //     from default list that didn't exist previously. We need to be careful not to add these
+            //     to the new lockfile. Removed are dependencies from old list that
+            //     don't exist in the default list.
+            //
+            // 4 - Old lockfile used the default list, new lockfile has trusted dependencies. Added
+            //     are dependencies are all from the new lockfile. Removed is empty because the default
+            //     list isn't appended to the lockfile.
+
+            // 1
+            if from_lockfile.trusted_dependencies.is_none()
+                && to_lockfile.trusted_dependencies.is_none()
+            {
+                break 'trusted_dependencies;
+            }
+
+            // 2
+            if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
+                from_lockfile.trusted_dependencies.as_mut(),
+                to_lockfile.trusted_dependencies.as_ref(),
+            ) {
+                let mut added: Vec<(TruncatedPackageNameHash, &[u8])> = Vec::new();
+                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
+                    // Empty name = legacy bun.lockb hash-only sentinel.
+                    let already_trusted = from_trusted_dependencies
+                        .get_mut(&to_trusted)
+                        .is_some_and(|from_name| {
+                            if from_name.is_empty() && !to_name.is_empty() {
+                                from_name.clone_from(to_name);
+                            }
+                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
+                        });
+                    if !already_trusted {
+                        added.push((to_trusted, &**to_name));
+                    }
+                }
+
+                // removed
+                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
+                    let still_trusted =
+                        to_trusted_dependencies
+                            .get(&from_trusted)
+                            .is_some_and(|to_name| {
+                                from_name.is_empty()
+                                    || to_name.is_empty()
+                                    || **to_name == **from_name
+                            });
+                    if !still_trusted {
+                        summary
+                            .removed_trusted_dependencies
+                            .put(from_trusted, from_name.clone())?;
+                    }
+                }
+
+                Self::add_stored_trusted_dependencies(from_lockfile, summary, &added)?;
+
+                break 'trusted_dependencies;
+            }
+
+            // 3
+            if let (Some(from_trusted_dependencies), None) = (
+                from_lockfile.trusted_dependencies.as_ref(),
+                to_lockfile.trusted_dependencies.as_ref(),
+            ) {
+                // added
+                for entry in default_trusted_dependencies::entries() {
+                    if !from_trusted_dependencies
+                        .contains(&(entry.hash as TruncatedPackageNameHash))
+                    {
+                        // although this is a new trusted dependency, it is from the default
+                        // list so it shouldn't be added to the lockfile
+                        summary.added_trusted_dependencies.put(
+                            entry.hash as TruncatedPackageNameHash,
+                            AddedTrustedDependency {
+                                add_to_lockfile: false,
+                                name: Box::from(entry.key),
+                            },
+                        )?;
+                    }
+                }
+
+                // removed
+                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
+                    if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
+                        summary
+                            .removed_trusted_dependencies
+                            .put(from_trusted, from_name.clone())?;
+                    }
+                }
+
+                break 'trusted_dependencies;
+            }
+
+            // 4
+            if let (None, Some(to_trusted_dependencies)) = (
+                from_lockfile.trusted_dependencies.as_ref(),
+                to_lockfile.trusted_dependencies.as_ref(),
+            ) {
+                // add all to trusted dependencies, even if they exist in default because they weren't in the
+                // lockfile originally
+                let added: Vec<(TruncatedPackageNameHash, &[u8])> = to_trusted_dependencies
+                    .iter()
+                    .map(|(&to_trusted, to_name)| (to_trusted, &**to_name))
+                    .collect();
+                Self::add_stored_trusted_dependencies(from_lockfile, summary, &added)?;
+                summary.trusted_dependencies_declared = true;
+
+                break 'trusted_dependencies;
+            }
+        }
+
+        summary.patched_dependencies_changed = 'patched_dependencies_changed: {
+            for (key, from_patch) in from_lockfile.patched_dependencies.iter() {
+                let Some(to_patch) = to_lockfile.patched_dependencies.get(key) else {
+                    break 'patched_dependencies_changed true;
+                };
+                if from_patch
+                    .path
+                    .slice(from_lockfile.buffers.string_bytes.as_slice())
+                    != to_patch
+                        .path
+                        .slice(to_lockfile.buffers.string_bytes.as_slice())
+                {
+                    break 'patched_dependencies_changed true;
+                }
+            }
+            // Additions only count if bun.lock would store them.
+            from_lockfile.stores_any_patched_dependency(&to_lockfile.patched_dependencies, |key| {
+                !from_lockfile.patched_dependencies.contains(&key)
+            })
+        };
+
+        Ok(())
+    }
+
+    /// bun.lock only stores the trusted dependencies that name something in
+    /// the lockfile, so only those count as added; the rest would be reported
+    /// on every install. Names already in the lockfile are stored either way.
+    fn add_stored_trusted_dependencies(
+        from_lockfile: &Lockfile,
+        summary: &mut DiffSummary,
+        added: &[(TruncatedPackageNameHash, &[u8])],
+    ) -> crate::Result<()> {
+        for &(name_hash, name) in added {
+            if !from_lockfile.stores_trusted_dependency(name) {
+                continue;
+            }
+            summary.added_trusted_dependencies.put(
+                name_hash,
+                AddedTrustedDependency {
+                    add_to_lockfile: true,
+                    name: Box::from(name),
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Compares every workspace member in the lockfile against its current
+    /// package.json, however the root ends up depending on it (its `workspaces`
+    /// entry, an override, or only through another member).
+    fn diff_workspace_members(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &mut Lockfile,
+        update_requests: Option<&[UpdateRequest]>,
+        removed_names: &mut Vec<PackageNameHash>,
+        survivors: &mut Vec<(String, DependencySlice)>,
+        summary: &mut DiffSummary,
+    ) -> crate::Result<()> {
+        for package_id in 0..from_lockfile.packages.len() {
+            let from_pkg = from_lockfile.packages.get(package_id);
+            if from_pkg.resolution.tag != ResolutionTag::Workspace {
+                continue;
+            }
+            // Not declared by the current manifests (removed, or not on disk):
+            // the root loop has already dealt with its edge.
+            let Some(workspace_path) = to_lockfile
+                .workspace_paths
+                .get(&from_pkg.name_hash)
+                .copied()
+            else {
+                continue;
+            };
+
+            let mut package_json_path: AutoAbsPath = AutoAbsPath::init_top_level_dir();
+            let _ = package_json_path
+                .append(workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice()));
+            let _ = package_json_path.append(b"package.json");
+
+            // The cache entry borrows `pm.workspace_package_json_cache`;
+            // capture a stable BACKREF to its `source` so the `&mut pm`
+            // reborrow below doesn't conflict. The entry lives in a
+            // `StringHashMap` whose backing storage is not touched by
+            // `parse_with_json`.
+            let parsed: Option<(bun_ptr::ParentRef<bun_ast::Source>, Expr)> = pm
+                .workspace_package_json_cache
+                .get_with_path(&mut *log, package_json_path.slice(), Default::default())
+                .unwrap()
+                .ok()
+                .map(|entry| (bun_ptr::ParentRef::new(&entry.source), entry.root));
+
+            let diff = match parsed {
+                Some((source_ref, json_root)) => {
+                    let mut workspace_pkg = Package::default();
+                    let mut resolver: () = ();
+                    workspace_pkg.parse_with_json::<()>(
+                        to_lockfile,
+                        pm,
+                        log,
+                        source_ref.get(),
+                        json_root,
+                        &mut resolver,
+                        Features::WORKSPACE,
+                    )?;
+                    survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
+                    Self::generate_inner(
+                        pm,
+                        log,
+                        from_lockfile,
+                        to_lockfile,
+                        &from_pkg,
+                        &workspace_pkg,
+                        update_requests,
+                        None,
+                        removed_names,
+                    )?
+                }
+                // Unreadable package.json: re-resolving the member reports the error.
+                None => DiffSummary {
+                    update: 1,
+                    ..Default::default()
+                },
+            };
+            if !diff.changes_resolutions() {
+                continue;
+            }
+
+            let path = workspace_path.slice(to_lockfile.buffers.string_bytes.as_slice());
+            if pm.options.log_level.is_verbose() {
+                bun_core::pretty_errorln!(
+                    "Workspace package \"{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
+                    bstr::BStr::new(path),
+                    diff.add,
+                    diff.remove,
+                    diff.update,
+                );
+            }
+            summary.changed_workspaces.push(WorkspaceDiff {
+                package_id: package_id as PackageID,
+                path: Box::from(path),
+                add: diff.add,
+                remove: diff.remove,
+                update: diff.update,
+                dependencies_changed: diff.changes_dependencies(),
+            });
+        }
+        Ok(())
     }
 }
 

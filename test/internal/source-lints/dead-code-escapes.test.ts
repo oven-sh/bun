@@ -18,9 +18,7 @@
 // limits the same way so the inventory stays accurate.
 
 import { file } from "bun";
-import { realpathSync } from "fs";
-import path from "path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { sortedInventory, trackedRustSources, withoutLineComments } from "./rust-sources.ts";
 
 // Item-level escapes only: `#[allow(dead_code)]`, combined lists like
 // `#[allow(dead_code, non_snake_case)]`, and `#[cfg_attr(<pred>, allow(dead_code))]`
@@ -37,42 +35,17 @@ const ESCAPE = /#\[\s*(?:cfg_attr\([^\]]+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)
 
 const limits: Record<string, number> = await Bun.file(import.meta.dir + "/dead-code-escape-limits.json").json();
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
-const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));
-
-// Only count files tracked in HEAD: editors and `git stash` round-trips can
-// leave stray `.rs` files in the working tree (e.g. files a branch deletes
-// being temporarily restored), and those must not fail the ratchet. CI runs
-// against the committed tree, so every real file is covered.
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
-
 const counts: Record<string, number> = {};
-for (const abs of rustSources) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  // `src/cli` is a symlink into `src/runtime/cli`; count each file once
-  // under its canonical path.
-  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
-  const content = await file(abs).text();
-  // Whole-file scan so rustfmt-wrapped attributes are counted too; strip
-  // full-line `//` comments first so commented-out escapes stay ignored.
-  const stripped = content.replace(/^\s*\/\/.*$/gm, "");
-  const n = [...stripped.matchAll(ESCAPE)].length;
+for (const { source, abs } of trackedRustSources()) {
+  // Whole-file scan so rustfmt-wrapped attributes are counted too.
+  const n = [...withoutLineComments(await file(abs).text()).matchAll(ESCAPE)].length;
   if (n > 0) counts[source] = n;
 }
 
 if (typeof describe === "undefined") {
   // Standalone mode (`bun ./test/internal/source-lints/dead-code-escapes.test.ts`):
   // regenerate the limits file from the current tree.
-  const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : 1)));
+  const sorted = sortedInventory(counts);
   await Bun.write(import.meta.dir + "/dead-code-escape-limits.json", JSON.stringify(sorted, null, 2) + "\n");
   console.log(`Wrote ${Object.keys(sorted).length} files to dead-code-escape-limits.json`);
   process.exit(0);

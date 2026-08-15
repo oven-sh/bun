@@ -29,11 +29,9 @@
 
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { realpathSync } from "fs";
 import path from "path";
-import { globAllSources } from "../../../scripts/glob-sources.ts";
+import { repoRoot, sortedInventory, trackedRustSources, withoutLineComments } from "./rust-sources.ts";
 
-const root = path.resolve(import.meta.dir, "..", "..", "..");
 const INVENTORY = import.meta.dir + "/vm-thread-door.inventory.json";
 
 const SCOPED = ["src/jsc/", "src/runtime/", "src/event_loop/", "src/sql_jsc/", "src/http_jsc/"];
@@ -52,25 +50,12 @@ const PATTERNS: [name: string, re: RegExp][] = [
   ["uv_queue_work", /(?<!fn\s)\buv_queue_work\s*\(/g],
 ];
 
-const tracked: Set<string> | null = (() => {
-  const r = Bun.spawnSync({
-    cmd: ["git", "-C", root, "ls-tree", "-r", "--name-only", "-z", "HEAD"],
-    stdout: "pipe",
-    stderr: "ignore",
-  });
-  if (!r.success) return null;
-  return new Set(r.stdout.toString().split("\0").filter(Boolean));
-})();
-
 type Inventory = Record<string, Record<string, string[] | number>>;
 const found: Inventory = {};
 
-for (const abs of globAllSources().rust.filter(p => p.endsWith(".rs"))) {
-  const source = path.relative(root, abs).replaceAll(path.sep, "/");
-  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
+for (const { source, abs } of trackedRustSources()) {
   if (!SCOPED.some(p => source.startsWith(p)) || DOOR.has(source)) continue;
-  if (tracked !== null && !tracked.has(source)) continue;
-  const stripped = (await file(abs).text()).replace(/^\s*\/\/.*$/gm, "");
+  const stripped = withoutLineComments(await file(abs).text());
   for (const [name, re] of PATTERNS) {
     const matches = [...stripped.matchAll(re)];
     if (matches.length === 0) continue;
@@ -83,9 +68,9 @@ for (const abs of globAllSources().rust.filter(p => p.endsWith(".rs"))) {
   }
 }
 
-const sortKeys = <T>(o: Record<string, T>): Record<string, T> =>
-  Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-const normalized: Inventory = sortKeys(Object.fromEntries(Object.entries(found).map(([k, v]) => [k, sortKeys(v)])));
+const normalized: Inventory = sortedInventory(
+  Object.fromEntries(Object.entries(found).map(([k, v]) => [k, sortedInventory(v)])),
+);
 
 if (process.argv.includes("--update")) {
   await Bun.write(INVENTORY, JSON.stringify(normalized, null, 2) + "\n");
@@ -113,7 +98,7 @@ describe("VM thread door", () => {
   });
 
   test("VirtualMachine stays !Send + !Sync", async () => {
-    const vm = await file(path.join(root, "src/jsc/VirtualMachine.rs")).text();
+    const vm = await file(path.join(repoRoot, "src/jsc/VirtualMachine.rs")).text();
     expect(vm).not.toMatch(/unsafe\s+impl\s+(?:Send|Sync)\s+for\s+VirtualMachine\b/);
     expect(vm).toContain("<VirtualMachine as AmbiguousIfImpl<_>>::some_item");
   });

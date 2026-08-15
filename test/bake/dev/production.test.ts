@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -632,8 +632,8 @@ export default function IndexPage() {
       });
 
       const { stdout, exitCode, signalCode, uncheckedScopes } = await buildApp(String(dir));
-      expect({ stdout, exitCode, signalCode, uncheckedScopes }).toEqual({
-        stdout: "done\n",
+      expect({ stdout: normalizeBunSnapshot(stdout), exitCode, signalCode, uncheckedScopes }).toEqual({
+        stdout: "done",
         exitCode: 0,
         signalCode: null,
         uncheckedScopes: [],

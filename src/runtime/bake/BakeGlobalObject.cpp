@@ -34,14 +34,6 @@ bakeModuleLoaderImportModule(JSC::JSGlobalObject* global,
 
     if (!sourceOrigin.isNull() && sourceOrigin.string().startsWith("bake:/"_s)) {
         WTF::String refererString = sourceOrigin.string();
-
-        if (!keyString) {
-            auto promise = JSC::JSPromise::create(vm, global->promiseStructure());
-            promise->reject(vm, JSC::createError(global, "import() requires a string"_s));
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            return promise;
-        }
-
         BunString result = BakeProdResolve(global, Bun::toString(refererString), Bun::toString(keyString));
         RETURN_IF_EXCEPTION(scope, nullptr);
 

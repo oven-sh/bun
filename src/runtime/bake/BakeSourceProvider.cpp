@@ -123,7 +123,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(GlobalObject*
   return JSC::JSValue::encode(result);
 }
 
-// Returns nullptr if and only if an exception is pending.
+// keyValue must name a module that has already been evaluated; then nullptr means an exception is pending.
 static JSC::JSModuleNamespaceObject* getModuleNamespace(JSC::JSGlobalObject* global, JSC::JSValue keyValue) {
   auto& vm = JSC::getVM(global);
   auto scope = DECLARE_THROW_SCOPE(vm);
@@ -133,7 +133,7 @@ static JSC::JSModuleNamespaceObject* getModuleNamespace(JSC::JSGlobalObject* glo
   RETURN_IF_EXCEPTION(scope, nullptr);
 
   auto* entry = global->moduleLoader()->registryEntry(keyIdent);
-  ASSERT(entry); // should have called BakeLoadModuleByKey and waited for that promise
+  ASSERT(entry); // the caller waited for this module's evaluation promise
   auto* module = entry ? entry->record() : nullptr;
   ASSERT(module);
   JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);

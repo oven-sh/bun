@@ -219,8 +219,6 @@ impl UserOptions {
             &arena,
         )?;
 
-        // Absolute with no trailing separator: `DevServer::relative_path` and
-        // `FrameworkRouter` strip it off file paths as a prefix.
         let root: &'static ZStr = {
             let cwd = match bun_sys::getcwd_alloc() {
                 Ok(cwd) => cwd,

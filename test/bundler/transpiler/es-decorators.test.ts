@@ -31,6 +31,20 @@ async function runDecorator(code: string) {
   return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
 
+async function runFiles(files: Record<string, string>, args: string[] = ["entry.js"]) {
+  using dir = tempDir("es-dec-files", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr: filterStderr(rawStderr), exitCode };
+}
+
 describe("ES Decorators", () => {
   describe("class decorators", () => {
     test("basic class decorator", async () => {
@@ -957,6 +971,122 @@ describe("ES Decorators", () => {
       const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(filterStderr(rawStderr)).toBe("");
       expect(stdout).toBe("true\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // The statement form is lowered as a declaration named after the module's
+    // default-export symbol (`mod_default`), which the lowering needs in order to
+    // refer to the class afterwards. Its `.name` must still be "default", as it
+    // is without decorators.
+    test.concurrent("anonymous export default class with member decorators is named 'default'", async () => {
+      const { stdout, stderr, exitCode } = await runFiles({
+        "entry.js": `
+          import Cls from "./mod.js";
+          console.log("static field:", Cls.observed);
+          console.log(Cls.name, Cls, Bun.inspect(new Cls(), { compact: true }));
+        `,
+        "mod.js": `
+          function dec(fn, ctx) {
+            ctx.addInitializer(function () { console.log("static initializer:", this.name); });
+          }
+          export default class {
+            static observed = this.name;
+            static { console.log("static block:", this.name); }
+            @dec static foo() {}
+          }
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe(
+        "static initializer: default\nstatic block: default\nstatic field: default\ndefault [class default] default {}\n",
+      );
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("anonymous TypeScript export default class with member decorators is named 'default'", async () => {
+      const { stdout, stderr, exitCode } = await runFiles(
+        {
+          "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+          "entry.ts": `
+            import Cls from "./mod.ts";
+            console.log(Cls.name);
+          `,
+          "mod.ts": `
+            function dec(fn: Function, ctx: ClassMethodDecoratorContext) { return fn; }
+            export default class {
+              @dec foo(): void {}
+            }
+          `,
+        },
+        ["entry.ts"],
+      );
+      expect(stderr).toBe("");
+      expect(stdout).toBe("default\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("class decorator on an anonymous export default class statement sees 'default'", async () => {
+      const { stdout, stderr, exitCode } = await runFiles({
+        "entry.js": `
+          import Cls from "./mod.js";
+          console.log(Cls.name, Cls);
+        `,
+        "mod.js": `
+          function dec(cls, ctx) { console.log("ctx.name:", ctx.name, "cls.name:", cls.name); }
+          @dec export default class {}
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ctx.name: default cls.name: default\ndefault [class default]\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("export default named class keeps its own name", async () => {
+      const { stdout, stderr, exitCode } = await runFiles({
+        "entry.js": `
+          import Cls from "./mod.js";
+          console.log(Cls.name);
+        `,
+        "mod.js": `
+          function classDec(cls, ctx) { console.log("ctx.name:", ctx.name); }
+          function dec(fn, ctx) { return fn; }
+          @classDec export default class Named {
+            @dec foo() {}
+          }
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ctx.name: Named\nNamed\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // The statement form goes through the same static `name` member rule as
+    // expressions: a member installed with the class body keeps the block out,
+    // a decorated accessor is installed afterwards and does not.
+    test.concurrent("anonymous export default class declaring its own static name", async () => {
+      const { stdout, stderr, exitCode } = await runFiles({
+        "entry.js": `
+          import WithGetter from "./getter.js";
+          import WithAccessor from "./accessor.js";
+          console.log(JSON.stringify([WithGetter.name, WithAccessor.seenBefore, WithAccessor.name]));
+        `,
+        "getter.js": `
+          function dec(fn, ctx) { return fn; }
+          export default class {
+            static get name() { return "own getter"; }
+            @dec m() {}
+          }
+        `,
+        "accessor.js": `
+          function dec() {}
+          export default class {
+            static seenBefore = this.name;
+            @dec static accessor name = "from accessor";
+          }
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(["own getter", "default", "from accessor"]);
       expect(exitCode).toBe(0);
     });
   });

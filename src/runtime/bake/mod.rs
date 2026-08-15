@@ -197,8 +197,11 @@ impl Framework {
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
     /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
+    ///
+    /// On `Err`, `out` is left uninitialized: whatever was built into it is
+    /// dropped again here, so the caller has nothing to tear down.
     pub(crate) fn init_transpiler<'a>(
-        &mut self,
+        &self,
         arena: &'a bun_alloc::Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
@@ -206,17 +209,55 @@ impl Framework {
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
     ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
-        use bun_options_types::schema as bun_schema;
-
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
+        // Nothing has been written into `out` yet if this fails.
+        let transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            bun_schema::api::TransformOptions::default(),
+            bun_options_types::schema::api::TransformOptions::default(),
             None,
         )?);
+        // The bundler crate (lower tier) carries a TYPE_ONLY
+        // projection (`bake_types::Framework`); construct it here and give it
+        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
+        let framework_view: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(self.as_bundler_view());
+
+        if let Err(err) = self.configure_transpiler(
+            transpiler,
+            framework_view,
+            log,
+            mode,
+            renderer,
+            bundler_options,
+            arena,
+        ) {
+            // SAFETY: `out` was written above and the `transpiler` borrow ended
+            // with the call. The transpiler goes first because its
+            // `options.framework` points at `framework_view`; the view is a
+            // fresh arena slot nothing else references.
+            unsafe {
+                out.assume_init_drop();
+                core::ptr::drop_in_place(framework_view);
+            }
+            return Err(err);
+        }
+        Ok(framework_view)
+    }
+
+    fn configure_transpiler<'a>(
+        &self,
+        out: &mut bun_bundler::Transpiler<'a>,
+        framework_view: *mut bun_bundler::bake_types::Framework,
+        log: &mut bun_ast::Log,
+        mode: Mode,
+        renderer: Graph,
+        bundler_options: &BuildConfigSubset,
+        arena: &'a bun_alloc::Arena,
+    ) -> crate::Result<()> {
+        use bun_options_types::schema as bun_schema;
 
         out.options.target = match renderer {
             Graph::Client => bun_ast::Target::Browser,
@@ -266,12 +307,7 @@ impl Framework {
         out.options.minify_identifiers = mode != Mode::Development;
         out.options.minify_whitespace = mode != Mode::Development;
         out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework_view: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(self.as_bundler_view());
-        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
+        // SAFETY: `framework_view` is a non-null, initialized slot backed by `arena: &'a Arena`,
         // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
         out.options.framework = Some(unsafe { &*framework_view });
         out.options.inline_entrypoint_import_meta_main = true;
@@ -346,7 +382,7 @@ impl Framework {
         // Re-sync after define/naming mutations so the
         // resolver sees the final option set.
         out.sync_resolver_opts();
-        Ok(framework_view)
+        Ok(())
     }
 
     /// Resolves built-in module

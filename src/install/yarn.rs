@@ -1033,20 +1033,27 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     }
                 }
                 break 'blk Resolution::default();
-            } else if let Some(resolved) = entry.resolved.as_deref() {
-                if is_direct_url_dep {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
-                }
+            } else {
+                let resolved = entry.resolved.as_deref();
+                if let Some(resolved) = resolved {
+                    if is_direct_url_dep {
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                            sbuf!().append(resolved)?,
+                        ));
+                    }
 
-                // Yarn v1 lockfiles legitimately contain entries without an integrity field
-                // (workspace deps, file:, codeload tarballs), so migration intentionally
-                // accepts off-registry tarball URLs without integrity instead of failing.
-                if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
+                    // Yarn v1 lockfiles legitimately contain entries without an integrity field
+                    // (workspace deps, file:, codeload tarballs), so migration intentionally
+                    // accepts off-registry tarball URLs without integrity instead of failing.
+                    if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                            sbuf!().append(resolved)?,
+                        ));
+                    }
+                } else if is_npm_alias || is_direct_url_dep {
+                    // Only the tarball URL says which package an alias resolved to, or where
+                    // a URL dependency is fetched from.
+                    break 'blk Resolution::default();
                 }
 
                 let version = sbuf!().append(entry.version)?;
@@ -1056,21 +1063,22 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::default();
                 }
 
-                let is_default_registry = resolved.starts_with(b"https://registry.yarnpkg.com/")
-                    || resolved.starts_with(b"https://registry.npmjs.org/");
-
-                let url = if is_default_registry {
-                    SemverString::default()
-                } else {
-                    sbuf!().append(resolved)?
+                // An empty url fetches name@version from the registry configured when the
+                // lockfile is loaded: all yarn recorded for an entry without a `resolved`
+                // line, and all bun.lock keeps of a default-registry URL anyway.
+                let is_default_registry = |resolved: &[u8]| {
+                    resolved.starts_with(b"https://registry.yarnpkg.com/")
+                        || resolved.starts_with(b"https://registry.npmjs.org/")
+                };
+                let url = match resolved {
+                    Some(resolved) if !is_default_registry(resolved) => sbuf!().append(resolved)?,
+                    _ => SemverString::default(),
                 };
 
                 break 'blk Resolution::init(ResolutionValue::Npm(VersionedURL {
                     url,
                     version: result.version.min(),
                 }));
-            } else {
-                break 'blk Resolution::default();
             }
         };
 

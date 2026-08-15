@@ -811,7 +811,7 @@ fn prune_node_modules_at(rel_path: &[u8], prunable: &StringHashMap<()>) {
     for name in &names {
         if name[0] == b'@' {
             // The prunable set stores scoped packages as `@scope/pkg`.
-            prune_scoped_node_modules(dir.fd(), name, prunable);
+            prune_scoped_node_modules(&dir, name, prunable);
             continue;
         }
         if prunable.contains_key(name.as_slice()) {
@@ -820,10 +820,11 @@ fn prune_node_modules_at(rel_path: &[u8], prunable: &StringHashMap<()>) {
     }
 }
 
-fn prune_scoped_node_modules(parent_dir: Fd, scope: &[u8], prunable: &StringHashMap<()>) {
-    let scope_dir = match sys::open_dir_for_iteration(parent_dir, scope) {
-        Ok(fd) => Dir::from_fd(fd),
-        Err(_) => return,
+fn prune_scoped_node_modules(parent: &Dir, scope: &[u8], prunable: &StringHashMap<()>) {
+    // `open_real_subdir` refuses a symlinked `@scope`, so the deletes below
+    // cannot escape the workspace's `node_modules`.
+    let Some(scope_dir) = crate::prune::open_real_subdir(parent, scope) else {
+        return;
     };
 
     let mut names: Vec<Vec<u8>> = Vec::new();
@@ -872,7 +873,7 @@ fn prune_scoped_node_modules(parent_dir: Fd, scope: &[u8], prunable: &StringHash
         scope_z.extend_from_slice(scope);
         scope_z.push(0);
         let z = bun_core::ZStr::from_buf(&scope_z, scope.len());
-        let _ = sys::rmdirat(parent_dir, z);
+        let _ = sys::rmdirat(parent.fd(), z);
     }
 }
 

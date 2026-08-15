@@ -1322,7 +1322,7 @@ fn entry_kind_of(dir: &Dir, alias: &[u8]) -> EntryKind {
     }
 }
 
-fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
+pub(crate) fn open_real_subdir(dir: &Dir, name: &[u8]) -> Option<Dir> {
     if lstat_kind(dir, name) != EntryKind::Directory {
         return None;
     }

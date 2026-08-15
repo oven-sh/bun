@@ -1,6 +1,5 @@
 [bun_ast]
 "arg_named_like_other_param:src/ast/lib.rs" = 1
-"bare_bool_args:src/ast/lib.rs" = 1
 
 [bun_bundler]
 "arg_named_like_other_param:src/bundler/linker.rs" = 1

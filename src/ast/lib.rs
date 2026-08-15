@@ -1534,7 +1534,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1613,23 +1612,21 @@ impl Log {
         r: Range,
         text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
-        clone: bool,
-        redact: bool,
+        redact_sensitive_information: bool,
     ) {
         match kind {
             Kind::Err => self.errors += 1,
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let mut data = self.tracked_range_data(source, r, text);
-        if clone {
-            data = data.clone_line_text(self.clone_line_text);
-        }
+        let data = self
+            .tracked_range_data(source, r, text)
+            .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
             data,
             notes,
-            redact_sensitive_information: redact,
+            redact_sensitive_information,
             ..Default::default()
         })
     }
@@ -1743,7 +1740,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), false)
     }
 
     #[inline]
@@ -1755,7 +1752,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, notes, false)
     }
 
     #[inline]
@@ -1775,7 +1772,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1793,7 +1789,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             opts.redact_sensitive_information,
         )
     }
@@ -1857,7 +1852,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1921,7 +1915,7 @@ impl Log {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), false)
     }
 
     #[cold]
@@ -1959,7 +1953,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, notes, false)
     }
 
     #[cold]

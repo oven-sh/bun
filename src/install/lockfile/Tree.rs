@@ -1159,12 +1159,37 @@ impl Tree {
             })
         };
 
+        // `tree_owner`'s regular dependencies placed in its own node_modules, `tree_id`
+        let nested_in = move |tree_id: Id, tree_owner: PackageID| {
+            let own_deps = resolution_lists[tree_owner as usize];
+            trees[tree_id as usize]
+                .dependencies
+                .get(entry_lists[tree_id as usize].as_slice())
+                .iter()
+                .filter(move |&&dep_id| {
+                    own_deps.contains(dep_id) && !deps[dep_id as usize].behavior.is_bundled()
+                })
+                .map(move |&dep_id| resolutions[dep_id as usize])
+                .filter(|&pkg_id| pkg_id != invalid_package_id)
+        };
+
         let owner = resolutions[trees[hoist_root as usize].dependency_id as usize];
         if resolves_elsewhere(owner) {
             return true;
         }
 
-        // (tree, package whose node_modules it is); children are appended after their parent
+        let mut any_nested = false;
+        for pkg_id in nested_in(hoist_root, owner) {
+            if resolves_elsewhere(pkg_id) {
+                return true;
+            }
+            any_nested = true;
+        }
+        if !any_nested {
+            return false;
+        }
+
+        // The nested packages' own trees hold more of them. A tree comes after its parent.
         let mut scope: Vec<(Id, PackageID)> = vec![(hoist_root, owner)];
         for (id, tree) in trees.iter().enumerate().skip(hoist_root as usize + 1) {
             let Some(&(_, parent_owner)) =
@@ -1177,23 +1202,14 @@ impl Tree {
             {
                 continue;
             }
-            scope.push((id as Id, resolutions[tree.dependency_id as usize]));
+            let tree_owner = resolutions[tree.dependency_id as usize];
+            if nested_in(id as Id, tree_owner).any(&resolves_elsewhere) {
+                return true;
+            }
+            scope.push((id as Id, tree_owner));
         }
 
-        scope.iter().any(|&(tree_id, tree_owner)| {
-            let own_deps = resolution_lists[tree_owner as usize];
-            trees[tree_id as usize]
-                .dependencies
-                .get(entry_lists[tree_id as usize].as_slice())
-                .iter()
-                .any(|&dep_id| {
-                    let nested = resolutions[dep_id as usize];
-                    nested != invalid_package_id
-                        && own_deps.contains(dep_id)
-                        && !deps[dep_id as usize].behavior.is_bundled()
-                        && resolves_elsewhere(nested)
-                })
-        })
+        false
     }
 }
 

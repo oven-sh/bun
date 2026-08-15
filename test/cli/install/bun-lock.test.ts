@@ -1438,20 +1438,21 @@ it("the isolated linker links the bundling package against the same dependency o
     bunfigOpts: { saveTextLockfile: true, linker: "isolated" },
   });
   const run = makeInstallRunner(packageDir);
-  const sharedLinkedIntoHost = async () =>
-    (
-      await file(
-        join(
-          packageDir,
-          "node_modules",
-          ".bun",
-          "bundled-shadow-host@1.0.0",
-          "node_modules",
-          "bundled-shadow-shared",
-          "package.json",
-        ),
-      ).json()
-    ).version;
+  const hostStoreEntry = join(packageDir, "node_modules", ".bun", "bundled-shadow-host@1.0.0", "node_modules");
+  const sharedVersion = async (...dir: string[]) =>
+    (await file(join(...dir, "bundled-shadow-shared", "package.json")).json()).version;
+  // `host` is what gets linked next to host in its store entry; `inner` is the
+  // copy that came out of host's tarball.
+  const layout = async () => ({
+    host: await sharedVersion(hostStoreEntry),
+    inner: await sharedVersion(
+      hostStoreEntry,
+      "bundled-shadow-host",
+      "node_modules",
+      "bundled-shadow-inner",
+      "node_modules",
+    ),
+  });
 
   await write(
     packageJson,
@@ -1461,13 +1462,13 @@ it("the isolated linker links the bundling package against the same dependency o
     }),
   );
   await run(["install"]);
-  expect(await sharedLinkedIntoHost()).toBe("1.0.0");
+  expect(await layout()).toEqual({ host: "1.0.0", inner: "2.0.0" });
 
   // The store is rebuilt from the resolutions bun.lock loads, which come from
   // the saved paths.
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
   await run(["install", "--frozen-lockfile"]);
-  expect(await sharedLinkedIntoHost()).toBe("1.0.0");
+  expect(await layout()).toEqual({ host: "1.0.0", inner: "2.0.0" });
 });
 
 it("a bundled dependency's dependency does not take a slot a dependency nested under the bundling package resolves through", async () => {

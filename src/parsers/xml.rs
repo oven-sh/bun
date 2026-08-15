@@ -89,9 +89,8 @@ impl XML {
     }
 
     /// [`parse`](Self::parse) for a UTF-16 document (a 16-bit JS string):
-    /// the strings in the result are UTF-16 as well. `source` holds the same
-    /// `units` as bytes; it is what diagnostics are attributed to and what the
-    /// size limit is checked against.
+    /// the strings in the result are UTF-16 as well. `source` is only what
+    /// diagnostics are attributed to and what the length limit is checked on.
     pub fn parse_utf16<'a>(
         source: &'a Source,
         units: &'a [u16],

@@ -1513,6 +1513,23 @@ it.each<{
     z: { "z": "z@1.0.0", "c/z": "z@1.1.0" },
   },
   {
+    // a and b resolve to the same z, so either of them may be the one that appends it; a's pin has to count
+    // either way when p (installed as a's peer after every regular row) brings a range from another major.
+    shape: "a -> z@1.1.0 and b -> z@^1.0.0 share a z that absorbs peer p -> z@*",
+    manifests: {
+      a: { "1.0.0": { dependencies: { z: "1.1.0" }, peerDependencies: { p: "1.0.0" } } },
+      b: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+      p: { "1.0.0": { dependencies: { z: "*" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/z-1.1.0.tgz" }],
+      "b's manifest last": [{ manifest: "b", until: "/z-1.1.0.tgz" }],
+    },
+    z: { "z": "z@1.1.0" },
+  },
+  {
     shape: "root z@1.0.0 absorbs b -> z@^1.0.0",
     manifests: { b: { "1.0.0": { dependencies: { z: "^1.0.0" } } }, z: zVersions },
     files: { "package.json": { name: "foo", dependencies: { b: "1.0.0", z: "1.0.0" } } },
@@ -1544,6 +1561,25 @@ it.each<{
       "z's manifest last": [{ manifest: "z", until: "/b-1.0.0.tgz" }],
     },
     z: { "z": "z@1.0.5" },
+  },
+  {
+    // The root's z is in place for every later row, so a's pin on it must not change what c gets,
+    // whether a's row is resolved before c's or after.
+    shape: "a -> z@1.0.5 pinning the root's z@~1.0.0 does not make it absorb c -> z@*",
+    manifests: {
+      a: { "1.0.0": { dependencies: { z: "1.0.5" } } },
+      c: { "1.0.0": { dependencies: { z: "*" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", c: "1.0.0", z: "~1.0.0" } } },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/z-2.0.0.tgz" }],
+      "c's manifest last": [
+        { manifest: "a", until: "/z" },
+        { manifest: "c", until: "/a-1.0.0.tgz" },
+      ],
+    },
+    z: { "z": "z@1.0.5", "c/z": "z@2.0.0" },
   },
   {
     shape: "root z@^1.0.0 does not absorb c -> z@* from another major",

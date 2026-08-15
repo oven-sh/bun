@@ -2084,6 +2084,7 @@ fn get_or_put_resolved_package_with_find_result(
     let suppress_peer_satisfies = behavior.is_peer()
         && !install_peer
         && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
+    let exact = version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact();
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update || suppress_peer_satisfies {
@@ -2096,6 +2097,11 @@ fn get_or_put_resolved_package_with_find_result(
             url: find_result.package.tarball_url.value,
         })),
     ) {
+        // A peer binds here or in the peer pass depending on what has arrived,
+        // so only regular rows, which all bind in the first pass, count.
+        if exact && !behavior.is_peer() {
+            this.lockfile.mark_pinned_by_reuse(id);
+        }
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
             package: *this.lockfile.packages.get(id as usize),
@@ -2125,11 +2131,7 @@ fn get_or_put_resolved_package_with_find_result(
     debug_assert!(package.meta.id != invalid_package_id);
     // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here; `package`
     // was returned by value above.
-    unsafe { &mut *(*this_ptr).lockfile }.mark_appended_for(
-        package.meta.id,
-        dependency_id,
-        version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact(),
-    );
+    unsafe { &mut *(*this_ptr).lockfile }.mark_appended_for(package.meta.id, dependency_id, exact);
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
     // `this` reborrow below doesn't conflict with the closure capture.

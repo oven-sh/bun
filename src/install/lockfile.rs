@@ -197,22 +197,24 @@ pub struct Lockfile {
 
     /// Packages below this were loaded or appended before resolution last
     /// drained (`mark_settled_packages`), so they exist on every install; see
-    /// `get_package_id`. Runtime-only, never serialised.
+    /// `is_reusable`. Runtime-only, never serialised.
     pub(crate) settled_package_count: PackageID,
 
     /// Indexed by `PackageID`, filled by `mark_appended_for` for the packages
     /// appended from a manifest in this run. Runtime-only, never serialised.
-    pub(crate) appended_for: Vec<AppendedFor>,
+    appended_for_by_id: Vec<AppendedFor>,
 }
 
-/// The dependency row a package was appended to resolve; see
+/// The rows a package appended in this run was resolved for; see
 /// `Lockfile::get_package_id`.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct AppendedFor {
-    /// Declared by the root or a workspace package.
+    /// The row it was appended for is declared by the root or a workspace.
     pub direct: bool,
-    /// Its range (after overrides and catalogs) was an exact version.
-    pub exact: bool,
+    /// A row's range (after overrides and catalogs) was this exact version:
+    /// the appending row's, or a later one's while the package was not yet
+    /// reusable (`mark_pinned_by_reuse`).
+    pub pinned: bool,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -1971,7 +1973,7 @@ impl Lockfile {
             saved_config_version: None,
             loaded_package_count: 0,
             settled_package_count: 0,
-            appended_for: Vec::new(),
+            appended_for_by_id: Vec::new(),
         }
     }
 
@@ -1995,30 +1997,55 @@ impl Lockfile {
         &mut self,
         id: PackageID,
         dependency_id: DependencyID,
-        exact: bool,
+        pinned: bool,
     ) {
-        let appended_for = AppendedFor {
-            direct: self.is_workspace_dependency(dependency_id),
-            exact,
-        };
-        let i = id as usize;
-        if self.appended_for.len() <= i {
-            self.appended_for.resize(i + 1, AppendedFor::default());
+        let direct = self.is_workspace_dependency(dependency_id);
+        *self.appended_for_mut(id) = AppendedFor { direct, pinned };
+    }
+
+    /// A regular row whose range is exactly `id`'s version resolved to it.
+    /// Ignored once the package is reusable: from then on rows read
+    /// `pinned`, and which rows have resolved to it by any given moment
+    /// depends on registry timing.
+    pub(crate) fn mark_pinned_by_reuse(&mut self, id: PackageID) {
+        if !self.is_reusable(id) {
+            self.appended_for_mut(id).pinned = true;
         }
-        self.appended_for[i] = appended_for;
+    }
+
+    fn appended_for_mut(&mut self, id: PackageID) -> &mut AppendedFor {
+        let i = id as usize;
+        if self.appended_for_by_id.len() <= i {
+            self.appended_for_by_id
+                .resize(i + 1, AppendedFor::default());
+        }
+        &mut self.appended_for_by_id[i]
+    }
+
+    fn appended_for(&self, id: PackageID) -> AppendedFor {
+        self.appended_for_by_id
+            .get(id as usize)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Whether package `id` exists on every install of this package.json, so a
+    /// range it merely satisfies may resolve to it: it was loaded or settled,
+    /// or appended for a direct row. Direct rows are enqueued before any
+    /// manifest is processed and a manifest's waiting rows resolve FIFO, so
+    /// for one name they resolve before every transitive row; which packages
+    /// transitive rows have appended so far depends on registry timing.
+    fn is_reusable(&self, id: PackageID) -> bool {
+        id < self.settled_package_count || self.appended_for(id).direct
     }
 
     /// The package `resolution` is already stored as, if any.
     ///
     /// For an npm range `version`, `resolution` is its best match from the
-    /// manifest, and an existing version the range accepts is preferred (a
-    /// lockfile version always, an appended one when pinned exactly or of the
-    /// best match's major) if it exists on every install: settled, or appended
-    /// for a direct row. Direct rows are enqueued before any manifest is
-    /// processed and a manifest's waiting rows resolve FIFO, so for one name
-    /// they resolve before every transitive row; what transitive rows appended
-    /// so far depends on registry timing, so those only answer for a range
-    /// whose best match they are.
+    /// manifest, and the highest reusable version the range accepts is
+    /// preferred over it (`is_reusable`; a lockfile version always, an
+    /// appended one when a row pinned it or it is of the best match's major).
+    /// Anything else only answers for a range whose best match it is.
     pub(crate) fn get_package_id(
         &self,
         name_hash: u64,
@@ -2040,7 +2067,7 @@ impl Lockfile {
         {
             let best_match =
                 (resolution.tag == ResolutionTag::Npm).then(|| resolution.npm().version);
-            let present_on_every_install = ids.iter().copied().find(|&id| {
+            let reusable = ids.iter().copied().find(|&id| {
                 let existing = &resolutions[id as usize];
                 if existing.tag != ResolutionTag::Npm {
                     return false;
@@ -2052,18 +2079,13 @@ impl Lockfile {
                 if id < self.loaded_package_count {
                     return true;
                 }
-                let appended_for = self
-                    .appended_for
-                    .get(id as usize)
-                    .copied()
-                    .unwrap_or_default();
-                (id < self.settled_package_count || appended_for.direct)
-                    && (appended_for.exact
+                self.is_reusable(id)
+                    && (self.appended_for(id).pinned
                         || best_match
                             .is_none_or(|best_match| existing_version.major == best_match.major))
             });
-            if present_on_every_install.is_some() {
-                return present_on_every_install;
+            if reusable.is_some() {
+                return reusable;
             }
         }
 

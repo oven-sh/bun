@@ -1609,10 +1609,13 @@ function flagTruncates(flag): boolean {
 async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
   let encoding;
   let signal: AbortSignal | null = null;
+  let flush = false;
   if (typeof optionsOrEncoding === "object") {
     encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
     flag = optionsOrEncoding?.flag ?? (flag || "w");
     mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+    flush = optionsOrEncoding?.flush ?? false;
+    validateBoolean(flush, "options.flush");
     signal = optionsOrEncoding?.signal ?? null;
     if (signal?.aborted) {
       throw $makeAbortError(undefined, { cause: signal.reason });
@@ -1628,9 +1631,11 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw new TypeError(`Unknown encoding: ${encoding}`);
   }
 
-  let mustClose = typeof fdOrPath === "string";
+  // Callers unwrap a FileHandle to its fd. Anything else is a path (string,
+  // Buffer or URL) that has to be opened with `flag` and `mode`; fs.open
+  // rejects the values that are none of those.
+  const mustClose = typeof fdOrPath !== "number";
   if (mustClose) {
-    // Rely on fs.open for further argument validaiton.
     fdOrPath = await fs.open(fdOrPath, flag, mode);
   }
 
@@ -1650,13 +1655,23 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
   }
 
   // Handle cleanup outside of try-catch
-  if (mustClose) {
-    if (flagTruncates(flag)) {
-      try {
-        await fs.ftruncate(fdOrPath, totalBytesWritten);
-      } catch {}
-    }
+  if (mustClose && flagTruncates(flag)) {
+    try {
+      await fs.ftruncate(fdOrPath, totalBytesWritten);
+    } catch {}
+  }
 
+  // Like node, only sync data that was fully written; a failed write rejects
+  // with its own error, and an fsync failure rejects the promise.
+  if (flush && error === undefined) {
+    try {
+      await fs.fsync(fdOrPath);
+    } catch (err) {
+      error = err as Error;
+    }
+  }
+
+  if (mustClose) {
     await fs.close(fdOrPath);
   }
 

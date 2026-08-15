@@ -1,6 +1,8 @@
-import { expect, mock, test } from "bun:test";
-import { writeFile } from "fs/promises";
-import { tempDir } from "harness";
+import { describe, expect, mock, test } from "bun:test";
+import { existsSync } from "fs";
+import { open, readFile, writeFile } from "fs/promises";
+import { bunEnv, bunExe, isGlibc, tempDir } from "harness";
+import { join } from "path";
 test("fs.promises.writeFile async iterator", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {
     "file1.txt": "0 Hello, world!",
@@ -50,4 +52,289 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   };
   expect(() => writeFile(String(dir), fn)).toThrow();
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
+});
+
+// Node validates and honors `options.flush` for every kind of data, including
+// the (async) iterable path; Bun used to read it only for string/Buffer data.
+describe("fs.promises.writeFile async iterator: options.flush", () => {
+  const invalidMessage = (received: string) =>
+    `ERR_INVALID_ARG_TYPE: The "options.flush" property must be of type boolean. Received ${received}`;
+
+  test.concurrent("rejects a non-boolean flush before opening the file or reading the iterable", async () => {
+    await using dir = tempDir("writeFile-iterable-flush-type", {});
+    const results: string[] = [];
+    for (const flush of ["yes", 1, 0, "", [], {}]) {
+      let pulled = false;
+      const iterable = {
+        *[Symbol.iterator]() {
+          pulled = true;
+          yield "x";
+        },
+      };
+      const path = join(String(dir), `${results.length}.txt`);
+      const err = await writeFile(path, iterable, { flush } as any).then(
+        () => null,
+        e => e,
+      );
+      results.push(`${err?.code}: ${err?.message} | pulled=${pulled} | created=${existsSync(path)}`);
+    }
+    expect(results).toEqual(
+      [
+        "type string ('yes')",
+        "type number (1)",
+        "type number (0)",
+        "type string ('')",
+        "an instance of Array",
+        "an instance of Object",
+      ].map(received => `${invalidMessage(received)} | pulled=false | created=false`),
+    );
+  });
+
+  test.concurrent("validates flush when the iterable is written through a FileHandle", async () => {
+    await using dir = tempDir("writeFile-iterable-flush-type-fh", { "a.txt": "" });
+    const file = join(String(dir), "a.txt");
+    const fh = await open(file, "w");
+    try {
+      const results = await Promise.all([
+        writeFile(fh, ["x"], { flush: "yes" } as any).then(
+          () => "resolved",
+          e => `${e.code}: ${e.message}`,
+        ),
+        fh.appendFile(["x"] as any, { flush: "yes" } as any).then(
+          () => "resolved",
+          e => `${e.code}: ${e.message}`,
+        ),
+      ]);
+      expect(results).toEqual([invalidMessage("type string ('yes')"), invalidMessage("type string ('yes')")]);
+    } finally {
+      await fh.close();
+    }
+    expect(await readFile(file, "utf8")).toBe("");
+  });
+
+  test.concurrent("accepts every flush value node accepts", async () => {
+    await using dir = tempDir("writeFile-iterable-flush-values", {});
+    const results: Record<string, string> = {};
+    for (const flush of [undefined, null, false, true]) {
+      const path = join(String(dir), `${String(flush)}.txt`);
+      await writeFile(path, ["a", "b"], { flush } as any);
+      results[String(flush)] = await readFile(path, "utf8");
+    }
+    expect(results).toEqual({ undefined: "ab", null: "ab", false: "ab", true: "ab" });
+  });
+
+  // Buffer and URL paths used to skip fs.open and hand the path straight to
+  // Bun.file().writer(), so flag/mode were ignored, the old tail of the file
+  // survived and there was no descriptor to fsync. Runs in a child process:
+  // the old Bun.file(buffer) route trips a debug-only GC assertion, which
+  // would otherwise take the whole test runner down instead of failing here.
+  test.concurrent("string, Buffer and URL paths all go through open(flag) and honor flush", async () => {
+    await using dir = tempDir("writeFile-iterable-flush-paths", {
+      "string.txt": "seed seed seed",
+      "buffer.txt": "seed seed seed",
+      "url.txt": "seed seed seed",
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+const dir = ${JSON.stringify(String(dir))};
+const targets = {
+  string: join(dir, "string.txt"),
+  buffer: Buffer.from(join(dir, "buffer.txt")),
+  url: pathToFileURL(join(dir, "url.txt")),
+};
+const results = {};
+for (const [kind, target] of Object.entries(targets)) {
+  await writeFile(target, ["a", "b"], { flush: true });
+  const truncated = await readFile(target, "utf8");
+  await writeFile(target, ["c"], { flag: "a", flush: true });
+  results[kind] = [truncated, await readFile(target, "utf8")];
+}
+console.log(JSON.stringify(results));
+`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ results: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+      results: {
+        string: ["ab", "abc"],
+        buffer: ["ab", "abc"],
+        url: ["ab", "abc"],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The fsync itself is issued from native code, so observe it by interposing
+  // fsync(2) with an LD_PRELOAD shim. Every call appends one byte to
+  // $FSYNC_LOG; with $FSYNC_FAIL set it also fails with EIO instead of syncing.
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  describe.skipIf(!isGlibc || !cc)("fsync(2)", () => {
+    const shimSource = `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+int fsync(int fd) {
+  const char *log = getenv("FSYNC_LOG");
+  if (log) {
+    int logfd = open(log, O_WRONLY | O_APPEND | O_CREAT, 0644);
+    if (logfd >= 0) {
+      write(logfd, "x", 1);
+      close(logfd);
+    }
+  }
+  if (getenv("FSYNC_FAIL")) {
+    errno = EIO;
+    return -1;
+  }
+  return ((int (*)(int))dlsym(RTLD_NEXT, "fsync"))(fd);
+}
+`;
+    // Shared by both fixtures: section() runs one operation and records how many
+    // fsync(2) calls it made plus what it resolved or rejected with.
+    const fixturePrelude = `
+import fs from "node:fs";
+import fsp from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+const dir = process.argv[2];
+const file = name => dir + "/" + name + ".txt";
+const fsyncs = () => (fs.existsSync(process.env.FSYNC_LOG) ? fs.statSync(process.env.FSYNC_LOG).size : 0);
+const report = {};
+async function section(name, run) {
+  const before = fsyncs();
+  const result = await run().then(
+    value => value ?? "resolved",
+    err => err.syscall ? err.code + " from " + err.syscall : err.code ?? err.message,
+  );
+  report[name] = { fsyncs: fsyncs() - before, result };
+}
+const contents = name => fs.readFileSync(file(name), "utf8");
+function* failing() {
+  yield "1";
+  throw new Error("boom");
+}
+`;
+
+    async function runFixture(dir: string, extraEnv: Record<string, string>) {
+      const shim = join(dir, "shim.so");
+      await using ccProc = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shim, join(dir, "shim.c"), "-ldl"],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [ccErr, ccExit] = await Promise.all([ccProc.stderr.text(), ccProc.exited]);
+      if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr}`);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(dir, "fixture.mjs"), dir],
+        env: {
+          ...bunEnv,
+          LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim,
+          FSYNC_LOG: join(dir, "fsync.log"),
+          ...extraEnv,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    test.concurrent("is called once after the data is written, only when flush is true", async () => {
+      await using dir = tempDir("writeFile-iterable-fsync-count", {
+        "shim.c": shimSource,
+        "fixture.mjs": `${fixturePrelude}
+await section("no options", () => fsp.writeFile(file("a"), ["1", "2"]));
+await section("flush: false", () => fsp.writeFile(file("b"), ["1", "2"], { flush: false }));
+await section("string path", () => fsp.writeFile(file("c"), ["1", "2"], { flush: true }).then(() => contents("c")));
+await section("URL path", () => fsp.writeFile(pathToFileURL(file("d")), ["1", "2"], { flush: true }).then(() => contents("d")));
+await section("Buffer path", () => fsp.writeFile(Buffer.from(file("e")), ["1", "2"], { flush: true }).then(() => contents("e")));
+await section("async iterable", () => fsp.writeFile(file("f"), (async function* () { yield "1"; yield "2"; })(), { flush: true }).then(() => contents("f")));
+await section("FileHandle", async () => {
+  const fh = await fsp.open(file("g"), "w");
+  try {
+    await fsp.writeFile(fh, ["1", "2"], { flush: true });
+  } finally {
+    await fh.close();
+  }
+  return contents("g");
+});
+await section("FileHandle.appendFile", async () => {
+  fs.writeFileSync(file("h"), "0");
+  const fh = await fsp.open(file("h"), "a");
+  try {
+    await fh.appendFile(["1", "2"], { flush: true });
+  } finally {
+    await fh.close();
+  }
+  return contents("h");
+});
+await section("iterable throws", () => fsp.writeFile(file("i"), failing(), { flush: true }));
+console.log(JSON.stringify(report));
+`,
+      });
+
+      expect(await runFixture(String(dir), {})).toEqual({
+        "no options": { fsyncs: 0, result: "resolved" },
+        "flush: false": { fsyncs: 0, result: "resolved" },
+        "string path": { fsyncs: 1, result: "12" },
+        "URL path": { fsyncs: 1, result: "12" },
+        "Buffer path": { fsyncs: 1, result: "12" },
+        "async iterable": { fsyncs: 1, result: "12" },
+        "FileHandle": { fsyncs: 1, result: "12" },
+        "FileHandle.appendFile": { fsyncs: 1, result: "012" },
+        "iterable throws": { fsyncs: 0, result: "boom" },
+      });
+    });
+
+    test.concurrent("failure rejects the promise after the file has been closed", async () => {
+      await using dir = tempDir("writeFile-iterable-fsync-fail", {
+        "shim.c": shimSource,
+        "fixture.mjs": `${fixturePrelude}
+// Warm up the code path so lazily created internal descriptors don't show up
+// in the leak check below.
+await fsp.writeFile(file("warmup"), ["1"], { flush: false });
+const openFds = () => fs.readdirSync("/proc/self/fd").length;
+const fdsBefore = openFds();
+await section("string path", () => fsp.writeFile(file("a"), ["1", "2"], { flush: true }));
+report["string path"].contents = contents("a");
+report["string path"].leakedFds = openFds() - fdsBefore;
+await section("flush: false", () => fsp.writeFile(file("b"), ["1", "2"], { flush: false }));
+await section("iterable throws", () => fsp.writeFile(file("c"), failing(), { flush: true }));
+await section("FileHandle", async () => {
+  const fh = await fsp.open(file("d"), "w");
+  try {
+    const result = await fsp.writeFile(fh, ["1", "2"], { flush: true }).then(() => "resolved", err => err.code + " from " + err.syscall);
+    // writeFile must not close a descriptor it did not open.
+    return result + ", handle still has " + (await fh.stat()).size + " bytes";
+  } finally {
+    await fh.close();
+  }
+});
+console.log(JSON.stringify(report));
+`,
+      });
+
+      expect(await runFixture(String(dir), { FSYNC_FAIL: "1" })).toEqual({
+        "string path": { fsyncs: 1, result: "EIO from fsync", contents: "12", leakedFds: 0 },
+        "flush: false": { fsyncs: 0, result: "resolved" },
+        "iterable throws": { fsyncs: 0, result: "boom" },
+        "FileHandle": { fsyncs: 1, result: "EIO from fsync, handle still has 2 bytes" },
+      });
+    });
+  });
 });

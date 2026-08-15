@@ -1527,3 +1527,150 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
 });
+
+// `timeout` is wall-clock, as in Node: a script that spends the budget off-CPU (blocked in
+// sleepSync / Atomics.wait / I/O) times out too. It used to be built on JSC's CPU-time watchdog,
+// which not only let such a script finish "normally" but also could not be retired afterwards: its
+// stale deadline was serviced later and terminated the *caller's* own JS once it had used up the
+// script's leftover CPU budget (and asserted on debug builds).
+test("vm timeout is wall-clock and leaves nothing armed against the caller afterwards", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const vm = require("node:vm");
+      const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      try {
+        vm.runInNewContext("sleepSync(80)", { sleepSync }, { timeout: 20 });
+        console.log("finished");
+      } catch (e) {
+        console.log("threw", e.code);
+      }
+      // Same synchronous section: burn CPU well past the script's leftover CPU budget.
+      const t = performance.now();
+      let s = 0;
+      while (performance.now() - t < 300) s += Math.sqrt(s + 1);
+      console.log("caller ran on", s > 0);
+      const script = new vm.Script("sleepSync(80)");
+      try {
+        script.runInThisContext({ timeout: 20 });
+        console.log("finished");
+      } catch (e) {
+        console.log("threw", e.code);
+      }
+      setImmediate(() => console.log("event loop ran on"));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "threw ERR_SCRIPT_EXECUTION_TIMEOUT\ncaller ran on true\nthrew ERR_SCRIPT_EXECUTION_TIMEOUT\nevent loop ran on\n",
+  );
+  expect(exitCode).toBe(0);
+});
+
+test("a vm timeout that never fires leaves nothing behind either", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const vm = require("node:vm");
+      // Many short runs with a generous timeout: none fires, and the timers left behind by earlier
+      // runs must not hit later runs or the caller.
+      const ctx = vm.createContext({});
+      for (let i = 0; i < 100; i++) vm.runInContext("1 + 1", ctx, { timeout: 1000 });
+      const t = performance.now();
+      let s = 0;
+      while (performance.now() - t < 200) s += Math.sqrt(s + 1);
+      await Bun.sleep(100);
+      for (let i = 0; i < 20; i++) vm.runInContext("2 + 2", ctx, { timeout: 1000 });
+      console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ok\n");
+  expect(exitCode).toBe(0);
+});
+
+// The next two run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
+// a child: a regression then fails that child (spawn timeout) instead of hanging this file.
+// POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.
+test.skipIf(process.platform === "win32")("breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const { Worker } = require("node:worker_threads");
+    new Worker('setTimeout(() => process.kill(process.pid, "SIGINT"), 100)', { eval: true });
+    let code_;
+    try { vm.runInNewContext("for (;;) {}", {}, { breakOnSigint: true }); } catch (e) { code_ = e.code; }
+    const t = Date.now(); while (Date.now() - t < 50);   // still running normally afterwards
+    // ...and SIGINT handling is back to the default-less state Node leaves it in: a listener sees the next one.
+    process.on("SIGINT", () => { console.log(code_, "second SIGINT observed"); process.exit(0); });
+    process.kill(process.pid, "SIGINT");
+    setTimeout(() => { console.log("no second SIGINT"); process.exit(1); }, 5000);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_INTERRUPTED second SIGINT observed\n");
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+test("nested vm runs each keep their own deadline", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    const codeOf = (fn) => { try { fn(); return "returned"; } catch (e) { return e.code; } };
+    // Inner run times out; the outer script catches that (catchable) error and carries on within its budget.
+    console.log(vm.runInNewContext(
+      'let r; try { vm.runInNewContext("for(;;){}", {}, { timeout: 20 }) } catch (e) { r = "inner:" + e.code } r',
+      { vm }, { timeout: 5000 }));
+    // Outer deadline passes while the inner run is on the stack: the outer run is what times out.
+    console.log(codeOf(() => vm.runInNewContext('vm.runInNewContext("for(;;){}", {}, { timeout: 5000 })', { vm }, { timeout: 30 })));
+    // Both deadlines pass before the inner run ends (it is blocked off-CPU past both): the inner
+    // run's error is caught by the outer script, which must nevertheless still be stopped by its own,
+    // already-fired deadline rather than loop forever.
+    const t = performance.now();
+    console.log(codeOf(() => vm.runInNewContext(
+      'try { vm.runInNewContext("sleepSync(120)", { sleepSync }, { timeout: 20 }) } catch {} for (;;) {}',
+      { vm, sleepSync }, { timeout: 40 })), performance.now() - t < 2000);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "inner:ERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT\nERR_SCRIPT_EXECUTION_TIMEOUT true\n",
+  );
+  expect(exitCode).toBe(0);
+}, 30_000);
+
+test("a module whose evaluation times out is errored", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const m = new vm.SourceTextModule("for (;;) {}", { context: vm.createContext({}) });
+    await m.link(() => { throw new Error("unreachable"); });
+    const first = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code + "|" + e.message);
+    // A second evaluate() re-throws the recorded error rather than complaining about the status.
+    const second = await m.evaluate({ timeout: 20 }).then(() => "resolved", (e) => e.code);
+    console.log(first, m.status, second);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(
+    "ERR_SCRIPT_EXECUTION_TIMEOUT|Script execution timed out after 20ms errored ERR_SCRIPT_EXECUTION_TIMEOUT\n",
+  );
+  expect(exitCode).toBe(0);
+}, 30_000);

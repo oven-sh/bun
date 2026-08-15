@@ -5,7 +5,6 @@
 
 #include "JavaScriptCore/SyntheticModuleRecord.h"
 
-#include "../vm/SigintReceiver.h"
 
 namespace Bun {
 

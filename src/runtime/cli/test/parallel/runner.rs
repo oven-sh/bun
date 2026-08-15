@@ -623,8 +623,7 @@ impl<'a> WorkerLoop<'a> {
 /// `vm` must be a valid pointer to this thread's live `VirtualMachine` for the
 /// entire duration of the call (i.e. for the rest of the process, since this
 /// never returns).
-// Raw because `WorkerLoop` stores it; used here only as the shared `vm_ref`,
-// since `begin()` runs JS that reaches the VM through `VirtualMachine::get()`.
+// Raw because `WorkerLoop` stores it as such.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,

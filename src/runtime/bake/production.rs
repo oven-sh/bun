@@ -279,8 +279,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
     // `as_ptr()` is `Copy` and does not borrow `pt`.
     let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
-    // Shared: the config module and the renders run JS, which reaches this VM
-    // through `VirtualMachine::get()`; `&mut self` methods go through `as_mut()`.
     debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
     let vm: &VirtualMachine = VirtualMachine::get();
     // Load and evaluate the configuration module.

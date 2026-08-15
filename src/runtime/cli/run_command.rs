@@ -972,7 +972,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// The CLI-state hand-off, `--eval`/cron entry synthesis and option wiring
     /// `boot` does before `Run::start`; returns the path `Run::start` loads.
-    /// Exclusive access is sound here and only here: no JS has run yet.
     fn configure_vm(
         vm: &mut VirtualMachine,
         ctx: &mut ContextData,
@@ -1247,10 +1246,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 /// `RunCommand::boot` / `boot_standalone`.
 pub struct Run<'a> {
     ctx: &'a ContextData,
-    /// Shared: `start` runs JS, which reaches this VM through
-    /// `VirtualMachine::get()`, so a `&mut` held across `tick()`/`on_exit()`
-    /// would be aliased. `&mut self` methods go through `as_mut()`, one
-    /// borrow per call, as in `WebWorker::spin`.
+    /// Not `&mut`: `start` runs JS, which reaches this VM through
+    /// `VirtualMachine::get()`. Mutation goes through `VirtualMachine::as_mut`.
     vm: &'a VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
@@ -1402,8 +1399,7 @@ impl Run<'_> {
         }
 
         // ── hot-reloader enable ─────────────────────────────────────────────
-        // The reloader writes through the pointer it stores, so it gets the
-        // thread-local `*mut`, not one cast from the shared `vm`.
+        // The reloader writes through the pointer it keeps: hand it the `*mut`.
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
                 // SAFETY: the main-thread VM is process-lifetime; it outlives

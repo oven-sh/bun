@@ -1589,8 +1589,7 @@ impl PublishCommand {
 
         let mut iter = DirIterator::iterate(workspace_dir);
         while let Some(entry) = iter.next().ok().flatten() {
-            // Same rule as the tarball: a README that is a symlink is not packed,
-            // so it must not be published as the readme either.
+            // Symlinks are not packed, so a symlinked README is not the readme either.
             if entry.kind != bun_sys::EntryKind::File {
                 continue;
             }

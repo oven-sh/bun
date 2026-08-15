@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { existsSync, rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, existsSync, openSync, readSync, rmSync } from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1423,37 +1423,60 @@ function elfTemplate(o: ElfTemplateOptions = {}): Buffer {
   return buf;
 }
 
-/** PT_INTERP and the `.interp` section header as written to a compiled output. */
-function readElfInterp(buf: Buffer): { interp: string; p_filesz: number; sh_size: number | null } {
-  const { PHDR, SHDR } = ELF;
-  const cstr = (offset: number, size: number) => {
-    const bytes = buf.subarray(offset, offset + size);
-    const nul = bytes.indexOf(0);
-    return bytes.subarray(0, nul === -1 ? bytes.length : nul).toString("latin1");
-  };
-  let interp: string | null = null;
-  let p_filesz = 0;
+function elfCString(buf: Buffer, offset: number, size: number): string {
+  const bytes = buf.subarray(offset, offset + size);
+  const nul = bytes.indexOf(0);
+  return bytes.subarray(0, nul === -1 ? bytes.length : nul).toString("latin1");
+}
+
+/** PT_INTERP of an ELF64 image. The first page of a real binary is enough. */
+function readPtInterp(buf: Buffer): { interp: string; p_filesz: number } | null {
+  if (buf.length < ELF.EHDR || buf.toString("latin1", 0, 4) !== "\x7fELF") return null;
   const phoff = Number(buf.readBigUInt64LE(32));
   for (let i = 0; i < buf.readUInt16LE(56); i++) {
-    const p = phoff + i * PHDR;
+    const p = phoff + i * ELF.PHDR;
     if (buf.readUInt32LE(p) !== ELF.PT_INTERP) continue;
-    p_filesz = Number(buf.readBigUInt64LE(p + 32));
-    interp = cstr(Number(buf.readBigUInt64LE(p + 8)), p_filesz);
+    const p_filesz = Number(buf.readBigUInt64LE(p + 32));
+    return { interp: elfCString(buf, Number(buf.readBigUInt64LE(p + 8)), p_filesz), p_filesz };
   }
-  if (interp === null) throw new Error("output has no PT_INTERP");
+  return null;
+}
 
-  let sh_size: number | null = null;
+/** `sh_size` of the `.interp` section, looked up through the (relocated) section header table. */
+function readInterpSectionSize(buf: Buffer): number | null {
   const shoff = Number(buf.readBigUInt64LE(40));
-  const shnum = buf.readUInt16LE(60);
-  const shstrtab = shoff + buf.readUInt16LE(62) * SHDR;
+  const shstrtab = shoff + buf.readUInt16LE(62) * ELF.SHDR;
   const namesOff = Number(buf.readBigUInt64LE(shstrtab + 24));
   const namesSize = Number(buf.readBigUInt64LE(shstrtab + 32));
-  for (let i = 0; i < shnum; i++) {
-    const s = shoff + i * SHDR;
+  for (let i = 0; i < buf.readUInt16LE(60); i++) {
+    const s = shoff + i * ELF.SHDR;
     const nameOff = buf.readUInt32LE(s);
-    if (cstr(namesOff + nameOff, namesSize - nameOff) === ".interp") sh_size = Number(buf.readBigUInt64LE(s + 32));
+    if (elfCString(buf, namesOff + nameOff, namesSize - nameOff) === ".interp") {
+      return Number(buf.readBigUInt64LE(s + 32));
+    }
   }
-  return { interp, p_filesz, sh_size };
+  return null;
+}
+
+// Mirror of host_uses_nix_store_interpreter() in src/exe_format/elf.rs: on a Nix/Guix host the
+// FHS loader path is a stub, so the rewrite is skipped there (#29290). The runtime also treats
+// a bun whose own PT_INTERP is a store path as such a host, so this has to as well, or the
+// rewrite test fails on a non-NixOS machine whose bun was installed through Nix.
+function hostLooksNix(): boolean {
+  if (!isLinux) return false;
+  if (existsSync("/etc/NIXOS") || existsSync("/gnu/store")) return true;
+  try {
+    const fd = openSync(bunExe(), "r");
+    try {
+      const head = Buffer.alloc(4096);
+      const interp = readPtInterp(head.subarray(0, readSync(fd, head, 0, head.length, 0)))?.interp ?? "";
+      return interp.startsWith("/nix/store/") || interp.startsWith("/gnu/store/");
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
 }
 
 async function compileWithElfTemplate(cwd: string, name: string, template: Buffer) {
@@ -1527,8 +1550,7 @@ test("compile --compile-executable-path rejects an ELF template whose headers po
   }
 });
 
-// On Nix/Guix hosts the FHS loader path is a stub, so the rewrite is skipped there (#29290).
-test.skipIf(existsSync("/etc/NIXOS") || existsSync("/gnu/store"))(
+test.skipIf(hostLooksNix())(
   "compile --compile-executable-path rewrites a Nix store PT_INTERP and the .interp section header",
   async () => {
     using dir = tempDir("compile-elf-template-interp", {
@@ -1542,7 +1564,11 @@ test.skipIf(existsSync("/etc/NIXOS") || existsSync("/gnu/store"))(
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
     const ldso = "/lib64/ld-linux-x86-64.so.2";
-    expect(readElfInterp(output!)).toEqual({ interp: ldso, p_filesz: ldso.length + 1, sh_size: ldso.length + 1 });
+    expect({ ...readPtInterp(output!), sh_size: readInterpSectionSize(output!) }).toEqual({
+      interp: ldso,
+      p_filesz: ldso.length + 1,
+      sh_size: ldso.length + 1,
+    });
     expect(output!.includes("compiled-from-template")).toBe(true);
   },
 );

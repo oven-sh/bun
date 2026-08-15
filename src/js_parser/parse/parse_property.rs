@@ -480,10 +480,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     | PropertyModifierKeyword::PPublic
                                     | PropertyModifierKeyword::PReadonly
                                     | PropertyModifierKeyword::POverride => {
-                                        // Skip over TypeScript keywords. As with "declare" and
-                                        // "abstract" (but not "static"), tsc only treats these as
-                                        // modifiers when the member name is on the same line;
-                                        // "public\n x" is a field named "public" followed by "x".
+                                        // Skip over TypeScript keywords ("public\n x" is a field
+                                        // named "public", like "declare" but unlike "static")
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
                                             && !p.lexer.has_newline_before

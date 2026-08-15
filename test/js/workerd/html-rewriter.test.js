@@ -2011,8 +2011,9 @@ describe("streamed input pacing", () => {
     const held = seen();
     expect(held).toBeLessThan(count);
     // Locked but not reading: give the loop real work to turn on and check the input did not advance meanwhile.
+    // (Windows reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.)
     expect((await Bun.file(otherFile).bytes()).length).toBe(otherPiece.length * count);
-    expect(seen()).toBe(held);
+    expect(seen() - held).toBeLessThanOrEqual(isWindows ? (256 * 1024) / piece.length : 0);
     const second = await reader.read();
     expect(seen()).toBeGreaterThan(held);
     expect(seen()).toBeLessThan(count);

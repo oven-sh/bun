@@ -2337,7 +2337,7 @@ describe("long store entry names", () => {
       }),
     );
 
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(gitEnv, packageDir);
 
     const entry = storeEntryName("git-dep", `git+${repoUrl.replaceAll(/[/:]/g, "+")}+${sha}`);
     expect(entry).toMatch(/^git-dep@git\+file\+\+\+\+.*\+[0-9a-f]{16}$/);

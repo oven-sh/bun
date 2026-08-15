@@ -353,9 +353,9 @@ pub mod entry {
     }
 
     /// Max bytes of resolution (the text after `name@`; a folder path or git/tarball
-    /// URL otherwise makes it arbitrarily long) in an entry name. The entry is the
-    /// cwd of the package's lifecycle scripts, which Windows' `CreateProcess` rejects
-    /// past MAX_PATH (ENOENT) although bun's own file I/O accepts such paths.
+    /// URL otherwise makes it arbitrarily long) in an entry name. The package directory
+    /// under the entry is the cwd of its lifecycle scripts, which Windows' `CreateProcess`
+    /// rejects past MAX_PATH (ENOENT) although bun's own file I/O accepts such paths.
     /// 80 keeps versions and `github+owner+repo+<sha>` verbatim.
     const MAX_RESOLUTION_LEN: usize = 80;
     /// Longer resolutions become `<leading bytes>+<16 hex wyhash of the whole text>`,

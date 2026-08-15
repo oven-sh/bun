@@ -1,4 +1,4 @@
-import { file, spawn, write } from "bun";
+import { file, gunzipSync, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { chmod, exists, lstat, mkdir, rm, symlink } from "fs/promises";
@@ -49,6 +49,22 @@ test("basic", async () => {
 
   const tarball = readTarball(join(packageDir, "pack-basic-1.2.3.tgz"));
   expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+});
+
+// The archive ends right after the two end-of-archive blocks. libarchive's default for a custom
+// output sink would pad it to a full 10 KiB record instead, which would change the size and shasum
+// of every tarball bun produces.
+test("the archive is not padded to a full tar record", async () => {
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "pack-unpadded", version: "1.0.0" })),
+    write(join(packageDir, "index.js"), "module.exports = 1;"),
+  ]);
+
+  await pack(packageDir, bunEnv);
+
+  const tar = gunzipSync(await file(join(packageDir, "pack-unpadded-1.0.0.tgz")).bytes());
+  // header + data for each of the two entries, then the two end-of-archive blocks
+  expect(tar.byteLength).toBe(6 * 512);
 });
 
 test("in subdirectory", async () => {

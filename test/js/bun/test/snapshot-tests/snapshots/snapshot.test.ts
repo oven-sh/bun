@@ -1064,17 +1064,19 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
   });
 
   test.concurrent("a hook that timed out", async () => {
+    // The hook only applies to "first": a 1ms timeout also fails a hook that returns right away
+    // whenever invoking it took longer than that, which happens on a loaded machine.
     const { stdout, stderr, snap } = await runTestFile(/* ts */ `
       const secondStarted = Promise.withResolvers<void>();
       const hookDone = Promise.withResolvers<void>();
-      let hookRuns = 0;
-      beforeEach(async () => {
-        if (hookRuns++ > 0) return;
-        await secondStarted.promise;
-        report("late from the hook", () => expect("from the hook").toMatchSnapshot("hook"));
-        hookDone.resolve();
-      }, 1);
-      test("first", () => {});
+      describe("with the hook", () => {
+        beforeEach(async () => {
+          await secondStarted.promise;
+          report("late from the hook", () => expect("from the hook").toMatchSnapshot("hook"));
+          hookDone.resolve();
+        }, 1);
+        test("first", () => {});
+      });
       test("second", async () => {
         secondStarted.resolve();
         await hookDone.promise;
@@ -1083,6 +1085,7 @@ describe("snapshot matchers called after the runner gave up on the test", () => 
     `);
 
     expect(stdout).toBe(`late from the hook: ${rejected}\n`);
+    expect(stderr).toContain("(fail) with the hook > first");
     expect(stderr).toContain("(pass) second");
     expect(snap).toBe(header + '\nexports[`second 1`] = `"from second"`;\n');
   });

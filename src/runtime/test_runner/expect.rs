@@ -212,8 +212,7 @@ impl Expect {
         parent.bun_test()
     }
 
-    /// An invocation the runner gave up on (AsyncContextRef.rs) gets to record
-    /// nothing more, with the error an `expect()` left over from a finished test gets.
+    /// Same error as for an `expect()` left over from a finished test (AsyncContextRef.rs).
     fn reject_snapshot_if_abandoned(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         if self.parent.as_ref().is_some_and(|parent| parent.abandoned.get()) {
             return Err(Self::throw_test_finished(global_this));

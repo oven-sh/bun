@@ -161,8 +161,7 @@ static JSValue findAsyncContextRef(JSValue context)
     return jsUndefined();
 }
 
-// True for a context the runner alone populated, i.e. one that would have been
-// no context at all without it.
+// A context the runner alone populated: without the runner there would be none.
 static bool holdsOnlyAsyncContextRefs(JSValue context)
 {
     auto* array = dynamicDowncast<JSArray>(context);
@@ -206,10 +205,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__AsyncContextRef__enableTracking(JSC
     globalObject->setAsyncContextTrackingEnabled(true);
 }
 
-// AsyncContextFrame::withAsyncContextIfNeeded for a test, describe or hook
-// callback being registered: the (ref, ref) of the invocation registering it
-// is not a context of its own. Whatever else the context holds is captured
-// as usual; __enter replaces the stale ref when the callback runs.
+// AsyncContextFrame::withAsyncContextIfNeeded for a callback being registered: the
+// registering invocation's (ref, ref) is not a context to capture. __enter drops it
+// from a context that is.
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__AsyncContextRef__withAsyncContextIfNeeded(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue callbackValue)
 {
     if (holdsOnlyAsyncContextRefs(globalObject->m_asyncContextData.get()->getInternalField(0)))
@@ -257,10 +255,9 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__AsyncContextRe
     return JSValue::encode(callback);
 }
 
-// Takes the refs back out of whatever the callback left in the slot
-// (als.enterWith() replaces the array, als.disable() splices it in place), so
-// that those effects outlive the callback as they did before. After a frame
-// the call itself restored the slot, which then holds no ref.
+// Takes the refs out of whatever the callback left in the slot, keeping the rest
+// in effect as before. Always rebuilt: als.disable() splices the installed array
+// in place. After a frame the call restored the slot itself, so there is no ref.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__AsyncContextRef__leave(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);

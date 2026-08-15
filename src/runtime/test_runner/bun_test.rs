@@ -52,11 +52,9 @@ fn strong_create(value: JSValue) -> Strong {
     Strong::create(value, global)
 }
 
-/// `JSValue::with_async_context_if_needed`, except that the ref of the test
-/// registering the callback (AsyncContextRef.rs) does not count as a context.
-/// Applied when a test/describe/hook callback is stored, not when the arguments
-/// are parsed: registration reads `.length` and `.bind()`s the function itself,
-/// and the wrapper is not a function.
+/// `JSValue::with_async_context_if_needed` minus the registering test's own ref (AsyncContextRef.rs).
+/// Applied where the callback is stored: registration reads `.length` of and `.bind()`s the
+/// function itself, and the wrapper is not a function.
 pub(crate) fn keep_registration_async_context(callback: JSValue) -> JSValue {
     bun_jsc::cpp::Bun__AsyncContextRef__withAsyncContextIfNeeded(VirtualMachine::get().global(), callback)
 }

@@ -1470,22 +1470,17 @@ impl<'a> Parser<'a> {
                                     let right = bin.right;
 
                                     if bin.op == js_ast::op::Code::BinAssign
-                                        && matches!(right.data, js_ast::ExprData::ERequireString(_))
+                                        && let js_ast::ExprData::ERequireString(req) = right.data
+                                        && let Some(unwrapped_id) = req.unwrapped_id.get()
                                         && matches!(&left.data, js_ast::ExprData::EDot(d)
                                             if d.name == b"exports"
                                                 && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
                                                     if id.ref_.eql(p.module_ref)))
                                     {
-                                        let req = match &right.data {
-                                            js_ast::ExprData::ERequireString(r) => r,
-                                            _ => unreachable!(),
-                                        };
                                         p.export_star_import_records.push(req.import_record_index);
-                                        let namespace_ref =
-                                            p.imports_to_convert_from_require.as_slice()
-                                                [req.unwrapped_id as usize]
-                                                .namespace
-                                                .ref_;
+                                        let deferred = &p.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        let namespace_ref = deferred.namespace.ref_;
 
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {

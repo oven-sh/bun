@@ -358,11 +358,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let ref_ = id.r#ref;
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
-                                    if req.unwrapped_id != u32::MAX {
-                                        self.imports_to_convert_from_require
-                                            [req.unwrapped_id as usize]
-                                            .namespace
-                                            .ref_ = ref_;
+                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
+                                        let deferred = &mut self.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        deferred.namespace.ref_ = ref_;
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;

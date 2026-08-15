@@ -23,7 +23,6 @@
 [bun_js_parser]
 "bare_bool_args:src/js_parser/visit/mod.rs" = 1
 "same_match_twice:src/js_parser/p.rs" = 3
-"sentinel_integer:src/js_parser/parse/parse_entry.rs" = 1
 
 [bun_js_printer]
 "parallel_vecs:src/js_printer/lib.rs" = 1

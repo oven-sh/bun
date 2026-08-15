@@ -560,9 +560,9 @@ impl TimerObjectInternals {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
         // The fake clock this timer was popped from, if it was a fake timer
         // (`in_heap` still names the heap until it is re-inserted or removed).
-        // SAFETY: `event_loop_timer()` points into the live parent; `state`
-        // is the boxed per-thread `RuntimeState`.
+        // SAFETY: `event_loop_timer()` points into the live parent.
         let fake_clock_before_call = if unsafe { (*s.event_loop_timer()).in_heap } == InHeap::Fake {
+            // SAFETY: `state` is the boxed per-thread `RuntimeState`.
             unsafe { (*state).timer.fake_timers.clock_id() }
         } else {
             None

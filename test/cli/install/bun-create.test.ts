@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, mergeWindowEnvs, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, isWindows, mergeWindowEnvs, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
@@ -615,17 +615,21 @@ describe.concurrent("bun-create tasks", () => {
   });
 
   it("reports a task that cannot be started and still runs the remaining tasks", async () => {
+    // A path-shaped command (either separator on Windows) is spawned as written
+    // and gets the spawn's own error rather than a $PATH lookup.
+    const missingPath = isWindows ? ".\\no-such-file" : "./no-such-file";
     const { err, exitCode, ran } = await createFromTemplate("create-task-missing", {
       name: "tmpl",
       "bun-create": {
-        postinstall: ["no-such-create-task first", "./no-such-file first", "create-task second"],
+        postinstall: ["no-such-create-task first", `${missingPath} first`, "create-task second"],
       },
     });
 
     expect(err).toContain(
       'error: Failed to run "no-such-create-task first": executable not found in $PATH: "no-such-create-task"',
     );
-    expect(err).toContain('error: Failed to run "./no-such-file first": ');
+    expect(err).toContain(`error: Failed to run "${missingPath} first": `);
+    expect(err).not.toContain(`executable not found in $PATH: "${missingPath}"`);
     expect(ran).toEqual({ "task-ran.txt": "second" });
     expect(exitCode).toBe(0);
   });

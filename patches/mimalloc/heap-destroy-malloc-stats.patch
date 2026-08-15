@@ -1,0 +1,46 @@
+mi_heap_destroy: undo the allocation statistics of the blocks it destroys.
+
+Every block allocation bumps malloc_normal (and, with MI_STAT>1, its
+malloc_bins entry) or malloc_huge, and mi_free takes it back off again in
+free.c:mi_stat_free. A block that is still in use when its heap is destroyed
+is freed along with its page in arena.c:mi_heap_delete_page and never goes
+through mi_free, so its increment stayed in the heap's stats forever and was
+merged into the main heap's stats when the destroyed heap was freed. With a
+short-lived heap per unit of work (bun_alloc::MimallocArena: one per
+transpile, per bundle, per parse) heapStats().mimalloc.malloc_normal.current
+grew by every destroyed heap's live bytes even though the memory was freed.
+Upstream dev3 has the same gap; the v2 destroy path (_mi_heap_page_destroy)
+did adjust these counters. This belongs in the oven-sh/mimalloc fork; it is
+a patch here until the pin is bumped.
+
+--- a/src/arena.c
++++ b/src/arena.c
+@@ -2715,6 +2715,28 @@
+     #if MI_GUARDED
+     _mi_page_unguard_all(page);          // remove potential interior guard pages 
+     #endif
++    #if (MI_STAT>0)
++    // The blocks still in use are destroyed along with the page and never go through `mi_free`
++    // (`free.c:mi_stat_free`), so undo their allocation statistics here (the mirror image of
++    // `alloc.c:mi_page_malloc_zero` and `page.c:mi_huge_page_alloc`). Blocks that were free'd
++    // from other threads but not yet collected were already accounted for by `mi_stat_free`,
++    // so collect first to get an accurate `used` count. The theaps of this heap are already
++    // freed and merged at this point (`heap.c:mi_heap_free_theaps`), so update the heap statistics directly.
++    _mi_page_free_collect_no_unpurge(page, false);
++    const size_t inuse = page->used;
++    if (inuse > 0) {
++      const size_t bsize = mi_page_usable_block_size(page);
++      if (bsize <= MI_LARGE_MAX_OBJ_SIZE) {
++        mi_heap_stat_decrease((mi_heap_t*)heap, malloc_normal, bsize * inuse);
++        #if (MI_STAT>1)
++        mi_heap_stat_decrease((mi_heap_t*)heap, malloc_bins[_mi_bin(bsize)], inuse);
++        #endif
++      }
++      else {
++        mi_heap_stat_decrease((mi_heap_t*)heap, malloc_huge, mi_page_block_size(page) * inuse);
++      }
++    }
++    #endif
+     // destroy the page
+     page->used=0;                        // note: invariant `|local_free| + |free| == reserved - used`  does not hold in this case
+     _mi_arenas_page_free(page, theap);

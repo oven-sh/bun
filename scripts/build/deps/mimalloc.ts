@@ -24,6 +24,12 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  // mi_heap_destroy frees the blocks still in use without taking them back off
+  // malloc_normal / malloc_bins / malloc_huge (MI_STAT builds, i.e. debug), so
+  // heapStats().mimalloc.malloc_normal.current grew by every destroyed
+  // MimallocArena's live bytes. Drop once the fix is in the pinned fork commit.
+  patches: ["patches/mimalloc/heap-destroy-malloc-stats.patch"],
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.

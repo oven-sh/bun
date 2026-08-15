@@ -179,7 +179,8 @@ describe("scan errors", () => {
     ).toEqual(['Multiple pages matching the same route pattern is ambiguous: "blog/[id].tsx" and "blog/[slug].tsx"']);
   });
 
-  test("a route group aliasing a static route", () => {
+  // A route group adds no URL segment, so both files land on the same route.
+  test("a route group next to the plain route", () => {
     expect(
       scanErrors("nextjs-app-ui", {
         "docs/page.tsx": "1",

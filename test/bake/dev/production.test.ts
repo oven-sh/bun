@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -697,6 +697,32 @@ export default function IndexPage() {
       expect(stderr).toContain("  - pages/blog/[slug].tsx");
       expect(exitCode).toBe(1);
       expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+
+    test("two router types claiming the same static route fail the build", async () => {
+      // Router types share one URL space, so this needs a framework with two of them.
+      using dir = tempDir("bake-production-route-alias-across-types", {
+        "src/index.tsx": `export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [
+                { root: "pages", style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+                { root: "docs", style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+              ],
+            },
+          },
+        };`,
+        "server.ts": `export default {};`,
+        "pages/about.tsx": `export default function About() { return "about"; }`,
+        "docs/about.tsx": `export default function About() { return "about"; }`,
+      });
+
+      const { exitCode, stderr } = await build(String(dir));
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/about.tsx");
+      expect(stderr).toContain("  - docs/about.tsx");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
     });
 
     test("every route error is reported before the build fails", async () => {

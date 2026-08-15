@@ -1340,7 +1340,7 @@ impl<'a> Repl<'a> {
         let Some(ctx) = parse_completion_context(&line, self.line_editor.cursor) else {
             return;
         };
-        if (ctx.prefix.is_empty() && ctx.object_expr.is_empty()) || ends_inside_string(&line) {
+        if (ctx.prefix.is_empty() && ctx.object_expr.is_empty()) || ends_inside_string(&[&line]) {
             return;
         }
 
@@ -2585,7 +2585,13 @@ impl<'a> Repl<'a> {
         };
 
         let cursor = self.line_editor.cursor;
-        if ends_inside_string(&line[..cursor]) {
+        // A template literal may have been opened on an earlier line of this input.
+        let earlier_lines: &[u8] = match self.input_mode {
+            InputMode::Normal => b"",
+            InputMode::Multiline => &self.multiline_buffer,
+            InputMode::Editor => &self.editor_buffer,
+        };
+        if ends_inside_string(&[earlier_lines, &line[..cursor]]) {
             self.insert_tab_spaces();
             return;
         }
@@ -2782,21 +2788,47 @@ const JS_KEYWORDS: &[&[u8]] = &[
     b"yield",
 ];
 
-/// Words inside a `'…'`, `"…"` or backtick literal are not identifiers, so completing them is noise.
-fn ends_inside_string(line: &[u8]) -> bool {
+/// Text ends inside string/template content, where completing is noise; `${…}` holes hold code.
+fn ends_inside_string(parts: &[&[u8]]) -> bool {
     let mut quote = 0u8;
-    let mut escaped = false;
-    for &c in line {
-        if escaped {
-            escaped = false;
-        } else if c == b'\\' {
-            escaped = true;
-        } else if quote != 0 {
-            if c == quote {
-                quote = 0;
+    // Unclosed-brace count of each `${` hole being scanned, innermost last.
+    let mut holes: Vec<u32> = Vec::new();
+    for part in parts {
+        let mut i = 0;
+        while i < part.len() {
+            let c = part[i];
+            i += 1;
+            if quote != 0 {
+                match c {
+                    b'\\' => i += 1,
+                    b'$' if quote == b'`' && part.get(i) == Some(&b'{') => {
+                        i += 1;
+                        holes.push(1);
+                        quote = 0;
+                    }
+                    _ if c == quote => quote = 0,
+                    _ => {}
+                }
+            } else {
+                match c {
+                    b'"' | b'\'' | b'`' => quote = c,
+                    b'{' => {
+                        if let Some(depth) = holes.last_mut() {
+                            *depth += 1;
+                        }
+                    }
+                    b'}' => {
+                        if let Some(depth) = holes.last_mut() {
+                            *depth -= 1;
+                            if *depth == 0 {
+                                holes.pop();
+                                quote = b'`';
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
-        } else if matches!(c, b'"' | b'\'' | b'`') {
-            quote = c;
         }
     }
     quote != 0

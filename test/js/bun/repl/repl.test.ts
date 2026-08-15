@@ -1275,6 +1275,47 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       });
     });
 
+    test("suggests inside a template hole but not in the template text around it", async () => {
+      await withTerminalRepl(
+        async ({ send, waitFor }) => {
+          send("`${JSO");
+          await waitFor(`${DIM}N`);
+          // Back in template text after the `}`: "st" must get no ghost, or the
+          // right arrow would accept it. `${JSON}` stringifies to the 13-char
+          // "[object JSON]", plus " st", so the length is 16.
+          send("N} st\x1b[C`.length === 16\n");
+          await waitFor("true");
+        },
+        { env: colorEnv },
+      );
+    });
+
+    test("tab on a continuation line of a template literal indents", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("globalThis.__tpl = `\n");
+        await waitFor("...");
+        // The backtick was opened on the previous line. Without that context
+        // Tab would complete `JSON.pars` to `parse` inside the template.
+        send("JSON.pars\t`\n");
+        await waitFor(/\u276f|> /);
+        // "\n" + "JSON.pars" + two spaces.
+        send("__tpl.length\n");
+        await waitFor(/\b12\b/);
+      });
+    });
+
+    test("tab on a continuation line outside a string still completes", async () => {
+      await withTerminalRepl(async ({ send, waitFor }) => {
+        send("function __cont() {\n");
+        await waitFor("...");
+        send("return JSON.pars\t\n");
+        send("}\n");
+        await waitFor(/\u276f|> /);
+        send("__cont() === JSON.parse\n");
+        await waitFor("true");
+      });
+    });
+
     test("completion on a Proxy with a misbehaving getPrototypeOf trap does not hang", async () => {
       await withTerminalRepl(
         async ({ send, waitFor }) => {

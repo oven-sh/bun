@@ -1127,8 +1127,7 @@ impl Tree {
         })) // 2
     }
 
-    /// Whether an edge for `name_hash` that a loaded `bun.lock` would rebind to an entry at
-    /// `hoist_root` (the bundling package's, or a dependency's nested under it) resolves elsewhere.
+    /// Whether a `name_hash` edge that a loaded `bun.lock` would rebind to `hoist_root` resolves elsewhere.
     fn hoist_root_resolves_elsewhere<const METHOD: BuilderMethod>(
         hoist_root: Id,
         package_id: PackageID,

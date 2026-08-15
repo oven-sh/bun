@@ -957,11 +957,11 @@ impl ShellRmTask {
             };
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => return self.verbose_deleted(dir_task, path.as_bytes()),
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                return self.verbose_deleted(dir_task, path.as_bytes());
+                                return Ok(());
                             }
                             return Err(self.error_with_path(&e, path.as_bytes()));
                         }
@@ -994,7 +994,7 @@ impl ShellRmTask {
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        return self.verbose_deleted(dir_task, path.as_bytes());
+                        return Ok(());
                     }
                     return Err(self.error_with_path(&e, path.as_bytes()));
                 }
@@ -1130,7 +1130,7 @@ impl ShellRmTask {
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        return self.verbose_deleted(dir_task, path.as_bytes());
+                        return Ok(());
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
@@ -1162,7 +1162,6 @@ impl ShellRmTask {
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                let _ = self.verbose_deleted(dir_task, path.as_bytes());
                                 return Ok(true);
                             }
                             return Err(self.error_with_path(&e, path.as_bytes()));
@@ -1202,7 +1201,7 @@ impl ShellRmTask {
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        return self.verbose_deleted(parent_dir_task, path.as_bytes());
+                        return Ok(());
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }

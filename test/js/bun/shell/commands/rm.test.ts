@@ -33,6 +33,7 @@ describe.concurrent("bunshell rm", () => {
   test("force", async () => {
     const files = {
       "existent.txt": "",
+      "other.txt": "",
     };
     await using tempdir = tempDir("rmforce", files);
 
@@ -50,6 +51,28 @@ describe.concurrent("bunshell rm", () => {
       expect(stdout.toString()).toEqual(`${tempdir}/existent.txt\n`);
       expect(exitCode).toBe(0);
       expect(await fileExists(`${tempdir}/existent.txt`)).toBeFalse();
+    }
+
+    // A -v line means the entry was removed, so an operand that -f skips
+    // because it does not exist (or whose parent does not exist) is not listed.
+    for (const flags of ["-fv", "-rfv", "-dfv"]) {
+      const { stdout, stderr, exitCode } = await $`rm ${flags} ${tempdir}/non_existent.txt ${tempdir}/no_dir/file.txt`;
+      expect({ flags, stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        flags,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+
+    {
+      const { stdout, stderr, exitCode } = await $`rm -fv ${tempdir}/non_existent.txt ${tempdir}/other.txt`;
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: `${tempdir}/other.txt\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await fileExists(`${tempdir}/other.txt`)).toBeFalse();
     }
   });
 
@@ -130,9 +153,12 @@ foo/
     }
 
     {
-      const { stdout, stderr, exitCode } = await $`rm -d ${tempdir}/sub_dir`;
-      console.log(stderr.toString());
-      expect(exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await $`rm -dv ${tempdir}/sub_dir`;
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: `${tempdir}/sub_dir\n`,
+        stderr: "",
+        exitCode: 0,
+      });
       expect(await fileExists(`${tempdir}/sub_dir`)).toBeFalse();
     }
 

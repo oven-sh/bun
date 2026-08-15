@@ -36,7 +36,7 @@ Instead, Bun uses the operating system's native filesystem watcher APIs, like kq
 
 </Note>
 
-The following examples show Bun live-reloading a file as it is edited, with VSCode configured to save the file [on each keystroke](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save).
+The following examples show Bun live-reloading a file as you edit it, with VSCode configured to save the file [on each keystroke](https://code.visualstudio.com/docs/editor/codebasics#_save-auto-save).
 
 ```sh terminal icon="terminal"
 bun run --watch watchy.tsx
@@ -77,8 +77,8 @@ bun --watch test
 </Note>
 
 <Note>
-  Before each restart, `bun run --watch` runs the handlers your script registered for the kill signal (default
-  `SIGTERM`, matching the signal Node.js sends its watched process). Use **`--watch-kill-signal`** to pick a different
+  Before each restart, `bun run --watch` runs the handlers your script registered for the kill signal. The default is
+  `SIGTERM`, matching the signal Node.js sends its watched process. Use **`--watch-kill-signal`** to pick a different
   signal, e.g. `bun --watch --watch-kill-signal SIGINT index.ts`.
 </Note>
 
@@ -89,17 +89,17 @@ bun --watch test
 Use `bun --hot` to enable hot reloading when executing code with Bun. Unlike `--watch` mode, Bun doesn't hard-restart the entire process. It detects code changes and updates its internal module cache with the new code.
 
 <Note>
-  This is not the same as hot reloading in the browser. Many frameworks provide a "hot reloading" experience, where you
-  can edit & save your frontend code (say, a React component) and see the changes reflected in the browser without
-  refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. To get hot reloading in the
-  browser, use a framework like [Vite](https://vite.dev).
+  Bun's `--hot` is not the same as hot reloading in the browser. Many frameworks provide a "hot reloading" experience,
+  where you can edit & save your frontend code (say, a React component) and see the changes reflected in the browser
+  without refreshing the page. Bun's `--hot` is the server-side equivalent of this experience. To get hot reloading in
+  the browser, use a framework like [Vite](https://vite.dev).
 </Note>
 
 ```bash terminal icon="terminal"
 bun --hot server.ts
 ```
 
-Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". All files are re-evaluated, but global state (notably, the `globalThis` object) persists.
+Starting from the entrypoint (`server.ts` in this example), Bun builds a registry of all imported source files (excluding those in `node_modules`) and watches them for changes. When a file changes, Bun performs a "soft reload". Bun re-evaluates all files, but global state (notably, the `globalThis` object) persists.
 
 ```ts title="server.ts" icon="/icons/typescript.svg"
 // make TypeScript happy

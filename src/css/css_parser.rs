@@ -3735,9 +3735,6 @@ impl<'a> Parser<'a> {
         let token: &Token = if using_cached_token {
             let cached_token = self.input.cached_token.as_ref().unwrap();
             self.input.tokenizer.reset(&cached_token.end_state);
-            if let Token::Function(f) = &cached_token.token {
-                self.input.tokenizer.see_function(f);
-            }
             &self.input.cached_token.as_ref().unwrap().token
         } else {
             let new_token = match self.input.tokenizer.next() {
@@ -4085,13 +4082,6 @@ pub struct CachedToken {
 
 // ───────────────────────────── Tokenizer ─────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SeenStatus {
-    DontCare,
-    LookingForThem,
-    SeenAtLeastOne,
-}
-
 pub struct Tokenizer<'a> {
     pub(crate) src: &'a [u8],
     pub(crate) position: usize,
@@ -4099,7 +4089,6 @@ pub struct Tokenizer<'a> {
     pub(crate) current_line_start_position: usize,
     pub(crate) current_line_number: u32,
     pub(crate) arena: &'a Bump,
-    var_or_env_functions: SeenStatus,
 }
 
 const FORM_FEED_BYTE: u8 = 0x0C;
@@ -4142,7 +4131,6 @@ impl<'a> Tokenizer<'a> {
             current_line_start_position: 0,
             current_line_number: 0,
             arena,
-            var_or_env_functions: SeenStatus::DontCare,
         }
     }
 
@@ -4196,17 +4184,6 @@ impl<'a> Tokenizer<'a> {
     #[inline]
     pub(crate) fn is_eof(&self) -> bool {
         self.position >= self.src.len()
-    }
-
-    pub(crate) fn see_function(&mut self, name: &[u8]) {
-        if self.var_or_env_functions == SeenStatus::LookingForThem {
-            // Note: this `&&` is always false; kept as-is intentionally.
-            if strings::eql_case_insensitive_ascii_check_length(name, b"var")
-                && strings::eql_case_insensitive_ascii_check_length(name, b"env")
-            {
-                self.var_or_env_functions = SeenStatus::SeenAtLeastOne;
-            }
-        }
     }
 
     /// Return error if it is eof.
@@ -4590,9 +4567,7 @@ impl<'a> Tokenizer<'a> {
                 if let Some(tok) = self.consume_unquoted_url() {
                     return tok;
                 }
-                return Token::Function(value);
             }
-            self.see_function(value);
             return Token::Function(value);
         }
         Token::Ident(value)

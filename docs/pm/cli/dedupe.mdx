@@ -3,7 +3,7 @@ title: "bun dedupe"
 description: "Remove duplicate versions of packages from bun.lock"
 ---
 
-Over time, `bun.lock` can accumulate several versions of the same package even though one of them satisfies every range — for example `esbuild@0.15.10` and `esbuild@0.15.11` when the ranges are `^0.15.7` and `^0.15.8`. `bun dedupe` collapses these onto the smallest set of already-locked versions (preferring newer ones), saves `bun.lock`, and installs.
+Over time, `bun.lock` can accumulate several versions of the same package even though one of them satisfies every range. For example, it can contain both `esbuild@0.15.10` and `esbuild@0.15.11` when the ranges are `^0.15.7` and `^0.15.8`. `bun dedupe` collapses these onto the smallest set of already-locked versions (preferring newer ones), saves `bun.lock`, and installs.
 
 ```bash terminal icon="terminal"
 bun dedupe
@@ -18,13 +18,13 @@ bun dedupe v1.4.0 (abc12345)
 2 duplicate versions removed, 3 packages installed (checked 5 packages) [12.00ms]
 ```
 
-Each row is a version that was removed and the version its dependents now use.
+Each row is a version Bun removed and the version its dependents now use.
 
-`bun dedupe` only chooses between versions already in the lockfile. It never fetches new versions from the registry and never moves a dependency outside its range — use [`bun update`](/pm/cli/update) for that. `package.json` is never modified.
+`bun dedupe` only chooses between versions already in the lockfile and never modifies `package.json`. It never fetches new versions from the registry and never moves a dependency outside its range. Use [`bun update`](/pm/cli/update) for that.
 
 ### `--check` and `--dry-run`
 
-`--check` reports what would be removed without changing anything, and exits `1` if there are duplicates. Use it in CI:
+`--check` reports what Bun would remove without changing anything, and exits `1` if there are duplicates. Use it in CI:
 
 ```bash terminal icon="terminal"
 bun dedupe --check
@@ -46,10 +46,10 @@ bun dedupe v1.4.0 (abc12345)
 
 ### Notes
 
-- Overrides and catalogs are respected; each dependency is re-pointed using its effective range.
-- A direct dependency may be moved to an _older_ locked version if that's the only way to remove a duplicate (e.g. a transitive dependency pins it exactly). Use `bun update` or an [override](/pm/overrides) if you want the newer one to win.
-- Versions in `patchedDependencies` are never removed. If that forces another version to be kept too, Bun prints a `kept …` line explaining why.
+- Bun respects overrides and catalogs. It re-points each dependency using its effective range.
+- Bun may move a direct dependency to an _older_ locked version if that's the only way to remove a duplicate (e.g. a transitive dependency pins it exactly). Use `bun update` or an [override](/pm/overrides) if you want the newer one to win.
+- Bun never removes versions in `patchedDependencies`. If that forces another version to be kept too, Bun prints a `kept …` line explaining why.
 - Dependencies on a dist-tag, git URL, or tarball keep their resolved version.
-- Requires a lockfile that matches `package.json`. If dependencies changed since the last install, it exits with `bun.lock does not match package.json` — run `bun install` first. A `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` is migrated automatically.
+- Requires a lockfile that matches `package.json`. If dependencies changed since the last install, it exits with `bun.lock does not match package.json`. Run `bun install` first. Bun migrates a `package-lock.json`, `yarn.lock`, or `pnpm-lock.yaml` automatically.
 - Cannot be combined with `--frozen-lockfile`, `--production`, or `--no-save`; use `--check` instead.
-- With the isolated linker, several copies of the _same_ version that differ only in peer dependencies are not duplicates and are not reported. Stale store entries are cleaned up by [`bun prune`](/pm/cli/prune).
+- With the isolated linker, several copies of the _same_ version that differ only in peer dependencies are not duplicates, and Bun does not report them. [`bun prune`](/pm/cli/prune) cleans up stale store entries.

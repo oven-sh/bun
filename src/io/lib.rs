@@ -481,7 +481,7 @@ pub mod write;
 pub use write::{AsFmt, DiscardingWriter, FixedBufferStream, FmtAdapter, IntLe, Result, Write};
 
 pub use max_buf as MaxBuf;
-pub use pipes::{FileType, ReadState};
+pub use pipes::{Chunk, FileType, ReadState};
 
 // `BufferedReader` parent callback dispatch. Each variant's `link_impl_*!` (in
 // `bun_runtime`/`bun_install`) forwards to that type's `BufferedReaderParent`
@@ -503,7 +503,7 @@ bun_dispatch::link_interface! {
         SecurityScan,
     ] {
         fn has_on_read_chunk() -> bool;
-        fn on_read_chunk(chunk: &[u8], has_more: pipes::ReadState) -> bool;
+        fn on_read_chunk(chunk: pipes::Chunk<'_>, has_more: pipes::ReadState) -> bool;
         fn on_reader_done();
         fn on_reader_error(err: bun_sys::Error);
         fn loop_ptr() -> *mut Loop;
@@ -586,7 +586,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
                 unsafe fn on_read_chunk(
                     $rc_this: *mut Self,
-                    $rc_chunk: &[u8],
+                    $rc_chunk: $crate::Chunk<'_>,
                     $rc_more: $crate::ReadState,
                 ) -> bool {
                     unsafe { $rc }

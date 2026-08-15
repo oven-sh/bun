@@ -673,8 +673,6 @@ impl MySQLConnection {
             self.ssl_mode != SSLMode::Disable,
             !self.database.is_empty(),
         );
-        // CLIENT_FOUND_ROWS makes affected_rows count WHERE-matched rows
-        // rather than changed rows (mysql2 / mariadb default).
         requested.CLIENT_FOUND_ROWS = self.found_rows;
         self.capabilities = requested.intersect(handshake.capability_flags);
         self.mariadb_capabilities = MariaDBCapabilities::get_default_capabilities()

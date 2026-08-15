@@ -56,8 +56,7 @@ async function run() {
           side: JSON.stringify(side),
           IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
-          // `define:` values are parsed as JSON; the CSS starts with `*{...}`,
-          // so quote it for bootstrap bun that predates #30679.
+          // quoted because bootstrap bun predating #30679 rejects raw CSS as a define value
           OVERLAY_CSS: JSON.stringify(css("../runtime/bake/client/overlay.css", !!debug)),
         },
         minify: {

@@ -1834,8 +1834,7 @@ function parseOptions(
       } else if (lowerKey === "path") {
         path = queryObject[key];
       } else if (lowerKey === "foundrows") {
-        // "false"/"0" disables; anything else keeps the default. `${}` handles
-        // the array `toJSON()` returns for duplicate keys.
+        // "false"/"0" disables; coerce first since toJSON() returns an array for duplicate keys
         const value = `${queryObject[key]}`.toLowerCase();
         foundRows = !(value === "false" || value === "0");
       } else {
@@ -2012,8 +2011,9 @@ function parseOptions(
   }
 
   // Options object wins over the URL query string.
-  if (options.foundRows !== undefined) {
-    foundRows = !!options.foundRows;
+  const foundRowsOption = options.foundRows;
+  if (foundRowsOption !== undefined) {
+    foundRows = !!foundRowsOption;
   }
 
   onconnect ??= options.onconnect;

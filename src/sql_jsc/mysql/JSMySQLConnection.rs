@@ -500,8 +500,6 @@ impl JSMySQLConnection {
         // MySQL doesn't support unnamed prepared statements
         let _ = use_unnamed_prepared_statements;
         let allow_public_key_retrieval = callframe.argument(15).to_boolean();
-        // UNDEFINED (arg omitted) coerces to `false`; `mysql.ts` always
-        // passes an explicit boolean, defaulting to `true`.
         let found_rows = callframe.argument(16).to_boolean();
 
         // Ownership transferred into `ptr.connection`; disarm the errdefer so the

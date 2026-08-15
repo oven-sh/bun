@@ -51,9 +51,7 @@ struct FieldInitEntry {
 enum StaticElementKind {
     Block,
     FieldOrAccessor,
-    /// Undecorated public static field moved out of the body of a class that
-    /// has class decorators (index into `relocated_static_fields`); see
-    /// `can_leave_class_body`.
+    /// Undecorated static field (`relocated_static_fields`).
     PlainField,
 }
 
@@ -143,10 +141,6 @@ fn can_be_class_binding_name(name: &[u8]) -> bool {
         && !is_eval_or_arguments(name)
 }
 
-/// `static x = 1` / `static x;` with no decorators. When the class itself is
-/// decorated these are initialized after the class decorators run (on whatever
-/// class they returned), so they are moved out of the class body, provided
-/// `can_leave_class_body` holds for the initializer.
 #[inline]
 fn is_plain_static_field(prop: &Property) -> bool {
     prop.kind == PropertyKind::Normal
@@ -162,13 +156,7 @@ fn has_private_key(prop: &Property) -> bool {
     matches!(prop.key, Some(key) if matches!(key.data, js_ast::ExprData::EPrivateIdentifier(_)))
 }
 
-/// Whether an undecorated static field initializer or computed key may be
-/// printed outside the class body. Accepts only the shapes `rewrite_expr`
-/// walks completely, so every `this` in them gets redirected, and none of
-/// the syntax that only means something inside the body: `super`,
-/// `new.target`, `#names`, and anything creating a function or class, whose
-/// parameters, keys and heritage the rewriter does not visit. Everything else
-/// stays in the class body and keeps behaving as it did before.
+/// Shapes `rewrite_expr` walks fully; never `super`, `new.target`, `#names`, functions or classes.
 fn can_leave_class_body(expr: &Expr) -> bool {
     use js_ast::ExprData as D;
     match &expr.data {
@@ -219,13 +207,7 @@ fn can_leave_class_body(expr: &Expr) -> bool {
     }
 }
 
-/// Whether a class statement with class decorators gets a binding of its own
-/// for the body's references to its name (see `declare_inner_class_binding`).
-///
-/// Private static members stay installed on the class as written, so a body
-/// that reaches them through the class name (`Foo.#count`) has to keep naming
-/// that class; pointing the name at a replacement returned by a decorator would
-/// turn every such access into a brand-check TypeError.
+/// Private statics stay on the class as written, so `Foo.#x` in the body must keep naming it.
 pub(crate) fn wants_inner_class_binding(class: &G::Class) -> bool {
     class.should_lower_standard_decorators
         && class.ts_decorators.len_u32() > 0
@@ -269,14 +251,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
-    /// `_Foo`: what `class Foo`'s body refers to by its own name once lowered.
-    /// The name binding a class declaration creates for its body is immutable,
-    /// so after `Foo = __decorateElement(...)` it would still hold the
-    /// undecorated class; `lower_impl` instead declares this symbol (`let _Foo;`)
-    /// in the scope the class statement is in, which must be the current scope
-    /// here, and reassigns it along with `Foo`. Element decorator and computed
-    /// key expressions are evaluated before that declaration and so hit the TDZ
-    /// the spec gives them.
+    /// `_Foo`, the body's name for `class Foo`: the binding the class itself provides is immutable.
     pub(crate) fn declare_inner_class_binding(&mut self, class_name_ref: Ref) -> Ref {
         let class_name: &'a [u8] = self.symbols[class_name_ref.inner_index() as usize]
             .original_name
@@ -1177,9 +1152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ── Public API ───────────────────────────────────────
 
-    /// `inner_class_ref` is the binding `visit_class` resolved the body's
-    /// references to the class name to (see `declare_inner_class_binding`), or
-    /// `Ref::NONE` when it left them on the class name itself.
+    /// `inner_class_ref`: what `visit_class` returned for this class.
     pub(crate) fn lower_standard_decorators_stmt(
         &mut self,
         stmt: Stmt,
@@ -1290,8 +1263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name_loc = class.class_name.as_ref().unwrap().loc;
         }
 
-        // Statement mode only; class expressions keep their own (per-evaluation)
-        // name binding and redirect relocated code to `_class` instead.
+        // Class expressions keep their per-evaluation name binding; see `relocated_name_rewrite`.
         let inner_class_ref: Ref = if is_expr {
             class_name_ref
         } else if visited_inner_class_ref.is_symbol() {
@@ -1309,10 +1281,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             bun_alloc::AstAlloc::take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
-        // Relocating a static field moves its key's evaluation ahead of the
-        // class, so to keep the keys in source order every computed key in the
-        // class is pre-evaluated along with it (Phase 2), which all of them
-        // must be able to take.
+        // Relocating pre-evaluates every computed key (Phase 2) to keep them in source order.
         let relocate_static_fields = class_decorators_len > 0
             && class.properties.slice().iter().all(|prop| {
                 !prop.flags.contains(Flags::Property::IsComputed)
@@ -1459,20 +1428,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Must be read before the lowering itself starts referencing the binding.
+        // Read before the lowering itself references the binding.
         let inner_binding_used =
             !is_expr && p.symbols[inner_class_ref.inner_index() as usize].use_count_estimate > 0;
         if !is_expr && !inner_binding_used {
-            // Either declared below or merged into the class name, so the symbol
-            // never prints as an undeclared `_Foo`.
+            // Not declared below, so merge it into the class name instead.
             p.symbols[inner_class_ref.inner_index() as usize]
                 .link
                 .set(class_name_ref);
         }
 
-        // For named class expressions: swap to expr_class_ref for suffix ops.
-        // Code relocated out of the body can no longer see the expression's own
-        // name binding, so it is redirected to `_class` as well.
+        // For named class expressions: swap to expr_class_ref for suffix ops and relocated code
         let mut original_class_name_for_decorator: Option<&'a [u8]> = None;
         let mut relocated_name_rewrite: Option<RewriteKind> = None;
         if is_expr
@@ -2380,9 +2346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         suffix_exprs.push(p.call_rt(loc, b"__runInitializers", &[i_e, n_e, c_e]));
                     }
                     StaticElementKind::PlainField => {
-                        // `__publicField(Foo, "x", init)` keeps the field syntax's
-                        // [[Define]] semantics; a plain assignment would invoke
-                        // inherited setters.
+                        // __publicField defines; an assignment would run inherited setters.
                         let field = &mut relocated_static_fields[elem.index];
                         let key = field.key.expect("infallible: prop has key");
                         let target = p.use_ref(class_name_ref, class_name_loc);
@@ -2639,9 +2603,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             new_properties = merged;
         }
 
-        // `static { _Foo = this }`: static initializers left in the body (see
-        // `can_leave_class_body`) read the binding while the class is still
-        // being defined, before the suffix can assign it.
+        // `static { _Foo = this }`: initializers left in the body run before the suffix assigns it.
         if inner_binding_used {
             let this_e = p.new_expr(E::This {}, class_name_loc);
             let capture = p.assign_to(inner_class_ref, this_e, class_name_loc);
@@ -2779,11 +2741,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         out.extend_from_slice(&pre_eval_stmts);
         out.extend_from_slice(&prefix_stmts);
-        // `let _Foo;` comes after the pre-evaluated element decorators and
-        // computed keys (which must still hit its TDZ) and before the class
-        // statement whose leading static block assigns it. `let` rather than
-        // `var` so that a class statement in a loop body or function gets a
-        // fresh binding per evaluation, like the class binding itself.
+        // After the pre-evaluated keys and decorators (TDZ); `let` so loops get fresh bindings.
         if inner_binding_used {
             p.record_declared_symbol(inner_class_ref);
             let binding = p.b(

@@ -1995,11 +1995,8 @@ test.skipIf(isWindows)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ fdsAliasingStdioCreatedByTheWorker: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      fdsAliasingStdioCreatedByTheWorker: [],
-      stderr: "",
-      exitCode: 0,
-    });
+    // stdout is the JSON list of fds the worker created that alias fd 1 or 2.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "[]", stderr: "", exitCode: 0 });
   },
 );
 

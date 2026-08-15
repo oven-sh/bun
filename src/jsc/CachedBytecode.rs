@@ -13,6 +13,7 @@ unsafe extern "C" {
         source_provider_url: *mut BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        input_is_utf16: bool,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -22,6 +23,7 @@ unsafe extern "C" {
         source_provider_url: *mut BunString,
         input_code: *const u8,
         input_source_code_size: usize,
+        input_is_utf16: bool,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
@@ -40,17 +42,20 @@ impl CachedBytecode {
     pub(crate) fn generate_for_esm(
         source_provider_url: &mut BunString,
         input: &[u8],
+        input_is_utf16: bool,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         let mut this: Option<NonNull<CachedBytecode>> = None;
 
         let mut input_code_size: usize = 0;
         let mut input_code_ptr: Option<NonNull<u8>> = None;
-        // SAFETY: out-params are valid for write; input slice valid for read.
+        // SAFETY: out-params are valid for write; input slice valid for read
+        // (and 2-byte aligned when `input_is_utf16` — it comes from a `Vec<u16>`).
         let ok = unsafe {
             generateCachedModuleByteCodeFromSourceCode(
                 source_provider_url,
                 input.as_ptr(),
                 input.len(),
+                input_is_utf16,
                 &raw mut input_code_ptr,
                 &raw mut input_code_size,
                 &raw mut this,
@@ -70,16 +75,19 @@ impl CachedBytecode {
     pub(crate) fn generate_for_cjs(
         source_provider_url: &mut BunString,
         input: &[u8],
+        input_is_utf16: bool,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         let mut this: Option<NonNull<CachedBytecode>> = None;
         let mut input_code_size: usize = 0;
         let mut input_code_ptr: Option<NonNull<u8>> = None;
-        // SAFETY: out-params are valid for write; input slice valid for read.
+        // SAFETY: out-params are valid for write; input slice valid for read
+        // (and 2-byte aligned when `input_is_utf16` — it comes from a `Vec<u16>`).
         let ok = unsafe {
             generateCachedCommonJSProgramByteCodeFromSourceCode(
                 source_provider_url,
                 input.as_ptr(),
                 input.len(),
+                input_is_utf16,
                 &raw mut input_code_ptr,
                 &raw mut input_code_size,
                 &raw mut this,
@@ -99,11 +107,12 @@ impl CachedBytecode {
     pub(crate) fn generate(
         format: Format,
         input: &[u8],
+        input_is_utf16: bool,
         source_provider_url: &mut BunString,
     ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
         match format {
-            Format::Esm => Self::generate_for_esm(source_provider_url, input),
-            Format::Cjs => Self::generate_for_cjs(source_provider_url, input),
+            Format::Esm => Self::generate_for_esm(source_provider_url, input, input_is_utf16),
+            Format::Cjs => Self::generate_for_cjs(source_provider_url, input, input_is_utf16),
             _ => None,
         }
     }
@@ -132,11 +141,13 @@ impl bun_alloc::Allocator for CachedBytecode {}
 pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
+    source_is_utf16: bool,
     source_provider_url: &mut BunString,
 ) -> Option<Box<[u8]>> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(crate::InitializeOptions::default());
-    let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
+    let (bytes, handle) =
+        CachedBytecode::generate(format, source, source_is_utf16, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;
     // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the

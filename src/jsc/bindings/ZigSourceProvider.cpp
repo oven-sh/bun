@@ -196,10 +196,20 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+// `inputSourceCodeSize` is always in bytes; when `inputIsUtf16` the buffer
+// holds native-endian, 2-byte-aligned UTF-16 code units. The input width must
+// match the width the runtime source string will have, or the SourceCodeKey
+// derived from the bytecode won't match at load time.
+static WTF::String sourceStringForBytecode(const uint8_t* inputSourceCode, size_t inputSourceCodeSize, bool inputIsUtf16)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    if (inputIsUtf16)
+        return WTF::String(std::span<const char16_t>(reinterpret_cast<const char16_t*>(inputSourceCode), inputSourceCodeSize / 2));
+    return WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(inputSourceCode), inputSourceCodeSize));
+}
+
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const uint8_t* inputSourceCode, size_t inputSourceCodeSize, bool inputIsUtf16, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+{
+    JSC::SourceCode sourceCode = JSC::makeSource(sourceStringForBytecode(inputSourceCode, inputSourceCodeSize, inputIsUtf16), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
 
@@ -231,11 +241,9 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const uint8_t* inputSourceCode, size_t inputSourceCodeSize, bool inputIsUtf16, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    JSC::SourceCode sourceCode = JSC::makeSource(sourceStringForBytecode(inputSourceCode, inputSourceCodeSize, inputIsUtf16), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = getVMForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);

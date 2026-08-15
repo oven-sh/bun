@@ -767,3 +767,64 @@ describe("compiled binary in a deleted cwd", () => {
 });
 
 // file command test works well
+
+// A compiled executable stores server-side JS modules in the width JSC loads
+// them in (Latin-1 or UTF-16) so the runtime wraps the mmapped bytes zero-copy
+// instead of transcoding the module into a 16-bit heap string at startup.
+// Function.prototype.toString() returns a substring of the module source, so
+// bun:jsc's jscDescribe exposes the width the source was loaded in.
+describe("compile module source text width", () => {
+  const mainJs = `function probeFn() { return 1 + 1; }
+const desc = require("bun:jsc").jscDescribe(probeFn.toString());
+console.log("width", desc.includes("8Bit:(1)") ? "8bit" : "16bit");
+console.log("value", "café 😀");
+`;
+
+  async function buildAndRun(extraArgs: string[], runEnv: Record<string, string> = {}) {
+    using dir = tempDir("compile-text-width", { "main.js": mainJs });
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", ...extraArgs, "main.js", "--outfile", "app"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [buildStderr, buildExit] = await Promise.all([build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExit).toBe(0);
+
+    await using proc = Bun.spawn({
+      cmd: [join(String(dir), isWindows ? "app.exe" : "app")],
+      env: { ...bunEnv, ...runEnv },
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  test("pure ASCII module text stays 8-bit", async () => {
+    const [stdout, , exitCode] = await buildAndRun([]);
+    expect(stdout).toBe("width 8bit\nvalue café 😀\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("Latin-1-range banner keeps module text 8-bit", async () => {
+    const [stdout, , exitCode] = await buildAndRun(["--banner", "// café ünïcödé"]);
+    expect(stdout).toBe("width 8bit\nvalue café 😀\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module text above U+00FF loads as 16-bit", async () => {
+    const [stdout, , exitCode] = await buildAndRun(["--banner", "// 😀 emoji"]);
+    expect(stdout).toBe("width 16bit\nvalue café 😀\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("bytecode cache hits with a non-ASCII banner", async () => {
+    const [stdout, stderr, exitCode] = await buildAndRun(["--bytecode", "--banner", "// café"], {
+      BUN_JSC_verboseDiskCache: "1",
+    });
+    expect(stdout).toContain("width 8bit");
+    expect(stdout + stderr).toContain("Cache hit for sourceCode");
+    expect(exitCode).toBe(0);
+  });
+});

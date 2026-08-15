@@ -1060,9 +1060,32 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         let mut source_provider_url =
                             bun_core::OwnedString::new(source_provider_url);
 
+                        // For --compile, the standalone graph stores server-side
+                        // modules in the width JSC loads them in (Latin-1 or
+                        // UTF-16; see `stores_transcoded_contents` in
+                        // `StandaloneModuleGraph.rs`). Bytecode must be
+                        // generated from those exact code units, or the
+                        // SourceCodeKey won't match at runtime and the cache is
+                        // silently ignored.
+                        let transcoded = if c.options.compile_mode.is_executable()
+                            && side == options::Side::Server
+                        {
+                            bun_core::handle_oom(
+                                strings::to_wtf_units_alloc(&code_result.buffer)
+                                    .map_err(|_| bun_alloc::AllocError),
+                            )
+                        } else {
+                            None
+                        };
+                        let (source, source_is_utf16): (&[u8], bool) = match &transcoded {
+                            Some(units) => (units.as_bytes(), units.is_utf16()),
+                            None => (&code_result.buffer, false),
+                        };
+
                         if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
-                            &code_result.buffer,
+                            source,
+                            source_is_utf16,
                             &mut source_provider_url,
                         ) {
                             let source_provider_url_str = source_provider_url.to_utf8();

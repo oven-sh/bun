@@ -6,6 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isGlibc, isLinux, isPosix, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
+import { constants } from "node:os";
 import { join } from "node:path";
 
 test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting unreachable", async () => {
@@ -34,8 +35,7 @@ test.skipIf(!isPosix)("bun run propagates SIGKILL from a child without hitting u
   expect(exitCode).not.toBe(0);
 });
 
-const SIGINT = 2;
-const SIGTERM = 15;
+const { SIGINT, SIGTERM } = constants.signals;
 
 /**
  * The fixture's `start` and `postinstall` scripts, and what the

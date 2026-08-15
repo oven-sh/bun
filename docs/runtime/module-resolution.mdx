@@ -334,6 +334,8 @@ Bun's JavaScript runtime has native support for CommonJS. When Bun's JavaScript 
 
 Once the CommonJS module is successfully evaluated, Bun creates a Synthetic Module Record with the `default` ES Module [export set to `module.exports`](https://github.com/oven-sh/bun/blob/9b6913e1a674ceb7f670f917fc355bb8758c6c72/src/bun.js/bindings/CommonJSModuleRecord.cpp#L212-L213). If `module.exports` is an object, Bun also re-exports its keys as named exports.
 
+Like Node.js, Bun additionally exports the names it detects in the source while transpiling (`exports.foo = ...`, `module.exports = { foo }`, `Object.defineProperty(exports, "foo", ...)`, and names re-exported through `module.exports = require(...)` or `__exportStar(require(...))`). A detected name that the evaluated `module.exports` does not have, for example one that is only assigned under a condition, can still be imported and is `undefined`.
+
 Bun's bundler works differently: it wraps the CommonJS module in a `require_${moduleName}` function which returns the `module.exports` object.
 
 </Accordion>

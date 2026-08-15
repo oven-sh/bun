@@ -407,8 +407,8 @@ async function setupWithCachedManifests(
   const pinned = JSON.stringify({ name: "foo", dependencies });
   let dir = await installThrough(server, pinned);
   for (let attempt = 1; cachedManifests(dir) < Object.keys(dependencies).length; attempt++) {
-    expect(attempt).toBeLessThan(5);
     dir[Symbol.dispose]();
+    expect(attempt).toBeLessThan(5);
     dir = await installThrough(server, pinned);
   }
   await reinstall(dir, { name: "foo", dependencies: widened });

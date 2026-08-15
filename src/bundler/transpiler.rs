@@ -459,6 +459,14 @@ impl<'a> Transpiler<'a> {
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
             Ok(r) => Ok(r),
+            // Nothing that long names a directory whose cache could be stale
+            // (and the join below has a PathBuffer to fit `top_level_dir/entry/..` in).
+            Err(err)
+                if self.fs().top_level_dir.len() + entry_point.len() + 4
+                    > bun_paths::MAX_PATH_BYTES =>
+            {
+                Err(err)
+            }
             Err(err) => {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
@@ -469,13 +477,6 @@ impl<'a> Transpiler<'a> {
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
                 // so compute `busted` directly instead.
                 let busted: bool = 'name: {
-                    // `cache_bust_buf` has to fit `top_level_dir/entry_point/..`.
-                    if self.fs().top_level_dir.len() + entry_point.len() + 4
-                        > bun_paths::MAX_PATH_BYTES
-                    {
-                        break 'name false;
-                    }
-
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             entry_point,
@@ -2661,7 +2662,7 @@ impl<'a> Transpiler<'a> {
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
-                        "\"{}\" is disabled due to \"browser\" field in package.json",
+                        "\"{}\" is disabled due to \"browser\" field in package.json (entry point)",
                         bstr::BStr::new(entry),
                     ),
                 );

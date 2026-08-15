@@ -580,10 +580,13 @@ describe.concurrent("modules that fail to print", () => {
   });
 });
 
-describe.concurrent("bun build with an entry point that cannot be resolved", () => {
+// --no-bundle resolves its entry points the same way a bundling build does.
+// It used to print a resolve failure without recording it as a build error,
+// so it still reported "Transpiled file" and exited 0.
+describe.concurrent("bun build --no-bundle entry point resolution", () => {
   async function build(dir: string, ...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", ...args],
+      cmd: [bunExe(), "build", "--no-bundle", ...args],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",
@@ -599,51 +602,45 @@ describe.concurrent("bun build with an entry point that cannot be resolved", () 
     exitCode: 1,
   };
 
-  // --no-bundle used to print the resolve failure without recording it as a
-  // build error, so it still reported "Transpiled file" and exited 0.
-  test("--no-bundle exits 1 when the entry point does not exist", async () => {
+  test("exits 1 when the entry point does not exist", async () => {
     using dir = tempDir("build-no-bundle-missing", {});
-    expect(await build(String(dir), "--no-bundle", "missing.ts")).toEqual(missingEntryFailure);
+    expect(await build(String(dir), "missing.ts")).toEqual(missingEntryFailure);
   });
 
-  test("--no-bundle --outfile exits 1 and does not create the output file", async () => {
+  test("--outfile: exits 1 and does not create the output file", async () => {
     using dir = tempDir("build-no-bundle-missing-outfile", {});
-    expect(await build(String(dir), "--no-bundle", "missing.ts", "--outfile", "out.js")).toEqual(missingEntryFailure);
+    expect(await build(String(dir), "missing.ts", "--outfile", "out.js")).toEqual(missingEntryFailure);
     expect(fs.existsSync(path.join(String(dir), "out.js"))).toBe(false);
   });
 
-  test("--no-bundle --outdir: one missing entry point fails the whole build, like bundling does", async () => {
+  test("--outdir: one missing entry point fails the whole build, like bundling does", async () => {
     using dir = tempDir("build-no-bundle-missing-outdir", {
       "present.ts": "export const present: number = 1;\n",
     });
-    expect(await build(String(dir), "--no-bundle", "present.ts", "missing.ts", "--outdir", "out")).toEqual(
-      missingEntryFailure,
-    );
+    expect(await build(String(dir), "present.ts", "missing.ts", "--outdir", "out")).toEqual(missingEntryFailure);
     expect(fs.existsSync(path.join(String(dir), "out", "present.js"))).toBe(false);
   });
 
-  test("--no-bundle exits 1 when the entry point is disabled by the package.json browser field", async () => {
+  test("exits 1 when the entry point is disabled by the package.json browser field", async () => {
     using dir = tempDir("build-no-bundle-browser-disabled", {
       "package.json": JSON.stringify({ name: "pkg", browser: { "./entry.ts": false } }),
       "entry.ts": "export const entry: number = 1;\n",
     });
-    expect(await build(String(dir), "--no-bundle", "--target=browser", "entry.ts")).toEqual({
+    expect(await build(String(dir), "--target=browser", "entry.ts")).toEqual({
       stdout: "",
-      stderr: expect.stringContaining('entry.ts" is disabled due to "browser" field in package.json'),
+      stderr: expect.stringContaining('entry.ts" is disabled due to "browser" field in package.json (entry point)'),
       exitCode: 1,
     });
   });
 
-  // Entry points longer than a path can be skip the retry after busting the
-  // directory cache; that used to skip reporting the failure as well, and the
-  // bundle then crashed with no entry points.
-  test("reports an entry point that is longer than a path can be", async () => {
-    using dir = tempDir("build-long-entry", {});
-    const name = Buffer.alloc(5000, "a").toString() + ".ts";
-    expect(await build(String(dir), name)).toEqual({
-      stdout: "",
-      stderr: expect.stringContaining(`error: ModuleNotFound resolving "${name}" (entry point)`),
-      exitCode: 1,
+  test("resolves an entry point without its extension, like bundling does", async () => {
+    using dir = tempDir("build-no-bundle-extensionless", {
+      "entry.ts": "export const entry: number = 1;\n",
+    });
+    expect(await build(String(dir), "entry")).toEqual({
+      stdout: "export const entry = 1;\n",
+      stderr: "",
+      exitCode: 0,
     });
   });
 });

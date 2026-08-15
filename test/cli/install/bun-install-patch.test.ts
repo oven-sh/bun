@@ -274,34 +274,57 @@ new file mode 100644
     const projectDir = join(String(filedir), "project");
     const cacheDir = join(String(filedir), "cache");
     const homeDir = join(String(filedir), "home");
+    const childTmpDir = join(String(filedir), "tmp");
     mkdirSync(cacheDir);
     mkdirSync(homeDir);
+    mkdirSync(childTmpDir);
 
     const NOBODY = 65534;
     const asRoot = process.getuid?.() === 0;
+    const restoreAncestors: [path: string, mode: number][] = [];
     if (asRoot) {
+      // CI's runner.node.mjs points TMPDIR at a mode-0700 root-owned mkdtemp
+      // dir, so every ancestor of filedir needs +x for uid 65534 or the child
+      // fails at path resolution before it ever reaches the patch logic.
+      for (let p = dirname(String(filedir)); p !== dirname(p); p = dirname(p)) {
+        const mode = statSync(p).mode & 0o7777;
+        if ((mode & 0o011) !== 0o011) {
+          restoreAncestors.push([p, mode]);
+          chmodSync(p, mode | 0o011);
+        }
+      }
       // Hand the whole tree to the unprivileged uid so it can write the cache,
       // staging tree and node_modules.
       const chown = Bun.spawnSync(["chown", "-R", `${NOBODY}:${NOBODY}`, String(filedir)]);
       expect(chown.exitCode).toBe(0);
     }
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: projectDir,
-      env: { ...bunEnv, HOME: homeDir, BUN_INSTALL_CACHE_DIR: cacheDir },
-      ...(asRoot ? { uid: NOBODY, gid: NOBODY } : {}),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: projectDir,
+        env: {
+          ...bunEnv,
+          HOME: homeDir,
+          BUN_INSTALL_CACHE_DIR: cacheDir,
+          TMPDIR: childTmpDir,
+          BUN_TMPDIR: childTmpDir,
+        },
+        ...(asRoot ? { uid: NOBODY, gid: NOBODY } : {}),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("EACCES");
-    expect(stderr).not.toContain("failed to apply patchfile");
-    expect(exitCode).toBe(0);
+      expect(stderr).not.toContain("EACCES");
+      expect(stderr).not.toContain("failed to apply patchfile");
+      expect(exitCode).toBe(0);
 
-    const createdFile = join(projectDir, "node_modules", "is-odd", "android", "build", "x", "results.bin");
-    expect(await Bun.file(createdFile).text()).toBe("hi\n");
+      const createdFile = join(projectDir, "node_modules", "is-odd", "android", "build", "x", "results.bin");
+      expect(await Bun.file(createdFile).text()).toBe("hi\n");
+    } finally {
+      for (const [p, mode] of restoreAncestors) chmodSync(p, mode);
+    }
   });
 
   describe("should patch a dependency after it was already installed", async () => {

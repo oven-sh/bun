@@ -2470,13 +2470,12 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        // `specifier` is arbitrary source text. A path that does not fit in a
-        // path buffer cannot be in either cache, so there is nothing to bust.
         let source_dir = bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO);
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
             bun_paths::platform::Auto,
         >(source_dir, &mut buf.0, &[specifier]) else {
+            // Longer than any cache key (see `dir_info_cached_maybe_log`).
             return false;
         };
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);

@@ -1273,8 +1273,6 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
-        // `specifier` is arbitrary source text. A path that does not fit in a
-        // path buffer cannot exist, so there is no directory to watch for it.
         let mut buf = bun_paths::path_buffer_pool::get();
         let Some(joined) =
             bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
@@ -1283,6 +1281,7 @@ impl DirectoryWatchStore {
                 &[specifier],
             )
         else {
+            // Same outcome as the NameTooLong case in `insert`: nothing to watch.
             return Ok(());
         };
         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);

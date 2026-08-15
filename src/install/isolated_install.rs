@@ -213,6 +213,69 @@ impl<'a, 'b> Wait<'a, 'b> {
     }
 }
 
+/// Folder packages that get no directory of their own in the store (see
+/// `store::entry::Entry::nested_folder`).
+///
+/// The path of a `Resolution::Folder` is relative to the top-level dir only when
+/// a manifest in the project wrote it: the root or a workspace, a local `file:`
+/// package (`Package::parse` rebases its paths onto the top-level dir), or a root
+/// `overrides`/`resolutions` entry (the same trust rule the resolver and the
+/// hoisted installer apply to those paths). Registry, git and tarball manifests
+/// keep the path as declared (`Package::from_npm`), relative to the declaring
+/// package, and the resolver records such a dependency as a stub package without
+/// dependencies of its own.
+fn nested_folder_packages(lockfile: &Lockfile) -> Result<DynamicBitSet, AllocError> {
+    let pkgs = lockfile.packages.slice();
+    let pkg_resolutions = pkgs.items_resolution();
+
+    let mut nested = DynamicBitSet::init_empty(pkg_resolutions.len())?;
+    for (pkg_id, pkg_res) in pkg_resolutions.iter().enumerate() {
+        if pkg_res.tag == ResolutionTag::Folder {
+            nested.set(pkg_id);
+        }
+    }
+    if nested.count() == 0 {
+        return Ok(nested);
+    }
+
+    let resolutions = &lockfile.buffers.resolutions[..];
+    let dependencies = &lockfile.buffers.dependencies[..];
+    let string_buf = &lockfile.buffers.string_bytes[..];
+    let has_overrides = !lockfile.overrides.is_empty();
+
+    for (pkg_id, pkg_deps) in pkgs.items_dependencies().iter().enumerate() {
+        let declared_in_project = matches!(
+            pkg_resolutions[pkg_id].tag,
+            ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder
+        );
+        if !declared_in_project && !has_overrides {
+            continue;
+        }
+
+        for dep_id in pkg_deps.begin()..pkg_deps.end() {
+            let target = resolutions[dep_id as usize];
+            if target == invalid_package_id
+                || target as usize >= pkg_resolutions.len()
+                || !nested.is_set(target as usize)
+            {
+                continue;
+            }
+            let dep = &dependencies[dep_id as usize];
+            if declared_in_project
+                || lockfile.overrides.contains_name(
+                    dep.name_hash,
+                    dep.name.slice(string_buf),
+                    string_buf,
+                )
+            {
+                nested.unset(target as usize);
+            }
+        }
+    }
+
+    Ok(nested)
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -230,6 +293,8 @@ pub(crate) fn build_store(
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
     let string_buf = &lockfile.buffers.string_bytes[..];
+
+    let nested_folder_pkgs = nested_folder_packages(lockfile)?;
 
     let mut nodes: store::node::List = store::node::List::default();
 
@@ -1007,8 +1072,10 @@ pub(crate) fn build_store(
 
         let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
+        let new_entry_nested_folder = nested_folder_pkgs.is_set(pkg_id as usize);
+
         let hoisted = 'hoisted: {
-            if !manager.options.hoist {
+            if !manager.options.hoist || new_entry_nested_folder {
                 break 'hoisted false;
             }
 
@@ -1039,6 +1106,7 @@ pub(crate) fn build_store(
             parents: new_entry_parents,
             peer_hash: new_entry_peer_hash,
             hoisted,
+            nested_folder: new_entry_nested_folder,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
             scripts: core::cell::Cell::new(None),
@@ -1080,8 +1148,9 @@ pub(crate) fn build_store(
                             .name
                             .slice(string_buf);
                         public_hoisted.put(dep_name, ())?;
-                    } else {
+                    } else if !new_entry_nested_folder {
                         // transitive dependencies (also direct dependencies of workspaces!)
+                        // a nested folder has no store directory for the root to link to.
                         let dep_name = dependencies[new_entry_dep_id as usize]
                             .name
                             .slice(string_buf);
@@ -1110,6 +1179,10 @@ pub(crate) fn build_store(
             peers: node_peers[entry.node_id.get() as usize].clone(),
         });
 
+        debug_assert!(
+            !new_entry_nested_folder || node_nodes[entry.node_id.get() as usize].is_empty(),
+            "a folder declared by a remote package is resolved without dependencies"
+        );
         for &child_node_id in &node_nodes[entry.node_id.get() as usize] {
             entry_queue.write_item(QueuedEntry {
                 node_id: child_node_id,
@@ -1968,6 +2041,7 @@ pub(crate) fn install_isolated_packages(
         let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
         let entry_hoisted = entries.items_hoisted();
+        let entry_nested_folder = entries.items_nested_folder();
 
         // Reborrow through a
         // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
@@ -2182,6 +2256,34 @@ pub(crate) fn install_isolated_packages(
                     continue;
                 }
                 ResolutionTag::Folder => {
+                    if entry_nested_folder[entry_id.get() as usize] {
+                        // Linked by each dependent from inside its own package directory
+                        // (`Installer::symlink_dependencies`); nothing is installed for the
+                        // entry itself.
+                        debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
+                        let folder = pkg_res.folder().slice(string_buf);
+                        let state = if crate::bin::bin_target_escapes_package_dir(folder) {
+                            // Only reachable from a lockfile: the resolver rejects these
+                            // paths. Same refusal as the hoisted installer.
+                            Output::err_generic(
+                                "refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
+                                (BStr::new(pkg_name.slice(string_buf)), BStr::new(folder)),
+                            );
+                            Output::flush();
+                            if installer.manager().options.enable.fail_early() {
+                                Global::exit(1);
+                            }
+                            installer::CompleteState::Fail
+                        } else {
+                            installer::CompleteState::Skipped
+                        };
+                        // .monotonic is okay because the task isn't running on another thread.
+                        entry_steps[entry_id.get() as usize]
+                            .store(installer::Step::Done as u32, Ordering::Relaxed);
+                        installer.on_task_complete(entry_id, state);
+                        continue;
+                    }
+
                     // folders are always hardlinked to keep them up-to-date
                     installer.start_task(entry_id);
                     continue;

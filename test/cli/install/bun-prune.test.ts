@@ -2647,6 +2647,30 @@ test.concurrent(
 );
 
 test.concurrent(
+  "isolated: a file: dependency declared by a registry package is not a store entry, a leftover one is removed",
+  async () => {
+    // file-dep@1.0.0 declares `"files": "file:./the-files"`; the installer links the
+    // folder inside the package's own store entry instead of creating one for it.
+    const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "file-dep": "1.0.0" } });
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    const filesLink = join(dir, "node_modules", ".bun", "file-dep@1.0.0", "node_modules", "files");
+    expect(isSymlink(filesLink)).toBeTrue();
+    plant(dir, "node_modules/.bun/files@file+.+the-files/node_modules/files");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+    expect(stderr).not.toContain("warn:");
+    expect(lines(stdout)).toContain("- files@file+.+the-files");
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    expect(existsSync(join(filesLink, "package.json"))).toBeTrue();
+
+    const again = await prune(dir, "--linker", "isolated");
+    expect(out(again.stdout)).toEndWith(NOTHING(2, 2));
+    expect(again.exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
   "workspaces: without --linker, a bun.lock with configVersion 1 is pruned with the isolated linker",
   async () => {
     const { packageDir: dir, packageJson } = await registry.createTestDir({});

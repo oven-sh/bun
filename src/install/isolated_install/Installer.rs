@@ -2278,7 +2278,24 @@ impl<'a> Installer<'a> {
             }
 
             let mut dep_store_path = AutoAbsPath::init_top_level_dir();
-            if uses_global_store {
+            if self.store.entries.items_nested_folder()[dep.entry_id.get() as usize] {
+                let Some(package_dir_name) = entry_node_modules_name else {
+                    continue;
+                };
+                let dep_node_id = self.store.entries.items_node_id()[dep.entry_id.get() as usize];
+                let dep_pkg_id = self.store.nodes.items_pkg_id()[dep_node_id.get() as usize];
+                let folder = pkg_resolutions[dep_pkg_id as usize]
+                    .folder()
+                    .slice(string_buf);
+                if !self.append_nested_folder_path(
+                    &mut dep_store_path,
+                    entry_id,
+                    package_dir_name,
+                    folder,
+                )? {
+                    continue;
+                }
+            } else if uses_global_store {
                 debug_assert!(self.entry_uses_global_store(dep.entry_id));
                 self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
             } else {
@@ -2788,6 +2805,45 @@ impl<'a> Installer<'a> {
                 buf.append(b"node_modules");
                 buf.append(pkg_name.slice(string_buf));
             }
+        }
+    }
+
+    /// Appends the location of `folder`, a nested folder dependency
+    /// (`store::entry::Entry::nested_folder`) of `entry_id`, to `buf`: the
+    /// declared path resolved inside the entry's own package directory
+    /// (`package_dir_name` in the entry's store `node_modules`).
+    ///
+    /// `Ok(false)` means there is nothing to link, which the hoisted installer
+    /// treats the same way: the path leaves the package (rejected by the
+    /// resolver, but a lockfile may still carry one; `install_isolated_packages`
+    /// reports it), or the package does not ship the folder (for example it was
+    /// excluded from the published tarball).
+    fn append_nested_folder_path(
+        &self,
+        buf: &mut AutoAbsPath,
+        entry_id: StoreEntryId,
+        package_dir_name: &[u8],
+        folder: &[u8],
+    ) -> sys::Result<bool> {
+        if bin_real::bin_target_escapes_package_dir(folder) {
+            return Ok(false);
+        }
+
+        self.append_real_store_node_modules_path(buf, entry_id, Which::Staging);
+        buf.append(package_dir_name).assume_ok();
+        // `folder` comes from a third-party manifest, so its length is unchecked.
+        if buf.len() + 1 + folder.len() >= paths::MAX_PATH_BYTES {
+            return Err(sys::Error::from_code(
+                sys::Errno::ENAMETOOLONG,
+                sys::Tag::fstatat,
+            ));
+        }
+        buf.append_join(folder).assume_ok();
+
+        match sys::directory_exists_at(Fd::cwd(), buf.slice_z()) {
+            Ok(is_dir) => Ok(is_dir),
+            Err(err) if err.get_errno() == sys::Errno::ENOTDIR => Ok(false),
+            Err(err) => Err(err),
         }
     }
 

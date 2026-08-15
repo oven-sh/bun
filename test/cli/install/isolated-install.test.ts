@@ -367,6 +367,171 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
+// A `file:` dependency declared by a registry package points at a folder inside
+// that package (the same fixtures as "transitive file dependencies" in
+// bun-install-registry.test.ts, which covers the hoisted linker).
+describe("transitive file dependencies of registry packages", () => {
+  const dependencies = {
+    // depends on file-dep@1.0.0
+    "dep-file-dep": "1.0.0",
+    // "files": "file:./the-files"
+    "file-dep": "1.0.0",
+    // "files": "file:./missing-folder", which is not in the tarball
+    "missing-file-dep": "1.0.0",
+    // file-dep@1.0.1 has "files": "file:."
+    "aliased-file-dep": "npm:file-dep@1.0.1",
+    // both have "@scoped/files": "file:./the-files", so bun.lock holds one
+    // folder package with two dependents
+    "@scoped/file-dep": "1.0.0",
+    "@another-scope/file-dep": "1.0.0",
+    // "self-file-dep": "file:."
+    "self-file-dep": "1.0.0",
+  };
+
+  const storeEntries = [
+    "@another-scope+file-dep@1.0.0",
+    "@scoped+file-dep@1.0.0",
+    "dep-file-dep@1.0.0",
+    "file-dep@1.0.0",
+    "file-dep@1.0.1",
+    "missing-file-dep@1.0.0",
+    "node_modules",
+    "self-file-dep@1.0.0",
+  ];
+
+  async function checkStore(packageDir: string) {
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const storePackage = (entry: string, ...name: string[]) => join(bunDir, entry, "node_modules", ...name);
+
+    // the folders never become store entries of their own
+    expect(await readdirSorted(bunDir)).toEqual(storeEntries);
+
+    expect([
+      readlinkSync(storePackage("file-dep@1.0.0", "files")),
+      readlinkSync(storePackage("file-dep@1.0.1", "files")),
+      readlinkSync(storePackage("@scoped+file-dep@1.0.0", "@scoped", "files")),
+      readlinkSync(storePackage("@another-scope+file-dep@1.0.0", "@scoped", "files")),
+      readlinkSync(storePackage("self-file-dep@1.0.0", "self-file-dep", "node_modules", "self-file-dep")),
+      await readdirSorted(storePackage("missing-file-dep@1.0.0")),
+      await readdirSorted(storePackage("dep-file-dep@1.0.0")),
+    ]).toEqual([
+      join("file-dep", "the-files"),
+      "file-dep",
+      join("file-dep", "the-files"),
+      join("..", "@another-scope", "file-dep", "the-files"),
+      "..",
+      ["missing-file-dep"],
+      ["dep-file-dep", "file-dep"],
+    ]);
+
+    expect(
+      await Promise.all([
+        file(storePackage("file-dep@1.0.0", "files", "package.json")).json(),
+        file(storePackage("file-dep@1.0.1", "files", "package.json")).json(),
+        file(storePackage("@another-scope+file-dep@1.0.0", "@scoped", "files", "index.js")).text(),
+        file(
+          storePackage("self-file-dep@1.0.0", "self-file-dep", "node_modules", "self-file-dep", "package.json"),
+        ).json(),
+      ]),
+    ).toEqual([
+      { name: "files", version: "1.1.1", dependencies: { "no-deps": "2.0.0" } },
+      { name: "file-dep", version: "1.0.1", dependencies: { files: "file:." } },
+      'console.log("hello files");',
+      { name: "self-file-dep", version: "1.0.0", dependencies: { "self-file-dep": "file:." } },
+    ]);
+
+    // the packages resolve their folders from their real location in the store
+    const fromFileDep = createRequire(storePackage("file-dep@1.0.0", "file-dep", "package.json"));
+    expect(fromFileDep.resolve("files")).toEndWith(
+      join(".bun", "file-dep@1.0.0", "node_modules", "file-dep", "the-files", "index.js"),
+    );
+    const fromMissingFileDep = createRequire(
+      storePackage("missing-file-dep@1.0.0", "missing-file-dep", "package.json"),
+    );
+    expect(() => fromMissingFileDep.resolve("files")).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
+  }
+
+  test("are linked from inside the package that declares them", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(packageJson, JSON.stringify({ name: "transitive-file-deps", dependencies }));
+
+    let { out } = await runBunInstall(bunEnv, packageDir);
+    expect(out).toContain("7 packages installed");
+    await checkStore(packageDir);
+
+    // from bun.lock, where the two `@scoped/files` rows load as one package
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    ({ out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false }));
+    expect(out).toContain("7 packages installed");
+    await checkStore(packageDir);
+
+    // relinking an existing node_modules
+    ({ out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false }));
+    expect(out).toContain("no changes");
+    await checkStore(packageDir);
+  });
+
+  test("a folder declared by the root keeps its store entry when a registry package peer-depends on it", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root-folder-satisfies-peer",
+          dependencies: {
+            // peerDependencies: { "no-deps": "*" }
+            "peer-deps": "1.0.0",
+            "no-deps": "file:./no-deps",
+          },
+        }),
+      ),
+      write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+    ]);
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = await readdirSorted(bunDir);
+    expect(entries).toContain("no-deps@file+no-deps");
+    const peerDeps = entries.find(entry => entry.startsWith("peer-deps@1.0.0"))!;
+    expect(readlinkSync(join(bunDir, peerDeps, "node_modules", "no-deps"))).toBe(
+      join("..", "..", "no-deps@file+no-deps", "node_modules", "no-deps"),
+    );
+    expect(await file(join(bunDir, peerDeps, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "9.9.9",
+    });
+  });
+
+  test("a folder path escaping its package is refused when it comes from bun.lock", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(packageJson, JSON.stringify({ name: "escaping-folder", dependencies: { "file-dep": "1.0.0" } }));
+
+    // the resolver refuses to record such a path, so install first and edit bun.lock
+    await runBunInstall(bunEnv, packageDir);
+    const lockfile = join(packageDir, "bun.lock");
+    const contents = await file(lockfile).text();
+    expect(contents).toContain('"files@file:./the-files"');
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    await Promise.all([
+      write(lockfile, contents.replace('"files@file:./the-files"', '"files@file:../../../the-files"')),
+      // exists, so only the refusal keeps it from being linked: ../../../the-files
+      // from .bun/file-dep@1.0.0/node_modules/file-dep is .bun/the-files
+      write(join(bunDir, "the-files", "package.json"), JSON.stringify({ name: "files" })),
+      rm(join(bunDir, "file-dep@1.0.0"), { recursive: true, force: true }),
+    ]);
+
+    const { out, err } = await runBunInstall(bunEnv, packageDir, {
+      allowErrors: true,
+      expectedExitCode: 1,
+      savesLockfile: false,
+    });
+    expect(err).toContain('error: refusing to install dependency files with unsafe folder path "../../../the-files"');
+    expect(out).toContain("Failed to install 1 package");
+    expect(await readdirSorted(join(bunDir, "file-dep@1.0.0", "node_modules"))).toEqual(["file-dep"]);
+  });
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

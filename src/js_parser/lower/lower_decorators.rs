@@ -76,6 +76,33 @@ struct SuperLowering<'r> {
     is_static: bool,
 }
 
+/// Static blocks and static initializers emitted after the class: `this` is the class and
+/// `super.x` is a static `super` access. Every site that moves such code out of the body
+/// goes through `rewrite_relocated_static_*`.
+#[derive(Clone, Copy)]
+struct RelocatedStatic<'r> {
+    home: &'r Cell<Option<Ref>>,
+    class_ref: Ref,
+    class_loc: bun_ast::Loc,
+}
+
+impl<'r> RelocatedStatic<'r> {
+    /// `LowerSuper` first: the `this` receivers it emits are replaced together with the
+    /// user's own `this` by the class binding, which class decorators may have reassigned.
+    fn kinds(self) -> [RewriteKind<'r>; 2] {
+        [
+            RewriteKind::LowerSuper(SuperLowering {
+                class_ref: self.home,
+                is_static: true,
+            }),
+            RewriteKind::ReplaceThis {
+                ref_: self.class_ref,
+                loc: self.class_loc,
+            },
+        ]
+    }
+}
+
 // ── Shallow-copy helpers (Property / Class are not `Clone` because they hold
 //    raw arena pointers; copying the raw pointers is intentional). ──
 
@@ -621,6 +648,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let kind = RewriteKind::LowerSuper(ctx);
         self.rewrite_args(func.func.args.slice_mut(), kind);
         self.rewrite_stmts(func.func.body.stmts.slice_mut(), kind);
+    }
+
+    fn rewrite_relocated_static_expr(&mut self, expr: &mut Expr, ctx: RelocatedStatic<'_>) {
+        for kind in ctx.kinds() {
+            self.rewrite_expr(expr, kind);
+        }
+    }
+
+    fn rewrite_relocated_static_stmts(&mut self, stmts: &mut [Stmt], ctx: RelocatedStatic<'_>) {
+        for kind in ctx.kinds() {
+            self.rewrite_stmts(stmts, kind);
+        }
     }
 
     /// The key of `super.name` / `super[expr]`; `None` for any other expression.
@@ -1772,6 +1811,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
         let super_home_ref: Cell<Option<Ref>> = Cell::new(None);
+        let relocated_static = RelocatedStatic {
+            home: &super_home_ref,
+            class_ref: class_name_ref,
+            class_loc: class_name_loc,
+        };
 
         // Pre-scan: determine if all private members need lowering
         let mut lower_all_private = false;
@@ -2012,7 +2056,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     });
 
-                    let init_val = prop
+                    let mut init_val = prop
                         .initializer
                         .unwrap_or_else(|| p.new_expr(E::Undefined {}, loc));
                     if !prop.flags.contains(Flags::Property::IsStatic) {
@@ -2027,6 +2071,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             loc,
                         ));
                     } else {
+                        p.rewrite_relocated_static_expr(&mut init_val, relocated_static);
                         let cn_e = p.use_ref(class_name_ref, class_name_loc);
                         let wm_e3 = p.use_ref(wm_ref, loc);
                         suffix_exprs.push(p.call_rt(
@@ -2039,7 +2084,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // Static blocks → extract to suffix
                 if prop.kind == PropertyKind::ClassStaticBlock {
-                    if let Some(sb) = prop.class_static_block {
+                    if let Some(mut sb) = prop.class_static_block {
+                        p.rewrite_relocated_static_stmts(sb.stmts.slice_mut(), relocated_static);
                         static_element_order.push(StaticElement {
                             kind: StaticElementKind::Block,
                             index: extracted_static_blocks.len(),
@@ -2305,13 +2351,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 let is_accessor = k == 4;
-                let init_entry = FieldInitEntry {
+                let mut init_entry = FieldInitEntry {
                     prop: prop_shallow,
                     is_private,
                     is_accessor,
                 };
 
                 if prop.flags.contains(Flags::Property::IsStatic) {
+                    if let Some(init) = &mut init_entry.prop.initializer {
+                        p.rewrite_relocated_static_expr(init, relocated_static);
+                    }
                     if is_accessor {
                         static_non_field_elements.push(element);
                         static_accessor_count += 1;
@@ -2509,13 +2558,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // `StoreRef::DerefMut` — arena-owned, safe under the StoreRef invariant.
                         let sb = &mut *extracted_static_blocks[elem.index];
                         let stmts_slice = sb.stmts.slice_mut();
-                        p.rewrite_stmts(
-                            stmts_slice,
-                            RewriteKind::ReplaceThis {
-                                ref_: class_name_ref,
-                                loc: class_name_loc,
-                            },
-                        );
 
                         let all_exprs = stmts_slice
                             .iter()

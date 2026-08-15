@@ -72,14 +72,10 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
-// WTF::String::fromUTF8ReplacingInvalidSequences sizes its intermediate
-// Vector<char16_t> by the UTF-8 *byte* count, and Vector CRASH()es past
-// isValidCapacityForVector<char16_t> (~2^30) elements, so a 1-2 GiB
-// non-ASCII string aborts the process even when the resulting UTF-16
-// string would fit in a WTF::String. Convert oversized input with an
-// exact-size allocation instead (the BunString__fromUTF8 idiom);
-// oversized invalid UTF-8 yields the null string, matching the other
-// "too long" paths in this file.
+// fromUTF8ReplacingInvalidSequences sizes an intermediate Vector<char16_t> by
+// the UTF-8 byte count, which Vector CRASH()es past ~2^30 entries, so above
+// that cap convert with an exact-size allocation instead (returning null on
+// overflow like the other too-long paths here).
 static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
     if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
@@ -89,10 +85,8 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
     if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
         return {};
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
-    if (utf16Length == bytes.size()) {
-        // Every byte is one UTF-16 unit, i.e. all-ASCII: keep it 8-bit.
-        return WTF::StringImpl::create(bytes);
-    }
+    if (utf16Length == bytes.size())
+        return WTF::StringImpl::create(bytes); // all-ASCII: stays 8-bit
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};
     std::span<char16_t> out;

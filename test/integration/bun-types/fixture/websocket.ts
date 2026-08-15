@@ -192,8 +192,10 @@ import { expectType } from "./utilities";
   expectType(ws.URL).is<string>();
 
   // Set binary type
+  expectType<Bun.WebSocket["binaryType"]>().is<"arraybuffer" | "blob" | "nodebuffer">();
   ws.binaryType = "arraybuffer";
   ws.binaryType = "nodebuffer";
+  ws.binaryType = "blob";
 }
 
 // WebSocket send method test
@@ -211,13 +213,9 @@ import { expectType } from "./utilities";
   const uint8Array = new Uint8Array(buffer);
   ws.send(uint8Array);
 
-  // --------------------------------------- //
-  // `.send(blob)` is not supported yet
-  // --------------------------------------- //
-  // // Send Blob
-  // const blob = new Blob(["Hello, server!"]);
-  // ws.send(blob);
-  // --------------------------------------- //
+  // Send Blob
+  const blob = new Blob(["Hello, server!"]);
+  ws.send(blob);
 }
 
 // WebSocket close method test
@@ -252,6 +250,10 @@ import { expectType } from "./utilities";
   const pingView = new Uint8Array(pingBuffer);
   ws.ping(pingView);
 
+  // Send ping frame with Blob
+  const pingBlob = new Blob(["ping data"]);
+  ws.ping(pingBlob);
+
   // Send pong frame with no data
   ws.pong();
 
@@ -265,6 +267,10 @@ import { expectType } from "./utilities";
   // Send pong frame with ArrayBufferView
   const pongView = new Uint8Array(pongBuffer);
   ws.pong(pongView);
+
+  // Send pong frame with Blob
+  const pongBlob = new Blob(["pong data"]);
+  ws.pong(pongBlob);
 
   // Terminate the connection immediately
   ws.terminate();
@@ -285,4 +291,31 @@ import { expectType } from "./utilities";
   ws.addEventListener("error", (event: ErrorEvent) => {
     expectType(event.message).is<string>();
   });
+}
+
+// WebSocket "ping" and "pong" events are MessageEvents carrying the frame payload
+{
+  const ws = new WebSocket("wss://dev.local");
+
+  // Inferred listener parameter is a MessageEvent with the payload in `data`
+  ws.addEventListener("ping", event => {
+    expectType(event).is<MessageEvent>();
+    expectType(event.data).is<any>();
+  });
+  ws.addEventListener("pong", event => {
+    expectType(event).is<MessageEvent>();
+    expectType(event.data).is<any>();
+  });
+
+  // Explicitly typed MessageEvent listeners match the add and remove overloads
+  const handlePing = (event: MessageEvent) => {
+    expectType(event.data).is<any>();
+  };
+  const handlePong = (event: MessageEvent) => {
+    expectType(event.data).is<any>();
+  };
+  ws.addEventListener("ping", handlePing);
+  ws.addEventListener("pong", handlePong);
+  ws.removeEventListener("ping", handlePing);
+  ws.removeEventListener("pong", handlePong);
 }

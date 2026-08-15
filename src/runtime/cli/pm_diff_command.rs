@@ -236,9 +236,12 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
     let pm_ptr: *mut PackageManager = pm;
     // SAFETY: `load_from_cwd` only reads manager options/log; same reshaping as `outdated`.
     let lockfile = unsafe { &mut *(*pm_ptr).lockfile };
+    // SAFETY: as above.
     let log = unsafe { &mut *(*pm_ptr).log };
+    // SAFETY: as above; the manager outlives this call.
+    let manager = unsafe { &mut *pm_ptr };
     if !matches!(
-        lockfile.load_from_cwd::<true>(Some(unsafe { &mut *pm_ptr }), log),
+        lockfile.load_from_cwd::<true>(Some(manager), log),
         LoadResult::Ok(_)
     ) {
         return None;
@@ -627,10 +630,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
         }
         if !flags.name_only && !flags.stat && change.hunks.is_empty() {
             // Whole-file add/remove: render every line as +/-.
-            let (sign, body, color) = if new.is_some() {
-                (b'+', new.unwrap(), "<green>")
-            } else {
-                (b'-', old.unwrap(), "<red>")
+            let (sign, body, color) = match (new, old) {
+                (Some(n), _) => (b'+', n, "<green>"),
+                (None, Some(o)) => (b'-', o, "<red>"),
+                (None, None) => unreachable!(),
             };
             let n = count_lines(body);
             let _ = write!(

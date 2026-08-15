@@ -436,6 +436,23 @@ pub enum ReferencePathStyle {
     OutdirRelative,
 }
 
+impl ReferencePathStyle {
+    /// An executable loads every chunk from one virtual root. The browser
+    /// chunks a server build emits for its HTML imports are served over HTTP
+    /// instead, so they keep the regular layout even when `compile` is set.
+    pub(crate) fn for_chunk(chunk: &Chunk, compile: bool) -> ReferencePathStyle {
+        if compile
+            && !chunk
+                .flags
+                .contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            ReferencePathStyle::OutdirRelative
+        } else {
+            ReferencePathStyle::ImporterRelative
+        }
+    }
+}
+
 /// Whether `code()` records how far each resolved reference shifted the text
 /// after it (`CodeResult::shifts`). Only a chunk that is getting a source map
 /// needs them, since the map was generated against the unresolved references.

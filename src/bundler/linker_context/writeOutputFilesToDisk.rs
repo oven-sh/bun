@@ -257,15 +257,6 @@ pub(crate) fn write_output_files_to_disk(
                 )),
             }
         } else {
-            let reference_path_style = if resolver_opts.compile
-                && !chunk
-                    .flags
-                    .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-            {
-                ReferencePathStyle::OutdirRelative
-            } else {
-                ReferencePathStyle::ImporterRelative
-            };
             match intermediate_output.code(
                 None,
                 parse_graph,
@@ -274,7 +265,7 @@ pub(crate) fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                reference_path_style,
+                ReferencePathStyle::for_chunk(chunk, resolver_opts.compile),
                 SourceMapShiftTracking::for_source_map(
                     chunk.content.sourcemap(c.options.source_maps),
                 ),

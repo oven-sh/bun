@@ -905,30 +905,19 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     standalone_chunk_contents.as_deref().unwrap(),
                 )?
             } else {
-                let reference_path_style = if c.resolver().opts.compile
-                    && !chunks[chunk_index_in_chunks_list]
-                        .flags
-                        .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-                {
-                    ReferencePathStyle::OutdirRelative
-                } else {
-                    ReferencePathStyle::ImporterRelative
-                };
-                let shift_tracking = SourceMapShiftTracking::for_source_map(
-                    chunks[chunk_index_in_chunks_list]
-                        .content
-                        .sourcemap(c.options.source_maps),
-                );
+                let chunk = &chunks[chunk_index_in_chunks_list];
                 intermediate_output.code(
                     None,
                     c.parse_graph(),
                     &c.graph,
                     public_path,
-                    &chunks[chunk_index_in_chunks_list],
+                    chunk,
                     chunks,
                     &mut display_size,
-                    reference_path_style,
-                    shift_tracking,
+                    ReferencePathStyle::for_chunk(chunk, c.resolver().opts.compile),
+                    SourceMapShiftTracking::for_source_map(
+                        chunk.content.sourcemap(c.options.source_maps),
+                    ),
                 )?
             };
             // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);

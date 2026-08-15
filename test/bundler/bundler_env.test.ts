@@ -158,7 +158,11 @@ test("Bun.build env option: which process.env reads get inlined", async () => {
         "false": { env: false },
         "null": { env: null },
         "0": { env: 0 },
+        '"0"': { env: "0" },
         "inline": { env: "inline" },
+        "true": { env: true },
+        "1": { env: 1 },
+        '"1"': { env: "1" },
         "PUBLIC_*": { env: "PUBLIC_*" },
         "*": { env: "*" },
         "bogus": { env: "bogus" },
@@ -193,6 +197,7 @@ test("Bun.build env option: which process.env reads get inlined", async () => {
   expect(stderr).toBe("");
 
   const nothingInlined = `console.log(process.env.NODE_ENV, process.env.BUN_ENV, process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`;
+  const everythingInlined = `console.log("from_build_env", "from_build_env", "public_value", "private_value");`;
   expect(JSON.parse(stdout)).toEqual({
     "unset": `console.log("from_build_env", "from_build_env", process.env.PUBLIC_FOO, process.env.PRIVATE_BAR);`,
     "disable": nothingInlined,
@@ -200,9 +205,13 @@ test("Bun.build env option: which process.env reads get inlined", async () => {
     "false": nothingInlined,
     "null": nothingInlined,
     "0": nothingInlined,
-    "inline": `console.log("from_build_env", "from_build_env", "public_value", "private_value");`,
+    '"0"': nothingInlined,
+    "inline": everythingInlined,
+    "true": everythingInlined,
+    "1": everythingInlined,
+    '"1"': everythingInlined,
     "PUBLIC_*": `console.log("from_build_env", "from_build_env", "public_value", process.env.PRIVATE_BAR);`,
-    "*": `console.log("from_build_env", "from_build_env", "public_value", "private_value");`,
+    "*": everythingInlined,
     "bogus": "threw: env must be 'inline', 'disable', or a string with a '*' character",
   });
   expect(exitCode).toBe(0);

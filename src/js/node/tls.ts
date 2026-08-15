@@ -735,16 +735,14 @@ function TLSSocket(socket?, options?) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
 
-  // A wrapped socket decides allowHalfOpen; the option only applies when this
-  // socket opens its own connection. The wrapped socket is the first argument
-  // here, or `options.socket` on the tls.connect({ socket }) path (node's
-  // connect() forwards it as the first argument).
+  // A wrapped socket's allowHalfOpen wins over the option:
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1756-L1757
   if (isNetSocketOrDuplex) {
     options = { ...options, allowHalfOpen: socket.allowHalfOpen };
   } else {
     options = options || socket || {};
+    // tls.connect() passes its socket here as options.socket; node passes it as the argument above:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1756-L1757
     const wrapped = options.socket;
     if (wrapped instanceof Duplex) {
       options = { ...options, allowHalfOpen: wrapped.allowHalfOpen };

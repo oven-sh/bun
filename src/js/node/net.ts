@@ -257,11 +257,7 @@ function detachSocket(self) {
 function destroyNT(self, err) {
   self.destroy(err);
 }
-// 'close' listener armed on the connection a TLS socket is upgraded over: the
-// connection going away (its owner destroyed it, or the transport under a
-// wrapped duplex closed) takes the TLS socket with it, like node's wrap 'close'
-// listener. The connection's EOF alone does not; that is what an allowHalfOpen
-// TLS socket outlives.
+// Node's `wrap.on('close', () => this.destroy())` for the connection a TLS socket was upgraded over:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
   if (self[kupgraded] === connection) self.destroy();
@@ -1900,12 +1896,9 @@ Socket.prototype[kAttach] = function (port, socket) {
   SocketHandlers.drain(socket);
 };
 
-// 'end' listener of an fd-upgraded TLS socket: retires the net.Socket whose fd
-// this socket took over.
 Socket.prototype[kCloseRawConnection] = function () {
   const connection = this[kupgraded];
-  // The 'close' this retirement emits is not the connection going away under
-  // this socket; one its owner already started (connection.destroyed) is.
+  // Only a destroy the connection's owner started counts as it closing under this socket.
   if (!connection.destroyed) connection.removeListener("close", this[kOnUpgradedClose]);
   connection.connecting = false;
   connection._handle = null;

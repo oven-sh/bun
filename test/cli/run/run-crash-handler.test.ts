@@ -364,7 +364,9 @@ function traceStringFrameImages(stderr: string): (string | null)[] {
 // them as leaf functions read a CallFrame slot as the return address instead:
 // the null CodeBlock slot ended the trace one frame below the JIT thunk, and
 // below vmEntryToJavaScript the remaining slots were reported as frames in no
-// module until the frame buffer was full.
+// module until the frame buffer was full. Panics (and everything else that is
+// not a fault) were captured with RtlCaptureStackBackTrace, which stopped at
+// the JIT thunk itself.
 describe.if(isWindows)("Windows: crash trace continues below the JS frames", () => {
   // JIT-pool code is in no loaded module; "JIT" is the tag a trace string may
   // carry for it instead of the bare unknown-module marker.
@@ -378,14 +380,19 @@ describe.if(isWindows)("Windows: crash trace continues below the JS frames", () 
     return images.slice(lastJitFrame + 1).filter(image => image === "bun").length;
   }
 
-  test.concurrent("fault in bun's image called from interpreted JS", async () => {
+  // `segfault` is reported from the fault context the VEH receives; `panic`
+  // is reported from inside the panicking code, capturing its own stack.
+  test.concurrent.each([
+    ["segfault", "Segmentation fault at address 0xDEADBEEF"],
+    ["panic", "invoked crashByPanic() handler"],
+  ])("%s in bun's image called from interpreted JS", async (hook, header) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "--debug-crash-handler-use-trace-string",
         "-e",
         `const { crash_handler } = require("bun:internal-for-testing");
-         function innermost() { crash_handler.segfault(); }
+         function innermost() { crash_handler.${hook}(); }
          function middle() { innermost(); }
          function outermost() { middle(); }
          outermost();`,
@@ -395,12 +402,13 @@ describe.if(isWindows)("Windows: crash trace continues below the JS frames", () 
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
+    expect(stderr).toContain(header);
     const images = traceStringFrameImages(stderr);
     expect(images[0]).toBe("bun");
     // Interpreter return addresses for innermost, middle, outermost and the
     // module body, then vmEntryToJavaScript, then at least the native code
-    // that called it. Unfixed, the trace ended at the first of these.
+    // that called it. Unfixed, the segfault trace ended at the first of these
+    // and the panic trace had nothing below the thunk at all.
     expect(bunFramesBelowTheJitFrames(images)).toBeGreaterThanOrEqual(4 + 1 + 1);
     expect(exitCode).not.toBe(0);
   });

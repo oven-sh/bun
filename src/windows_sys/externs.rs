@@ -688,6 +688,10 @@ pub mod ntdll {
             EstablisherFrame: *mut u64,
             ContextPointers: *mut c_void,
         ) -> *mut c_void;
+        /// Fills `ContextRecord` with the caller's register state, as a seed
+        /// for `RtlVirtualUnwind`. `CONTEXT` carries the 16-byte alignment it
+        /// requires.
+        pub fn RtlCaptureContext(ContextRecord: *mut CONTEXT);
     }
 
     #[cfg_attr(windows, link(name = "ntdll"))]

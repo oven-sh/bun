@@ -299,8 +299,11 @@ pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
 
 /// Capture the current thread's call stack.
 ///
-/// POSIX: walk frame pointers. Windows: `RtlCaptureStackBackTrace` via
-/// `.pdata` (rbp is not a reliable frame pointer across all linked code).
+/// POSIX: walk frame pointers. Windows: `RtlCaptureStackBackTrace`, which
+/// stops at the first frame without static unwind info, i.e. at the JIT thunk
+/// whenever the caller was reached from JS. That is acceptable for what this is
+/// used for (`StoredTrace`, captured on every debug-build refcount init, so it
+/// has to stay this cheap); crash reports use [`capture_current_for_crash`].
 ///
 /// `first_address`, when present, trims every frame above (and including) the
 /// capture machinery: frames are dropped until one matches `first_address`.
@@ -346,6 +349,10 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
         }
         n
     };
+    trim_to_first_address(first_address, out, n)
+}
+
+fn trim_to_first_address(first_address: Option<usize>, out: &mut [usize], n: usize) -> usize {
     if let Some(target) = first_address {
         if let Some(skip) = out[..n].iter().position(|&a| a == target) {
             out.copy_within(skip..n, 0);
@@ -353,6 +360,32 @@ pub(crate) fn capture_current(first_address: Option<usize>, out: &mut [usize]) -
         }
     }
     n
+}
+
+/// [`capture_current`] for a crash report, which is captured once and so can
+/// afford the fault path's walk: on Windows this seeds [`walk_context`] from
+/// this thread's own registers, so the report continues through the JS frames
+/// into the code that entered JS exactly as a fault's does. Trimmed the same
+/// way as `capture_current`.
+pub(crate) fn capture_current_for_crash(first_address: Option<usize>, out: &mut [usize]) -> usize {
+    #[cfg(windows)]
+    {
+        if out.is_empty() {
+            return 0;
+        }
+        // SAFETY: CONTEXT is a plain Win32 register dump; all-zeros is valid.
+        let mut ctx: bun_windows_sys::CONTEXT = unsafe { crate::ffi::zeroed_unchecked() };
+        // SAFETY: `ctx` is a writable CONTEXT with the 16-byte alignment the
+        // type declares; RtlCaptureContext only writes into it.
+        unsafe { bun_windows_sys::ntdll::RtlCaptureContext(&raw mut ctx) };
+        out[0] = context_pc_sp(&ctx).0 as usize;
+        let n = walk_context(ctx, out);
+        trim_to_first_address(first_address, out, n)
+    }
+    #[cfg(not(windows))]
+    {
+        capture_current(first_address, out)
+    }
 }
 
 #[cfg(windows)]
@@ -400,13 +433,16 @@ fn unwind_leaf(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAccessor) -> b
     }
 }
 
-/// No unwind info and not a leaf: in bun that is JSC's offlineasm (LLInt and
-/// the `vmEntryTo*` trampolines; it is emitted without unwind info, and the
-/// dynamic tables JSC registers cannot cover in-image code) or a tinycc
-/// `bun:ffi` trampoline. Both keep `rbp`/`x29` on a frame whose first two
+/// No unwind info and not a leaf: in bun that is only JSC's offlineasm (LLInt
+/// and the `vmEntryTo*` trampolines), which is assembled without unwind info
+/// and, being inside the image, cannot be covered by a registered table the way
+/// the JIT pool is (everything else that runs, including tinycc output,
+/// registers one). Offlineasm keeps `rbp`/`x29` on a frame whose first two
 /// slots are the caller's frame pointer and the return address, the layout
 /// JSC's JIT-pool unwind info describes too (`registerJITUnwindInfo`), and
 /// `RtlVirtualUnwind` restores that register across the compiled frames above.
+/// This step becomes dead, and should go, once the WebKit build emits `.pdata`
+/// for the offlineasm blob.
 #[cfg(windows)]
 fn unwind_frame_pointer(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAccessor) -> bool {
     #[cfg(target_arch = "x86_64")]
@@ -441,6 +477,73 @@ fn unwind_frame_pointer(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAcces
     true
 }
 
+/// Walks the stack described by `ctx` with `RtlLookupFunctionEntry` +
+/// `RtlVirtualUnwind`, appending return addresses after the frame-0 PC the
+/// caller already stored in `out[0]`; returns the frame count. Frames without
+/// unwind info are JSC's offlineasm (LLInt, `vmEntryToJavaScript`), which
+/// every JS-initiated crash passes through; those are stepped via the frame
+/// pointer instead (`unwind_frame_pointer`). A frame-pointer walk on its own
+/// would still derail: the prebuilt C++ keeps no frame pointer, and it is
+/// `RtlVirtualUnwind` stepping through those frames that leaves the register
+/// valid.
+#[cfg(windows)]
+fn walk_context(mut ctx: bun_windows_sys::CONTEXT, out: &mut [usize]) -> usize {
+    use bun_windows_sys::{UNW_FLAG_NHANDLER, ntdll};
+    let mut ma = MemoryAccessor::INIT;
+    let mut n = 1usize;
+    // Termination: on x64 RtlVirtualUnwind sets Pc = 0 at the end of the
+    // chain; on ARM64 it can leave the CONTEXT entirely unchanged, so a
+    // step that changed neither Pc nor Sp is also terminal. An Sp-only or
+    // Pc-only check truncates legitimate stacks: an ARM64 fault at prolog
+    // offset 0 (or a .pdata-bearing zero-stack leaf) sets Pc = Lr while
+    // leaving Sp unchanged, and directly-recursive frames share a return
+    // Pc. A non-code Pc means the chain is lost (smashed return address, or
+    // a fallback that did not fit the frame): stop rather than report stack
+    // slots. The `n < out.len()` cap is the ultimate bound.
+    while n < out.len() {
+        let (control_pc, control_sp) = context_pc_sp(&ctx);
+        let mut image_base: u64 = 0;
+        // SAFETY: `control_pc` is a code address from the context;
+        // `image_base` is valid for write; history table may be null.
+        let rf = unsafe {
+            ntdll::RtlLookupFunctionEntry(control_pc, &raw mut image_base, core::ptr::null_mut())
+        };
+        if !rf.is_null() {
+            let mut handler_data: *mut core::ffi::c_void = core::ptr::null_mut();
+            let mut establisher_frame: u64 = 0;
+            // SAFETY: `rf` and `image_base` came from RtlLookupFunctionEntry
+            // for `control_pc`; `ctx` is a valid local CONTEXT; out-params
+            // are valid for write; ContextPointers may be null.
+            unsafe {
+                ntdll::RtlVirtualUnwind(
+                    UNW_FLAG_NHANDLER,
+                    image_base,
+                    control_pc,
+                    rf,
+                    &raw mut ctx,
+                    &raw mut handler_data,
+                    &raw mut establisher_frame,
+                    core::ptr::null_mut(),
+                );
+            }
+        } else if !(n == 1 && unwind_leaf(&mut ctx, &mut ma))
+            && !unwind_frame_pointer(&mut ctx, &mut ma)
+        {
+            break;
+        }
+        let (next_pc, next_sp) = context_pc_sp(&ctx);
+        if next_pc == 0
+            || (next_pc == control_pc && next_sp == control_sp)
+            || !is_executable_memory(next_pc as usize)
+        {
+            break;
+        }
+        out[n] = next_pc as usize;
+        n += 1;
+    }
+    n
+}
+
 /// Capture a faulting thread's call stack from the fault context. `pc` is the
 /// exact faulting instruction (`ExceptionAddress` / `mcontext` PC) and becomes
 /// frame 0.
@@ -450,86 +553,29 @@ fn unwind_frame_pointer(ctx: &mut bun_windows_sys::CONTEXT, ma: &mut MemoryAcces
 /// signal handler's own frames (on the altstack) are never in the chain.
 ///
 /// Windows: `fp` is the `*const CONTEXT` the VEH received (`EXCEPTION_POINTERS
-/// ::ContextRecord`). The walk is `RtlLookupFunctionEntry` + `RtlVirtualUnwind`
-/// seeded from that context, so it starts at the fault frame and the handler's
-/// own frames are never in the chain. The frames without unwind info are JSC's
-/// offlineasm (LLInt, `vmEntryToJavaScript`), which every JS-initiated crash
-/// passes through; those are stepped via the frame pointer instead
-/// (`unwind_frame_pointer`). A frame-pointer walk on its own would still
-/// derail: the prebuilt C++ keeps no frame pointer, and it is `RtlVirtualUnwind`
-/// stepping through those frames that leaves the register valid.
+/// ::ContextRecord`); `walk_context` is seeded from it, so the walk starts
+/// at the fault frame and the handler's own frames are never in the chain.
 pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     if out.is_empty() {
         return 0;
     }
     out[0] = pc;
-    let mut n = 1usize;
     #[cfg(windows)]
     {
-        use bun_windows_sys::{CONTEXT, UNW_FLAG_NHANDLER, ntdll};
         if fp == 0 {
             // No CONTEXT available (should not happen for a real VEH fault).
-            return n;
+            return 1;
         }
         // SAFETY: `fp` is `EXCEPTION_POINTERS::ContextRecord` from the kernel;
-        // valid for the duration of the handler. Copy so RtlVirtualUnwind can
-        // mutate freely without touching the kernel's record.
-        let mut ctx: CONTEXT = unsafe { *(fp as *const CONTEXT) };
-        let mut ma = MemoryAccessor::INIT;
-        // Termination: on x64 RtlVirtualUnwind sets Pc = 0 at the end of the
-        // chain; on ARM64 it can leave the CONTEXT entirely unchanged, so a
-        // step that changed neither Pc nor Sp is also terminal. An Sp-only or
-        // Pc-only check truncates legitimate stacks: an ARM64 fault at prolog
-        // offset 0 (or a .pdata-bearing zero-stack leaf) sets Pc = Lr while
-        // leaving Sp unchanged, and directly-recursive frames share a return
-        // Pc. A non-code Pc means the chain is lost (smashed return address, or
-        // a fallback that did not fit the frame): stop rather than report stack
-        // slots. The `n < out.len()` cap is the ultimate bound.
-        while n < out.len() {
-            let (control_pc, control_sp) = context_pc_sp(&ctx);
-            let mut image_base: u64 = 0;
-            // SAFETY: `control_pc` is a code address from the fault context;
-            // `image_base` is valid for write; history table may be null.
-            let rf = unsafe {
-                ntdll::RtlLookupFunctionEntry(control_pc, &mut image_base, core::ptr::null_mut())
-            };
-            if !rf.is_null() {
-                let mut handler_data: *mut core::ffi::c_void = core::ptr::null_mut();
-                let mut establisher_frame: u64 = 0;
-                // SAFETY: `rf` and `image_base` came from RtlLookupFunctionEntry
-                // for `control_pc`; `ctx` is a valid local CONTEXT; out-params
-                // are valid for write; ContextPointers may be null.
-                unsafe {
-                    ntdll::RtlVirtualUnwind(
-                        UNW_FLAG_NHANDLER,
-                        image_base,
-                        control_pc,
-                        rf,
-                        &mut ctx,
-                        &mut handler_data,
-                        &mut establisher_frame,
-                        core::ptr::null_mut(),
-                    );
-                }
-            } else if !(n == 1 && unwind_leaf(&mut ctx, &mut ma))
-                && !unwind_frame_pointer(&mut ctx, &mut ma)
-            {
-                break;
-            }
-            let (next_pc, next_sp) = context_pc_sp(&ctx);
-            if next_pc == 0
-                || (next_pc == control_pc && next_sp == control_sp)
-                || !is_executable_memory(next_pc as usize)
-            {
-                break;
-            }
-            out[n] = next_pc as usize;
-            n += 1;
-        }
+        // valid for the duration of the handler. Copied so the walk can mutate
+        // it freely without touching the kernel's record.
+        let ctx: bun_windows_sys::CONTEXT = unsafe { *(fp as *const bun_windows_sys::CONTEXT) };
+        walk_context(ctx, out)
     }
     #[cfg(not(windows))]
     {
         let mut it = StackIterator::init(fp);
+        let mut n = 1usize;
         while n < out.len() {
             match it.next() {
                 Some(addr) => {
@@ -539,6 +585,6 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
                 None => break,
             }
         }
+        n
     }
-    n
 }

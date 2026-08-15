@@ -34,12 +34,11 @@ const repo = resolve(import.meta.dirname, "..");
 // thread APIs are; vendored C is not) — otherwise Miri reports
 // `unsupported operation: can't call foreign function`.
 //
-// Ordered longest-running first (bun_ast ~8 min, bun_collections ~3 min,
-// bun_paths ~1 min under Miri; the rest are seconds) so the concurrent run
-// below starts the long poles immediately.
+// Ordered longest-running-under-Miri first so the concurrent run below starts
+// the long poles immediately; everything after bun_hash takes seconds.
 const MIRI_CRATES = [
-  "bun_ast",
   "bun_collections",
+  "bun_ast",
   "bun_paths",
   "bun_hash",
   "bun_base64",

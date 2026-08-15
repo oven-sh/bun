@@ -2221,6 +2221,9 @@ pub(crate) fn install_isolated_packages(
                                     .ok()
                                     .unwrap_or(false);
                             }
+                            // Likewise, the package directory itself is linked into a
+                            // staging sibling and renamed here only once complete, so
+                            // anything found below it belongs to a finished link.
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
                             // Capture the length instead of a `ResetScope` so
                             // `store_path` stays unborrowed.

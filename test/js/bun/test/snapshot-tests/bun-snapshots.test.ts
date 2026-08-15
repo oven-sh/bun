@@ -130,6 +130,32 @@ describe("snapshots taken in hooks", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("per-test hooks share the test's counter, beforeAll/afterAll share the describe's", async () => {
+    using dir = tempDir("snapshot-hook-counters", {
+      "hooks.test.ts": /*js*/ `
+        import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+        describe("d", () => {
+          beforeAll(() => expect("ba").toMatchSnapshot("setup"));
+          beforeEach(() => expect("be").toMatchSnapshot("setup"));
+          afterEach(() => expect("ae").toMatchSnapshot("setup"));
+          afterAll(() => expect("aa").toMatchSnapshot("setup"));
+          test("t1", () => expect("body").toMatchSnapshot("setup"));
+        });
+      `,
+    });
+    const { exitCode, stderr, entries } = await runHooksFile(String(dir));
+    expect(entries).toEqual([
+      'd (unnamed): setup 1 = "ba"',
+      'd t1: setup 1 = "be"',
+      'd t1: setup 2 = "body"',
+      'd t1: setup 3 = "ae"',
+      'd (unnamed): setup 2 = "aa"',
+    ]);
+    expect(stderr).toContain(" 1 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("adding a test does not invalidate the hook snapshots of the other tests", async () => {
     const source = (extraTest: string) => /*js*/ `
       import { afterEach, describe, expect, test } from "bun:test";

@@ -594,4 +594,52 @@ export default function IndexPage() {
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
   });
+
+  test("a route can import a file outside the bundle while rendering", async () => {
+    // import() of a path the bundler never saw is keyed under "bake:" like the bundled
+    // modules, misses the module map, and is read from disk by the regular loader. On
+    // Windows the specifier is a drive path (import.meta.dir is inlined as one), which
+    // used to be joined onto the referrer's bundle path as if it were relative, and the
+    // build failed with `EINVAL reading "\\"`.
+    const dir = await tempDirWithBakeDeps("bake-production-disk-import", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "extra/banner.mjs": `import { detail } from "./detail.mjs";
+
+export const banner = "read from disk while rendering";
+export { detail };`,
+      "extra/detail.mjs": `export const detail = "resolved relative to the file on disk";`,
+      "pages/index.tsx": `import { join } from "node:path";
+
+export default async function IndexPage() {
+  // Computed specifiers, so the bundler leaves these import()s to the runtime.
+  // The first is a normalized native path; the second still has the ".." in it
+  // and, on Windows, mixes separators. Both must name the same module.
+  const joined = await import(join(import.meta.dir, "..", "extra", "banner.mjs"));
+  const unnormalized = await import([import.meta.dir, "..", "extra", "banner.mjs"].join("/"));
+  return (
+    <ul>
+      <li>{joined.banner}</li>
+      <li>{joined.detail}</li>
+      <li>{joined === unnormalized ? "one module instance" : "two module instances"}</li>
+    </ul>
+  );
+}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./src/index.tsx"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(html).toContain("<li>read from disk while rendering</li>");
+    expect(html).toContain("<li>resolved relative to the file on disk</li>");
+    expect(html).toContain("<li>one module instance</li>");
+  });
 });

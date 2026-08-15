@@ -889,14 +889,15 @@ fn iterate_bundled_deps(
             continue;
         }
 
-        let _entry_name = entry.name.slice_u8();
+        let entry_name = entry.name.slice_u8();
 
-        if strings::starts_with_char(_entry_name, b'@') {
-            let concat = entry_subpath(b"node_modules", _entry_name)?;
+        if strings::starts_with_char(entry_name, b'@') {
+            let scope_name = entry_name;
+            let scope_subpath = entry_subpath(b"node_modules", scope_name)?;
 
-            let scoped_dir: Dir = match dir_open_dir_z(
+            let scope_dir: Dir = match dir_open_dir_z(
                 root_dir,
-                &concat,
+                &scope_subpath,
                 bun_sys::OpenDirOptions {
                     iterate: true,
                     ..Default::default()
@@ -906,32 +907,32 @@ fn iterate_bundled_deps(
                 Err(_) => continue,
             };
 
-            let mut scoped_iter = DirIterator::iterate(Fd::from_std_dir(&scoped_dir));
-            while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
-                let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
+            let mut scope_iter = DirIterator::iterate(Fd::from_std_dir(&scope_dir));
+            while let Some(scope_entry) = scope_iter.next().ok().flatten() {
+                let dep_name = entry_subpath(scope_name, scope_entry.name.slice_u8())?;
 
                 let Some(dep) = bundled_deps.iter_mut().find(|dep| {
                     debug_assert!(dep.from_root_package_json);
-                    strings::eql_long(entry_name.as_bytes(), &dep.name, true)
+                    strings::eql_long(dep_name.as_bytes(), &dep.name, true)
                 }) else {
                     continue;
                 };
 
-                let entry_subpath_ = entry_subpath(b"node_modules", entry_name.as_bytes())?;
+                let dep_subpath = entry_subpath(b"node_modules", dep_name.as_bytes())?;
 
-                let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+                let dedupe_entry = dedupe.get_or_put(dep_subpath.as_bytes())?;
                 dep.was_packed = true;
                 if dedupe_entry.found_existing {
                     // already got to it in `add_bundled_dep` below
                     continue;
                 }
 
-                let subdir = open_subdir(&dir, entry_name.as_bytes(), &entry_subpath_);
+                let subdir = open_subdir(&dir, dep_name.as_bytes(), &dep_subpath);
                 add_bundled_dep(
                     stats,
                     log,
                     root_dir,
-                    DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
+                    DirInfo(subdir, dep_subpath.as_bytes().into(), 2),
                     &mut bundled_pack_queue,
                     &mut dedupe,
                     &mut additional_bundled_deps,
@@ -939,29 +940,29 @@ fn iterate_bundled_deps(
                 )?;
             }
         } else {
-            let entry_name = _entry_name;
+            let dep_name = entry_name;
             let Some(dep) = bundled_deps.iter_mut().find(|dep| {
                 debug_assert!(dep.from_root_package_json);
-                strings::eql_long(entry_name, &dep.name, true)
+                strings::eql_long(dep_name, &dep.name, true)
             }) else {
                 continue;
             };
 
-            let entry_subpath_ = entry_subpath(b"node_modules", entry_name)?;
+            let dep_subpath = entry_subpath(b"node_modules", dep_name)?;
 
-            let dedupe_entry = dedupe.get_or_put(entry_subpath_.as_bytes())?;
+            let dedupe_entry = dedupe.get_or_put(dep_subpath.as_bytes())?;
             dep.was_packed = true;
             if dedupe_entry.found_existing {
                 // already got to it in `add_bundled_dep` below
                 continue;
             }
 
-            let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
+            let subdir = open_subdir(&dir, dep_name, &dep_subpath);
             add_bundled_dep(
                 stats,
                 log,
                 root_dir,
-                DirInfo(subdir, entry_subpath_.as_bytes().into(), 2),
+                DirInfo(subdir, dep_subpath.as_bytes().into(), 2),
                 &mut bundled_pack_queue,
                 &mut dedupe,
                 &mut additional_bundled_deps,

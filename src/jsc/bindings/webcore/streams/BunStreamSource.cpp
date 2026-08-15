@@ -1017,6 +1017,7 @@ static void rsisDetachNativeTransform(JSGlobalObject* globalObject, JSReadStream
         ts->m_nativeSinkReadyPromise.clear();
         resolvePromise(globalObject, ready, jsUndefined());
     }
+    nativeCodecAbandon(globalObject, ts);
     op->m_nativeTransform.clear();
 }
 
@@ -1542,6 +1543,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_boundReadStreamIntoSinkOnReady, (JS
             ts->m_nativeSinkReadyPromise.clear();
             Bun::WebStreams::resolvePromise(globalObject, ready, jsUndefined());
             scope.assertNoException();
+        } else if (ts->m_codecPromise) {
+            Bun::WebStreams::nativeCodecContinue(globalObject, ts);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
     if (!op->m_waitingOnSink)

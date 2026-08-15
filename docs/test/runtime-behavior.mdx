@@ -92,7 +92,7 @@ test("test without timeout", async () => {
 This helps catch errors in asynchronous code that might otherwise go unnoticed:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { test } from "bun:test";
+import { test, expect } from "bun:test";
 
 test("test 1", () => {
   // This test passes
@@ -118,7 +118,7 @@ test("test 2", () => {
 The test runner also catches unhandled promise rejections:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { test } from "bun:test";
+import { test, expect } from "bun:test";
 
 test("passing test", () => {
   expect(1).toBe(1);
@@ -315,7 +315,7 @@ bun test src/integration/
 Since tests run in the same process, ensure proper cleanup:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
-import { afterEach } from "bun:test";
+import { afterEach, jest } from "bun:test";
 
 afterEach(() => {
   // Clean up global state

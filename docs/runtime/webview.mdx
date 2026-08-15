@@ -17,7 +17,7 @@ const title = await view.evaluate("document.title");
 await Bun.write("page.png", await view.screenshot());
 ```
 
-On macOS, `Bun.WebView` uses the system's `WKWebView` — nothing to install. On Linux and Windows it drives an installed Chrome, Chromium, Edge, or Brave over the Chrome DevTools Protocol.
+On macOS, `Bun.WebView` uses the system's `WKWebView` — nothing to install. On Linux it drives an installed Chrome, Chromium, Edge, or Brave over the Chrome DevTools Protocol.
 
 Each view runs its page in a separate renderer process. All input methods (`click`, `type`, `press`, `scroll`) dispatch **native** browser events, so the page sees `isTrusted: true` — the same as a real user.
 

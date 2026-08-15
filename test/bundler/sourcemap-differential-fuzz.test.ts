@@ -277,8 +277,9 @@ async function checkProgram(program: Program, generated: string, map: any, stats
   // The map names sources relative to the build root; consumer.sources may
   // prefix them differently from map.sources, so both are matched by suffix.
   const fileOfSource = (source: string): string => {
+    const normalized = source.replaceAll("\\", "/");
     for (const file of originals.keys()) {
-      if (source === file || source.endsWith("/" + file)) return file;
+      if (normalized === file || normalized.endsWith("/" + file)) return file;
     }
     throw new Error(
       `map names source ${JSON.stringify(source)}, which is not one of ${[...originals.keys()]}. ${repro}`,
@@ -344,6 +345,11 @@ async function checkProgram(program: Program, generated: string, map: any, stats
   });
 }
 
+/** An in-memory artifact's path ("./p3/entry.js", or with the host's separators) as a build-root relative name. */
+function outputName(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "");
+}
+
 test(
   `Bun.build source maps point every mapped identifier back at itself ${fuzz.label}`,
   async () => {
@@ -372,7 +378,7 @@ test(
       for (const [offset, program] of programs.entries()) {
         const iteration = first + offset;
         const repro = `${fuzz.repro(iteration)} options=${JSON.stringify(options)}`;
-        const js = build.outputs.find(o => o.kind === "entry-point" && o.path.replace(/^\.\//, "") === program.entry);
+        const js = build.outputs.find(o => o.kind === "entry-point" && outputName(o.path) === program.entry);
         expect(js, `no output for ${program.entry} in ${build.outputs.map(o => o.path)}. ${repro}`).toBeDefined();
         // Paired by path rather than through `js.sourcemap`, which with several
         // entrypoints currently points at the wrong artifact (handed off separately).

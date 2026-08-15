@@ -3350,20 +3350,35 @@ struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>);
 
 impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        let bytes = s.as_bytes();
         let mut start = 0;
-        for (i, c) in s.char_indices() {
-            if !matches!(c, '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}') {
-                continue;
-            }
+        let mut cursor = 0;
+        // The scan stops at every byte outside 0x20..=0x7E plus `\` (passed as the
+        // quote so nothing else is reported); stops that are not C0, DEL or a C1
+        // control (`C2 80..=C2 9F`) are skipped.
+        while let Some(offset) =
+            strings::index_of_needs_escape_for_java_script_string(&bytes[cursor..], b'\\')
+        {
+            let i = cursor + offset as usize;
+            let (code_point, len) = match bytes[i] {
+                byte @ (0x00..=0x1F | 0x7F) => (byte as u32, 1),
+                0xC2 if matches!(bytes.get(i + 1), Some(0x80..=0x9F)) => (bytes[i + 1] as u32, 2),
+                byte => {
+                    let char_len = strings::wtf8_byte_sequence_length(byte) as usize;
+                    cursor = (i + char_len).min(bytes.len());
+                    continue;
+                }
+            };
             self.0.write_str(&s[start..i])?;
-            match c {
-                '\n' => self.0.write_str("\\n")?,
-                '\r' => self.0.write_str("\\r")?,
-                '\t' => self.0.write_str("\\t")?,
-                c if c.is_ascii() => write!(self.0, "\\x{:02x}", c as u32)?,
-                c => write!(self.0, "\\u{:04x}", c as u32)?,
+            match code_point {
+                0x0A => self.0.write_str("\\n")?,
+                0x0D => self.0.write_str("\\r")?,
+                0x09 => self.0.write_str("\\t")?,
+                0x00..=0x7F => write!(self.0, "\\x{:02x}", code_point)?,
+                _ => write!(self.0, "\\u{:04x}", code_point)?,
             }
-            start = i + c.len_utf8();
+            start = i + len;
+            cursor = start;
         }
         self.0.write_str(&s[start..])
     }

@@ -3122,8 +3122,7 @@ impl RunCommand {
         let mut remote_urls: Vec<Box<[u8]>> = Vec::new();
         for u in collector.urls.iter() {
             let u: &[u8] = u.as_ref();
-            // Case-insensitive scheme check per RFC 3986 §3.1, matching
-            // the lookup in `emit_image` against `remote_image_paths`.
+            // Scheme is case-insensitive per RFC 3986 §3.1.
             if !bun_paths::strings::starts_with_case_insensitive_ascii(u, b"http://")
                 && !bun_paths::strings::starts_with_case_insensitive_ascii(u, b"https://")
             {

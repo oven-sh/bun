@@ -320,6 +320,124 @@ describe("bundler", () => {
       stdout: "react\nreact",
     },
   });
+  // `const x = require("react")` is normally replaced by the import it becomes.
+  // An exported declaration has to survive as a declaration, or the export is
+  // dropped with it.
+  itBundled("cjs2esm/UnwrappedModuleRequireExported", {
+    files: {
+      "/entry.js": /* js */ `
+        import { constReact, varReact, letReact, first, second, third } from "./lib.js";
+        import { importEquals, NS } from "./lib-ts.ts";
+        console.log(constReact.react, varReact.react, letReact.react);
+        console.log(first.react, second, third.react);
+        console.log(importEquals.react, NS.react.react);
+      `,
+      "/lib.js": /* js */ `
+        export const constReact = require("react");
+        export var varReact = require("react");
+        export let letReact = require("react");
+        export const first = require("react"),
+          second = "second",
+          third = require("react");
+      `,
+      "/lib-ts.ts": /* ts */ `
+        export import importEquals = require("react");
+        export namespace NS {
+          export const react = require("react");
+        }
+      `,
+      ...fakeReactNodeModules,
+    },
+    run: {
+      stdout: "react react react\nreact second react\nreact react",
+    },
+  });
+  // Same against a package that converts to ESM. The unexported declaration is
+  // still folded into the import; the exported one stays a declaration.
+  itBundled("cjs2esm/UnwrappedModuleRequireExportedConverted", {
+    files: {
+      "/entry.js": /* js */ `
+        import { exported } from "./lib.js";
+        console.log(exported.react);
+      `,
+      "/lib.js": /* js */ `
+        export const exported = require("react");
+        const unexported = require("react");
+        console.log(unexported.react);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        exports.react = "react";
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        {
+          "name": "react",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    onAfterBundle: api => {
+      const code = api.readFile("out.js");
+      expect(code).toMatch(/var exported = \(?exports_react\)?;/);
+      expect(code).not.toContain("unexported");
+    },
+    run: {
+      stdout: "react\nreact",
+    },
+  });
+  // A `using` declaration disposes the required value itself, so its require()
+  // is not unwrapped at all: the import namespace __toESM() builds has no
+  // symbol-keyed properties and only getters. The expected output is what the
+  // entry prints unbundled.
+  itBundled("cjs2esm/UnwrappedModuleRequireUsing", {
+    files: {
+      "/entry.js": /* js */ `
+        import reactExports from "react";
+        import schedulerExports from "scheduler";
+        {
+          using react = require("react");
+          await using scheduler = require("scheduler");
+          using conditional = require(Math.random() < 2 ? "react" : "scheduler");
+          console.log(react.react, scheduler.scheduler, conditional.react);
+          console.log(react === reactExports, scheduler === schedulerExports, conditional === reactExports);
+        }
+        console.log("after", reactExports.disposed, schedulerExports.disposed);
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        module.exports = {
+          react: "react",
+          [Symbol.dispose]() {
+            this.disposed = true;
+            console.log("dispose react");
+          },
+        };
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        {
+          "name": "react",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        exports.scheduler = "scheduler";
+        exports[Symbol.asyncDispose] = async function () {
+          this.disposed = true;
+          console.log("dispose scheduler");
+        };
+      `,
+      "/node_modules/scheduler/package.json": /* json */ `
+        {
+          "name": "scheduler",
+          "version": "1.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    run: {
+      stdout: "react scheduler react\ntrue true true\ndispose react\ndispose scheduler\ndispose react\nafter true true",
+    },
+  });
   itBundled("cjs2esm/ReactSpecificUnwrapping", {
     files: {
       "/entry.js": /* js */ `

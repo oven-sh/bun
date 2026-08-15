@@ -1937,6 +1937,13 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
+    // A loaded lockfile already describes the project (a migrated
+    // pnpm-lock.yaml imports pnpm-workspace.yaml itself); without one, the
+    // package.json read below is all the install has to go on.
+    if !matches!(load_result, lockfile::LoadResult::Ok { .. }) {
+        crate::pnpm::migrate_pnpm_workspace_config(manager)?;
+    }
+
     // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
     let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),

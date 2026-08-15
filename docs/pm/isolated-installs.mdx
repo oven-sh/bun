@@ -207,12 +207,14 @@ bun install --linker isolated
 Isolated installs are conceptually similar to pnpm, so migration is direct:
 
 ```bash terminal icon="terminal"
-# Remove pnpm files
-rm -rf node_modules pnpm-lock.yaml
+# Remove pnpm's node_modules
+rm -rf node_modules
 
 # Install with Bun's isolated linker
 bun install --linker isolated
 ```
+
+Keep `pnpm-lock.yaml` around for this first install: Bun converts it to `bun.lock`, so you keep the versions pnpm had resolved. The workspace list, catalogs and overrides in `pnpm-workspace.yaml` are moved into the root `package.json` whether or not a `pnpm-lock.yaml` is present. See [pnpm migration](/pm/cli/install#pnpm-migration) for what is converted.
 
 The main difference is that Bun uses symlinks in `node_modules` while pnpm uses a global store with symlinks.
 

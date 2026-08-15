@@ -1307,10 +1307,7 @@ fn plan_edges(
     Ok((pins, report))
 }
 
-/// Live rows grouped per planned instance. `followers` resolve to the instance and only the
-/// post-resolve redirect can move them; `direct` rows (root/workspace-owned) name its package and
-/// are re-resolved by the differ instead, so they are matched by name (after the differ re-appends
-/// root rows their resolutions are not yet valid). Orphaned rows outside every live slice are skipped.
+/// Live rows per planned instance: `followers` resolve to it and move only via the post-resolve redirect; `direct` root/workspace rows are re-resolved by the differ, so they are matched by name.
 struct InstanceEdges {
     followers: Vec<Vec<DependencyID>>,
     direct: Vec<Vec<DependencyID>>,
@@ -1367,8 +1364,7 @@ fn edges_on_instances(lockfile: &Lockfile, instances: &[Instance]) -> InstanceEd
     InstanceEdges { followers, direct }
 }
 
-/// Whether the differ will land this root/workspace row back on `current`: the best release its
-/// range allows (or its dist-tag target) is `current` itself.
+/// The differ lands this root/workspace row back on `current` when that is the best release (or dist-tag target) its range allows.
 fn direct_row_stays(
     lockfile: &Lockfile,
     manifest: &PackageManifest,

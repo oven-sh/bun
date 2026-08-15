@@ -571,6 +571,10 @@ class InspectorCDPAdapter {
           endLine: params.endLine ?? 0,
           endColumn: params.endColumn ?? 0,
         });
+        // JSC describes the script with scriptType ("program", "module" or
+        // "webassembly"); V8 splits the same information into isModule and
+        // scriptLanguage.
+        const { scriptType } = params;
         this.#emitToClient("Debugger.scriptParsed", {
           scriptId: params.scriptId,
           url: cdpUrl,
@@ -580,10 +584,10 @@ class InspectorCDPAdapter {
           endColumn: params.endColumn ?? 0,
           executionContextId: EXECUTION_CONTEXT_ID,
           hash: "",
-          isModule: !!params.module,
+          isModule: scriptType === "module",
           sourceMapURL: params.sourceMapURL,
           embedderName: cdpUrl,
-          scriptLanguage: "JavaScript",
+          scriptLanguage: scriptType === "webassembly" ? "WebAssembly" : "JavaScript",
         });
         return;
       }

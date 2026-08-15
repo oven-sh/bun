@@ -141,6 +141,11 @@ Ref<SourceProvider> SourceProvider::create(
 
     auto provider = getProvider();
 
+    // The provider's copy of the struct now owns this +1 (released in the
+    // destructor); clear the caller's so ResolvedSourceCodeHolder doesn't
+    // release it again.
+    resolvedSource.commonjs_static_exports = BunStringEmpty;
+
     if (shouldGenerateCodeCoverage) {
         ByteRangeMapping__generate(Bun::toString(provider->sourceURL()), Bun::toString(provider->source().toStringWithoutCopying()), provider->asID());
     }
@@ -176,6 +181,7 @@ SourceProvider::~SourceProvider()
     m_resolvedSource.specifier.deref();
     m_resolvedSource.source_url.deref();
     m_resolvedSource.bytecode_origin_path.deref();
+    m_resolvedSource.commonjs_static_exports.deref();
 }
 
 extern "C" void CachedBytecode__deref(JSC::CachedBytecode* cachedBytecode)

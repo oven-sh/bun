@@ -749,6 +749,10 @@ impl BinaryExpressionVisitor {
             _ => {}
         }
 
+        if e_.op == Op::Code::BinAssign {
+            p.record_commonjs_static_export_assignment(&e_.left, &e_.right);
+        }
+
         v.left_in = ExprIn {
             assign_target: Op::Code::binary_assign_target(e_.op),
             ..ExprIn::default()

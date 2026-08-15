@@ -57,10 +57,15 @@ public:
 
     ~ResolvedSourceCodeHolder()
     {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
+        if (!res->success)
+            return;
+        if (res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
             res->result.value.needsDeref = false;
             res->result.value.source_code.impl.wtf->deref();
         }
+        // Empty by now unless no module or provider took it (error paths).
+        res->result.value.commonjs_static_exports.deref();
+        res->result.value.commonjs_static_exports = BunStringEmpty;
     }
 
     ErrorableResolvedSource* res;
@@ -802,7 +807,7 @@ JSValue fetchCommonJSModule(
                 // The wrapper override only affects CJS evaluation; if it's
                 // active, fall through and re-transpile so the override can run.
                 if (!globalObject->hasOverriddenModuleWrapper) {
-                    target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                    target->evaluate(globalObject, Ref(*cached));
                     RETURN_IF_EXCEPTION(scope, {});
                     RELEASE_AND_RETURN(scope, target);
                 }
@@ -1099,7 +1104,7 @@ static JSValue fetchESMSourceCode(
             // affects CJS evaluation, so don't serve a cached Program-type provider
             // when one is active in this global — fall through to re-transpile.
             if (!globalObject->hasOverriddenModuleWrapper) {
-                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
+                auto created = Bun::createCommonJSModule(globalObject, specifierJS, Ref(*cached));
                 EXCEPTION_ASSERT(created.has_value() == !scope.exception());
                 if (created.has_value()) {
                     RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));

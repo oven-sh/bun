@@ -1229,6 +1229,8 @@ impl AsyncModule {
         // can `mem::take` instead of cloning.
         let is_commonjs_module = self.parse_result.ast.has_commonjs_export_names
             || self.parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
+        // Backed by `self.arena`, which outlives this fn.
+        let commonjs_static_exports = self.parse_result.ast.commonjs_static_exports;
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
@@ -1316,6 +1318,8 @@ impl AsyncModule {
             };
 
             resolved_source.is_commonjs_module = is_commonjs_module;
+            resolved_source.commonjs_static_exports =
+                ResolvedSource::commonjs_static_exports_from_bytes(commonjs_static_exports.slice());
 
             return Ok(resolved_source);
         }
@@ -1325,6 +1329,9 @@ impl AsyncModule {
             specifier: BunString::init(specifier),
             source_url: BunString::init(path.text),
             is_commonjs_module,
+            commonjs_static_exports: ResolvedSource::commonjs_static_exports_from_bytes(
+                commonjs_static_exports.slice(),
+            ),
             ..Default::default()
         })
     }

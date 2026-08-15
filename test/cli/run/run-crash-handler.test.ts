@@ -30,13 +30,23 @@ const panicApproaches = [
   ["rustUnwrap", 'called `Result::unwrap()` on an `Err` value: "invoked crashByRustUnwrap() handler"'],
 ] as const;
 
+// In trace-string mode (release builds, or --debug-crash-handler-use-trace-string)
+// the report ends with the trace string on its own line after "please file a
+// GitHub issue using the link below:". With noReportEnv's empty base URL it is
+// printed as just the path, `/{version}/...`.
+function traceStringFromReport(stderr: string): string {
+  const traceString = (stderr.split("using the link below:")[1] ?? "").trim().split(/\s+/)[0];
+  expect(traceString).toBeTruthy();
+  return traceString;
+}
+
 // A trace string is `{base}/{version}/{header}{frames...}{VLQ 0}{reason}`. For
 // a panic the reason is the tag `0` followed by the zlib-compressed, base64
 // message (see `encode_trace_string` in src/crash_handler/lib.rs). The frames
 // are variable-length, so find the terminator by trying each `A0` (`A` is the
 // VLQ encoding of 0) until the remainder inflates.
 function panicMessageFromTraceString(traceString: string): string | undefined {
-  const pathname = new URL(traceString).pathname;
+  const pathname = new URL(traceString, "http://trace.invalid").pathname;
   const payload = pathname.slice(pathname.indexOf("/", 1) + 1);
   for (let i = payload.indexOf("A0"); i !== -1; i = payload.indexOf("A0", i + 1)) {
     try {
@@ -115,6 +125,39 @@ describe("panics through panic_impl and through the std panic hook print the sam
     // The message is reported on its own, with no `file:line:col` suffix.
     expect(stderr).toContain(`panic(main thread): ${message}\n`);
     expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code.");
+    expect(panicMessageFromTraceString(traceStringFromReport(stderr))).toBe(message);
+    expect(exitCode).not.toBe(0);
+  });
+});
+
+// The one thing the panic hook does besides calling the crash handler: a panic
+// payload can be arbitrarily long (an `assert_eq!` dump), so it reports at most
+// MAX_MESSAGE_BYTES (1024) of it, cut on a char boundary (see `rust_panic_hook`
+// in src/crash_handler/lib.rs). `rustPanic(message)` panics with the given
+// message, which reaches the hook as a `String` payload.
+describe("the panic hook caps the reported message at 1024 bytes", () => {
+  const a = (n: number) => Buffer.alloc(n, "a").toString();
+  // [name, JS expression the child panics with, what the report must contain]
+  test.concurrent.each([
+    ["a 1024-byte message is reported whole", `Buffer.alloc(1019, "a") + ":tail"`, `${a(1019)}:tail`],
+    ["a longer message is cut after 1024 bytes", `Buffer.alloc(1024, "a") + ":tail"`, a(1024)],
+    // Bytes 1023-1024 are one two-byte char; cutting at byte 1024 would split it.
+    ["the cut does not split a multi-byte char", `Buffer.alloc(1023, "a") + "\\u00e9"`, a(1023)],
+  ])("%s", async (_name, messageExpr, reported) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("bun:internal-for-testing").crash_handler.rustPanic(${messageExpr})`,
+        "--debug-crash-handler-use-trace-string",
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+    expect(stderr.match(/^panic\(main thread\): (.*)$/m)?.[1]).toBe(reported);
+    expect(panicMessageFromTraceString(traceStringFromReport(stderr))).toBe(reported);
     expect(exitCode).not.toBe(0);
   });
 });
@@ -656,8 +699,8 @@ describe("automatic crash reporter", () => {
 
       // Assert on the report before waiting for the upload, so a crash that
       // never reports fails here instead of timing out on the promise below.
-      const traceString = stderr.split(/\s+/).find(word => word.startsWith(server.url.toString()));
-      expect(traceString).toBeDefined();
+      const traceString = traceStringFromReport(stderr);
+      expect(traceString).toStartWith(server.url.toString());
       if (approach !== "outOfMemory") {
         expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
       } else {
@@ -668,7 +711,7 @@ describe("automatic crash reporter", () => {
       // so a real Rust panic must encode its message exactly like panic_impl.
       const panicMessage = panicMessages.get(approach);
       if (panicMessage !== undefined) {
-        expect(panicMessageFromTraceString(traceString!)).toBe(panicMessage);
+        expect(panicMessageFromTraceString(traceString)).toBe(panicMessage);
       }
       expect(exitCode).not.toBe(0);
 

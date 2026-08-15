@@ -614,10 +614,13 @@ mod draft {
     static SUPPRESS_REPORTING: AtomicBool = AtomicBool::new(false);
 
     /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
+    ///
+    /// Borrows the message from the crashing frame: a reason is only ever
+    /// formatted and then passed to `crash_handler`/`crash`, never stored.
     #[derive(Clone, Copy)]
-    pub enum CrashReason {
+    pub enum CrashReason<'a> {
         /// From @panic()
-        Panic(&'static [u8]),
+        Panic(&'a [u8]),
         /// "reached unreachable code"
         Unreachable,
 
@@ -638,12 +641,12 @@ mod draft {
         StackOverflow,
 
         /// Either `main` returned an error, or somewhere else in the code a trace string is printed.
-        ZigError(&'static [u8]),
+        ZigError(&'a [u8]),
 
         OutOfMemory,
     }
 
-    impl CrashReason {
+    impl CrashReason<'_> {
         /// Signal to terminate the process with after the crash report has
         /// been printed. Signal-originated crashes re-raise the original
         /// fault so the parent process (and core-dump analyzers) see the
@@ -668,7 +671,7 @@ mod draft {
         }
     }
 
-    impl fmt::Display for CrashReason {
+    impl fmt::Display for CrashReason<'_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self {
                 CrashReason::Panic(message) => write!(writer, "{}", bstr::BStr::new(message)),
@@ -785,7 +788,7 @@ mod draft {
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
     #[cold]
-    pub fn crash_handler(reason: CrashReason, seed: TraceSeed) -> ! {
+    pub fn crash_handler(reason: CrashReason<'_>, seed: TraceSeed) -> ! {
         if cfg!(debug_assertions) {
             Output::disable_scoped_debug_writer();
         }
@@ -1449,8 +1452,7 @@ mod draft {
             if msg == b"reached unreachable code" {
                 CrashReason::Unreachable
             } else {
-                // SAFETY: process is about to abort; the borrow is never invalidated.
-                CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
+                CrashReason::Panic(msg)
             },
             TraceSeed::BeginAddr(begin_addr),
         );
@@ -1722,25 +1724,24 @@ mod draft {
     #[cold]
     #[inline(never)]
     fn rust_panic_hook(info: &std::panic::PanicHookInfo<'_>) {
+        /// A panic payload can be arbitrarily long (`assert_eq!` on two large
+        /// values), but `encode_trace_string` has to fit the compressed message
+        /// into the fixed-size trace string buffer. Cut on a char boundary so
+        /// the report stays valid UTF-8.
+        const MAX_MESSAGE_BYTES: usize = 1024;
+
         // `panic!` in Rust 2021 always carries a `&'static str` or `String`
         // payload; only `std::panic::panic_any` can produce anything else.
         let msg = info
             .payload_as_str()
             .unwrap_or("<non-string panic payload>");
-        // `encode_trace_string` has to fit the compressed message into the
-        // fixed-size trace string buffer; cap it so a huge assertion dump still
-        // yields a usable report.
-        let msg = &msg[..msg.floor_char_boundary(1024)];
-        // SAFETY: `CrashReason::Panic` holds a `&'static [u8]` because every
-        // path that builds one ends in `crash_handler`, which never returns.
-        // The payload is owned by the std panic machinery's frames below this
-        // one (or is a string literal), so it stays live for as long as the
-        // process does, and nothing takes a `&mut` to it while the hook runs.
-        let reason =
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg.as_bytes()) });
+        let msg = &msg[..msg.floor_char_boundary(MAX_MESSAGE_BYTES)];
         // Read in this frame (not inside a closure) so the trim anchor is a
         // frame that is still on the stack when the trace is captured.
-        crash_handler(reason, TraceSeed::BeginAddr(debug::return_address()));
+        crash_handler(
+            CrashReason::Panic(msg.as_bytes()),
+            TraceSeed::BeginAddr(debug::return_address()),
+        );
     }
 
     /// Adapter for non-fatal `bun_core::dump_current_stack_trace` callers
@@ -1841,7 +1842,7 @@ mod draft {
     #[cfg(windows)]
     fn classify_exception_windows(
         record: &bun_sys::windows::EXCEPTION_RECORD,
-    ) -> Option<CrashReason> {
+    ) -> Option<CrashReason<'static>> {
         Some(match record.ExceptionCode {
             bun_sys::windows::EXCEPTION_DATATYPE_MISALIGNMENT => CrashReason::DatatypeMisalignment,
             bun_sys::windows::EXCEPTION_ACCESS_VIOLATION => {
@@ -2455,7 +2456,7 @@ mod draft {
 
     struct TraceString<'a> {
         trace: &'a StackTrace<'a>,
-        reason: CrashReason,
+        reason: CrashReason<'a>,
         action: TraceStringAction,
     }
 
@@ -2818,7 +2819,7 @@ mod draft {
     /// On POSIX this re-raises the signal that caused the crash (or SIGABRT
     /// for panics) so the parent sees the real fault and core dumps are
     /// attributed correctly.
-    fn crash(reason: CrashReason) -> ! {
+    fn crash(reason: CrashReason<'_>) -> ! {
         #[cfg(not(windows))]
         {
             let sig = reason.terminal_signal();
@@ -3518,7 +3519,7 @@ mod draft {
         // SAFETY: per the caller contract above, `name` is a valid NUL-terminated C string (non-null).
         let name_bytes = unsafe { bun_core::ffi::cstr(name) }.to_bytes();
         // PORTING.md §Forbidden: no Box::leak. We're on the noreturn path, so a stack
-        // buffer suffices — `panic_impl` erases to &'static for the abort path.
+        // buffer suffices.
         let mut msg = BoundedArray::<u8, 256>::default();
         let _ = write!(
             msg.writer(),
@@ -3535,8 +3536,7 @@ mod draft {
         // SAFETY: caller passes a valid (ptr, len) byte slice
         let msg = unsafe { core::slice::from_raw_parts(message_ptr, message_len) };
         crash_handler(
-            // SAFETY: noreturn — see panic_impl note
-            CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) }),
+            CrashReason::Panic(msg),
             TraceSeed::BeginAddr(debug::return_address()),
         );
     }

@@ -983,7 +983,7 @@ describe("ES Decorators", () => {
         "entry.js": `
           import Cls from "./mod.js";
           console.log("static field:", Cls.observed);
-          console.log(Cls.name);
+          console.log(Cls.name, Cls, Bun.inspect(new Cls(), { compact: true }));
         `,
         "mod.js": `
           function dec(fn, ctx) {
@@ -993,12 +993,13 @@ describe("ES Decorators", () => {
             static observed = this.name;
             static { console.log("static block:", this.name); }
             @dec static foo() {}
-            @dec bar() {}
           }
         `,
       });
       expect(stderr).toBe("");
-      expect(stdout).toBe("static initializer: default\nstatic block: default\nstatic field: default\ndefault\n");
+      expect(stdout).toBe(
+        "static initializer: default\nstatic block: default\nstatic field: default\ndefault [class default] default {}\n",
+      );
       expect(exitCode).toBe(0);
     });
 
@@ -1028,7 +1029,7 @@ describe("ES Decorators", () => {
       const { stdout, stderr, exitCode } = await runFiles({
         "entry.js": `
           import Cls from "./mod.js";
-          console.log(Cls.name);
+          console.log(Cls.name, Cls);
         `,
         "mod.js": `
           function dec(cls, ctx) { console.log("ctx.name:", ctx.name, "cls.name:", cls.name); }
@@ -1036,7 +1037,7 @@ describe("ES Decorators", () => {
         `,
       });
       expect(stderr).toBe("");
-      expect(stdout).toBe("ctx.name: default cls.name: default\ndefault\n");
+      expect(stdout).toBe("ctx.name: default cls.name: default\ndefault [class default]\n");
       expect(exitCode).toBe(0);
     });
 

@@ -1651,6 +1651,57 @@ describe("package-lock.json migration fixes", () => {
       ).toStrictEqual({ name: "b", version: "1.0.0" });
     });
 
+    // npm deduplicated a local folder's `files` onto the hoisted link into file-dep. Each dependent needs its own
+    // form of the row: file-dep's is read relative to file-dep, the local folder's relative to the project.
+    test.concurrent.each([
+      ["file-dep", "local"],
+      ["local", "file-dep"],
+    ])("a local folder sharing the directory gets the project-relative row (%s linked first)", async (...order) => {
+      using registry = localRegistry();
+      const specs: Record<string, string> = { "file-dep": "1.0.0", local: "file:vendor/local" };
+      const dependencies = Object.fromEntries(order.map(name => [name, specs[name]]));
+      const name = `npm-migrate-folder-shared-${order[0]}-first`;
+      using dir = synthetic(
+        name,
+        {
+          "package.json": JSON.stringify({ name, dependencies }),
+          "vendor/local/package.json": JSON.stringify({
+            name: "local",
+            version: "1.0.0",
+            dependencies: { files: "*" },
+          }),
+          "package-lock.json": npmLock(name, {
+            "": { name, dependencies },
+            "node_modules/file-dep": {
+              version: "1.0.0",
+              resolved: registry.tarball("file-dep", "1.0.0"),
+              integrity: registry.integrity("file-dep", "1.0.0"),
+              dependencies: { files: "file:./the-files" },
+            },
+            "node_modules/file-dep/the-files": { name: "files", version: "1.1.1" },
+            "node_modules/files": { resolved: "node_modules/file-dep/the-files", link: true },
+            "node_modules/local": { resolved: "vendor/local", link: true },
+            "vendor/local": { version: "1.0.0", dependencies: { files: "*" } },
+          }),
+        },
+        registry.url,
+      );
+
+      const { lock } = await migrate(dir);
+      expect(lock.packages["file-dep/files"]).toStrictEqual(["files@file:the-files", {}]);
+      expect(lock.packages["local/files"]).toStrictEqual(["files@file:node_modules/file-dep/the-files", {}]);
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error");
+      expect(install.exitCode).toBe(0);
+      for (const dependent of ["file-dep", "local"]) {
+        expect(
+          await Bun.file(join(String(dir), "node_modules", dependent, "node_modules", "files", "package.json")).json(),
+        ).toHaveProperty("name", "files");
+      }
+    });
+
     test.concurrent(
       "a registry package deduplicated onto a folder the root declares keeps the root's row",
       async () => {

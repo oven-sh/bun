@@ -113,7 +113,9 @@ fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
 /// installed relative to the project, so its entry key is its resolution; one
 /// declared by a package installed from the cache is installed relative to that
 /// package (`PackageInstaller`, transitive folder branch), so its resolution is
-/// `path`. The same folder migrates once per dependent, not through `build_or_get`.
+/// `path`. Such a build is made for each dependent and never enters
+/// `entry_package_ids`, so a dependent of either kind gets its own form of the row
+/// whichever is linked first.
 #[derive(Clone, Copy)]
 struct FolderInDependent<'k> {
     path: &'k [u8],
@@ -454,7 +456,9 @@ impl<'a> Migrator<'a> {
                         self.this.packages.items_resolution_mut()[existing as usize] = res;
                     }
                 }
-                self.entry_package_ids[j as usize] = existing;
+                if folder_in_dependent.is_none() {
+                    self.entry_package_ids[j as usize] = existing;
+                }
                 self.shadow(j);
                 return Ok(existing);
             }
@@ -475,8 +479,13 @@ impl<'a> Migrator<'a> {
             scripts: Default::default(),
         })?;
         self.this.get_or_put_id(id, name_hash)?;
-        self.entry_package_ids[j as usize] = id;
         self.queue.push((j, id));
+        // `entry_package_ids` only ever holds the entry-key build, which every
+        // dependent that is not installed from the cache gets from `build_or_get`.
+        match folder_in_dependent {
+            None => self.entry_package_ids[j as usize] = id,
+            Some(_) => self.shadowed.set(j as usize),
+        }
         Ok(id)
     }
 

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, pack, tempDir, VerdaccioRegistry } from "harness";
 import { dirname, join } from "path";
 
 const verdaccio = new VerdaccioRegistry();
@@ -1083,6 +1083,187 @@ snapshots:
     expect(bunLock).toContain(`"sub-dep": "file:./sub-dep"`);
     expect(bunLock).toContain(`["sub-dep@file:sub-dep", { "dependencies": { "nested-child": "file:sub-dep/child" } }]`);
     expect(bunLock).toContain(`["nested-child@file:sub-dep/child", {}]`);
+  });
+
+  // pnpm resolves a `file:` directory declared by a package it installs from a registry, tarball or git
+  // against the project, and `directory:` is always project-relative. bun installs such a dependency from
+  // inside the declaring package, so the migrated row only installs when the package ships the directory.
+  describe("file: directory pnpm resolved against the project for an installed package", () => {
+    const tarball = "pkg-1.0.0.tgz";
+    const warning = `warn: "sub" (file:vendor/sub) is a dependency of "pkg@${tarball}" in pnpm-lock.yaml; bun resolves it inside that package instead of the project, so it is only installed if the package contains "vendor/sub"`;
+
+    type Extra = {
+      manifest?: Record<string, unknown>;
+      files?: Record<string, string>;
+      overrides?: string;
+      importers?: string;
+      packages?: string;
+      snapshots?: string;
+    };
+
+    // What a project-side declarer of `sub` adds on top of the tarball package depending on it.
+    const alsoDeclaredBy: Record<string, Extra> = {
+      "nobody": {},
+      "the root": {
+        manifest: { dependencies: { sub: "file:./vendor/sub" } },
+        importers: `      sub:
+        specifier: file:./vendor/sub
+        version: file:vendor/sub
+`,
+      },
+      "a workspace": {
+        manifest: { workspaces: ["packages/app"] },
+        files: {
+          "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { sub: "file:../../vendor/sub" } }),
+        },
+        importers: `
+  packages/app:
+    dependencies:
+      sub:
+        specifier: file:../../vendor/sub
+        version: file:vendor/sub
+`,
+      },
+      "a file: package of the root": {
+        manifest: { dependencies: { local: "file:./vendor/local" } },
+        files: {
+          "vendor/local/package.json": JSON.stringify({
+            name: "local",
+            version: "1.0.0",
+            dependencies: { sub: "file:../sub" },
+          }),
+        },
+        importers: `      local:
+        specifier: file:./vendor/local
+        version: file:vendor/local
+`,
+        packages: `  local@file:vendor/local:
+    resolution: {directory: vendor/local, type: directory}
+    version: 1.0.0
+
+`,
+        snapshots: `  local@file:vendor/local:
+    dependencies:
+      sub: file:vendor/sub
+
+`,
+      },
+      "an override": {
+        manifest: { pnpm: { overrides: { sub: "file:vendor/sub" } } },
+        overrides: `overrides:
+  sub: file:vendor/sub
+
+`,
+      },
+    };
+
+    async function project(name: string, declarer: keyof typeof alsoDeclaredBy) {
+      const {
+        manifest = {},
+        files = {},
+        overrides = "",
+        importers = "",
+        packages = "",
+        snapshots = "",
+      } = alsoDeclaredBy[declarer];
+      const dir = tempDir(`pnpm-v9-installed-package-folder-${name}`, {
+        ...files,
+        "package.json": JSON.stringify({
+          name,
+          ...manifest,
+          dependencies: { pkg: `file:${tarball}`, ...(manifest.dependencies as Record<string, string> | undefined) },
+        }),
+        "pkg-src/package.json": JSON.stringify({
+          name: "pkg",
+          version: "1.0.0",
+          dependencies: { sub: "file:./vendor/sub" },
+        }),
+        "pkg-src/index.js": `module.exports = require("sub/package.json").version;`,
+        "vendor/sub/package.json": JSON.stringify({ name: "sub", version: "1.0.0" }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+${overrides}importers:
+
+  .:
+    dependencies:
+      pkg:
+        specifier: file:${tarball}
+        version: file:${tarball}
+${importers}
+packages:
+
+${packages}  pkg@file:${tarball}:
+    resolution: {tarball: file:${tarball}}
+    version: 1.0.0
+
+  sub@file:vendor/sub:
+    resolution: {directory: vendor/sub, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+${snapshots}  pkg@file:${tarball}:
+    dependencies:
+      sub: file:vendor/sub
+
+  sub@file:vendor/sub: {}
+`,
+      });
+      await pack(join(String(dir), "pkg-src"), bunEnv, "--destination", "..");
+      return dir;
+    }
+
+    test.concurrent("warns and keeps the row when only the installed package depends on it", async () => {
+      using dir = await project("only", "nobody");
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).toContain(warning);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+      expect(await bunLockOf(String(dir))).toContain(`"pkg/sub": ["sub@file:vendor/sub", {}]`);
+
+      const install = await run(String(dir), "install", "--frozen-lockfile", "--linker", "hoisted");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(existsSync(join(String(dir), "node_modules", "pkg", "node_modules", "sub"))).toBeFalse();
+      expect(existsSync(join(String(dir), "node_modules", "sub"))).toBeFalse();
+    });
+
+    test.concurrent("does not warn when the root also depends on it, which installs the project's copy", async () => {
+      using dir = await project("root", "the root");
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+      expect(await bunLockOf(String(dir))).toContain(`"sub": ["sub@file:vendor/sub", {}]`);
+
+      const install = await run(String(dir), "install", "--frozen-lockfile", "--linker", "hoisted");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      const resolve = await run(String(dir), "-e", `console.log(require("pkg"))`);
+      expect(resolve.stdout).toBe("1.0.0\n");
+      expect(resolve.exitCode).toBe(0);
+    });
+
+    test.concurrent.each([
+      ["a workspace", "workspace"],
+      ["a file: package of the root", "local-folder"],
+      ["an override", "override"],
+    ])("does not warn when %s also resolves it against the project", async (declarer, slug) => {
+      using dir = await project(slug, declarer);
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+      expect(await bunLockOf(String(dir))).toContain(`"pkg/sub": ["sub@file:vendor/sub", {}]`);
+    });
   });
 
   test.concurrent("codeload tarballs with and without gitHosted: true", async () => {

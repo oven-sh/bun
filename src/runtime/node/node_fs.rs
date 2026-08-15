@@ -7139,6 +7139,10 @@ impl NodeFS {
             Some(scratch) => &mut scratch[..],
             None => &mut heap_buffer[..],
         };
+        let pre_stat_len = pre_stat_buf
+            .len()
+            .min(args.max_size.map_or(usize::MAX, |v| v as usize));
+        let pre_stat_buf = &mut pre_stat_buf[..pre_stat_len];
         let temporary_read_buffer_before_stat_call: &[u8] = {
             let mut available: &mut [u8] = &mut pre_stat_buf[..];
             while !available.is_empty() {

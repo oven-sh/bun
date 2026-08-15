@@ -120,6 +120,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             self.lexer.next()?;
                         }
 
+                        // "{[key]: y}"
+                        // "{[Symbol.iterator]: y}"
+                        //
+                        // The key is an expression, but it is skipped as a type, like
+                        // the computed keys in skip_type_script_object_type. That covers
+                        // the identifier, member chain and literal forms, and unlike the
+                        // expression parser it has no side effects (scopes, AST) that the
+                        // backtracking in skip_type_script_paren_or_fn_type can't undo.
+                        T::TOpenBracket => {
+                            self.lexer.next()?;
+                            self.skip_type_script_type(Level::Lowest)?;
+                            self.lexer.expect(T::TCloseBracket)?;
+                        }
+
                         _ => {
                             if self.lexer.is_identifier_or_keyword() {
                                 // "{if: x}"

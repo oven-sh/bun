@@ -59,6 +59,8 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <limits.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <pwd.h>
 #include <sched.h>
@@ -79,6 +81,16 @@
 #if !defined(__aarch64__)
 #error "ohos_compat_shim.c: only supports aarch64 (HarmonyOS/OHOS target)"
 #endif
+
+/* /tmp is read-only in the OHOS sandbox; default TMPDIR so the program's own
+ * mkstemp/getenv temp calls land on a writable, auto-cleaned path. Preserves
+ * any user- or wrapper-set TMPDIR. */
+__attribute__((constructor))
+static void ohos_shim_init_tmpdir(void)
+{
+	if (!getenv("TMPDIR"))
+		setenv("TMPDIR", "/data/storage/el2/base/cache", 1);
+}
 
 /* ------------------------------------------------------------------ */
 /*  Runtime toggle parsing                                            */
@@ -125,6 +137,7 @@ enum {
 	SD_SYMLINKAT   = 1 << 6,
 	SD_SPLICE      = 1 << 7,
 	SD_EPOLL_PIPE  = 1 << 8,
+	SD_GETADDRINFO = 1 << 9,
 };
 
 static int g_disable_mask = -1;
@@ -153,6 +166,8 @@ static void parse_toggle_masks(void)
 		d |= SD_SPLICE;
 	if (env_list_has("OHOS_COMPAT_SHIM_DISABLE", "epoll_pipe"))
 		d |= SD_EPOLL_PIPE;
+	if (env_list_has("OHOS_COMPAT_SHIM_DISABLE", "getaddrinfo"))
+		d |= SD_GETADDRINFO;
 	g_disable_mask = d; /* set last: non-negative value doubles as "done" */
 }
 
@@ -177,6 +192,8 @@ static int shim_disabled(const char *name)
 		return !!(g_disable_mask & SD_SPLICE);
 	if (strcmp(name, "epoll_pipe") == 0)
 		return !!(g_disable_mask & SD_EPOLL_PIPE);
+	if (strcmp(name, "getaddrinfo") == 0)
+		return !!(g_disable_mask & SD_GETADDRINFO);
 	return 0;
 }
 
@@ -660,6 +677,15 @@ int getpwuid_r(uid_t uid, struct passwd *pwd, char *buf, size_t buflen,
 	}
 
 	if (shim_disabled("getpwuid_r")) {
+		*result = NULL;
+		return ENOENT;
+	}
+
+	/* Only synthesize for the caller's own uid — the fallback record IS the
+	 * current OS account, so handing it out for an arbitrary uid would mask
+	 * the ENOENT that callers rely on (Node's process.initgroups() numeric
+	 * pre-resolve expects ERR_UNKNOWN_CREDENTIAL for unknown uids). */
+	if (uid != getuid() && uid != geteuid()) {
 		*result = NULL;
 		return ENOENT;
 	}
@@ -1603,4 +1629,105 @@ int symlinkat(const char *target, int newdirfd, const char *linkpath)
 	}
 	close(src);
 	return 0;
+}
+
+/* ==================================================================== */
+/*  2b. getaddrinfo() — HarmonyOS's AI_ADDRCONFIG wrongly filters IPv4   */
+/*     loopback: on a host with no global IPv4, "localhost" resolves to  */
+/*     ::1 only, so Happy-Eyeballs callers (autoSelectFamily) have no    */
+/*     IPv4 address to fall back to when ::1 refuses. When the real      */
+/*     call with AI_ADDRCONFIG yields only IPv6-loopback results, redo   */
+/*     the query without AI_ADDRCONFIG and append the AF_INET entries.   */
+/*     (bun T49; verified against OHOS_TEST_STATUS.md's probe chain.)    */
+/* ==================================================================== */
+
+typedef int (*getaddrinfo_fn)(const char *, const char *,
+			      const struct addrinfo *, struct addrinfo **);
+
+/* glibc getaddrinfo rejects names with characters outside the DNS/hostname
+ * alphabet locally (EAI_NONAME); HarmonyOS's resolver forwards them to the
+ * network where they hang until timeout (~4s observed). That kills tests and
+ * code that rely on a fast local reject (bun's udp_socket "bind fails" case
+ * does it 200 times). Match glibc: fail fast, no network round-trip. */
+static int hostname_has_invalid_chars(const char *node)
+{
+	for (const unsigned char *p = (const unsigned char *)node; *p; p++) {
+		unsigned char c = *p;
+		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		    (c >= '0' && c <= '9') || c == '.' || c == '-' ||
+		    c == '_' || c == '%' || c == ':')
+			continue;
+		return 1;
+	}
+	return 0;
+}
+
+int getaddrinfo(const char *node, const char *service,
+		const struct addrinfo *hints, struct addrinfo **res)
+{
+	static getaddrinfo_fn real = NULL;
+	if (!real)
+		real = (getaddrinfo_fn)dlsym(RTLD_NEXT, "getaddrinfo");
+	if (!real) {
+		errno = ENOSYS;
+		return EAI_SYSTEM;
+	}
+
+	if (!shim_disabled("getaddrinfo") && node && *node &&
+	    hostname_has_invalid_chars(node))
+		return EAI_NONAME;
+
+	int rc = real(node, service, hints, res);
+
+
+	if (shim_disabled("getaddrinfo") || rc != 0 || !hints || !node ||
+	    !(hints->ai_flags & AI_ADDRCONFIG))
+		return rc;
+
+	/* Only the broken case: every returned address is IPv6 loopback
+	 * (and there is at least one). Anything else passes through. */
+	int n = 0, all_v6_loopback = 1;
+	struct addrinfo *tail = NULL;
+	for (struct addrinfo *ai = *res; ai; ai = ai->ai_next) {
+		n++;
+		tail = ai;
+		if (ai->ai_family != AF_INET6 ||
+		    ai->ai_addrlen < sizeof(struct sockaddr_in6) ||
+		    !IN6_IS_ADDR_LOOPBACK(
+			    &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr)) {
+			all_v6_loopback = 0;
+			break;
+		}
+	}
+	if (n == 0 || !all_v6_loopback) {
+		return rc;
+	}
+
+	struct addrinfo hints2 = *hints;
+	hints2.ai_flags &= ~AI_ADDRCONFIG;
+	/* Force AF_INET for the retry: an AF_UNSPEC no-ADDRCONFIG query on this
+	 * resolver can still come back v6-only (it is stateful), but an explicit
+	 * AF_INET query for a loopback name is answered from /etc/hosts. */
+	hints2.ai_family = AF_INET;
+	struct addrinfo *res2 = NULL;
+	if (real(node, service, &hints2, &res2) != 0) {
+		return rc; /* retry failed: keep the original (broken) answer */
+	}
+
+	/* Move AF_INET nodes from res2 onto the tail of *res (preserving the
+	 * loopback-first order), then free what remains of res2. */
+	for (struct addrinfo **pp = &res2; *pp;) {
+		struct addrinfo *ai = *pp;
+		if (ai->ai_family == AF_INET) {
+			*pp = ai->ai_next;   /* unlink from res2 */
+			ai->ai_next = NULL;
+			tail->ai_next = ai;  /* append to *res */
+			tail = ai;
+		} else {
+			pp = &ai->ai_next;
+		}
+	}
+	if (res2)
+		freeaddrinfo(res2);
+	return rc;
 }

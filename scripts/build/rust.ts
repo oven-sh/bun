@@ -196,7 +196,15 @@ function rustCpuTargetFlags(cfg: Config): string[] {
     } else {
       const [level, ...extensions] = value.split("+");
       assert(level === "armv8-a", `rustCpuTargetFlags() only knows how to spell -march=armv8-a, not -march=${value}`);
-      rustflags.push("-Ctarget-cpu=generic");
+      // OHOS: the build machine is a Cortex-A72-class core; `generic`
+      // leaves auto-vectorization off. Match the C++ side's
+      // `-mtune=cortex-a53` with a concrete CPU so Rust codegen isn't
+      // measurably slower (parallel test timeouts on OHOS).
+      if (cfg.ohos) {
+        rustflags.push("-Ctarget-cpu=cortex-a72");
+      } else {
+        rustflags.push("-Ctarget-cpu=generic");
+      }
       if (extensions.length > 0) rustflags.push(`-Ctarget-feature=${extensions.map(ext => `+${ext}`).join(",")}`);
     }
   }

@@ -403,6 +403,37 @@ impl ElfFile {
             );
         }
 
+        // Fix up program headers whose p_offset pointed into the moved tail.
+        // The shdr loop above only covers section headers; patchelf-built
+        // templates (the #24742/#29290/#31023 shape) keep the relocated
+        // PT_INTERP/PT_NOTE data — and an extra writable PT_LOAD — in that
+        // tail, so without this the compiled output's PT_INTERP points at the
+        // zero-filled gap and the loader reads an empty interpreter path.
+        // A tail PT_LOAD additionally overlaps the extended RW segment's
+        // vaddr range once we grow it; its content is only reached via
+        // PT_INTERP's file offset (the kernel reads the interpreter path
+        // directly, no runtime mapping is needed), so neutralize it to
+        // PT_NULL to keep the load list disjoint.
+        {
+            let move_delta = move_dst_start - move_src_start;
+            for i in 0..ehdr.e_phnum as usize {
+                if i == rw_index {
+                    continue;
+                }
+                let phdr_offset =
+                    usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
+                let mut phdr: Elf64_Phdr = read_struct(&self.data[phdr_offset..][..phdr_size]);
+                if phdr.p_offset < move_src_start || phdr.p_offset >= move_src_end {
+                    continue;
+                }
+                phdr.p_offset += move_delta;
+                if phdr.p_type == PT_LOAD {
+                    phdr.p_type = 0; // PT_NULL
+                }
+                write_struct(&mut self.data[phdr_offset..][..phdr_size], &phdr);
+            }
+        }
+
         // Extend the existing writable PT_LOAD to cover the appended payload.
         // Keep p_offset/p_vaddr/p_paddr/p_align unchanged; only grow filesz
         // and memsz. Equal values are fine — the extension is entirely

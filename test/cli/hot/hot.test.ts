@@ -391,27 +391,48 @@ setInterval(() => {}, 1e6);
     // An editor-save-shaped burst: each write emits an event on the file and
     // directory watches, and the 2 ms gaps let the watcher thread observe
     // them mid-burst while staying inside the 10 ms coalesce window.
-    {
+    //
+    // The gaps are measured: a loaded runner can stretch `sleepSync(2)` past
+    // the window, and writes that far apart are legitimately separate saves.
+    // A burst that was both stretched and split proves nothing either way, so
+    // it is retried; a split burst only counts against the watcher when its
+    // gaps stayed well inside the window.
+    const maxTightGapMs = 8;
+    let trial: { reloads: number; gapsMs: number[] } | undefined;
+    for (let attempt = 0; attempt < 8 && trial === undefined; attempt++) {
+      const evalsBefore = evals.length;
+      const gapsMs: number[] = [];
       const fd = openSync(root, "a");
       try {
+        let last = performance.now();
         for (let i = 0; i < 10; i++) {
           writeSync(fd, "\n");
           Bun.sleepSync(2);
+          const now = performance.now();
+          gapsMs.push(now - last);
+          last = now;
         }
       } finally {
         closeSync(fd);
       }
-    }
 
-    while (evals.length < 2) await Bun.sleep(1);
-    // Give any extra reloads time to surface (same settle as the "random
-    // file" test below).
-    await Bun.sleep(200);
+      while (evals.length === evalsBefore) await Bun.sleep(1);
+      // Give any extra reloads time to surface (same settle as the "random
+      // file" test below).
+      await Bun.sleep(200);
+
+      const reloads = evals.length - evalsBefore;
+      if (reloads === 1 || Math.max(...gapsMs) <= maxTightGapMs) {
+        trial = { reloads, gapsMs };
+      }
+    }
 
     runner.kill();
 
-    // The initial evaluation plus one reload for the whole burst.
-    expect({ evals }).toEqual({ evals: [1, 2] });
+    // One reload for the whole burst. `gapsMs` is carried along so a failure
+    // shows how tight the burst actually was.
+    expect(trial).toBeDefined();
+    expect(trial).toEqual({ ...trial!, reloads: 1 });
   },
   timeout,
 );

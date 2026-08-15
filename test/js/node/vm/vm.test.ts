@@ -1605,23 +1605,25 @@ test("a vm timeout that never fires leaves nothing behind either", async () => {
   expect(exitCode).toBe(0);
 });
 
+// The next three run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
+// a child: a regression then fails that child (spawn timeout) instead of hanging this file.
 // Microtasks a timed-out script left on an afterEvaluate context are discarded, not run after the timeout
-// (they would run with no deadline armed).
-test("microtasks queued by a timed-out script on an afterEvaluate context are discarded", () => {
-  const ctx = createContext({}, { microtaskMode: "afterEvaluate" });
-  let error;
-  try {
-    runInContext("Promise.resolve().then(() => { for (;;) {} }); for (;;) {}", ctx, { timeout: 20 });
-  } catch (e) {
-    error = e;
-  }
-  expect(error?.code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
-  // ...and the context is still usable, with nothing of that promise job left to run.
-  expect(runInContext("1 + 1", ctx, { timeout: 1000 })).toBe(2);
+// (they would run with no deadline armed), and the context stays usable.
+test("microtasks queued by a timed-out script on an afterEvaluate context are discarded", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const ctx = vm.createContext({}, { microtaskMode: "afterEvaluate" });
+    let first;
+    try { vm.runInContext("Promise.resolve().then(() => { for (;;) {} }); for (;;) {}", ctx, { timeout: 20 }); } catch (e) { first = e.code; }
+    console.log(first, vm.runInContext("1 + 1", ctx, { timeout: 1000 }));
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT 2\n");
+  expect(exitCode).toBe(0);
 });
 
-// The next two run unbounded `for(;;)` loops that only the mechanism under test can stop, so they run in
-// a child: a regression then fails that child (spawn timeout) instead of hanging this file.
 // POSIX-only: a real SIGINT, sent from a worker while the main thread is stuck in a breakOnSigint run.
 test.skipIf(process.platform === "win32")(
   "breakOnSigint interrupts a stuck run with ERR_SCRIPT_EXECUTION_INTERRUPTED and nothing lingers",

@@ -2191,9 +2191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.should_fold_typescript_constant_expressions;
         p.should_fold_typescript_constant_expressions = true;
 
-        // Declarations hoisted out of the initializers (e.g. a lowered class expression's
-        // temporaries) go at the top of the enum closure; enums are visited before the
-        // enclosing statement list exists.
+        // Declarations hoisted out of the initializers are emitted at the top of the enum closure.
         let mut hoisted_stmts: StmtList<'a> = BumpVec::new_in(p.arena);
         let prev_nearest_stmt_list = p.nearest_stmt_list;
         p.nearest_stmt_list = core::ptr::NonNull::new(core::ptr::addr_of_mut!(hoisted_stmts));

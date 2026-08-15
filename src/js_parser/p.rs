@@ -598,8 +598,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // If this is true, then all top-level statements are wrapped in a try/catch
     pub(crate) will_wrap_module_in_try_catch_for_using: bool,
 
-    /// Receives declarations hoisted out of the expression being visited: the
-    /// `before` list of the current `visit_stmts`, or the enum closure body in `s_enum`.
+    /// Receives hoisted declarations; installed by `visit_stmts` and, for enum members, `s_enum`.
     pub(crate) nearest_stmt_list: Option<NonNull<ListManaged<'a, Stmt>>>,
     // Lifetime caution: points at a stack local saved/restored across calls.
     /// Name from assignment context for anonymous decorated class expressions.

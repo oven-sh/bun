@@ -3,16 +3,22 @@
 // commands must behave as they do elsewhere; `dtUnknownReaddir` (harness)
 // simulates such a filesystem with an LD_PRELOAD shim.
 import { readTarball } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import { bunExe, dtUnknownReaddir, tempDir } from "harness";
 import { readdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+
+let env: NodeJS.Dict<string>;
+
+beforeAll(async () => {
+  if (dtUnknownReaddir.available) env = await dtUnknownReaddir.env();
+}, 30_000);
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
-    env: dtUnknownReaddir.env(),
+    env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -118,9 +124,7 @@ describe.skipIf(!dtUnknownReaddir.available)("pack on a filesystem whose readdir
       },
     });
     using dir = tempDir("dt-unknown-publish", {
-      "bunfig.toml": Bun.TOML.stringify({
-        install: { cache: false, registry: { url: `http://localhost:${registry.port}`, token: "unused" } },
-      }),
+      "bunfig.toml": `[install]\ncache = false\nregistry = { url = "http://localhost:${registry.port}", token = "unused" }\n`,
       "package.json": JSON.stringify({
         name: "dt-unknown-publish",
         version: "1.0.0",

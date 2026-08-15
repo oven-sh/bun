@@ -369,6 +369,23 @@ describe("web worker", () => {
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
     });
+
+    test("names an entry point that does not resolve", async () => {
+      const worker = new Worker("./worker-fixture-does-not-exist.js");
+      const [err] = await once(worker, "error");
+      expect(err.message).toBe(
+        'BuildMessage: ModuleNotFound resolving "./worker-fixture-does-not-exist.js" (entry point)',
+      );
+    });
+
+    // A specifier longer than a path can be skips the retry after busting the
+    // directory cache; that used to skip the report too ("BuildMessage: undefined").
+    test("names an entry point that is longer than a path can be", async () => {
+      const name = Buffer.alloc(5000, "a").toString() + ".js";
+      const worker = new Worker(name);
+      const [err] = await once(worker, "error");
+      expect(err.message).toBe(`BuildMessage: ModuleNotFound resolving "${name}" (entry point)`);
+    });
   });
 
   describe("terminate() races and lifecycle edges", () => {

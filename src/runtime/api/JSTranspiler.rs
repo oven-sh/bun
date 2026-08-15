@@ -5,7 +5,7 @@ use bun_options_types::TargetExt as _;
 use std::io::Write as _;
 
 use crate::Error;
-use crate::node::{Encoding, StringOrBuffer};
+use crate::node::{Encoding, StringOrBuffer, StringOrBufferKind};
 use bun_alloc::{Arena, ArenaVec}; // bumpalo::Bump / bumpalo::collections::Vec re-exports
 use bun_ast::Expr;
 use bun_ast::Loader;
@@ -1297,13 +1297,10 @@ impl JSTranspiler {
         let Some(code_arg) = args.next() else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
-
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        args.eat();
+        let Some(code_kind) = StringOrBufferKind::of(code_arg) else {
             return Err(global.throw_invalid_argument_type("scan", "code", "string or Uint8Array"));
         };
-        // defer code_holder.deinit() → Drop
-        let code = code_holder.slice();
-        args.eat();
 
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
@@ -1316,6 +1313,9 @@ impl JSTranspiler {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
+
+        let code_holder = StringOrBuffer::from_js_with_kind(global, code_arg, code_kind)?;
+        let code = code_holder.slice();
 
         let arena = Arena::new();
         let mut log = bun_ast::Log::init();
@@ -1459,20 +1459,15 @@ impl JSTranspiler {
             ));
         };
 
-        let arena = Arena::new();
-        let Some(code_holder) = StringOrBuffer::from_js(global, code_arg)? else {
+        args.eat();
+        let Some(code_kind) = StringOrBufferKind::of(code_arg) else {
             return Err(global.throw_invalid_argument_type(
                 "transformSync",
                 "code",
                 "string or Uint8Array",
             ));
         };
-        // defer code_holder.deinit() → Drop
-        let code = code_holder.slice();
-        arguments[0].ensure_still_alive();
-        let _keep0 = bun_jsc::EnsureStillAlive(arguments[0]);
 
-        args.eat();
         let mut js_ctx_value: JSValue = JSValue::ZERO;
         let loader: Option<Loader> = 'brk: {
             if let Some(arg) = args.next() {
@@ -1488,6 +1483,12 @@ impl JSTranspiler {
             }
             break 'brk None;
         };
+
+        let arena = Arena::new();
+        let code_holder = StringOrBuffer::from_js_with_kind(global, code_arg, code_kind)?;
+        let code = code_holder.slice();
+        arguments[0].ensure_still_alive();
+        let _keep0 = bun_jsc::EnsureStillAlive(arguments[0]);
 
         if let Some(arg) = args.next_eat() {
             if arg.is_object() {
@@ -1671,22 +1672,14 @@ impl JSTranspiler {
             ));
         };
 
-        let code_holder = match StringOrBuffer::from_js(global, code_arg)? {
-            Some(h) => h,
-            None => {
-                if !global.has_exception() {
-                    return Err(global.throw_invalid_argument_type(
-                        "scanImports",
-                        "code",
-                        "string or Uint8Array",
-                    ));
-                }
-                return Ok(JSValue::ZERO);
-            }
-        };
         args.eat();
-        // defer code_holder.deinit() → Drop
-        let code = code_holder.slice();
+        let Some(code_kind) = StringOrBufferKind::of(code_arg) else {
+            return Err(global.throw_invalid_argument_type(
+                "scanImports",
+                "code",
+                "string or Uint8Array",
+            ));
+        };
 
         let mut loader: Loader = self.config.get().default_loader;
         if let Some(arg) = args.next() {
@@ -1695,6 +1688,9 @@ impl JSTranspiler {
             }
             args.eat();
         }
+
+        let code_holder = StringOrBuffer::from_js_with_kind(global, code_arg, code_kind)?;
+        let code = code_holder.slice();
 
         if !loader.is_java_script_like() {
             return Err(global.throw_invalid_arguments(format_args!(

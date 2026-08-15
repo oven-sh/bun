@@ -5354,6 +5354,61 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
   expect(exitCode).toBe(0);
 });
 
+// A boxed `String` loader's `toString()` runs user JS; detaching the code buffer
+// from there left the parser reading freed heap. With the loader coerced before
+// the code buffer is captured, the detached buffer is seen as empty.
+it("transformSync/scan/scanImports coerce the loader before capturing the code buffer", async () => {
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 16;
+    const keep = [];
+    function mkSrc() {
+      const bytes = new Uint8Array(new ArrayBuffer(size)).fill(0x20);
+      new TextEncoder().encodeInto("export const ORIGINAL = 1;//", bytes);
+      return bytes;
+    }
+    function hostile(src) {
+      return Object.assign(new String("js"), {
+        toString() {
+          src.buffer.transfer(0);
+          Bun.gc(true);
+          for (let i = 0; i < 64; i++) {
+            const x = new Uint8Array(size).fill(0x20);
+            new TextEncoder().encodeInto('import "recycled"; export const RECYCLED = 2;//', x);
+            keep.push(x);
+          }
+          Bun.gc(true);
+          return "js";
+        },
+      });
+    }
+    const results = {};
+    { const src = mkSrc(); results.transformSync = transpiler.transformSync(src, hostile(src)); }
+    { const src = mkSrc(); results.scan = transpiler.scan(src, hostile(src)); }
+    { const src = mkSrc(); results.scanImports = transpiler.scanImports(src, hostile(src)); }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const results = JSON.parse(stdout.trim());
+  expect(results).toEqual({
+    transformSync: "",
+    scan: { imports: [], exports: [] },
+    scanImports: [],
+  });
+  expect(stdout).not.toContain("RECYCLED");
+  expect(stdout).not.toContain("recycled");
+  expect(exitCode).toBe(0);
+});
+
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the
 // printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
 // keys must be printed as computed properties instead.

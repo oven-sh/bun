@@ -1537,7 +1537,7 @@ where
         }
         self.response_weakref.with_mut(|w| w.deref());
 
-        self.detach_request_body_producer(global_this);
+        self.detach_request_body_producer();
         self.request_body_readable_stream_ref
             .with_mut(|s| s.deinit());
 
@@ -2373,7 +2373,7 @@ where
             let strong = self
                 .request_body_readable_stream_ref
                 .replace(readable_stream::Strong::default());
-            if let Some(readable) = strong.get(global_this) {
+            if let Some(readable) = strong.get() {
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
                     let mut err =
@@ -2879,7 +2879,7 @@ where
                 // before `detach()` below re-enters JS so any drain callback /
                 // `on_start_buffering` reached from there early-returns.
                 self.flags.set_request_body_paused(false);
-                self.detach_request_body_producer(self.server().global_this());
+                self.detach_request_body_producer();
             }
 
             wrapper.sink.finalize();
@@ -2974,7 +2974,7 @@ where
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear before JS below.
                 self.flags.set_request_body_paused(false);
-                self.detach_request_body_producer(global_this);
+                self.detach_request_body_producer();
             }
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
@@ -3148,7 +3148,7 @@ where
                     return;
                 }
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
-                    if let Some(stream) = lock.readable.get(global_this) {
+                    if let Some(stream) = lock.readable.get() {
                         // we hold the stream alive until we're done with it
                         // NOTE: `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref
@@ -4064,7 +4064,7 @@ where
         // After the user does request.body,
         // if they then do .text(), .arrayBuffer(), etc
         // we can no longer hold the strong reference from the body value ref.
-        let readable = this.request_body_readable_stream_ref.get().get(global_this);
+        let readable = this.request_body_readable_stream_ref.get().get();
         if let Some(readable) = readable {
             debug_assert!(this.request_body_buf.get().is_empty());
 
@@ -4307,8 +4307,8 @@ where
     }
 
     /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
-    fn detach_request_body_producer(&self, global_this: &JSGlobalObject) {
-        let Some(readable) = self.request_body_readable_stream_ref.get().get(global_this) else {
+    fn detach_request_body_producer(&self) {
+        let Some(readable) = self.request_body_readable_stream_ref.get().get() else {
             return;
         };
         if let Some(bytes) = readable.ptr.bytes() {

@@ -269,7 +269,7 @@ impl Request {
                 BodyValue::Blob(blob) => {
                     Some(std::ptr::from_ref::<[u8]>(blob.content_type_slice()))
                 }
-                BodyValue::Locked(locked) => match locked.readable.get(global_this) {
+                BodyValue::Locked(locked) => match locked.readable.get() {
                     Some(readable) => match readable.ptr {
                         crate::webcore::readable_stream::Source::Blob(blob) => {
                             // SAFETY: `Source::Blob` holds a live `*mut ByteBlobLoader`

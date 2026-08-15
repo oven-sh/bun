@@ -624,7 +624,7 @@ impl FetchTasklet {
         let HTTPRequestBody::ReadableStream(ref stream_ref) = self.request_body else {
             return;
         };
-        let Some(stream) = stream_ref.get(&self.global_this) else {
+        let Some(stream) = stream_ref.get() else {
             return;
         };
         if self.signal_aborted() {
@@ -777,7 +777,7 @@ impl FetchTasklet {
             let mut err = scopeguard::guard(self.on_reject(), |mut e| e.reset());
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
-            if let Some(readable) = self.readable_stream_ref.get(&global_this) {
+            if let Some(readable) = self.readable_stream_ref.get() {
                 if let Some(bytes) = readable.ptr.bytes() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
@@ -813,7 +813,7 @@ impl FetchTasklet {
             return Ok(());
         }
 
-        if let Some(readable) = self.readable_stream_ref.get(&global_this) {
+        if let Some(readable) = self.readable_stream_ref.get() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
             if let Some(bytes) = readable.ptr.bytes() {
                 bytes.size_hint.set(self.get_size_hint());
@@ -2147,7 +2147,7 @@ impl FetchTasklet {
         if this.is_waiting_request_stream_start {
             if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
                 this.is_waiting_request_stream_start = false;
-                if let Some(stream) = stream_ref.get(&this.global_this) {
+                if let Some(stream) = stream_ref.get() {
                     stream.cancel_with_reason(&this.global_this, reason);
                 }
             }

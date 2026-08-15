@@ -1258,7 +1258,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if locked.readable.has() {
                         break 'extract_body Some(HTTPRequestBody::ReadableStream(
                             readable_stream::Strong::init(
-                                locked.readable.get(global_this).unwrap(),
+                                locked.readable.get().unwrap(),
                                 global_this,
                             ),
                         ));
@@ -1270,7 +1270,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         if locked.readable.has() {
                             break 'extract_body Some(HTTPRequestBody::ReadableStream(
                                 readable_stream::Strong::init(
-                                    locked.readable.get(global_this).unwrap(),
+                                    locked.readable.get().unwrap(),
                                     global_this,
                                 ),
                             ));
@@ -1628,7 +1628,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                if let Some(stream) = stream_ref.get(global_this) {
+                if let Some(stream) = stream_ref.get() {
                     stream.cancel_with_reason(global_this, reason);
                 }
             }
@@ -1951,7 +1951,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
-                readable_stream.get(global_this).unwrap(),
+                readable_stream.get().unwrap(),
                 global_this,
                 credentials_with_options.options,
                 credentials_with_options.acl,

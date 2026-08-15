@@ -796,9 +796,9 @@ impl RewriterPipe {
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept. So only release the
-    /// cell's ref; the last holder frees the Box. At VM shutdown deferred
-    /// releases never run, so a pipe with refs outstanding leaks instead of
-    /// being freed under a live ref.
+    /// cell's ref; the last holder frees the Box (at VM shutdown, where
+    /// deferred releases no longer run, `DeferredDerefTask::schedule` releases
+    /// inline instead).
     pub fn finalize(this: Box<Self>) {
         bun_ptr::finalize_js_box(this, |pipe| pipe.cell.set(JSValue::ZERO));
     }

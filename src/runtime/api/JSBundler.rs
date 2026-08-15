@@ -1898,7 +1898,6 @@ pub(crate) use js_bundler::PluginJscExt;
 pub struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
-
     pub path: Box<[u8]>,
     pub(crate) hash: u64,
     pub(crate) output_kind: OutputKind,

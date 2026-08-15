@@ -5109,7 +5109,7 @@ pub(crate) fn write_file_internal(
                                 else {
                                     return None;
                                 };
-                                locked.readable.get(global_this)
+                                locked.readable.get()
                             });
                             if let Some(readable) = readable_opt {
                                 if readable.is_disturbed(global_this) {
@@ -5899,7 +5899,7 @@ pub(crate) fn on_file_stream_resolve_request_stream(
         bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
-    if let Some(stream) = strong.get(global_this) {
+    if let Some(stream) = strong.get() {
         stream.done(global_this);
     }
     this.promise.resolve(global_this, JSValue::js_number(0.0))?;
@@ -5924,7 +5924,7 @@ pub(crate) fn on_file_stream_reject_request_stream(
 
     this.promise.reject(global_this, Ok(err))?;
 
-    if let Some(stream) = strong.get(global_this) {
+    if let Some(stream) = strong.get() {
         stream.cancel(global_this);
     }
     Ok(JSValue::UNDEFINED)

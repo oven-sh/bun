@@ -317,7 +317,7 @@ impl FileSink {
                 .replace(readable_stream::Strong::default());
             if readable_stream.has() {
                 if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = readable_stream.get(global).as_mut() {
+                    if let Some(stream) = readable_stream.get().as_mut() {
                         if !status.is_ok() {
                             // SAFETY: `bun_vm()` is non-null when `global_object()` was;
                             // `event_loop()` returns the live VM-owned `*mut EventLoop`.
@@ -514,7 +514,7 @@ impl FileSink {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = (*this).readable_stream.get().get(global) {
+                    if let Some(stream) = (*this).readable_stream.get().get() {
                         stream.done(global);
                     }
                 }
@@ -1483,7 +1483,7 @@ impl FlushPendingTask {
 impl FileSink {
     /// Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
-        if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
+        if let Some(stream) = self.readable_stream.get().get().as_mut() {
             stream.done(global_this);
         }
 
@@ -1494,7 +1494,7 @@ impl FileSink {
 
     /// Does not ref or unref.
     fn handle_reject_stream(&self, global_this: &JSGlobalObject, _err: JSValue) {
-        if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
+        if let Some(stream) = self.readable_stream.get().get().as_mut() {
             stream.abort(global_this);
             self.readable_stream.set(readable_stream::Strong::default());
         }

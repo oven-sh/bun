@@ -40,11 +40,6 @@ pub struct ConnectionFlags {
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
-    /// `close()` is closing the socket itself: a close event uSockets dispatches synchronously
-    /// from inside it is `close()`'s to return, not the socket trampoline's to fold.
-    pub(crate) in_close: bool,
-    /// Set by that close event when its handler left an exception pending.
-    pub(crate) close_event_threw: bool,
     // This flag is a slight hack to allow returning the client instance in the
     // promise which resolves when the connection is established. There are two
     // modes through which a client may connect:
@@ -68,8 +63,6 @@ impl Default for ConnectionFlags {
             failed: false,
             enable_auto_pipelining: true,
             finalized: false,
-            in_close: false,
-            close_event_threw: false,
             connection_promise_returns_client: false,
         }
     }
@@ -660,17 +653,20 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
-        // The close event re-enters `*self` through the socket's ext pointer, not through this
-        // borrow: launder `self` so the flag handshake is not optimised as if nothing could see it.
-        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` is `self`; volatile so the stores/loads survive the opaque re-entry.
-        unsafe {
-            core::ptr::addr_of_mut!((*this).flags.in_close).write_volatile(true);
-            socket.close(uws::CloseCode::Normal);
-            core::ptr::addr_of_mut!((*this).flags.in_close).write_volatile(false);
-            if core::ptr::addr_of_mut!((*this).flags.close_event_threw).replace(false) {
-                return Err(bun_jsc::JsError::Thrown);
-            }
+        // The close event uSockets dispatches synchronously from inside `close()` re-enters this
+        // client through the socket's ext pointer; the handshake with it lives on the parent, in
+        // `Cell`s, so nothing derived from `self` is held across the dispatch.
+        let parent: *const JSValkeyClient = self.parent();
+        // SAFETY: the parent box outlives its `client` field (this `self`).
+        unsafe { (*parent).in_close.set(true) };
+        socket.close(uws::CloseCode::Normal);
+        // SAFETY: as above.
+        let threw = unsafe {
+            (*parent).in_close.set(false);
+            (*parent).close_event_threw.replace(false)
+        };
+        if threw {
+            return Err(bun_jsc::JsError::Thrown);
         }
         if is_semi_socket {
             self.status = Status::Disconnected;

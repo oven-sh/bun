@@ -199,11 +199,22 @@ impl DeferredDerefTask {
         let vm = VirtualMachine::get();
         if vm.is_shutting_down() {
             // The queue no longer drains. On the main thread the process is dying and the leak no
-            // longer matters; a worker's parked HTMLRewriter pipe would outlive it, so that one is
-            // abandoned here and now, script-free (this can be mid-sweep).
-            if tag == Tag::HTMLRewriterSuspension {
+            // longer matters; a worker's HTMLRewriter pipe would outlive it, so those are released
+            // here and now, script-free (this can be mid-sweep). Only GC destructors reach this
+            // during shutdown, and theirs is the last use of the pipe in that frame.
+            match tag {
                 // SAFETY: the destroyed context held this live pipe; not touched after.
-                unsafe { html_rewriter::RewriterPipe::abandon_at_shutdown(ctx.cast()) };
+                Tag::HTMLRewriterSuspension => unsafe {
+                    html_rewriter::RewriterPipe::abandon_at_shutdown(ctx.cast())
+                },
+                // SAFETY: the detached controller handed over the pipe's last ref; not touched after
+                // (its destructor's trailing `finalize` is a no-op for this sink).
+                Tag::HTMLRewriterPipeFree => unsafe {
+                    <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    )
+                },
+                _ => {}
             }
             return;
         }

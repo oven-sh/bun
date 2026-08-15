@@ -64,7 +64,7 @@ impl Strong {
     }
 
     pub(crate) fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
-        if let Some(stream) = self.get(global) {
+        if let Some(stream) = self.get() {
             return stream.is_disturbed(global);
         }
         false
@@ -89,12 +89,12 @@ impl Strong {
 
     /// The held stream, re-tagged. Pure: no script, no exception, no trap poll (unlike
     /// [`ReadableStream::from_js`], which converts arbitrary values).
-    pub(crate) fn get(&self, _global: &JSGlobalObject) -> Option<ReadableStream> {
+    pub(crate) fn get(&self) -> Option<ReadableStream> {
         self.value().and_then(ReadableStream::from_held)
     }
 
     pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
-        if let Some(stream) = self.get(global) {
+        if let Some(stream) = self.get() {
             let Some((first, second)) = stream.tee(global)? else {
                 return Ok(None);
             };

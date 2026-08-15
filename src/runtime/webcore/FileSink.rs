@@ -932,20 +932,24 @@ impl FileSink {
         // state that in-flight IO still needs (close).
 
         // Shutdown never unwinds the writer: the loop stops ticking, so the
-        // `onWrite`/`onClose`/EOF callbacks that balance the keep-alive ref can
-        // no longer arrive. Release it here (a piped stdout whose write once
-        // returned `.pending` otherwise strands it forever and the sink leaks).
-        // Only under `is_shutting_down`: on a live VM those events still arrive
-        // and must keep the sink alive past the wrapper. `clear_keep_alive_ref`
-        // is flag-gated, so a (theoretical) late `onClose` is a no-op. A queued
-        // FlushPendingFileSinkTask keeps *its* ref: teardown releases every
-        // queued task (`release_unrun`, which drops that ref) after this can
-        // have run, and must not find the sink already freed.
+        // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
+        // longer arrive, and a queued FlushPendingFileSinkTask never runs.
+        // Release them here (a piped stdout whose write once returned
+        // `.pending` otherwise strands its keep-alive ref forever and the sink
+        // leaks). Only under `is_shutting_down`: on a live VM those events
+        // still arrive and must keep the sink alive past the wrapper.
+        // `clear_keep_alive_ref` is flag-gated, so a (theoretical) late
+        // `onClose` is a no-op.
         // SAFETY: caller contract — the wrapper's +1 is held until the trailing
-        // `deref` below, so the release here cannot free `this`.
+        // `deref` below, so neither release here can free `this`.
         unsafe {
             if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down()) {
                 FileSink::clear_keep_alive_ref(this);
+                if (*this).run_pending_later.has.replace(false) {
+                    // Balances the `ref_()` taken in `run_pending_later()` for
+                    // a task that will never run.
+                    FileSink::deref(this);
+                }
             }
         }
 

@@ -61,10 +61,18 @@ std::span<const char> jsonField(std::span<const char> json, std::span<const char
 uint32_t jsonId(std::span<const char> json);
 
 // Slice out the inner string contents (past the quotes, before escapes).
-// The caller must know the field is a string. Does NOT unescape — for
-// sessionId/targetId that's fine (base64-ish, no escapes); for method
-// names it's fine (no escapes in CDP method names).
+// The caller must know the field is a string. Does NOT unescape, so it is
+// only for values Chrome never has to escape: sessionId/targetId
+// (base64-ish/hex), method names, RemoteObject types, screenshot base64.
 std::span<const char> jsonString(std::span<const char> field);
+
+// Decode a JSON string value (the quoted slice jsonField returns) into the
+// text it denotes. Chrome's encoder escapes quotes, backslashes, control
+// characters and every non-ASCII code point (\uXXXX, surrogate pairs for
+// astral), so anything handed to the user (page title, frame url, error
+// messages) goes through this, not jsonString(). Null string if the slice
+// isn't a JSON string.
+WTF::String jsonStringValue(std::span<const char> field);
 
 // --- Command builder -------------------------------------------------------
 // Per-method fixed templates. The builder holds an inline-capacity

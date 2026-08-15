@@ -20,8 +20,8 @@
 //! Matching is purely lexical (`exports` / `module` by name, whatever they are
 //! bound to, in any scope, reachable or not), exactly like the lexer. The result
 //! travels as one string so it can be stored in the runtime transpiler cache and
-//! handed to C++ without a separate ownership protocol; see [`serialize`] for the
-//! format.
+//! handed to C++ without a separate ownership protocol; see
+//! `CommonJSStaticExports::serialize` for the format.
 
 use std::io::Write as _;
 
@@ -129,7 +129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     fn string_literal(&self, expr: &Expr) -> Option<&'a [u8]> {
         match expr.data {
-            ExprData::EString(mut str) => Some(str.slice(self.arena)),
+            ExprData::EString(mut string) => Some(string.slice(self.arena)),
             _ => None,
         }
     }

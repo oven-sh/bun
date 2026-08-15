@@ -8,6 +8,7 @@ use bun_collections::StringArrayHashMap;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
 use bun_core::strings;
 use bun_semver as semver;
+use bun_semver::query::token::Wildcard;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
@@ -43,6 +44,21 @@ macro_rules! string_bytes {
     ($lockfile:expr) => {
         $lockfile.buffers.string_bytes.as_slice()
     };
+}
+
+// Binds a root or workspace edge the way bun.lock's reader does. `workspace:*` rows and ranges
+// pnpm linked to a member arrive here parsed from their literal, while the package.json rows the
+// differ compares them against carry the member's path. A macro so callers can keep slices of
+// `string_bytes` alive across the call.
+macro_rules! bind_importer_dependency {
+    ($lockfile:expr, $dep_id:expr, $pkg_id:expr) => {{
+        let pkg_id: PackageID = $pkg_id;
+        $lockfile.buffers.resolutions[$dep_id as usize] = pkg_id;
+        lockfile::bun_lock::adopt_workspace_resolution(
+            &mut $lockfile.buffers.dependencies[$dep_id as usize],
+            &$lockfile.packages.items_resolution()[pkg_id as usize],
+        );
+    }};
 }
 
 /// returns (peers_index, patch_hash_index)
@@ -780,20 +796,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let path_str = sbuf!(lockfile).append(importer_path)?;
             lockfile.workspace_paths.put(name_hash, path_str)?;
 
-            if let Some(version_expr) = value.get(b"version") {
-                let Some(version_raw) = as_string(&version_expr) else {
-                    return Err(invalid_pnpm_lockfile());
-                };
+            // Same rule as the `workspaces` array parser: a version that does not parse, or has a
+            // wildcard, leaves the member unversioned.
+            if let Some((version_raw, _)) = get_string(workspace_root, b"version") {
                 let version_str = sbuf!(lockfile).append(version_raw)?;
-
                 let parsed = semver::Version::parse(version_str.sliced(string_bytes!(lockfile)));
-                if !parsed.valid {
-                    return Err(invalid_pnpm_lockfile());
+                if parsed.valid && parsed.wildcard == Wildcard::None {
+                    lockfile
+                        .workspace_versions
+                        .put(name_hash, parsed.version.min())?;
                 }
-
-                lockfile
-                    .workspace_versions
-                    .put(name_hash, parsed.version.min())?;
             }
         }
 
@@ -1440,14 +1452,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
+                    bind_importer_dependency!(lockfile, dep_id, *workspace_pkg_id);
                     continue;
                 }
             }
 
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
-                lockfile.buffers.resolutions[dep_id as usize] = peer_pkg_id;
+                bind_importer_dependency!(lockfile, dep_id, peer_pkg_id);
                 continue;
             }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
@@ -1476,7 +1488,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
+                    bind_importer_dependency!(lockfile, dep_id, *pkg_id);
                     continue;
                 }
             }
@@ -1492,7 +1504,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 ));
             };
 
-            lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
+            bind_importer_dependency!(lockfile, dep_id, *pkg_id);
         }
     }
 
@@ -1514,7 +1526,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
-                lockfile.buffers.resolutions[dep_id as usize] = peer_pkg_id;
+                bind_importer_dependency!(lockfile, dep_id, peer_pkg_id);
                 continue;
             }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
@@ -1544,7 +1556,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
+                    bind_importer_dependency!(lockfile, dep_id, *link_pkg_id);
                     continue;
                 }
             }
@@ -1560,7 +1572,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 ));
             };
 
-            lockfile.buffers.resolutions[dep_id as usize] = *res_pkg_id;
+            bind_importer_dependency!(lockfile, dep_id, *res_pkg_id);
         }
     }
 
@@ -1983,36 +1995,29 @@ fn append_importer_dependency(
     specifier_str: &[u8],
     behavior: dependency::Behavior,
 ) -> Result<(), ParseAppendDependenciesError> {
-    if strings::has_prefix(specifier_str, b"catalog:") {
-        let name_hash = semver::string::Builder::string_hash(name_str);
-        let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
-        let mut catalog_group_name_str = specifier_str[b"catalog:".len()..].trim_ascii();
-        if catalog_group_name_str == b"default" {
-            catalog_group_name_str = b"";
-        }
-        let catalog_group_name = sbuf!(lockfile).append(catalog_group_name_str)?;
-        // `CatalogMap::get` borrows `&self` and the whole lockfile, so move catalogs out for the call.
-        let catalogs = core::mem::take(&mut lockfile.catalogs);
-        let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
-        lockfile.catalogs = catalogs;
-        let Some(mut dep) = dep_result else {
-            // catalog is missing an entry in the "catalogs" object in the lockfile
+    // The row keeps its `catalog:` reference, as the package.json parser and the bun.lock reader
+    // keep theirs; the importer's own `version:` field binds it below. Only the entry's existence
+    // is checked here.
+    if let Some(catalog_name) =
+        strings::without_prefix_if_possible_comptime(specifier_str, b"catalog:")
+    {
+        let catalog_name = catalog_name.trim_ascii();
+        if lockfile
+            .catalogs
+            .find(string_bytes!(lockfile), catalog_name, name_str)
+            .is_none()
+        {
             log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "pnpm-lock.yaml catalog '{}' missing entry for dependency '{}'",
-                    bstr::BStr::new(specifier_str[b"catalog:".len()..].trim_ascii()),
+                    bstr::BStr::new(catalog_name),
                     bstr::BStr::new(name_str)
                 ),
             );
             return Err(ParseAppendDependenciesError::PnpmLockfileMissingCatalogEntry);
-        };
-
-        dep.behavior = behavior;
-
-        lockfile.buffers.dependencies.push(dep);
-        return Ok(());
+        }
     }
 
     append_manifest_dependency(lockfile, log, name_str, specifier_str, behavior)

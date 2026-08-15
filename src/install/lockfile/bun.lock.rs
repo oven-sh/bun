@@ -3442,20 +3442,28 @@ fn map_dep_to_pkg(
     resolutions[dep_id as usize] = pkg_id;
 
     if text_lockfile_version != Version::V0 {
-        let res = &pkg_resolutions[pkg_id as usize];
-        if res.tag == ResolutionTag::Workspace {
-            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
-            // npm chain. SAFETY: `res.tag == Workspace` checked above.
-            let literal = dep.version.literal;
-            dep.version = DependencyVersion {
-                tag: DependencyVersionTag::Workspace,
-                literal,
-                value: DependencyVersionValue {
-                    workspace: *res.workspace(),
-                },
-            };
-        }
+        adopt_workspace_resolution(dep, &pkg_resolutions[pkg_id as usize]);
     }
+}
+
+/// An edge bound to a workspace member takes the shape `Package::parse_dependency`
+/// gives it (`workspace` tag carrying the member's path, literal kept), so the
+/// differ compares equal against a fresh package.json parse. Other targets leave
+/// the edge as parsed.
+pub(crate) fn adopt_workspace_resolution(dep: &mut Dependency, res: &Resolution) {
+    if res.tag != ResolutionTag::Workspace {
+        return;
+    }
+    // Whole-struct assign so `DependencyVersion::Drop` frees any prior
+    // npm chain. SAFETY: `res.tag == Workspace` checked above.
+    let literal = dep.version.literal;
+    dep.version = DependencyVersion {
+        tag: DependencyVersionTag::Workspace,
+        literal,
+        value: DependencyVersionValue {
+            workspace: *res.workspace(),
+        },
+    };
 }
 
 fn dependency_resolution_failure(

@@ -18,9 +18,7 @@
 "tuple_wants_struct:src/css/values/color.rs" = 5
 
 [bun_install]
-"always_unwrapped_option:src/install/PackageInstall.rs" = 1
 "arg_named_like_other_param:src/install/PackageManager/PackageJSONEditor.rs" = 3
-"arg_named_like_other_param:src/install/resolution.rs" = 1
 "bare_bool_args:src/install/isolated_install.rs" = 1
 "defaulted_failure:src/install/npm.rs" = 1
 "index_of_other_kind:src/install/isolated_install.rs" = 1

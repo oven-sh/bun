@@ -646,13 +646,9 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
-// Nothing will settle this view's work anymore: it was closed, its page
-// detached, or Chrome itself is gone. Rejects whatever is still awaited by
-// walking the slots themselves, not m_pending: a navigate()/reload()/
-// goBack() whose CDP reply already came back has no m_pending entry (it is
-// waiting on Page.loadEventFired) but its Navigate slot is still set.
-// settleSlot is a no-op on an empty slot. Same contract as
-// HostClient::rejectAllAndMarkDead.
+// Rejects everything the view still awaits. Walks the slots, not m_pending:
+// a navigation drops its m_pending entry when Page.navigate replies and
+// then waits for Page.loadEventFired with only its slot set.
 static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
 {
     view->m_loading = false;
@@ -1295,24 +1291,16 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     m_mode = TransportMode::None;
     m_wsOpen = false;
     m_wsPending.clear();
-    // Detach the routing tables before settling anything. Settling a
-    // promise allocates, and a GC that finalizes inside that allocation
-    // runs ~JSWebView() for any view the user dropped without close(),
-    // which removes the view from m_views: the member map can change
-    // while this function runs, the local one cannot. A view collected
-    // that way is a null Weak here and has nothing pending by definition
-    // (pending activity is what keeps a view alive).
+    // Settling allocates, and a GC in that allocation can run ~JSWebView()
+    // for a view dropped without close(), which removes it from m_views.
+    // Move the map into a local first so that removal never hits the map
+    // being iterated.
     m_pending.clear();
     m_sessions.clear();
     auto views = std::exchange(m_views, {});
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Every view that was still registered, not just the ones with an
-    // entry in m_pending: a navigation that is past its Page.navigate
-    // reply is only reachable through its slot (see rejectViewSlots).
-    // Views that left m_views earlier (close(), detachedFromTarget) had
-    // their slots rejected at that point.
     for (auto& weak : views.values()) {
         if (JSWebView* v = weak.get())
             rejectViewSlots(g, v, err);

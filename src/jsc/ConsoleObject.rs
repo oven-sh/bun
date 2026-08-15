@@ -566,10 +566,11 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    // SAFETY: see [`vm_console`]; read-only probe, no borrow held.
     let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+        // SAFETY: see [`vm_console`]; read-only probe, no borrow held.
         unsafe { (*console).colors_stderr() }
     } else {
+        // SAFETY: as above.
         unsafe { (*console).colors_stdout() }
     };
 

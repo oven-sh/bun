@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
 
@@ -1105,3 +1105,181 @@ test("lowering many decorated instance fields into a large constructor body stay
   const { tSmall, tLarge } = JSON.parse(stdout);
   expect(tLarge).toBeLessThan(tSmall * 3);
 }, 90_000);
+
+describe("decorated static field initializers", () => {
+  function dec(_target: any, _key?: any) {}
+
+  test("evaluate `this` as the class", () => {
+    const key = Symbol("key");
+    class Base {
+      static tag = "base-tag";
+    }
+    class A extends Base {
+      static own = "own";
+      @dec static self = this;
+      @dec static inheritedTag = this.tag;
+      @dec static ownViaThis = this.own;
+      @dec static [key] = this;
+      @dec static arrow = () => this;
+      @dec static fn = function (this: unknown) {
+        return this;
+      };
+    }
+
+    const receiver = {};
+    expect({
+      self: A.self === A,
+      inheritedTag: A.inheritedTag,
+      ownViaThis: A.ownViaThis,
+      computedKey: A[key] === A,
+      arrow: A.arrow() === A,
+      fn: A.fn.call(receiver) === receiver,
+    }).toEqual({
+      self: true,
+      inheritedTag: "base-tag",
+      ownViaThis: "own",
+      computedKey: true,
+      arrow: true,
+      fn: true,
+    });
+  });
+
+  test("run in source order with the other static members", () => {
+    const order: string[] = [];
+    function log(name: string) {
+      order.push(name);
+      return name;
+    }
+    function logDec(_target: any, key: string) {
+      order.push(`dec:${key}`);
+    }
+
+    class A {
+      static a = log("a");
+      @logDec static b = log("b");
+      static {
+        log("block");
+      }
+      @logDec static c = log("c");
+      static d = log("d");
+      @logDec e = log("e");
+    }
+
+    // Same order as tsc; `e` is an instance field, so only its decorator runs.
+    expect(order).toEqual(["a", "b", "block", "c", "d", "dec:e", "dec:b", "dec:c"]);
+  });
+
+  test.concurrent("can use `super`", async () => {
+    using dir = tempDir("legacy-decorator-static-super", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+      "base.ts": `
+        export function dec(_target: any, _key?: any) {}
+        export class Base {
+          static x = 1;
+          static receiver() {
+            return this;
+          }
+          static get tagged() {
+            return "base:" + this.label;
+          }
+        }
+      `,
+      "anon.ts": `
+        import { Base, dec } from "./base";
+        export default class extends Base {
+          @dec static me = this;
+          @dec static viaSuper = super.receiver();
+        }
+      `,
+      "main.ts": `
+        import Anon from "./anon";
+        import { Base, dec } from "./base";
+        class A extends Base {
+          static label = "A";
+          @dec static call = super.receiver() === this;
+          @dec static getter = super.tagged;
+          @dec static arrow = (() => super.receiver())() === this;
+          @dec static computedMember = super["receiver"]() === this;
+          @dec static assigned = (super.x = 42);
+          @dec static ["computed" + "Key"] = super.tagged;
+        }
+        console.log(
+          JSON.stringify({
+            call: A.call,
+            getter: A.getter,
+            arrow: A.arrow,
+            computedMember: A.computedMember,
+            assigned: A.assigned,
+            ownX: Object.hasOwn(A, "x") && A.x,
+            baseX: Base.x,
+            computedKey: A.computedKey,
+            anonMe: Anon.me === Anon,
+            anonViaSuper: Anon.viaSuper === Anon,
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, result: stdout.trim() && JSON.parse(stdout), exitCode }).toEqual({
+      stderr: "",
+      result: {
+        call: true,
+        getter: "base:A",
+        arrow: true,
+        computedMember: true,
+        assigned: 42,
+        ownX: 42,
+        baseX: 1,
+        computedKey: "base:A",
+        anonMe: true,
+        anonViaSuper: true,
+      },
+      exitCode: 0,
+    });
+  });
+
+  test("stay in the class body as static blocks", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: { compilerOptions: { experimentalDecorators: true } },
+    });
+    const out = transpiler.transformSync(`
+      class A extends Base {
+        @dec static a = super.f();
+        static b = 1;
+        @dec static [k] = this.b;
+        @dec static c: number;
+        @dec d = this.e;
+      }
+    `);
+
+    const classStart = out.indexOf("class A");
+    const classEnd = out.indexOf("\n}\n", classStart) + "\n}\n".length;
+    expect(out.slice(classStart, classEnd)).toMatchInlineSnapshot(`
+      "class A extends Base {
+        constructor() {
+          super(...arguments);
+          this.d = this.e;
+        }
+        static {
+          this.a = super.f();
+        }
+        static b = 1;
+        static {
+          this[k] = this.b;
+        }
+      }
+      "
+    `);
+    // Only the decorator calls are left after the class statement.
+    expect(out.slice(classEnd)).toStartWith("__legacyDecorateClassTS");
+  });
+});

@@ -273,7 +273,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Create a static block property from a single expression.
-    fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
+    pub(crate) fn make_static_block(&mut self, expr: Expr, l: bun_ast::Loc) -> Property {
         let bump = self.arena;
         let stmt = self.s(
             S::SExpr {

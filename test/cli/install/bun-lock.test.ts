@@ -1692,6 +1692,7 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
     }
 
     await run(["install", "--lockfile-only"]);
+    await run(["install", "--frozen-lockfile"]);
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
   });
 

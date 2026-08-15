@@ -3404,16 +3404,11 @@ pub(crate) fn resolve_peer_dep_version_based(
     }
 
     let candidates = package_index.get(&name_hash)?.as_slice();
-    for &id in candidates {
-        if (id as usize) < pkg_resolutions.len()
-            && pkg_resolutions[id as usize]
-                .satisfies_dependency_version(range, string_buf, string_buf)
-        {
-            return Some(id);
-        }
-    }
-
-    None
+    candidates.iter().copied().find(|&id| {
+        pkg_resolutions
+            .get(id as usize)
+            .is_some_and(|res| res.satisfies_dependency_version(range, string_buf, string_buf))
+    })
 }
 
 // Taking `&mut BinaryLockfile` plus a `&mut Dependency` that

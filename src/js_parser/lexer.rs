@@ -3764,7 +3764,7 @@ pub fn range_of_identifier(source: &Source, loc: Loc) -> Range {
     let contents = &source.contents;
     let start = match loc.to_index() {
         Some(start) if start < contents.len() => start,
-        _ => return Range::NONE,
+        Some(_) | None => return Range::NONE,
     };
 
     let iter = CodepointIterator::init(&contents[start..]);

@@ -1257,7 +1257,7 @@ impl Default for Range {
 pub(crate) fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
     let text = match loc.to_index() {
         Some(start) if start < contents.len() => &contents[start..],
-        _ => return Range::NONE,
+        Some(_) | None => return Range::NONE,
     };
     let mut r = Range { loc, len: 0 };
     if text.is_empty() {

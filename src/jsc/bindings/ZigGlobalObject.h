@@ -356,9 +356,7 @@ public:
     void forbidExecution();
 
     Bun::Process* processObject() const { return m_processObject.getInitializedOnMainThread(this); }
-    // Builds process.env on first use. On Windows that runs a JS builtin, which can
-    // throw (stack overflow, clobbered globals); then this returns nullptr with the
-    // exception pending and caches nothing, so the next access tries again.
+    // Null with the exception pending if building it threw; nothing is cached then.
     JSC::JSObject* processEnvObject();
     JSC::JSObject* bunObject() const { return m_bunObject.getInitializedOnMainThread(this); }
 

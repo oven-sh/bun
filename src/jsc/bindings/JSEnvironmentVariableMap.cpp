@@ -1144,8 +1144,6 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
-    // Entering JS here fails with a RangeError when process.env is first read
-    // close to the stack limit; leave it pending for processEnvObject()'s caller.
     JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, getSourceEvent, callData, globalObject->globalThis(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     // windowsEnv returns `new Proxy(...)`, so a normal return is always an object.

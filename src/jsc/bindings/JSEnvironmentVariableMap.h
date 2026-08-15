@@ -53,9 +53,7 @@ private:
     }
 };
 
-// Returns null with an exception pending if building the map threw (on Windows
-// the map is finished by a JS builtin). Callers go through
-// Zig::GlobalObject::processEnvObject(), which caches the result.
+// Null with an exception pending if it threw (Windows finishes the map in JS).
 JSC::JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache

@@ -3219,13 +3219,10 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    // On failure return empty and leave the exception pending: the read throws
-    // and `env` stays unreified, so the next read builds it (like Bun.$). Caching
-    // undefined instead would pin process.env to undefined for the whole process.
-    // TopExceptionScope like the sibling builders: reifyAllStaticProperties runs
-    // builders back to back with no exception check in between, and the simulated
-    // throw a ThrowScope leaves behind fails the next builder's scope under
-    // BUN_JSC_validateExceptionChecks (`delete process._fatalException`).
+    // Empty with the exception left pending: the read throws and `env` stays
+    // unreified for the next read (like Bun.$). Not a ThrowScope: its simulated
+    // throw fails the next builder under validateExceptionChecks, since
+    // reifyAllStaticProperties does not check between builders.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* env = globalObject->processEnvObject();
     if (scope.exception()) [[unlikely]]

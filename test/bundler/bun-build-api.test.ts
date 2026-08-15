@@ -1727,6 +1727,13 @@ describe.concurrent("source whose path is close to or beyond the path buffer siz
     expect(sources).toEqual([relativePath, "entry.js"]);
   });
 
+  test.skipIf(isWindows)("as an HTML file on disk imported by a server-target entry point", async () => {
+    // The HTML import manifest embedded in the server chunk keys its entries
+    // by the cwd-relative source path.
+    const { inputs, relativePath } = await bundle("html-import");
+    expect(inputs).toContain(relativePath);
+  });
+
   test.skipIf(isWindows)("as an imported file on disk, with an onResolve plugin that declines it", async () => {
     const { inputs, sources, relativePath } = await bundle("import-plugin");
     expect(inputs).toEqual(["entry.js", relativePath]);

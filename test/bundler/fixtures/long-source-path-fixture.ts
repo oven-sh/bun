@@ -10,6 +10,8 @@
 //   import         entry point on disk importing a file on disk at the long path
 //   import-plugin  like `import`, with an onResolve plugin that declines every path
 //                  (imports then reach the resolver through the plugin code path)
+//   html-import    server-target entry point on disk importing an HTML file on disk at
+//                  the long path (its path becomes a key in the HTML import manifest)
 //   resolve-plugin entry point on disk whose import an onResolve plugin resolves to the
 //                  long path; nothing exists there, so the build reports the failed read
 //   load-plugin    like `resolve-plugin`, with an onLoad plugin supplying the contents
@@ -71,6 +73,15 @@ switch (mode) {
           ? [{ name: "declines everything", setup: build => build.onResolve({ filter: /.*/ }, () => undefined) }]
           : [],
     };
+    break;
+  }
+  case "html-import": {
+    path = longPath(realpathSync(dir), "index.html");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `<!DOCTYPE html><html><head></head><body><script src="./app.js"></script></body></html>`);
+    writeFileSync(join(dirname(path), "app.js"), "console.log(1);");
+    writeFileSync("entry.js", `import index from ${JSON.stringify(path)}; console.log(typeof index);`);
+    options = { entrypoints: ["./entry.js"], target: "bun" };
     break;
   }
   case "resolve-plugin":

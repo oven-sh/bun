@@ -649,12 +649,9 @@ pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr
     ZStr::from_buf(&buf[..], len)
 }
 
-/// Normalizes both inputs of a `relative` computation into `from_buf` and
-/// `to_buf`, resolving a non-absolute input against the top-level dir first
-/// (`to_scratch` holds the intermediate normalization of a non-absolute `to`).
-/// Each of the three buffers must hold [`relative_scratch_len`] bytes. The
-/// results borrow only `from_buf` and `to_buf`, so `to_scratch` is free again
-/// once this returns.
+/// Normalizes `from` and `to` into `from_buf` and `to_buf` (each
+/// [`relative_scratch_len`] bytes), resolving a non-absolute input against the
+/// top-level dir; `to_scratch` is intermediate space for a non-absolute `to`.
 fn relative_normalize_inputs<'f, 't, P: PlatformT>(
     from_buf: &'f mut [u8],
     to_buf: &'t mut [u8],
@@ -681,10 +678,8 @@ fn relative_normalize_inputs<'f, 't, P: PlatformT>(
             break 'brk &from_buf[0..path_len + 1];
         }
     } else {
-        // Avoid aliasing from_buf as both input (normalize result) and output
-        // (join target): normalize into to_buf as scratch, then join into
-        // from_buf. Safe because normalized_to is computed afterwards
-        // (overwrites to_buf anyway).
+        // Normalize into to_buf (overwritten below anyway), then join into
+        // from_buf, so from_buf is not both input and output.
         let norm_len = normalize_string_buf::<true, P, true>(from, &mut to_buf[..]).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
@@ -710,8 +705,7 @@ fn relative_normalize_inputs<'f, 't, P: PlatformT>(
             break 'brk &to_buf[0..path_len + 1];
         }
     } else {
-        // Same aliasing concern as above: normalize into to_scratch, then join
-        // into to_buf.
+        // As above: normalize into to_scratch, then join into to_buf.
         let norm_len = normalize_string_buf::<true, P, true>(to, to_scratch).len();
         join_abs_string_buf::<P>(
             Fs::FileSystem::instance().top_level_dir(),
@@ -723,11 +717,9 @@ fn relative_normalize_inputs<'f, 't, P: PlatformT>(
     (normalized_from, normalized_to)
 }
 
-/// Bytes each buffer handed to [`relative_normalize_inputs`] must hold: an
-/// input (joined onto the top-level dir when it is not absolute, which adds
-/// that dir and a separator) plus the leading separator slot and the one byte
-/// normalization can add (see [`normalize_string_spill`]), for both the
-/// intermediate and the final normalization.
+/// Bytes each [`relative_normalize_inputs`] buffer must hold: an input, the
+/// top-level dir it may be joined onto, a separator slot, and the byte
+/// normalization can add (see [`normalize_string_spill`]).
 fn relative_scratch_len<P: PlatformT>(from: &[u8], to: &[u8]) -> usize {
     let cwd_len = if P::P.is_absolute(from) && P::P.is_absolute(to) {
         0
@@ -737,10 +729,9 @@ fn relative_scratch_len<P: PlatformT>(from: &[u8], to: &[u8]) -> usize {
     cwd_len + from.len().max(to.len()) + 4
 }
 
-/// Upper bound on what [`relative_normalized_buf`] writes for these inputs:
-/// at most one `..` per component of `from` (three bytes each, counting its
-/// separator), one joining separator, then a suffix of `to`. Counting both
-/// separator styles over-approximates the component count on every platform.
+/// Upper bound on what [`relative_normalized_buf`] writes: one `..` per
+/// component of `from` (counting both separator styles over-approximates),
+/// one joining separator, then a suffix of `to`.
 fn relative_max_len(normalized_from: &[u8], normalized_to: &[u8]) -> usize {
     let from_components = strings::count_char(normalized_from, SEP_POSIX)
         + strings::count_char(normalized_from, SEP_WINDOWS)
@@ -748,19 +739,16 @@ fn relative_max_len(normalized_from: &[u8], normalized_to: &[u8]) -> usize {
     3 * from_components + 1 + normalized_to.len()
 }
 
-/// `from` and `to` must each fit in a `PathBuffer` and the result must fit in
-/// `buf`. The result is not bounded by the inputs: it is the tail of `to` plus
-/// one `..` per level of `from` outside their common prefix, so a `to` that
-/// fits in a `PathBuffer` can still relativize to something that does not.
-/// Use [`relative_platform_spill`] when that is possible.
+/// `from`, `to` and the result must each fit in a `PathBuffer`. The result can
+/// outgrow both inputs (a `..` per level of `from` outside the common prefix);
+/// use [`relative_platform_spill`] when that is possible.
 pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     buf: &'a mut [u8],
     from: &[u8],
     to: &[u8],
 ) -> &'a [u8] {
-    // RELATIVE_FROM_BUF and RELATIVE_TO_BUF are independent allocations so the
-    // two `&mut` borrows below are disjoint. `buf` serves as the scratch for a
-    // non-absolute `to`; that use ends before the result is written into it.
+    // The thread-local bufs are independent allocations; `buf` is only scratch
+    // for a non-absolute `to`, and that use ends before the final write.
     let (normalized_from, normalized_to) = relative_normalize_inputs::<P>(
         RELATIVE_FROM_BUF.with(lazy_path_buf),
         RELATIVE_TO_BUF.with(lazy_path_buf),
@@ -784,11 +772,33 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     )
 }
 
+/// [`relative_normalized`] without its length limit: the result uses the
+/// thread-local buffer when it fits and `spill` (grown as needed) otherwise.
+pub fn relative_normalized_spill<'a, P: PlatformT>(
+    spill: &'a mut Vec<u8>,
+    normalized_from: &[u8],
+    normalized_to: &[u8],
+) -> &'a [u8] {
+    let needed = relative_max_len(normalized_from, normalized_to);
+    let out: &'a mut [u8] = if needed <= MAX_PATH_BYTES {
+        // SAFETY: thread-local scratch; single live borrow per thread.
+        RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf)
+    } else {
+        if spill.len() < needed {
+            spill.resize(needed, 0);
+        }
+        spill.as_mut_slice()
+    };
+    // ALWAYS_COPY: the result must be a prefix of `out`, never a view into
+    // the caller's (possibly temporary) inputs.
+    let len = relative_normalized_buf::<P, true>(out, normalized_from, normalized_to).len();
+    &out[..len]
+}
+
 /// [`relative_platform`] without its length limits: the inputs and the result
 /// use the thread-local buffers when they fit, and otherwise heap scratch and
-/// `spill` (grown as needed) respectively. `spill` is untouched in the common
-/// case. Like `relative_platform`, the result is valid until the next
-/// `relative*` call on this thread.
+/// `spill` respectively. The result is valid until the next `relative*` call
+/// on this thread.
 pub fn relative_platform_spill<'a, P: PlatformT>(
     spill: &'a mut Vec<u8>,
     from: &[u8],
@@ -798,7 +808,9 @@ pub fn relative_platform_spill<'a, P: PlatformT>(
     let mut heap: Vec<u8>;
     let (from_buf, to_buf, to_scratch): (&mut [u8], &mut [u8], &mut [u8]) =
         if scratch_len <= MAX_PATH_BYTES {
-            // SAFETY: thread-local scratch; single live borrow per thread.
+            // SAFETY: thread-local scratch; single live borrow per thread. The
+            // common-path buf is only scratch here; its borrow ends before
+            // `relative_normalized_spill` reuses it for the result.
             (
                 RELATIVE_FROM_BUF.with(lazy_path_buf).as_mut_slice(),
                 RELATIVE_TO_BUF.with(lazy_path_buf).as_mut_slice(),
@@ -814,24 +826,7 @@ pub fn relative_platform_spill<'a, P: PlatformT>(
         };
     let (normalized_from, normalized_to) =
         relative_normalize_inputs::<P>(from_buf, to_buf, to_scratch, from, to);
-
-    let needed = relative_max_len(normalized_from, normalized_to);
-    let out: &'a mut [u8] = if needed <= MAX_PATH_BYTES {
-        // The scratch use of this buffer above (if any) is over: the normalized
-        // inputs live in the from/to buffers.
-        RELATIVE_TO_COMMON_PATH_BUF
-            .with(lazy_path_buf)
-            .as_mut_slice()
-    } else {
-        if spill.len() < needed {
-            spill.resize(needed, 0);
-        }
-        spill.as_mut_slice()
-    };
-    // ALWAYS_COPY, so that the result never aliases the (possibly heap) input
-    // scratch; it is a prefix of `out`, or empty.
-    let len = relative_normalized_buf::<P, true>(out, normalized_from, normalized_to).len();
-    &out[..len]
+    relative_normalized_spill::<P>(spill, normalized_from, normalized_to)
 }
 
 pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
@@ -2631,9 +2626,8 @@ mod tests {
         haystack.iter().filter(|&&b| b == needle).count()
     }
 
-    /// Only linked, never reached: `strings::last_index_of_char_t::<u8>` (used
-    /// by `relative`) also names the `u16` kernel. Returns `usize::MAX` when
-    /// `needle` does not occur, like the kernel.
+    /// Only linked, never reached: `strings::last_index_of_char_t::<u8>` also
+    /// names the `u16` kernel.
     #[cfg(not(miri))]
     #[unsafe(no_mangle)]
     unsafe extern "C" fn highway_memrmem16(

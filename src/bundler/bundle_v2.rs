@@ -6403,12 +6403,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                self.transpiler.fs().top_level_dir, path.text
-                            );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL
@@ -6434,8 +6428,6 @@ pub mod bv2_impl {
                                 };
                                 import_record.path.is_disabled = false;
                             } else {
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
                                     &self
                                         .path_with_pretty_initialized(path, target)
@@ -7528,10 +7520,8 @@ pub mod bv2_impl {
             return Ok(*path);
         }
 
-        // `pretty` is a display path that is never handed to the filesystem, so
-        // unlike `text` it is not bounded by MAX_PATH_BYTES: relativizing adds a
-        // `..` per level of `top_level_dir`, and the other forms add a prefix.
-        // `dupe_alloc_fix_pretty` copies whatever is built here into `bump`.
+        // `pretty` is a display path never handed to the filesystem, so it is
+        // not bounded by MAX_PATH_BYTES; `dupe_alloc_fix_pretty` copies it into `bump`.
         let ssr_prefix: &[u8] = if target == options::Target::ServerComponentsSsr {
             b"ssr:"
         } else {

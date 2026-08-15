@@ -462,7 +462,36 @@ it("process.env coerces to string on every execution of the same assignment", ()
   }
 });
 
-it("process.env reads are never stale and writes always coerce across JIT tiers", async () => {
+it("process.env coerces integer-like keys to string on every assignment", () => {
+  // Integer-like keys go through putByIndex. The first store used to give the
+  // object ordinary indexed storage, after which JSC stores into that vector
+  // directly, so later stores (to the same index or a neighbouring one) never
+  // reached putByIndex. process.env has to keep indexed keys on the slow path.
+  try {
+    const repeated = [];
+    const stringForm = [];
+    for (let i = 0; i < 4; i++) {
+      process.env[700] = i;
+      repeated.push(process.env[700]);
+      process.env["701"] = i;
+      stringForm.push(process.env["701"]);
+    }
+    process.env[702] = 7;
+    const keys = Object.keys(process.env).filter(key => key === "700" || key === "701" || key === "702");
+    expect({ repeated, stringForm, neighbour: process.env[702], keys }).toEqual({
+      repeated: ["0", "1", "2", "3"],
+      stringForm: ["0", "1", "2", "3"],
+      neighbour: "7",
+      keys: ["700", "701", "702"],
+    });
+  } finally {
+    delete process.env[700];
+    delete process.env[701];
+    delete process.env[702];
+  }
+});
+
+it.concurrent("process.env reads are never stale and writes always coerce across JIT tiers", async () => {
   // process.env sets ProhibitsPropertyCaching (JSEnvironmentVariableMap.h), so
   // neither reads nor writes to it may be served by an inline cache or folded by
   // the DFG. writeAndRead() and readHot() are called often enough to be compiled
@@ -505,6 +534,56 @@ it("process.env reads are never stale and writes always coerce across JIT tiers"
       `,
     ],
     env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it.concurrent("process.env.TZ and NODE_TLS_REJECT_UNAUTHORIZED writes still reach put() once optimized", async () => {
+  // put() stores these two keys with putDirect and applies their native side
+  // effect first. After the first write they are ordinary data properties, so
+  // without ProhibitsPropertyCaching the DFG folds the write site into a plain
+  // store once it is hot: the string still lands in process.env but the timezone
+  // stops changing and non-strings are stored raw. Non-concurrent JIT makes the
+  // tier-up happen at a fixed call count (around call 100) so the loop is short.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const env = process.env;
+        const N = 200;
+        const zones = ["Asia/Tokyo", "UTC"];
+        const offsets = [-540, 0];
+        function writeTZ(i) {
+          env.TZ = zones[i & 1];
+          return env.TZ;
+        }
+        for (let i = 0; i < N; i++) {
+          const stored = writeTZ(i);
+          const offset = new Date(0).getTimezoneOffset();
+          if (stored !== zones[i & 1] || offset !== offsets[i & 1]) {
+            throw new Error("call " + i + ": stored " + stored + ", offset " + offset);
+          }
+        }
+        function writeTLS(i) {
+          env.NODE_TLS_REJECT_UNAUTHORIZED = i;
+          return env.NODE_TLS_REJECT_UNAUTHORIZED;
+        }
+        for (let i = 0; i < N; i++) {
+          const stored = writeTLS(i);
+          if (stored !== String(i)) throw new Error("call " + i + ": stored " + typeof stored + " " + stored);
+        }
+        console.log("ok");
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
     stdout: "pipe",
     stderr: "pipe",
   });

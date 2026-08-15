@@ -2015,10 +2015,10 @@ mod draft {
         // `ERROR_INVALID_PARAMETER`. Treating that first-chance exception as
         // fatal kills the process for what the callee was about to recover
         // from. So only take over here when the faulting instruction is inside
-        // Bun's own image; for foreign code, let SEH dispatch proceed. JSC
-        // registers unwind info for its JIT pool with a language-specific
-        // handler (LLInt is pending build-time offlineasm .seh_* emission)
-        // that routes back to `Bun__crashHandlerFromJSCFrame`, and
+        // Bun's own image; for foreign code, let SEH dispatch proceed. JSC's
+        // unwind info for its JIT pool and for LLInt carries a
+        // language-specific handler that routes back to
+        // `Bun__crashHandlerFromJSCFrame`, and
         // `handle_unhandled_exception_windows` reports anything that still
         // goes unhandled. Stack overflow is always claimed here: no foreign
         // `__except` recovers from it in practice, and SEH dispatch itself
@@ -2042,8 +2042,8 @@ mod draft {
         );
     }
 
-    /// Called from JSC's `jscJITSEHHandler` when SEH dispatch reaches a JIT
-    /// frame with an unhandled exception. Reports the crash if the reason is
+    /// Called from JSC's `jscJITSEHHandler` when SEH dispatch reaches a JIT or
+    /// LLInt frame with an unhandled exception. Reports the crash if the reason is
     /// one we classify; otherwise continues the search so an outer handler
     /// (or UEF) can claim it.
     #[cfg(windows)]

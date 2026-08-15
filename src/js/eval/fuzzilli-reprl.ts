@@ -10,6 +10,8 @@ const fs = require("node:fs");
 // Captured before any fuzzed script gets a chance to replace them.
 const { drainMicrotasks } = require("bun:jsc");
 const log = console.log.bind(console);
+const addListener = process.on.bind(process);
+const removeListener = process.off.bind(process);
 
 // Make common Node modules available
 globalThis.require = require;
@@ -53,17 +55,13 @@ function reportUncaught(error) {
   try {
     message = `${error}`;
   } catch {
-    // A throwing uncaughtException listener would exit the process.
+    // Coercing the value threw (a Symbol, a hostile toPrimitive); throwing from here would kill the child.
     message = "<unprintable>";
   }
   // Print uncaught exception like workerd does
   log(`uncaught:${message}`);
   exit_code = 1;
 }
-
-// Errors from microtasks and unhandled rejections arrive here, not out of drainMicrotasks().
-process.on("uncaughtException", reportUncaught);
-process.on("unhandledRejection", reportUncaught);
 
 // Main REPRL loop
 while (true) {
@@ -98,15 +96,20 @@ while (true) {
 
   // Execute script
   exit_code = 0;
+  // Errors from the script's microtasks and its unhandled rejections arrive through these events.
+  addListener("uncaughtException", reportUncaught);
+  addListener("unhandledRejection", reportUncaught);
   try {
     // Use indirect eval to execute in global scope
     (0, eval)(script);
   } catch (_e) {
     reportUncaught(_e);
   }
-
   // This loop never yields to the event loop, so run what the script queued before reporting its status.
   drainMicrotasks();
+  // Removed again so that an error escaping the loop itself still takes the child down.
+  removeListener("uncaughtException", reportUncaught);
+  removeListener("unhandledRejection", reportUncaught);
 
   // Send status back (4 bytes: exit code in REPRL format)
   // Format: lower 8 bits = signal number, next 8 bits = exit code

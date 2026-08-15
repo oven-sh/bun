@@ -52,8 +52,10 @@ test.concurrent("REPRL loop runs each program's microtasks before reporting its 
     `queueMicrotask(() => { throw new Error("thrown from a microtask"); });`,
     `Promise.resolve().then(() => ran.push("then queued before the throw"));
      throw new Error("thrown synchronously");`,
-    // Coercing this value to a string throws. An uncaughtException listener that
-    // throws takes the whole process down, so it must be reported without that.
+    // Values whose string coercion throws must be reported without the report
+    // itself throwing: from the catch block that would escape the loop, from
+    // the uncaughtException listener it would exit the process.
+    `ran.push("threw a symbol synchronously"); throw Symbol("unprintable");`,
     `queueMicrotask(() => { throw { [Symbol.toPrimitive]() { throw new Error("unprintable"); } }; });`,
     // Same hazard via the logger: the report must not go through whatever the
     // program left in console.log.
@@ -71,6 +73,8 @@ test.concurrent("REPRL loop runs each program's microtasks before reporting its 
     uncaught:Error: thrown synchronously
     status=0x100 ran=["then queued before the throw"]
     uncaught:<unprintable>
+    status=0x100 ran=["threw a symbol synchronously"]
+    uncaught:<unprintable>
     status=0x100 ran=[]
     uncaught:Error: thrown after console.log was replaced
     status=0x100 ran=[]
@@ -79,4 +83,21 @@ test.concurrent("REPRL loop runs each program's microtasks before reporting its 
   `);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// The listeners that turn a program's async errors into its status must not
+// also catch errors thrown by the loop itself (here: a program broke the
+// resetCoverage() call the loop makes after writing its status). Those have to
+// keep killing the child with a non-zero exit, so the fuzzer records a failed
+// execution and respawns, rather than a child that reports nothing further and
+// exits 0 (or keeps running, if the program left a timer behind).
+test.concurrent("an error escaping the REPRL loop itself still kills the child", async () => {
+  const { stdout, stderr, exitCode } = await runReprl([`globalThis.resetCoverage = 1;`, `ran.push("never executed");`]);
+
+  expect(stdout).toMatchInlineSnapshot(`
+    "status=0x0 ran=[]
+    "
+  `);
+  expect(stderr).toContain("resetCoverage is not a function");
+  expect(exitCode).toBe(1);
 });

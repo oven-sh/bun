@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { isMacOS, tempDir } from "harness";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
@@ -60,9 +60,11 @@ describe.concurrent("bunshell mkdir", () => {
       using dir = tempDir("mkdir-verbose-eexist", { dir: {} });
       const cwd = String(dir);
 
+      // The builtins use the host's strerror text for EEXIST.
+      const eexist = isMacOS ? "File or folder exists" : "File exists";
       expect(await mkdir(cwd, flags, "dir")).toEqual({
         stdout: "",
-        stderr: `mkdir: ${join(cwd, "dir")}: File exists\n`,
+        stderr: `mkdir: ${join(cwd, "dir")}: ${eexist}\n`,
         exitCode: 1,
       });
     });

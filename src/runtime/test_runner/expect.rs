@@ -624,8 +624,7 @@ impl Expect {
         let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
         let execution_entry = match &parent.phase {
-            // `entry()` is None once the runner has advanced past the entry that was
-            // running when this expect() was created.
+            // `entry()` only resolves while the captured entry is still the one running.
             bun_test::RefDataValue::Execution { entry_data: Some(_), .. } => {
                 parent.phase.entry(buntest).ok_or(crate::Error::TestNotActive)?
             }

@@ -1413,12 +1413,29 @@ export function escapeGitHubAction(string) {
   return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
+// Escapes used by GitHub Actions workflow commands (`::error file=a,title=b::message`).
+// The message escapes `%` and newlines; property values also escape the `,` and
+// `:` that delimit them. Decoding happens in one pass so that an escaped literal
+// "%0A" (written "%250A") does not turn into a newline.
+// https://github.com/actions/toolkit/blob/main/packages/core/src/command.ts
+const githubActionEscapes = { "%25": "%", "%0D": "\r", "%0A": "\n", "%3A": ":", "%2C": "," };
+
 /**
+ * Decodes the message of a GitHub Actions workflow command.
  * @param {string} string
  * @returns {string}
  */
 export function unescapeGitHubAction(string) {
-  return string.replace(/%25/g, "%").replace(/%0D/g, "\r").replace(/%0A/g, "\n");
+  return string.replace(/%(?:25|0D|0A)/g, escaped => githubActionEscapes[escaped]);
+}
+
+/**
+ * Decodes a property value (`file=`, `title=`, ...) of a GitHub Actions workflow command.
+ * @param {string} string
+ * @returns {string}
+ */
+export function unescapeGitHubActionProperty(string) {
+  return string.replace(/%(?:25|0D|0A|3A|2C)/g, escaped => githubActionEscapes[escaped]);
 }
 
 /**
@@ -2780,21 +2797,33 @@ export function parseAnnotations(content) {
       return { lines, match };
     };
 
-    // Github Actions
+    // GitHub Actions workflow command, e.g. what `bun test` prints for a failure
+    // when GITHUB_ACTIONS is set, or a step's `echo "::error::message"`:
+    //   ::error file=a.test.ts,line=3,col=5,title=error: boom::Expected: 1%0A    at ...
+    // As in the runner, the properties are optional and end at the first `::`
+    // (only the message may contain an unescaped `::`), and a property splits at
+    // its first `=`.
     // https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions
-    const githubAnnotation = line.match(/^::(error|warning|notice|debug)(?: (.*))?::(.*)$/);
+    const githubAnnotation = line.match(/^::(error|warning|notice|debug)(?: (.*?))?::(.*)$/);
     if (githubAnnotation) {
-      const [, level, attributes, content] = githubAnnotation;
-      const { file, line, col, title } = Object.fromEntries(
-        attributes?.split(",")?.map(entry => entry.split("=")) || {},
-      );
+      const [, level, properties = "", message] = githubAnnotation;
+      /** @type {Record<string, string>} */
+      const attributes = {};
+      for (const property of properties.split(",")) {
+        const separator = property.indexOf("=");
+        if (separator > 0) {
+          attributes[property.slice(0, separator)] = unescapeGitHubActionProperty(property.slice(separator + 1));
+        }
+      }
+      const { file, line, col, title } = attributes;
 
       const annotation = parseAnnotation({
         level,
+        title,
         filename: file,
         line,
         column: col,
-        content: unescapeGitHubAction(title) + unescapeGitHubAction(content),
+        content: unescapeGitHubAction(message),
       });
       annotations.push(annotation);
       continue;

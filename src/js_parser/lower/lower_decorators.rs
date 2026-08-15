@@ -2411,9 +2411,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             new_properties = merged;
         }
 
-        // `_class = class {}` would be named "_class". A string literal, unlike a
-        // class binding, survives bundler renaming and shadows nothing in the body;
-        // the block goes first so static initializers already see the name.
+        // A string literal, unlike a class binding, survives the bundler's renaming.
         if expr_class_is_anonymous && !defines_static_name(&new_properties) {
             let this_e = p.new_expr(E::This {}, loc);
             let name_e = p.new_expr(

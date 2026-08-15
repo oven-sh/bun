@@ -897,6 +897,28 @@ test.concurrent("a removed workspace member's rows do not hold the remaining wan
   expect(exitCode).toBe(0);
 });
 
+// An optional dependency the registry cannot resolve is skipped at install and its row stays
+// unresolved in bun.lock; a later `bun update` must tolerate that row.
+test.concurrent("`bun update` tolerates an unresolved optional dependency row", async () => {
+  using server = await serveRegistry({
+    parent: { "1.0.0": { dependencies: { leaf: "^1.0.0" } } },
+    leaf: { "1.0.0": {}, "1.5.0": {} },
+  });
+  using tmp = tempDir("update-optional-unresolved-", {
+    "package.json": stringify({ name: "root", workspaces: ["packages/*"], dependencies: { parent: "1.0.0" } }),
+    "packages/a/package.json": stringify({ name: "a", optionalDependencies: { gone: "^1.0.0" } }),
+  });
+  const dir = String(tmp);
+  await servedBunfig(server, dir);
+  const first = await run(dir, "install");
+  expect(first.exitCode).toBe(0);
+
+  const { stderr, exitCode } = await run(dir, "update");
+  expect(stderr).not.toContain("error:");
+  expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.5.0"]);
+  expect(exitCode).toBe(0);
+});
+
 // The root's `^1.0.0` row sits on leaf@1.5.0; its lookup (1.5.0) is below leaf@2.0.0 but the row
 // never resolved there, so it must not hold parent's `^2.0.0` want from moving to 2.5.0.
 test.concurrent("a direct row on a lower instance does not hold wants on a higher instance", async () => {

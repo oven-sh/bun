@@ -9,7 +9,7 @@ use bun_semver as Semver;
 
 use crate::audit_fix;
 use crate::dedupe;
-use crate::dependency::{self, Behavior};
+use crate::dependency::{self, Behavior, TagExt as _};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, PackageIndexEntry};
 use crate::npm::PackageManifest;
@@ -1429,7 +1429,8 @@ fn edges_on_instances(
                     .and_then(|id| slot_of.get(id as usize).copied())
                     .unwrap_or(u32::MAX);
                 let locked = locked_id.and_then(|id| {
-                    let res = &pkg_res[id as usize];
+                    // An optional row the loaded lockfile left unresolved snapshots as invalid.
+                    let res = pkg_res.get(id as usize)?;
                     (res.tag == ResolutionTag::Npm).then(|| res.npm().version)
                 });
                 for (i, inst) in instances.iter().enumerate() {
@@ -1490,12 +1491,12 @@ fn edges_on_instances(
         // Mirrors `latest_for_target` (catalog and overridden rows resolve by their range, never by `latest`); named rows reach plan_edges via the --latest-only path.
         let overridden = overridden_row(&manager.lockfile, row.dep_id);
         let latest = to_latest && (!bare || in_targets) && !row.catalog && !overridden;
-        // `keep_locked_if_ahead` finds a locked version only where its path can: the range's loaded lockfile instance for -r/--filter npm rows, the invoking workspace's own dist-tag row otherwise.
+        // `keep_locked_if_ahead` finds a locked version only where its path can: the range's loaded lockfile instance for -r/--filter npm rows, the invoking workspace's rewritten rows otherwise (rows that were dist-tag literals follow their tag).
         let keep = if !to_latest || row.catalog || overridden {
             KeepLocked::No
         } else if has_targets && in_targets && row.npm {
             KeepLocked::Range
-        } else if !has_targets && !row.npm {
+        } else if !has_targets && !row.npm && !original_literal_is_dist_tag(manager, row.dep_id) {
             row.locked.map_or(KeepLocked::No, KeepLocked::Version)
         } else {
             KeepLocked::No
@@ -1512,6 +1513,51 @@ enum KeepLocked {
     Range,
     /// The row's own locked version keeps it when ahead of the lookup.
     Version(Semver::Version),
+}
+
+/// Mirrors `locked_version_of_invoking_workspace_row`'s dist-tag-literal exclusion.
+fn original_literal_is_dist_tag(manager: &PackageManager, dep_id: DependencyID) -> bool {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+    manager
+        .updating_packages
+        .get(lockfile.str(&dep.name))
+        .is_some_and(|entry| {
+            DependencyVersionTag::infer(&entry.original_version_literal)
+                == DependencyVersionTag::DistTag
+        })
+}
+
+/// Mirrors `patched_package_satisfying`: a patched loaded instance the row's range accepts captures the row before any lookup.
+fn patched_capture(lockfile: &Lockfile, dep_id: DependencyID) -> Option<Semver::Version> {
+    if lockfile.patched_dependencies.count() == 0 {
+        return None;
+    }
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let dep = &lockfile.buffers.dependencies[dep_id as usize];
+    let version = dedupe::effective_version(lockfile, dep_id, dep)?;
+    if version.tag != DependencyVersionTag::Npm {
+        return None;
+    }
+    let hash = Semver::string::Builder::string_hash(version.npm().name.slice(buf));
+    let candidates = lockfile.package_index.get(&hash)?.as_slice();
+    let pkg_res = lockfile.packages.items_resolution();
+    let range = &version.npm().version;
+    candidates
+        .iter()
+        .copied()
+        .filter(|&id| (id as usize) < lockfile.packages.len())
+        .find(|&id| {
+            let res = &pkg_res[id as usize];
+            res.tag == ResolutionTag::Npm
+                && range.satisfies(res.npm().version, buf, buf)
+                && lockfile
+                    .patched_dependencies
+                    .contains(&Semver::string::Builder::string_hash(&dedupe::label(
+                        lockfile, id,
+                    )))
+        })
+        .map(|id| pkg_res[id as usize].npm().version)
 }
 
 /// Mirrors `locked_version_in_lockfile`: the highest loaded npm instance the row's range accepts.
@@ -1596,6 +1642,10 @@ fn direct_row_stays(
     excludes: Option<&[&[u8]]>,
 ) -> bool {
     let buf = lockfile.buffers.string_bytes.as_slice();
+    // `patched_package_satisfying` captures the row before any lookup.
+    if let Some(patched) = patched_capture(lockfile, dep_id) {
+        return patched.order(current, buf, buf) == Ordering::Equal;
+    }
     let found = if latest {
         manifest
             .find_by_dist_tag_with_filter(b"latest", min_age, excludes)

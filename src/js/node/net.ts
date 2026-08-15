@@ -2122,8 +2122,6 @@ Socket.prototype.connect = function connect(...args) {
   }
   if (this.destroyed) {
     this._handle = null;
-    this._peername = null;
-    this._sockname = null;
   }
 
   this.connecting = true;

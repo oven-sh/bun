@@ -464,9 +464,10 @@ describe("net.Socket write", () => {
   );
 
   function listen(server: Server) {
-    return new Promise<number>(resolve =>
-      server.listen(0, "127.0.0.1", () => resolve((server.address() as import("node:net").AddressInfo).port)),
-    );
+    return new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as import("node:net").AddressInfo).port));
+    });
   }
 
   it("should allow reconnecting after end()", async () => {
@@ -580,7 +581,10 @@ describe("net.Socket write", () => {
       const errors: Error[] = [];
       socket.on("error", err => errors.push(err));
       try {
-        await new Promise<void>(r => server.listen(socketPath, r));
+        await new Promise<void>((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(socketPath, resolve);
+        });
 
         socket.connect(socketPath);
         await once(socket, "connect");

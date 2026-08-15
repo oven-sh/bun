@@ -1947,22 +1947,59 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
+    /// Runtime Android detection. Android's app seccomp policy denies
+    /// syscalls outside its allowlist with `SECCOMP_RET_TRAP` — the process
+    /// is killed by SIGSYS instead of seeing ENOSYS — so errno-based
+    /// fallbacks for newer syscalls (`openat2(2)`, `fchmodat2(2)`) never get
+    /// a chance to run. The shipped linux builds run under Termux as plain
+    /// `target_os = "linux"`, so `cfg!(target_os = "android")` alone can't
+    /// catch this; probe the kernel release string (GKI kernels embed
+    /// "android") and the `ANDROID_ROOT`/`ANDROID_DATA` env vars Android
+    /// init sets for every process.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn is_android_kernel() -> bool {
+        if cfg!(target_os = "android") {
+            return true;
+        }
+        use core::sync::atomic::{AtomicU8, Ordering};
+        // 0 = unprobed, 1 = not Android, 2 = Android.
+        static CACHED: AtomicU8 = AtomicU8::new(0);
+        match CACHED.load(Ordering::Relaxed) {
+            0 => {}
+            v => return v == 2,
+        }
+        let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
+        let detected = bun_core::strings::contains_case_insensitive_ascii(release, b"android")
+            || (bun_core::env_var::ANDROID_ROOT::get_not_empty().is_some()
+                && bun_core::env_var::ANDROID_DATA::get_not_empty().is_some());
+        CACHED.store(if detected { 2 } else { 1 }, Ordering::Relaxed);
+        detected
+    }
+    /// `openat2(RESOLVE_BENEATH)`. Fails with ENOSYS on Android without
+    /// issuing the syscall (seccomp there kills the process instead of
+    /// returning ENOSYS; see [`is_android_kernel`]) so callers take their
+    /// existing fallback paths.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        if is_android_kernel() {
+            return Err(Error::from_code_int(libc::ENOSYS, Tag::open).with_path(path.as_bytes()));
+        }
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
     /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
     /// if `dir` were `/`. Falls back to plain `openat` on kernels without
     /// `openat2` (or when seccomp blocks it), caching the unavailability.
+    /// On Android the syscall is never issued at all (seccomp there kills
+    /// the process instead of returning ENOSYS; see [`is_android_kernel`]).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         use core::sync::atomic::{AtomicBool, Ordering};
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
         let dir = dir.as_fd();
-        if !UNAVAILABLE.load(Ordering::Relaxed) {
+        if !UNAVAILABLE.load(Ordering::Relaxed) && !is_android_kernel() {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
                 Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
@@ -2835,6 +2872,14 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if is_android_kernel() {
+                // Android seccomp SIGSYS-kills `fchmodat2(2)` instead of
+                // returning ENOSYS, and libc's `fchmodat(.., AT_SYMLINK_
+                // NOFOLLOW)` emulation (current glibc and musl) tries
+                // `fchmodat2(2)` internally first, so neither may be issued.
+                return lchmod_no_fchmodat2(path, mode);
+            }
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {
                 // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -2860,6 +2905,49 @@ mod posix_impl {
                 return Ok(());
             }
         }
+    }
+    /// `lchmod` without touching `fchmodat2(2)`: `AT_SYMLINK_NOFOLLOW`
+    /// emulation via `O_PATH` + `chmod("/proc/self/fd/N")`, the same strategy
+    /// musl's fallback uses. Symlinks are rejected with EOPNOTSUPP (symlink
+    /// modes are meaningless on Linux), matching libc behavior.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn lchmod_no_fchmodat2(path: &ZStr, mode: Mode) -> Maybe<()> {
+        let fd = match open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0) {
+            Ok(fd) => fd,
+            Err(mut err) => {
+                err.syscall = Tag::lchmod;
+                return Err(err);
+            }
+        };
+        let st = match fstat(fd) {
+            Ok(st) => st,
+            Err(mut err) => {
+                let _ = close(fd);
+                err.syscall = Tag::lchmod;
+                return Err(err.with_path(path.as_bytes()));
+            }
+        };
+        if (st.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32 {
+            let _ = close(fd);
+            return Err(
+                Error::from_code_int(libc::EOPNOTSUPP, Tag::lchmod).with_path(path.as_bytes())
+            );
+        }
+        let mut proc = [0u8; 32];
+        let n = {
+            use std::io::Write as _;
+            let mut c = std::io::Cursor::new(&mut proc[..]);
+            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
+            c.position() as usize - 1
+        };
+        // SAFETY: NUL written above.
+        let z = ZStr::from_buf(&proc[..], n);
+        let result = chmod(z, mode);
+        let _ = close(fd);
+        result.map_err(|mut err| {
+            err.syscall = Tag::lchmod;
+            err.with_path(path.as_bytes())
+        })
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(

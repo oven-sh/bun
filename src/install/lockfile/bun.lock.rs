@@ -3299,18 +3299,23 @@ pub(crate) fn parse_into_binary_lockfile(
 }
 
 /// The catalog-resolved range of a peer edge the fresh resolver defers to its second phase
-/// (`install_peer`) and binds by version there. Two exemptions, matching
-/// `enqueue_dependency_with_main_and_success_fn`: optional peers return
-/// before the deferred phase and are bound to the hoisted-tree sibling by
-/// `process_subtree` instead, and `*` peers express no version preference
-/// and bind to whatever sibling pin existed first. Both of those are
-/// exactly what the printed tree's path walk reproduces, so they keep it.
+/// (`install_peer`) and binds by version there. Three exemptions keep the
+/// printed tree's path walk, which reproduces their saved binding exactly.
+/// Two match `enqueue_dependency_with_main_and_success_fn`: optional peers
+/// return before the deferred phase and are bound to the hoisted-tree
+/// sibling by `process_subtree` instead, and `*` peers express no version
+/// preference and bind to whatever sibling pin existed first. The third is
+/// a bundled peer: `process_subtree` always places a bundled edge under its
+/// own package, so its entry is always printed, and like every other bundled
+/// edge (`bun update` and dedupe hold them in place too) it stays on the
+/// version recorded there, the copy inside the bundle, even once a newer
+/// version satisfying the range exists elsewhere in the lockfile.
 fn deferred_peer_range<'a>(
     dep: &'a Dependency,
     catalogs: &'a CatalogMap,
     string_buf: &[u8],
 ) -> Option<&'a DependencyVersion> {
-    if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() {
+    if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() || dep.behavior.is_bundled() {
         return None;
     }
     let range = catalogs.resolve_range(string_buf, dep);

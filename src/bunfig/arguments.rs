@@ -48,9 +48,8 @@ fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
             let path =
                 resolve_path::join_abs_string_buf_z::<platform::Auto>(base, &mut **buf, &parts);
             if bun_sys::exists_z(path) {
-                // SAFETY: `buf` holds the NUL-terminated path of length `len`.
                 let len = path.len();
-                return Some(unsafe { ZStr::from_raw(buf.as_ptr(), len) });
+                return Some(ZStr::from_buf(&**buf, len));
             }
         }
     }

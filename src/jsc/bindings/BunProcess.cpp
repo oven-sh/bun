@@ -2996,11 +2996,6 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     return result;
 }
 
-// In `--hot` mode the process object and its stdio streams survive module
-// registry reloads. User code (e.g. node:readline) that attached listeners on
-// the previous load must be detached so the fresh evaluation doesn't stack a
-// second set of handlers on the same stream. Called from
-// GlobalObject::reload(). (#15027)
 void resetStdioForHotReload(Zig::GlobalObject* globalObject)
 {
     if (!globalObject->hasProcessObject()) {
@@ -3013,9 +3008,7 @@ void resetStdioForHotReload(Zig::GlobalObject* globalObject)
     const auto& resetName = WebCore::builtinNames(vm).resetStdioForHotReloadPrivateName();
 
     for (auto name : { "stdin"_s, "stdout"_s, "stderr"_s }) {
-        // getDirect() only returns the value if the PropertyCallback was
-        // already reified by a prior access; it does not trigger lazy
-        // construction of the stream.
+        // getDirect() skips streams that were never reified instead of constructing them.
         JSValue stream = process->getDirect(vm, Identifier::fromString(vm, name));
         if (!stream || !stream.isObject()) {
             continue;
@@ -3033,7 +3026,10 @@ void resetStdioForHotReload(Zig::GlobalObject* globalObject)
 
         JSC::MarkedArgumentBuffer args;
         JSC::profiledCall(globalObject, ProfilingReason::API, resetFn, callData, stream, args);
-        CLEAR_IF_EXCEPTION(scope);
+        // A failing reset on one stream must not stop the others; a termination must.
+        if (!scope.tryClearException()) [[unlikely]] {
+            return;
+        }
     }
 }
 

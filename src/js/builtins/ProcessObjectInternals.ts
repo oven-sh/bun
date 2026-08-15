@@ -110,11 +110,7 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
-  // For `bun --hot`: drop any listeners user code attached on the previous
-  // load so a fresh module evaluation doesn't stack duplicate handlers
-  // (e.g. node:readline's 'resize' listener). Called from
-  // GlobalObject::reload(). There are no internal listeners to preserve on
-  // the write-side stdio streams. (#15027)
+  // Called from GlobalObject::reload(); the stream outlives each `--hot` load.
   stream.$resetStdioForHotReload = function () {
     stream.removeAllListeners();
   };
@@ -352,43 +348,21 @@ export function getStdinStream(
 
   stream._readableState.reading = false;
 
-  // For `bun --hot`: the process object (and this stream) survive module
-  // registry reloads. User code (e.g. node:readline) that attached 'data',
-  // 'keypress', etc. listeners on the previous load must be detached so the
-  // fresh module evaluation doesn't stack a second set of handlers on the
-  // same native fd. Called from GlobalObject::reload(). (#15027)
+  // Called from GlobalObject::reload(); the stream outlives each `--hot` load.
   stream.$resetStdioForHotReload = function () {
     disown();
-    // removeAllListeners() alone leaves the Readable's kDataListening bit
-    // set and schedules updateReadableListening() on the next tick, which
-    // would call self.resume() → own() and undo the disown() above. Use
-    // removeListener('data', fn) per listener so kDataListening is cleared,
-    // and pause() so kFlowing is cleared — otherwise any chunk pushed by an
-    // in-flight internalRead before the new load attaches its handler takes
-    // the addChunk fast path and is emitted to zero listeners instead of
-    // buffered. unpipe() also clears state.pipes so destinations from the
-    // previous load aren't pinned for the process lifetime.
-    // setRawMode(false) restores cooked mode: raw mode clears ISIG, and
-    // once the keypress handler that translated ^C is gone Ctrl+C would be
-    // dead if the new load doesn't re-enter raw mode itself.
     if (stream.isRaw) stream.setRawMode?.(false);
-    // node:readline is cached in the InternalModuleRegistry and is NOT
-    // re-evaluated on reload, so its module-local KEYPRESS_DECODER symbol
-    // keeps pointing at the marker left on this stream.
-    // emitKeypressEvents() early-returns when it sees it, so it would never
-    // reinstall the 'data' → 'keypress' bridge we remove below and
-    // terminal-mode readline would go silent after a reload. Delete it so
-    // the next createInterface() wires keypress events up again. The
-    // escape-decoder generator is left alone: emitKeypressEvents()
-    // overwrites it unconditionally once the guard passes, and a pending
-    // escape-sequence timer from the previous load dereferences it, so
-    // deleting it would turn that timer into an uncaught TypeError.
+    // node:readline is not re-evaluated on reload, and emitKeypressEvents() is a
+    // no-op while the marker from the previous load is still on the stream. Its
+    // escape-decoder stays: a pending escape timeout from the old load still uses it.
     for (const sym of Object.getOwnPropertySymbols(stream)) {
       if (sym.description === "keypress-decoder") {
         delete stream[sym];
       }
     }
     stream.unpipe();
+    // Readable clears kDataListening only in removeListener(); after a bare
+    // removeAllListeners() its next-tick updateReadableListening() would resume() (re-own stdin).
     for (const fn of stream.listeners("data")) stream.removeListener("data", fn);
     originalPause.$call(stream);
     stream.removeAllListeners();

@@ -58,11 +58,18 @@ describe("--bail", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--bail", ...args],
       cwd: String(dir),
-      env: { ...bunEnv, CI: "false" },
+      env: {
+        ...bunEnv,
+        CI: "false",
+        // Bailing on a failed test exits the process without tearing the VM down, so the
+        // test runner's JSC-owned objects show up as leaks. These tests cover what reaches
+        // disk before that exit, so keep ASAN on but leave LSAN off for the child.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Bailed out after 1 failure");
     expect(exitCode).toBe(1);
   }

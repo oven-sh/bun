@@ -2279,3 +2279,54 @@ export const rss: () => number =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
     ? (Bun.unsafe.memoryFootprint as () => number)
     : process.memoryUsage.rss;
+
+/**
+ * `PT_INTERP` of the ELF64 executable at `path`, or `null` if it has none (or
+ * is not an ELF64 file). Only the first page is read: the bun binary is
+ * around 1 GB in debug builds, and every real linker puts the program headers
+ * and the interpreter string there.
+ */
+export function readElfInterp(path: string): { interp: string; p_filesz: number } | null {
+  const head = Buffer.alloc(4096);
+  const fd = openSync(path, "r");
+  let n: number;
+  try {
+    n = fs.readSync(fd, head, 0, head.length, 0);
+  } finally {
+    closeSync(fd);
+  }
+  const image = head.subarray(0, n);
+  if (image.length < 64 || image.toString("latin1", 0, 4) !== "\x7fELF") return null;
+  const PT_INTERP = 3;
+  const e_phoff = Number(image.readBigUInt64LE(32));
+  const e_phnum = image.readUInt16LE(56);
+  for (let i = 0; i < e_phnum; i++) {
+    const phdr = e_phoff + i * 56;
+    if (phdr + 56 > image.length) return null;
+    if (image.readUInt32LE(phdr) !== PT_INTERP) continue;
+    const p_offset = Number(image.readBigUInt64LE(phdr + 8));
+    const p_filesz = Number(image.readBigUInt64LE(phdr + 32));
+    const bytes = image.subarray(p_offset, p_offset + p_filesz);
+    const nul = bytes.indexOf(0);
+    return { interp: bytes.subarray(0, nul === -1 ? bytes.length : nul).toString("latin1"), p_filesz };
+  }
+  return null;
+}
+
+/**
+ * Mirror of `host_uses_nix_store_interpreter()` in src/exe_format/elf.rs, which
+ * makes `bun build --compile` keep a store-path `PT_INTERP` (#29290); tests of
+ * the rewrite skip when this is true. Keep the two in lockstep: like the
+ * runtime, this also counts a bun whose own interpreter is a store path.
+ */
+export function hostLooksNix(): boolean {
+  if (!isLinux) return false;
+  if (fs.existsSync("/etc/NIXOS") || fs.existsSync("/gnu/store")) return true;
+  let selfInterp: string | undefined;
+  try {
+    selfInterp = readElfInterp(bunExe())?.interp;
+  } catch {
+    return false;
+  }
+  return selfInterp?.startsWith("/nix/store/") || selfInterp?.startsWith("/gnu/store/") || false;
+}

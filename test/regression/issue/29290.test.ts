@@ -16,8 +16,8 @@
 // https://github.com/oven-sh/bun/issues/29290
 
 import { expect, test } from "bun:test";
-import { chmodSync, closeSync, cpSync, existsSync, openSync, readSync } from "fs";
-import { bunEnv, bunExe, isLinux, isMusl, tempDir } from "harness";
+import { chmodSync, cpSync, existsSync } from "fs";
+import { bunEnv, bunExe, hostLooksNix, isLinux, isMusl, readElfInterp, tempDir } from "harness";
 import { join } from "path";
 
 const patchelf = Bun.which("patchelf");
@@ -34,53 +34,6 @@ const ldso =
 const ldsoBasename = ldso.split("/").pop()!;
 // Shape of a real /nix/store/ entry: 32-char hash + -<pname>.
 const fakeNixInterp = `/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-glibc-2.40-1/lib/${ldsoBasename}`;
-
-// Read PT_INTERP path from an ELF64 LE binary.
-function readInterp(buf: Buffer): string | null {
-  if (buf.length < 64 || buf.readUInt32BE(0) !== 0x7f454c46) return null;
-  const e_phoff = Number(buf.readBigUInt64LE(32));
-  const e_phnum = buf.readUInt16LE(56);
-  for (let i = 0; i < e_phnum; i++) {
-    const ph = e_phoff + i * 56;
-    if (buf.readUInt32LE(ph) !== 3 /* PT_INTERP */) continue;
-    const p_offset = Number(buf.readBigUInt64LE(ph + 8));
-    const p_filesz = Number(buf.readBigUInt64LE(ph + 32));
-    const region = buf.subarray(p_offset, p_offset + p_filesz);
-    const nul = region.indexOf(0);
-    return region.subarray(0, nul === -1 ? region.length : nul).toString("utf8");
-  }
-  return null;
-}
-
-// Read up to the first 4 KiB of a file (enough for PT_INTERP, which always
-// lives in the first ELF page). The bun binary is ~1.3 GB in debug builds,
-// so `readFileSync` on it would be wasteful; mirror what the Zig helper does.
-function readHead(path: string, bytes = 4096): Buffer {
-  const fd = openSync(path, "r");
-  try {
-    const buf = Buffer.alloc(bytes);
-    const n = readSync(fd, buf, 0, bytes, 0);
-    return buf.subarray(0, n);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-// Mirror of `hostUsesNixStoreInterpreter()` in src/elf.zig: true iff the
-// running bun would skip the FHS rewrite for this host. Test decisions must
-// stay in lockstep with the runtime's — if these two drift, tests pass/fail
-// for the wrong reason.
-function hostLooksNix(): boolean {
-  if (existsSync("/etc/NIXOS")) return true;
-  if (existsSync("/gnu/store")) return true;
-  try {
-    const selfInterp = readInterp(readHead(bunExe()));
-    if (selfInterp && (selfInterp.startsWith("/nix/store/") || selfInterp.startsWith("/gnu/store/"))) {
-      return true;
-    }
-  } catch {}
-  return false;
-}
 
 test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
   "bun build --compile preserves /nix/store PT_INTERP on NixOS hosts (#29290)",
@@ -104,7 +57,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
       expect(r.stderr.toString()).toBe("");
       expect(r.exitCode).toBe(0);
     }
-    expect(readInterp(readHead(fakeNixBun))).toBe(fakeNixInterp);
+    expect(readElfInterp(fakeNixBun)?.interp).toBe(fakeNixInterp);
 
     // Force the spawned bun's host-detection to say "yes, Nix" without
     // mutating the shared rootfs. `BUN_DEBUG_FORCE_NIX_HOST=1` is a
@@ -134,7 +87,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
     // On a NixOS host the output must keep the /nix/store interpreter from
     // the template — rewriting to FHS would point at a stub-ld that rejects
     // generic binaries and #29290 reappears.
-    const interp = readInterp(readHead(out));
+    const interp = readElfInterp(out)?.interp;
     expect(interp).toBe(fakeNixInterp);
   },
   180_000,
@@ -186,7 +139,7 @@ test.skipIf(!isLinux || !patchelf || !existsSync(ldso) || hostLooksNix())(
     expect(r.exitCode).toBe(0);
 
     // Non-NixOS host → normalization kicks in → FHS path.
-    expect(readInterp(readHead(out))).toBe(ldso);
+    expect(readElfInterp(out)?.interp).toBe(ldso);
 
     // And the binary runs on this (non-NixOS) system.
     const run = Bun.spawnSync({ cmd: [out], env: bunEnv, stderr: "pipe", stdout: "pipe" });

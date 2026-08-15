@@ -578,8 +578,9 @@ impl JSBundleCompletionTask {
     ///   cell, promise, keep-alive), return the count, and leave the inert rest
     ///   for the bundle thread to free when it dequeues it — the VM does not
     ///   wait behind other VMs' builds.
-    /// * Already on the bundle thread: tombstone the plugin, cancel and wake it;
-    ///   it fails what the plugins hold, fails the build and posts the
+    /// * Already on the bundle thread: tombstone the plugin — which answers what
+    ///   the plugins still hold as cancelled — then cancel and wake the bundle
+    ///   thread; it consumes those answers, fails the build and posts the
     ///   completion, which teardown waits for and releases.
     ///
     /// # Safety

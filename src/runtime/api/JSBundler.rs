@@ -1522,8 +1522,10 @@ pub mod js_bundler {
                     .expect("BundleV2.linker.loop must be set before plugins run");
                 match &mut *any_loop.as_ptr() {
                     bun_event_loop::AnyEventLoop::Js { .. } => {
-                        let ct =
-                            ConcurrentTask::from_callback(ctx.as_mut_ptr(), on_notify_defer_raw);
+                        let ct = ConcurrentTask::from_callback(
+                            std::ptr::from_mut::<Load>(self),
+                            on_notify_defer_js,
+                        );
                         let poster = (*ctx.as_mut_ptr())
                             .js_poster
                             .as_ref()
@@ -1547,8 +1549,11 @@ pub mod js_bundler {
         }
     }
 
-    fn on_notify_defer_raw(ctx: *mut BundleV2<'static>) -> bun_event_loop::JsResult<()> {
-        bv2_mut(ctx).on_notify_defer();
+    fn on_notify_defer_js(load: *mut Load) -> bun_event_loop::JsResult<()> {
+        // SAFETY: task contract — `load` is the live request `on_defer` posted; this runs on the loop
+        // that runs the bundle (bake: the plugins' own), so it is the bundle thread here.
+        let load = unsafe { &mut *load };
+        BundleV2::on_notify_defer(load, bv2_mut(load.bv2));
         Ok(())
     }
 
@@ -1556,7 +1561,7 @@ pub mod js_bundler {
         // SAFETY: callback contract — `load` was passed as the `Context` arg to
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
         // `BundleV2` backref the mini loop's tick supplies as `extra`.
-        BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
+        BundleV2::on_notify_defer(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
     /// # Safety

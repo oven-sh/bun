@@ -489,22 +489,23 @@ describe("Bun.Terminal", () => {
 
     test.skipIf(isWindows)("setting flags throws when the terminal's fd is not a PTY", async () => {
       // No libc rejects a termios update on a healthy PTY portably, so swap
-      // the PTY master fd out for /dev/null (ENOTTY) behind the terminal's
-      // back. openpty() hands out the lowest free fd, so the master lands on
-      // the fd number the probe just freed.
+      // the PTY master fd out for a regular file behind the terminal's back.
+      // openpty() hands out the lowest free fd, so the master lands on the fd
+      // number the probe just freed. A regular file fails termios ioctls with
+      // ENOTTY on every POSIX kernel; /dev/null would be ENODEV on macOS.
       const script = `
         const fs = require("node:fs");
         // The first terminal may open unrelated fds on the side (openpty is
         // loaded lazily); construct one up front so the probe below sees a
         // settled fd table.
         new Bun.Terminal({}).close();
-        const probe = fs.openSync("/dev/null", "r");
+        const probe = fs.openSync(process.execPath, "r");
         fs.closeSync(probe);
 
         const terminal = new Bun.Terminal({});
         const flags = terminal.localFlags;
         fs.closeSync(probe);
-        const replacement = fs.openSync("/dev/null", "r");
+        const replacement = fs.openSync(process.execPath, "r");
 
         let thrown = null;
         try {

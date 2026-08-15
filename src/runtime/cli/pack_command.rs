@@ -1528,8 +1528,7 @@ fn bin_path_escapes_root(p: &[u8]) -> bool {
     path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
 }
 
-/// `lstat` kind of `bin_path` (relative to the package root, `/`-separated), or
-/// `Unknown` if it is missing or a parent component is not a real directory.
+/// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
 fn bin_kind_without_following_symlinks(
     abs_workspace_path: &[u8],
     bin_path: &[u8],

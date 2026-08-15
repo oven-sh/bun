@@ -2458,13 +2458,28 @@ fn get_or_put_resolved_package(
 
                     break 'blk Some(result);
                 }
-                Npm::FindVersionResult::Err(err_type) => match err_type {
-                    Npm::FindVersionError::TooRecent
-                    | Npm::FindVersionError::AllVersionsTooRecent => {
-                        return Err(crate::Error::TooRecentVersion);
+                Npm::FindVersionResult::Err(err_type) => {
+                    // The leftover `existing_peer_target` passed over is all there is.
+                    if install_peer && behavior.is_peer() {
+                        if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
+                        {
+                            return Ok(Some(bind_existing_peer(
+                                this,
+                                dependency_id,
+                                id,
+                                false,
+                                success_fn,
+                            )));
+                        }
                     }
-                    Npm::FindVersionError::NotFound => None, // Handle below with existing logic
-                },
+                    match err_type {
+                        Npm::FindVersionError::TooRecent
+                        | Npm::FindVersionError::AllVersionsTooRecent => {
+                            return Err(crate::Error::TooRecentVersion);
+                        }
+                        Npm::FindVersionError::NotFound => None, // Handle below with existing logic
+                    }
+                }
             };
 
             let find_result = match find_result_opt {
@@ -2498,22 +2513,9 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    if behavior.is_peer() {
-                        // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
-                        if !install_peer {
-                            return Ok(None);
-                        }
-                        // The leftover `existing_peer_target` passed over is all there is.
-                        if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
-                        {
-                            return Ok(Some(bind_existing_peer(
-                                this,
-                                dependency_id,
-                                id,
-                                false,
-                                success_fn,
-                            )));
-                        }
+                    // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
+                    if behavior.is_peer() && !install_peer {
+                        return Ok(None);
                     }
 
                     return match version.tag {

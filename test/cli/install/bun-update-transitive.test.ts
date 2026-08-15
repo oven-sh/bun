@@ -2186,6 +2186,29 @@ test.concurrent(
   },
 );
 
+// Same when the only release the new range accepts is still inside --minimum-release-age.
+test.concurrent(
+  "a peerDependencies entry whose new range only matches a too recent release keeps the installed copy",
+  async () => {
+    using server = await serveRegistry(
+      { leaf: { "1.0.0": {}, "2.0.0": {} } },
+      {},
+      { times: { leaf: { "1.0.0": daysAgo(30), "2.0.0": daysAgo(1) } } },
+    );
+    const entry = (range: string) => ({ name: "foo", peerDependencies: { leaf: range } });
+    const dir = await installServed(server, "peer-entry-min-age-", entry("^1.0.0"));
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+    await write(join(dir, "package.json"), stringify(entry("^2.0.0")));
+    const { stderr, exitCode } = await run(dir, "install", "--minimum-release-age", THREE_DAYS_SECONDS);
+    expect(stderr).toContain('warn: incorrect peer dependency "leaf@1.0.0"');
+    expect(stderr).not.toContain("error:");
+    expect(await lockedVersions(dir, "leaf")).toStrictEqual(["1.0.0"]);
+    expect(await installedVersion(dir, "leaf")).toBe("1.0.0");
+    await frozen(dir);
+    expect(exitCode).toBe(0);
+  },
+);
+
 // The root's peer entry alone holds no-deps@1.1.0 at the top of node_modules; one-fixed-dep@1.0.0 then nests the no-deps@1.0.0
 // it depends on, so bun.lock carries two copies, the higher of which nothing depends on outright.
 const rootPeer = (range: string, dependencies: Json) =>

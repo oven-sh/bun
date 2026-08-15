@@ -175,6 +175,98 @@ describe("--print for cjs/esm", () => {
   });
 });
 
+// `--print` looks at the result once the event loop is done. A result promise
+// that is still pending when the loop drained on its own gets one more turn of
+// the loop; one left pending because an unhandled error stopped the loop does
+// not (nothing of the script runs after such an error, as with `-e`). Either
+// way the process then leaves through the regular exit path ('exit' listeners,
+// exit code), not from inside a reaction on the promise.
+//
+// Every script below arms the timer that would settle the result and then
+// blocks in Bun.sleepSync, so the timer is overdue by the time the loop is
+// looked at: it fires for sure in the extra turn of the unref cases, and its
+// callback not having run in the error cases shows that nothing ran after the
+// error, whatever the timing.
+describe.concurrent("--print with a result promise still pending when the event loop is done", () => {
+  const exitListener = `process.on("exit", () => console.log("exit listener ran"));`;
+
+  async function print(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--print", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("fulfilled by an unref'd timer: prints the value, then runs 'exit' listeners", async () => {
+    const { stdout, stderr, exitCode } = await print(
+      `${exitListener}
+       new Promise(resolve => { setTimeout(() => resolve("settled late"), 1).unref(); Bun.sleepSync(10); })`,
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toBe("settled late\nexit listener ran\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("rejected by an unref'd timer: reported as unhandled and exits 1, like a rejection during the loop", async () => {
+    const { stdout, stderr, exitCode } = await print(
+      `${exitListener}
+       new Promise((_, reject) => { setTimeout(() => reject("rejected late"), 1).unref(); Bun.sleepSync(10); })`,
+    );
+    expect(stderr).toContain("error: rejected late");
+    // What a rejected result is printed as is not this block's subject.
+    expect(stdout).toEndWith("exit listener ran\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(["resolve", "reject"])(
+    "unhandled rejection stopped the loop: the %s() timer does not run, exits 1 after 'exit' listeners",
+    async settle => {
+      const { stdout, stderr, exitCode } = await print(
+        `${exitListener}
+         Promise.reject(new Error("early rejection"));
+         new Promise((resolve, reject) => {
+           setTimeout(() => { console.log("timer ran"); ${settle}("late"); }, 1);
+           Bun.sleepSync(10);
+         })`,
+      );
+      expect(stderr).toContain("early rejection");
+      expect(stdout).toBe("Promise { <pending> }\nexit listener ran\n");
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("uncaught exception from a timer stopped the loop: 'exit' listeners see code 1", async () => {
+    // The settling timer is armed by the throwing callback itself. Whether the
+    // turn of the loop that ran the throw still fires it differs by platform
+    // (libuv runs timers again after its poll), so what gets printed is not
+    // asserted, only that the process left through the exit listeners.
+    const { stdout, stderr, exitCode } = await print(
+      `process.on("exit", code => console.log("exit listener ran with", code));
+       new Promise(resolve => {
+         setTimeout(() => {
+           setTimeout(() => resolve("settled late"), 1);
+           Bun.sleepSync(10);
+           throw new Error("thrown in timer");
+         }, 1);
+       })`,
+    );
+    expect(stderr).toContain("thrown in timer");
+    expect(stdout).toEndWith("exit listener ran with 1\n");
+    expect(exitCode).toBe(1);
+  });
+
+  test("never settles: prints the promise and exits normally", async () => {
+    const { stdout, stderr, exitCode } = await print(`${exitListener} new Promise(() => {})`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("Promise { <pending> }\nexit listener ran\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
   test("it works", async () => {
     const { stdout } = run('console.log("hello world")');

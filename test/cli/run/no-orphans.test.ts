@@ -26,25 +26,26 @@ const isSupported = isPosix || isWindows;
 // 65534 is "nobody" on Linux and macOS.
 const NOBODY = 65534;
 
-// uid 0 is not enough for the uid/gid test. Spawning the grandchild as nobody
-// takes CAP_SETUID/CAP_SETGID; signalling it afterwards takes CAP_KILL, both
-// for this file's kill(2)-based isAlive()/reap() and for the kernel's
-// PR_SET_PDEATHSIG delivery, which runs the same permission check with the
-// dying bun as the sender. Containers commonly run as uid 0 with set*id but
-// without CAP_KILL, so probe the operations themselves. The probe blocks on
-// stdin and exits on EOF, so it needs no signal to clean up.
-function canSignalProcessSpawnedAsNobody(): boolean {
+// The tests whose grandchild changes ids need two things uid 0 by itself does
+// not guarantee: CAP_SETUID/CAP_SETGID to spawn with those ids, and permission
+// to signal the result. Signal permission goes by uid, so a uid change needs
+// CAP_KILL, both for this file's kill(2)-based isAlive()/reap() and for the
+// kernel's PR_SET_PDEATHSIG delivery, which runs the same permission check
+// with the dying bun as the sender; a gid-only change stays signallable.
+// Containers routinely run as uid 0 with set*id but without CAP_KILL, so probe
+// the operations themselves instead of getuid(). The probe blocks on stdin and
+// exits on EOF, so it needs no signal to clean up.
+function canSpawnAndSignal(ids: { uid?: number; gid?: number }): boolean {
   if (!isPosix) return false;
   try {
     const probe = Bun.spawn({
       cmd: ["/bin/sh", "-c", "read x"],
-      uid: NOBODY,
-      gid: NOBODY,
+      ...ids,
       stdio: ["pipe", "ignore", "ignore"],
     });
     try {
       // Bun.spawn returns after the child has exec'd (vfork / exec-status
-      // pipe), so the child already carries nobody's ids here.
+      // pipe), so the child already carries the requested ids here.
       process.kill(probe.pid, 0);
       return true;
     } finally {
@@ -55,7 +56,23 @@ function canSignalProcessSpawnedAsNobody(): boolean {
     return false;
   }
 }
-const canReapNobodyGrandchild = canSignalProcessSpawnedAsNobody();
+
+// Same shape as child.js, but the grandchild is plain /bin/sh — never calls
+// prctl itself, so reaping it proves the spawn-side linux_pdeathsig (Linux)
+// and the libproc walk (macOS) cover non-Bun descendants. `ids` is spliced
+// into the grandchild's spawn options.
+function nonBunChild(ids = "") {
+  return `
+    const gc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", "echo r; while :; do sleep 1; done"],
+      ${ids}
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    await gc.stdout.getReader().read();
+    console.log(process.pid, process.ppid, gc.pid);
+    setInterval(()=>{}, 1000);
+  `;
+}
 
 // Shared fixture dir — child.js spawns grandchild.js, prints
 // "<self> <ppid> <grandchild>", then idles. Kept on disk so we can pass it
@@ -85,32 +102,12 @@ const fixture = tempDir("no-orphans", {
   // of /bin/sh. A .bat avoids cmd /c's quote-stripping around a quoted exe +
   // arg. %1 is the child script name.
   "supervisor.bat": `@"${bunExe()}" "%~dp0%~1"\r\n`,
-  // Same shape as child.js, but the grandchild is plain /bin/sh — never calls
-  // prctl itself, so reaping it proves the spawn-side linux_pdeathsig (Linux)
-  // and the libproc walk (macOS) cover non-Bun descendants.
-  "child-nonbun.js": `
-    const gc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", "echo r; while :; do sleep 1; done"],
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    await gc.stdout.getReader().read();
-    console.log(process.pid, process.ppid, gc.pid);
-    setInterval(()=>{}, 1000);
-  `,
-  // Same as child-nonbun.js but the grandchild drops to nobody. On Linux the
-  // kernel clears PR_SET_PDEATHSIG when the child's effective ids change
-  // (prctl(2)), so the spawn must re-arm it after setgid/setuid.
-  "child-nonbun-uid.js": `
-    const gc = Bun.spawn({
-      cmd: ["/bin/sh", "-c", "echo r; while :; do sleep 1; done"],
-      uid: ${NOBODY},
-      gid: ${NOBODY},
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    await gc.stdout.getReader().read();
-    console.log(process.pid, process.ppid, gc.pid);
-    setInterval(()=>{}, 1000);
-  `,
+  "child-nonbun.js": nonBunChild(),
+  // The grandchild changes ids. On Linux the kernel clears PR_SET_PDEATHSIG
+  // when a process's effective uid or gid changes (prctl(2)), so the spawn
+  // must re-arm it after setgid/setuid.
+  "child-nonbun-uid.js": nonBunChild(`uid: ${NOBODY}, gid: ${NOBODY},`),
+  "child-nonbun-gid.js": nonBunChild(`gid: ${NOBODY},`),
 });
 
 async function spawnTree(noOrphans: string | undefined, childScript = "child.js") {
@@ -176,10 +173,6 @@ async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
   return !isAlive(pid);
 }
 
-/**
- * Tests record their observations, call this, and only then `expect()`: an
- * assertion that throws before reap() leaves the whole tree running.
- */
 function reap(...pids: number[]) {
   for (const pid of pids) {
     if (isAlive(pid)) {
@@ -221,7 +214,7 @@ test.concurrent.skipIf(!isSupported)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1");
-    const grandchildWasAlive = isAlive(grandchildPid);
+    expect(isAlive(grandchildPid)).toBe(true);
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;
     const bunDied = await waitUntilDead(bunPid, 10000);
@@ -230,7 +223,6 @@ test.concurrent.skipIf(!isSupported)(
     // also Bun with the env var inherited and so has its own PDEATHSIG.
     const grandchildDied = await waitUntilDead(grandchildPid, 10000);
     reap(bunPid, grandchildPid);
-    expect(grandchildWasAlive).toBe(true);
     expect(bunDied).toBe(true);
     expect(grandchildDied).toBe(true);
   },
@@ -244,36 +236,43 @@ test.concurrent.skipIf(!isPosix)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: non-Bun grandchildren are reaped when bun dies with its parent",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun.js");
-    const grandchildWasAlive = isAlive(grandchildPid);
+    expect(isAlive(grandchildPid)).toBe(true);
     process.kill(sh.pid!, "SIGKILL");
     await sh.exited;
     const bunDied = await waitUntilDead(bunPid, 10000);
     const grandchildDied = await waitUntilDead(grandchildPid, 10000);
     reap(bunPid, grandchildPid);
-    expect(grandchildWasAlive).toBe(true);
     expect(bunDied).toBe(true);
     expect(grandchildDied).toBe(true);
   },
 );
 
-// Same as above but the grandchild is spawned with uid/gid. The credential
-// change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
-// gets re-armed after setgid/setuid.
-test.concurrent.skipIf(!canReapNobodyGrandchild)(
-  "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
-  async () => {
-    const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");
-    const grandchildWasAlive = isAlive(grandchildPid);
-    process.kill(sh.pid!, "SIGKILL");
-    await sh.exited;
-    const bunDied = await waitUntilDead(bunPid, 10000);
-    const grandchildDied = await waitUntilDead(grandchildPid, 10000);
-    reap(bunPid, grandchildPid);
-    expect(grandchildWasAlive).toBe(true);
-    expect(bunDied).toBe(true);
-    expect(grandchildDied).toBe(true);
-  },
-);
+// Same as above but the grandchild is spawned with new ids. The credential
+// change clears the pdeathsig the spawn armed (prctl(2)), so these prove it
+// gets re-armed after setgid/setuid. Each variant runs only where this process
+// can spawn with those ids and then signal the result (canSpawnAndSignal):
+// non-root can do neither; uid 0 without CAP_KILL, the usual shape of a
+// container, can for the gid-only variant but not the uid one, which is what
+// keeps the re-arm covered there.
+for (const { ids, script, enabled } of [
+  { ids: "uid/gid", script: "child-nonbun-uid.js", enabled: canSpawnAndSignal({ uid: NOBODY, gid: NOBODY }) },
+  { ids: "gid", script: "child-nonbun-gid.js", enabled: canSpawnAndSignal({ gid: NOBODY }) },
+]) {
+  test.concurrent.skipIf(!enabled)(
+    `BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with ${ids} is reaped`,
+    async () => {
+      const { sh, bunPid, grandchildPid } = await spawnTree("1", script);
+      expect(isAlive(grandchildPid)).toBe(true);
+      process.kill(sh.pid!, "SIGKILL");
+      await sh.exited;
+      const bunDied = await waitUntilDead(bunPid, 10000);
+      const grandchildDied = await waitUntilDead(grandchildPid, 10000);
+      reap(bunPid, grandchildPid);
+      expect(bunDied).toBe(true);
+      expect(grandchildDied).toBe(true);
+    },
+  );
+}
 
 test.concurrent.skipIf(!isSupported)("BUN_FEATURE_FLAG_NO_ORPHANS=0 is treated as unset", async () => {
   const { sh, bunPid, grandchildPid } = await spawnTree("0");

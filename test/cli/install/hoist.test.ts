@@ -38,6 +38,8 @@ test("should handle resolving optional peer from multiple instances of same pack
 // resolver's own `incorrect peer dependency` warning only covers peers it bound
 // out of range itself.
 const peerWarnings = (stderr: string) => stderr.match(/^warn: incorrect peer dependency [^\r\n]*/gm) ?? [];
+// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
+const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
 const installedVersion = async (packageDir: string, ...path: string[]) =>
   (await file(join(packageDir, "node_modules", ...path, "package.json")).json()).version;
 const hasOwnNodeModules = (packageDir: string, name: string) =>
@@ -59,14 +61,14 @@ test.concurrent("warns when a workspace member's peer is served by a root depend
   });
 
   // The member's peer binds to the root's no-deps@1.1.0: nothing to report.
-  await runBunInstall(bunEnv, packageDir);
+  await runBunInstall(installEnv(packageDir), packageDir);
   expect(await installedVersion(packageDir, "no-deps")).toBe("1.1.0");
 
   // The peer stays bound to 1.1.0, but the tree only has room for the root's
   // new copy, so pkg1 gets no-deps@2.0.0. Reported once: the tree is also built
   // while loading and cleaning the lockfile, and those builds stay quiet.
   await write(packageJson, rootPackageJson("^2.0.0"));
-  const { err } = await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+  const { err } = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: true });
   expect(peerWarnings(err)).toEqual([
     'warn: incorrect peer dependency "no-deps@2.0.0": "pkg1@workspace:packages/pkg1" requires "no-deps@^1.0.0"',
   ]);
@@ -97,14 +99,17 @@ test.concurrent(
     const expected =
       'warn: incorrect peer dependency "no-deps@2.0.0": "peer-deps-fixed@1.0.0" requires "no-deps@^1.0.0"';
 
-    const fresh = await runBunInstall(bunEnv, packageDir, { allowWarnings: true });
+    const fresh = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: true });
     expect(peerWarnings(fresh.err)).toEqual([expected]);
     expect(await installedVersion(packageDir, "no-deps")).toBe("2.0.0");
     expect(await installedVersion(packageDir, "provides-peer-deps-1-0-0", "node_modules", "no-deps")).toBe("1.0.0");
     expect(await hasOwnNodeModules(packageDir, "peer-deps-fixed")).toBe(false);
 
     // Nothing changed, so the same tree gets installed again.
-    const again = await runBunInstall(bunEnv, packageDir, { allowWarnings: true, savesLockfile: false });
+    const again = await runBunInstall(installEnv(packageDir), packageDir, {
+      allowWarnings: true,
+      savesLockfile: false,
+    });
     expect(peerWarnings(again.err)).toEqual([expected]);
   },
 );
@@ -131,7 +136,7 @@ test.concurrent.each([
     },
   });
 
-  const { err } = await runBunInstall(bunEnv, packageDir, { allowWarnings: warnings.length > 0 });
+  const { err } = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: warnings.length > 0 });
   expect(peerWarnings(err)).toEqual(warnings);
   expect(await installedVersion(packageDir, "no-deps")).toBe(version);
   expect(await hasOwnNodeModules(packageDir, "peer-deps-fixed")).toBe(false);
@@ -163,11 +168,11 @@ test.concurrent.each([
       files: { "package.json": rootPackageJson("1.0.0") },
     });
 
-    await runBunInstall(bunEnv, packageDir);
+    await runBunInstall(installEnv(packageDir), packageDir);
     expect(await installedVersion(packageDir, "no-deps")).toBe("1.0.0");
 
     await write(packageJson, rootPackageJson("2.0.0"));
-    const { err } = await runBunInstall(bunEnv, packageDir, { allowWarnings: warnings.length > 0 });
+    const { err } = await runBunInstall(installEnv(packageDir), packageDir, { allowWarnings: warnings.length > 0 });
     expect(peerWarnings(err)).toEqual(warnings);
     expect(await installedVersion(packageDir, "no-deps")).toBe("2.0.0");
     expect(await installedVersion(packageDir, "provides-peer-deps-1-0-0", "node_modules", "no-deps")).toBe("1.0.0");

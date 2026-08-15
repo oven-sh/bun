@@ -252,35 +252,39 @@ impl Step {
 }
 
 /// The directory a package is linked into before being renamed onto its real
-/// path in one step (`@scope/name` becomes `@scope/.name.bun-tmp`), so the real
-/// path, whose contents later installs take as proof that the package is
+/// path in one step (`@scope/name` becomes `@scope/.bun-tmp-<hash>`), so the
+/// real path, whose contents later installs take as proof that the package is
 /// installed, never exists half-written. The leading dot keeps it from being
-/// treated as a package and the suffix keeps it clear of `.bin`, `.bun` and
-/// `.bun-cache`. The name is deterministic so that the next install of the
-/// package finds and removes whatever an interrupted one left behind.
+/// treated as a package. The name is a hash of the package path rather than the
+/// path itself because a package name may already be as long as a file name can
+/// be, and it is deterministic so that the next install of the package finds and
+/// removes whatever an interrupted one left behind.
 pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
 
 impl core::fmt::Display for StagingPath<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
-        let (scope, name) = self.0.split_at(name_start);
+        let scope = &self.0[..name_start];
         write!(
             f,
-            "{}.{}.bun-tmp",
+            "{}.bun-tmp-{:016x}",
             bstr::BStr::new(scope),
-            bstr::BStr::new(name)
+            bun_wyhash::hash(self.0)
         )
     }
 }
 
 /// Renames a fully linked `StagingPath` onto the package's real path. Both are
-/// relative to `dir`.
+/// relative to `dir`. Fails if something is already installed at `dest`; the
+/// caller decides what to do with it.
 ///
 /// On Windows a directory cannot be renamed while another process holds a file
 /// inside it open without `FILE_SHARE_DELETE`, which is how virus scanners look
 /// at files that were just written (https://github.com/oven-sh/bun/issues/11250
 /// is the same failure for the cache); that clears within milliseconds, so back
-/// off and retry like the cache publish in `extract_tarball.rs` does.
+/// off and retry like the cache publish in `extract_tarball.rs` does. Windows
+/// reports an occupied `dest` with the same errors, so that case is told apart
+/// by looking for `dest` instead of waited on.
 pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
     #[cfg(windows)]
     {
@@ -291,7 +295,7 @@ pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) ->
                     if matches!(
                         err.get_errno(),
                         sys::E::EPERM | sys::E::EACCES | sys::E::EBUSY
-                    ) =>
+                    ) && !sys::directory_exists_at(dir, dest).unwrap_or(false) =>
                 {
                     // 10ms, 20ms, ... 320ms: 630ms in total.
                     std::thread::sleep(std::time::Duration::from_millis(10u64 << attempt));
@@ -2402,8 +2406,17 @@ impl<'a> PackageInstall<'a> {
             return failure;
         }
 
-        match rename_staging_into_place(destination_dir.fd(), staging, self.destination_dir_subpath)
-        {
+        let dest = self.destination_dir_subpath;
+        let mut renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
+        if renamed.is_err() && dest.as_bytes() != b"." {
+            // Something is installed there even though nothing was moved away above:
+            // a workspace that is depended on under two names has its node_modules
+            // walked as two trees, so the packages in it are installed twice. Replace
+            // it, as overwriting it file by file did before.
+            self.uninstall_before_install(destination_dir);
+            renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
+        }
+        match renamed {
             Ok(()) => InstallResult::Success,
             Err(err) => {
                 let _ = destination_dir.delete_tree(staging.as_bytes());

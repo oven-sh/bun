@@ -524,8 +524,6 @@ impl Linker {
         Ok(())
     }
 
-    // Same text as `ResolveMessage::fmt`: files transpiled off the JS thread skip
-    // this linker and get this error from the runtime resolve hook instead.
     fn when_builtin_not_found(
         log: &mut Log,
         import_record: &mut ImportRecord,

@@ -922,12 +922,9 @@ fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] 
 }
 
 /// Coordinator-side SIGINT/SIGTERM handling. The handler sets a flag and wakes
-/// the event loop; `Coordinator::drive` checks the flag between polls and tears
-/// down workers itself, so nothing non-signal-safe runs in the handler. The
-/// wakeup is what makes the flag visible promptly: the poll retries on EINTR,
-/// so without it an idle coordinator sees the flag only at its next
-/// housekeeping timer, up to ~1s later. Linux PDEATHSIG and the Windows Job
-/// Object are the safety net for when the coordinator can't run this (SIGKILL).
+/// the loop (the poll retries on EINTR, so the flag alone would wait for the
+/// next ~1s housekeeping timer); `Coordinator::drive` does the teardown. Linux
+/// PDEATHSIG and the Windows Job Object cover the case where it can't (SIGKILL).
 pub(crate) mod abort_handler {
     use super::*;
 

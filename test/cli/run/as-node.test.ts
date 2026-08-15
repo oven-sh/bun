@@ -135,10 +135,12 @@ describe("fake node cli", () => {
         cwd: dir,
         env: { ...bunEnv, NODE_ENV: undefined },
         stdin: Buffer.alloc(0),
+        stdout: "pipe",
         stderr: "pipe",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain("Missing script");
+      expect(stdout).toBe("");
       expect(exitCode).not.toBe(0);
     },
   );

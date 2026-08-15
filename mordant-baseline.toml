@@ -56,9 +56,6 @@
 "unchecked_construction:src/runtime/server/mod.rs" = 1
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 
-[bun_shell_parser]
-"bare_bool_args:src/shell_parser/parse.rs" = 1
-
 [bun_sql_jsc]
 
 [bun_sys]

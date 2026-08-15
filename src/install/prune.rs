@@ -11,7 +11,7 @@ use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
 
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{Store, build_store};
+use crate::isolated_install::{Store, Timings, build_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
@@ -1475,7 +1475,14 @@ fn build_store_with(manager: &mut PackageManager, (local, remote): StoreFeatures
     );
     manager.options.local_package_features = local;
     manager.options.remote_package_features = remote;
-    let store = build_store(&*manager, &manager.lockfile, true, &[], None, false);
+    let store = build_store(
+        &*manager,
+        &manager.lockfile,
+        true,
+        &[],
+        None,
+        Timings::Quiet,
+    );
     (
         manager.options.local_package_features,
         manager.options.remote_package_features,

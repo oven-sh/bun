@@ -4840,8 +4840,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 
 /* Source for Process.lut.h
 @begin processObjectTable
-  _debugEnd                        Process_stubEmptyFunction                           Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
   _eval                            processGetEval                                      CustomAccessor
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
@@ -4849,8 +4847,6 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
   _preload_modules                 Process_stubEmptyArray                              PropertyCallback
   _rawDebug                        constructRawDebug                                   PropertyCallback
-  _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
-  _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      constructAllowedNodeEnvironmentFlags                PropertyCallback
@@ -4970,6 +4966,18 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
+
+    // Node's worker threads have no process._debugProcess & co. These are own
+    // properties rather than processObjectTable entries because deleting a
+    // static-table property makes JSC reify every lazy property in the table
+    // (the stdio streams, env, versions, config, ...): exactly the work a
+    // worker's startup is supposed to skip.
+    if (!WebCore::clientData(vm)->isWorkerVM()) {
+        auto* globalObject = this->globalObject();
+        for (auto name : { "_debugProcess"_s, "_debugEnd"_s, "_startProfilerIdleNotifier"_s, "_stopProfilerIdleNotifier"_s })
+            putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, name), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+    }
+
     // Node's addReadOnlyProcessAlias: read-only so `process.noDeprecation = false`
     // is ignored, but a per-Process property — a Worker must not flip the main
     // thread. Unflagged it stays an ordinary undefined slot user code can set.

@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -1924,6 +1924,84 @@ test("process.debugPort defaults to 9229 on the main thread", async () => {
   expect(stdout.trim()).toBe("9229");
   expect(exitCode).toBe(0);
 });
+
+// The worker bootstrap rebinds process.stdout/stderr/stdin and removes/replaces a few
+// process methods. It must do so without building the process object's lazy native
+// properties: Object.defineProperty over one constructs the fd-backed stdio stream it is
+// about to replace, and `delete` makes JSC reify every lazy property (env, versions,
+// config, the stdio streams, ...). Constructing all of that was most of a worker's
+// startup. Same invariant test/js/bun/util/BunObject.test.ts holds for the Bun object.
+test("the worker bootstrap leaves the process object's lazy properties unbuilt", async () => {
+  const mainOnlyInternals = ["_debugProcess", "_debugEnd", "_startProfilerIdleNotifier", "_stopProfilerIdleNotifier"];
+  const worker = new Worker(
+    `const { hasNonReifiedStatic } = require("bun:internal-for-testing");
+     const lazy = hasNonReifiedStatic(process);
+     const shape = name => {
+       const { value, writable, enumerable, configurable } = Object.getOwnPropertyDescriptor(process, name);
+       return [value.constructor.name, writable, enumerable, configurable];
+     };
+     require("worker_threads").parentPort.postMessage({
+       lazy,
+       stdout: shape("stdout"),
+       stderr: shape("stderr"),
+       stdin: shape("stdin"),
+       presentInternals: ${JSON.stringify(mainOnlyInternals)}.filter(name => name in process),
+     });`,
+    { eval: true },
+  );
+  const [result] = await once(worker, "message");
+  await worker.terminate();
+  expect(result).toEqual({
+    lazy: true,
+    // The same own data properties the main thread ends up with once it touches them.
+    stdout: ["Writable", true, true, true],
+    stderr: ["Writable", true, true, true],
+    stdin: ["Readable", true, true, true],
+    presentInternals: [],
+  });
+  // ...while the main thread still has node's no-op stubs.
+  expect(mainOnlyInternals.map(name => typeof process[name])).toEqual(["function", "function", "function", "function"]);
+});
+
+// The previous test cannot see the stdio streams themselves being built, because building
+// a single lazy property does not count as reifying the table. Building the fd-backed
+// stdout/stderr streams of a piped stdio dups fd 1 and 2, so an fd aliasing either of them
+// that did not exist before the worker was created is the streams having been built and
+// thrown away. A child process is used so that stdio is piped whatever the test runner's is.
+test.skipIf(isWindows)(
+  "the worker bootstrap does not build (and dup the fds of) the stdio streams it replaces",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+       // Self-contained: its source is also evaluated inside the worker.
+       const aliasesOfStdio = () => {
+         const fs = require("fs");
+         const id = fd => { try { const { dev, ino } = fs.fstatSync(fd); return dev + ":" + ino; } catch { return null; } };
+         const stdio = [id(1), id(2)], out = [];
+         for (let fd = 3; fd < 256; fd++) if (stdio.includes(id(fd))) out.push(fd);
+         return out;
+       };
+       const worker = new Worker(
+         "const wt = require('worker_threads'); wt.parentPort.postMessage((" + aliasesOfStdio + ")().filter(fd => !wt.workerData.includes(fd)));",
+         { eval: true, workerData: aliasesOfStdio() },
+       );
+       worker.on("message", created => { console.log(JSON.stringify(created)); worker.terminate(); });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ fdsAliasingStdioCreatedByTheWorker: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      fdsAliasingStdioCreatedByTheWorker: [],
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
 
 // Founding a SHARE_ENV tree replaces the founding thread's process.env object. If the
 // replacement were orphaned, the founder's later writes would go nowhere. child_process

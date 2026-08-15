@@ -460,33 +460,23 @@ function setupWorkerStdio(stdio) {
   const { stdin, stdout, stderr } = stdio;
   const stdoutStream = makePortWritable(stdout);
   const stderrStream = makePortWritable(stderr);
-  Object.defineProperty(process, "stdout", {
-    value: stdoutStream,
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
-  Object.defineProperty(process, "stderr", {
-    value: stderrStream,
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
+  const proc: any = process;
+  // Plain assignment, not Object.defineProperty: process.stdout/stderr/stdin are
+  // lazy native properties. Assigning replaces one unbuilt; defineProperty first
+  // builds the fd-backed stream it is about to discard (loading tty/net/fs to do
+  // so). Either way the result is a writable, enumerable, configurable own property.
+  proc.stdout = stdoutStream;
+  proc.stderr = stderrStream;
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
-  Object.defineProperty(process, "stdin", {
-    value: stdin
-      ? makePortReadable(stdin, true)
-      : new Readable({
-          read() {
-            this.push(null);
-          },
-        }),
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
+  proc.stdin = stdin
+    ? makePortReadable(stdin, true)
+    : new Readable({
+        read() {
+          this.push(null);
+        },
+      });
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the port-backed streams.
   const { Console } = require("node:console");
@@ -864,6 +854,10 @@ function fakeParentPort() {
 if (!isMainThread && _isNodeWorker) {
   applyWorkerProcessOverrides();
 }
+// Only ever assigns or defines individual properties: `delete process.x` makes JSC
+// reify every lazy property of the process object (stdio streams, env, versions,
+// ...). The main-only internals node deletes in workers (process._debugProcess & co.)
+// are therefore never defined on a worker's process to begin with (BunProcess.cpp).
 function applyWorkerProcessOverrides() {
   const proc: any = process;
   // node defaults debugPort to 9229 in workers (still settable). Per-object property:
@@ -871,12 +865,6 @@ function applyWorkerProcessOverrides() {
   try {
     Object.defineProperty(proc, "debugPort", { value: 9229, writable: true, configurable: true, enumerable: true });
   } catch {}
-  // These main-only internals are absent on a worker's process.
-  for (const k of ["_startProfilerIdleNotifier", "_stopProfilerIdleNotifier", "_debugProcess", "_debugEnd"]) {
-    try {
-      delete proc[k];
-    } catch {}
-  }
   // process.umask(setMask) is unsupported in workers; the getter still works.
   const realUmask = proc.umask;
   function umask(mask?: unknown) {

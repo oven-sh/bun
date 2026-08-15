@@ -31,19 +31,6 @@ use super::{dev_server, framework_router};
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
 
-/// Local shim until `bun_jsc` grows a typed `get_optional`.
-/// Returns `None` for missing/null/undefined.
-fn get_optional_slice(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<ZigStringSlice>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
-        _ => Ok(None),
-    }
-}
-
 /// `JSValue.getBooleanStrict` — local shim.
 fn get_boolean_strict(
     target: JSValue,
@@ -232,14 +219,35 @@ impl UserOptions {
             &arena,
         )?;
 
-        let root: &[u8] = if let Some(slice) = get_optional_slice(config, global, b"root")? {
-            allocations.track(slice)
-        } else {
-            match bun_sys::getcwd_alloc() {
-                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
+        // DevServer and FrameworkRouter strip `root` off absolute file paths to
+        // form module IDs and route patterns, so it must be absolute and must
+        // not end in a separator.
+        let root: &'static ZStr = {
+            let cwd = match bun_sys::getcwd_alloc() {
+                Ok(cwd) => cwd,
                 Err(e) => {
                     return Err(global
                         .throw_error(e.to_zig_err(), "while querying current working directory"));
+                }
+            };
+            match config.get_optional_slice(global, b"root")? {
+                None => arena_dupe_z(&arena, cwd.as_bytes()),
+                Some(user_root) => {
+                    use bun_paths::resolve_path::join_abs_string_buf_checked;
+                    use bun_paths::string_paths::without_trailing_slash_windows_path;
+
+                    let mut buf = paths::path_buffer_pool::get();
+                    let Some(resolved) = join_abs_string_buf_checked::<paths::platform::Auto>(
+                        cwd.as_bytes(),
+                        &mut buf[..],
+                        &[user_root.slice()],
+                    ) else {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'{}.root' is too long",
+                            API_NAME
+                        )));
+                    };
+                    arena_dupe_z(&arena, without_trailing_slash_windows_path(resolved))
                 }
             }
         };
@@ -248,10 +256,8 @@ impl UserOptions {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        let root_z = arena_dupe_z(&arena, root);
-
         Ok(UserOptions {
-            root: root_z,
+            root,
             framework,
             bundler_options,
             allocations,
@@ -334,7 +340,7 @@ impl SplitBundlerOptions {
                 );
             }
 
-            if let Some(slice) = get_optional_slice(plugin_config, global, b"name")? {
+            if let Some(slice) = plugin_config.get_optional_slice(global, b"name")? {
                 if slice.slice().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected plugin to have a non-empty name"
@@ -856,7 +862,7 @@ impl Framework {
                     )));
                 },
                 server_runtime_import: refs.track(
-                    match get_optional_slice(sc, global, b"serverRuntimeImportSource")? {
+                    match sc.get_optional_slice(global, b"serverRuntimeImportSource")? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -866,7 +872,7 @@ impl Framework {
                     },
                 ),
                 server_register_client_reference: if let Some(slice) =
-                    get_optional_slice(sc, global, b"serverRegisterClientReferenceExport")?
+                    sc.get_optional_slice(global, b"serverRegisterClientReferenceExport")?
                 {
                     refs.track(slice)
                 } else {

@@ -102,8 +102,7 @@ bun_core::comptime_string_map! {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-variant string table — single source of truth for the four exhaustive
-// matches that previously lived in typename_label / param_typename_label /
+// Per-variant string table — single source of truth for typename_label /
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize`.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -224,14 +223,6 @@ impl ABIType {
 
     pub(crate) fn typename_label(self) -> &'static [u8] {
         self.row().c_type
-    }
-
-    pub(crate) fn param_typename(
-        self,
-        writer: &mut impl std::io::Write,
-    ) -> Result<(), crate::Error> {
-        writer.write_all(self.typename_label())?;
-        Ok(())
     }
 }
 

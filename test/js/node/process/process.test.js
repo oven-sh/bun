@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -2545,4 +2545,66 @@ it("no socket close handler runs after the 'exit' event", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
+});
+
+// process.constrainedMemory() and navigator.hardwareConcurrency come from the
+// cgroup the process is in: its path is read from /proc/self/cgroup and the
+// limits from /sys/fs/cgroup/<path>/{memory.max,cpu.max}. Both locations can be
+// faked without privileges wherever unprivileged user namespaces are enabled:
+// inside a user+mount namespace, bind-mount our own file over /proc/self/cgroup
+// and our own directory over /sys/fs/cgroup, then exec bun from the pid that
+// did the mounting so that its /proc/self/cgroup is the bind-mounted file.
+// 256 MiB and 1 cpu are below any host's resources, so the expected output is
+// the same on every machine.
+const fakeCgroupLimits = { "memory.max": "268435456\n", "cpu.max": "100000 100000\n" };
+const fakeCgroupLimitsReport = "268435456 1\n";
+
+function reportLimitsWithFakeCgroups(unshare, procSelfCgroup, sysFsCgroup) {
+  using dir = tempDir("fake-cgroup", { cgroup: procSelfCgroup, sys: sysFsCgroup });
+  return spawnSync({
+    cmd: [
+      unshare,
+      "-U",
+      "-r",
+      "-m",
+      "sh",
+      "-c",
+      'mount --bind "$1" /proc/self/cgroup && mount --bind "$2" /sys/fs/cgroup && ' +
+        'exec "$3" -e "console.log(process.constrainedMemory(), navigator.hardwareConcurrency)"',
+      "sh",
+      join(String(dir), "cgroup"),
+      join(String(dir), "sys"),
+      bunExe(),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+}
+
+// The layout every container runtime produces on a cgroup v2 host doubles as
+// the probe for whether this machine lets us fake cgroups at all.
+const unshare = isLinux ? which("unshare") : null;
+const canFakeCgroups =
+  unshare !== null &&
+  reportLimitsWithFakeCgroups(unshare, "0::/\n", fakeCgroupLimits).stdout.toString() === fakeCgroupLimitsReport;
+
+describe.skipIf(!canFakeCgroups)("cgroup limits when /proc/self/cgroup has more than the cgroup v2 line", () => {
+  // A cgroup v1 hierarchy mounted with only a name (cgroupfs-mount,
+  // docker-in-docker and LXC hosts do this) coexists with cgroup v2 and is
+  // listed before the "0::" line. Detection used to require "0::" at the very
+  // start of the file and otherwise reported the host's RAM and core count.
+  it("named cgroup v1 hierarchy listed before the 0:: line", () => {
+    const { stdout, exitCode } = reportLimitsWithFakeCgroups(unshare, "1:name=systemd:/\n0::/\n", fakeCgroupLimits);
+    expect(stdout.toString()).toBe(fakeCgroupLimitsReport);
+    expect(exitCode).toBe(0);
+  });
+
+  it("named cgroup v1 hierarchy listed before a nested 0:: path", () => {
+    const { stdout, exitCode } = reportLimitsWithFakeCgroups(unshare, "1:name=systemd:/\n0::/docker/abc\n", {
+      docker: { abc: fakeCgroupLimits },
+    });
+    expect(stdout.toString()).toBe(fakeCgroupLimitsReport);
+    expect(exitCode).toBe(0);
+  });
 });

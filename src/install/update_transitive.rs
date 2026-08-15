@@ -1215,23 +1215,29 @@ fn plan_edges(
                 (edge, owner)
             })
             .collect();
-        // Rows the differ lands back on `current`; like followers, the redirect can still carry them.
-        let direct_stayers: Vec<DependencyID> = edges_on.direct[inst_i]
-            .iter()
-            .filter(|&&(dep_id, latest, keep)| {
-                direct_row_stays(
-                    &manager.lockfile,
-                    manifest,
-                    dep_id,
-                    latest,
-                    keep,
-                    inst.current,
-                    min_age,
-                    excludes,
-                )
-            })
-            .map(|&(dep_id, ..)| dep_id)
-            .collect();
+        // Where the differ lands each direct row: rows back on `current` are stayers the redirect
+        // can still carry; moved rows' landings are earlier redirect targets of their own.
+        let mut direct_stayers: Vec<DependencyID> = Vec::new();
+        let mut direct_landings: Vec<(Semver::Version, bool)> = Vec::new();
+        for &(dep_id, latest, keep) in &edges_on.direct[inst_i] {
+            let Some((landing, in_manifest)) = direct_row_landing(
+                &manager.lockfile,
+                manifest,
+                dep_id,
+                latest,
+                keep,
+                min_age,
+                excludes,
+            ) else {
+                continue;
+            };
+            let landing_buf = if in_manifest { manifest_buf } else { buf };
+            if landing.order(inst.current, landing_buf, buf) == Ordering::Equal {
+                direct_stayers.push(dep_id);
+            } else {
+                direct_landings.push((landing, in_manifest));
+            }
+        }
         // Holds cascade (a held want stays behind and can block another), so iterate to a fixed point.
         let mut held_wants = vec![false; inst.wants.len()];
         loop {
@@ -1243,11 +1249,9 @@ fn plan_edges(
                 if held_wants[w] || plan.to.is_none() {
                     continue;
                 }
-                // The redirect carries every remaining edge toward the FIRST pinned want's target.
+                // The redirect carries every remaining edge toward the FIRST pinned want's target (dist-tag pins included).
                 let redirect_v = (0..inst.wants.len())
-                    .find(|&i| {
-                        !held_wants[i] && planned[i].as_ref().is_some_and(|plan| plan.to.is_some())
-                    })
+                    .find(|&i| !held_wants[i] && planned[i].is_some())
                     .and_then(|i| planned[i].as_ref().map(|plan| plan.v))
                     .unwrap_or(plan.v);
                 if forks_surviving_instance(
@@ -1258,6 +1262,7 @@ fn plan_edges(
                     &held_wants,
                     &edge_wants,
                     &direct_stayers,
+                    &direct_landings,
                     redirect_v,
                     manifest_buf,
                 ) {
@@ -1639,18 +1644,16 @@ fn overridden_row(lockfile: &Lockfile, dep_id: DependencyID) -> bool {
             .is_some()
 }
 
-/// The differ lands this row back on `current` when that is the release it re-resolves to: the `latest` dist-tag for `--latest` target rows, otherwise the best release the row's range allows.
-#[allow(clippy::too_many_arguments)]
-fn direct_row_stays(
+/// The release the differ lands this row on (with whether it lives in the manifest buffer): the patched capture, the keep-locked version, or the lookup (`latest` dist-tag for `--latest` target rows, else the row's own range or tag).
+fn direct_row_landing(
     lockfile: &Lockfile,
     manifest: &PackageManifest,
     dep_id: DependencyID,
     latest: bool,
     keep: KeepLocked,
-    current: Semver::Version,
     min_age: Option<f64>,
     excludes: Option<&[&[u8]]>,
-) -> bool {
+) -> Option<(Semver::Version, bool)> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     // `patched_package_satisfying` captures the row before any lookup; peer rows fall through.
     if !lockfile.buffers.dependencies[dep_id as usize]
@@ -1658,7 +1661,7 @@ fn direct_row_stays(
         .is_peer()
     {
         if let Some(patched) = patched_capture(lockfile, dep_id) {
-            return patched.order(current, buf, buf) == Ordering::Equal;
+            return Some((patched, false));
         }
     }
     let found = if latest {
@@ -1667,9 +1670,7 @@ fn direct_row_stays(
             .unwrap()
     } else {
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
-        let Some(version) = dedupe::effective_version(lockfile, dep_id, dep) else {
-            return false;
-        };
+        let version = dedupe::effective_version(lockfile, dep_id, dep)?;
         match version.tag {
             DependencyVersionTag::Npm => manifest
                 .find_best_version_with_filter(&version.npm().version, buf, min_age, excludes)
@@ -1677,25 +1678,24 @@ fn direct_row_stays(
             DependencyVersionTag::DistTag => manifest
                 .find_by_dist_tag_with_filter(version.dist_tag().tag.slice(buf), min_age, excludes)
                 .unwrap(),
-            _ => return false,
+            _ => return None,
         }
     };
+    let found = found?;
     // `keep_locked_if_ahead`: a lookup below the row's locked version lands it back on that version, when the manifest still has it.
-    found.is_some_and(|found| {
-        let locked = match keep {
-            KeepLocked::No => None,
-            KeepLocked::Version(locked) => Some(locked),
-            KeepLocked::Range => locked_in_lockfile(lockfile, dep_id),
-        };
-        if let Some(locked) = locked {
-            if found.version.order(locked, &manifest.string_buf, buf) == Ordering::Less
-                && manifest.find_by_version(locked).is_some()
-            {
-                return locked.order(current, buf, buf) == Ordering::Equal;
-            }
+    let locked = match keep {
+        KeepLocked::No => None,
+        KeepLocked::Version(locked) => Some(locked),
+        KeepLocked::Range => locked_in_lockfile(lockfile, dep_id),
+    };
+    if let Some(locked) = locked {
+        if found.version.order(locked, &manifest.string_buf, buf) == Ordering::Less
+            && manifest.find_by_version(locked).is_some()
+        {
+            return Some((locked, false));
         }
-        found.version.order(current, &manifest.string_buf, buf) == Ordering::Equal
-    })
+    }
+    Some((found.version, true))
 }
 
 /// An edge left behind at a still-satisfying `current` would re-create the duplicate `bun dedupe` removes.
@@ -1708,6 +1708,7 @@ fn forks_surviving_instance(
     held_wants: &[bool],
     edge_wants: &[(DependencyID, Option<usize>)],
     direct_stayers: &[DependencyID],
+    direct_landings: &[(Semver::Version, bool)],
     redirect_v: Semver::Version,
     manifest_buf: &[u8],
 ) -> bool {
@@ -1720,11 +1721,14 @@ fn forks_surviving_instance(
     }
     let deps = lockfile.buffers.dependencies.as_slice();
     let stays = |version: &dependency::Version| {
-        version.tag != DependencyVersionTag::Npm
-            || !version
-                .npm()
-                .version
-                .satisfies(redirect_v, buf, manifest_buf)
+        if version.tag != DependencyVersionTag::Npm {
+            return true;
+        }
+        let range = &version.npm().version;
+        !range.satisfies(redirect_v, buf, manifest_buf)
+            && !direct_landings.iter().any(|&(landing, in_manifest)| {
+                range.satisfies(landing, buf, if in_manifest { manifest_buf } else { buf })
+            })
     };
     let uncarried = |edge: DependencyID| {
         let dep = &deps[edge as usize];

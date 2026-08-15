@@ -39,6 +39,9 @@ const ran: string[] = [];
 (globalThis as any).resetCoverage = () => {};
 (globalThis as any).require = require;
 
+// Programs may replace console.log; the status lines must still come out.
+const log = console.log.bind(console);
+
 const realFstatSync = fs.fstatSync;
 const realReadSync = fs.readSync;
 const realWriteSync = fs.writeSync;
@@ -63,7 +66,7 @@ let sawHelo = false;
   if (!sawHelo) {
     sawHelo = true;
   } else {
-    console.log(`status=0x${buffer.readUInt32LE(0).toString(16)} ran=${JSON.stringify([...ran].sort())}`);
+    log(`status=0x${buffer.readUInt32LE(0).toString(16)} ran=${JSON.stringify([...ran].sort())}`);
     ran.length = 0;
   }
   return buffer.length;

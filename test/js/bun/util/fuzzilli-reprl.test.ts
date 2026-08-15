@@ -55,6 +55,10 @@ test.concurrent("REPRL loop runs each program's microtasks before reporting its 
     // Coercing this value to a string throws. An uncaughtException listener that
     // throws takes the whole process down, so it must be reported without that.
     `queueMicrotask(() => { throw { [Symbol.toPrimitive]() { throw new Error("unprintable"); } }; });`,
+    // Same hazard via the logger: the report must not go through whatever the
+    // program left in console.log.
+    `console.log = () => { throw new Error("console.log was replaced"); };
+     queueMicrotask(() => { throw new Error("thrown after console.log was replaced"); });`,
     `ran.push("clean program after failed ones");`,
   ]);
 
@@ -67,6 +71,8 @@ test.concurrent("REPRL loop runs each program's microtasks before reporting its 
     uncaught:Error: thrown synchronously
     status=0x100 ran=["then queued before the throw"]
     uncaught:<unprintable>
+    status=0x100 ran=[]
+    uncaught:Error: thrown after console.log was replaced
     status=0x100 ran=[]
     status=0x0 ran=["clean program after failed ones"]
     "

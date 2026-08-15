@@ -7,9 +7,10 @@ const REPRL_CWFD = 101; // Control write FD
 const REPRL_DRFD = 102; // Data read FD
 
 const fs = require("node:fs");
-// Captured before any fuzzed script runs: require is exposed on globalThis
-// below, so a script could otherwise replace require("bun:jsc").drainMicrotasks.
+// Captured before any fuzzed script runs: scripts can replace console.log and,
+// through the require exposed below, require("bun:jsc").drainMicrotasks.
 const { drainMicrotasks } = require("bun:jsc");
+const log = console.log.bind(console);
 
 // Make common Node modules available
 globalThis.require = require;
@@ -58,7 +59,7 @@ function reportUncaught(error) {
     message = "<unprintable>";
   }
   // Print uncaught exception like workerd does
-  console.log(`uncaught:${message}`);
+  log(`uncaught:${message}`);
   exit_code = 1;
 }
 

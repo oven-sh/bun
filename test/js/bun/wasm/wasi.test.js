@@ -249,6 +249,40 @@ it("fd_write accepts iovecs, iovec arrays and output pointers that end exactly a
   expect(chunks).toEqual(["end", "mid", "mid"]);
 });
 
+it("fd_read returns EOVERFLOW for an out-of-bounds nread pointer before consuming any input", () => {
+  let stdinReads = 0;
+  const wasi = new WASI({
+    getStdin: () => {
+      stdinReads++;
+      return Buffer.from("input");
+    },
+  });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const END = wasi.memory.buffer.byteLength;
+  const memory = Buffer.from(wasi.memory.buffer);
+  const view = new DataView(wasi.memory.buffer);
+  const WASI_STDIN = 0;
+  const iovsPtr = 0;
+  const bufPtr = 1024;
+  const nreadPtr = 256;
+  view.setUint32(iovsPtr, bufPtr, true);
+  view.setUint32(iovsPtr + 4, 5, true);
+  const destination = () => memory.toString("latin1", bufPtr, bufPtr + 5);
+
+  expect(wasi.wasiImport.fd_read(WASI_STDIN, iovsPtr, 1, END + 1000)).toBe(WASI_EOVERFLOW);
+  expect({ stdinReads, destination: destination() }).toEqual({
+    stdinReads: 0,
+    destination: Buffer.alloc(5, 0).toString("latin1"),
+  });
+
+  expect(wasi.wasiImport.fd_read(WASI_STDIN, iovsPtr, 1, nreadPtr)).toBe(WASI_ESUCCESS);
+  expect({ stdinReads, destination: destination(), nread: view.getUint32(nreadPtr, true) }).toEqual({
+    stdinReads: 1,
+    destination: "input",
+    nread: 5,
+  });
+});
+
 it("fd_pwrite/fd_pread return EOVERFLOW before touching the file or guest memory", () => {
   using dir = tempDir("wasi-pwrite-oob", {
     "data.txt": "original",
@@ -320,7 +354,7 @@ it("fd_pwrite/fd_pread return EOVERFLOW before touching the file or guest memory
   expect(wasi.wasiImport.fd_close(fd)).toBe(WASI_ESUCCESS);
 });
 
-it("path_open/fd_seek return EOVERFLOW for an out-of-bounds output pointer before opening or seeking", () => {
+it("path_open/fd_seek/fd_tell return EOVERFLOW for an out-of-bounds output pointer before opening or seeking", () => {
   using dir = tempDir("wasi-open-seek-oob", {
     "exists.txt": "0123456789",
   });
@@ -358,6 +392,11 @@ it("path_open/fd_seek return EOVERFLOW for an out-of-bounds output pointer befor
 
   expect(open("exists.txt", 0, fdPtr)).toBe(WASI_ESUCCESS);
   const fd = view.getUint32(fdPtr, true);
+  // A descriptor that has not been positioned yet reads through the host's file
+  // position; a rejected fd_tell must not switch it to an explicit offset.
+  expect(wasi.wasiImport.fd_tell(fd, END + 1000)).toBe(WASI_EOVERFLOW);
+  expect(wasi.wasiImport.fd_tell(fd, END - 7)).toBe(WASI_EOVERFLOW);
+  expect(wasi.FD_MAP.get(fd).offset).toBeUndefined();
   expect(wasi.wasiImport.fd_seek(fd, BigInt(5), WASI_WHENCE_SET, END + 1000)).toBe(WASI_EOVERFLOW);
   expect(wasi.wasiImport.fd_seek(fd, BigInt(5), WASI_WHENCE_SET, END - 7)).toBe(WASI_EOVERFLOW);
   expect(tell(fd)).toBe(BigInt(0));
@@ -365,6 +404,22 @@ it("path_open/fd_seek return EOVERFLOW for an out-of-bounds output pointer befor
   expect(view.getBigUint64(END - 8, true)).toBe(BigInt(5));
   expect(tell(fd)).toBe(BigInt(5));
   expect(wasi.wasiImport.fd_close(fd)).toBe(WASI_ESUCCESS);
+});
+
+it("path_* hostcalls return EOVERFLOW when the path itself lies outside of memory", () => {
+  using dir = tempDir("wasi-path-oob", {
+    "data.txt": "x",
+  });
+  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const END = wasi.memory.buffer.byteLength;
+  const preopenFd = 3;
+  const statBufPtr = 4096;
+
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, 0, END + 1000, 8, statBufPtr)).toBe(WASI_EOVERFLOW);
+  expect(wasi.wasiImport.path_filestat_get(preopenFd, 0, END - 4, 8, statBufPtr)).toBe(WASI_EOVERFLOW);
+  expect(wasi.wasiImport.path_create_directory(preopenFd, END + 1000, 8)).toBe(WASI_EOVERFLOW);
+  expect(fs.readdirSync(String(dir))).toEqual(["data.txt"]);
 });
 
 it("path_* syscalls cannot escape the preopened directory", () => {

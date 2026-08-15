@@ -457,14 +457,15 @@ var require_wasi = __commonJS({
           while (e.prev != null) {
             e = e.prev;
           }
-          if (e?.code && typeof e?.code === "string") {
-            return constants_1.ERROR_MAP[e.code] || constants_1.WASI_EINVAL;
-          }
           if (e instanceof types_1.WASIError) {
             return e.errno;
           }
-          if (e instanceof RangeError) {
+          // Out-of-bounds guest pointer: a bare RangeError from DataView/TypedArray, ERR_BUFFER_OUT_OF_BOUNDS from Buffer.from.
+          if (e instanceof RangeError && (e.code == null || e.code === "ERR_BUFFER_OUT_OF_BOUNDS")) {
             return constants_1.WASI_EOVERFLOW;
+          }
+          if (e?.code && typeof e?.code === "string") {
+            return constants_1.ERROR_MAP[e.code] || constants_1.WASI_EINVAL;
           }
           throw e;
         }
@@ -1173,6 +1174,7 @@ var require_wasi = __commonJS({
           fd_tell: wrap((fd, offsetPtr) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_TELL);
             this.refreshMemory();
+            checkBounds(offsetPtr, 8, this.memory.buffer.byteLength);
             if (!stats.offset) {
               stats.offset = BigInt(0);
             }

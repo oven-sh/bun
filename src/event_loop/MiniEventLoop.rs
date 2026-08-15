@@ -187,14 +187,6 @@ impl MiniEventLoop {
         self.loop_
     }
 
-    /// Make a poll in progress (or the next one) return immediately, so the
-    /// `is_done` predicate a `tick` loop spins on is evaluated again. Any thread.
-    pub fn wakeup(&self) {
-        // SAFETY: `loop_` is the live uws loop; `us_wakeup_loop` is thread-safe
-        // and takes the raw pointer (no `&mut Loop` formed).
-        unsafe { bun_uws::us_wakeup_loop(self.loop_) };
-    }
-
     /// Raw pointer to the `DotEnv::Loader` backref.
     ///
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor

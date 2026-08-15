@@ -318,9 +318,7 @@ impl Source {
 mod stdarg {
     use super::*;
 
-    // Defined in c-bindings.cpp. Only their addresses are taken (handed to
-    // TinyCC below); the `ap` parameter of the `v*` variants is a `va_list`,
-    // declared here as an opaque pointer.
+    // Defined in c-bindings.cpp; `ap` is a `va_list`.
     unsafe extern "C" {
         pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ap: *mut c_void) -> c_int;
         pub(super) fn ffi_vprintf(_: *const c_char, ap: *mut c_void) -> c_int;

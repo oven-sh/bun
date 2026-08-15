@@ -51,6 +51,8 @@ pub struct ServerConfig {
     pub(crate) on_error: JSValue,
     pub(crate) on_request: JSValue,
     pub(crate) on_node_http_request: JSValue,
+    /// Created with `onNodeHTTPRequest`; unlike the handler above, `reload()` never clears this.
+    pub(crate) is_node_http_server: bool,
 
     pub(crate) websocket: Option<WebSocketServerContext>,
 
@@ -86,6 +88,7 @@ impl Default for ServerConfig {
             on_error: JSValue::ZERO,
             on_request: JSValue::ZERO,
             on_node_http_request: JSValue::ZERO,
+            is_node_http_server: false,
             websocket: None,
             reuse_port: false,
             id: Box::default(),
@@ -272,6 +275,7 @@ impl ServerConfig {
             on_error: self.on_error,
             on_request: self.on_request,
             on_node_http_request: self.on_node_http_request,
+            is_node_http_server: self.is_node_http_server,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
@@ -1355,6 +1359,7 @@ impl ServerConfig {
                 )));
             }
             args.on_node_http_request = on_request_;
+            args.is_node_http_server = true;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1364,7 +1369,7 @@ impl ServerConfig {
             }
             args.on_request = on_request_;
         } else if args.bake.is_none()
-            && args.on_node_http_request.is_empty()
+            && !args.is_node_http_server
             && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
                 && !opts.has_user_routes)
             && opts.is_fetch_required

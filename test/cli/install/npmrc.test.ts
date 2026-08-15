@@ -985,6 +985,28 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(stderr).not.toContain(".npmrc");
   });
 
+  // Tarball dependencies written as a URL never carry registry credentials, so
+  // there is no .npmrc line to suggest for them.
+  test("a 401 for a tarball dependency given by URL is reported without a suggestion", async () => {
+    using host = mockRegistry("Bearer something");
+    using dir = tempDir("npmrc-url-auth-url-dependency", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": `${host.origin}${tarballPath}` },
+      }),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+
+    expect({ requests: host.requests, exitCode }).toEqual({
+      requests: [{ path: tarballPath, auth: null }],
+      exitCode: 1,
+    });
+    expect(stderr).toContain(`error: GET ${host.origin}${tarballPath} - 401\n`);
+    expect(stderr).not.toContain(".npmrc");
+  });
+
   test("a tarball on a different host than its registry gets that host's own line", async () => {
     using cdn = mockRegistry("Bearer cdn-token");
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });

@@ -61,6 +61,10 @@ pub struct NetworkTask {
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
     pub(crate) header_buf: Box<[u8]>,
+    /// Whether this request was allowed to carry registry credentials at all
+    /// (`github:` and URL tarball dependencies are not). Read back when a
+    /// 401/403 is reported, so the suggested fix is one that would apply.
+    pub(crate) authorization: Authorization,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -599,6 +603,8 @@ impl NetworkTask {
             }
         }
 
+        self.authorization = Authorization::AllowAuthorization;
+
         let mut header_builder = HeaderBuilder::default();
 
         count_auth(&mut header_builder, scope);
@@ -832,6 +838,7 @@ impl NetworkTask {
             None => None,
         };
 
+        self.authorization = authorization;
         // The empty-`tarball_url` branch above built the URL from `scope.url`,
         // so it is same-origin and gets the scope's credentials.
         let credentials = match authorization {
@@ -1005,6 +1012,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
+            addr_of_mut!((*slot).authorization).write(Authorization::NoAuthorization);
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

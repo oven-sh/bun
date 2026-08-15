@@ -5,6 +5,7 @@ use bun_paths::PathBuffer;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
+use crate::network_task::Authorization;
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::{Features, Npm};
 
@@ -287,8 +288,10 @@ impl Options {
 
     /// Text to append to the `GET <url> - 401` line of a request that bun sent
     /// without an `Authorization` header, saying which `.npmrc` line would have
-    /// supplied one. Empty when credentials were sent: then the registry
-    /// rejected them and the status line already says everything bun knows.
+    /// supplied one. Empty when credentials were sent (the registry rejected
+    /// them, and the status line already says everything bun knows) and for
+    /// downloads that never carry registry credentials, where no `.npmrc` line
+    /// would change anything.
     pub(crate) fn missing_credentials_note(
         &self,
         package_name: &[u8],
@@ -298,10 +301,12 @@ impl Options {
         use std::io::Write as _;
 
         let scope = self.scope_for_package_name(package_name);
-        let url = bun_url::URL::parse(url);
         let mut note = Vec::new();
         match request {
-            RequestKind::Manifest if !scope.has_credentials() => {
+            RequestKind::Manifest => {
+                if scope.has_credentials() {
+                    return note;
+                }
                 let registry = scope.url.url();
                 let _ = write!(
                     note,
@@ -310,7 +315,12 @@ impl Options {
                     RegistryPath(registry.pathname),
                 );
             }
-            RequestKind::Tarball if self.tarball_credentials(scope, &url).is_none() => {
+            RequestKind::Tarball(Authorization::NoAuthorization) => {}
+            RequestKind::Tarball(Authorization::AllowAuthorization) => {
+                let url = bun_url::URL::parse(url);
+                if self.tarball_credentials(scope, &url).is_some() {
+                    return note;
+                }
                 if scope.has_credentials() {
                     let _ = write!(
                         note,
@@ -328,7 +338,6 @@ impl Options {
                     );
                 }
             }
-            RequestKind::Manifest | RequestKind::Tarball => {}
         }
         note
     }
@@ -368,8 +377,9 @@ fn is_same_origin(a: &bun_url::URL, b: &bun_url::URL) -> bool {
 pub(crate) enum RequestKind {
     /// Always on the package's registry, so it carries the scope's credentials.
     Manifest,
-    /// May be anywhere; see `Options::tarball_credentials`.
-    Tarball,
+    /// May be anywhere; see `Options::tarball_credentials`. Carries what the
+    /// request was enqueued with (`NetworkTask::authorization`).
+    Tarball(Authorization),
 }
 
 /// A registry pathname in the form `.npmrc` keys use: `/` or `/some/path/`.

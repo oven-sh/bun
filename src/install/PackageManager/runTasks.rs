@@ -842,7 +842,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         response.status_code,
                         extract.name.slice(),
                         &task.url_buf,
-                        RequestKind::Tarball,
+                        RequestKind::Tarball(task.authorization),
                     );
                     if is_required {
                         bun_ast::add_error_pretty!(

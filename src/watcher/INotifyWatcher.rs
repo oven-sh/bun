@@ -246,8 +246,7 @@ impl INotifyWatcher {
                             return Ok(&[]);
                         }
 
-                        // Drain until quiet. Past `max_count` events the parse
-                        // loop below would leave a `read_ptr` anyway, so stop there.
+                        // Drain until quiet; beyond `max_count` the parser sets `read_ptr` anyway.
                         let timespec = coalesce_timespec(self.coalesce_interval);
                         let mut iterations: u32 = 0;
                         while read_len < size_of::<Event>() * max_count

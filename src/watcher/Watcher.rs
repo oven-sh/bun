@@ -28,17 +28,14 @@ bun_core::define_scoped_log!(log, watcher, visible);
 
 pub const MAX_COUNT: usize = 128;
 
-/// How long (ns) a backend keeps draining after a batch of events before
-/// dispatching it. One editor save emits several events a few ms apart; the
-/// quiet window delivers them as one `on_file_update` (#13511).
+/// Quiet window (ns) that folds one editor save's several events into one dispatch (#13511).
 pub(crate) fn coalesce_interval_ns() -> u64 {
     env_var::BUN_INOTIFY_COALESCE_INTERVAL
         .get()
         .expect("BUN_INOTIFY_COALESCE_INTERVAL declares a default")
 }
 
-/// Bounds a drain so a continuously written file can't starve the watch loop.
-/// kqueue returns per event, so a burst of N writes costs ~N iterations.
+/// Caps a drain (kqueue wakes once per event) so a continuously written file can't starve the loop.
 pub(crate) const MAX_COALESCE_ITERATIONS: u32 = 32;
 
 /// `ns` split into a `timespec`; `tv_nsec` must stay below one second.

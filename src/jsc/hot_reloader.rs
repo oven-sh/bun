@@ -540,9 +540,7 @@ where
     }
 
     pub(crate) fn append(&mut self, id: u32) {
-        // One save delivers the same hash many times; letting duplicates fill
-        // the buffer triggers the mid-update `enqueue` below, i.e. a second
-        // reload for the same save.
+        // One save repeats its hash; duplicates would hit the mid-update `enqueue` below.
         if self.hashes[..self.count as usize].contains(&id) {
             return;
         }

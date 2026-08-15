@@ -299,8 +299,7 @@ impl WindowsWatcher {
             root.len()
         };
 
-        // Round up so a sub-millisecond override still waits; an interval too
-        // large for a DWORD is as good as infinite.
+        // div_ceil so a sub-millisecond override still waits instead of becoming 0.
         self.coalesce_interval_ms =
             w::DWORD::try_from(coalesce_interval_ns().div_ceil(1_000_000)).unwrap_or(w::INFINITE);
 
@@ -407,8 +406,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let mut event_id: usize = 0;
 
-    // Block for the first batch, then keep sweeping until quiet (see
-    // `coalesce_interval_ns`); `<=` because the blocking wait is iteration zero.
+    // `<=`: the blocking INFINITE wait is iteration zero; the coalesce sweeps are the rest.
     let mut timeout_ms: w::DWORD = w::INFINITE;
     let mut iterations: u32 = 0;
     while iterations <= MAX_COALESCE_ITERATIONS {

@@ -588,21 +588,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
-    /// Returns the wrapper unless it has been finalized or its VM may no
-    /// longer run script. The wrapper's WriteBarrier slots are the only GC
-    /// root of the handler shadows (`config.on_*`, `on_clienterror`,
-    /// `on_connection`), which is why `deinit_if_we_can` keeps it `Strong`
-    /// until [`Self::is_drained`] — no listener, request, HTTP connection or
-    /// websocket left to reach a dispatch trampoline — rather than relying on
-    /// this check: a `Weak` `JsRef` is a bare `JSValue` and cannot tell a
-    /// collected-but-unswept wrapper from a live one. A VM whose script gate
-    /// has closed (a worker that called `process.exit()` or was asked to
+    /// Returns the wrapper while it may take a dispatch: held `Strong` and its
+    /// VM may still run script. The wrapper's WriteBarrier slots are the only
+    /// GC root of the handler shadows (`config.on_*`, `on_clienterror`,
+    /// `on_connection`), so `deinit_if_we_can` keeps it `Strong` until
+    /// [`Self::is_drained`] — no listener, request, HTTP connection or
+    /// websocket left — and downgrades it then; from there the wrapper and
+    /// the shadows are the GC's, and a `Weak` `JsRef` (a bare `JSValue`)
+    /// cannot tell a collected-but-unswept wrapper from a live one. What can
+    /// still arrive after that — a TLS handshake that was in flight when the
+    /// listener closed (a connection counts only once its handshake is done)
+    /// — is answered natively. So is anything for a VM whose script gate has
+    /// closed (a worker that called `process.exit()` or was asked to
     /// terminate, still draining the current loop tick before its stop phase
-    /// closes the listener) must not have a request built for it either: uWS
-    /// requires every dispatched request to be answered or adopted, so
-    /// dispatch trampolines answer 503+close on `None`.
+    /// closes the listener): uWS requires every dispatched request to be
+    /// answered or adopted, so dispatch trampolines answer 503+close on `None`.
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
-        if !self.vm().script_allowed() {
+        if !self.js_value.is_strong() || !self.vm().script_allowed() {
             return None;
         }
         self.js_value.try_get()
@@ -1901,8 +1903,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         if self.is_drained() {
-            // Nothing can dispatch a handler anymore, so the wrapper — the
-            // handlers' only GC root — may become collectible.
+            // No handler is dispatched from here on (`js_value_for_dispatch`), so the wrapper —
+            // the handlers' only GC root — may become collectible.
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;

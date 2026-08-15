@@ -204,6 +204,13 @@ exports[`snapshot records the matchers that were checked 10`] = `
 }
 `;
 
+exports[`snapshot records the matchers that were checked 11`] = `
+{
+  "id": Any<Number>,
+  "self": [Circular],
+}
+`;
+
 exports[`a matcher object checked through a getter is recorded on the object behind it 1`] = `
 Wrapper {
   "_user": {

@@ -622,16 +622,19 @@ describe("fs.watch", () => {
   // IN_IGNORED. The reader thread (thread_main in path_watcher.rs) gets at most
   // one 64KB read() in before it blocks on that mutex, so every later removal
   // stays queued; once max_queued_events of them are, the next one is dropped
-  // and replaced by IN_Q_OVERFLOW. The rest is margin.
+  // and replaced by IN_Q_OVERFLOW.
   const readerDrainEvents = (64 * 1024) / 16;
-  const overflowDirCount = maxQueuedEvents + readerDrainEvents + 512;
+  const overflowMargin = 512;
+  const overflowDirCount = maxQueuedEvents + readerDrainEvents + overflowMargin;
+  // Watches (and tmpfs inodes, below) the rest of this user's processes may hold.
+  const headroom = 1024;
   // 16384 is the kernel default; a host tuned above that would need an
   // impractically large directory tree, so skip there.
   const canOverflowInotify =
     isLinux &&
     maxQueuedEvents > 0 &&
     maxQueuedEvents <= 16384 &&
-    inotifySysctl("max_user_watches") >= overflowDirCount + 1024;
+    inotifySysctl("max_user_watches") >= overflowDirCount + headroom;
 
   // include/uapi/linux/magic.h
   const TMPFS_MAGIC = 0x01021994;
@@ -645,7 +648,7 @@ describe("fs.watch", () => {
       try {
         const { type, files, ffree } = fs.statfsSync(base);
         // files === 0 is a tmpfs mounted without an inode limit.
-        if (type !== TMPFS_MAGIC || (files !== 0 && ffree < overflowDirCount + 1024)) continue;
+        if (type !== TMPFS_MAGIC || (files !== 0 && ffree < overflowDirCount + headroom)) continue;
         onTmpfs = fs.mkdtempSync(path.join(base, "fs-watch-overflow-"));
         break;
       } catch {}

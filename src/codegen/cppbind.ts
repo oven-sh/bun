@@ -701,9 +701,17 @@ function generateRustFn(fn: CppFn, rustRaw: string[], rustWrap: string[]): void 
       `    crate::top_scope!(__scope, ${gname});`,
       `    // SAFETY: \`[[ZIG_EXPORT(check_slow)]]\` extern; ref args are opaque-ZST handles valid for the call;`,
       `    // any raw-pointer args are forwarded under the wrapper's own \`unsafe fn\` contract.`,
-      `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
-      `    __scope.return_if_exception()?;`,
-      `    Ok(__r)`,
+      ...(ret === "()"
+        ? [
+            `    unsafe { raw::${fn.name}(${callArgsStr}) };`,
+            `    __scope.return_if_exception()?;`,
+            `    Ok(())`,
+          ]
+        : [
+            `    let __r = unsafe { raw::${fn.name}(${callArgsStr}) };`,
+            `    __scope.return_if_exception()?;`,
+            `    Ok(__r)`,
+          ]),
       `}`,
     );
     return;

@@ -659,7 +659,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_dispatch",
@@ -856,7 +855,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_collections",
  "bun_core",
  "bun_url",

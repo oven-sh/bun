@@ -191,10 +191,12 @@ describe.concurrent("loading a module again after it failed to build", () => {
       "via-import.js": twoBuildErrors,
       "via-require.js": twoBuildErrors,
       "via-extension.js": twoBuildErrors,
+      // Loads via-extension.js into this module object the way a hijacked
+      // require.extensions handler would, so require() of this file returns it.
+      "load-via-extension.cjs": `require.extensions[".js"](module, require.resolve("./via-extension.js"));`,
       "entry.js": /* js */ `
         ${shape}
         import { writeFileSync } from "node:fs";
-        import Module from "node:module";
         const fix = name => writeFileSync(import.meta.dir + "/" + name, "export const loadedBy = " + JSON.stringify(name) + ";");
         const attempt = async load => {
           try {
@@ -215,13 +217,7 @@ describe.concurrent("loading a module again after it failed to build", () => {
 
         out.extensionBefore = await attempt(() => import("./via-extension.js"));
         fix("via-extension.js");
-        out.extensionAfter = await attempt(() => {
-          const filename = require.resolve("./via-extension.js");
-          const mod = new Module(filename);
-          mod.filename = filename;
-          require.extensions[".js"](mod, filename);
-          return mod.exports;
-        });
+        out.extensionAfter = await attempt(() => require("./load-via-extension.cjs"));
 
         console.log(JSON.stringify(out));
       `,

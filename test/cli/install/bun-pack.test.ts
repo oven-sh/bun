@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -397,10 +397,9 @@ describe("flags", () => {
     expect(async () => await pack(packageDir, bunEnv, "--filename=test.tgz", "--destination=packed")).toThrowError();
   });
 
-  // PATH_MAX is 4096 on Linux and 1024 on macOS, so this overflows the path buffer on both. Windows'
-  // path buffer is larger than any command line, so the overflow cannot be reached there.
-  describe.skipIf(isWindows)("--destination longer than PATH_MAX", () => {
-    const longName = Buffer.alloc(5000, "d").toString();
+  // On Windows the path buffer is larger than any command line, so the overflow cannot be reached there.
+  describe.skipIf(isWindows)("--destination longer than the path buffer", () => {
+    const longName = Buffer.alloc(MAX_PATH_BYTES + 1, "d").toString();
     const packageJson = JSON.stringify({ name: "pack-long-dest", version: "1.0.0" });
     const expectedError = `error: archive destination name too long: "${longName}/pack-long-dest-1.0.0.tgz"\n`;
 
@@ -440,7 +439,7 @@ describe("flags", () => {
     test.concurrent("packs when the path normalizes to one that fits", async () => {
       await using dir = tempDir("pack-long-destination-normalized", { "package.json": packageJson });
 
-      // `<5000 bytes>/..` resolves back to the package directory.
+      // `<over-long name>/..` resolves back to the package directory.
       const { out } = await pack(dir, bunEnv, `--destination=${longName}/..`);
 
       expect(out).toContain(join(dir, "pack-long-dest-1.0.0.tgz"));

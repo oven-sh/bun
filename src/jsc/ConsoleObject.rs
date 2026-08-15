@@ -3247,10 +3247,8 @@ pub mod formatter {
         Ok(None)
     }
 
-    /// Tag name for a JSX element whose `type` is a component (function, class,
-    /// or a `memo`/`forwardRef` object) rather than a string. Same rule React
-    /// uses to name a component: `displayName`, else the function/class name
-    /// (the one `[Function: x]` / `[class x]` print).
+    /// How React itself names a component: `displayName`, else the name
+    /// `[Function: x]` / `[class x]` print.
     pub fn jsx_component_tag_name(
         global_this: &JSGlobalObject,
         component: JSValue,

@@ -742,6 +742,7 @@ pub(super) fn remove_leftover_node_modules(
     match bun_sys::open_dir_for_iteration(cwd.fd(), manager.options.bin_path.as_bytes()) {
         Ok(node_modules_bin) => {
             let mut iter = bun_sys::iterate_dir(node_modules_bin);
+            iter.resolve_unknown_entry_types = true;
             'iterator: loop {
                 let Ok(Some(entry)) = iter.next() else { break };
                 match entry.kind {

@@ -34,16 +34,7 @@ impl Hardlinker {
         Ok(Hardlinker {
             src,
             dest,
-            walker: {
-                let mut w = bun_sys::walker_skippable::walk(
-                    folder_dir,
-                    // bun.default_allocator dropped — global mimalloc
-                    &[],
-                    skip_dirnames,
-                )?;
-                w.resolve_unknown_entry_types = true;
-                w
-            },
+            walker: bun_sys::walker_skippable::walk(folder_dir, &[], skip_dirnames)?,
         })
     }
 

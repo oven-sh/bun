@@ -1796,6 +1796,7 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
+                    iter.resolve_unknown_entry_types = true;
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
@@ -1953,6 +1954,7 @@ impl<'a> Linker<'a> {
                     let abs_dest_dir_end = dest_off;
 
                     let mut iter = sys::iterate_dir(target_dir);
+                    iter.resolve_unknown_entry_types = true;
                     while let Some(entry) = iter.next().unwrap_or(None) {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {

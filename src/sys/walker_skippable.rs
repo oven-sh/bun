@@ -26,8 +26,6 @@ pub struct Walker {
     skip_dirnames: Range<usize>,
     skip_all: Box<[u64]>,
     seed: u64,
-    /// See `dir_iterator::WrappedIterator::resolve_unknown_entry_types`.
-    pub resolve_unknown_entry_types: bool,
 }
 
 /// The directory a walk starts from. The walker never closes a borrowed
@@ -54,12 +52,20 @@ pub struct WalkerEntry<'a> {
     pub dir: Fd,
     pub basename: &'a OSPathSliceZ,
     pub path: &'a OSPathSliceZ,
+    /// Resolved with `lstat` when readdir did not report it; `Unknown` only if that failed too.
     pub kind: sys::EntryKind,
 }
 
 struct StackItem {
     iter: WrappedIterator,
     dirname_len: usize,
+}
+
+/// Every consumer branches on the kind, and the walk itself descends by it.
+fn iterate(dir: Fd) -> WrappedIterator {
+    let mut iter = dir_iterator::iterate(dir);
+    iter.resolve_unknown_entry_types = true;
+    iter
 }
 
 impl Walker {
@@ -77,8 +83,6 @@ impl Walker {
             // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
-            // Per call: callers set the flag after `walk()` built the root iterator.
-            self.stack[top_idx].iter.resolve_unknown_entry_types = self.resolve_unknown_entry_types;
             let Some(base) = self.stack[top_idx].iter.next()? else {
                 let item = self.stack.pop().unwrap();
                 if !self.stack.is_empty() {
@@ -151,7 +155,7 @@ impl Walker {
                 )?;
                 {
                     self.stack.push(StackItem {
-                        iter: dir_iterator::iterate(new_dir),
+                        iter: iterate(new_dir),
                         dirname_len: cur_len,
                     });
                     top_idx = self.stack.len() - 1;
@@ -235,7 +239,7 @@ fn walk_root(
     }
 
     stack.push(StackItem {
-        iter: dir_iterator::iterate(root.fd()),
+        iter: iterate(root.fd()),
         dirname_len: 0,
     });
 
@@ -247,6 +251,5 @@ fn walk_root(
         seed,
         skip_filenames: skip_filenames_,
         skip_dirnames: skip_dirnames_,
-        resolve_unknown_entry_types: false,
     })
 }

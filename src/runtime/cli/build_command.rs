@@ -1355,7 +1355,6 @@ pub(crate) fn collect_compile_assets(
                 Ok(w) => w,
                 Err(_) => bun_core::out_of_memory(),
             };
-            walker.resolve_unknown_entry_types = true;
             loop {
                 let entry = match walker.next() {
                     Ok(Some(e)) => e,

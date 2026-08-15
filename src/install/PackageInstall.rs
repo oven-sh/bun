@@ -1024,7 +1024,6 @@ impl<'a> PackageInstall<'a> {
             Ok(w) => w,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
         };
-        walker_.resolve_unknown_entry_types = true;
 
         fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
             let mut stackpath = [0u8; path::MAX_PATH_BYTES];
@@ -1181,12 +1180,11 @@ impl<'a> PackageInstall<'a> {
             &[]
         };
 
-        let mut walker = bun_core::handle_oom(walker_skippable::walk_owned(
+        let walker = bun_core::handle_oom(walker_skippable::walk_owned(
             cached_package_dir,
             &[] as &[&OSPathSlice],
             skip_dirs,
         ));
-        walker.resolve_unknown_entry_types = true;
 
         #[cfg(not(windows))]
         {

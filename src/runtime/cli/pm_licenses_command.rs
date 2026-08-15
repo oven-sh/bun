@@ -590,6 +590,7 @@ fn list_dir(path: &[u8]) -> Vec<(Box<[u8]>, FileKind)> {
         return out;
     };
     let mut iter = bun_sys::iterate_dir(dir.fd());
+    iter.resolve_unknown_entry_types = true;
     while let Ok(Some(entry)) = iter.next() {
         out.push((entry.name.slice_u8().into(), entry.kind));
     }

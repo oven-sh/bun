@@ -315,6 +315,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     const PREFIX: &[u8] = b"chromium_headless_shell-";
 
     let mut iter = bun_sys::iterate_dir(fd);
+    iter.resolve_unknown_entry_types = true;
     loop {
         let entry = match iter.next() {
             Ok(Some(e)) => e,

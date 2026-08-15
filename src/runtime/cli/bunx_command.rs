@@ -350,6 +350,7 @@ impl BunxCommand {
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
                     let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);
+                    iterator.resolve_unknown_entry_types = true;
                     let mut entry = iterator.next();
                     loop {
                         let current = match entry {

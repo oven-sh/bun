@@ -119,6 +119,7 @@ impl PackageManager {
             Err(e) => return Err(e),
         };
         let mut iter = bun_sys::iterate_dir(dir.fd);
+        iter.resolve_unknown_entry_types = true;
 
         loop {
             let entry = match iter.next() {

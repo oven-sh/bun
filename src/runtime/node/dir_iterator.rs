@@ -19,21 +19,30 @@ pub struct IteratorResult {
     /// `RawSlice` invariant: borrows the iterator's `getdents` buffer
     /// (streaming-iterator contract — invalidated on next `next()` call).
     /// The kernel writes `d_name` NUL-terminated, so the backing has a NUL at
-    /// `[name.len()]` (see `name_assume_z`).
+    /// `[name.len()]` (see `resolve_unknown_kind`).
     pub name: RawSlice<u8>,
     pub(crate) kind: EntryKind,
 }
 
 impl IteratorResult {
-    /// The entry name as a NUL-terminated `&ZStr` — the POSIX `d_name` is always
-    /// NUL-terminated in the `getdents` buffer.
-    #[inline]
-    pub(crate) fn name_assume_z(&self) -> &bun_core::ZStr {
+    /// See `NewWrappedIterator::resolve_unknown_entry_types`.
+    #[cfg(not(windows))]
+    fn resolve_unknown_kind(&mut self, dir: Fd) {
+        if self.kind != EntryKind::Unknown {
+            return;
+        }
         let s = self.name.slice();
         // SAFETY: `d_name` is NUL-terminated by the kernel; `name` points at it
         // with len excluding the NUL, so `[len] == 0`.
-        unsafe { bun_core::ZStr::from_raw(s.as_ptr(), s.len()) }
+        let name = unsafe { bun_core::ZStr::from_raw(s.as_ptr(), s.len()) };
+        if let Ok(st) = sys::lstatat(dir, name) {
+            self.kind = sys::kind_from_mode(st.st_mode as sys::Mode);
+        }
     }
+
+    /// The Windows iterator always knows the kind.
+    #[cfg(windows)]
+    fn resolve_unknown_kind(&mut self, _dir: Fd) {}
 }
 pub type Result = sys::Result<Option<IteratorResult>>;
 
@@ -412,9 +421,7 @@ mod platform {
                     libc::DT_LNK => EntryKind::SymLink,
                     libc::DT_REG => EntryKind::File,
                     libc::DT_SOCK => EntryKind::UnixDomainSocket,
-                    // DT_UNKNOWN: Some filesystems (e.g., bind mounts, FUSE, NFS)
-                    // don't provide d_type. Callers should use lstatat() to determine
-                    // the type when needed (lazy stat pattern for performance).
+                    // DT_UNKNOWN: see `NewWrappedIterator::resolve_unknown_entry_types`.
                     _ => EntryKind::Unknown,
                 };
                 return Ok(Some(IteratorResult {
@@ -858,12 +865,20 @@ where
     (): WrappedSelect<IS_U16>,
 {
     pub(crate) iter: NewIterator<IS_U16>,
+    /// As `bun_sys::dir_iterator::WrappedIterator::resolve_unknown_entry_types`; ignored by the `IS_U16` (Windows) iterator.
+    pub(crate) resolve_unknown_entry_types: bool,
 }
 
 impl NewWrappedIterator<false> {
     #[inline]
     pub(crate) fn next(&mut self) -> Result {
-        self.iter.next()
+        let mut entry = self.iter.next()?;
+        if self.resolve_unknown_entry_types {
+            if let Some(entry) = entry.as_mut() {
+                entry.resolve_unknown_kind(self.iter.dir);
+            }
+        }
+        Ok(entry)
     }
 }
 
@@ -892,6 +907,7 @@ where
                     buf: platform::DirentBuf([0u8; 8192]),
                     received_eof: false,
                 },
+                resolve_unknown_entry_types: false,
             };
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -904,6 +920,7 @@ where
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
                 },
+                resolve_unknown_entry_types: false,
             };
         }
         #[cfg(target_os = "freebsd")]
@@ -916,6 +933,7 @@ where
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: platform::DirentBuf([0u8; 8192]),
                 },
+                resolve_unknown_entry_types: false,
             };
         }
         #[cfg(windows)]
@@ -932,6 +950,7 @@ where
                     name_data: unsafe { bun_core::ffi::zeroed_unchecked() },
                     name_filter: None,
                 },
+                resolve_unknown_entry_types: false,
             };
         }
         #[cfg(target_os = "wasi")]
@@ -945,6 +964,7 @@ where
                     // zero-init avoids the invalid_value lint on [u8; N]
                     buf: [0u8; 8192],
                 },
+                resolve_unknown_entry_types: false,
             };
         }
     }

@@ -541,6 +541,7 @@ impl InitCommand {
                     let _ = bun_sys::close(d);
                 });
                 let mut it = bun_sys::iterate_dir(dir);
+                it.resolve_unknown_entry_types = true;
                 while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;

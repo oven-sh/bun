@@ -2664,8 +2664,7 @@ impl<'a> EqlSorter<'a> {
 }
 
 impl Lockfile {
-    /// A placement of `r` bound at or past `r_loaded_package_count` (its `mark_loaded_packages`
-    /// watermark) was rebound to a package appended after loading, so it counts as a change.
+    /// A placement of `r` bound past `r_loaded_package_count` was rebound after loading: a change.
     pub(crate) fn eql(
         &self,
         r: &Lockfile,

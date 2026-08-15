@@ -590,7 +590,11 @@ The converted selectors keep the specificity and behavior of the original.
 
 ### Math functions
 
-CSS includes standard math functions (`round()`, `mod()`, `rem()`, `abs()`, `sign()`), trigonometric functions (`sin()`, `cos()`, `tan()`, `asin()`, `acos()`, `atan()`, `atan2()`), and exponential functions (`pow()`, `sqrt()`, `exp()`, `log()`, `hypot()`).
+CSS includes the following math functions:
+
+- Standard math functions: `round()`, `mod()`, `rem()`, `abs()`, `sign()`
+- Trigonometric functions: `sin()`, `cos()`, `tan()`, `asin()`, `acos()`, `atan()`, `atan2()`
+- Exponential functions: `pow()`, `sqrt()`, `exp()`, `log()`, `hypot()`
 
 ```css title="styles.css" icon="file-code"
 .dynamic-sizing {
@@ -961,8 +965,12 @@ This is the same as writing:
 Two rules apply when using `composes`:
 
 <Info>
-  **Composition Rules:** - A `composes` property must come before any regular CSS properties or declarations - You can
-  only use `composes` on a simple selector with a single class name
+
+**Composition Rules:**
+
+- A `composes` property must come before any regular CSS properties or declarations
+- You can only use `composes` on a simple selector with a single class name
+
 </Info>
 
 ```css title="styles.module.css" icon="file-code"

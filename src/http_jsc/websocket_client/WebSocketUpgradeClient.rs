@@ -93,8 +93,6 @@ enum State {
     Failed,
     /// Sent CONNECT, waiting for 200
     ProxyHandshake,
-    /// TLS inside tunnel (for wss:// through proxy)
-    ProxyTlsHandshake,
     /// WebSocket upgrade complete, forwarding data through tunnel
     Done,
 }
@@ -1187,7 +1185,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
         p.set_tunnel(Some(tunnel));
         // SAFETY: scoped write; `p` is dead.
-        unsafe { (*this).state = State::ProxyTlsHandshake };
+        unsafe { (*this).state = State::Reading };
     }
 
     /// Called by WebSocketProxyTunnel when TLS handshake completes successfully

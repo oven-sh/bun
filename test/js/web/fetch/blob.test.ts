@@ -688,6 +688,73 @@ describe("file-backed slice bounds are respected when streaming and serving", ()
     // Serializing resolves the original's size, clamping the window to EOF.
     expect(s.size).toBe(5);
   });
+
+  // A sliced Bun.file() is streamed by FileReader, which hands bytes out two
+  // ways: a JS pull reads straight into the pull buffer, while a native sink
+  // (HTMLRewriter here; also pollable fds and Windows) is fed from the read
+  // loop's on_read_chunk. Both have to stop at the end of the slice while the
+  // file goes on past it, and a used-up slice has to end the stream, not hang it.
+  describe("a slice of a file that continues past it", () => {
+    const size = 1024 * 1024;
+    // 61-byte period: coprime with every chunk size involved, so bytes streamed
+    // from the wrong offset compare unequal, not just a wrong number of them.
+    const data = Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY");
+    const windows: [start: number, end: number][] = [
+      [0, 5], // inside the first read
+      [3, 7],
+      [100, 700_000], // several pulls; the last one has to be cut short
+      [size - 10, size], // ends at EOF
+      [4096, 4096], // nothing to deliver at all
+    ];
+
+    async function collect(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    }
+
+    test.each(windows)("Bun.file(path).slice(%d, %d).stream()", async (start, end) => {
+      using dir = tempDir("blob-file-slice-stream", { "data.bin": data });
+      const streamed = await collect(Bun.file(`${dir}/data.bin`).slice(start, end).stream());
+      expect(streamed.length).toBe(end - start);
+      expect(streamed).toEqual(data.subarray(start, end));
+    });
+
+    // Buffered consumers size their pulls from the slice and need the stream to
+    // close once it is delivered (#18192, #31675).
+    test.each(windows)("Bun.file(path).slice(%d, %d).stream().bytes()", async (start, end) => {
+      using dir = tempDir("blob-file-slice-bytes", { "data.bin": data });
+      const bytes = Buffer.from(await Bun.file(`${dir}/data.bin`).slice(start, end).stream().bytes());
+      expect(bytes.length).toBe(end - start);
+      expect(bytes).toEqual(data.subarray(start, end));
+    });
+
+    test.each(windows)("new Response(Bun.file(path).slice(%d, %d)).body", async (start, end) => {
+      using dir = tempDir("blob-file-slice-body", { "data.bin": data });
+      const streamed = await collect(new Response(Bun.file(`${dir}/data.bin`).slice(start, end)).body!);
+      expect(streamed.length).toBe(end - start);
+      expect(streamed).toEqual(data.subarray(start, end));
+    });
+
+    test.each(windows)("HTMLRewriter.transform(new Response(Bun.file(path).slice(%d, %d)))", async (start, end) => {
+      using dir = tempDir("blob-file-slice-rewriter", { "data.bin": data });
+      const response = new HTMLRewriter().transform(new Response(Bun.file(`${dir}/data.bin`).slice(start, end)));
+      const rewritten = Buffer.from(await response.arrayBuffer());
+      expect(rewritten.length).toBe(end - start);
+      expect(rewritten).toEqual(data.subarray(start, end));
+    });
+
+    // Reading .size gives the unsliced file's stream a window that ends exactly
+    // where the file does; ending the stream there must not drop the last chunk.
+    test("Bun.file(path) with a resolved size still streams the whole file", async () => {
+      using dir = tempDir("blob-file-resolved-size-stream", { "data.bin": data });
+      const file = Bun.file(`${dir}/data.bin`);
+      expect(file.size).toBe(size);
+      const streamed = await collect(file.stream());
+      expect(streamed.length).toBe(size);
+      expect(streamed).toEqual(data);
+    });
+  });
 });
 
 // Blob conversion accepts every ArrayBuffer-like type, both as a direct body

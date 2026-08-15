@@ -79,8 +79,9 @@ public:
 
     // WebKit: viewId routes frames to the host. Chrome: 0.
     uint32_t m_viewId = 0;
-    // Chrome: target creation width/height for the first navigate() which
-    // does Target.createTarget. WebKit: held in the child.
+    // Chrome: the viewport size, applied with Emulation.setDeviceMetricsOverride
+    // when the first navigate()'s attach chain reaches the page session and
+    // updated by resize(). WebKit: held in the child.
     uint32_t m_width = 0, m_height = 0;
     bool m_closed = false;
     // Updated from NavDone replies / Page.frameNavigated — the getters are
@@ -186,7 +187,7 @@ public:
 #endif
 
     // Chrome constructor. Lazy-spawns Chrome; stores width/height for the
-    // Target.createTarget that the first navigate() sends. path overrides
+    // viewport override the first navigate()'s attach chain sends. path overrides
     // auto-detection; extraArgv appends to the built-in flags. Works on
     // all platforms where Chrome runs (not just Darwin). Returns nullptr
     // if Chrome spawn failed.

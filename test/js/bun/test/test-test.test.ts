@@ -818,7 +818,8 @@ for (const [name, [matcher, settle]] of Object.entries(cases)) {
     // (the test's own timeout fires in there, but the matcher keeps waiting).
     timeout: 30_000,
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe(`bun test ${Bun.version_with_sha}\n`);
   expect(
     normalizeBunSnapshot(stderr)
       .split("\n")

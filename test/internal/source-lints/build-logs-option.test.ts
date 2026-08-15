@@ -12,6 +12,9 @@
  *     option dead: a release build configured with logs had none, a debug
  *     build configured without still logged);
  *   - Cargo.toml registers the cfg so a bare `cargo check` doesn't warn;
+ *   - a release build with logs keeps `#[track_caller]` locations, which the
+ *     `mark_binding()` style of logger prints (`-Zlocation-detail=none` would
+ *     turn them into `<redacted>:0`);
  *   - the loggers in src gate on `ENABLE_LOGS`, not on `IS_DEBUG`, otherwise
  *     a non-debug build configured with logs still compiles them out.
  *
@@ -143,6 +146,21 @@ describe("ENABLE_LOGS follows the logs option", () => {
     expect(releaseWithLogs).not.toContain("--cfg=bun_debug");
     const debugWithoutLogs = rustflags(linuxConfig({ buildType: "Debug", logs: false }, String(dir)));
     expect(debugWithoutLogs).toContain("--cfg=bun_debug");
+  });
+
+  test("a release build with logs keeps the call-site locations its loggers print", () => {
+    using dir = tempDir("build-logs-option", {});
+    const locationDetail = (partial: PartialConfig) =>
+      rustflags(linuxConfig(partial, String(dir))).includes("-Zlocation-detail=none");
+    expect({
+      release: locationDetail({ buildType: "Release" }),
+      "release --logs=on": locationDetail({ buildType: "Release", logs: true }),
+      "release-assertions": locationDetail(getProfile("release-assertions")),
+    }).toEqual({
+      release: true,
+      "release --logs=on": false,
+      "release-assertions": false,
+    });
   });
 
   test("the cfg build_options.rs reads is registered for bare cargo in Cargo.toml", () => {

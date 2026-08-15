@@ -511,9 +511,12 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // file:line server-side, so the panic call site is recoverable from the trace
   // without embedding the location in the binary — same as the Zig build, which
   // had ~0 embedded source paths. Kept off for debug and `release-assertions`
-  // where panic messages are read locally. Nightly-only; the pinned toolchain
-  // is nightly.
-  if (cfg.release && !cfg.assertions) {
+  // where panic messages are read locally, and for `--logs=on` builds: the
+  // `bun_jsc::mark_binding()` / test-runner `group::begin()` loggers print
+  // `Location::caller()`, which this flag turns into `<redacted>:0`, and a
+  // build that embeds every `scoped_log!` format string is not the one the
+  // size matters for. Nightly-only; the pinned toolchain is nightly.
+  if (cfg.release && !cfg.assertions && !cfg.logs) {
     rustflags.push("-Zlocation-detail=none");
   }
   // Path remapping (CI reproducibility) — rustc equivalent of the C/C++

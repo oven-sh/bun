@@ -456,9 +456,15 @@ impl<'a> Transpiler<'a> {
 
     /// Resolve an entry-point specifier, busting the directory cache and
     /// retrying once on failure before reporting the error to the log.
+    ///
+    /// Every failure is logged before it is returned: callers drop the entry
+    /// point on `Err`, and the build drivers decide whether to keep going from
+    /// the log alone. That includes an entry point the resolver disabled (mapped
+    /// to `false` by a package.json `"browser"` field, or a Node.js builtin that
+    /// browser builds stub out), which has no module to bundle.
     pub fn resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         match self._resolve_entry_point(entry_point) {
-            Ok(r) => Ok(r),
+            Ok(r) => self.reject_disabled_entry_point(r, entry_point),
             // Nothing that long names a directory whose cache could be stale
             // (and the join below has a PathBuffer to fit `top_level_dir/entry/..` in).
             Err(err)
@@ -515,7 +521,7 @@ impl<'a> Transpiler<'a> {
                 // Only re-query if we previously had something cached.
                 if busted {
                     if let Ok(result) = self._resolve_entry_point(entry_point) {
-                        return Ok(result);
+                        return self.reject_disabled_entry_point(result, entry_point);
                     }
                     // ignore this error, we will print the original error
                 }
@@ -532,6 +538,43 @@ impl<'a> Transpiler<'a> {
                 Err(err)
             }
         }
+    }
+
+    /// A resolver result with no usable path is a module the resolver disabled
+    /// (`Result::path` skips disabled paths). Imports of such a module become an
+    /// empty object, but an entry point has nothing to produce, so report it
+    /// like any other entry point that fails to resolve.
+    fn reject_disabled_entry_point(
+        &self,
+        resolved: resolver::Result,
+        entry_point: &[u8],
+    ) -> crate::Result<resolver::Result> {
+        if resolved.path_const().is_some() {
+            return Ok(resolved);
+        }
+
+        // The resolver gives builtins it stubs out for the browser the "node"
+        // namespace; everything else disabled comes from a "browser" map.
+        if resolved.path_pair.primary.namespace == b"node" {
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Browser build cannot use Node.js builtin \"{}\" as an entry point. To use Node.js builtins, set target to 'node' or 'bun'",
+                    bstr::BStr::new(entry_point)
+                ),
+            );
+        } else {
+            self.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "\"{}\" is disabled due to \"browser\" field in package.json (entry point)",
+                    bstr::BStr::new(entry_point)
+                ),
+            );
+        }
+        Err(crate::Error::ResolveMessage)
     }
 
     /// Load env files and build `options.define`. Idempotent — a no-op once

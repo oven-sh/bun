@@ -374,6 +374,87 @@ describe("bundler", () => {
     },
   });
 
+  // An entry point the "browser" field maps to false has nothing to bundle.
+  // This used to reach the linker with zero entry points and crash
+  // ("index out of bounds" in generateChunksInParallel); with a second, live
+  // entry point it silently built only that one.
+  const browserFieldDisabledEntryPointFiles = {
+    "/package.json": /* json */ `
+      { "name": "app", "browser": { "./entry.js": false } }
+    `,
+    "/entry.js": /* js */ `
+      console.log("entry");
+    `,
+    "/other.js": /* js */ `
+      console.log("other");
+    `,
+  };
+  itBundled("browser/EntryPointDisabledByBrowserField", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: browserFieldDisabledEntryPointFiles,
+    entryPointsRaw: ["./entry.js"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": ['"./entry.js" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointDisabledByBrowserFieldNextToLiveEntryPoint", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: browserFieldDisabledEntryPointFiles,
+    entryPointsRaw: ["./entry.js", "./other.js"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": ['"./entry.js" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointDisabledByBrowserFieldOnlyAppliesToBrowserTarget", {
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: browserFieldDisabledEntryPointFiles,
+    entryPointsRaw: ["./entry.js"],
+    target: "bun",
+    run: {
+      file: "/out/entry.js",
+      stdout: "entry",
+    },
+  });
+  itBundled("browser/EntryPointDisabledByPackageMainBrowserField", {
+    // The disabled module is reached through a package's "main", so the entry
+    // point specifier and the disabled file differ.
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {
+      "/node_modules/pkg/package.json": /* json */ `
+        { "name": "pkg", "main": "./node.js", "browser": { "./node.js": false } }
+      `,
+      "/node_modules/pkg/node.js": /* js */ `
+        console.log("node only");
+      `,
+    },
+    entryPointsRaw: ["pkg"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": ['"pkg" is disabled due to "browser" field in package.json (entry point)'],
+    },
+  });
+  itBundled("browser/EntryPointIsNodeBuiltinStubbedForBrowser", {
+    // Browser builds replace "fs" (and node:* builtins without a polyfill) with
+    // an empty module, so as entry points they have nothing to bundle either.
+    skipOnEsbuild: true,
+    backend: "cli",
+    files: {},
+    entryPointsRaw: ["fs", "node:fs"],
+    target: "browser",
+    bundleErrors: {
+      "<bun>": [
+        `Browser build cannot use Node.js builtin "fs" as an entry point. To use Node.js builtins, set target to 'node' or 'bun'`,
+        `Browser build cannot use Node.js builtin "node:fs" as an entry point. To use Node.js builtins, set target to 'node' or 'bun'`,
+      ],
+    },
+  });
+
   // unsure: do we want polyfills or no-op stuff like node:* has
   // right now all error except bun:wrap which errors at resolve time, but is included if external
   const bunModules: Record<string, "no-op" | "polyfill" | "error"> = {

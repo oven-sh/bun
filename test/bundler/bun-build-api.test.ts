@@ -214,6 +214,58 @@ describe("Bun.build", () => {
     }
   });
 
+  // Runs in a child because the unfixed behavior was a process abort: the
+  // disabled entry point was dropped without an error and the linker ran with
+  // zero entry points.
+  test.concurrent("an entry point disabled by the package.json browser field is a build error", async () => {
+    using dir = tempDir("build-entry-point-disabled-by-browser-field", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./entry.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "build.mjs": `
+        const returned = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+        let thrown;
+        try {
+          await Bun.build({ entrypoints: ["./entry.js"], target: "browser" });
+        } catch (e) {
+          thrown = {
+            isAggregateError: e instanceof AggregateError,
+            errors: e.errors.map(error => ({ name: error.name, level: error.level, position: error.position, message: error.message })),
+          };
+        }
+        console.log(JSON.stringify({
+          returned: {
+            success: returned.success,
+            outputs: returned.outputs.length,
+            logs: returned.logs.map(log => ({ name: log.name, level: log.level, position: log.position, message: log.message })),
+          },
+          thrown,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const message = {
+      name: "BuildMessage",
+      level: "error",
+      position: null,
+      message: '"./entry.js" is disabled due to "browser" field in package.json (entry point)',
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      returned: { success: false, outputs: 0, logs: [message] },
+      thrown: { isAggregateError: true, errors: [message] },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("returns output files", async () => {
     Bun.gc(true);
     const build = await Bun.build({

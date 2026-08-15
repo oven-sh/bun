@@ -3911,10 +3911,10 @@ pub mod bv2_impl {
                 // sidestep for the `&mut self` overlap.
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-
+                // Entry point errors are reported after the pool drains: the
+                // runtime parse is already scheduled, and tearing the workers
+                // down while one is still setting itself up reads a
+                // half-initialized `Worker` out of `workers_assignments`.
                 this.wait_for_parse();
                 this.dump_pool_stats("parse");
 
@@ -4085,10 +4085,7 @@ pub mod bv2_impl {
 
                 this.enqueue_entry_points_bake_production(entry_points)?;
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-
+                // No early return before the drain; see `generate_from_cli`.
                 this.wait_for_parse();
 
                 if this.transpiler.log().has_errors() {
@@ -4862,6 +4859,27 @@ pub mod bv2_impl {
                     } else {
                         drop(result.namespace);
                         drop(result.path);
+
+                        // An external entry point has nothing to bundle; the build
+                        // drivers only find out about a dropped entry point from
+                        // the log. Same error as esbuild.
+                        if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                            // Entry points have no importer (`source_file` is empty);
+                            // the dev server keys the failure by the entry point's
+                            // own path, which is the specifier.
+                            this.log_for_resolution_failures(
+                                &resolve.import_record.specifier,
+                                resolve.import_record.original_target.bake_graph(),
+                            )
+                            .add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "The entry point {} cannot be marked as external",
+                                    bun_core::fmt::quote(&resolve.import_record.specifier),
+                                ),
+                            );
+                        }
                     }
 
                     if let Some(source_index) = out_source_index {

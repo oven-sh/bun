@@ -1688,4 +1688,82 @@ describe("bundler", () => {
       expect(exitCode).toBe(0);
     });
   }
+
+  // An entry point that an onResolve plugin leaves without a module (marks it
+  // external, or declines it and the package.json "browser" field disables it)
+  // must fail the build. It used to be dropped without a log entry, which
+  // crashed the linker when it was the only entry point and silently produced
+  // fewer outputs when it was not.
+  test.concurrent("plugin/entry point left without a module by onResolve fails the build", async () => {
+    using dir = tempDir("plugin-entry-point-without-module", {
+      "package.json": JSON.stringify({ name: "app", browser: { "./disabled.js": false } }),
+      "entry.js": `console.log("entry");`,
+      "other.js": `console.log("other");`,
+      "disabled.js": `console.log("disabled");`,
+      "build.mjs": `
+        const declined = [];
+        const plugins = [
+          {
+            name: "externalize-entry",
+            setup(build) {
+              build.onResolve({ filter: /entry\\.js$/ }, args => ({ path: args.path, external: true }));
+            },
+          },
+          {
+            name: "decline-disabled",
+            setup(build) {
+              build.onResolve({ filter: /disabled\\.js$/ }, args => {
+                declined.push(args.path);
+              });
+            },
+          },
+        ];
+        const results = {};
+        for (const [name, entrypoints] of Object.entries({
+          external: ["./entry.js"],
+          externalNextToLiveEntryPoint: ["./entry.js", "./other.js"],
+          declinedThenDisabledByBrowserField: ["./disabled.js"],
+        })) {
+          const result = await Bun.build({ entrypoints, target: "browser", plugins, throw: false });
+          results[name] = {
+            success: result.success,
+            logs: result.logs.map(log => log.message),
+            outputs: result.outputs.map(output => output.path),
+          };
+        }
+        results.declined = declined;
+        console.log(JSON.stringify(results));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      external: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      externalNextToLiveEntryPoint: {
+        success: false,
+        logs: ['The entry point "./entry.js" cannot be marked as external'],
+        outputs: [],
+      },
+      declinedThenDisabledByBrowserField: {
+        success: false,
+        logs: ['"./disabled.js" is disabled due to "browser" field in package.json (entry point)'],
+        outputs: [],
+      },
+      declined: ["./disabled.js"],
+    });
+    expect(exitCode).toBe(0);
+  });
 });

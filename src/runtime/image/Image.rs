@@ -67,8 +67,7 @@ pub struct Image {
     /// Apply EXIF Orientation (JPEG) before any user ops, the way Sharp's
     /// `.rotate()`-with-no-args / `autoOrient` does.
     auto_orient: bool,
-    /// `(width, height)` once a pipeline has run; lets `.width`/`.height`
-    /// answer synchronously after the first await (-1 before that).
+    /// Set by the first awaited terminal; `.width`/`.height` answer -1 until then.
     last_size: Cell<Option<(u32, u32)>>,
     /// Strong while at least one PipelineTask is in flight, weak otherwise. The
     /// Strong→wrapper→sourceJS-slot chain is what keeps the borrowed ArrayBuffer

@@ -2016,7 +2016,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn should_remove_import_export_stmt(
-        &mut self,
+        &self,
         stmts: &mut StmtList,
         loc: Loc,
         namespace_ref: Ref,
@@ -2149,8 +2149,13 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
+    // CONCURRENCY: called from every JS part-range task at once (see
+    // `generate_compile_result_for_js_chunk`); `&self` is what makes the
+    // concurrent borrows of one `LinkerContext` legitimate, so everything in
+    // here, including the `require_or_import_meta_for_source` callback the
+    // printer calls back into, must stay read-only over `self`.
     pub(crate) fn print_code_for_file_in_chunk_js(
-        &mut self,
+        &self,
         r: renamer::Renamer,
         alloc: &Bump,
         writer: &mut js_printer::BufferWriter,
@@ -2169,30 +2174,11 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
-
-        // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
-        // `line_offset_tables` / `mangled_props` from `self.graph`, but the
-        // `require_or_import_meta_for_source_callback` field below needs
-        // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
-        // (graph SoA storage is never reallocated during the print step).
-        // SAFETY: `self.graph` columns are stable heap allocations valid for
-        // the duration of this call; the printer only reads from them.
-        let ts_enums: &bun_ast::ast_result::TsEnumsMap =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
-        // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
-        // call (see above); the printer only reads from this slot.
-        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            bun_ptr::detach_lifetime_ref(
-                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
-            )
-        };
-        let mangled_props: &MangledProps =
-            // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
-            // outlives only this call (see above).
-            unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
+        let parse_graph = self.parse_graph();
+        let ts_enums: &bun_ast::ast_result::TsEnumsMap = &self.graph.ts_enums;
+        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> =
+            &self.graph.files.items_line_offset_table()[source_index.get() as usize];
+        let mangled_props: &MangledProps = &self.mangled_props;
 
         let print_options = js_printer::Options {
             bundling: true,
@@ -2261,18 +2247,6 @@ impl<'a> LinkerContext<'a> {
         // the read is a bitwise copy whose result is never dropped.
         let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
 
-        // Note: `print_with_writer<'a>` requires `Renamer<'a,'a>` (the
-        // printer struct stores it with a single lifetime), but `Renamer`'s
-        // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
-        // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
-        // Rebind via a
-        // lifetime-only cast — sound because the renamer's borrowed data
-        // (symbol map, source) strictly outlives this call.
-        // SAFETY: lifetime-only erase; layout identical across instantiations.
-        let r: renamer::Renamer<'_, '_> = unsafe {
-            core::mem::transmute::<renamer::Renamer<'_, '_>, renamer::Renamer<'_, '_>>(r)
-        };
-
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
         let result = if enable_source_maps {
@@ -2307,7 +2281,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
@@ -2563,7 +2537,7 @@ impl<'a> LinkerContext<'a> {
 impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
     #[inline]
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {

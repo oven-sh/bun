@@ -122,22 +122,16 @@ impl Default for Content {
 // mutability and never requires an aliased `&mut Chunk` /
 // `&mut [CompileResult]` — see [`Chunk::write_compile_result_slot`].
 // `files_with_parts_in_chunk` values are bumped via atomic RMW;
-// the renamer is fully populated before fan-out and treated as
-// read-only by the printer.
-// Caveat: `Renamer<'r>` still borrows `&'r mut {Number,Minify}Renamer`,
-// so the per-chunk renamer is reborrowed mutably from each part-range task;
-// the printer never writes through it, but the borrow should become `&'r`.
+// the renamer is fully populated before fan-out and every part-range task
+// reads it through `ChunkRenamer::as_renamer(&self)`.
 unsafe impl Send for Chunk {}
 // SAFETY: shared `&Chunk` access during the worker fan-out touches only
 // `compile_results_for_chunk` (UnsafeCell-per-slot, disjoint indices) and
-// `files_with_parts_in_chunk` atomic counters; the remaining fields are
-// frozen before fan-out and read single-threaded after the pool join —
-// **except** `renamer`, which the per-part-range printer reborrows `&mut`
-// from each worker (read-only in practice). See the renamer caveat above:
-// once `Renamer<'r>` borrows `&'r` instead of `&'r mut`, this caveat (and
-// the matching split-borrow in `generate_compile_result_for_js_chunk`) goes
-// away. Pre-existing; this impl mirrors `unsafe impl Send for Chunk` and
-// the single-pointer fan-out the workers use.
+// `files_with_parts_in_chunk` atomic counters; the remaining fields
+// (including `renamer`) are frozen before fan-out, only read while it runs,
+// and mutated again only after the pool join. The fan-out callbacks form
+// `&Chunk`, never `&mut Chunk`; the one write goes through the raw pointer
+// in `write_compile_result_slot`.
 unsafe impl Sync for Chunk {}
 
 /// Disjoint-slot output buffer for [`Chunk::compile_results_for_chunk`].
@@ -1594,7 +1588,7 @@ pub mod bun_renamer {
     }
 
     impl ChunkRenamer {
-        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+        pub(crate) fn as_renamer(&self) -> bun_js_printer::renamer::Renamer<'_, '_> {
             match self {
                 ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
                 ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),

@@ -1289,12 +1289,12 @@ pub struct RequireOrImportMeta {
 #[derive(Clone, Copy)]
 pub struct RequireOrImportMetaCallback {
     pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+    pub(crate) callback: fn(*const (), u32, bool) -> RequireOrImportMeta,
 }
 
 impl Default for RequireOrImportMetaCallback {
     fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
+        fn noop(_: *const (), _: u32, _: bool) -> RequireOrImportMeta {
             RequireOrImportMeta::default()
         }
         Self {
@@ -1306,9 +1306,13 @@ impl Default for RequireOrImportMetaCallback {
 
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
+///
+/// Takes `&self`: the bundler installs one callback per part range while
+/// printing many part ranges of the same `LinkerContext` concurrently, so the
+/// erased context is only ever a shared borrow.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
@@ -1319,19 +1323,19 @@ impl RequireOrImportMetaCallback {
         (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
+    pub fn init<T: RequireOrImportMetaSource>(ctx: &T) -> Self {
         fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
+            p: *const (),
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
+            // SAFETY: `p` was constructed from `&T` in `init` below; caller guarantees
             // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
+            // shared deref is valid.
             unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
         }
         Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
+            // Type-erased to `*const ()` and cast back to `*const T` inside the thunk before dereference.
             ctx: Some(NonNull::from(ctx).cast::<()>()),
             callback: thunk::<T>,
         }
@@ -2410,19 +2414,12 @@ pub(crate) mod __gated_printer {
             self.renamer.symbols()
         }
 
-        /// Borrowck-reshape helper: `Renamer::name_for_symbol` returns a slice
-        /// borrowing `&mut self.renamer`, which conflicts with the immediately
-        /// following `self.print_*` call. The returned bytes always point into
-        /// either the AST arena (`Symbol::original_name: *const [u8]`) or the
-        /// `Source::contents` buffer — both are kept alive for `'a` by the
-        /// caller of `Printer::init`. Detach the borrow to a raw ptr per the
-        /// parser's ARENA convention (matching `slice_of` for AST fields).
-        /// Reshaped for borrowck — a future refactor could thread `'bump` through Renamer.
+        /// The name borrows the renamer for `'a` (`Renamer<'a, 'a>`), not
+        /// `self`, so callers can hold it across the `&mut self` print calls
+        /// that follow.
         #[inline]
-        fn name_for_symbol(&mut self, ref_: Ref) -> &'a [u8] {
-            let p = std::ptr::from_ref::<[u8]>(self.renamer.name_for_symbol(ref_));
-            // SAFETY: arena/source-backed; outlives 'a (see renamer.rs SAFETY notes).
-            unsafe { &*p }
+        fn name_for_symbol(&self, ref_: Ref) -> &'a [u8] {
+            self.renamer.name_for_symbol(ref_)
         }
 
         // Emitting a `throw` shim is a diagnostic/error path — keep it out of the
@@ -5438,7 +5435,7 @@ pub(crate) mod __gated_printer {
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
                         // reshaped for borrowck — re-borrow module_info per item so
-                        // `name_for_symbol` (which needs `&mut self`) can run between uses.
+                        // `name_for_symbol` (which borrows `self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let id = mi.str(irp);
@@ -7370,13 +7367,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let _restore =
         bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
 
-    // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
-    // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
-    // `MinifyRenamer` variant inline (rather than via `to_renamer() ->
-    // Renamer<'static,'static>`) lets inference unify it with the no-op arm.
-    let mut no_op_renamer;
-    // hoisted out of the `minify_identifiers` arm so the
-    // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
+    // Declared out here so the borrow stored in `renamer` outlives the branch
+    // that fills in whichever of the two is used.
+    let no_op_renamer;
     let mut minify_renamer;
     // `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
@@ -7462,7 +7455,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&minifier)?;
 
-        rename::Renamer::MinifyRenamer(&mut *minify_renamer)
+        rename::Renamer::MinifyRenamer(&*minify_renamer)
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
         no_op_renamer.to_renamer()
@@ -7607,8 +7600,7 @@ pub fn print_json<W: WriterTrait>(
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
     let bump = bun_alloc::Arena::new();
-    let mut no_op =
-        rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
+    let no_op = rename::NoOpRenamer::init(js_ast::symbol::Map::init_list(vec![Vec::new()]), source);
 
     let full_opts = Options {
         indent: opts.indent,

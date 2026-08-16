@@ -196,68 +196,32 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
-    /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     ///
-    /// On `Err`, `out` is left uninitialized: whatever was built into it is
-    /// dropped again here, so the caller has nothing to tear down.
+    /// `framework_view` is the caller's projection of `self` (see
+    /// `as_bundler_view`); the transpiler borrows it for as long as it lives.
+    /// On `Err`, `out` may already hold the partially configured transpiler;
+    /// the slot drops it.
     pub(crate) fn init_transpiler<'a>(
         &self,
         arena: &'a bun_alloc::Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+        out: &mut TranspilerSlot<'a>,
+        framework_view: &'a bun_bundler::bake_types::Framework,
         bundler_options: &BuildConfigSubset,
-    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
+    ) -> crate::Result<()> {
+        use bun_options_types::schema as bun_schema;
+
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // Nothing has been written into `out` yet if this fails.
-        let transpiler = out.write(bun_bundler::Transpiler::init(
+        let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            bun_options_types::schema::api::TransformOptions::default(),
+            bun_schema::api::TransformOptions::default(),
             None,
         )?);
-        // The bundler crate (lower tier) carries a TYPE_ONLY
-        // projection (`bake_types::Framework`); construct it here and give it
-        // arena lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework_view: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(self.as_bundler_view());
-
-        if let Err(err) = self.configure_transpiler(
-            transpiler,
-            framework_view,
-            log,
-            mode,
-            renderer,
-            bundler_options,
-            arena,
-        ) {
-            // SAFETY: `out` was written above and the `transpiler` borrow ended
-            // with the call. The transpiler goes first because its
-            // `options.framework` points at `framework_view`; the view is a
-            // fresh arena slot nothing else references.
-            unsafe {
-                out.assume_init_drop();
-                core::ptr::drop_in_place(framework_view);
-            }
-            return Err(err);
-        }
-        Ok(framework_view)
-    }
-
-    fn configure_transpiler<'a>(
-        &self,
-        out: &mut bun_bundler::Transpiler<'a>,
-        framework_view: *mut bun_bundler::bake_types::Framework,
-        log: &mut bun_ast::Log,
-        mode: Mode,
-        renderer: Graph,
-        bundler_options: &BuildConfigSubset,
-        arena: &'a bun_alloc::Arena,
-    ) -> crate::Result<()> {
-        use bun_options_types::schema as bun_schema;
 
         out.options.target = match renderer {
             Graph::Client => bun_ast::Target::Browser,
@@ -307,9 +271,7 @@ impl Framework {
         out.options.minify_identifiers = mode != Mode::Development;
         out.options.minify_whitespace = mode != Mode::Development;
         out.options.css_chunking = true;
-        // SAFETY: `framework_view` is a non-null, initialized slot backed by `arena: &'a Arena`,
-        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
-        out.options.framework = Some(unsafe { &*framework_view });
+        out.options.framework = Some(framework_view);
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -496,6 +458,76 @@ impl Framework {
             ),
             ..Default::default()
         });
+    }
+}
+
+/// Storage that a `Framework::init_transpiler*` fills in place (a configured
+/// `Transpiler` points into its own fields, so it cannot be built and moved)
+/// and that knows whether it was filled. Owners that can stop part-way through
+/// building several of them (`DevServer::init`) just drop their slots.
+pub(crate) struct TranspilerSlot<'a> {
+    transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+    initialized: bool,
+}
+
+impl<'a> TranspilerSlot<'a> {
+    pub(crate) const fn uninit() -> Self {
+        Self {
+            transpiler: core::mem::MaybeUninit::uninit(),
+            initialized: false,
+        }
+    }
+
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    fn write(
+        &mut self,
+        transpiler: bun_bundler::Transpiler<'a>,
+    ) -> &mut bun_bundler::Transpiler<'a> {
+        debug_assert!(!self.initialized);
+        let transpiler = self.transpiler.write(transpiler);
+        self.initialized = true;
+        transpiler
+    }
+
+    /// Panics if the slot was never filled (`init_transpiler` did not return `Ok` for it).
+    pub(crate) fn get(&self) -> &bun_bundler::Transpiler<'a> {
+        assert!(self.initialized, "transpiler slot is empty");
+        // SAFETY: `initialized` is only set by `write`, once it has stored the
+        // transpiler, and only cleared by `clear`, which drops it.
+        unsafe { self.transpiler.assume_init_ref() }
+    }
+
+    /// See `get`.
+    pub(crate) fn get_mut(&mut self) -> &mut bun_bundler::Transpiler<'a> {
+        assert!(self.initialized, "transpiler slot is empty");
+        // SAFETY: see `get`.
+        unsafe { self.transpiler.assume_init_mut() }
+    }
+
+    /// For handing the transpiler to code that keeps raw pointers to it
+    /// (`BundleV2`), or for reaching one of its fields without forming a
+    /// reference to the whole transpiler. Only valid to dereference while the
+    /// slot is initialized.
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut bun_bundler::Transpiler<'a> {
+        self.transpiler.as_mut_ptr()
+    }
+
+    /// Drops the transpiler, if there is one, leaving the slot empty.
+    pub(crate) fn clear(&mut self) {
+        if core::mem::take(&mut self.initialized) {
+            // SAFETY: `initialized` was set, so the slot holds a transpiler, and
+            // it was just cleared, so nothing drops it a second time.
+            unsafe { self.transpiler.assume_init_drop() };
+        }
+    }
+}
+
+impl Drop for TranspilerSlot<'_> {
+    fn drop(&mut self) {
+        self.clear();
     }
 }
 

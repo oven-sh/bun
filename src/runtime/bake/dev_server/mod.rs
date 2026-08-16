@@ -454,9 +454,9 @@ impl HotReloadEvent {
 
                 // Bust resolution cache, but since Bun does not watch all
                 // directories in a codebase, this only targets the following resolutions
-                // SAFETY: server_transpiler is initialized in DevServer::init before any
-                // HotReloadEvent can fire.
-                let _ = unsafe { dev.server_transpiler.assume_init_mut() }
+                let _ = dev
+                    .server_transpiler
+                    .get_mut()
                     .resolver
                     .bust_dir_cache(changed_dir);
 
@@ -478,7 +478,9 @@ impl HotReloadEvent {
                         // `specifier` points into the dep's owned `Box<[u8]>`, which is
                         // not mutated until after `resolve` returns.
                         // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
+                        let resolved = dev
+                            .server_transpiler
+                            .get_mut()
                             .resolver
                             .resolve(
                                 bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
@@ -1384,19 +1386,20 @@ impl DirectoryWatchStore {
         });
 
         // Try to use an existing open directory handle
-        // SAFETY: server_transpiler is initialized by Framework::init_transpiler
-        // before DevServer accepts requests; `dev` is a valid *mut DevServer.
-        let cache_fd: Option<bun_sys::Fd> =
-            match unsafe { (*dev).server_transpiler.assume_init_mut() }
-                .resolver
-                .read_dir_info(dir_name_to_watch)
-            {
-                Ok(Some(cache)) => {
-                    let fd = cache.get_file_descriptor();
-                    if fd.is_valid() { Some(fd) } else { None }
-                }
-                Ok(None) | Err(_) => None,
-            };
+        // SAFETY: `dev` is the live DevServer owning this store;
+        // `server_transpiler` is disjoint from `directory_watchers` so this
+        // `&mut` does not alias `&mut self`.
+        let cache_fd: Option<bun_sys::Fd> = match unsafe { &mut (*dev).server_transpiler }
+            .get_mut()
+            .resolver
+            .read_dir_info(dir_name_to_watch)
+        {
+            Ok(Some(cache)) => {
+                let fd = cache.get_file_descriptor();
+                if fd.is_valid() { Some(fd) } else { None }
+            }
+            Ok(None) | Err(_) => None,
+        };
 
         let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {

@@ -75,7 +75,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_transpiler: _,
             client_transpiler: _,
             ssr_transpiler: _,
-            initialized_transpilers: _,
             log: _,
             plugin_state: _,
             current_bundle: _,
@@ -102,7 +101,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .frontend_only
     //   .generation
     //   .graph_safety_lock
-    //   .initialized_transpilers
     //   .magic
     //   .memory_visualizer_timer
     //   .plugin_state

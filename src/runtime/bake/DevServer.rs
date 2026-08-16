@@ -119,38 +119,27 @@ impl DevServer {
     }
 
     // ── transpiler accessors ───────────────────────────────────────────────
-    // The three transpilers are `MaybeUninit` until `init()` writes them via
-    // `Framework::init_transpiler`. Every access after `init()` returns goes
-    // through these helpers; the SAFETY contract is that `init()` is the only
-    // constructor and it always populates the server and client transpilers
-    // before returning `Ok`. The SSR one only exists when the framework has a
-    // separate SSR graph (`initialized_transpilers == 3`).
+    // `init()` fills the server and client slots before it returns `Ok`; the
+    // SSR slot only when the framework has a separate SSR graph.
     #[inline]
     pub(crate) fn server_transpiler(&self) -> &Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_ref() }
+        self.server_transpiler.get()
     }
     #[inline]
     pub(crate) fn server_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.server_transpiler.assume_init_mut() }
+        self.server_transpiler.get_mut()
     }
     #[inline]
     pub(crate) fn client_transpiler(&self) -> &Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_ref() }
+        self.client_transpiler.get()
     }
     #[inline]
     pub(crate) fn client_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        // SAFETY: written in `init()` before any access.
-        unsafe { self.client_transpiler.assume_init_mut() }
+        self.client_transpiler.get_mut()
     }
     #[inline]
     pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
-        debug_assert!(self.initialized_transpilers == 3);
-        // SAFETY: `init()` only builds the SSR transpiler for a separate SSR
-        // graph, and callers only reach this in that configuration.
-        unsafe { self.ssr_transpiler.assume_init_mut() }
+        self.ssr_transpiler.get_mut()
     }
     /// The transpiler `BundleV2` should use for the SSR graph: the dedicated
     /// one when it exists, otherwise the server transpiler (the same aliasing
@@ -159,7 +148,7 @@ impl DevServer {
     /// handed to the bundler as `&mut` at the same time.
     #[inline]
     fn ssr_transpiler_ptr_for_bundle(&mut self) -> *mut Transpiler<'static> {
-        if self.initialized_transpilers == 3 {
+        if self.ssr_transpiler.is_initialized() {
             self.ssr_transpiler.as_mut_ptr()
         } else {
             self.server_transpiler.as_mut_ptr()
@@ -411,19 +400,12 @@ pub struct DevServer {
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    // `MaybeUninit` until `Framework::init_transpiler` populates them in place
-    // (in `init()` below) — `Transpiler` contains a non-nullable `&Arena`, so
-    // neither `Default` nor `mem::zeroed()` are sound (PORTING.md §Forbidden).
-    // `ssr_transpiler` stays uninitialized unless the framework has a separate
-    // SSR graph; see `ssr_transpiler_ptr_for_bundle`.
-    pub(crate) server_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
-    pub(crate) client_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
-    pub(crate) ssr_transpiler: ::core::mem::MaybeUninit<Transpiler<'static>>,
-    /// How many of `server_transpiler`, `client_transpiler`, `ssr_transpiler`
-    /// (populated in that order) hold a live `Transpiler`. `init()` bumps it as
-    /// each one is built, so `Drop` tears down exactly the ones that exist
-    /// when initialization fails part-way through.
-    pub(crate) initialized_transpilers: u8,
+    // Empty until `Framework::init_transpiler` fills them in `init()` below;
+    // `ssr_transpiler` stays empty unless the framework has a separate SSR
+    // graph (see `ssr_transpiler_ptr_for_bundle`).
+    pub(crate) server_transpiler: bake::TranspilerSlot<'static>,
+    pub(crate) client_transpiler: bake::TranspilerSlot<'static>,
+    pub(crate) ssr_transpiler: bake::TranspilerSlot<'static>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
@@ -512,18 +494,17 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .unwrap_or(false);
 
     // `bun_watcher` and `watcher_atomics` point back at the server, so they
-    // need its heap address before it exists as a value. Rust forbids partial
-    // struct literals and `mem::zeroed()` here is UB (`Box<Watcher>` is
-    // `NonNull`-backed; `Transpiler<'a>` carries `&'a Arena`), so allocate
-    // uninitialized storage, build those two against its address, then write
-    // every field with `addr_of_mut!().write()` and `assume_init()`.
+    // need its heap address before it exists as a value, and the struct is
+    // ~15 KiB (three inline transpiler slots plus the deferred request pool),
+    // which a struct literal would build on the stack and copy (see the note
+    // on `hive_array::Fallback::new_boxed`). Instead: allocate uninitialized
+    // storage, build those two against its address, write every field with
+    // `addr_of_mut!().write()`, `assume_init()`.
     //
-    // Ordering matters for the error paths: `MaybeUninit` never drops what was
-    // written into it, so nothing that owns a resource is written until every
-    // step that can fail before `assume_init()` has passed. The transpilers
-    // (the remaining fallible part of construction) are built after
-    // `assume_init()`, so a failure there tears the server down through
-    // `Drop` like any other failure later in this function.
+    // `MaybeUninit` never drops what was written into it, so the steps that
+    // can fail come either before anything is written (below) or after
+    // `assume_init()`, where a failure drops the `Box<DevServer>` and `Drop`
+    // tears down whatever exists, like any later failure in this function.
     use ::core::mem::MaybeUninit;
     use ::core::ptr::addr_of_mut;
 
@@ -566,10 +547,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     // SAFETY: `p` is a freshly-allocated, properly-aligned `*mut DevServer`; each
     // `addr_of_mut!((*p).field)` computes an in-bounds field address without
-    // creating a reference to the (partially-uninit) whole. Every field except
-    // the three `MaybeUninit` transpiler slots (valid in any state) is written
-    // exactly once below, and nothing in between can fail, so `assume_init()`
-    // at the end of the block is sound.
+    // creating a reference to the (partially-uninit) whole. Every field is
+    // written exactly once below and nothing in between can fail, so the
+    // `assume_init()` at the end of the block is sound.
     let mut dev: Box<DevServer> = unsafe {
         w!(magic, Magic::Valid);
         w!(root, Box::from(options.root.as_bytes()));
@@ -668,7 +648,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         // dereferenced during construction.
         w!(watcher_atomics, WatcherAtomics::init(p));
         w!(bundler_framework_views, Vec::with_capacity(4));
-        w!(initialized_transpilers, 0);
+        w!(server_transpiler, bake::TranspilerSlot::uninit());
+        w!(client_transpiler, bake::TranspilerSlot::uninit());
+        w!(ssr_transpiler, bake::TranspilerSlot::uninit());
 
         dev_uninit.assume_init()
     };
@@ -690,33 +672,37 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
-    // Same order as `initialized_transpilers` counts them. `init_transpiler`
-    // leaves the slot uninitialized when it fails, so the count is still right
-    // for `Drop` when the `?` below drops `dev`.
     let graphs: &[bake::Graph] = if separate_ssr_graph {
         &[bake::Graph::Server, bake::Graph::Client, bake::Graph::Ssr]
     } else {
         &[bake::Graph::Server, bake::Graph::Client]
     };
     for &graph in graphs {
+        // The bundler crate (lower tier) reads the framework through its own
+        // projection, which the transpiler borrows for as long as it lives.
+        // Registered with `dev` before the call so that `Drop` destroys it
+        // whether or not the transpiler gets built.
+        let view: *mut bun_bundler::bake_types::Framework =
+            arena.alloc(dev.framework.as_bundler_view());
+        dev.bundler_framework_views.push(view);
         let (slot, config) = match graph {
             bake::Graph::Server => (&mut dev.server_transpiler, &dev.bundler_options.server),
             bake::Graph::Client => (&mut dev.client_transpiler, &dev.bundler_options.client),
             bake::Graph::Ssr => (&mut dev.ssr_transpiler, &dev.bundler_options.ssr),
         };
-        let view = dev
-            .framework
+        dev.framework
             .init_transpiler(
                 arena,
                 &mut dev.log,
                 bake::Mode::Development,
                 graph,
                 slot,
+                // SAFETY: a fresh slot in `arena`, which outlives `dev`; it is only
+                // dropped in place by `Drop for DevServer`, after the transpilers.
+                unsafe { &*view },
                 config,
             )
             .map_err(|err| global.throw_error(err, generic_action))?;
-        dev.bundler_framework_views.push(view);
-        dev.initialized_transpilers += 1;
     }
 
     let dev_ptr: *mut DevServer = &raw mut *dev;
@@ -921,9 +907,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut buf[..],
                 &[&fsr.root],
             );
-            // SAFETY: `server_transpiler` was fully initialized by `init_transpiler`
-            // above; `.resolver` is disjoint from `framework`.
-            let Some(entry) = unsafe { (*dev_ptr).server_transpiler.assume_init_mut() }
+            // SAFETY: `server_transpiler` is disjoint from `framework`.
+            let Some(entry) = unsafe { &mut (*dev_ptr).server_transpiler }
+                .get_mut()
                 .resolver
                 .read_dir_info_ignore_error(joined_root)
             else {
@@ -1036,7 +1022,6 @@ impl Drop for DevServer {
                 server_transpiler: _,
                 client_transpiler: _,
                 ssr_transpiler: _,
-                initialized_transpilers: _,
                 log: _,
                 plugin_state: _,
                 current_bundle: _,
@@ -1159,20 +1144,10 @@ impl Drop for DevServer {
             ));
         }
 
-        // `init()` may have failed before building all of them (or, without a
-        // separate SSR graph, never builds the third one).
-        let initialized = usize::from(self.initialized_transpilers);
-        debug_assert!(initialized <= 3);
-        let slots = [
-            &mut self.server_transpiler,
-            &mut self.client_transpiler,
-            &mut self.ssr_transpiler,
-        ];
-        for slot in slots.into_iter().take(initialized) {
-            // SAFETY: `init()` populates the slots in this order and counts each
-            // one it populated; none of them is dropped anywhere else.
-            unsafe { slot.assume_init_drop() };
-        }
+        // The transpilers borrow the views, so they go first.
+        self.server_transpiler.clear();
+        self.client_transpiler.clear();
+        self.ssr_transpiler.clear();
 
         for &ptr in &self.bundler_framework_views {
             // SAFETY: each ptr is a unique arena slot written once in `init()`.

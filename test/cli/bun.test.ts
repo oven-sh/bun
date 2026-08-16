@@ -1,8 +1,9 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("bun", () => {
   describe("NO_COLOR", () => {
@@ -124,6 +125,64 @@ describe("bun", () => {
 
         expect(exitCode).toBe(0);
       }
+    });
+  });
+  // On Windows `bun completions` installs bunx as a hardlink (or a .cmd shim) instead of a symlink.
+  describe.skipIf(isWindows)("completions", () => {
+    const bunxName = isDebug ? "bunx-debug" : "bunx";
+
+    test("installs a bunx symlink to the executable, falling back through the install directories", async () => {
+      using dir = tempDir("completions-bunx", {
+        "bin": {},
+        "empty-path": {},
+        "install": { bin: {} },
+        "home-empty": {},
+        "home-bun": { ".bun": { bin: {} } },
+        "home-local": { ".local": { bin: {} } },
+      });
+      // Run a private copy of the executable so that the first candidate location, the executable's
+      // own directory, is inside the temporary directory. A hardlink avoids copying the binary; fall
+      // back to a copy when the temporary directory is on another filesystem.
+      const exe = join(String(dir), "bin", "bun");
+      try {
+        fs.linkSync(fs.realpathSync(bunExe()), exe);
+      } catch {
+        fs.copyFileSync(bunExe(), exe);
+      }
+      // The link is created against the resolved executable path.
+      const exeRealpath = fs.realpathSync(exe);
+
+      async function installBunx(env: Record<string, string | undefined>) {
+        await using proc = Bun.spawn({
+          cmd: [exe, "completions"],
+          // No bunx on PATH, so the symlink gets installed. No SHELL, so the command stops right
+          // after that step instead of writing shell completions.
+          env: { ...bunEnv, PATH: join(String(dir), "empty-path"), SHELL: undefined, BUN_INSTALL: undefined, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Unknown or unsupported shell");
+        expect(exitCode).toBe(1);
+      }
+
+      // 1. Next to the executable.
+      await installBunx({ HOME: join(String(dir), "home-empty") });
+      expect(fs.readlinkSync(join(String(dir), "bin", bunxName))).toBe(exeRealpath);
+
+      // That link now exists, so every following run falls through to the next location.
+      // 2. $BUN_INSTALL/bin
+      await installBunx({ HOME: join(String(dir), "home-empty"), BUN_INSTALL: join(String(dir), "install") });
+      expect(fs.readlinkSync(join(String(dir), "install", "bin", bunxName))).toBe(exeRealpath);
+
+      // 3. $HOME/.bun/bin
+      await installBunx({ HOME: join(String(dir), "home-bun") });
+      expect(fs.readlinkSync(join(String(dir), "home-bun", ".bun", "bin", bunxName))).toBe(exeRealpath);
+
+      // 4. $HOME/.local/bin, once $HOME/.bun/bin does not exist.
+      await installBunx({ HOME: join(String(dir), "home-local") });
+      expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", bunxName))).toBe(exeRealpath);
     });
   });
   describe("--help preserves <placeholder> text", () => {

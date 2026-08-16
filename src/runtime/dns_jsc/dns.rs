@@ -154,7 +154,6 @@ mod lib_c {
             cache,
             get_addr_info_request::Backend::CAres,
             Some(this.as_ctx_ptr()),
-            &query,
             global_this,
             PendingCacheField::PendingHostCacheNative,
         );
@@ -243,7 +242,6 @@ pub(crate) mod lib_uv_backend {
             cache,
             get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::uv_uninit()),
             Some(this.as_ctx_ptr()),
-            &query,
             global_this,
             PendingCacheField::PendingHostCacheNative,
         );
@@ -287,9 +285,9 @@ pub(crate) mod lib_uv_backend {
                 // completion would have taken so the pending-cache slot is released
                 // and the promise is rejected with a DNSException.
                 if let Some(resolver) = (*request).resolver_for_caching {
-                    if (*request).cache.pending_cache() {
+                    if let Some(pos) = (*request).pending_slot {
                         (*resolver).drain_pending_host_native(
-                            (*request).cache.pos_in_pending(),
+                            pos,
                             (*request).head.global_this(),
                             rc.int(),
                             &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
@@ -331,39 +329,6 @@ fn normalize_dns_name<'a>(name: &'a [u8], backend: &mut GetAddrInfoBackend) -> &
     }
 
     name
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// CacheConfig — packed struct(u16) shared by all request types
-// ──────────────────────────────────────────────────────────────────────────
-
-#[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-pub struct CacheConfig(u16);
-
-impl CacheConfig {
-    #[inline]
-    pub(crate) const fn pending_cache(self) -> bool {
-        self.0 & 0x0001 != 0
-    }
-    #[inline]
-    pub(crate) const fn pos_in_pending(self) -> u8 {
-        ((self.0 >> 2) & 0x1F) as u8
-    }
-    #[inline]
-    pub(crate) const fn new(
-        pending_cache: bool,
-        entry_cache: bool,
-        pos_in_pending: u8,
-        name_len: u16,
-    ) -> Self {
-        Self(
-            (pending_cache as u16)
-                | ((entry_cache as u16) << 1)
-                | (((pos_in_pending as u16) & 0x1F) << 2)
-                | ((name_len & 0x1FF) << 7),
-        )
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -431,7 +396,9 @@ impl<T: CAresRecordType> Drop for OwnedReply<T> {
 pub(crate) struct ResolveInfoRequest<T: CAresRecordType> {
     // TODO: should be Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
-    pub cache: CacheConfig,
+    /// Slot this request owns in the resolver's pending cache, which same-name
+    /// lookups chain onto until completion drains it; `None` when the cache was full.
+    pub pending_slot: Option<u8>,
     pub head: CAresLookup<T>,
     pub tail: *mut CAresLookup<T>, // INTRUSIVE — points at `head` or last appended node
 }
@@ -480,7 +447,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: CAresLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
@@ -505,7 +472,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
                     .pending_cache_for::<T>(cache_field)
                     .index_of(new)
                     .unwrap();
-                (*request).cache = CacheConfig::new(true, false, pos as u8, name.len() as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -522,13 +489,8 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_cares::<T>(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_cares::<T>(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -568,7 +530,8 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 pub(crate) struct GetHostByAddrInfoRequest {
     // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
-    pub cache: CacheConfig,
+    /// See [`ResolveInfoRequest::pending_slot`].
+    pub pending_slot: Option<u8>,
     pub head: CAresReverse,
     pub tail: *mut CAresReverse, // INTRUSIVE
 }
@@ -618,7 +581,7 @@ impl GetHostByAddrInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: CAresReverse {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
@@ -642,7 +605,7 @@ impl GetHostByAddrInfoRequest {
                     .get()
                     .index_of(new)
                     .unwrap();
-                (*request).cache = CacheConfig::new(true, false, pos as u8, name.len() as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -658,13 +621,8 @@ impl GetHostByAddrInfoRequest {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_addr_cares(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_addr_cares(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -818,7 +776,8 @@ impl Drop for CAresNameInfo {
 pub(crate) struct GetNameInfoRequest {
     // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
-    pub cache: CacheConfig,
+    /// See [`ResolveInfoRequest::pending_slot`].
+    pub pending_slot: Option<u8>,
     pub head: CAresNameInfo,
     pub tail: *mut CAresNameInfo, // INTRUSIVE
 }
@@ -865,10 +824,9 @@ impl GetNameInfoRequest {
     ) -> *mut Self {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
-        let name_len = name.len();
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: CAresNameInfo {
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
@@ -890,7 +848,7 @@ impl GetNameInfoRequest {
                     .get()
                     .index_of(new)
                     .unwrap();
-                (*request).cache = CacheConfig::new(true, false, pos as u8, name_len as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -909,13 +867,8 @@ impl GetNameInfoRequest {
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_name_info_cares(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_name_info_cares(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -957,7 +910,8 @@ pub struct GetAddrInfoRequest {
     pub(crate) backend: get_addr_info_request::Backend,
     // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub(crate) resolver_for_caching: Option<*mut Resolver>,
-    pub(crate) cache: CacheConfig,
+    /// See [`ResolveInfoRequest::pending_slot`].
+    pub(crate) pending_slot: Option<u8>,
     pub(crate) head: DNSLookup,
     pub(crate) tail: *mut DNSLookup, // INTRUSIVE
 }
@@ -989,11 +943,11 @@ pub mod get_addr_info_request {
             // waiters, none of which anything else will touch again.
             unsafe {
                 if let Some(resolver) = (*req).resolver_for_caching {
-                    if (*req).cache.pending_cache() {
-                        drop((*resolver).get_key_host(
-                            (*req).cache.pos_in_pending(),
-                            PendingCacheField::PendingHostCacheNative,
-                        ));
+                    if let Some(pos) = (*req).pending_slot {
+                        drop(
+                            (*resolver)
+                                .get_key_host(pos, PendingCacheField::PendingHostCacheNative),
+                        );
                     }
                 }
                 let mut pending = (*req).head.next;
@@ -1189,7 +1143,6 @@ impl GetAddrInfoRequest {
         cache: CacheHit,
         backend: get_addr_info_request::Backend,
         resolver: Option<*mut Resolver>,
-        query: &GetAddrInfo,
         global_this: &JSGlobalObject,
         cache_field: PendingCacheField,
     ) -> *mut Self {
@@ -1199,7 +1152,7 @@ impl GetAddrInfoRequest {
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
             resolver_for_caching: resolver,
-            cache: CacheConfig::default(),
+            pending_slot: None,
             head: DNSLookup {
                 // SAFETY: resolver is a live intrusive-RC m_ctx; init_ref bumps the embedded ref_count.
                 resolver: resolver.map(|r| unsafe { bun_ptr::IntrusiveRc::init_ref(r) }),
@@ -1221,8 +1174,7 @@ impl GetAddrInfoRequest {
                     .pending_host_cache(cache_field)
                     .index_of(new)
                     .unwrap();
-                (*request).cache =
-                    CacheConfig::new(true, false, pos as u8, query.name.len() as u16);
+                (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
         }
@@ -1283,9 +1235,9 @@ impl GetAddrInfoRequest {
             };
 
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
+                if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_host_native(
-                        (*this).cache.pos_in_pending(),
+                        pos,
                         (*this).head.global_this(),
                         status,
                         &any,
@@ -1331,9 +1283,9 @@ impl GetAddrInfoRequest {
                     // at the end of whichever callee receives `any`.
                     let any = GetAddrInfoResultAny::List(result);
                     if let Some(resolver) = (*this).resolver_for_caching {
-                        if (*this).cache.pending_cache() {
+                        if let Some(pos) = (*this).pending_slot {
                             (*resolver).drain_pending_host_native(
-                                (*this).cache.pos_in_pending(),
+                                pos,
                                 (*this).head.global_this(),
                                 0,
                                 &any,
@@ -1351,9 +1303,9 @@ impl GetAddrInfoRequest {
                     err,
                 )) => {
                     if let Some(resolver) = (*this).resolver_for_caching {
-                        if (*this).cache.pending_cache() {
+                        if let Some(pos) = (*this).pending_slot {
                             (*resolver).drain_pending_host_native(
-                                (*this).cache.pos_in_pending(),
+                                pos,
                                 (*this).head.global_this(),
                                 err,
                                 &GetAddrInfoResultAny::Addrinfo(ptr::null_mut()),
@@ -1388,13 +1340,8 @@ impl GetAddrInfoRequest {
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
-                    (*resolver).drain_pending_host_cares(
-                        (*this).cache.pos_in_pending(),
-                        err_,
-                        timeout,
-                        result,
-                    );
+                if let Some(pos) = (*this).pending_slot {
+                    (*resolver).drain_pending_host_cares(pos, err_, timeout, result);
                     return;
                 }
             }
@@ -1434,9 +1381,9 @@ impl GetAddrInfoRequest {
             };
 
             if let Some(resolver) = (*this).resolver_for_caching {
-                if (*this).cache.pending_cache() {
+                if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_host_native(
-                        (*this).cache.pos_in_pending(),
+                        pos,
                         (*this).head.global_this(),
                         retcode,
                         &result_any,
@@ -5495,7 +5442,6 @@ impl Resolver {
             cache,
             get_addr_info_request::Backend::CAres,
             Some(self.as_ctx_ptr()),
-            query,
             global_this,
             PendingCacheField::PendingHostCacheCares,
         );

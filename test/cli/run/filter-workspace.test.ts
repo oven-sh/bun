@@ -648,6 +648,29 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
+  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+    using dir = tempDir("filter-done-in", {
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: "exit 0" } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "dep0", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    expect(exitCode).toBe(0);
+  });
+
   test("self-referential directory symlink in a workspace does not loop", () => {
     using dir = tempDir("filter-symlink-loop", {
       packages: {

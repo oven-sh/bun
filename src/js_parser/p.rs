@@ -1200,13 +1200,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         );
                     }
 
+                    let unwrapped_id = E::UnwrappedRequireIndex::init(
+                        u32::try_from(self.imports_to_convert_from_require.len() - 1)
+                            .expect("int cast"),
+                    )
+                    .to_optional();
                     return self.new_expr(
                         E::RequireString {
                             import_record_index,
-                            unwrapped_id: u32::try_from(
-                                self.imports_to_convert_from_require.len() - 1,
-                            )
-                            .expect("int cast"),
+                            unwrapped_id,
                         },
                         arg.loc,
                     );

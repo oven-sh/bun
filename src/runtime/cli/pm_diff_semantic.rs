@@ -3,7 +3,14 @@
 //! became dead is), what is shown is the author's text (comments, types, JSX and names intact).
 
 use crate::cli::pm_diff_normalize::Normalized;
-use crate::test_runner::diff::diff_match_patch::{self, DiffMatchPatch, Operation};
+use crate::test_runner::diff::text_diff;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Operation {
+    Equal,
+    Delete,
+    Insert,
+}
 
 /// One displayed line. Numbers are 1-based and real (they index the original files).
 #[derive(Clone, Copy)]
@@ -24,44 +31,49 @@ pub(crate) struct Projection<'a> {
 
 /// A plain line diff as `Op`s — the skeleton every view starts from.
 pub(crate) fn line_ops<'a>(old: &'a [u8], new: &'a [u8]) -> Vec<Op<'a>> {
-    let mut dmp = DiffMatchPatch::<usize>::default();
-    dmp.config.diff_timeout = 1000;
-    let l2c = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(old, new));
-    let chars = bun_core::handle_oom(dmp.diff(&l2c.chars_1, &l2c.chars_2, false));
-    // `diff_chars_to_lines` would allocate joined texts; walk the char runs and slice the inputs instead.
-    let old_lines: Vec<&[u8]> = super::pm_diff_command::Lines(old).collect();
-    let new_lines: Vec<&[u8]> = super::pm_diff_command::Lines(new).collect();
-    let mut ops = Vec::with_capacity(old_lines.len().max(new_lines.len()) + 8);
+    let hunks = text_diff::diff_lines(old, new);
+    let mut ops = Vec::with_capacity(old.len().min(new.len()) / 32 + 8);
+    // A line is numbered by the position it occupies on each side; a side that did not advance keeps its last.
     let (mut o, mut n) = (0usize, 0usize);
-    for d in &chars {
-        for _ in 0..d.text.len() {
-            let (text, kind) = match d.operation {
-                Operation::Equal => {
-                    let t = new_lines.get(n).copied().unwrap_or(b"");
-                    o += 1;
-                    n += 1;
-                    (t, Operation::Equal)
-                }
-                Operation::Delete => {
-                    let t = old_lines.get(o).copied().unwrap_or(b"");
-                    o += 1;
-                    (t, Operation::Delete)
-                }
-                Operation::Insert => {
-                    let t = new_lines.get(n).copied().unwrap_or(b"");
-                    n += 1;
-                    (t, Operation::Insert)
-                }
-            };
-            // The number of the line just consumed on each side (a side that did not advance keeps its last).
+    let mut oa = 0usize;
+    for h in hunks.iter().chain(core::iter::once(&text_diff::Hunk {
+        a_lo: old.len(),
+        a_hi: old.len(),
+        b_lo: new.len(),
+        b_hi: new.len(),
+    })) {
+        for line in super::pm_diff_command::Lines(&old[oa..h.a_lo]) {
+            o += 1;
+            n += 1;
             ops.push(Op {
-                kind,
+                kind: Operation::Equal,
                 old_no: o,
                 new_no: n,
-                text,
+                text: line,
                 affected: false,
             });
         }
+        for line in super::pm_diff_command::Lines(&old[h.a_lo..h.a_hi]) {
+            o += 1;
+            ops.push(Op {
+                kind: Operation::Delete,
+                old_no: o,
+                new_no: n,
+                text: line,
+                affected: false,
+            });
+        }
+        for line in super::pm_diff_command::Lines(&new[h.b_lo..h.b_hi]) {
+            n += 1;
+            ops.push(Op {
+                kind: Operation::Insert,
+                old_no: o,
+                new_no: n,
+                text: line,
+                affected: false,
+            });
+        }
+        oa = h.a_hi;
     }
     ops
 }
@@ -158,22 +170,29 @@ fn loose(text: &[u8]) -> Vec<u8> {
 }
 
 fn changed_lines(a: &[u8], b: &[u8]) -> (Vec<bool>, Vec<bool>) {
-    let mut dmp = DiffMatchPatch::<usize>::default();
-    dmp.config.diff_timeout = 1000;
-    let l2c = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(a, b));
-    let chars = bun_core::handle_oom(dmp.diff(&l2c.chars_1, &l2c.chars_2, false));
-    let (mut ca, mut cb) = (Vec::new(), Vec::new());
-    for d in &chars {
-        for _ in 0..d.text.len() {
-            match d.operation {
-                Operation::Equal => {
-                    ca.push(false);
-                    cb.push(false);
-                }
-                Operation::Delete => ca.push(true),
-                Operation::Insert => cb.push(true),
-            }
+    let count = |t: &[u8]| {
+        if t.is_empty() {
+            0
+        } else {
+            bun_core::strings::count_char(t, b'\n') + usize::from(!t.ends_with(b"\n"))
         }
+    };
+    let (mut ca, mut cb) = (vec![false; count(a)], vec![false; count(b)]);
+    let (mut la, mut lb) = (0usize, 0usize);
+    let (mut oa, mut ob) = (0usize, 0usize);
+    for h in text_diff::diff_lines(a, b) {
+        la += count(&a[oa..h.a_lo]);
+        lb += count(&b[ob..h.b_lo]);
+        for c in &mut ca[la..la + count(&a[h.a_lo..h.a_hi])] {
+            *c = true;
+        }
+        for c in &mut cb[lb..lb + count(&b[h.b_lo..h.b_hi])] {
+            *c = true;
+        }
+        la += count(&a[h.a_lo..h.a_hi]);
+        lb += count(&b[h.b_lo..h.b_hi]);
+        oa = h.a_hi;
+        ob = h.b_hi;
     }
     (ca, cb)
 }

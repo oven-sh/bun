@@ -23,8 +23,8 @@ use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
+use crate::cli::pm_diff_semantic::Operation;
 use crate::cli::pm_diff_semantic::{self as semantic, Op};
-use crate::test_runner::diff::diff_match_patch::Operation;
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 

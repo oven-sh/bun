@@ -897,9 +897,8 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            // The quiet scope covered the call; the wait runs the event loop, and what rejects
-            // meanwhile is other code's and is reported as usual (as `.rejects` and async custom
-            // matchers do). This promise's own rejection is the result being waited for.
+            // This rejection is the result; any other one surfacing while the loop runs below is
+            // reported as usual, as during a `.rejects` wait.
             promise.set_handled(global_this.vm());
             scope.apply(vm);
             vm.wait_for_promise(promise)

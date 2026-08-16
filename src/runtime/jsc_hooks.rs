@@ -973,32 +973,23 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
-    let mut waiter_satisfied = false;
+    let mut wait_over = false;
     if let Some(promise) = waiting_on {
-        // The frame blocked in the wait usually has the loop entered already
-        // (it is a timer, immediate or task callback, or runs in a microtask
-        // drain), so the immediates' own exits above were not the outermost
-        // and did not checkpoint microtasks. What settles the awaited promise
-        // is normally one of those microtasks (an await continuation), and the
-        // wait's next `tick()` would only run them after the poll below: run
-        // them now, so that the poll can see the promise settled.
-        //
-        // A stop found by the drain is the wait's to act on at its gate, as is
-        // one found by the immediates above or by `get_timeout`'s timers: the
-        // rest of the tick runs gated exactly as after those, and requesting
-        // the stop woke the loop, so the poll returns at once.
+        // The blocked frame usually has the loop entered (it is a callback, or
+        // runs in a microtask drain), so the immediates' exits above did not
+        // checkpoint microtasks; the one settling the promise (as a rule an
+        // await continuation) would otherwise run in the wait's next `tick()`,
+        // after the poll.
         // SAFETY: as above.
-        let _ = unsafe { (*el).drain_microtasks() };
-        // Nothing else before the poll runs script (the timers `get_timeout`
-        // fires are JSC-internal), so this is final: a settled promise wakes
-        // nothing, and the waiter acts on it as soon as this tick returns, so
-        // the poll must not park, same as with an immediate queued.
-        waiter_satisfied = promise.status() != PromiseStatus::Pending;
+        let stopped = unsafe { (*el).drain_microtasks() }.is_err();
+        // Final: nothing else before the poll runs script. The waiter returns
+        // on either as soon as this tick does, so the poll must not park.
+        wait_over = stopped || promise.status() != PromiseStatus::Pending;
     }
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
-    if has_yielded_tasks || waiter_satisfied || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if has_yielded_tasks || wait_over || !unsafe { &*el }.immediate_tasks.is_empty() {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1060,11 +1051,9 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
-        // True when something is acted on as soon as the poll returns, so it
-        // must not park.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
-            || waiter_satisfied
+            || wait_over
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.

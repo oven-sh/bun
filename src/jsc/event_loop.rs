@@ -995,13 +995,10 @@ impl EventLoop {
         self.vm_ref().as_mut().auto_tick();
     }
 
-    /// [`auto_tick`](Self::auto_tick) for a caller that is blocked until
-    /// `promise` settles and acts on that as soon as this tick returns. The
-    /// immediates the tick runs before it polls (and the microtasks they
-    /// queue, which this tick then drains) may be what settles the promise;
-    /// a settled promise wakes nothing, so the tick then polls without
-    /// parking instead of sleeping until the next unrelated timer or I/O
-    /// event.
+    /// [`auto_tick`](Self::auto_tick) for a caller blocked until `promise`
+    /// settles. The immediates (and their microtasks) run before the poll may
+    /// be what settles it, and a settled promise wakes nothing: the tick then
+    /// polls without parking, since the caller returns as soon as it does.
     #[inline]
     pub fn auto_tick_waiting_on(&mut self, promise: jsc::AnyPromise) {
         self.vm_ref().as_mut().auto_tick_waiting_on(Some(promise));

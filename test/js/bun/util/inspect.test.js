@@ -928,3 +928,62 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("property lookup throws while formatting", () => {
+  async function run(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  it.concurrent("get trap on a prototype Proxy throws", async () => {
+    const { stdout, exitCode } = await run(`
+      const proto = new Proxy(
+        { a: 1, b: 2 },
+        {
+          get(target, key) {
+            if (key === "a" || key === "b") throw new Error("boom");
+            return Reflect.get(target, key);
+          },
+        },
+      );
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(stdout).toBe("{}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("getPrototypeOf trap on a prototype Proxy throws", async () => {
+    const { stdout, exitCode } = await run(`
+      const proto = new Proxy(
+        { a: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("boom");
+          },
+        },
+      );
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(stdout).toBe("{\n  a: 1,\n}\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("lazy property initializer throws", async () => {
+    // Bun.$ is the first lazy property on the Bun object and its initializer
+    // calls Symbol(), so it throws here. The properties after it must still be
+    // printed.
+    const { stdout, exitCode } = await run(`
+      globalThis.Symbol = {};
+      const text = Bun.inspect(Bun);
+      console.log(text.includes("Archive:"), text.includes("inspect:"));
+    `);
+    expect(stdout).toBe("true true\n");
+    expect(exitCode).toBe(0);
+  });
+});

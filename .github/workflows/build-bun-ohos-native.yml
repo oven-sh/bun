@@ -484,21 +484,21 @@ jobs:
           build_ninja="build/release/build.ninja"
           if [ -f "$build_ninja" ]; then
             python3 - "$build_ninja" "$SHIM_DIR/v8_stub.o" << 'PYEOF'
-            import sys
-            nf, stub = sys.argv[1], sys.argv[2]
-            with open(nf) as f:
-                c = f.read()
-            old = "stream.ts link --console ${REPO_BIN}clang++ @$out.rsp $ldflags -o $out"
-            # 实际命令格式
-            old = c[c.find("stream.ts link"):c.find("stream.ts link")+200]
-            if stub not in c:
-                # 在 @$out.rsp 前插入 stub
-                c = c.replace("@$out.rsp", stub + " @$out.rsp")
-                with open(nf, "w") as f:
-                    f.write(c)
-                print("v8_stub.o injected into link rule")
-            else:
-                print("v8_stub.o already present")
+          import sys
+          nf, stub = sys.argv[1], sys.argv[2]
+          with open(nf) as f:
+              c = f.read()
+          old = "stream.ts link --console ${REPO_BIN}clang++ @$out.rsp $ldflags -o $out"
+          # 实际命令格式
+          old = c[c.find("stream.ts link"):c.find("stream.ts link")+200]
+          if stub not in c:
+              # 在 @$out.rsp 前插入 stub
+              c = c.replace("@$out.rsp", stub + " @$out.rsp")
+              with open(nf, "w") as f:
+                  f.write(c)
+              print("v8_stub.o injected into link rule")
+          else:
+              print("v8_stub.o already present")
           PYEOF
           fi
           echo "V8 stub ready: $SHIM_DIR/v8_stub.o"

@@ -470,7 +470,7 @@ jobs:
           mkdir -p "$SHIM_DIR"
 
           cat > "$SHIM_DIR/v8_stub.cpp" << 'V8EOF'
-          extern "C" void _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_10ValueEEEvEEE() {}
+          extern "C" void _ZN2v85Array3NewENS_5LocalINS_7ContextEEEmNSt3__18functionIFNS_10MaybeLocalINS_5ValueEEEvEEE() {}
           extern "C" void _ZN2v811CpuProfiler13CollectSampleEPNS_7IsolateENSt3__18optionalImEE() {}
           V8EOF
 

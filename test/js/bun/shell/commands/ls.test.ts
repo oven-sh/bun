@@ -1,10 +1,8 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, tempDir, tempDirWithFiles } from "harness";
+import { isPosix, isRoot, tempDir, tempDirWithFiles } from "harness";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
-// Root bypasses directory mode bits, so chmod 000 cannot produce EACCES for it.
-const isRoot = process.getuid?.() === 0;
 
 const fileExists = async (path: string): Promise<boolean> =>
   $`ls -d ${path}`.then(o => o.stdout.toString() === `${path}\n`);

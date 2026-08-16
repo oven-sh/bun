@@ -24,6 +24,12 @@ export const isFreeBSD = process.platform === "freebsd";
 export const isAndroid = process.platform === "android";
 export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
+/**
+ * Root bypasses file and directory mode bits, so a test that expects EACCES
+ * from a `chmod 000` fixture cannot pass as uid 0; skip such tests on it.
+ * Always false on Windows, where `process.getuid` does not exist.
+ */
+export const isRoot = process.getuid?.() === 0;
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");

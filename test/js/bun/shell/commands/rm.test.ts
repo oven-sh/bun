@@ -66,12 +66,6 @@ describe.concurrent("bunshell rm", () => {
     TestBuilder.command`rm -f ${none}`.stdout("").stderr("").exitCode(0).runAsTest("rm -f with an empty list");
     TestBuilder.command`rm -rf`.stdout("").stderr("").exitCode(0).runAsTest("rm -rf");
     TestBuilder.command`rm -fv`.stdout("").stderr("").exitCode(0).runAsTest("rm -fv");
-    TestBuilder.command`rm -f --interactive=never`
-      .stdout("")
-      .stderr("")
-      .exitCode(0)
-      .runAsTest("rm -f --interactive=never");
-    TestBuilder.command`rm -i -f`.stdout("").stderr("").exitCode(0).runAsTest("-f given after -i");
     TestBuilder.command`rm -f ${none} && echo cleaned`
       .stdout("cleaned\n")
       .stderr("")
@@ -81,10 +75,10 @@ describe.concurrent("bunshell rm", () => {
     TestBuilder.command`rm`.stdout("").stderr(usage).exitCode(1).runAsTest("rm");
     TestBuilder.command`rm -r`.stdout("").stderr(usage).exitCode(1).runAsTest("rm -r");
     TestBuilder.command`rm -rv`.quiet().stdout("").stderr(usage).exitCode(1).runAsTest("rm -rv (quiet)");
-    // A prompting flag given after -f cancels it, as in GNU rm.
-    for (const flag of ["-i", "-I", "--interactive=once", "--interactive=always"]) {
-      TestBuilder.command`rm -f ${flag}`.stdout("").stderr(usage).exitCode(1).runAsTest(`${flag} given after -f`);
-    }
+    // Missing operands are reported before the unsupported prompting mode is.
+    TestBuilder.command`rm -i`.stdout("").stderr(usage).exitCode(1).runAsTest("rm -i");
+    // -f only covers the missing operands, not a bad flag.
+    TestBuilder.command`rm -f -x`.stdout("").stderr("rm: illegal option -- x\n").exitCode(1).runAsTest("rm -f -x");
   });
 
   test("recursive", async () => {

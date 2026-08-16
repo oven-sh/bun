@@ -287,6 +287,9 @@ CLANGXX
   export OHOS_BUN_SIGNING_LINKER="$CXX"
   export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_OHOS_LINKER="$CXX"
 
+  # 并行度: 与 scripts/ohos/build.sh 一致 (默认 nproc, 可用 NINJA_JOBS 覆盖)
+  export NINJA_JOBS="${NINJA_JOBS:-$(nproc)}"
+
   # cargo sparse protocol
   mkdir -p "$HOME/.cargo"
   cat > "$HOME/.cargo/config.toml" << 'CARGO'
@@ -373,8 +376,8 @@ phase_build() {
     #    统一替换为 llvm@21 (否则 ninja regen 会覆盖手动修改)
     patch_ninja_llvm21 || return 1
 
-    # 3. 运行 ninja 编译 (使用 llvm@21 的 build.ninja)
-    if ninja -C "$OUTDIR" -j1 bun 2>&1 | tee "$TMPDIR/build.log"; then
+    # 3. 运行 ninja 编译 (并行度 NINJA_JOBS, 同 scripts/ohos/build.sh)
+    if ninja -C "$OUTDIR" -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"; then
       ok "编译成功!"
       return 0
     fi
@@ -447,7 +450,7 @@ PYEOF
 # stub 注入 build.ninja 后重新 link, 解析 Rust napi 引用的 __1 符号.
 phase_relink() {
   info "=== 重新链接 (V8 stub 生效) ==="
-  if ! ninja -C "$OUTDIR" -j1 bun 2>&1 | tee "$TMPDIR/build.log"; then
+  if ! ninja -C "$OUTDIR" -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"; then
     err "重新链接失败 (查看 $TMPDIR/build.log)"
     return 1
   fi

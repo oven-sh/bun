@@ -263,6 +263,9 @@ jobs:
           echo "RUSTUP_TOOLCHAIN=$RUST_VER" >> "$GITHUB_ENV"
           echo "RUSTC=$RUST_HOME/bin/rustc" >> "$GITHUB_ENV"
 
+          # 并行度: 与 scripts/ohos/build.sh 一致 (默认 nproc, 可用 NINJA_JOBS 覆盖)
+          echo "NINJA_JOBS=${NINJA_JOBS:-$(nproc)}" >> "$GITHUB_ENV"
+
           # OHOS 专用
           echo "OHOS_LLVM_PREFIX=$LLVM21" >> "$GITHUB_ENV"
           echo "BUN_WEBKIT_PATH=$WEBKIT_SRC" >> "$GITHUB_ENV"
@@ -351,8 +354,8 @@ jobs:
             # 2. 统一工具链
             patch_ninja_llvm21 || exit 1
 
-            # 3. ninja 编译 (串行, 避免并发签名冲突)
-            if ninja -C build/release -j1 bun 2>&1 | tee "$TMPDIR/build.log"; then
+            # 3. ninja 编译 (并行度 NINJA_JOBS, 同 scripts/ohos/build.sh)
+            if ninja -C build/release -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"; then
               echo "build succeeded"
               exit 0
             fi
@@ -420,7 +423,7 @@ jobs:
       - name: Relink (V8 stub)
         working-directory: bun
         run: |
-          ninja -C build/release -j1 bun 2>&1 | tee "$TMPDIR/build.log"
+          ninja -C build/release -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"
 
       # ─── phase_sign ──────────────────────────────────────────────────────
       - name: Sign final binary

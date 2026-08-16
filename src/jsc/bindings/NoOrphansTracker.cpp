@@ -64,9 +64,7 @@ static_assert(sizeof(ProcUniqIdentifierInfo) == 56, "xnu ABI");
 
 class NoOrphansTracker {
 public:
-    // Function-local static: lazy first-use construction, no global ctor,
-    // thread-safe per C++11 [stmt.dcl]. Only the arming thread gets here
-    // anyway, but this keeps the binary's static-init section clean.
+    // Function-local static keeps this out of the binary's static-init section.
     static NoOrphansTracker& get()
     {
         static NoOrphansTracker instance;

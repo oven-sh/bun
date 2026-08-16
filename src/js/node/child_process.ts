@@ -1717,12 +1717,8 @@ function nodeToBun(item, index: number): string | number | null | NodeJS.TypedAr
   if (typeof item === "number") {
     return item;
   }
-  // Anything exposing a numeric `fd` (a server's or socket's _handle, a
-  // FileHandle, an fs/tty stream, a plain { fd }) shares that descriptor with
-  // the child, like node's `typeof stdio.fd === 'number'` branch:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1058
-  // The value is passed through as-is, so a closed handle's negative fd is
-  // refused by Bun.spawn exactly like the same number passed directly.
+  // Handle wraps, FileHandles, fs/tty streams and { fd } objects all share their
+  // `fd`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1058
   if (typeof item === "object") {
     const fd = item.fd;
     if (typeof fd === "number") return fd;

@@ -69,6 +69,8 @@ JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
+// `$makeAbortError` for the JS builtins, and the `constructor` of every ABORT_ERR error.
+JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
 // Appends Node's `determineSpecificType()` rendering of a value ("type number (5)",
 // "an instance of Foo", ...) — the "Received ..." part of ERR_INVALID_ARG_TYPE messages.

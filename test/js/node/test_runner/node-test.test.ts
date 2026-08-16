@@ -2,6 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
+import { run } from "node:test";
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -322,6 +323,49 @@ describe("node:test", () => {
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),
     });
+  });
+
+  test("should abort t.signal on timeout and enforce the test-level signal option", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["30-signal-abort.js"]);
+    expect(stdout).toContain("OBS top-level timeout aborted t.signal");
+    expect(stdout).not.toContain("OBS pre-aborted top-level body ran");
+    // The three deliberate failures: the timeout plus each signal's reason.
+    expect(stderr).toContain("test timed out after 10ms");
+    expect(stderr).toContain("top-level abort reason");
+    expect(stderr).toContain("aborted before start");
+    expect(stderr).toContain("6 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("3 fail"),
+    });
+  });
+
+  test("should cancel the subtests a timed-out test stopped waiting for", async () => {
+    const { exitCode, stderr } = await runTests(["31-cancelled-by-parent.js"]);
+    expect(stderr).toContain("test timed out after 20ms");
+    expect(stderr).toContain("1 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should report every cancelled subtest and suite as a failure through run()", async () => {
+    const events = await run({ files: [join(import.meta.dirname, "fixtures", "31-cancelled-by-parent.js")] }).toArray();
+    const outcomes = events
+      .filter(({ type }) => type === "test:pass" || type === "test:fail")
+      .map(({ type, data }) => [data.name, type === "test:pass" ? "pass" : data.details.error.message])
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const cancelled = "test did not finish before its parent and was cancelled";
+    expect(outcomes).toEqual([
+      ["parent times out while a subtest is still running", "test timed out after 20ms"],
+      ["queued", cancelled],
+      ["queued empty suite", cancelled],
+      ["queued suite", cancelled],
+      ["running", cancelled],
+      ["suite child", cancelled],
+      ["the subtests the parent stopped waiting for were cancelled", "pass"],
+    ]);
   });
 });
 

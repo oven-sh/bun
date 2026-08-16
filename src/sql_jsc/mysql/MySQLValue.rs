@@ -152,7 +152,7 @@ pub(crate) enum Value {
 pub struct Bytes {
     pub(crate) slice: ZigStringSlice,
     /// JS ArrayBuffer/view to `unpinArrayBuffer` in `Drop`. `JSValue::ZERO`
-    /// when the slice is owned (mode-1 dupe), borrowed from a
+    /// when the slice is owned (FastTypedArray dupe), borrowed from a
     /// Blob store (nothing to unpin), or empty. GC rooting of this value
     /// is the caller's responsibility via the `MarkedArgumentBuffer`
     /// passed to `from_js`.
@@ -346,9 +346,7 @@ impl Value {
                     return match JSC__JSValue__borrowBytesForOffThread(value, &mut ptr, &mut len) {
                         // detached / null
                         0 => Ok(Value::Bytes(Bytes::default())),
-                        // FastTypedArray (tiny, GC-movable) or storage a pin
-                        // cannot hold in place (wasm memory / resizable
-                        // non-shared, any size); dupe.
+                        // FastTypedArray — tiny, GC-movable vector; dupe.
                         1 => Ok(Value::Bytes(Bytes {
                             // SAFETY: ptr/len returned from helper are valid for the
                             // duration of this call; init_dupe copies immediately.
@@ -824,10 +822,9 @@ unsafe extern "C" {
     /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
-    /// 0 = detached/null, 1 = caller should dupe, no unpin needed (a GC-movable
-    /// FastTypedArray, or wasm-memory/resizable storage a pin cannot hold),
-    /// 2 = pinned an existing ArrayBuffer (caller must `unpinArrayBuffer`),
-    /// 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
+    /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
+    /// no unpin needed), 2 = pinned an existing ArrayBuffer (caller must
+    /// `unpinArrayBuffer`), 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
     /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
     /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(

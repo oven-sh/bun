@@ -188,10 +188,8 @@ pub mod coreutils_error_map {
     }
 
     // macOS DELTA: overrides where Apple's strerror() text diverges from glibc,
-    // plus macOS-only errnos (EBADARCH, EBADMACHO, EPWROFF, …). Texts are
-    // Libc's errlst.c (what strerror() returns), not the <sys/errno.h>
-    // comments, which differ for a dozen errnos; pinned by
-    // test/internal/source-lints/coreutils-error-map.test.ts.
+    // plus macOS-only errnos (EBADARCH, EBADMACHO, EPWROFF, …).
+    // Texts are strerror()'s (Libc errlst.c), not the <sys/errno.h> comments.
     #[cfg(target_os = "macos")]
     crate::comptime_string_map! {
     static DELTA: &'static str = {

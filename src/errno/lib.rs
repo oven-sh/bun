@@ -527,9 +527,6 @@ mod errno_name_tests {
         assert_eq!(coreutils_error_map::get(0), None);
     }
 
-    /// The labels are the platform's own strerror() texts: identical to glibc's
-    /// where the platform agrees with it, the platform's wording where it does
-    /// not.
     #[test]
     fn coreutils_map_uses_platform_strerror_text() {
         assert_eq!(

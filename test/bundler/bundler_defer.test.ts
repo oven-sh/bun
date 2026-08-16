@@ -656,9 +656,6 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     expect(onFinalizeCallCount).toBe(3);
   });
 
-  // A plugin that calls defer() without awaiting it and answers straight away must not corrupt the pass's
-  // accounting or let the pass finish under its own defer hop (use-after-free under ASAN). Run in a child so
-  // a regression fails the child instead of taking this file down.
   test("defer() called after the build settled is refused", async () => {
     using dir = tempDir("defer-after-settle", {
       "index.ts": `import "./a.ts"; console.log("index");`,
@@ -684,6 +681,9 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
     expect(() => late!()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
   });
 
+  // A plugin that calls defer() without awaiting it and answers straight away must not corrupt the pass's
+  // accounting or let the pass finish under its own defer hop (use-after-free under ASAN). Run in a child so
+  // a regression fails the child instead of taking this file down.
   test("an un-awaited defer() with an immediate answer neither corrupts the queue nor outlives the pass", async () => {
     using dir = tempDir("defer-unawaited", {
       "entry.ts": `import { x, foo } from "./shared"; console.log(x, foo());`,

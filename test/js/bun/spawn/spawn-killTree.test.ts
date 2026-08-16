@@ -25,6 +25,17 @@ function procState(pid: number): string {
   return stat.charAt(stat.lastIndexOf(")") + 2);
 }
 
+// A signal takes effect shortly after kill() returns, not synchronously, so poll before asserting.
+async function waitForStates(pids: number[], want: RegExp): Promise<string[]> {
+  const deadline = Date.now() + 5000;
+  let states = pids.map(procState);
+  while (!states.every(s => want.test(s)) && Date.now() < deadline) {
+    await Bun.sleep(10);
+    states = pids.map(procState);
+  }
+  return states;
+}
+
 // root.js (bun) spawns child.js (bun) which spawns an outer sh, which
 // itself spawns an inner sh in the background. root.js prints the four
 // pids on one line once the whole chain is up, then everything idles.
@@ -304,6 +315,30 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
         }).toEqual({ child: running, outerSh: running, innerSh: running });
       }
     } finally {
+      killProcesses(childPid, outerShPid, innerShPid);
+    }
+  });
+
+  // Stop signals must not be followed by the SIGCONT that other signals get, or the
+  // stop would be undone; SIGCONT itself must leave the tree running.
+  test.skipIf(!isLinux)("killTree('SIGSTOP') pauses the whole tree and killTree('SIGCONT') resumes it", async () => {
+    const { proc, childPid, outerShPid, innerShPid } = await spawnTree();
+    await using _ = proc;
+    const pids = [proc.pid, childPid, outerShPid, innerShPid];
+    try {
+      proc.killTree("SIGSTOP");
+      expect(await waitForStates(pids, /^T$/)).toEqual(["T", "T", "T", "T"]);
+
+      proc.killTree("SIGCONT");
+      const running = expect.stringMatching(/^[RSD]$/);
+      expect(await waitForStates(pids, /^[RSD]$/)).toEqual([running, running, running, running]);
+
+      expect(proc.killed).toBe(false);
+    } finally {
+      // A SIGKILLed stopped process dies, but its stopped children would not, so take the whole tree down.
+      try {
+        proc.killTree("SIGKILL");
+      } catch {}
       killProcesses(childPid, outerShPid, innerShPid);
     }
   });

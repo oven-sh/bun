@@ -99,8 +99,7 @@ impl VM {
         JSC__VM__collectAsync(self)
     }
 
-    /// Request a full collection on the GC thread without blocking the event
-    /// loop (unlike [`VM::run_gc`], which collects synchronously).
+    /// Non-blocking full collection on the GC thread (unlike [`VM::run_gc`]).
     pub fn collect_full_async(&self) {
         JSC__VM__collectFullAsync(self)
     }

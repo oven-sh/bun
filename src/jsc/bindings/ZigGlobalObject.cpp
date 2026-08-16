@@ -700,26 +700,15 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // Drop the module registry and require.cache on the outgoing global before
-    // unprotecting it. Every value stored in a module top-level binding is
-    // rooted through these maps (the module record holds its environment, which
-    // holds the bindings), so they survive a collection as long as the global
-    // is reachable at all — and the global can stay transiently reachable across
-    // the swap (e.g. a ScriptExecutionContext map entry, a pending native task,
-    // or a not-yet-swept cell). Clearing the maps here severs
-    // moduleLoader -> record -> environment -> bindings so the per-file module
-    // graph is reclaimed even while the global shell lingers. Without this, the
-    // graph accumulates linearly with the number of test files and OOMs large
-    // suites. Mirrors GlobalObject::reload().
+    // Detach the outgoing file's module graph so it's reclaimed even if the old
+    // global lingers transiently past the swap (otherwise RSS grows per file).
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
         oldGlobal->clearModuleRegistry();
         scope.assertNoException();
     }
 
-    // Drop the permanent root on the previous global so the global shell itself
-    // (and anything else it still roots) becomes collectable. JSC's CodeCache
-    // and Bun's RuntimeTranspilerCache are VM/process scoped and survive.
+    // Drop the permanent root on the previous global so it becomes collectable.
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
 
@@ -3599,8 +3588,7 @@ void GlobalObject::clearModuleRegistry()
 {
     auto* moduleLoader = this->moduleLoader();
     {
-        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
-        // under cellLock(); take the same lock so clearAll() can't race it.
+        // cellLock() pairs with the GC thread's visitChildrenImpl over these maps.
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }

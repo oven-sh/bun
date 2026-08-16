@@ -5114,20 +5114,15 @@ impl VirtualMachine {
         self.unhandled_error_counter = 0;
 
         let old_global = self.global;
-        // `old_global` valid for VM lifetime (safe ZST-handle deref);
-        // `console` is the live per-VM ConsoleObject. The C++ side opens a
-        // `DECLARE_THROW_SCOPE` (around clearModuleRegistry); under
-        // `BUN_JSC_validateExceptionChecks=1` its dtor sets
-        // `m_needExceptionCheck`, so a Rust-side scope must be live across the
-        // call and queried afterward, or the next file's first ThrowScope
-        // asserts in `verifyExceptionCheckNeedIsSatisfied`.
+        // The C++ callee declares a ThrowScope; hold a Rust-side scope across the
+        // call and query it so exception-check validation stays balanced.
         let new_global: *mut JSGlobalObject = {
             crate::top_scope!(scope, self.global());
             let new_global = JSGlobalObject::create_for_test_isolation(
                 JSGlobalObject::opaque_ref(old_global),
                 self.console.cast(),
             );
-            scope.assert_no_exception();
+            let _ = scope.assert_no_exception_except_termination();
             new_global
         };
         self.global = new_global;
@@ -5142,16 +5137,8 @@ impl VirtualMachine {
             }
         }
 
-        // `create_for_test_isolation` detached the previous file's module graph
-        // from the (now-unrooted) old global, but nothing in the per-file loop
-        // applies enough allocation pressure to schedule a full collection, so
-        // the detached graph would otherwise sit in the old heap until the end
-        // of the run — peak RSS growing linearly with the number of files and
-        // OOMing large suites. Request a full collection on the GC thread to
-        // reclaim it between files; this runs concurrently and does not stall
-        // the event loop. Freed blocks are returned to the OS by the
-        // `mimalloc_cleanup` both per-file loops (the serial --isolate loop
-        // and the --parallel worker) run before each swap.
+        // Reclaim the old file's now-detached module graph; the per-file loop
+        // has no allocation pressure to trigger a collection on its own.
         self.global().vm().collect_full_async();
     }
 

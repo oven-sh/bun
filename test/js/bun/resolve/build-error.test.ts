@@ -1,3 +1,4 @@
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -87,4 +88,169 @@ test("BuildMessage finalize frees with the same allocator it was created with", 
     }
     Bun.gc(true);
   }
+});
+
+// The module loader keeps the registry entry of a module whose build failed and
+// settles every later load of it from that entry. It used to hand out a copy of
+// the stored error that had only the error's type and message, so the second
+// import() (or a require(), or another module importing it) got an
+// AggregateError without `errors`; with two test files importing the same
+// broken module, `bun test` crashed printing that copy on the second file
+// (#36963). Later loads now reject with the error the build produced.
+describe.concurrent("a module that failed to build reports its errors to every later load", () => {
+  // Three declarations of the same const produce exactly two build errors.
+  const twoBuildErrors = `const dup = 1; const dup = 2; const dup = 3;\n`;
+  // The stripped copy has the same name and message; `errors` tells them apart.
+  const shape = /* js */ `
+    const shape = e => ({
+      name: e.constructor.name,
+      message: e.message,
+      errors: e.errors ? e.errors.map(error => error.name) : null,
+    });
+  `;
+  const aggregateOfTwo = {
+    name: "AggregateError",
+    message: expect.stringMatching(/^2 errors building "/),
+    errors: ["BuildMessage", "BuildMessage"],
+  };
+
+  async function runEntry(files: Record<string, string>) {
+    using dir = tempDir("failed-build-reload", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("a second import() and a require()", async () => {
+    const result = await runEntry({
+      "bad.js": twoBuildErrors,
+      "entry.js": /* js */ `
+        ${shape}
+        const out = {};
+        out.firstImport = await import("./bad.js").then(() => "loaded", shape);
+        out.secondImport = await import("./bad.js").then(() => "loaded", shape);
+        try {
+          require("./bad.js");
+          out.require = "loaded";
+        } catch (e) {
+          out.require = shape(e);
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(result).toEqual({ firstImport: aggregateOfTwo, secondImport: aggregateOfTwo, require: aggregateOfTwo });
+  });
+
+  test("every module that imports it", async () => {
+    const result = await runEntry({
+      "bad.js": twoBuildErrors,
+      "a.js": `import "./bad.js";`,
+      "b.js": `import "./bad.js";`,
+      "entry.js": /* js */ `
+        ${shape}
+        const out = {};
+        out.a = await import("./a.js").then(() => "loaded", shape);
+        out.b = await import("./b.js").then(() => "loaded", shape);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(result).toEqual({ a: aggregateOfTwo, b: aggregateOfTwo });
+  });
+
+  // The second file used to crash the run. Its report is empty because a
+  // BuildMessage is only ever printed once per process (the same as for a
+  // module with a single build error); it still fails the file and the run.
+  test("every test file that imports it under bun test", async () => {
+    using dir = tempDir("failed-build-bun-test", {
+      "bad.js": twoBuildErrors,
+      "a.test.js": `import "./bad.js";`,
+      "b.test.js": `import "./bad.js";`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "./b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const output = stdout + stderr;
+    expect(output).toContain('error: "dup" has already been declared');
+    expect(output).toContain("\nb.test.js:\n");
+    expect(output).toContain("Ran 2 tests across 2 files.");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a second import() while the same file is also loaded with another import type", async () => {
+    const result = await runEntry({
+      "bad.js": twoBuildErrors,
+      "entry.js": /* js */ `
+        ${shape}
+        const out = {};
+        out.firstImport = await import("./bad.js").then(() => "loaded", shape);
+        const firstText = await import("./bad.js", { with: { type: "text" } });
+        out.secondImport = await import("./bad.js").then(() => "loaded", shape);
+        const secondText = await import("./bad.js", { with: { type: "text" } });
+        out.textIsSameModule = firstText === secondText;
+        out.text = firstText.default;
+        console.log(JSON.stringify(out));
+      `,
+    });
+    expect(result).toEqual({
+      firstImport: aggregateOfTwo,
+      secondImport: aggregateOfTwo,
+      textIsSameModule: true,
+      text: twoBuildErrors,
+    });
+  });
+
+  // The same replay applies to whatever a plugin rejected the load with.
+  test("a second import() of a plugin module keeps the properties of the error the plugin threw", async () => {
+    const result = await runEntry({
+      "entry.js": /* js */ `
+        Bun.plugin({
+          name: "failing module",
+          setup(build) {
+            build.module("virtual:failing", async () => {
+              const error = new Error("plugin failed");
+              error.code = "E_PLUGIN";
+              throw error;
+            });
+          },
+        });
+        const shape = e => ({ message: e.message, code: e.code ?? null });
+        const out = {};
+        out.first = await import("virtual:failing").then(() => "loaded", shape);
+        out.second = await import("virtual:failing").then(() => "loaded", shape);
+        console.log(JSON.stringify(out));
+      `,
+    });
+    const pluginError = { message: "plugin failed", code: "E_PLUGIN" };
+    expect(result).toEqual({ first: pluginError, second: pluginError });
+  });
+
+  // A module that threw while evaluating is replayed the same way, and always was.
+  test("a module that threw while evaluating rejects every later import() with that error", async () => {
+    const result = await runEntry({
+      "throws.js": `globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;\nthrow new Error("evaluation failed");`,
+      "entry.js": /* js */ `
+        const errors = [];
+        for (let i = 0; i < 2; i++) errors.push(await import("./throws.js").then(() => "loaded", e => e));
+        console.log(JSON.stringify({
+          messages: errors.map(e => e.message),
+          sameError: errors[0] === errors[1],
+          evaluations: globalThis.evaluations,
+        }));
+      `,
+    });
+    expect(result).toEqual({ messages: ["evaluation failed", "evaluation failed"], sameError: true, evaluations: 1 });
+  });
 });

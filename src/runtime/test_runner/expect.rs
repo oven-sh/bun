@@ -897,12 +897,9 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            // This rejection is the result; any other one surfacing while the loop runs below is
-            // reported as usual, as during a `.rejects` wait.
-            promise.set_handled(global_this.vm());
+            let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
-            vm.wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+            waited.map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));

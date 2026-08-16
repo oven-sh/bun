@@ -67,7 +67,6 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, DOMException&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMException* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<DOMException>&&);

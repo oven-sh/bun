@@ -930,7 +930,14 @@ describe("expect()", () => {
       () => new Map(),
       () => new Set(),
       () => Promise.resolve(),
-      vi && (() => Promise.reject(Symbol("123"))), // on jest it causes an UnhandledPromiseRejection
+      vi &&
+        (() => {
+          // The promise is thrown as a plain value; toThrow() does not consume its rejection,
+          // so an unhandled one would (as on jest) be reported and fail this test.
+          const rejected = Promise.reject(Symbol("123"));
+          rejected.catch(() => {});
+          return rejected;
+        }),
       () => Symbol("123"),
     ];
     for (const weirdThing of weirdThings) {

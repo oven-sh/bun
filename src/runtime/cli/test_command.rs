@@ -3225,7 +3225,6 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
-        vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
 
         while repeat_index < repeat_count {

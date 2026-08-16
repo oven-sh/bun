@@ -749,3 +749,45 @@ test("my-test", () => {
     });
   }
 });
+
+test("unhandled rejections around a matcher's synchronous promise wait", async () => {
+  await using proc = spawn({
+    cmd: [bunExe(), "test", join(import.meta.dir, "rejections-during-matcher-wait.fixture.ts")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // One line per test: its status, then the errors reported against it (printed
+  // right before its status line). Errors reported against no test end up last.
+  const report: string[] = [];
+  let errors: string[] = [];
+  for (const line of stderr.split(/\r?\n/)) {
+    if (/^ \d+ pass$/.test(line)) break;
+    const error = /^error: (.*)$/.exec(line);
+    if (error) errors.push(error[1]);
+    const status = /^(\((?:pass|fail)\) .*?)(?: \[[\d.]+m?s\])?$/.exec(line);
+    if (status) {
+      report.push(errors.length ? `${status[1]}  <-  ${errors.join(", ")}` : status[1]);
+      errors = [];
+    }
+  }
+  if (errors.length) report.push(`(between tests)  <-  ${errors.join(", ")}`);
+
+  expect(report).toEqual([
+    "(pass) toThrow(): siblings rejecting during the first wait are checked by the next ones",
+    "(pass) .rejects: siblings rejecting during the first wait are checked by the next ones",
+    "(pass) .resolves: rejections during the wait can be handled after it",
+    "(pass) custom async matcher: rejections during the wait can be handled after it",
+    "(pass) toThrow(): a rejection from before the call can still be handled after it",
+    "(fail) toThrow(): a rejection left unhandled during the wait fails the test  <-  UNHANDLED_DURING_TOTHROW_WAIT",
+    "(fail) toThrow(): a rejection left unhandled by the function itself fails the test  <-  UNHANDLED_FROM_THE_FUNCTION",
+    "(fail) toThrow(): an exception thrown by a callback during the wait fails the test  <-  THROWN_DURING_TOTHROW_WAIT",
+    "(fail) .rejects: a rejection left unhandled during the wait fails the test  <-  UNHANDLED_DURING_REJECTS_WAIT",
+    "(fail) resumed by an event loop task: a rejection it leaves is its own  <-  UNHANDLED_AFTER_TASK_RESUME",
+    "(fail) resumed by an event loop task: a rejection left during a wait is its own  <-  UNHANDLED_DURING_WAIT_AFTER_TASK_RESUME",
+    "(pass) the test after those passes",
+  ]);
+  expect(exitCode).toBe(1);
+});

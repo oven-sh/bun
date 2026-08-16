@@ -1548,6 +1548,10 @@ impl RunTestsTask {
         let this = unsafe { bun_core::heap::take(this.as_ptr()) };
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
+        // What the test that just settled left rejected is its failure, not the
+        // next test's: `tick()` reports only after the whole task batch, which
+        // includes this task when the settling job ran inside it.
+        this.global_this.handle_rejected_promises();
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
             // A termination is the tick's to fold, not a test failure.
             if this.global_this.has_pending_termination_exception() {

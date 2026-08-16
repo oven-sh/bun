@@ -183,7 +183,6 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
-    pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
     ///
@@ -302,9 +301,14 @@ pub struct VirtualMachine {
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
-    pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
+    /// Host functions currently blocking the JS that called them in
+    /// [`Self::wait_for_promise_blocking_js`]. While non-zero,
+    /// [`JSGlobalObject::handle_rejected_promises`] reports nothing. `Cell` for
+    /// the same reason as [`Self::is_inside_deferred_task_queue`]: the waits
+    /// hold `&mut` into this VM while the loop reads it. Zero-valid.
+    pub(crate) promise_waits_blocking_js: core::cell::Cell<u32>,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
     /// so observers can read name/message/stack without re-running the
@@ -429,20 +433,6 @@ pub enum GCLevel {
     None = 0,
     Mild = 1,
     Aggressive = 2,
-}
-
-pub struct UnhandledRejectionScope {
-    pub ctx: Option<*mut c_void>,
-    pub(crate) on_unhandled_rejection: OnUnhandledRejection,
-    pub(crate) count: usize,
-}
-
-impl UnhandledRejectionScope {
-    pub fn apply(&self, vm: &mut VirtualMachine) {
-        vm.on_unhandled_rejection = self.on_unhandled_rejection;
-        vm.on_unhandled_rejection_ctx = self.ctx;
-        vm.unhandled_error_counter = self.count;
-    }
 }
 
 /// Thread-local VM holder. Wired to the
@@ -1224,25 +1214,12 @@ impl VirtualMachine {
         self.event_loop_mut().wakeup();
     }
 
-    pub fn on_quiet_unhandled_rejection_handler_capture_value(
+    pub(crate) fn on_quiet_unhandled_rejection_handler(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
-        value: JSValue,
+        _: JSValue,
     ) {
         this.unhandled_error_counter += 1;
-        value.ensure_still_alive();
-        if let Some(ptr) = this.unhandled_pending_rejection_to_capture {
-            // SAFETY: caller passed &mut stack_var (see LIFETIMES.tsv)
-            unsafe { *ptr = value };
-        }
-    }
-
-    pub fn unhandled_rejection_scope(&self) -> UnhandledRejectionScope {
-        UnhandledRejectionScope {
-            on_unhandled_rejection: self.on_unhandled_rejection,
-            ctx: self.on_unhandled_rejection_ctx,
-            count: self.unhandled_error_counter,
-        }
     }
 
     pub(crate) fn handled_promise(&self, global_object: &JSGlobalObject, promise: JSValue) -> bool {
@@ -2636,6 +2613,33 @@ impl VirtualMachine {
     #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.event_loop_mut().wait_for_promise(promise)
+    }
+
+    /// [`Self::wait_for_promise`] for a host function called from JS (a
+    /// bun:test matcher waiting on a promise): the JS that called it is still
+    /// on the stack while the loop runs here. Script may handle a rejection
+    /// until the job it happened in ends, and for everything that rejects
+    /// during this wait that job is the blocked caller, which gets to attach
+    /// its handlers when it resumes (`expect(a).rejects...` followed by
+    /// `expect(b).rejects...` when `a` and `b` reject together). So while such
+    /// a wait is on the stack [`JSGlobalObject::handle_rejected_promises`]
+    /// reports nothing; what is still unhandled is reported by the first
+    /// checkpoint after the caller returns: the end of the tick or callback it
+    /// runs in, or the test runner's drain after a test body.
+    ///
+    /// Waits with no JS below them (the entry point, preloads, the REPL) keep
+    /// using `wait_for_promise`: nothing is left to handle those rejections,
+    /// and such a wait may never end (a top-level `await` that holds the
+    /// process open), so they report as they go.
+    pub fn wait_for_promise_blocking_js(
+        &mut self,
+        promise: jsc::AnyPromise,
+    ) -> Result<(), jsc::Stopped> {
+        let waits = &self.promise_waits_blocking_js;
+        waits.set(waits.get() + 1);
+        let result = self.event_loop_mut().wait_for_promise(promise);
+        waits.set(waits.get() - 1);
+        result
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook

@@ -390,8 +390,7 @@ impl<'a> LinkerContext<'a> {
         )
     }
 
-    /// See `BundleV2::pretty_path_base_dir`; the dev server's root reaches the
-    /// linker through the resolver's copy of the bundle options.
+    /// Same rule as `BundleV2::pretty_path_base_dir`.
     pub(crate) fn pretty_path_base_dir(&self) -> &[u8] {
         if self.dev_server.is_some() {
             let root_dir: &[u8] = &self.resolver().opts.root_dir;

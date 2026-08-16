@@ -5747,17 +5747,11 @@ pub mod bv2_impl {
             false
         }
 
-        /// The directory `Path.pretty` is computed relative to.
-        ///
-        /// In a dev server bundle the pretty path is the module id the HMR
-        /// runtimes load modules by, and the dev server derives the ids it asks
-        /// them to load from its root (`DevServer.root`, which it installs as
-        /// the `root_dir` of its transpilers). That root is not `top_level_dir`
-        /// when `app.root` is set or the process chdir()s after the server is
-        /// created, so dev server bundles relativize against it. Every other
-        /// build relativizes against the cwd.
-        /// `LinkerContext::pretty_path_base_dir` is the same rule for the
-        /// linking phase.
+        /// The directory `Path.pretty` is relative to. In dev server bundles the
+        /// pretty path is the module id, and the dev server resolves ids against
+        /// its root (`DevServer.root`, installed as the transpilers' `root_dir`),
+        /// which is not the cwd when `app.root` is set or the process chdir()s.
+        /// Keep in sync with `LinkerContext::pretty_path_base_dir`.
         fn pretty_path_base_dir(&self) -> &[u8] {
             if self.dev_server.is_some() {
                 debug_assert!(!self.transpiler.options.root_dir.is_empty());

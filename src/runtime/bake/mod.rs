@@ -196,8 +196,7 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
-    /// `root` is the project root (`DevServer.root`); the bundler relativizes
-    /// the module ids it prints against it.
+    /// `root` (`DevServer.root`) becomes the directory module ids are relative to.
     /// Returns the arena slot for the `bake_types::Framework` projection; caller must `drop_in_place` it.
     pub(crate) fn init_transpiler<'a>(
         &mut self,
@@ -239,8 +238,7 @@ impl Framework {
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
-        // Read back by `pretty_path_base_dir` in the bundler; `sync_resolver_opts`
-        // below copies it to the resolver options the linker reads.
+        // Read by the bundler's `pretty_path_base_dir`.
         out.options.root_dir = root.into();
 
         out.options.react_fast_refresh = mode == Mode::Development

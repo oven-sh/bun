@@ -286,12 +286,10 @@ pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub(crate) magic: Magic,
-    /// Absolute path to project root directory: `app.root`, or the cwd at the
-    /// time the server was created. The HMR runtimes' module IDs are paths
-    /// relative to this, both the ones the bundler prints into the bundles
-    /// (it is the `root_dir` of the three transpilers below) and the ones this
-    /// server asks the runtimes to load (`relative_path`). It is a snapshot:
-    /// `top_level_dir` follows `process.chdir()` while this does not.
+    /// Absolute path to project root directory (`app.root`, or the cwd when the
+    /// server was created; unlike `top_level_dir` it does not follow chdir).
+    /// Module IDs are paths relative to this, both as printed by the bundler
+    /// (it is the transpilers' `root_dir`) and as computed by `relative_path`.
     pub(crate) root: Box<[u8]>,
     /// Unique identifier for this DevServer instance. Used to identify it
     /// when using the debugger protocol.
@@ -614,10 +612,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    // The process-wide `FileSystem` was initialized with the cwd when the VM
-    // started (and follows `process.chdir()`), so `top_level_dir` is not
-    // `options.root`. Everything that needs to be relative to the project root
-    // goes through `dev.root` instead.
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`

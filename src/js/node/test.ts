@@ -2171,7 +2171,7 @@ function invokeTestFn(fn: Function, arg: unknown) {
 
 let addAbortListener;
 
-// Node's stopTest(): armed before the body starts, only ever rejects (timeout or signal reason); callers must dispose().
+// Node's stopTest(): armed before the body starts, only ever rejects (timeout or signal reason); callers dispose().
 function createStopController(timeout: number | undefined, signal: AbortSignal | undefined) {
   const hasTimeout = typeof timeout === "number" && Number.isFinite(timeout);
   if (!hasTimeout && signal === undefined) {

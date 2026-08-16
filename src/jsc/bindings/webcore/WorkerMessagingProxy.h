@@ -104,7 +104,7 @@ public:
     // The thread's global scope, VM and per-thread state are gone; only the OS thread remains.
     // stoppedByParent: it stopped because it was asked to and never called process.exit() itself.
     void workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent);
-    void drainMessagesToWorkerGlobalScope(ScriptExecutionContext&);
+    void drainMessagesToWorkerGlobalScope(ScriptExecutionContext&, bool fromYieldContinuation = false);
 
     // -- Either thread ---------------------------------------------------------------------------
     WorkerOptions& options() { return m_options; }
@@ -118,6 +118,10 @@ public:
         Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
         // True only while a posted drain task has not yet started draining.
         bool drainScheduled WTF_GUARDED_BY_LOCK(lock) { false };
+        // Budget spent; only the posted after-yield continuation (or an
+        // UntilEmpty flush) may drain, so a message flood cannot starve the
+        // rest of the event loop.
+        bool yieldPending WTF_GUARDED_BY_LOCK(lock) { false };
     };
 
 private:
@@ -125,7 +129,7 @@ private:
 
     void workerGlobalScopeDestroyedInternal(int32_t exitCode, bool stoppedByParent);
     void releaseWorkerThread();
-    void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget);
+    void drainMessagesToWorkerObject(ScriptExecutionContext&, DrainBudget, bool fromYieldContinuation = false);
     void rejectAllCrossVMRequests();
     void postMessageErrorToWorkerObject(String&& message);
     bool postSerializedErrorToWorkerObject(Zig::GlobalObject&, JSC::JSValue error);

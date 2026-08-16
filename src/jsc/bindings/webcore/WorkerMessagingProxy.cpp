@@ -289,13 +289,23 @@ enum class DrainBudget { Bounded,
 static constexpr size_t drainBatchLimit = 1024;
 
 template<typename Dispatch>
-static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
+static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, bool fromYieldContinuation, Dispatch&& dispatch)
 {
     size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
     static constexpr size_t takeAtOnce = 64;
 
     {
         Locker locker { inbox.lock };
+        // A spent budget hands the rest to an after-yield continuation so a
+        // self-feeding message loop cannot starve timers and I/O; wakeup tasks
+        // posted by a send in the meantime stand down until it has run. An
+        // UntilEmpty flush overrides it: the sender has exited and everything
+        // queued precedes 'close'.
+        if (inbox.yieldPending) {
+            if (!fromYieldContinuation && budget != DrainBudget::UntilEmpty)
+                return false;
+            inbox.yieldPending = false;
+        }
         inbox.drainScheduled = false;
     }
 
@@ -307,12 +317,11 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
                 if (inbox.queue.isEmpty())
                     return false;
                 if (!remaining) {
-                    // Budget spent; yield. If a racing send already posted a
-                    // wakeup let that task drain the rest, else claim the flag
-                    // and have the caller reschedule.
-                    if (inbox.drainScheduled)
-                        return false;
-                    inbox.drainScheduled = true;
+                    // Budget spent; the caller posts the after-yield
+                    // continuation that this marks as the only invocation
+                    // allowed to keep draining. Nested waits still progress:
+                    // the loop tick they spin promotes after-yield tasks.
+                    inbox.yieldPending = true;
                     return true;
                 }
                 size_t n = std::min({ takeAtOnce, remaining, static_cast<size_t>(inbox.queue.size()) });
@@ -336,38 +345,39 @@ static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObj
     }
 }
 
-void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionContext& context)
+void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionContext& context, bool fromYieldContinuation)
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
+    bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, fromYieldContinuation, [&](Event& event) {
         globalObject.globalEventScope->dispatchEvent(event);
     });
     if (more) {
         // Budget spent with messages left: continue after the loop has polled,
         // or a producer faster than this drain starves timers and I/O for good.
         context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->drainMessagesToWorkerGlobalScope(context);
+            protectedThis->drainMessagesToWorkerGlobalScope(context, /* fromYieldContinuation */ true);
         });
     }
 }
 
-void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& context, DrainBudget budget)
+void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& context, DrainBudget budget, bool fromYieldContinuation)
 {
     if (!m_workerObject) {
         Locker locker { m_toParent.lock };
         m_toParent.queue.clear();
         m_toParent.draining.clear();
         m_toParent.drainScheduled = false;
+        m_toParent.yieldPending = false;
         return;
     }
     Ref workerObject = *m_workerObject;
     auto& globalObject = *defaultGlobalObject(context.globalObject());
-    bool more = drainInbox(m_toParent, globalObject, context, budget, [&](Event& event) {
+    bool more = drainInbox(m_toParent, globalObject, context, budget, fromYieldContinuation, [&](Event& event) {
         workerObject->dispatchEvent(event);
     });
     if (more) {
         context.postTaskAfterYield([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
-            protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded);
+            protectedThis->drainMessagesToWorkerObject(context, DrainBudget::Bounded, /* fromYieldContinuation */ true);
         });
     }
 }

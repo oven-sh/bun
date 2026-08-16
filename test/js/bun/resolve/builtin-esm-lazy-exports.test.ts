@@ -276,11 +276,143 @@ test.concurrent("spyOn and mock.module on an imported builtin", async () => {
           expect(ns.ReadStream).toBe("mocked");
           expect(kinds()).toEqual(${JSON.stringify(kinds("WriteStream"))});
         });
+
+        test("mock.restore() materializes the binding it restores, and only then", () => {
+          mock.restore();
+          expect(kinds()).toEqual(${JSON.stringify(kinds("WriteStream", "ReadStream"))});
+          expect(ns.ReadStream).toBe(fs.ReadStream);
+          expect(typeof ns.ReadStream).toBe("function");
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 3 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a lazy export is restored from the real object even while default is replaced", async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "lazy.test.ts": `
+        import { expect, mock, spyOn, test } from "bun:test";
+        import * as ns from "node:fs";
+        import { kinds } from "./helper.mjs";
+        const realFs = ns.default;
+
+        test("by the same mock.module() call, which overrides default first", () => {
+          expect(kinds()).toEqual(${JSON.stringify(kinds())});
+          mock.module("node:fs", () => ({ default: { notFs: true }, ReadStream: "mocked" }));
+          expect(ns.default).toEqual({ notFs: true });
+          expect(ns.ReadStream).toBe("mocked");
+          mock.restore();
+          expect(ns.default).toBe(realFs);
+          expect(ns.ReadStream).toBe(realFs.ReadStream);
+          expect(kinds()).toEqual(${JSON.stringify(kinds("ReadStream"))});
+        });
+
+        test("by an earlier spyOn(ns, 'default')", () => {
+          spyOn(ns, "default");
+          expect(ns.default).not.toBe(realFs);
+          mock.module("node:fs", () => ({ WriteStream: "mocked" }));
+          expect(ns.WriteStream).toBe("mocked");
+          mock.restore();
+          expect(ns.default).toBe(realFs);
+          expect(ns.WriteStream).toBe(realFs.WriteStream);
+          expect(kinds()).toEqual(${JSON.stringify(kinds("ReadStream", "WriteStream"))});
+        });
       `,
     },
     ["test", "lazy.test.ts"],
   );
   expect(stderr).toContain(" 2 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a top-level mock of default does not change what a lazy export is restored from", async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as ns from "node:fs";
+        const realFs = ns.default;
+        const readStreamIsAccessor = () => "get" in Object.getOwnPropertyDescriptor(realFs, "ReadStream");
+        // Installed at the top level, so it stays in place across mock.restore().
+        mock.module("node:fs", () => ({ default: { notFs: true } }));
+
+        test("ReadStream", () => {
+          expect(ns.default).toEqual({ notFs: true });
+          mock.module("node:fs", () => ({ ReadStream: "mocked" }));
+          expect(ns.ReadStream).toBe("mocked");
+          expect(readStreamIsAccessor()).toBe(true);
+          mock.restore();
+          expect(ns.ReadStream).toBe(realFs.ReadStream);
+          expect(readStreamIsAccessor()).toBe(false);
+          expect(ns.default).toEqual({ notFs: true });
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+// An enumerable accessor on the exports object before the module record exists makes that export lazy, default included.
+function lazyDefaultFixture(factory: string, afterRestore: string) {
+  return `
+    import { expect, mock, test } from "bun:test";
+    const events = require("node:events");
+    let defaultReads = 0;
+    Object.defineProperty(events, "default", { configurable: true, enumerable: true, get: () => (defaultReads++, events) });
+
+    test("defaultMaxListeners", async () => {
+      const ns = await import("node:events");
+      mock.module("node:events", () => (${factory}));
+      expect(ns.defaultMaxListeners).toBe(123);
+      mock.restore();
+      expect(ns.defaultMaxListeners).toBe(123);
+      ${afterRestore}
+    });
+  `;
+}
+
+test.concurrent("a lazy export stays mocked after restore when the default export is itself lazy", async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "lazy.test.ts": lazyDefaultFixture(
+        `{ defaultMaxListeners: 123 }`,
+        `
+          expect(defaultReads).toBe(0);
+          expect(ns.default).toBe(events);
+          expect(defaultReads).toBe(1);
+        `,
+      ),
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("a lazy export stays mocked when the same call also replaced the lazy default", async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "lazy.test.ts": lazyDefaultFixture(
+        `{ default: { notEvents: true }, defaultMaxListeners: 123 }`,
+        `
+          expect(ns.default).toEqual({ notEvents: true });
+          expect(defaultReads).toBe(0);
+        `,
+      ),
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 1 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });
@@ -413,13 +545,172 @@ test.concurrent('"bun": mock.module replaces a binding without constructing the 
           expect(reexported.Glob).toBe(Bun.Glob);
           // The mock went into the module binding; Bun.SQL itself was neither read nor replaced.
           expect(constructed()).toEqual(["Glob"]);
+        });
+
+        test("mock.restore() binds the real Bun.SQL through the re-export", () => {
+          mock.restore();
+          expect(constructed()).toEqual(["Glob", "SQL"]);
+          expect(reexported.SQL).toBe(Bun.SQL);
           expect(typeof Bun.SQL).toBe("function");
         });
       `,
     },
     ["test", "lazy.test.ts"],
   );
+  expect(stderr).toContain(" 2 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent('"bun": mock.restore() restores a renamed re-export by its own name', async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "reexport.mjs": bunReexport,
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as reexported from "./reexport.mjs";
+        import { constructed } from "./native-helper.mjs";
+
+        test("RenamedGlob", () => {
+          expect(constructed()).toEqual([]);
+          mock.module("./reexport.mjs", () => ({ RenamedGlob: "mocked" }));
+          expect(reexported.RenamedGlob).toBe("mocked");
+          expect(constructed()).toEqual([]);
+          mock.restore();
+          expect(reexported.RenamedGlob).toBe(Bun.Glob);
+          expect(constructed()).toEqual(["Glob"]);
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+  );
   expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent('"bun": a throwing getter fails mock.restore() and keeps the mock for a retry', async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "reexport.mjs": bunReexport,
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as reexported from "./reexport.mjs";
+
+        test("redis", () => {
+          expect(reexported.Glob).toBe(Bun.Glob); // materialized: snapshotted by value
+          mock.module("./reexport.mjs", () => ({ Glob: "mocked glob", redis: "mocked redis" }));
+          expect(reexported.Glob).toBe("mocked glob");
+          expect(reexported.redis).toBe("mocked redis");
+
+          // Reading Bun.redis throws (invalid REDIS_URL), so restoring the redis binding fails after Glob was put back.
+          expect(() => mock.restore()).toThrow(/URL/);
+          expect(reexported.Glob).toBe(Bun.Glob);
+          expect(reexported.redis).toBe("mocked redis");
+
+          // The module is still registered as mocked, so a retry attempts (and fails) the restore again.
+          expect(() => mock.restore()).toThrow(/URL/);
+          expect(reexported.redis).toBe("mocked redis");
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+    { REDIS_URL: "http://[::1" },
+  );
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent('"bun": a getter that itself mocks (and maybe restores) does not derail the restore', async () => {
+  const { stderr, exitCode } = await run(
+    {
+      "reexport.mjs": bunReexport,
+      "dep.mjs": `export const value = "real dep";`,
+      "dep.cjs": `module.exports = { value: "real cjs dep" };`,
+      "never-loaded.mjs": `export const value = "real never-loaded";`,
+      "lazy.test.ts": `
+        import { expect, mock, test } from "bun:test";
+        import * as dep from "./dep.mjs";
+
+        // Defined before anything builds the "bun" module record, so these become lazy exports with user getters.
+        const reads = { restoring: 0, mockingOnly: 0, remocking: 0 };
+        Object.defineProperty(Bun, "restoringLazy", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            reads.restoring++;
+            mock.module("./dep.mjs", () => ({ value: "mocked inside the getter" }));
+            mock.restore();
+            return "restoring getter";
+          },
+        });
+        Object.defineProperty(Bun, "mockingLazy", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            reads.mockingOnly++;
+            mock.module("./dep.mjs", () => ({ value: "esm mocked by the getter" }));
+            mock.module("./dep.cjs", () => ({ value: "cjs mocked by the getter" }));
+            mock.module("./never-loaded.mjs", () => ({ value: "never-loaded mocked by the getter" }));
+            return "mocking getter";
+          },
+        });
+        // A binding is only restored through its getter once, so the third scenario needs a getter of its own.
+        Object.defineProperty(Bun, "remockingLazy", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            reads.remocking++;
+            mock.module("./dep.mjs", () => ({ value: "esm re-mocked by the getter" }));
+            mock.module("./dep.cjs", () => ({ value: "cjs re-mocked by the getter" }));
+            return "re-mocking getter";
+          },
+        });
+
+        test("the getter restores as well", async () => {
+          const reexported = await import("./reexport.mjs");
+          mock.module("./reexport.mjs", () => ({ restoringLazy: "mocked", Glob: "mocked glob" }));
+          expect([reexported.restoringLazy, reexported.Glob]).toEqual(["mocked", "mocked glob"]);
+          mock.restore();
+          expect(reads).toEqual({ restoring: 1, mockingOnly: 0, remocking: 0 });
+          expect([reexported.restoringLazy, reexported.Glob, dep.value]).toEqual(["restoring getter", Bun.Glob, "real dep"]);
+        });
+
+        test("the getter only mocks: its mocks all stay until the next restore", async () => {
+          const reexported = await import("./reexport.mjs");
+          expect(require("./dep.cjs").value).toBe("real cjs dep");
+          mock.module("./reexport.mjs", () => ({ mockingLazy: "mocked" }));
+          mock.restore();
+          expect(reads).toEqual({ restoring: 1, mockingOnly: 1, remocking: 0 });
+          expect(reexported.mockingLazy).toBe("mocking getter");
+          expect(dep.value).toBe("esm mocked by the getter");
+          expect(require("./dep.cjs").value).toBe("cjs mocked by the getter");
+          expect((await import("./never-loaded.mjs")).value).toBe("never-loaded mocked by the getter");
+          mock.restore();
+          expect(dep.value).toBe("real dep");
+          expect(require("./dep.cjs").value).toBe("real cjs dep");
+        });
+
+        test("the getter re-mocks modules this restore has yet to put back: they are put back, and stay put", async () => {
+          const reexported = await import("./reexport.mjs");
+          mock.module("./reexport.mjs", () => ({ remockingLazy: "mocked" }));
+          mock.module("./dep.mjs", () => ({ value: "esm mocked by the test" }));
+          mock.module("./dep.cjs", () => ({ value: "cjs mocked by the test" }));
+          expect([dep.value, require("./dep.cjs").value]).toEqual(["esm mocked by the test", "cjs mocked by the test"]);
+          mock.restore();
+          expect(reads).toEqual({ restoring: 1, mockingOnly: 1, remocking: 1 });
+          expect(reexported.remockingLazy).toBe("re-mocking getter");
+          expect([dep.value, require("./dep.cjs").value]).toEqual(["real dep", "real cjs dep"]);
+          // Nothing the getter logged may describe the test's mocks as the values to go back to.
+          mock.restore();
+          expect([dep.value, require("./dep.cjs").value]).toEqual(["real dep", "real cjs dep"]);
+        });
+      `,
+    },
+    ["test", "lazy.test.ts"],
+  );
+  expect(stderr).toContain(" 3 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });

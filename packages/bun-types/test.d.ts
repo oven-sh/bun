@@ -50,6 +50,9 @@ declare module "bun:test" {
     module(id: string, factory: () => any): void | Promise<void>;
     /**
      * Restore the previous value of mocks.
+     *
+     * This also undoes `mock.module()` calls made inside tests and lifecycle hooks.
+     * Module mocks set up by a preload script or at the top level of a test file stay in place.
      */
     restore(): void;
 

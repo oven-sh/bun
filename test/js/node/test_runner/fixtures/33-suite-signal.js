@@ -3,8 +3,10 @@
 // an earlier test) fails with the reason and runs nothing: no hooks, no
 // children, although its describe callback does run. A signal that aborts
 // while the suite runs cancels the running child and the queued one, still
-// runs the after hooks, and fails the suite with the reason; a falsy reason is
-// reported as Node's own "The test was aborted". Four suites here fail on
+// runs the after hooks, and fails the suite with the reason; one aborted by
+// the suite's own before hook still runs the remaining before hooks and the
+// after hooks, and cancels every child without starting it; a falsy reason is
+// reported as Node's own "The test was aborted". Five suites here fail on
 // purpose; node-test.test.ts asserts the exact counts and the OBS markers.
 // Differences from `node --test` with this file: a suite's own failure shows up
 // as a failed hook of its describe block, the children of a suite that never
@@ -53,6 +55,21 @@ describe("suite aborted while running", { signal: abortedWhileRunning.signal }, 
   });
 
   it("queued when the signal aborts", () => console.log("OBS queued child ran"));
+});
+
+const abortedByBeforeHook = new AbortController();
+
+describe("suite aborted by its own before hook", { signal: abortedByBeforeHook.signal }, () => {
+  before(() => {
+    abortedByBeforeHook.abort(new Error("aborted by a before hook"));
+    console.log("OBS before hook aborted the suite");
+  });
+  before(() => console.log("OBS second before hook still ran"));
+  after(suite =>
+    console.log("OBS after of the suite aborted by its hook ran, suite signal aborted: " + suite.signal.aborted),
+  );
+
+  it("child of the suite aborted by its hook", () => console.log("OBS child of the suite aborted by its hook ran"));
 });
 
 describe("suite aborted with a falsy reason", { signal: AbortSignal.abort(0) }, () => {

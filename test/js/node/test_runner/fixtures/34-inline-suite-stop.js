@@ -4,12 +4,14 @@
 // queued behind it never run, and its after hooks still run (with the suite's
 // own signal left alone: a timeout fails a suite, it does not abort it); a
 // suite whose signal has already aborted is failed by the reason and runs
-// nothing. Both fail the test that owns them, so the first test fails on
-// purpose ("2 subtests failed"); the last test checks what the suites left
-// behind, and passes verbatim under `node --test` too. node-test.test.ts also
-// runs this file through run(), which reports each suite's own error. One
-// difference from Node there: Node drops the children of a suite that was
-// already aborted without reporting them, while here they report as cancelled.
+// nothing; one whose own before hook aborts the signal still runs its other
+// hooks but starts no child. All three fail the test that owns them, so the
+// first test fails on purpose ("3 subtests failed"); the last test checks what
+// the suites left behind, and passes verbatim under `node --test` too.
+// node-test.test.ts also runs this file through run(), which reports each
+// suite's own error. One difference from Node there: Node drops the children
+// of an aborted suite without reporting them, while here they report as
+// cancelled.
 const assert = require("node:assert");
 const { test, describe, it, before, after } = require("node:test");
 
@@ -25,6 +27,7 @@ const seen = {
   queuedChildRan: false,
   nestedChildRan: false,
   abortedSuiteChildRan: false,
+  childOfSuiteAbortedByHookRan: false,
   childWithinTimeoutRan: false,
   childAfterSlowBeforeHookRan: false,
 };
@@ -57,6 +60,19 @@ test("inline suites are stopped by their timeout or an aborted signal", () => {
     });
   });
 
+  const abortedByBeforeHook = new AbortController();
+  describe("aborted by its own before hook", { signal: abortedByBeforeHook.signal }, () => {
+    before(() => {
+      abortedByBeforeHook.abort(new Error("inline suite aborted by a before hook"));
+      seen.hooks.push("aborting before");
+    });
+    before(() => seen.hooks.push("second before after the abort"));
+    after(suite => seen.hooks.push("after the abort, suite signal aborted: " + suite.signal.aborted));
+    it("child of the suite aborted by its hook", () => {
+      seen.childOfSuiteAbortedByHookRan = true;
+    });
+  });
+
   describe("within its timeout", { timeout: 30_000 }, () => {
     it("passes", () => {
       seen.childWithinTimeoutRan = true;
@@ -80,11 +96,18 @@ test("an inline suite's before hooks do not count against its timeout", () => {
 test("what the stopped inline suites left behind", () => {
   // Each test above waited for its suites before it finished.
   assert.deepStrictEqual(seen, {
-    hooks: ["before", "after, suite signal aborted: false"],
+    hooks: [
+      "before",
+      "after, suite signal aborted: false",
+      "aborting before",
+      "second before after the abort",
+      "after the abort, suite signal aborted: true",
+    ],
     runningChildSignalAborted: true,
     queuedChildRan: false,
     nestedChildRan: false,
     abortedSuiteChildRan: false,
+    childOfSuiteAbortedByHookRan: false,
     childWithinTimeoutRan: true,
     childAfterSlowBeforeHookRan: true,
   });

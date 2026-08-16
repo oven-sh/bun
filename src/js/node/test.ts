@@ -2104,11 +2104,11 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
 function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
   const { concurrency, tags, plan } = options;
 
-  // Suites enforce timeout and signal (see startInlineSuite and
-  // registerTopLevelSuiteStart); tests enforce timeout in executeTestNode. A
-  // test's signal and concurrency anywhere are only validated for Node's error
-  // contract so far (t.signal aborts only when a suite cancels the test;
-  // subtests always run serially).
+  // Suites enforce timeout and signal (see startInlineSuite and the top-level
+  // suite hooks registered by addSuite); tests enforce timeout in
+  // executeTestNode. A test's signal and concurrency anywhere are only
+  // validated for Node's error contract so far (t.signal aborts only when a
+  // suite cancels the test; subtests always run serially).
   validateTimeoutAndSignal(options);
   if (concurrency != null && typeof concurrency !== "boolean") {
     if (typeof concurrency === "number") {
@@ -2569,13 +2569,15 @@ async function drainSubtestChain(node: TestNode) {
   } while (chain !== node.subtestChain);
 }
 
-// Port of Node's [kShouldAbort] (test.js:1245) for a suite whose turn has come:
-// it was swept by a suite around it that stopped, or its own `signal` option
-// has aborted by now (Node's listener cancels it the moment the signal aborts;
-// looking when the suite's turn comes gives the same verdict). Node then runs
-// nothing of it, hooks included, and drops its children (test.js:1854). The
-// children are cancelled here instead, so the ones the subtest chain or
-// bun:test still reaches report without running.
+// Whether the suite is already stopped at one of the two points where Node's
+// Suite.run() would notice: when its turn comes ([kShouldAbort], test.js:1245;
+// it then runs nothing, hooks included) and again after its before hooks
+// (test.js:1866; it then starts no child, but still runs its after hooks).
+// Either it was swept by a suite around it that stopped, or its own `signal`
+// option has aborted by now (Node's listener cancels it the moment the signal
+// aborts; looking at these two points gives the same verdicts). Node drops the
+// children of such a suite; they are cancelled here instead, so the ones the
+// subtest chain or bun:test still reaches report without running.
 function suiteShouldAbort(suite: TestNode): boolean {
   if (suite.cancelError === undefined) {
     const { signal } = suite.options;
@@ -2586,12 +2588,14 @@ function suiteShouldAbort(suite: TestNode): boolean {
   return true;
 }
 
-// Port of the stopTest() call in Node's Suite.run() (test.js:1865). Node runs
-// the after hooks first and sweeps the children in postRun(); the sweep comes
-// first here because it is what ends the running child's turn, after which the
-// queued children report as cancelled, the chain (or bun:test's scope) drains
-// on its own, and the after hooks follow.
+// Port of the stopTest() call in Node's Suite.run() (test.js:1865), made once
+// the suite's before hooks have run. Node runs the after hooks first and sweeps
+// the children in postRun() when the stop fires; the sweep comes first here
+// because it is what ends the running child's turn, after which the queued
+// children report as cancelled, the chain (or bun:test's scope) drains on its
+// own, and the after hooks follow.
 function armSuiteStop(suite: TestNode) {
+  if (suiteShouldAbort(suite)) return;
   const { timeout, signal } = suite.options;
   const stop = createStopController(timeout, signal);
   if (stop === undefined) return;
@@ -2721,10 +2725,14 @@ function bunTestOptions(options: TestOptions) {
 
 // A top-level suite is a bun:test describe block whose children bun:test runs
 // itself, so the suite's half of Node's Suite.run() is spread over hooks of
-// that scope. addSuite registers them around the describe callback so that they
-// bracket the suite's own before()/after() hooks, which are bun:test hooks too
-// and run in registration order. Only a suite with a stop of its own, or one
-// inside such a suite, gets them; every other suite stays a plain describe.
+// that scope. The suite's own before()/after() hooks are bun:test hooks of the
+// same scope, and bun:test runs each kind in registration order, so addSuite
+// registers one pair before the describe callback (they run ahead of the
+// suite's hooks of the same kind) and one pair after it (they run behind
+// them), reproducing Node's order: abort check, before hooks, stop armed,
+// children, stop released, after hooks, verdict. Only a suite with a stop of
+// its own, or one inside such a suite, gets them; every other suite stays a
+// plain describe.
 //
 // Like every test and hook callback this module hands to bun:test, the hooks
 // take `done`: a nested describe callback runs inside its parent's async
@@ -2734,41 +2742,55 @@ function bunTestOptions(options: TestOptions) {
 // throw fails the hook itself. That is what reports the suite's own error
 // against the suite (a describe block has no verdict of its own, and its
 // cancelled children only say that their parent stopped) and, from a
-// beforeAll, what makes bun:test skip the scope's tests. A todo suite's failure
-// is not a failure in Node: its children report themselves as todo under a
-// run() child, and sit in a describe.todo scope under plain bun:test.
-function registerTopLevelSuiteFinish(suite: TestNode) {
-  // Registered before the callback, so it runs before the suite's after hooks:
-  // once the children are done the stop can no longer fail the suite (Node
-  // ignores one that fires during the after hooks), and its timer is released
-  // whatever those hooks do.
-  bunTest().afterAll((done: (error?: unknown) => void) => {
+// beforeAll, what makes bun:test skip the scope's remaining hooks and tests. A
+// todo suite's failure is not a failure in Node: its children report
+// themselves as todo under a run() child, and sit in a describe.todo scope
+// under plain bun:test.
+function registerTopLevelSuiteLeadingHooks(suite: TestNode) {
+  const { beforeAll, afterAll } = bunTest();
+  // Node never starts a suite that is already stopped when its turn comes and
+  // drops its children; failing here makes bun:test skip the suite's before
+  // hooks and its tests the same way. A todo suite's before hooks are skipped
+  // by their own wrappers instead (suiteNeverStarted).
+  beforeAll((done: (error?: unknown) => void) => {
+    if (!suiteShouldAbort(suite)) suite.suiteStarted = true;
+    else if (!suite.todoFlag) throw suite.cancelError;
+    done();
+  });
+  // Runs before the suite's after hooks: once the children are done the stop
+  // can no longer fail the suite (Node ignores one that fires during the after
+  // hooks), and its timer is released whatever those hooks do.
+  afterAll((done: (error?: unknown) => void) => {
     suite.suiteStop?.dispose();
     done();
   });
 }
 
-function registerTopLevelSuiteStart(suite: TestNode) {
+function registerTopLevelSuiteTrailingHooks(suite: TestNode) {
   const { beforeAll, afterAll } = bunTest();
-  // Registered after the callback, so the suite's before hooks have already run
-  // by now; like in Node they do not count against the suite's timeout.
+  // Runs once the suite's before hooks have run; like in Node they do not count
+  // against the timeout, and a signal they aborted stops the suite right here.
   beforeAll((done: (error?: unknown) => void) => {
-    if (!suiteShouldAbort(suite)) {
-      suite.suiteStarted = true;
-      armSuiteStop(suite);
-    } else if (!suite.todoFlag) {
-      // Node drops the children of a suite that never starts.
-      throw suite.cancelError;
-    }
+    armSuiteStop(suite);
     done();
   });
-  // Runs after the suite's after hooks, where Node fails the suite as well.
+  // Runs after the suite's after hooks, where Node fails the suite as well. A
+  // suite that never started already failed the leading beforeAll.
   afterAll((done: (error?: unknown) => void) => {
     const stopped = suite.suiteStarted && suite.cancelError !== undefined;
     suite.finished = true;
     if (stopped && !suite.todoFlag) throw suite.cancelError;
     done();
   });
+}
+
+// Node runs neither hook set of a suite that was stopped before it started
+// ([kShouldAbort] goes straight to postRun()), while a suite stopped later
+// still runs its after hooks. The before()/after() wrappers of a top-level
+// suite consult this: bun:test runs a scope's afterAll hooks even after a
+// beforeAll failed, and a todo suite's leading beforeAll does not fail at all.
+function suiteNeverStarted(suite: TestNode): boolean {
+  return suite.cancelError !== undefined && !suite.suiteStarted;
 }
 
 function currentCollectionParent(): TestNode {
@@ -2980,7 +3002,7 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : () => {
-          if (stoppable) registerTopLevelSuiteFinish(suiteNode);
+          if (stoppable) registerTopLevelSuiteLeadingHooks(suiteNode);
           const built = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
           if (!stoppable) return built;
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
@@ -2988,11 +3010,11 @@ function addSuite(
             // settles, so hooks registered from here still land in it, behind
             // any the callback registered after awaiting something.
             return (built as PromiseLike<unknown>).then(value => {
-              registerTopLevelSuiteStart(suiteNode);
+              registerTopLevelSuiteTrailingHooks(suiteNode);
               return value;
             });
           }
-          registerTopLevelSuiteStart(suiteNode);
+          registerTopLevelSuiteTrailingHooks(suiteNode);
           return built;
         };
 
@@ -3074,8 +3096,7 @@ function before(arg0: unknown, arg1: unknown) {
   }
   const { beforeAll } = bunTest();
   beforeAll((done: (error?: unknown) => void) => {
-    // Node runs no hook of a suite that is cancelled by the time it would start.
-    if (suiteShouldAbort(owner)) {
+    if (suiteNeverStarted(owner)) {
       done();
       return;
     }
@@ -3095,9 +3116,7 @@ function after(arg0: unknown, arg1: unknown) {
   }
   const { afterAll } = bunTest();
   afterAll((done: (error?: unknown) => void) => {
-    // Same as in before(): a suite that never started skips its after hooks
-    // too, while one that was stopped midway still runs them, like Node.
-    if (!owner.suiteStarted && suiteShouldAbort(owner)) {
+    if (suiteNeverStarted(owner)) {
       done();
       return;
     }

@@ -24,6 +24,7 @@ use bun_sys::{self, SystemErrno};
 use bun_threading::Mutex;
 
 use crate::node::types::{Encoding, PathLikeExt};
+use crate::node::util::validators;
 use crate::webcore::encoding as Encoder;
 
 bun_output::declare_scope!(fs_watch, hidden);
@@ -701,7 +702,7 @@ impl<'a> Arguments<'a> {
                 }
 
                 // abort signal
-                if let Some(signal_) = options_or_callable.get_truthy(ctx, "signal")? {
+                if let Some(signal_) = options_or_callable.get(ctx, "signal")? {
                     if let Some(signal_obj) = AbortSignal::from_js(signal_) {
                         // Keep it alive
                         signal_.ensure_still_alive();
@@ -712,9 +713,11 @@ impl<'a> Arguments<'a> {
                         // centralised deref proof.
                         signal = Some(AbortSignal::opaque_ref(signal_obj));
                     } else {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
-                            "signal is not of type AbortSignal"
-                        )));
+                        return Err(validators::throw_err_invalid_abort_signal(
+                            ctx,
+                            "options.signal",
+                            signal_,
+                        ));
                     }
                 }
 

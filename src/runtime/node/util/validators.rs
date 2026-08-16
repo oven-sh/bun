@@ -53,6 +53,19 @@ pub(crate) fn throw_err_invalid_arg_type(
     )
 }
 
+/// The error `validateAbortSignal(value, name)` throws. Callers pass every
+/// defined value of the option (`JSValue::get`, not `get_truthy`): like Node,
+/// only `undefined` means "no signal", so `null` or `""` end up here too.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L444-L451
+#[cold]
+pub(crate) fn throw_err_invalid_abort_signal(
+    global_this: &JSGlobalObject,
+    name: &str,
+    value: JSValue,
+) -> JsError {
+    global_this.throw_invalid_argument_type_value2(name, "an instance of AbortSignal", value)
+}
+
 #[cold]
 fn throw_range_error(global_this: &JSGlobalObject, args: fmt::Arguments<'_>) -> JsError {
     global_this.err(jsc::ErrorCode::OUT_OF_RANGE, args).throw()

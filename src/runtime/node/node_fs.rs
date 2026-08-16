@@ -4074,14 +4074,14 @@ pub mod args {
                     if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
+                    if let Some(value) = arg.get(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
+                            return Err(validators::throw_err_invalid_abort_signal(
+                                ctx,
+                                "options.signal",
                                 value,
                             ));
                         }
@@ -4183,14 +4183,14 @@ pub mod args {
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
-                    if let Some(value) = arg.get_truthy(ctx, "signal")? {
+                    if let Some(value) = arg.get(ctx, "signal")? {
                         if let Some(signal) = AbortSignal::ref_from_js(value) {
                             signal.pending_activity_ref();
                             *abort_signal = Some(signal);
                         } else {
-                            return Err(ctx.throw_invalid_argument_type_value(
-                                b"signal",
-                                b"AbortSignal",
+                            return Err(validators::throw_err_invalid_abort_signal(
+                                ctx,
+                                "options.signal",
                                 value,
                             ));
                         }

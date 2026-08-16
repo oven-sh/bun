@@ -14,6 +14,8 @@ on:
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
+      - "scripts/rust-test.ts"
+      - "scripts/rust-workspace.ts"
       - "package.json"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -84,6 +86,31 @@ jobs:
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:miri
+
+  test:
+    # The thing Miri cannot check: a crate's test binary links only its Rust
+    # dependencies, so a test that reaches one of the externs only the full bun
+    # link provides fails here (scripts/rust-test.ts).
+    name: cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+
+      - name: cargo test
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:test
 
   lolhtml:
     # The vendored lol-html is a fork (oven-sh/lol-html, `bun` branch) carrying

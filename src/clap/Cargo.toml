@@ -21,3 +21,9 @@ bitflags.workspace = true
 thiserror.workspace = true
 bun_clap_macros.workspace = true
 bun_core.workspace = true
+
+[dev-dependencies]
+# The streaming tests reach `bun_core::strings` (`StreamingClap::normal`,
+# `test_err`); without this the test binary fails to link against the highway
+# kernels (`bun run rust:test`).
+bun_highway = { workspace = true, features = ["scalar"] }

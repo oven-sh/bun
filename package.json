@@ -74,6 +74,7 @@
     "rust:mordant": "DYLINT_RUSTFLAGS='-A unknown_lints' cargo dylint --all --workspace -- --keep-going",
     "rust:mordant:baseline": "DYLINT_RUSTFLAGS='-A unknown_lints' MORDANT_BASELINE_WRITE=1 cargo dylint --all --workspace",
     "rust:miri": "bun scripts/rust-miri.ts",
+    "rust:test": "bun scripts/rust-test.ts",
     "rust:timings": "bun scripts/rust-timings.ts",
     "codegen:string-maps": "for f in src/**/*.string-map.ts; do bun src/codegen/generate-string-map.ts \"$f\" \"${f%.string-map.ts}.generated.rs\"; done",
     "codegen:verify": "bun run codegen:string-maps && git diff --exit-code 'src/**/*.generated.rs' || (echo '\\n*.generated.rs is stale — run `bun run codegen:string-maps` and commit the result.' >&2; exit 1)",

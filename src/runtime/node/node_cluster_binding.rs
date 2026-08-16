@@ -491,7 +491,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
 
         fn close_fd(fd: c_int) {
-            bun_sys::FdExt::close(bun_sys::Fd::from_native(fd));
+            let _ = bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
         }
 
         fn set_cloexec_nonblock(fd: c_int) {
@@ -522,7 +522,12 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     return Ok(last_neg_errno());
                 }
                 set_cloexec_nonblock(fd);
-                let len = core::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+                // Abstract names (leading NUL) are length-delimited: a padded length binds a different name.
+                let len = if path_bytes.first() == Some(&0) {
+                    core::mem::offset_of!(libc::sockaddr_un, sun_path) + path_bytes.len()
+                } else {
+                    core::mem::size_of::<libc::sockaddr_un>()
+                } as libc::socklen_t;
                 if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
                     let e = last_neg_errno();
                     close_fd(fd);
@@ -807,11 +812,21 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
                 &raw mut len,
             )
         };
-        if rc != 0 {
-            return Ok(JSValue::js_number_from_int32(-bun_core::ffi::errno()));
-        }
-        if ty != libc::SOCK_STREAM && ty != libc::SOCK_DGRAM {
+        // node's createServerHandle: EINVAL for anything that cannot listen (e.g. a connected stdio socketpair), fd left untouched.
+        if rc != 0 || (ty != libc::SOCK_STREAM && ty != libc::SOCK_DGRAM) {
             return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+        }
+        if ty == libc::SOCK_STREAM {
+            // SAFETY: sockaddr_storage is plain data; getpeername only writes within `peer_len`.
+            let connected = unsafe {
+                let mut peer: libc::sockaddr_storage = bun_core::ffi::zeroed_unchecked();
+                let mut peer_len =
+                    core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+                libc::getpeername(fd, (&raw mut peer).cast(), &raw mut peer_len) == 0
+            };
+            if connected {
+                return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
+            }
         }
         Ok(JSValue::js_number_from_int32(0))
     }
@@ -843,7 +858,8 @@ pub(crate) fn cluster_close_handle(
         {
             let fd = value.to_int32();
             if fd >= 0 {
-                bun_sys::FdExt::close(bun_sys::Fd::from_native(fd));
+                let _ =
+                    bun_sys::FdExt::close_allowing_standard_io(bun_sys::Fd::from_native(fd), None);
             }
         }
     }

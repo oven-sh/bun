@@ -5,7 +5,7 @@ let net;
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
-const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
+const { UV_EINVAL } = process.binding("uv");
 
 const ArrayIsArray = Array.isArray;
 
@@ -56,6 +56,7 @@ export default class RoundRobinHandle {
 
   onServerConnection(socket) {
     const handle = makeAcceptedHandle(socket);
+    socket.on("error", noop);
     socket.once("close", RoundRobinHandle.prototype.onAcceptedSocketClose.bind(this, handle));
     this.distribute(0, handle);
   }
@@ -101,7 +102,7 @@ export default class RoundRobinHandle {
     this.server.once("listening", done);
     this.server.once("error", err => {
       const raw = typeof err.errno === "number" && err.errno !== 0 ? err.errno : null;
-      send(raw != null ? uvTranslateSysError(raw) : einvalErrorCode(), null, null);
+      send(raw != null ? uvTranslateSysError(raw) : UV_EINVAL, null, null);
     });
   }
 
@@ -109,20 +110,29 @@ export default class RoundRobinHandle {
     return this.all.has(worker.id);
   }
 
-  remove(worker) {
+  // With the channel still up the unacked newconn is settled by its ack; once it is gone, a crashed worker's goes to another worker and a disconnected worker's (already settled by it) is dropped.
+  remove(worker, channelGone = false) {
+    if (channelGone) {
+      const pending = this.inFlight.get(worker.id);
+      if (pending !== undefined) {
+        this.inFlight.delete(worker.id);
+        const others = this.all.size - (this.all.has(worker.id) ? 1 : 0);
+        if (!worker.exitedAfterDisconnect && others > 0) this.distribute(0, pending);
+        else pending.close();
+      }
+    }
+
     const existed = this.all.delete(worker.id);
 
     if (!existed) return false;
 
     this.free.delete(worker.id);
 
-    const pending = this.inFlight.get(worker.id);
-    if (pending !== undefined) {
-      this.inFlight.delete(worker.id);
-      this.distribute(0, pending);
-    }
-
     if (this.all.size !== 0) return false;
+
+    // Winding down: whatever is still in flight is the workers' now; drop the primary's copies.
+    for (const pending of this.inFlight.values()) pending.close();
+    this.inFlight.clear();
 
     while (!isEmpty(this.handles)) {
       const handle = peek(this.handles);
@@ -157,42 +167,52 @@ export default class RoundRobinHandle {
       return; // Worker is closing (or has closed) the server.
     }
 
-    const handle = peek(this.handles);
+    for (;;) {
+      const handle = peek(this.handles);
 
-    if (handle === null) {
-      this.free.set(worker.id, worker); // Add to ready queue again.
-      return;
-    }
+      if (handle === null) {
+        this.free.set(worker.id, worker); // Add to ready queue again.
+        return;
+      }
 
-    remove(handle);
+      remove(handle);
 
-    const message = { cmd: "NODE_CLUSTER", act: "newconn", key: this.key };
+      const message = { act: "newconn", key: this.key };
 
-    this.inFlight.set(worker.id, handle);
-    const sent = sendHelper(worker.process[kHandle], message, handle, reply => {
-      if (this.inFlight.get(worker.id) !== handle) return;
-      this.inFlight.delete(worker.id);
-      if (reply.accepted) handle.close();
-      else this.distribute(0, handle); // Worker is shutting down. Send to another.
+      this.inFlight.set(worker.id, handle);
+      const sent = sendHelper(worker.process[kHandle], message, handle, reply => {
+        if (this.inFlight.get(worker.id) !== handle) return;
+        this.inFlight.delete(worker.id);
+        if (reply.accepted) handle.close();
+        else this.distribute(0, handle); // Worker is shutting down. Send to another.
 
-      this.handoff(worker);
-    });
-    if (sent === null) {
+        this.handoff(worker);
+      });
+      if (sent !== null) return;
+
       const { id } = worker;
       this.inFlight.delete(id);
-      if (handle.fd >= 0) this.distribute(0, handle);
-      else handle.close();
+      if (handle.fd < 0) {
+        // Peer went away while queued: drop it and move on to the next connection.
+        handle.close();
+        continue;
+      }
+      this.distribute(0, handle);
       if (this.all.has(id)) {
         this.free.set(id, worker);
       }
+      return;
     }
   }
 }
 
+function noop() {}
+
 function makeAcceptedHandle(socket) {
   return {
     get fd() {
-      return socket.destroyed ? -1 : socket._handle.fd;
+      const nativeSocket = socket._handle;
+      return socket.destroyed || !nativeSocket ? -1 : nativeSocket.fd;
     },
     close(cb?) {
       socket.destroy();

@@ -20,7 +20,12 @@ export function serialize(message, handle, options, target) {
     return [native, { cmd: "NODE_HANDLE", msg: message, type: "net.Server" }];
   }
   if (handle instanceof net.Socket) {
-    const native = handle._handle ?? handle[require("internal/http").kHandle];
+    // Only plain TCP sockets cross processes; a TLS session cannot (node: ERR_INVALID_HANDLE_TYPE).
+    if (typeof handle[Symbol.for("::buntls::")] === "function") throw $ERR_INVALID_HANDLE_TYPE();
+    // node:http server connections keep their native socket under kHandle and
+    // have no detachable _handle; the native side pauses/closes those itself.
+    const jsHandle = handle._handle;
+    const native = jsHandle ?? handle[require("internal/http").kHandle];
     if (!native) return null;
     const serialized: any = { cmd: "NODE_HANDLE", msg: message, type: "net.Socket" };
     const keepOpen = !!options?.keepOpen;
@@ -28,18 +33,21 @@ export function serialize(message, handle, options, target) {
     const server = handle.server;
     const connectionKey = server ? server._connectionKey : undefined;
     if (owner && connectionKey !== undefined) {
+      // node's handleConversion: the sending server stops counting this
+      // socket and instead polls the receiver via socket_list.
       serialized.key = connectionKey;
       const { getSocketList, kChannelSockets } = require("internal/socket_list");
       const firstTime = !owner[kChannelSockets]?.send[serialized.key];
       const socketList = getSocketList("send", owner, serialized.key);
       if (firstTime) server._setupWorker(socketList);
-      if (!keepOpen) {
+    }
+    if (!keepOpen) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L120-L148
+      if (server) {
         server._connections--;
         handle.server = null;
         handle._server = null;
       }
-    }
-    if (!keepOpen) {
       handle.setTimeout(0);
       const parser = handle.parser;
       if (parser) {
@@ -55,19 +63,18 @@ export function serialize(message, handle, options, target) {
         const { _httpMessage } = handle;
         if (_httpMessage) _httpMessage.detachSocket(handle);
       }
+      if (jsHandle) {
+        jsHandle.data = undefined;
+        handle._handle = null;
+      }
     }
     return [native, serialized];
   }
-  const dgram = require("node:dgram");
-  if (handle instanceof dgram.Socket) {
-    if (process.platform === "win32") {
-      throw $ERR_INVALID_HANDLE_TYPE();
-    }
-    const fd = handle[require("internal/dgram").kStateSymbol]?.handle?.fd;
-    return [
-      typeof fd === "number" ? fd : -1,
-      { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type },
-    ];
+  if (handle instanceof require("node:dgram").Socket) {
+    const { kStateSymbol } = require("internal/dgram");
+    const native = handle[kStateSymbol]?.handle?.socket;
+    if (!native) return null;
+    return [native, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type }];
   }
   throw $ERR_INVALID_HANDLE_TYPE();
 }
@@ -79,11 +86,7 @@ export function serialize(message, handle, options, target) {
  */
 export function parseHandle(target, serialized, fd) {
   const emit = $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
-  function emitReceivedHandle(boundEmit, target, msg, handle) {
-    boundEmit(target, msg, handle);
-  }
   const net = require("node:net");
-  // const dgram = require("node:dgram");
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
@@ -119,8 +122,12 @@ export function parseHandle(target, serialized, fd) {
       return;
     }
     case "dgram.Socket": {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js handleConversion['dgram.Socket'].got
       const dgram = require("node:dgram");
-      const socket = dgram.createSocket(serialized.dgramType);
+      const socket = new dgram.Socket(serialized.dgramType || "udp4");
+      // Without a listener an adoption failure is a bare 'error' on a socket
+      // nobody holds yet; this throw never reaches the native caller, so the
+      // received descriptor is released here.
       function throwOnAdoptionFailure(err) {
         try {
           require("node:fs").closeSync(fd);
@@ -128,11 +135,9 @@ export function parseHandle(target, serialized, fd) {
         throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`);
       }
       socket.once("error", throwOnAdoptionFailure);
-      // exclusive: the SCM_RIGHTS descriptor is local; without it a cluster
-      // worker's bind({ fd }) would resolve fd in the primary's fd space.
-      socket.bind({ fd, exclusive: true }, function onAdopted() {
+      socket.bind({ fd, exclusive: true }, () => {
         socket.removeListener("error", throwOnAdoptionFailure);
-        emitReceivedHandle(emit, target, serialized.msg, socket);
+        emit(target, serialized.msg, socket);
       });
       return;
     }

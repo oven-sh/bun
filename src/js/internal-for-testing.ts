@@ -523,14 +523,6 @@ export function getWebStreamState(stream: ReadableStream | WritableStream): {
   }
 }
 
-export const fs = require("node:fs/promises").$data;
-
-export const fsStreamInternals = {
-  writeStreamFastPath(str) {
-    return str[require("internal/fs/streams").kWriteStreamFastPath];
-  },
-};
-
 export const arrayBufferViewHasBuffer = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_arrayBufferViewHasBuffer",
@@ -546,7 +538,6 @@ export const timerInternals = {
 export const dgramInternals = {
   newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
   closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
-  isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -741,4 +732,13 @@ export const fetchH3Internals = {
 
 export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+};
+
+export const byteStreamInternals = {
+  // Swap a ByteStream-backed stream's producer for one whose drain signal
+  // re-enters on_cancel, making consumed-during-signal_drained re-entrancy
+  // deterministic in tests.
+  cancelOnDrain: $newRustFunction("runtime/webcore/ByteStream.rs", "TestingAPIs.byteStreamCancelOnDrain", 1) as (
+    stream: ReadableStream,
+  ) => void,
 };

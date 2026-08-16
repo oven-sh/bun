@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, tempDir, tls } from "harness";
 
 const node = nodeExe();
 
@@ -428,7 +428,7 @@ const net = require('node:net');
 const child = fork('child.js');
 const server = net.createServer();
 server.listen(0, '127.0.0.1', () => {
-  let a = null, bCalled = false;
+  let a = "never called", bCalled = false;
   net.connect(server.address().port, '127.0.0.1', function () {
     const sockA = this;
     net.connect(server.address().port, '127.0.0.1', function () {
@@ -462,72 +462,75 @@ server.listen(0, '127.0.0.1', () => {
       expect(exitCode).toBe(0);
     },
   );
-});
 
-describe.skipIf(isWindows)("send() callback settlement on channel close", () => {
-  test.concurrent("every queued plain send callback settles (with null, like node)", async () => {
-    using dir = tempDir("ipc-close-settles-callbacks", {
-      "parent.js": `
+  test.concurrent(
+    "sending a tls.TLSSocket throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
+    async () => {
+      using dir = tempDir("ipc-handle-tls-socket", {
+        "cert.pem": tls.cert,
+        "key.pem": tls.key,
+        "parent.js": `
 const { fork } = require('node:child_process');
+const tlsMod = require('node:tls');
+const fs = require('node:fs');
 const child = fork('child.js');
-
-child.on('message', m => {
-  if (m !== 'ready') return;
-  const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
-  const results = [];
-  const total = 3;
-  for (let i = 0; i < total; i++) {
-    child.send(big, err => {
-      results.push(err === null ? 'null' : err.code);
-      if (results.length === total) {
-        console.log('CALLBACKS:' + results.join(','));
-        process.exit(0);
-      }
-    });
-  }
-  child.kill('SIGKILL');
+const sockets = [];
+const finish = out => { console.log(JSON.stringify(out)); for (const s of sockets) s.destroy(); server.close(); child.disconnect(); };
+child.on('message', m => finish({ childReceived: m }));
+const server = tlsMod.createServer({ key: fs.readFileSync('key.pem'), cert: fs.readFileSync('cert.pem') }, serverSide => {
+  sockets.push(serverSide);
+  try { child.send('tls', serverSide); } catch (err) { report('serverCode', err.code); }
 });
-setTimeout(() => { console.log('TIMEOUT:callbacks-never-settled'); process.exit(1); }, 15000);
-`,
-      "child.js": `
-process.send('ready');
-setInterval(() => {}, 1 << 30);
-`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "parent.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
-    expect(stdout.trim()).toBe("CALLBACKS:null,null,null");
-    expect(exitCode).toBe(0);
+const codes = {};
+function report(side, code) { codes[side] = code; if ('serverCode' in codes && 'clientCode' in codes) finish({ ...codes, childReceived: null }); }
+server.listen(0, '127.0.0.1', () => {
+  const clientSide = tlsMod.connect({ port: server.address().port, host: '127.0.0.1', rejectUnauthorized: false }, () => {
+    sockets.push(clientSide);
+    try { child.send('tls', clientSide); } catch (err) { report('clientCode', err.code); }
   });
+});
+`,
+        "child.js": `process.on('message', m => process.send('unexpected:' + m));`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: { serverCode: "ERR_INVALID_HANDLE_TYPE", clientCode: "ERR_INVALID_HANDLE_TYPE", childReceived: null },
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  test.concurrent("handle send queued behind plain backpressure settles null on close, like node", async () => {
-    using dir = tempDir("ipc-handle-behind-backpressure", {
+  test.concurrent("a received handle that lands on fd 0 is adopted", async () => {
+    using dir = tempDir("ipc-handle-fd0", {
       "parent.js": `
 const { fork } = require('node:child_process');
 const net = require('node:net');
 const child = fork('child.js');
-const server = net.createServer();
+const server = net.createServer(sock => {
+  child.send('sock', sock);
+  child.once('message', m => { console.log(JSON.stringify(m)); sock.destroy(); server.close(); child.disconnect(); });
+});
 server.listen(0, '127.0.0.1', () => {
-  let a = 'nocall', h = 'nocall';
-  const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
-  child.send(big, err => { a = err === null ? 'null' : err.code; });
-  child.send('withhandle', server, err => { h = err === null ? 'null' : err.code; });
-  child.kill('SIGKILL');
-  child.on('close', () => setImmediate(() => setImmediate(() => {
-    console.log(JSON.stringify({ a, h }));
-    server.close();
-    process.exit(0);
-  })));
+  const client = net.connect(server.address().port, '127.0.0.1');
+  client.on('data', d => { client.end(); });
+  client.on('error', () => {});
 });
 `,
-      "child.js": `const end = Date.now() + 30_000; while (Date.now() < end) {}`,
+      "child.js": `
+require('node:fs').closeSync(0); // the next descriptor this process receives is fd 0
+process.on('message', (m, sock) => {
+  const fd = sock && sock._handle && sock._handle.fd;
+  sock.end('hi', () => process.send({ message: m, receivedFd: fd, writable: true }));
+});
+`,
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "parent.js"],
@@ -536,42 +539,104 @@ server.listen(0, '127.0.0.1', () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
-    expect(JSON.parse(stdout.trim())).toEqual({ a: "null", h: "null" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { message: "sock", receivedFd: 0, writable: true },
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("sending a dgram socket delivers a dgram.Socket to the child", async () => {
-    using dir = tempDir("ipc-dgram-handle-pass", {
+  // node: a sent socket is detached from the sender's net.Socket (no 'end'/'close' there when the
+  // receiver finishes with it), and disconnect() waits for the messages queued behind an un-acked
+  // handle to be delivered. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js
+  test.concurrent(
+    "handoff detaches the sender's socket; disconnect() reports disconnected at once but flushes messages queued behind the handle",
+    async () => {
+      using dir = tempDir("ipc-handle-detach-flush", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const senderEvents = [];
+let client, connectedAfterDisconnect, secondDisconnect = 'no error';
+child.on('error', e => { secondDisconnect = e.code; });
+const server = net.createServer(sock => {
+  sock.on('end', () => senderEvents.push('end'));
+  sock.on('close', () => senderEvents.push('close'));
+  child.send('sock', sock);
+  child.send({ type: 'after-handle' });
+  child.disconnect();
+  // While the queue behind the handle drains, the channel already reports disconnected.
+  connectedAfterDisconnect = child.connected;
+  child.disconnect();
+});
+child.on('exit', code => {
+  client.destroy();
+  server.close(() => console.log(JSON.stringify({ childSawQueuedMessage: code === 0, senderEvents, connectedAfterDisconnect, secondDisconnect })));
+});
+server.listen(0, '127.0.0.1', () => {
+  client = net.connect(server.address().port, '127.0.0.1');
+  client.on('error', () => {});
+});
+`,
+        "child.js": `
+let sawQueued = false;
+process.on('message', (m, sock) => { if (sock) sock.destroy(); else sawQueued = m.type === 'after-handle'; });
+process.on('disconnect', () => process.exit(sawQueued ? 0 : 3));
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+        out: {
+          childSawQueuedMessage: true,
+          senderEvents: [],
+          connectedAfterDisconnect: false,
+          secondDisconnect: "ERR_IPC_DISCONNECTED",
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The child sends a server and disconnects at once. node: process.connected drops immediately, a
+  // second disconnect() errors, and the parent still receives the server (its adoption completes a
+  // loop turn later, which must not lose it) as well as the message queued behind it. Order is not
+  // pinned: bun currently emits the late-adopted handle after 'disconnect', node before it.
+  test.concurrent("a handle sent right before the child's disconnect() is still delivered", async () => {
+    using dir = tempDir("ipc-handle-then-disconnect", {
       "parent.js": `
 const { fork } = require('node:child_process');
-const dgram = require('node:dgram');
-const child = fork('child.js');
-const sock = dgram.createSocket('udp4');
-sock.bind(0, () => {
-  child.send('msg', sock, err => {
-    if (err) { console.log('RESULT:' + (err.code || err.message)); process.exit(1); }
-  });
-});
-child.on('message', m => {
-  console.log('RESULT:' + m.got + ':' + m.handle);
-  sock.close();
-  child.kill();
-  process.exit(0);
-});
-setTimeout(() => { console.log('RESULT:timeout'); process.exit(1); }, 10000);
+const child = fork('child.js', { stdio: ['ignore', 'inherit', 'pipe', 'ipc'] });
+const got = [];
+let childReport = '';
+child.stderr.on('data', d => { childReport += d; });
+child.on('message', (m, h) => { got.push(h ? 'handle:' + m : m); if (h) h.close(); });
+child.on('disconnect', () => got.push('disconnect'));
+child.on('exit', code => console.log(JSON.stringify({ got: got.sort(), code, child: JSON.parse(childReport) })));
 `,
       "child.js": `
-process.on('message', (m, handle) => {
-  // If the message arrives without its handle, the silent-drop bug is back.
-  const kind = handle === undefined ? 'missing' : (handle.constructor && handle.constructor.name);
-  if (handle && typeof handle.close === 'function') { try { handle.close(); } catch {} }
-  process.send({ got: m, handle: kind });
+const net = require('node:net');
+const server = net.createServer().listen(0, '127.0.0.1', () => {
+  process.send('srv', server);
+  process.send('after-handle');
+  process.disconnect();
+  const connectedAfterDisconnect = process.connected;
+  let secondDisconnect = 'no error';
+  process.once('error', e => { secondDisconnect = e.code; });
+  process.disconnect();
+  process.on('disconnect', () => { process.stderr.write(JSON.stringify({ connectedAfterDisconnect, secondDisconnect })); server.close(); });
 });
-setTimeout(() => process.exit(0), 5000);
 `,
     });
-
     await using proc = Bun.spawn({
       cmd: [bunExe(), "parent.js"],
       env: bunEnv,
@@ -579,8 +644,15 @@ setTimeout(() => process.exit(0), 5000);
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
-    expect(stdout.trim()).toBe("RESULT:msg:Socket");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: {
+        got: ["after-handle", "disconnect", "handle:srv"],
+        code: 0,
+        child: { connectedAfterDisconnect: false, secondDisconnect: "ERR_IPC_DISCONNECTED" },
+      },
+      stderr: "",
+    });
     expect(exitCode).toBe(0);
   });
 });

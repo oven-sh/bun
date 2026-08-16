@@ -1,19 +1,16 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
-const SharedHandle = require("internal/cluster/SharedHandle");
-const path = require("node:path");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
 const settleClusterAck = $newRustFunction("node_cluster_binding.rs", "settleClusterAck", 2);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
-const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
-const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
-const ebadfErrorCode = $newRustFunction("node_util_binding.rs", "ebadfErrorCode", 0);
+const { UV_EBADF, UV_EINVAL, UV_ENOBUFS } = process.binding("uv");
 const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
 
 let child_process;
+let RoundRobinHandle;
+let SharedHandle;
 let netForProbe;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -105,11 +102,12 @@ function removeWorker(worker) {
   }
 }
 
-function removeHandlesForWorker(worker) {
+// channelGone: the channel is closed, so nothing the worker still holds can be acked (a primary disconnect() keeps it up until the acks arrive).
+function removeHandlesForWorker(worker, channelGone) {
   if (!worker) throw new Error("ERR_INTERNAL_ASSERTION");
 
   handles.forEach((handle, key) => {
-    if (handle.remove(worker)) handles.delete(key);
+    if (handle.remove(worker, channelGone)) handles.delete(key);
   });
 }
 
@@ -136,7 +134,7 @@ cluster.fork = function (env) {
      * still want to access it.
      */
     if (!worker.isConnected()) {
-      removeHandlesForWorker(worker);
+      removeHandlesForWorker(worker, true);
       removeWorker(worker);
     }
 
@@ -153,7 +151,7 @@ cluster.fork = function (env) {
      * associated with this worker because it is
      * not connected to the primary anymore.
      */
-    removeHandlesForWorker(worker);
+    removeHandlesForWorker(worker, true);
 
     /*
      * Remove the worker from the workers list only
@@ -218,7 +216,6 @@ function onmessage(message, _handle) {
   const worker = this;
 
   const fn = methodMessageMapping[message.act];
-
   if (typeof fn === "function") fn(worker, message);
 }
 
@@ -237,6 +234,9 @@ function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
 
+  RoundRobinHandle ??= require("internal/cluster/RoundRobinHandle");
+  SharedHandle ??= require("internal/cluster/SharedHandle");
+
   const key =
     `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
     (message.port === 0 ? `:${message.index}` : "");
@@ -248,11 +248,7 @@ function queryServer(worker, message) {
     "TLS and non-TLS cluster workers cannot share the same address:port under SCHED_RR " +
     "(Bun's TLS accept is native and cannot adopt round-robin connection fds)";
   if (handle !== undefined && message.sharedOnly === true && handle instanceof RoundRobinHandle) {
-    send(
-      worker,
-      { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint },
-      null,
-    );
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
   }
   if (
@@ -264,11 +260,7 @@ function queryServer(worker, message) {
     message.addressType !== "udp4" &&
     message.addressType !== "udp6"
   ) {
-    send(
-      worker,
-      { errno: einvalErrorCode(), key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint },
-      null,
-    );
+    send(worker, { errno: UV_EINVAL, key, ack: message.seq, data: handle.data, bunHint: kSharedOnlyHint }, null);
     return;
   }
 
@@ -277,7 +269,7 @@ function queryServer(worker, message) {
 
     // Find shortest path for unix sockets because of the ~100 byte limit
     if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
-      address = path.relative(process.cwd(), address);
+      address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;
     }
@@ -326,7 +318,9 @@ function queryServer(worker, message) {
       serverHandle,
     );
     if (sent === null && serverHandle !== null && serverHandle !== undefined) {
-      send(worker, { errno: enobufsErrorCode(), key, ack: message.seq, data }, null);
+      send(worker, { errno: UV_ENOBUFS, key, ack: message.seq, data }, null);
+      // The worker never got the handle, so it will never send act:close for it.
+      if (handle.remove(worker) && handles.get(key) === handle) handles.delete(key);
     }
     if (cachedHandle && handle !== cachedHandle && !errno) handle.remove(worker);
   });
@@ -355,7 +349,7 @@ class ReusePortHandle {
     const server = (this.handle = netForProbe.createServer(conn => conn.destroy()));
     server.once("error", err => {
       this.errno =
-        typeof err?.errno === "number" && err.errno !== 0 ? uvTranslateSysError(err.errno) : einvalErrorCode();
+        typeof err?.errno === "number" && err.errno !== 0 ? uvTranslateSysError(err.errno) : UV_EINVAL;
       this.#settle();
     });
     server.listen({ port, host: address || undefined }, () => server.close(() => this.#settle()));
@@ -399,18 +393,18 @@ function shareListenFd(worker, message) {
 
   const fd = message.fd;
   if (process.platform === "win32") {
-    send(worker, { errno: einvalErrorCode(), ack: message.seq });
+    send(worker, { errno: UV_EINVAL, ack: message.seq });
     return;
   }
   if (typeof fd !== "number" || fd < 0) {
-    send(worker, { errno: ebadfErrorCode(), ack: message.seq });
+    send(worker, { errno: UV_EBADF, ack: message.seq });
     return;
   }
   try {
     const sent = send(worker, { errno: 0, ack: message.seq }, { fd });
-    if (sent === null) send(worker, { errno: einvalErrorCode(), ack: message.seq });
+    if (sent === null) send(worker, { errno: UV_EINVAL, ack: message.seq });
   } catch {
-    send(worker, { errno: einvalErrorCode(), ack: message.seq });
+    send(worker, { errno: UV_EINVAL, ack: message.seq });
   }
 }
 
@@ -427,7 +421,7 @@ function probePort(worker, message) {
     try {
       handle = new ReusePortHandle(key, message.address, message);
     } catch {
-      send(worker, { errno: einvalErrorCode(), key, ack: message.seq });
+      send(worker, { errno: UV_EINVAL, key, ack: message.seq });
       return;
     }
     if (!cachedHandle) handles.set(key, handle);
@@ -473,7 +467,7 @@ Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
   this.process.disconnect();
-  removeHandlesForWorker(this);
+  removeHandlesForWorker(this, false);
   removeWorker(this);
   return this;
 };

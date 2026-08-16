@@ -894,12 +894,16 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
-    int readable = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
-    if (us_socket_is_shut_down(s)) {
-        // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, readable);
-        return;
+    int events = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
+    if (!us_socket_is_shut_down(s)) {
+        // still writable: a FIN of ours would have left the socket read-only
+        events |= LIBUS_SOCKET_WRITABLE;
     }
-    // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, readable | LIBUS_SOCKET_WRITABLE);
+    if (us_poll_change(&s->p, s->group->loop, events) != 0) {
+        /* The dispatcher parked this socket while it was paused (loop.c) and the
+         * kernel refused to take it back: nothing would ever deliver its tail,
+         * end or close again, so fail it now like a failed first registration. */
+        int err = errno;
+        us_internal_socket_close_raw(s, err > 2 ? err : ECONNRESET, NULL);
+    }
 }

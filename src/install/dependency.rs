@@ -440,7 +440,14 @@ fn is_github_tarball_path(dependency: &[u8]) -> bool {
 // before I add that.
 #[inline]
 fn is_tarball(dependency: &[u8]) -> bool {
-    dependency.ends_with(b".tgz") || dependency.ends_with(b".tar.gz")
+    has_suffix_ignore_ascii_case(dependency, b".tgz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar.gz")
+        || has_suffix_ignore_ascii_case(dependency, b".tar")
+}
+
+#[inline]
+fn has_suffix_ignore_ascii_case(s: &[u8], suffix: &[u8]) -> bool {
+    s.len() >= suffix.len() && s[s.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
 }
 
 /// the input is assumed to be either a remote or local tarball
@@ -461,24 +468,6 @@ pub mod version {
 }
 pub mod tarball {
     pub use super::{TarballInfo, URI as Uri};
-}
-
-pub(crate) fn split_version_and_maybe_name(str: &[u8]) -> (&[u8], Option<&[u8]>) {
-    if let Some(at_index) = strings::index_of_char(str, b'@') {
-        let at_index = at_index as usize;
-        if at_index != 0 {
-            return (&str[at_index + 1..], Some(&str[0..at_index]));
-        }
-
-        let Some(second) = strings::index_of_char(&str[1..], b'@') else {
-            return (str, None);
-        };
-        let second_at_index = second as usize + 1;
-
-        return (&str[second_at_index + 1..], Some(&str[0..second_at_index]));
-    }
-
-    (str, None)
 }
 
 /// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
@@ -734,6 +723,7 @@ impl VersionExt for Version {
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
             Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
+            Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
         }
     }
@@ -1590,7 +1580,11 @@ pub(crate) fn parse_with_tag(
                 literal: sliced.value(),
             })
         }
-        Tag::Uninitialized => None,
+        Tag::Uninitialized => Some(Version {
+            tag: Tag::Uninitialized,
+            literal: sliced.value(),
+            value: Value::default(),
+        }),
         Tag::Symlink => {
             if let Some(colon) = strings::index_of_char(dependency, b':') {
                 return Some(Version {

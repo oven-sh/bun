@@ -121,7 +121,7 @@ pub(crate) fn do_send(
     } else if !options_.is_undefined() {
         global_object.validate_object("options", options_, Default::default())?;
         if options_
-            .get(global_object, "$internal")?
+            .fast_get(global_object, bun_jsc::BuiltinName::internal)?
             .is_some_and(|v| v.to_boolean())
         {
             is_internal = IsInternal::Internal;
@@ -174,9 +174,9 @@ pub(crate) fn do_send(
             match IPC::ipc_serialize(global_object, message, handle, options_, target) {
                 Ok(v) => v,
                 Err(e) => {
-                    // Never take a TerminationException: taking it clears the
+                    // Never take a pending termination: taking it clears the
                     // VM's termination request and resumes a terminating worker.
-                    if matches!(e, bun_jsc::JsError::Terminated) {
+                    if global_object.has_pending_termination_exception() {
                         return Err(e);
                     }
                     let ex = global_object.take_error(e);
@@ -251,19 +251,22 @@ pub(crate) fn do_send(
                     });
                 }
             }
-        } else if handle.is_int32() {
-            #[cfg(not(windows))]
-            {
-                let raw = handle.as_int32();
-                if raw >= 0 {
-                    log!("got raw fd");
-                    match Handle::init_dup(bun_sys::Fd::from_native(raw), handle, false) {
-                        Ok(h) => zig_handle = Some(h),
-                        Err(e) => dup_err = Some(e),
-                    }
+        } else if let Some(udp) = handle.as_class_ref::<crate::socket::UDPSocket>() {
+            if let Some(fd) = udp.native_fd() {
+                log!("got udp socket fd");
+                #[cfg(not(windows))]
+                match Handle::init_dup(fd, handle, false) {
+                    Ok(h) => zig_handle = Some(h),
+                    Err(e) => dup_err = Some(e),
+                }
+                #[cfg(windows)]
+                {
+                    zig_handle = Some(Handle::init(fd, handle));
                 }
             }
         } else {
+            // node:http server socket (JSNodeHTTPServerSocket): no JS-visible
+            // _handle, so the descriptor comes from the native wrapper.
             let raw = bun_jsc::cpp::NodeHTTP__getServerSocketFd(handle);
             if raw >= 0 {
                 log!("got node:http server socket fd");
@@ -287,9 +290,29 @@ pub(crate) fn do_send(
             }
         }
     }
+    // serialize() already detached a non-keepOpen net.Socket; if it is not sent after all, close it
+    // here (node: postSend on error). The handle's `close()`/`pause()` are calls of their own: what
+    // one throws is reported (this host function is its landing frame), and the send goes on to
+    // deliver its own result.
+    let call_handle_method =
+        |global_object: &JSGlobalObject, target: JSValue, name: &'static str| -> JsResult<()> {
+            if target.is_object() {
+                if let Some(f) = target.get(global_object, name)? {
+                    if f.is_callable() {
+                        crate::dispatch::fold(f.call(global_object, target, &[]).map(drop));
+                    }
+                }
+            }
+            Ok(())
+        };
+    let close_detached = |global_object: &JSGlobalObject, target: JSValue| {
+        call_handle_method(global_object, target, "close")
+    };
+
     #[cfg(not(windows))]
     if let Some(e) = dup_err {
         use bun_jsc::SysErrorJsc as _;
+        close_detached(global_object, pause_target)?;
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
 
@@ -304,10 +327,12 @@ pub(crate) fn do_send(
         }
     }
     if zig_handle.is_none() && !handle.is_undefined_or_null() {
-        // serialize() returned a native handle but its fd is gone; its side
-        // effects (socket_list, _connections--) already ran, so fail the send
-        // instead of silently dropping the NODE_HANDLE envelope.
+        // serialize() returned a handle whose descriptor is gone. Its side
+        // effects (detach, socket_list, _connections--) already ran, so close
+        // what it detached and fail the send instead of silently sending the
+        // bare message without its NODE_HANDLE envelope.
         use bun_jsc::SysErrorJsc as _;
+        close_detached(global_object, pause_target)?;
         let e = bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::send);
         return do_send_err(global_object, callback, e.to_js(global_object), from);
     }
@@ -315,22 +340,19 @@ pub(crate) fn do_send(
     let status =
         ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
 
-    if status != SerializeAndSendResult::Failure
-        && !pause_target.is_undefined()
-        && pause_target.is_object()
-    {
-        match pause_target.get(global_object, "pause") {
-            Ok(Some(f)) if f.is_callable() => {
-                if let Err(e) = f.call(global_object, pause_target, &[]) {
-                    global_object.report_active_exception_as_unhandled(e);
-                }
+    if status != SerializeAndSendResult::Failure && pause_target.is_object() {
+        // net.Socket handles expose pause(); the node:http server-socket
+        // wrapper does not, so it is paused natively.
+        match pause_target.get(global_object, "pause")? {
+            Some(f) if f.is_callable() => {
+                crate::dispatch::fold(f.call(global_object, pause_target, &[]).map(drop));
             }
-            Ok(_) => bun_jsc::cpp::NodeHTTP__pauseServerSocket(pause_target),
-            Err(e) => global_object.report_active_exception_as_unhandled(e),
+            _ => bun_jsc::cpp::NodeHTTP__pauseServerSocket(pause_target),
         }
     }
 
     if status == SerializeAndSendResult::Failure {
+        close_detached(global_object, pause_target)?;
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
         ex.put(
             global_object,
@@ -376,6 +398,8 @@ pub(crate) fn emit_handle_ipc_message(
         }
         let vm = global_this.bun_vm().as_mut();
         let Some(ipc) = get_ipc_instance(vm) else {
+            // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
+            Process__emitMessageEvent(global_this, message, handle);
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.

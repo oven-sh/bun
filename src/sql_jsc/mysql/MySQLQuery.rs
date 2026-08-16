@@ -1,6 +1,3 @@
-use core::ffi::c_void;
-use core::marker::PhantomData;
-
 use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
@@ -8,11 +5,10 @@ use bun_core::String as BunString;
 use super::my_sql_value::Value;
 use bun_sql::mysql::mysql_param::Param;
 use bun_sql::mysql::mysql_request;
-use bun_sql::mysql::mysql_types::FieldType;
-use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, AnyMySQLError};
+use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
-use bun_sql::mysql::protocol::prepared_statement::{self as prepared_statement, ExecuteParams};
+use bun_sql::mysql::protocol::prepared_statement;
 use bun_sql::mysql::query_status::Status;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
@@ -230,22 +226,6 @@ impl MySQLQuery {
         )?;
         // `defer execute.deinit()` — `params: Vec<Value>` drops at end of scope.
 
-        // Thunks bridging the higher-tier `Value` into the lower-tier `ExecuteParams`
-        // hooks (which can't name `Value` directly across crates).
-        fn is_null_thunk(ctx: *mut c_void, i: usize) -> bool {
-            // SAFETY: `ctx` is `params.as_ptr()` and `i < params.len()` (asserted by
-            // the `len` field passed alongside, checked in `Execute::write_internal`).
-            unsafe { matches!(*ctx.cast::<Value>().add(i), Value::Null) }
-        }
-        fn to_data_thunk(
-            ctx: *mut c_void,
-            i: usize,
-            ft: FieldType,
-        ) -> Result<bun_sql::shared::Data, any_mysql_error::Error> {
-            // SAFETY: same as `is_null_thunk`.
-            unsafe { (*ctx.cast::<Value>().add(i)).to_data(ft) }
-        }
-
         let execute = prepared_statement::Execute {
             statement_id: statement.statement_id,
             flags: 0,
@@ -254,13 +234,7 @@ impl MySQLQuery {
             new_params_bind_flag: statement
                 .execution_flags
                 .contains(ExecutionFlags::NEED_TO_SEND_PARAMS),
-            params: ExecuteParams {
-                len: params.len(),
-                ctx: params.as_ptr().cast_mut().cast::<c_void>(),
-                is_null: is_null_thunk,
-                to_data: to_data_thunk,
-                _marker: PhantomData,
-            },
+            params: &params,
         };
 
         let mut packet = writer.start(0)?;

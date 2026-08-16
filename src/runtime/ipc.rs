@@ -216,11 +216,12 @@ pub enum IPCDecodeError {
     /// Format could not be recognized. Report an error and close the socket.
     #[error("InvalidFormat")]
     InvalidFormat,
+    /// The decode ran under a VM that is stopping (loop-level; not an exception).
+    #[error("Stopped")]
+    Stopped,
     // —— bun.JSError variants ——
     #[error("JSError")]
     JSError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -229,7 +230,6 @@ impl From<JsError> for IPCDecodeError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::Thrown => IPCDecodeError::JSError,
-            JsError::Terminated => IPCDecodeError::JSTerminated,
             JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
         }
     }
@@ -243,10 +243,17 @@ pub enum IPCSerializationError {
     // —— bun.JSError variants ——
     #[error("JSError")]
     JSError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("OutOfMemory")]
     OutOfMemory,
+}
+
+impl From<JsError> for IPCSerializationError {
+    fn from(e: JsError) -> Self {
+        match e {
+            JsError::Thrown => IPCSerializationError::JSError,
+            JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+        }
+    }
 }
 
 mod advanced {
@@ -382,11 +389,7 @@ mod advanced {
         let (value, message_type) = match is_internal {
             IsInternal::Internal => (value, IPCMessageType::SerializedInternalMessage),
             IsInternal::External => {
-                let tagged = ipc_tag_advanced_buffers(global, value).map_err(|e| match e {
-                    JsError::Thrown => IPCSerializationError::JSError,
-                    JsError::Terminated => IPCSerializationError::JSTerminated,
-                    JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-                })?;
+                let tagged = ipc_tag_advanced_buffers(global, value)?;
                 if tagged.is_null() {
                     (value, IPCMessageType::SerializedMessage)
                 } else {
@@ -395,20 +398,14 @@ mod advanced {
             }
         };
 
-        let serialized = value
-            .serialize(
-                global,
-                SerializedFlags {
-                    // IPC sends across process.
-                    for_cross_process_transfer: true,
-                    for_storage: false,
-                },
-            )
-            .map_err(|e| match e {
-                JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
-                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-            })?;
+        let serialized = value.serialize(
+            global,
+            SerializedFlags {
+                // IPC sends across process.
+                for_cross_process_transfer: true,
+                for_storage: false,
+            },
+        )?;
         // `serialized` Drops at scope exit (defer serialized.deinit()).
 
         let size: u32 = u32::try_from(serialized.data().len()).expect("int cast");
@@ -530,8 +527,9 @@ mod json {
         }
         let deserialized = match parsed {
             Ok(v) => v,
-            Err(JsError::Thrown) | Err(JsError::Terminated) => {
-                global_this.clear_exception_except_termination();
+            Err(JsError::Thrown) => {
+                // A malformed message; a pending termination is not cleared by this and keeps unwinding.
+                global_this.clear_exception();
                 return Err(IPCDecodeError::InvalidFormat);
             }
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -558,13 +556,7 @@ mod json {
         let mut out: BunString = BunString::default();
         // Use jsonStringifyFast which passes undefined for the space parameter,
         // triggering JSC's SIMD-optimized FastStringifier code path.
-        value
-            .json_stringify_fast(global, &mut out)
-            .map_err(|e| match e {
-                JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
-                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-            })?;
+        value.json_stringify_fast(global, &mut out)?;
         // `bun_core::String` is `Copy` (no `Drop`),
         // so the +1 ref written by `json_stringify_fast` is wrapped in
         // `OwnedString` immediately so every exit path (Dead, OOM in
@@ -611,7 +603,7 @@ pub(crate) fn decode_ipc_message(
     // The previous message's JS handler may have taken a worker's termination
     // trap; JSONParse with it pending trips LiteralParser's state assert.
     if global.bun_vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
-        return Err(IPCDecodeError::JSTerminated);
+        return Err(IPCDecodeError::Stopped);
     }
     match mode {
         Mode::Advanced => advanced::decode_ipc_message(data, global),
@@ -720,7 +712,8 @@ impl Handle {
 impl Drop for Handle {
     fn drop(&mut self) {
         if self.owns_fd {
-            FdExt::close(self.fd);
+            // Owned dup/received descriptors may legitimately be 0-2 (stdio closed); close them regardless.
+            let _ = self.fd.close_allowing_standard_io(None);
         }
     }
 }
@@ -804,41 +797,25 @@ impl SendHandle {
     }
 
     /// Call the callback and deinit
-    pub(crate) fn complete(
-        mut self,
-        global: &JSGlobalObject,
-        close_fn: &JsCell<Option<Protected>>,
-    ) {
-        self.schedule_handle_close(global, close_fn);
-        let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
-        // self drops here → data/callbacks/handle Drop.
-    }
-
-    /// Channel closed while parked behind a pending handle ack: close the handle wrap and
-    /// drop callbacks unsettled — node discards `_handleQueue` on abrupt close (v26.3.0).
-    /// https://github.com/nodejs/node/blob/main/lib/internal/child_process.js
-    pub(crate) fn abort_parked(
-        self,
-        global: &JSGlobalObject,
-        close_fn: &JsCell<Option<Protected>>,
-    ) {
-        self.schedule_handle_close(global, close_fn);
-    }
-
-    fn schedule_handle_close(&self, global: &JSGlobalObject, close_fn: &JsCell<Option<Protected>>) {
+    pub(crate) fn complete(mut self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
                 if js.is_object() {
-                    let f = close_fn.with_mut(|close_fn| match close_fn {
-                        Some(p) => p.value(),
-                        None => {
-                            let f = close_sent_handle_fn(global);
-                            *close_fn = Some(f.protected());
-                            f
-                        }
-                    });
-                    let _ = JSValue::call_next_tick_1(f, global, js);
+                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+                }
+            }
+        }
+        let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
+        // self drops here → data/callbacks/handle Drop.
+    }
+
+    pub fn abort_unsent(self, global: &JSGlobalObject) {
+        if let Some(handle) = &self.handle {
+            if handle.close_on_complete {
+                let js = handle.js.value();
+                if js.is_object() {
+                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
                 }
             }
         }
@@ -949,14 +926,11 @@ pub struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
+    /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
+    pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
     pub close_event_sent: Cell<bool>,
-
-    /// Lazily created, per-channel cache of the `close_sent_handle` JSFunction
-    /// so handle-carrying sends don't allocate a fresh function per message.
-    /// `Protected` unprotects on Drop (JS thread, like the queued callbacks).
-    pub(crate) close_handle_fn: JsCell<Option<Protected>>,
 
     pub windows: JsCell<WindowsState>,
 }
@@ -1014,7 +988,7 @@ impl SendQueueOwner {
                 .this_value
                 .get()
                 .try_get()
-                .unwrap_or(JSValue::ZERO),
+                .unwrap_or_default(),
             SendQueueOwner::Instance(_) => JSValue::ZERO,
         }
     }
@@ -1073,10 +1047,10 @@ impl SendQueue {
             owner: Cell::new(owner),
             deferred_scheduled: Cell::new(false),
             pending_close: Cell::new(false),
+            close_after_flush: Cell::new(false),
             pending_after_close: Cell::new(false),
             write_in_progress: Cell::new(false),
             close_event_sent: Cell::new(false),
-            close_handle_fn: JsCell::new(None),
             windows: JsCell::new(WindowsState::default()),
         }));
         // SAFETY: `this` is the fresh, non-null allocation root.
@@ -1104,7 +1078,7 @@ impl SendQueue {
         if self.windows.get().try_close_after_write {
             return false;
         }
-        self.socket_is_open() && !self.pending_close.get()
+        self.socket_is_open() && !self.pending_close.get() && !self.close_after_flush.get()
     }
 
     fn close_socket(&self, reason: CloseReason, from: CloseFrom) {
@@ -1215,23 +1189,12 @@ impl SendQueue {
                 log!("SendQueue#_onAfterIPCClosed");
                 if !sq.close_event_sent.replace(true) {
                     let global = sq.get_global_this();
-                    // Node discards _handleQueue on close without firing callbacks; the parked
-                    // window opens when a handle send is *initiated*, so everything after the
-                    // first handle-bearing item is parked. lib/internal/child_process.js (v26.3.0)
-                    let mut parked = sq.waiting_for_ack.get().is_some();
                     if let Some(item) = sq.waiting_for_ack.with_mut(|w| w.take()) {
-                        item.complete(&global, &sq.close_handle_fn);
+                        item.complete(&global);
                     }
+                    // on_write_complete already dequeued everything fully written; the rest was never delivered.
                     for item in sq.queue.with_mut(std::mem::take) {
-                        let was_parked = parked;
-                        if item.handle.is_some() {
-                            parked = true;
-                        }
-                        if was_parked {
-                            item.abort_parked(&global, &sq.close_handle_fn);
-                        } else {
-                            item.complete(&global, &sq.close_handle_fn);
-                        }
+                        item.abort_unsent(&global);
                     }
                     if let Some(owner) = sq.owner.get() {
                         owner.handle_ipc_close();
@@ -1244,14 +1207,25 @@ impl SendQueue {
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
-    /// `__bun_release_task_at_shutdown` hook: a scheduled deferred task that
-    /// will never run still owns a ref; drop it (skipping the JS callbacks).
+    /// `Taskable::release_unrun`: a scheduled deferred task that will never
+    /// run still owns a ref; drop it (skipping the JS callbacks).
     ///
     /// # Safety
     /// `this` is the queued root pointer, live via the ref taken at schedule.
     pub unsafe fn release_deferred_unrun(this: *mut SendQueue) {
         // SAFETY: caller contract.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    /// `uv::open_handles` closes the channel's pipe through here at a thread
+    /// teardown: close now (pending writes finish ECANCELED) and let the owner
+    /// observe the disconnect, rather than waiting for writes as a user close does.
+    #[cfg(windows)]
+    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
+        // SAFETY: recorded at configure time by this live SendQueue; the pipe
+        // leaves the list when `windows_close` issues its uv_close.
+        let this = unsafe { &*this.cast::<SendQueue>() };
+        this.windows_close(true);
     }
 
     #[cfg(windows)]
@@ -1281,6 +1255,8 @@ impl SendQueue {
             self.socket.set(SocketUnion::Closed);
             return;
         }
+        // Peer-gone and exit paths land here too: a postponed disconnect never outranks them.
+        self.close_after_flush.set(false);
         if self.pending_close.get() {
             return; // close already requested
         }
@@ -1290,6 +1266,18 @@ impl SendQueue {
         }
         self.pending_close.set(true);
         self.schedule_deferred();
+    }
+
+    /// User disconnect(): reports disconnected now but, like node, closes only once a handle awaiting its ack and the queue behind it have gone out.
+    pub fn disconnect(&self) {
+        if self.socket_is_open()
+            && !self.pending_close.get()
+            && self.waiting_for_ack.get().is_some()
+        {
+            self.close_after_flush.set(true);
+            return;
+        }
+        self.close_socket_next_tick(true);
     }
 
     fn start_message(
@@ -1440,7 +1428,7 @@ impl SendQueue {
         // consume the message and continue sending
         if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
             self.retry_count.set(0);
-            item.complete(global, &self.close_handle_fn); // call the callback & deinit
+            item.complete(global); // call the callback & deinit
         }
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
@@ -1520,10 +1508,13 @@ impl SendQueue {
         });
         match next {
             Next::Nothing => {
+                if self.close_after_flush.get() && !waiting_for_ack && self.queue.get().is_empty() {
+                    self.close_socket_next_tick(true);
+                }
                 self.update_ref(global);
             }
             Next::EmptyItem(itm) => {
-                itm.complete(global, &self.close_handle_fn); // call the callback & deinit
+                itm.complete(global); // call the callback & deinit
                 log!("IPC call continueSend() from empty item");
                 self.continue_send(global, reason);
             }
@@ -1592,7 +1583,7 @@ impl SendQueue {
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Completed(item) => {
-                item.complete(&global_this, &self.close_handle_fn); // call the callback & deinit
+                item.complete(&global_this); // call the callback & deinit
                 self.continue_send(&global_this, ContinueSendReason::OnWritable);
             }
             Done::Partial | Done::NoProgress => {}
@@ -1866,6 +1857,11 @@ impl SendQueue {
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
         self_.socket.set(SocketUnion::Open(ipc_pipe));
+        uv::open_handles::set_owner(
+            ipc_pipe.cast(),
+            this.cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
         self_.windows.with_mut(|w| w.is_server = true);
         // SAFETY: pipe is the live uv handle just stored in the socket cell.
         unsafe { (*ipc_pipe).data = this.cast() };
@@ -1919,6 +1915,11 @@ impl SendQueue {
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
         self_.socket.set(SocketUnion::Open(ipc_pipe));
+        uv::open_handles::set_owner(
+            ipc_pipe.cast(),
+            this.cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
         self_.windows.with_mut(|w| w.is_server = false);
 
         // SAFETY: ipc_pipe is the live uv handle just stored in the socket cell.
@@ -1970,6 +1971,10 @@ impl uv::StreamReader for SendQueue {
 
 impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the SendQueue root queued with a held ref.
+        unsafe { SendQueue::release_deferred_unrun(this) }
+    }
 }
 
 impl Drop for SendQueue {
@@ -1983,7 +1988,7 @@ impl Drop for SendQueue {
         // An SCM_RIGHTS fd can be stashed by `onFd` and not yet consumed by
         // the `NODE_HANDLE` decoder when the socket closes.
         if let Some(fd) = self.incoming_fd.take() {
-            FdExt::close(fd);
+            let _ = fd.close_allowing_standard_io(None);
         }
     }
 }
@@ -2020,7 +2025,7 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
         Ok(Some(v)) if v.is_string() => v,
         Ok(_) => return None,
         Err(_) => {
-            global.clear_exception_except_termination();
+            global.clear_exception();
             return None;
         }
     };
@@ -2102,7 +2107,7 @@ fn handle_ipc_message(
             if msg_data.is_object() {
                 let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
                     Err(_) => {
-                        global_this.clear_exception_except_termination();
+                        global_this.clear_exception();
                         break 'handle_message;
                     }
                     Ok(None) => break 'handle_message,
@@ -2171,7 +2176,7 @@ fn handle_ipc_message(
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
                 let Some(owner) = send_queue.owner_ref() else {
-                    FdExt::close(fd);
+                    let _ = fd.close_allowing_standard_io(None);
                     return;
                 };
                 let target: JSValue = match owner.kind() {
@@ -2186,8 +2191,8 @@ fn handle_ipc_message(
                 let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.
-                    FdExt::close(fd);
-                    global_this.report_active_exception_as_unhandled(e);
+                    let _ = fd.close_allowing_standard_io(None);
+                    crate::dispatch::fold(Err(e));
                     return;
                 }
                 drop(_scope);
@@ -2210,6 +2215,7 @@ fn handle_ipc_message(
     } else {
         // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
         let mut handle_js = JSValue::UNDEFINED;
+        let mut received_fd: Option<Fd> = None;
         if let DecodedIPCMessage::Internal(msg_data) = &message {
             let msg_data = *msg_data;
             if msg_data.is_object() {
@@ -2243,17 +2249,24 @@ fn handle_ipc_message(
                         let fd = imported.unwrap();
                         #[cfg(not(windows))]
                         let fd = send_queue.incoming_fd.take().unwrap();
+                        received_fd = Some(fd);
                         handle_js = received_fd_to_js(fd);
                     }
                     Ok(_) => {}
                     Err(_) => {
-                        global_this.clear_exception_except_termination();
+                        global_this.clear_exception();
                     }
                 }
             }
         }
-        if let Some(owner) = send_queue.owner.get() {
-            owner.handle_ipc_message(&message, handle_js);
+        match send_queue.owner.get() {
+            Some(owner) => owner.handle_ipc_message(&message, handle_js),
+            // Owner already torn down: nobody will adopt the descriptor we just acked.
+            None => {
+                if let Some(fd) = received_fd {
+                    let _ = fd.close_allowing_standard_io(None);
+                }
+            }
         }
     }
 }
@@ -2264,7 +2277,7 @@ enum DecodeStep {
     Fail(IPCDecodeError),
 }
 
-fn finish_decode(send_queue: &SendQueue, step: &DecodeStep, global: &JSGlobalObject) {
+fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
     match step {
         DecodeStep::Message(_) => unreachable!("caller dispatches Message"),
         DecodeStep::Wait => {
@@ -2274,13 +2287,15 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep, global: &JSGlobalObj
             Output::print_errorln("IPC message is too long.");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
-        DecodeStep::Fail(e) => {
-            if matches!(e, IPCDecodeError::JSError) {
-                // deserialize/restoreBuffers threw and the exception is still
-                // pending; the event-loop exit drains microtasks right after
-                // this returns, which asserts no-pending-exception.
-                global.clear_exception_except_termination();
-            }
+        // Materializing the message (structured-clone deserialize, buffer
+        // restore) threw: that is this message's delivery failing, folded like
+        // a throwing listener, and the channel is closed as for any undecodable
+        // input.
+        DecodeStep::Fail(IPCDecodeError::JSError) => {
+            crate::dispatch::fold(Err(JsError::Thrown));
+            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+        }
+        DecodeStep::Fail(_) => {
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
     }
@@ -2360,7 +2375,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     DecodeStep::Message(result) => {
                         handle_ipc_message(send_queue, result.message, &global_this);
                     }
-                    step => return finish_decode(send_queue, &step, &global_this),
+                    step => return finish_decode(send_queue, &step),
                 }
             }
         }
@@ -2396,7 +2411,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                             return;
                         }
                         Err(e) => {
-                            return finish_decode(send_queue, &DecodeStep::Fail(e), &global_this);
+                            return finish_decode(send_queue, &DecodeStep::Fail(e));
                         }
                     }
                 }
@@ -2415,7 +2430,7 @@ fn on_data2(send_queue: &SendQueue, all_data: &[u8]) {
                     DecodeStep::Message(result) => {
                         handle_ipc_message(send_queue, result.message, &global_this);
                     }
-                    step => return finish_decode(send_queue, &step, &global_this),
+                    step => return finish_decode(send_queue, &step),
                 }
             }
         }
@@ -2457,7 +2472,7 @@ pub mod IPCHandlers {
                 log!("onFd: {}", fd);
                 if let Some(existing_fd) = send_queue.incoming_fd.take() {
                     log!("onFd: incoming_fd already set; overwriting");
-                    FdExt::close(existing_fd);
+                    let _ = existing_fd.close_allowing_standard_io(None);
                 }
                 send_queue.incoming_fd.set(Some(Fd::from_native(fd)));
             }
@@ -2541,7 +2556,7 @@ pub mod IPCHandlers {
                             DecodeStep::Message(result) => {
                                 handle_ipc_message(send_queue, result.message, &global_this);
                             }
-                            step => return finish_decode(send_queue, &step, &global_this),
+                            step => return finish_decode(send_queue, &step),
                         }
                     }
                 }
@@ -2563,7 +2578,7 @@ pub mod IPCHandlers {
                             DecodeStep::Message(result) => {
                                 handle_ipc_message(send_queue, result.message, &global_this);
                             }
-                            step => return finish_decode(send_queue, &step, &global_this),
+                            step => return finish_decode(send_queue, &step),
                         }
                     }
                 }

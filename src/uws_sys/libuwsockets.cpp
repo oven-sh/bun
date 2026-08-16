@@ -2093,9 +2093,10 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  // we need to manually call this at thread exit
-  extern "C" void bun_clear_loop_at_thread_exit() {
-      uWS::Loop::clearLoopAtThreadExit();
+  // A thread that ran a uws loop (a Worker) is exiting; free its loop. On Windows the loop sits on
+  // the thread's libuv loop, which the caller closes after this returns.
+  extern "C" void bun_free_loop_at_thread_exit() {
+      uWS::Loop::freeLoopAtThreadExit();
   }
 
 #pragma clang attribute pop

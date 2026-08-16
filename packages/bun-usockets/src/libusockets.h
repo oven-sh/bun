@@ -436,6 +436,7 @@ void us_ssl_ctx_set_sni_policy(struct ssl_ctx_st *ctx, int request_cert,
 /* 1 iff the SNI-selected context for this connection demands closing on a
  * client-certificate verification error. */
 int us_socket_server_name_reject_unauthorized(us_socket_r s);
+int us_ssl_ctx_reject_unauthorized(struct ssl_ctx_st *ctx);
 /* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
  * listen socket behind it. Same contract as the listener resolver: an owned
  * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
@@ -617,7 +618,9 @@ void us_poll_init(us_poll_r p, LIBUS_SOCKET_DESCRIPTOR fd, int poll_type);
 void us_poll_start(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 /* Returns 0 if successful */
 int us_poll_start_rc(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
-void us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
+/* Returns 0 unless the fd had to be registered anew (a poll parked by the
+ * dispatcher while paused) and that registration failed; errno is set then. */
+int us_poll_change(us_poll_r p, us_loop_r loop, int events) nonnull_fn_decl;
 void us_poll_stop(us_poll_r p, struct us_loop_t *loop) nonnull_fn_decl;
 
 /* Return what events we are polling for */

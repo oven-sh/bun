@@ -82,6 +82,7 @@ unsafe extern "C" {
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     this.closed.set(true);
+    crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).unregister();
     this.poll_ref.with_mut(|p| p.disable());
     this.this_value.with_mut(|r| r.downgrade());
     this.socket.set(None);
@@ -312,19 +313,19 @@ extern "C" fn on_data(
 }
 
 pub struct ConnectConfig {
-    pub(crate) port: u16,
-    pub(crate) address: BunString,
+    port: u16,
+    address: BunString,
 }
 
 pub struct UDPSocketConfig {
     pub(crate) hostname: BunString,
-    pub(crate) connect: Option<ConnectConfig>,
+    connect: Option<ConnectConfig>,
     pub(crate) port: u16,
     pub(crate) flags: i32,
     /// Adopt this already-created (and usually bound) socket descriptor
     /// instead of creating a new one. Used by node:dgram for
     /// `socket.bind({ fd })` and cluster-shared sockets.
-    pub(crate) fd: Option<i32>,
+    fd: Option<i32>,
     pub(crate) binary_type: BinaryType,
     pub(crate) shared_fd: bool,
 }
@@ -403,7 +404,7 @@ impl UDPSocketConfig {
         };
 
         let shared_fd = options
-            .get_truthy(global_this, "$sharedFd")?
+            .fast_get(global_this, bun_jsc::BuiltinName::sharedFd)?
             .is_some_and(|v| v.to_boolean());
 
         let mut config = Self {
@@ -696,6 +697,8 @@ impl UDPSocket {
         this.socket.set(if created.is_null() {
             None
         } else {
+            // Open: the VM's stop phase closes it if script never does.
+            crate::jsc_hooks::ActiveHandle::UdpSocket(core::ptr::NonNull::from(this)).register();
             Some(created)
         });
 
@@ -798,7 +801,7 @@ impl UDPSocket {
         } else {
             this_value_
         };
-        let callback = js::on_error_get_cached(this_value).unwrap_or(JSValue::ZERO);
+        let callback = js::on_error_get_cached(this_value).unwrap_or_default();
         let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();
 
@@ -820,13 +823,14 @@ impl UDPSocket {
             return;
         }
 
-        let event_loop = vm.event_loop_mut();
-        event_loop.enter();
-        let result = callback.call(global_this, this_value, &[err.to_error().unwrap_or(err)]);
-        if let Err(e) = result {
-            global_this.report_active_exception_as_unhandled(e);
-        }
-        event_loop.exit();
+        // A top-level call from the UDP socket callbacks: what `error` itself
+        // throws is reported.
+        vm.event_loop_mut().run_callback(
+            callback,
+            global_this,
+            this_value,
+            &[err.to_error().unwrap_or(err)],
+        );
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1678,11 +1682,22 @@ impl UDPSocket {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The VM's stop phase (script forbidden): close the uSockets socket, as
+    /// `close()` from script would; `on_close` unregisters and drops the keep-alive.
+    pub(crate) fn stop_for_vm_teardown(this: &Self) {
+        Self::close_socket(this);
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn close(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        Self::close_socket(this);
+        Ok(JSValue::UNDEFINED)
+    }
+
+    fn close_socket(this: &Self) {
         if !this.closed.get() {
             let Some(socket) = this.socket.take() else {
-                return Ok(JSValue::UNDEFINED);
+                return;
             };
             // `(*socket).close()` SYNCHRONOUSLY invokes `on_close` (udp.c:110
             // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
@@ -1699,8 +1714,6 @@ impl UDPSocket {
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             uws::udp::Socket::opaque_mut(socket).close();
         }
-
-        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1985,6 +1998,29 @@ impl UDPSocket {
         }
 
         Ok(JSValue::js_number(f64::from(value)))
+    }
+
+    /// Underlying socket descriptor, or `None` once closed. IPC send dups/exports this for a `dgram.Socket` handle.
+    pub(crate) fn native_fd(&self) -> Option<bun_sys::Fd> {
+        if self.closed.get() {
+            return None;
+        }
+        let socket = self.socket.get()?;
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        let raw = uws::udp::Socket::opaque_mut(socket).fd();
+        if raw < 0 {
+            return None;
+        }
+        #[cfg(windows)]
+        {
+            Some(bun_sys::Fd::from_system(
+                raw as usize as *mut core::ffi::c_void,
+            ))
+        }
+        #[cfg(not(windows))]
+        {
+            Some(bun_sys::Fd::from_native(raw))
+        }
     }
 
     /// Underlying socket descriptor as a number, or -1 once closed. Backs

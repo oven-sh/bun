@@ -320,6 +320,12 @@ impl Listener {
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
                 this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                if let Some(handles) = crate::jsc_hooks::active_handles() {
+                    bun_core::handle_oom(handles.put(
+                        crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                        (),
+                    ));
+                }
                 return Ok(this_value);
             }
         }
@@ -497,7 +503,9 @@ impl Listener {
                 || (matches!(connection, UnixOrHost::Fd(_))
                     && matches!(
                         mapped,
-                        Some(bun_sys::SystemErrno::ENOTSOCK) | Some(bun_sys::SystemErrno::EBADF)
+                        Some(bun_sys::SystemErrno::ENOTSOCK)
+                            | Some(bun_sys::SystemErrno::EBADF)
+                            | Some(bun_sys::SystemErrno::EOPNOTSUPP)
                     )) {
                 bun_sys::SystemErrno::EINVAL as c_int
             } else {
@@ -583,6 +591,12 @@ impl Listener {
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
         this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            bun_core::handle_oom(handles.put(
+                crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(this_ref)),
+                (),
+            ));
+        }
 
         Ok(this_value)
     }
@@ -822,11 +836,23 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// The VM (or the finished `--isolate` file) is being torn down: stop
+    /// listening and close accepted connections now, while script can still
+    /// run their close handlers, instead of from the GC finalizer.
+    pub(crate) fn stop_for_vm_teardown(this: &Self) {
+        Self::do_stop(this, true);
+    }
+
     fn do_stop(this: &Self, force_close: bool) {
         if matches!(this.listener.get(), ListenerType::None) {
             return;
         }
         let listener = this.listener.replace(ListenerType::None);
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                this,
+            )));
+        }
 
         if matches!(listener, ListenerType::Uws(_)) {
             Self::unlink_unix_socket_path(this);
@@ -870,6 +896,13 @@ impl Listener {
     pub fn finalize(self: Box<Self>) {
         log!("finalize");
         let listener = self.listener.replace(ListenerType::None);
+        if !matches!(listener, ListenerType::None) {
+            if let Some(handles) = crate::jsc_hooks::active_handles() {
+                handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Listener(NonNull::from(
+                    &*self,
+                )));
+            }
+        }
         match listener {
             ListenerType::Uws(socket) => {
                 Self::unlink_unix_socket_path(&self);
@@ -1588,71 +1621,85 @@ fn connect_finish<const IS_SSL: bool>(
     }
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
-    if socket_ref.do_connect().is_err() {
-        // Winsock sets WSAGetLastError, not the CRT `_errno()` that
-        // `last_errno()` reads.
-        #[cfg(windows)]
-        let os_errno = {
-            let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
-            // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
-            // or not; Node distinguishes ENOENT via `CreateFile`.
-            if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
-                if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
-                    if !bun_sys::exists(path) {
-                        e = bun_sys::SystemErrno::ENOENT as c_int;
+    // An already-open fd socket runs `on_open` synchronously; what settling
+    // the connect promise there left pending is not a connect failure.
+    let opened_err = match socket_ref.do_connect() {
+        Ok(()) => None,
+        Err(crate::Error::Js(err)) => Some(err),
+        Err(_) => {
+            // Winsock sets WSAGetLastError, not the CRT `_errno()` that
+            // `last_errno()` reads.
+            #[cfg(windows)]
+            let os_errno = {
+                let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
+                // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
+                // or not; Node distinguishes ENOENT via `CreateFile`.
+                if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
+                    if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
+                        if !bun_sys::exists(path) {
+                            e = bun_sys::SystemErrno::ENOENT as c_int;
+                        }
                     }
                 }
-            }
-            e
-        };
-        #[cfg(not(windows))]
-        let os_errno = bun_sys::last_errno();
-        let errno = if port.is_none() {
-            // Preserve the real errno from the failed connect(2) on a unix path:
-            // connecting to an existing non-socket file is ENOTSOCK, a
-            // permission-denied path is EACCES, a missing one is ENOENT.
-            if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
-                // libuv reports UV_EINVAL for a pipe path it cannot express.
-                bun_sys::SystemErrno::EINVAL as c_int
-            } else if os_errno != 0 {
-                os_errno
+                e
+            };
+            #[cfg(not(windows))]
+            let os_errno = bun_sys::last_errno();
+            let errno = if port.is_none() {
+                // Preserve the real errno from the failed connect(2) on a unix path:
+                // connecting to an existing non-socket file is ENOTSOCK, a
+                // permission-denied path is EACCES, a missing one is ENOENT.
+                if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
+                    // libuv reports UV_EINVAL for a pipe path it cannot express.
+                    bun_sys::SystemErrno::EINVAL as c_int
+                } else if os_errno != 0 {
+                    os_errno
+                } else {
+                    bun_sys::SystemErrno::ENOENT as c_int
+                }
             } else {
-                bun_sys::SystemErrno::ENOENT as c_int
-            }
-        } else {
-            // A synchronous TCP connect failure is almost always the local
-            // bind() (localAddress/localPort) failing - preserve the errnos a
-            // bind() meaningfully produces (EADDRINUSE: port busy,
-            // EADDRNOTAVAIL: address not local, EACCES: privileged port,
-            // EINVAL: address family mismatch); everything else stays
-            // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
-            if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
-                || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
-                || os_errno == bun_sys::SystemErrno::EACCES as c_int
-                || os_errno == bun_sys::SystemErrno::EINVAL as c_int
+                // A synchronous TCP connect failure is almost always the local
+                // bind() (localAddress/localPort) failing - preserve the errnos a
+                // bind() meaningfully produces (EADDRINUSE: port busy,
+                // EADDRNOTAVAIL: address not local, EACCES: privileged port,
+                // EINVAL: address family mismatch); everything else stays
+                // ECONNREFUSED. Mirrors handle_connect_error's whitelist.
+                if os_errno == bun_sys::SystemErrno::EADDRINUSE as c_int
+                    || os_errno == bun_sys::SystemErrno::EADDRNOTAVAIL as c_int
+                    || os_errno == bun_sys::SystemErrno::EACCES as c_int
+                    || os_errno == bun_sys::SystemErrno::EINVAL as c_int
+                {
+                    os_errno
+                } else {
+                    bun_sys::SystemErrno::ECONNREFUSED as c_int
+                }
+            };
             {
-                os_errno
-            } else {
-                bun_sys::SystemErrno::ECONNREFUSED as c_int
+                let this = socket;
+                let handled = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
+                // Balance the unconditional `socket_ref.ref_()` above.
+                NewSocket::deref(&this);
+                // A `connectError` handler that threw on this synchronous failure
+                // throws from `connect()`.
+                handled?;
+                return Ok(promise_value);
             }
-        };
-        {
-            let this = socket;
-            NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);
-            // Balance the unconditional `socket_ref.ref_()` above.
-            NewSocket::deref(&this);
         }
-        return Ok(promise_value);
-    }
+    };
 
     // if this is from node:net there's surface where the user can .ref() and .deref()
     // before the connection starts. make sure we honor that here.
-    if socket_ref.ref_pollref_on_connect.get() {
+    if socket_ref.ref_pollref_on_connect.get() && !socket_ref.socket.get().is_closed() {
         socket_ref
             .poll_ref
             .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
     }
 
+    // What settling the connect promise in `on_open` left pending (allocation
+    // failure, a terminating VM).
+    if let Some(err) = opened_err {
+        return Err(err);
+    }
     Ok(promise_value)
 }
 
@@ -1737,9 +1784,8 @@ impl WindowsNamedPipeListeningContext {
         // Shared borrow — `on_name_pipe_created` re-enters JS; the one `&mut`
         // (the `uv_pipe` field) is taken through the root pointer below.
         let this_ref = unsafe { &*this };
-        let shutting_down = this_ref.vm.is_shutting_down();
-        if status != uv::ReturnCode::ZERO || shutting_down || this_ref.listener.is_none() {
-            // connection dropped or vm is shutting down or we are deiniting/closing
+        if status != uv::ReturnCode::ZERO || this_ref.listener.is_none() {
+            // connection dropped, or we are deiniting/closing
             return;
         }
         // `BackRef` deref — owner `Listener` outlives this context (see field doc).
@@ -1959,9 +2005,6 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
         return core::ptr::null_mut();
     }
     let handlers = tls.get_handlers();
-    if handlers.vm.is_shutting_down() {
-        return core::ptr::null_mut();
-    }
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();
@@ -2052,9 +2095,6 @@ extern "C" fn us_dispatch_server_name(
     // duration of this synchronous handshake dispatch.
     let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
-    if handlers.vm.is_shutting_down() {
-        return core::ptr::null_mut();
-    }
     let callback = handlers.on_server_name();
     if callback.is_empty() {
         return core::ptr::null_mut();

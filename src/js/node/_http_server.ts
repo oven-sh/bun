@@ -37,16 +37,12 @@ const {
   kRealListen,
   tlsSymbol,
   optionsSymbol,
-  kDeprecatedReplySymbol,
   headerStateSymbol,
   NodeHTTPHeaderState,
   kPendingCallbacks,
   kRequest,
   kCloseCallback,
   NodeHTTPResponseFlags,
-  emitErrorNextTickIfErrorListenerNT,
-  getIsNextIncomingMessageHTTPS,
-  setIsNextIncomingMessageHTTPS,
   callCloseCallback,
   emitCloseNT,
   NodeHTTPResponseAbortEvent,
@@ -54,11 +50,7 @@ const {
   isTlsSymbol,
   hasServerResponseFinished,
   NodeHTTPBodyReadState,
-  controllerSymbol,
-  firstWriteSymbol,
-  deferredSymbol,
   eofInProgress,
-  runSymbol,
   drainMicrotasks,
   setServerCustomOptions,
   setServerAppFlags,
@@ -118,7 +110,6 @@ const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
 const kShouldKeepAlive = Symbol("kShouldKeepAlive");
 const kOptimizeEmptyRequests = Symbol("kOptimizeEmptyRequests");
-const GlobalPromise = globalThis.Promise;
 const kEmptyBuffer = Buffer.alloc(0);
 const ObjectKeys = Object.keys;
 const MathMin = Math.min;
@@ -203,35 +194,6 @@ function strictContentLength(response) {
   }
 }
 
-const ServerResponse_writeDeprecated = function _write(chunk, encoding, callback) {
-  if ($isCallable(encoding)) {
-    callback = encoding;
-    encoding = undefined;
-  }
-  if (!$isCallable(callback)) {
-    callback = undefined;
-  }
-  if (encoding && encoding !== "buffer") {
-    chunk = Buffer.from(chunk, encoding);
-  }
-  if (this.destroyed || this.finished) {
-    if (chunk) {
-      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
-    }
-    return false;
-  }
-  if (this[firstWriteSymbol] === undefined && !this.headersSent) {
-    this[firstWriteSymbol] = chunk;
-    if (callback) callback();
-    return;
-  }
-
-  ensureReadableStreamController.$call(this, controller => {
-    controller.write(chunk);
-    if (callback) callback();
-  });
-};
-
 const kParserOnTimeout = HTTPParser.kOnTimeout | 0;
 
 // Node attaches the llhttp HTTPParser to every server connection as
@@ -276,11 +238,6 @@ function onNodeHTTPServerSocketTimeout() {
   const serverTimeout = this.server.emit("timeout", this);
 
   if (!reqTimeout && !resTimeout && !serverTimeout) this.destroy();
-}
-
-function emitRequestCloseNT(self) {
-  callCloseCallback(self);
-  self.emit("close");
 }
 
 function emitListeningNextTick(self, hostname, port) {
@@ -770,7 +727,6 @@ Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath,
     const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
     const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
     const canUseInternalAssignSocket = ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
-    let isHTTPS = false;
     let server = this;
 
     if (tls) {
@@ -824,8 +780,6 @@ Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath,
         connectHead?: Buffer,
         isPipelinedDispatch?: boolean,
       ) {
-        const prevIsNextIncomingMessageHTTPS = getIsNextIncomingMessageHTTPS();
-        setIsNextIncomingMessageHTTPS(isHTTPS);
         if (!socket) {
           socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
         }
@@ -970,7 +924,6 @@ Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath,
           http_res.once("finish", stopServerResponsePerf);
         }
 
-        setIsNextIncomingMessageHTTPS(prevIsNextIncomingMessageHTTPS);
         handle.onabort = socket[kBoundOnAbort] ??= onServerRequestEvent.bind(socket);
         // Like Node's connectionListener -> parserOnBody: body bytes flow into
         // the IncomingMessage as they arrive, and the push callback readStop()s
@@ -1209,7 +1162,6 @@ Server.prototype[kRealListen] = function realListen(tls, port, host, socketPath,
     });
 
     getBunServerAllClosedPromise(this[serverSymbol]).$then(emitCloseNTServer.bind(this));
-    isHTTPS = this[serverSymbol].protocol === "https";
     applyServerCustomOptions(this);
 
     if (this?._unref) {
@@ -2246,14 +2198,6 @@ function ServerResponse(req, options): void {
   OutgoingMessage.$call(this, options);
 
   this.useChunkedEncodingByDefault = true;
-
-  if ((this[kDeprecatedReplySymbol] = options?.[kDeprecatedReplySymbol])) {
-    this[controllerSymbol] = undefined;
-    this[firstWriteSymbol] = undefined;
-    this[deferredSymbol] = undefined;
-    this.write = ServerResponse_writeDeprecated;
-    this.end = ServerResponse_finalDeprecated;
-  }
 
   this.req = req;
   this.sendDate = true;
@@ -3844,101 +3788,6 @@ function allowWritesToContinue() {
   this.emit("drain");
 }
 
-function drainHeadersIfObservable() {
-  if (this._implicitHeader === OriginalImplicitHeadFn && this.writeHead === OriginalWriteHeadFn) {
-    return;
-  }
-
-  this._implicitHeader();
-}
-
-function ServerResponse_finalDeprecated(chunk, encoding, callback) {
-  if ($isCallable(encoding)) {
-    callback = encoding;
-    encoding = undefined;
-  }
-  if (!$isCallable(callback)) {
-    callback = undefined;
-  }
-
-  if (this.destroyed || this.finished) {
-    if (chunk) {
-      emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END(), callback);
-    }
-    return false;
-  }
-  if (encoding && encoding !== "buffer") {
-    chunk = Buffer.from(chunk, encoding);
-  }
-  const req = this.req;
-
-  const shouldEmitClose = req && req.emit && !this.finished;
-  if (!this.headersSent) {
-    let data = this[firstWriteSymbol];
-    if (chunk) {
-      if (data) {
-        if (encoding) {
-          data = Buffer.from(data, encoding);
-        }
-
-        data = new Blob([data, chunk]);
-      } else {
-        data = chunk;
-      }
-    } else if (!data) {
-      data = undefined;
-    } else {
-      data = new Blob([data]);
-    }
-
-    this[firstWriteSymbol] = undefined;
-    this.finished = true;
-    this.headersSent = true; // https://github.com/oven-sh/bun/issues/3458
-    drainHeadersIfObservable.$call(this);
-    this[kDeprecatedReplySymbol](
-      new Response(data, {
-        headers: this.getHeaders(),
-        status: this.statusCode,
-        statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-      }),
-    );
-    if (shouldEmitClose) {
-      req.complete = true;
-      process.nextTick(emitRequestCloseNT, req);
-    }
-    callback?.();
-    return;
-  }
-
-  this.finished = true;
-  ensureReadableStreamController.$call(this, controller => {
-    if (chunk && encoding) {
-      chunk = Buffer.from(chunk, encoding);
-    }
-
-    let prom;
-    if (chunk) {
-      controller.write(chunk);
-      prom = controller.end();
-    } else {
-      prom = controller.end();
-    }
-
-    const handler = () => {
-      callback();
-      const deferred = this[deferredSymbol];
-      if (deferred) {
-        this[deferredSymbol] = undefined;
-        deferred();
-      }
-    };
-    if ($isPromise(prom)) prom.then(handler, handler);
-    else handler();
-  });
-}
-
-// ServerResponse.prototype._final = ServerResponse_finalDeprecated;
-
 OriginalWriteHeadFn = ServerResponse.prototype.writeHead;
 OriginalImplicitHeadFn = ServerResponse.prototype._implicitHeader;
 
@@ -4056,44 +3905,6 @@ function storeHTTPOptions(options) {
     validateBoolean(optimizeEmptyRequests, "options.optimizeEmptyRequests");
   }
   this[kOptimizeEmptyRequests] = optimizeEmptyRequests || false;
-}
-
-function ensureReadableStreamController(run) {
-  const thisController = this[controllerSymbol];
-  if (thisController) return run(thisController);
-  this.headersSent = true;
-  let firstWrite = this[firstWriteSymbol];
-  const old_run = this[runSymbol];
-  if (old_run) {
-    old_run.push(run);
-    return;
-  }
-  this[runSymbol] = [run];
-  this[kDeprecatedReplySymbol](
-    new Response(
-      new ReadableStream({
-        type: "direct",
-        pull: controller => {
-          this[controllerSymbol] = controller;
-          if (firstWrite) controller.write(firstWrite);
-          firstWrite = undefined;
-          for (let run of this[runSymbol]) {
-            run(controller);
-          }
-          if (!this.finished) {
-            const { promise, resolve } = $newPromiseCapability(GlobalPromise);
-            this[deferredSymbol] = resolve;
-            return promise;
-          }
-        },
-      }),
-      {
-        headers: this.getHeaders(),
-        status: this.statusCode,
-        statusText: this.statusMessage ?? STATUS_CODES[this.statusCode],
-      },
-    ),
-  );
 }
 
 export default {

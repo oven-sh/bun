@@ -308,7 +308,8 @@ function onClientHandshakeComplete(self, socket, verifyError) {
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
     const { checkServerIdentity } = self[bunTLSConnectOptions];
     if (!verifyError && !self.isSessionReused() && typeof checkServerIdentity === "function") {
-      const hostname = self.servername || self._host || "localhost";
+      const options = self[kConnectOptions];
+      const hostname = self.servername || options?.host || options?.socket?._host || self._host || "localhost";
       const cert = self.getPeerCertificate(true);
       if (cert) {
         verifyError = checkServerIdentity(hostname, cert);
@@ -413,7 +414,7 @@ const SocketHandlers: SocketHandler = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      socket.pause();
+      pauseForBackpressure(self, socket);
     }
   },
   drain(socket) {
@@ -429,6 +430,7 @@ const SocketHandlers: SocketHandler = {
         failWrite(self, res, callback);
       } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
+        unrefAfterDrain(self, socket);
         callback(null);
       } else {
         self._pendingData = null;
@@ -560,6 +562,30 @@ const SocketHandlers: SocketHandler = {
   },
   binaryType: "buffer",
 } as const;
+
+// push() (or an onread callback) said stop. Like node's readStop, a socket that
+// is not reading does not hold the loop (see Socket.prototype.pause); a write
+// awaiting drain still does, and unrefAfterDrain drops the hold once it completes.
+function pauseForBackpressure(self, handle) {
+  handle?.pause?.();
+  if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
+  self[kPausedUnref] = true;
+  if (!self[kwriteCallback]) handle?.unref?.();
+}
+
+// Reads are flowing again: give back the hold a pause dropped. Cleared even when
+// the user unref'd, so a later ref() is not undone by unrefAfterDrain.
+function restorePausedHold(self, handle) {
+  if (!self[kPausedUnref]) return;
+  self[kPausedUnref] = false;
+  if (!self[kUserUnrefed]) handle?.ref?.();
+}
+
+// The write that was holding the loop (_write) just drained; a socket whose
+// reads are over (peer FIN) or stopped is back at rest and lets go again.
+function unrefAfterDrain(self, handle) {
+  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed] && handle === self._handle) handle.unref?.();
+}
 
 function finishSocketEnd(self) {
   if (self[kended]) return;
@@ -730,7 +756,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      socket.pause();
+      pauseForBackpressure(self, socket);
     }
   },
   keylog(socket, line) {
@@ -1251,7 +1277,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) socket.pause();
+    if (!self.push(buffer)) pauseForBackpressure(self, socket);
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -1268,9 +1294,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
       } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
-        // The buffered write drained: if end() already unref'd (peer FIN) and _write
-        // re-ref'd for this pending flush, drop the ref again now nothing is in flight.
-        if (self[kended] && !self[kUserUnrefed] && socket === self._handle) socket.unref?.();
+        unrefAfterDrain(self, socket);
         callback(null);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
@@ -1707,7 +1731,7 @@ function Socket(options?) {
           if (self.destroyed) return;
           if (ret === false || self.isPaused()) {
             self[kOnreadTail] = kOnreadEmptyTail;
-            self._handle?.pause?.();
+            pauseForBackpressure(self, self._handle);
           }
           return;
         }
@@ -1738,7 +1762,7 @@ function Socket(options?) {
         if (ret === false || self.isPaused()) {
           const rest = buffer.subarray(offset);
           self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
-          self._handle?.pause?.();
+          pauseForBackpressure(self, self._handle);
           return;
         }
       }
@@ -1901,7 +1925,7 @@ Socket.prototype.connect = function connect(...args) {
     // A fd already adopted by the constructor is skipped here: createConnection()
     // constructs the Socket and then calls connect() with the same options, and
     // attaching the same fd twice would leak the first handle.
-    if (fd && this[kAdoptedFd] !== fd) {
+    if (fd != null && this[kAdoptedFd] !== fd) {
       this[kAdoptedFd] = fd;
       doConnect(this._handle, {
         data: this,
@@ -1932,9 +1956,9 @@ Socket.prototype.connect = function connect(...args) {
         // attached stays buffered instead of being emitted to nobody.
         if (!this.isPaused()) this.read(0);
       });
-      if (!fd) this.connecting = true;
+      if (fd == null) this.connecting = true;
     }
-    if (fd) {
+    if (fd != null) {
       return this;
     }
     if (
@@ -2326,6 +2350,7 @@ function drainOnreadTailNT(socket) {
     finishSocketEnd(socket);
   } else if (fromRead || !socket.isPaused()) {
     socket._handle?.resume?.();
+    restorePausedHold(socket, socket._handle);
   }
 }
 
@@ -2337,14 +2362,8 @@ Socket.prototype.resume = function resume() {
   if (!this.connecting && !drainOnreadTail(this)) {
     this._handle?.resume?.();
   }
-  // Restore the hold pause() removed - even while still connecting, so the
-  // pause-then-resume sequence is symmetric. Gated on the pause flag so a
-  // socket that was never paused (e.g. a wrapped duplex with no fd) is not
-  // newly pinned to the loop.
-  if (this[kPausedUnref] && !this[kUserUnrefed]) {
-    this._handle?.ref?.();
-    this[kPausedUnref] = false;
-  }
+  // Even while still connecting, so pause-then-resume stays symmetric.
+  restorePausedHold(this, this._handle);
   return ret;
 };
 
@@ -2449,13 +2468,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
 Socket.prototype.read = function read(size) {
   if (!this.connecting && !drainOnreadTail(this, true)) {
     this._handle?.resume?.();
-    // Restarting kernel reads makes the handle hold the loop open again;
-    // mirror resume()'s re-ref or a paused-then-read() socket waits for
-    // data without keeping the process alive.
-    if (this[kPausedUnref] && !this[kUserUnrefed]) {
-      this._handle?.ref?.();
-      this[kPausedUnref] = false;
-    }
+    restorePausedHold(this, this._handle);
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -2466,12 +2479,7 @@ Socket.prototype._read = function _read(size) {
     this.once("connect", () => this._read(size));
   } else if (!drainOnreadTail(this, true)) {
     socket?.resume?.();
-    // See read() above - the Readable machinery's pull path must also
-    // restore the handle's hold on the loop.
-    if (this[kPausedUnref] && !this[kUserUnrefed]) {
-      socket?.ref?.();
-      this[kPausedUnref] = false;
-    }
+    restorePausedHold(this, socket);
   }
 };
 
@@ -2523,6 +2531,9 @@ Object.defineProperty(Socket.prototype, "readyState", {
 
 Socket.prototype.ref = function ref() {
   this[kUserUnrefed] = false;
+  // An explicit ref() supersedes the hold a pause dropped on the user's behalf;
+  // unrefAfterDrain must not give it up again.
+  this[kPausedUnref] = false;
   const socket = this._handle;
   if (!socket) {
     this.once("connect", this.ref);
@@ -2843,10 +2854,9 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
-    // libuv holds the loop for a pending uv_write_t regardless of the handle's ref
-    // state; end() dropped ours on the peer's FIN. Re-ref while this buffered write
-    // waits for drain so the process does not exit with data unflushed.
-    if (this[kended] && !this[kUserUnrefed]) socket.ref?.();
+    // A pending write holds the loop even on a handle whose FIN/pause dropped
+    // its hold (libuv: the uv_write_t is active); unrefAfterDrain lets go again.
+    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed]) socket.ref?.();
   }
 };
 
@@ -3585,6 +3595,13 @@ Server.prototype.close = function close(callback) {
   if (this._handle) {
     if (typeof this._handle.stop === "function") {
       this._handle.stop(false);
+      // Released here, not on 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2434-L2437
+      const clusterHandle = this[kClusterHandle];
+      if (clusterHandle) {
+        this[kClusterHandle] = null;
+        this[kClusterUnixPath] = undefined;
+        clusterHandle.close();
+      }
     } else {
       this._handle.close();
     }
@@ -3647,7 +3664,7 @@ Server.prototype._emitCloseIfDrained = function _emitCloseIfDrained() {
 Server.prototype.address = function address() {
   const server = this._handle;
   if (server) {
-    const unix = server.unix;
+    const unix = server.unix || this[kClusterUnixPath];
     if (unix) {
       return unix;
     }
@@ -4205,7 +4222,8 @@ function listenInCluster(
     if (handle && typeof sharedFd === "number") {
       server[kClusterHandle] = handle;
       handle[kClusterOwner] = server;
-      server.once("close", closeClusterHandle.bind(null, handle));
+      // The primary owns the socket file; the adopted fd only needs to report it from address().
+      server[kClusterUnixPath] = path;
       try {
         server[kRealListen](
           undefined,
@@ -4225,6 +4243,7 @@ function listenInCluster(
         handle.adopted = true;
       } catch (err) {
         server[kClusterHandle] = null;
+        server[kClusterUnixPath] = undefined;
         handle[kClusterOwner] = null;
         handle.close();
         setTimeout(emitErrorNextTick, 1, server, err);
@@ -4236,12 +4255,9 @@ function listenInCluster(
 }
 
 const kClusterHandle = Symbol("kClusterHandle");
+const kClusterUnixPath = Symbol("kClusterUnixPath");
 const kClusterFauxListen = Symbol("kClusterFauxListen");
 const { kClusterOwner } = require("internal/shared");
-
-function closeClusterHandle(handle) {
-  handle.close();
-}
 
 Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
   this[kClusterHandle] = handle;
@@ -4287,16 +4303,8 @@ function onClusterConnection(err, clientHandle) {
     const remote = socket.remoteAddress;
     const t = isIP(remote);
     if (t && blockList.check(remote, `ipv${t}`)) {
-      const data = {
-        localAddress: socket.localAddress,
-        localPort: socket.localPort,
-        localFamily: socket.localFamily,
-        remoteAddress: remote,
-        remotePort: socket.remotePort,
-        remoteFamily: socket.remoteFamily,
-      };
+      // node's onconnection closes a blocked peer silently; 'drop' is for maxConnections only.
       socket.destroy();
-      self.emit("drop", data);
       return;
     }
   }
@@ -4308,9 +4316,6 @@ function onClusterConnection(err, clientHandle) {
     self.prependOnceListener("connection", connectionListener);
   }
   self.emit("connection", socket);
-  if (!self.pauseOnConnect) {
-    socket.resume();
-  }
 }
 
 function createServer(options, connectionListener) {

@@ -267,8 +267,10 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub(crate) config: ServerConfig,
     pub(crate) pending_requests: core::cell::Cell<usize>,
     /// Live HTTP connections (accepted, not yet closed or upgraded), fed by
-    /// the uWS filter in [`NewServer::listen`]. Part of the graceful-stop
-    /// drain predicate so idle keep-alive sockets hold the promise open.
+    /// the uWS filter in [`NewServer::listen`]. Any of them can still dispatch
+    /// a handler, so the wrapper stays `Strong` until this drains
+    /// ([`NewServer::is_drained`]); for Bun.serve it also holds the
+    /// graceful-stop promise open ([`NewServer::is_closed`]).
     pub(crate) active_connection_count: core::cell::Cell<u32>,
     /// Live `ServerWebSocket` count. Lives on the server (not the websocket
     /// context) so a reload's context swap cannot reset it, and sits in a
@@ -586,12 +588,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
-    /// Returns the wrapper while it is alive (`Strong` or `Weak`), or `None`
-    /// once `finalize()` has set `Finalized`. `Weak` means the wrapper cell is
-    /// still live (its WriteBarrier slots still root the handlers); only
-    /// `Finalized` means the slots are gone and the `config` shadows may point
-    /// at freed cells. Dispatch trampolines answer 503+close on `None`.
+    /// Returns the wrapper unless it has been finalized or its VM may no
+    /// longer run script. The wrapper's WriteBarrier slots are the only GC
+    /// root of the handler shadows (`config.on_*`, `on_clienterror`,
+    /// `on_connection`), which is why `deinit_if_we_can` keeps it `Strong`
+    /// until [`Self::is_drained`] — no listener, request, HTTP connection or
+    /// websocket left to reach a dispatch trampoline — rather than relying on
+    /// this check: a `Weak` `JsRef` is a bare `JSValue` and cannot tell a
+    /// collected-but-unswept wrapper from a live one. A VM whose script gate
+    /// has closed (a worker that called `process.exit()` or was asked to
+    /// terminate, still draining the current loop tick before its stop phase
+    /// closes the listener) must not have a request built for it either: uWS
+    /// requires every dispatched request to be answered or adopted, so
+    /// dispatch trampolines answer 503+close on `None`.
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
+        if !self.vm().script_allowed() {
+            return None;
+        }
         self.js_value.try_get()
     }
 }
@@ -924,11 +937,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
     ) {
-        // Same Finalized-only gate as the network trampolines. Unreachable
-        // today — the saved request's `pending_requests` increment keeps the
-        // wrapper `Strong`, so `finalize()` cannot run — but explicit so a
-        // future accounting bug 503s instead of dispatching with a stale
-        // handler shadow.
+        // Same gate as the network trampolines: the saved request's
+        // `pending_requests` increment keeps the wrapper `Strong` (so it is
+        // never `Finalized` here), but the VM's script gate can have closed
+        // while the bundle was being built.
         // SAFETY: `this` is the live server backref for this request.
         let Some(server_js) = unsafe { &*this }.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
@@ -1169,10 +1181,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
-            match &user_route.route.method {
-                server_config::RouteMethod::Any => None,
-                server_config::RouteMethod::Specific(m) => Some(*m),
-            },
+            user_route.route.method.specific(),
         ) else {
             return;
         };
@@ -1246,7 +1255,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // SAFETY: `this` is the live server backref registered as the uws
         // userdata; only one borrow derived from it is alive at a time.
-        if unsafe { &*this }.js_value_for_dispatch().is_none() {
+        let this_ref = unsafe { &*this };
+        if this_ref.js_value_for_dispatch().is_none() {
             server_body::respond_stopped_503(resp);
             return;
         }
@@ -1319,6 +1329,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
+        if node_http_response.is_null() {
+            // The request never reached the handler: an exception (in practice
+            // a termination request landing in the header conversion) unwound
+            // before the response object existed. Nothing adopted the response;
+            // answer it natively as above.
+            if !result.is_empty() && !result.is_termination_exception() {
+                // SAFETY: `vm` is the process-static VirtualMachine.
+                let _ = unsafe { (*vm).uncaught_exception(global, result, false) };
+            }
+            server_body::respond_stopped_503(resp);
+            // SAFETY: same `this`; balances `on_pending_request` above.
+            unsafe { (*this).on_static_request_complete() };
+            return;
+        }
+
         enum HttpResult {
             Rejection(JSValue),
             Exception(JSValue),
@@ -1342,6 +1367,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     needs_to_drain = false;
                     // SAFETY: `vm` is the process-static VirtualMachine.
                     unsafe { (*vm).drain_microtasks() };
+                    // The drain ran script: an exception it left (a termination
+                    // request landing in it) ends this dispatch like a throw
+                    // from the handler; nothing below may enter script over it.
+                    if global.has_exception() {
+                        break 'brk HttpResult::Exception(
+                            global.take_error(bun_jsc::JsError::Thrown),
+                        );
+                    }
                     status = promise.status();
                 }
 
@@ -1568,6 +1601,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.active_sockets_count() > 0
     }
 
+    /// What the `stop()` promise (node:http: the `'close'` event) and the
+    /// loop unref wait for. Bun.serve waits for open HTTP connections too;
+    /// node:http's `server.close()` reports closed without them (Node's own
+    /// `net.Server` waits for every connection — pre-existing divergence),
+    /// so there they only pin the wrapper via [`Self::is_drained`].
+    pub(crate) fn is_closed(&self) -> bool {
+        self.pending_requests.get() == 0
+            && !self.has_listener()
+            && !self.has_active_web_sockets()
+            && (self.config.is_node_http_server || !self.has_active_connections())
+    }
+
+    /// Nothing is left that can dispatch a handler: [`Self::is_closed`] and
+    /// no open HTTP connection. The wrapper may only go `Weak` from here on
+    /// (see [`Self::js_value_for_dispatch`]).
+    pub(crate) fn is_drained(&self) -> bool {
+        self.is_closed() && !self.has_active_connections()
+    }
+
     pub(crate) fn has_listener(&self) -> bool {
         self.listener.is_some() || (Self::HAS_H3 && self.h3_listener.is_some())
     }
@@ -1615,12 +1667,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
-        if self.vm().test_isolation_enabled {
-            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
-                    core::ptr::from_ref(self),
-                )));
-            }
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
+                core::ptr::from_ref(self),
+            )));
         }
 
         if Self::HAS_H3 {
@@ -1671,11 +1721,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             return;
         };
-        if abrupt
-            || (self.pending_requests.get() == 0
-                && !self.has_active_web_sockets()
-                && !self.has_active_connections())
-        {
+        if abrupt || self.is_closed() {
             self.unref();
         }
         // A graceful stop with work in flight keeps the ref (deinit_if_we_can
@@ -1716,7 +1762,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // `closeIdleConnections()`), and a connection whose response
             // completes after `close()` stays keep-alive until its timeout
             // reaps it — verified against Node v26.
-            if self.config.on_node_http_request.is_empty() {
+            if !self.config.is_node_http_server {
                 if let Some(app) = self.app {
                     self.deinit_running.set(true);
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -1813,10 +1859,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             matches!(self.js_value, jsc::JsRef::Finalized),
         );
 
-        if self.pending_requests.get() == 0
-            && !self.has_listener()
-            && !self.has_active_web_sockets()
-            && !self.has_active_connections()
+        let closed = self.is_closed();
+        if closed
             && !self
                 .flags
                 .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
@@ -1850,21 +1894,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 vm_ref,
             );
         }
-        if self.pending_requests.get() == 0
-            && !self.has_listener()
-            && !self.has_active_web_sockets()
-            && !self.has_active_connections()
-        {
-            // Make the wrapper collectible. Dispatch still works while it is
-            // `Weak` (its WriteBarrier slots still root the handlers); the
-            // `js_value_for_dispatch` gate only trips once the wrapper is
-            // actually finalized.
+        if closed {
+            self.unref();
+        }
+        if self.is_drained() {
+            // Nothing can dispatch a handler anymore, so the wrapper — the
+            // handlers' only GC root — may become collectible.
             self.js_value.downgrade();
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;
                 ws.handler.server = None;
             }
-            self.unref();
 
             // Detach DevServer. This is needed because there are aggressive
             // tests that check for DevServer memory soundness. Keeping the JS
@@ -2097,12 +2137,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // This should've already been handled in stop_listening; however, when
         // the JS VM terminates, it hypothetically might not call stop_listening.
         server.notify_inspector_server_stopped();
-        if server.vm().test_isolation_enabled {
-            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
-                    this.cast_const(),
-                )));
-            }
+        if let Some(handles) = crate::jsc_hooks::active_handles() {
+            handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
+                this.cast_const(),
+            )));
         }
 
         if Self::HAS_H3 {
@@ -2712,10 +2750,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        // If onNodeHTTPRequest is configured, it might be needed for Node.js
-        // compatibility layer for specific Node API routes, even if it's not
-        // the main "/*" handler.
-        if has_node_http {
+        // Idempotent, so re-running set_routes on reload() is fine.
+        if self.config.is_node_http_server {
             ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
         }
 
@@ -2960,16 +2996,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { (*this).set_routes() };
         }
 
-        // node:http's `server.close()` does not wait for connections; each
-        // upgraded/tunnelled socket is owned by its JS wrapper, so counting
-        // them here would keep the server ref'd after Node has handed them off.
-        if this_ref.config.on_node_http_request.is_empty() {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app)
-                .filter(Self::on_connection_filter, this.cast::<c_void>());
-        }
+        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        bun_opaque::opaque_deref_mut(app).filter(Self::on_connection_filter, this.cast::<c_void>());
 
-        if !this_ref.config.on_node_http_request.is_empty() {
+        if this_ref.config.is_node_http_server {
             // SAFETY: `this` is the live boxed server from `init()`; no other
             // borrow is live — `&mut` scoped to this call.
             unsafe { (*this).set_using_custom_expect_handler(true) };
@@ -2982,7 +3012,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // on the next access. So: hoist every config read into a local via a
         // short-lived `&*this` BEFORE the call, drop the borrow, call listen,
         // then re-derive fresh for each post-listen field access.
-        let mut host_buff = [0u8; 1025];
+
+        // Owns the bracket-stripped copy of an IPv6 literal hostname; `host`
+        // points into it, so it has to outlive the listen calls below.
+        let mut stripped_hostname: Option<bun_core::ZBox> = None;
         // Extract (discriminant, raw payload) and drop the `&*this` borrow at `;`.
         // The raw pointers reference `config.address`'s backing storage,
         // which the trampolines never touch (they only write `listener`/
@@ -3004,10 +3037,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             let bytes = existing.as_bytes();
                             if bytes.len() > 2 && bytes[0] == b'[' {
                                 // strip "[" and "]" from IPv6 literal
-                                let inner = &bytes[1..bytes.len() - 1];
-                                host_buff[..inner.len()].copy_from_slice(inner);
-                                host_buff[inner.len()] = 0;
-                                host = host_buff.as_ptr().cast::<c_char>();
+                                host = stripped_hostname
+                                    .insert(bun_core::ZBox::from_bytes(&bytes[1..bytes.len() - 1]))
+                                    .as_ptr();
                             } else {
                                 host = existing.as_ptr();
                             }
@@ -4221,26 +4253,17 @@ pub struct ServerAllConnectionsClosedTask {
 
 impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
+    /// A `server.stop()` whose all-closed notification will not run: drop the
+    /// promise handle with the box.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `schedule` queued.
+        drop(unsafe { bun_core::heap::take(this) });
+    }
 }
 
 impl ServerAllConnectionsClosedTask {
-    /// Use `ManagedTask::new_owned` (not `Task::init`) so a still-pending task
-    /// at process exit is freed by `EventLoop::deinit()`. Without this the
-    /// `Box` (and its `JSPromiseStrong`) leaks 24 bytes per `server.stop()`
-    /// that races `process.exit()`. `JSPromiseStrong`'s own `Drop` is already
-    /// a no-op past `is_shutting_down()` (see `bun_jsc::Strong::Impl::destroy`).
     pub(crate) fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
-        fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_event_loop::JsResult<()> {
-            // `this` is the unique owning pointer heap-allocated below
-            // in `schedule()`; `ManagedTask::new_owned` invokes this exactly once.
-            ServerAllConnectionsClosedTask::run_from_js_thread(this, jsc::VirtualMachine::get_mut())
-                .map_err(Into::into)
-        }
-        let ptr = bun_core::heap::into_raw(Box::new(this));
-        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
-            ptr,
-            call_erased,
-        ));
+        vm.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(this)));
     }
 
     /// Resolve the `server.stop()` promise
@@ -4250,10 +4273,7 @@ impl ServerAllConnectionsClosedTask {
     /// `this` must be the unique owning pointer heap-allocated in
     /// [`Self::schedule`]; ownership is reclaimed and `this` must not be used
     /// after this returns.
-    pub(crate) fn run_from_js_thread(
-        this: *mut Self,
-        vm: &mut jsc::VirtualMachine,
-    ) -> Result<(), jsc::JsTerminated> {
+    pub(crate) fn run_from_js_thread(this: *mut Self) -> JsResult<()> {
         httplog!("ServerAllConnectionsClosedTask runFromJSThread");
 
         // SAFETY: `this` was `heap::alloc`'d in `schedule()`; reclaim
@@ -4266,10 +4286,8 @@ impl ServerAllConnectionsClosedTask {
         let global_object: &jsc::JSGlobalObject = bun_opaque::opaque_deref(this.global_object);
         let _dispatch = this.tracker.dispatch(global_object);
 
-        if !vm.is_shutting_down() {
-            // `JSPromiseStrong`'s Drop runs when `this` falls out of scope.
-            this.promise.resolve(global_object, JSValue::UNDEFINED)?;
-        }
+        // `JSPromiseStrong`'s Drop runs when `this` falls out of scope.
+        this.promise.resolve(global_object, JSValue::UNDEFINED)?;
         Ok(())
     }
 }

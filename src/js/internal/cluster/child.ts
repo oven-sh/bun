@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
-const { kClusterOwner: owner_symbol } = require("internal/shared");
+const { kClusterOwner: owner_symbol, kInternalSendOptions } = require("internal/shared");
 
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
 const closeRawHandle = $newRustFunction("node_cluster_binding.rs", "clusterCloseHandle", 1);
@@ -18,7 +18,6 @@ let seq = 0;
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-const kInternalSendOptions = { __proto__: null, "$internal": true };
 
 function makeConnectionHandle(fd) {
   let closed = false;
@@ -65,11 +64,17 @@ cluster._setupWorker = function () {
     }
   });
 
+  // Like node (lib/internal/cluster/child.js: process.on('internalMessage', internal(worker, onmessage))),
+  // cluster dispatch is an ordinary 'internalMessage' listener. Natively framed traffic is re-emitted
+  // as that event by the binding below; externally framed NODE_CLUSTER sends already arrive as it.
   process.on("internalMessage", onmessage);
   onInternalMessage(worker, emitInternalMessage);
   send({ act: "online" });
 
   function emitInternalMessage(message, handle) {
+    // The native framing implies the channel; node's messages all carry cmd,
+    // and onmessage (plus user listeners) key on it.
+    message.cmd = "NODE_CLUSTER";
     if (message.act === "newconn" && typeof handle === "number" && handle >= 0) {
       handle = makeConnectionHandle(handle);
     }
@@ -77,12 +82,13 @@ cluster._setupWorker = function () {
   }
 
   function onmessage(message, handle) {
+    if (message === null || typeof message !== "object" || message.cmd !== "NODE_CLUSTER") return;
     const ack = message.ack;
     if (ack !== undefined) {
       const callback = callbacks.$get(ack);
       if (callback !== undefined) {
         callbacks.$delete(ack);
-        callback.$call(this, message, handle);
+        callback.$call(worker, message, handle);
         return;
       }
     }
@@ -167,16 +173,15 @@ function removeIndexesKey(indexesKey, index) {
 }
 
 function makeSharedHandle(fd) {
-  let closed = false;
+  let fdOpen = true;
   const handle = {
     sharedFd: fd,
     adopted: false,
     close(cb?) {
-      if (!closed) {
-        closed = true;
-        if (!handle.adopted) {
-          closeRawHandle(fd);
-        }
+      // A close() that ran while `adopted` was set leaves the fd to the adopter; a later release (adopted cleared) still closes it.
+      if (fdOpen && !handle.adopted) {
+        fdOpen = false;
+        closeRawHandle(fd);
       }
       if (typeof cb === "function") process.nextTick(cb);
     },
@@ -190,11 +195,15 @@ function shared(message, { handle, indexesKey, index }, cb) {
   // Monkey-patch the close() method so we can keep track of when it's
   // closed. Avoids resource leaks when the handle is short-lived.
   const close = handle.close;
+  let released = false;
 
   handle.close = function () {
-    send({ act: "close", key });
-    handles.delete(key);
-    removeIndexesKey(indexesKey, index);
+    if (!released) {
+      released = true;
+      send({ act: "close", key });
+      handles.delete(key);
+      removeIndexesKey(indexesKey, index);
+    }
     return close.$apply(handle, arguments);
   };
   $assert(handles.has(key) === false);

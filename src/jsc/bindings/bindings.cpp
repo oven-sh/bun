@@ -5179,12 +5179,17 @@ void JSC__VM__ensureTerminationExceptionPending(JSC::VM* arg0)
     JSC::VM& vm = *arg0;
     if (vm.hasPendingTerminationException())
         return;
+    // Called from Rust with no scope on the stack. Leaving the exception pending is this
+    // function's contract, so acknowledge it here; otherwise the next scope declared on this
+    // thread fails exception-check verification for a throw that was deliberate.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     if (!vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
         vm.notifyNeedTermination();
     if (vm.hasTerminationRequest())
         vm.throwTerminationException();
     else
         vm.traps().handleTraps(JSC::VMTraps::NeedTermination);
+    EXCEPTION_ASSERT(!scope.exception() || vm.hasPendingTerminationException());
 }
 
 // These may be called concurrently from another thread.

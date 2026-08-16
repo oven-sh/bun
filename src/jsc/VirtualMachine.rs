@@ -2827,6 +2827,13 @@ impl VirtualMachine {
                         self.pending_internal_promise_is_protected = true;
                         return Ok(p);
                     }
+                    // A stop landed while a preload was evaluating (worker
+                    // terminate()): `load_preloads` returned null and left the
+                    // TerminationException pending; do not enter the loader
+                    // with it on the VM.
+                    if !self.script_allowed() {
+                        return Err(crate::CrateError::JSTerminated);
+                    }
                 }
 
                 // Check if Module.runMain was patched.

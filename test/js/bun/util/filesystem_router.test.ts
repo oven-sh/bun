@@ -513,8 +513,9 @@ it("throws instead of aborting when a relative dir no longer fits in a path buff
     }
     // The joined path is cwd + separator + dir.
     const resolvingTo = (bytes: number) => Buffer.alloc(bytes - Buffer.byteLength(process.cwd()) - 1, "a").toString();
-    // Longer than MAX_PATH_BYTES on every platform.
-    const longDir = Buffer.alloc(100_000, "a").toString();
+    // Longer than MAX_PATH_BYTES on every platform, and than the 2 * MAX_PATH_BYTES
+    // buffer the constructor used to overflow (196604 bytes on Windows).
+    const longDir = Buffer.alloc(250_000, "a").toString();
     console.log(JSON.stringify({
       relative: construct(longDir),
       absolute: construct(path.parse(process.cwd()).root + longDir),

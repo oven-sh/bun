@@ -12,7 +12,6 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQue
 
 pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
-use bun_sql::shared::column_identifier::ColumnIdentifier;
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -1272,20 +1271,10 @@ impl<'a> Putter<'a> {
             };
         }
         self.count += 1;
-        cell.index = match &field.name_or_index {
-            // The indexed columns can be out of order.
-            ColumnIdentifier::Index(i) => *i,
-            _ => index,
-        };
-
         // TODO: when duplicate and we know the result will be an object
         // and not a .values() array, we can discard the data
         // immediately.
-        cell.is_indexed_column = match &field.name_or_index {
-            ColumnIdentifier::Duplicate => 2,
-            ColumnIdentifier::Index(_) => 1,
-            ColumnIdentifier::Name(_) => 0,
-        };
+        cell.set_column(index, &field.name_or_index);
         Ok(true)
     }
 

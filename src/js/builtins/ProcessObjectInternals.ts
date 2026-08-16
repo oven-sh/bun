@@ -448,7 +448,7 @@ export function windowsEnv(
   envMapList: Array<string>,
   editWindowsEnvVar: EditWindowsEnvVarCb,
   coerceForWrite,
-  resetTZ,
+  resetForDelete,
 ) {
   (internalEnv as any)[Bun.inspect.custom] = () => {
     let o = {};
@@ -541,10 +541,9 @@ export function windowsEnv(
         envMapList.splice(i, 1);
       }
       editWindowsEnvVar(k, null);
-      // Node's RealEnvStore::Delete resets Date caches for TZ; internalEnv
-      // is a plain object here so `delete internalEnv[k]` never reaches the
-      // TZ setter — fire the reset explicitly.
-      if (k === "TZ") resetTZ();
+      // internalEnv is a plain object here so `delete internalEnv[k]` never
+      // reaches the CustomAccessor — undo the native side effect explicitly.
+      if (k === "TZ" || k === "NODE_TLS_REJECT_UNAUTHORIZED") resetForDelete(k);
       return delete internalEnv[k];
     },
     defineProperty(_, p, attributes) {

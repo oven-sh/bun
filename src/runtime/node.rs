@@ -16,8 +16,9 @@ pub mod assert {
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
-    BlobOrStringOrBuffer, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
-    PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer, mode_from_js,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, FileSystemFlags, Flavor, PathLike,
+    PathOrBlob, PathOrFileDescriptor, StringObjects, StringOrBuffer, Valid, VectorArrayBuffer,
+    mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;

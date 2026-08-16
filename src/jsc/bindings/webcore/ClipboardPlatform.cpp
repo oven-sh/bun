@@ -84,18 +84,18 @@ extern "C" void Bun__Clipboard__requestComplete(JSC::JSGlobalObject* globalObjec
     adopted->complete(*globalObject, { representations, count }, message);
 }
 
-// JS thread, VM tearing down before the op came back: the completion is never
-// run, its captures are released here while their heap is alive, and the op is
-// cancelled. The off-thread side may still hold the (now inert) request.
+// JS thread, the job's completion is being dropped unrun (its VM has begun
+// stopping): the captures are released here while their heap is alive. A
+// write's off-thread reference may still hold the (now inert) request.
 extern "C" void Bun__Clipboard__requestAbandon(WebCore::ClipboardRequest* request)
 {
     Ref<WebCore::ClipboardRequest> adopted = adoptRef(*request);
     adopted->abandon();
 }
 
-// The job's off-thread reference: taken on the JS thread at schedule, dropped
-// wherever the job ends (ThreadSafeRefCounted, and by then the completion has
-// already been run or released on the JS thread).
+// A write's off-thread reference: taken on the JS thread at schedule, dropped
+// wherever the job's off-thread half ends up being dropped (ThreadSafeRefCounted;
+// by then the completion has been run or released on the JS thread).
 extern "C" void Bun__Clipboard__requestRef(WebCore::ClipboardRequest* request)
 {
     request->ref();

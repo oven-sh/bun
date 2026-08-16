@@ -23,12 +23,12 @@ struct ClipboardRepresentation {
     size_t length;
 };
 
-// One outstanding platform clipboard operation. The backend's job holds two
-// references: its JS side owns the completion (run or released on the JS
-// thread only), and its off-thread side keeps the cancel flag readable on the
-// pool thread for as long as the op can still run. Whichever side drops
-// last may be off the JS thread, hence ThreadSafeRefCounted; by then the
-// completion has already been run or released on the JS thread.
+// One outstanding platform clipboard operation. The backend job's JS side
+// owns the completion (run or released on the JS thread only); a write's
+// off-thread side holds a second reference so the pool thread can read the
+// cancel flag. Whichever reference drops last may be off the JS thread, hence
+// ThreadSafeRefCounted; by then the completion has already been run or
+// released on the JS thread.
 class ClipboardRequest : public ThreadSafeRefCounted<ClipboardRequest> {
 public:
     // Runs on the JS thread when done. Empty `representations` is not an error; `failureMessage`
@@ -49,17 +49,13 @@ public:
             completion(globalObject, representations, failureMessage);
     }
 
-    // JS thread, VM going away: release the promise and clipboard the
-    // completion captured while their heap is alive, and cancel, so an op the
-    // pool has not reached yet does nothing on the dead VM's behalf.
-    void abandon()
-    {
-        m_completion = {};
-        cancel();
-    }
+    // JS thread, the job came back to a VM that has begun stopping: release
+    // the promise and clipboard the completion captured while their heap is
+    // still alive, without running it.
+    void abandon() { m_completion = {}; }
 
-    // The backend job checks this before touching the platform, so a
-    // superseded write (whose AbortError must not be a lie) or an abandoned op
+    // The backend checks this under its write lock before touching the
+    // platform, so a superseded write (whose AbortError must not be a lie)
     // never reaches the OS clipboard.
     void cancel() { m_cancelled.store(true, std::memory_order_relaxed); }
     bool isCancelled() const { return m_cancelled.load(std::memory_order_relaxed); }

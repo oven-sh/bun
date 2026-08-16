@@ -1182,13 +1182,13 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     });
   });
 
-  // Regression: a VM torn down with an op in flight. Teardown releases the
-  // job's JS side (the request's promise must be released on that thread),
-  // cancels the op, and once the helper returns the job finds its VM gone and
-  // drops its own half on the pool thread. Any fault on that path aborts the
-  // child (debug assertions, ASAN) instead of exiting 0; the parent's own
-  // write afterwards shows the backend is still usable, and the orphaned
-  // write still removed its staged file.
+  // Regression: a VM torn down with an op in flight. The worker's teardown
+  // waits for the helper (released here right after terminate()), then drops
+  // the job's completion unrun, which has to release the request's promise on
+  // the worker's own thread. Any fault on that path aborts the child (debug
+  // assertions, ASAN) instead of exiting 0; the parent's own write afterwards
+  // shows the backend is still usable, and the orphaned write still removed
+  // its staged file.
   test("terminating a worker with a write in flight releases the op cleanly", async () => {
     const { result, log } = await runWithHelpers(
       {

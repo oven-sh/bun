@@ -6088,12 +6088,14 @@ impl ClipboardBlobReadHandler {
 }
 
 impl ReadBytesHandler for ClipboardBlobReadHandler {
-    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) {
+    unsafe fn on_read_bytes(this: *mut Self, result: ReadBytesResult) -> JsResult<()> {
         // SAFETY: `this` is the Box leaked in `Blob__implReadBytes`, delivered
         // here exactly once per the trait's contract; reclaiming it frees it on
         // return.
         let boxed = unsafe { bun_core::heap::take(this) };
+        // The C++ completion settles its promise itself and leaves nothing pending.
         boxed.finish(result);
+        Ok(())
     }
 }
 

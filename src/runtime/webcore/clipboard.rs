@@ -9,12 +9,12 @@ use core::ffi::c_void;
 use core::ptr;
 
 use bun_jsc::job::JsAffine;
-use bun_jsc::vm_handle::Borrow;
 use bun_jsc::{Completion, JSGlobalObject, Job, JobContext, JsThread};
 
 /// The job's JS side: the `WebCore::ClipboardRequest` reference that owns the
 /// completion. Consumed exactly once on the JS thread by `complete`/`fail`,
-/// or released there by `Drop` when the VM tears down first.
+/// or released there by `Drop` when the job comes back to a VM that has begun
+/// stopping and the carrier drops its completion unrun.
 struct RequestHandle(*mut c_void);
 
 // SAFETY: used and dropped only on the JS thread, which is what the job
@@ -72,20 +72,20 @@ impl RequestHandle {
 
 impl Drop for RequestHandle {
     fn drop(&mut self) {
-        // VM teardown released this side before the op came back.
         // SAFETY: JS thread; still the live reference (`complete`/`fail`
         // bypass Drop via `take`).
         unsafe { Bun__Clipboard__requestAbandon(self.0) };
     }
 }
 
-/// The job's off-thread reference to the same request: keeps the cancel flag
-/// readable on the pool thread however long the op waits, independent of the
-/// JS side, which teardown may release first.
+/// A write's own reference to its request, so the pool thread can read the
+/// supersession flag without touching the JS-affine side.
 struct CancelProbe(*mut c_void);
 
-// SAFETY: the request is ThreadSafeRefCounted and the flag is atomic; the
-// JS-affine completion is only ever touched through `RequestHandle`.
+// SAFETY: holds no VM or JS state, only a ThreadSafeRefCounted request whose
+// flag is atomic (its JS-affine completion is touched solely through
+// `RequestHandle`, on the JS thread); it crosses threads inside the `Job`,
+// which holds the VM's ticket for the trip.
 unsafe impl Send for CancelProbe {}
 
 impl CancelProbe {
@@ -177,7 +177,10 @@ impl Mime {
 enum Op {
     ReadText,
     Read,
-    Write(Vec<(Mime, Vec<u8>)>),
+    Write {
+        items: Vec<(Mime, Vec<u8>)>,
+        probe: CancelProbe,
+    },
 }
 
 enum Outcome {
@@ -186,11 +189,9 @@ enum Outcome {
     Failed(Unavailable),
 }
 
-/// The job's off-thread side: owned bytes plus the cancel probe.
 struct ClipboardOp {
     op: Op,
     outcome: Option<Outcome>,
-    probe: CancelProbe,
 }
 
 /// Held across a write's cancel check and platform transaction. A write()
@@ -203,8 +204,6 @@ static WRITE_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 
 fn write(items: &[(Mime, Vec<u8>)], probe: &CancelProbe) -> Outcome {
     let _serialized = WRITE_LOCK.lock_guard();
-    // Superseded (its promise already rejected) or abandoned by a VM
-    // tearing down; either way the result goes nowhere.
     if probe.is_cancelled() {
         return Outcome::Representations(Vec::new());
     }
@@ -221,11 +220,9 @@ impl JobContext for ClipboardJob {
     type OffThread = ClipboardOp;
     type Js = RequestHandle;
 
-    fn run(this: &mut ClipboardOp, _: &Borrow, done: Completion<Self>) -> Option<Completion<Self>> {
+    fn run(this: &mut ClipboardOp, done: Completion<Self>) -> Option<Completion<Self>> {
         this.outcome = Some(match &this.op {
-            Op::Write(items) => write(items, &this.probe),
-            // Abandoned by a VM tearing down: nothing will see the result.
-            _ if this.probe.is_cancelled() => Outcome::Representations(Vec::new()),
+            Op::Write { items, probe } => write(items, probe),
             Op::ReadText => match platform::read_type(Mime::TextPlain) {
                 Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
                 Ok(None) => Outcome::Representations(Vec::new()),
@@ -250,12 +247,13 @@ impl JobContext for ClipboardJob {
 }
 
 fn schedule(global: &JSGlobalObject, op: Op, request: RequestHandle) {
-    let off = ClipboardOp {
-        op,
-        outcome: None,
-        probe: CancelProbe::new(request.0),
-    };
+    let off = ClipboardOp { op, outcome: None };
     Job::<ClipboardJob>::schedule(&global.js_thread(), off, request);
+}
+
+fn schedule_write(global: &JSGlobalObject, items: Vec<(Mime, Vec<u8>)>, request: RequestHandle) {
+    let probe = CancelProbe::new(request.0);
+    schedule(global, Op::Write { items, probe }, request);
 }
 
 /// # Safety
@@ -313,9 +311,9 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWriteText(
 ) {
     // SAFETY: forwarded from the caller's contract.
     let bytes = unsafe { copy_bytes(text, len) };
-    schedule(
+    schedule_write(
         global,
-        Op::Write(vec![(Mime::TextPlain, bytes)]),
+        vec![(Mime::TextPlain, bytes)],
         RequestHandle(request),
     );
 }
@@ -352,7 +350,7 @@ pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
             items.push((mime, bytes));
         }
     }
-    schedule(global, Op::Write(items), request);
+    schedule_write(global, items, request);
 }
 
 /// Why the platform clipboard is unreachable; carries the message the

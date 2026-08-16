@@ -7,7 +7,7 @@ use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
+use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile, PackageIDSlice};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
     Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
@@ -52,14 +52,14 @@ impl Default for Tree {
 pub type Id = u32;
 
 const EXTERNAL_SIZE: usize = core::mem::size_of::<Id>()
-    + core::mem::size_of::<PackageID>()
+    + core::mem::size_of::<DependencyID>()
     + core::mem::size_of::<Id>()
     + core::mem::size_of::<DependencyIDSlice>();
 
 pub(crate) type External = [u8; EXTERNAL_SIZE];
 pub type List = Vec<Tree>;
 
-pub(crate) const ROOT_DEP_ID: DependencyID = invalid_package_id - 1;
+pub(crate) const ROOT_DEP_ID: DependencyID = invalid_dependency_id - 1;
 pub(crate) const INVALID_ID: Id = Id::MAX;
 
 impl Tree {
@@ -427,7 +427,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) list: MultiArrayList<BuilderEntry>,
     pub(crate) resolutions: &'a mut [PackageID],
     pub(crate) dependencies: &'a [Dependency],
-    pub(crate) resolution_lists: &'a [DependencyIDSlice],
+    pub(crate) resolution_lists: &'a [PackageIDSlice],
     pub(crate) queue: TreeFiller,
     pub(crate) log: &'a mut bun_ast::Log,
     /// Stored as `ParentRef` (raw
@@ -948,7 +948,7 @@ impl Tree {
         hoist_root_id: Id,
         package_id: PackageID,
         input_dep_id: DependencyID,
-        input_dep_range: DependencyIDSlice,
+        input_dep_range: PackageIDSlice,
         builder: &mut Builder<'_, METHOD>,
     ) -> HoistDependencyResult {
         // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.

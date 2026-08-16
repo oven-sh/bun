@@ -9,7 +9,7 @@ use bun_semver::{SlicedString, String as SemverString};
 
 use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
 use crate::dependency;
-use crate::lockfile::{DependencyIDSlice, DependencySlice};
+use crate::lockfile::{DependencySlice, PackageIDSlice};
 use crate::npm;
 use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PackageNameHash, Resolution, invalid_package_id};
@@ -301,7 +301,7 @@ impl PackageManager {
 
     pub(crate) fn verify_resolutions(&mut self, log_level: LogLevel) {
         let lockfile = &self.lockfile;
-        let resolutions_lists: &[DependencyIDSlice] = lockfile.packages.items_resolutions();
+        let resolutions_lists: &[PackageIDSlice] = lockfile.packages.items_resolutions();
         let dependency_lists: &[DependencySlice] = lockfile.packages.items_dependencies();
         let pkg_resolutions = lockfile.packages.items_resolution();
         let dependencies_buffer = lockfile.buffers.dependencies.as_slice();

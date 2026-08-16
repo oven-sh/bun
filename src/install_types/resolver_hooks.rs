@@ -1288,7 +1288,7 @@ impl Features {
 
 #[derive(Default, Clone, Copy)]
 pub struct TaskCallbackContext {
-    pub root_request_id: u32,
+    pub root_request_id: PackageID,
 }
 
 /// Opaque

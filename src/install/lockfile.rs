@@ -201,7 +201,7 @@ pub struct Lockfile {
     /// session-appended").
     ///
     /// Runtime-only — never serialised.
-    pub(crate) loaded_package_count: PackageID,
+    pub(crate) loaded_package_count: u32,
 
     /// `bit[id] == true` ⇔ package `id` was appended for a dependency whose
     /// version range was an exact `=X.Y.Z` (i.e. the user — root or workspace
@@ -1354,7 +1354,7 @@ impl Lockfile {
 #[derive(Clone, Copy)]
 pub struct PendingResolution {
     pub(crate) old_resolution: PackageID,
-    pub(crate) resolve_id: PackageID,
+    pub(crate) resolve_id: DependencyID,
 }
 
 pub(crate) type PendingResolutions = Vec<PendingResolution>;
@@ -1995,7 +1995,7 @@ impl Lockfile {
     /// migration) before any manifest-driven `append_package`.
     #[inline]
     pub(crate) fn mark_loaded_packages(&mut self) {
-        self.loaded_package_count = self.packages.len() as PackageID;
+        self.loaded_package_count = self.packages.len() as u32;
     }
 
     /// Record that package `id` was appended via an exact-version dependency

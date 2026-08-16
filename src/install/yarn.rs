@@ -1182,7 +1182,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     this.packages.items_dependencies_mut()[0] =
         lockfile::DependencySlice::new(0, actual_root_dep_count);
     this.packages.items_resolutions_mut()[0] =
-        lockfile::DependencyIDSlice::new(0, actual_root_dep_count);
+        lockfile::PackageIDSlice::new(0, actual_root_dep_count);
 
     dependencies_buf = &mut dependencies_buf[actual_root_dep_count as usize..];
     resolutions_buf = &mut resolutions_buf[actual_root_dep_count as usize..];
@@ -1273,11 +1273,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             );
         let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
         let res_len = (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
-        this.packages.items_resolutions_mut()[package_id as usize] =
-            lockfile::DependencyIDSlice::new(
-                u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
-                u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
-            );
+        this.packages.items_resolutions_mut()[package_id as usize] = lockfile::PackageIDSlice::new(
+            u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
+            u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
+        );
     }
 
     let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
@@ -1670,7 +1669,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         root_deps_off,
         u32::try_from(root_dependencies.len()).expect("int cast"),
     );
-    this.packages.items_resolutions_mut()[0] = lockfile::DependencyIDSlice::new(
+    this.packages.items_resolutions_mut()[0] = lockfile::PackageIDSlice::new(
         root_resolutions_off,
         u32::try_from(root_dependencies.len()).expect("int cast"),
     );
@@ -1898,7 +1897,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             lockfile::DependencySlice::new(deps_off, dep_count);
 
         this.packages.items_resolutions_mut()[package_id as usize] =
-            lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
+            lockfile::PackageIDSlice::new(resolutions_off, dep_count);
     }
 
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as

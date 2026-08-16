@@ -20,8 +20,8 @@ use bun_bundler::options::{self as bundler_options, OutputFile, SourceMapOption}
 use bun_bundler::output_file::Index as OutputFileIndex;
 
 use bun_collections::{AutoBitSet, StringArrayHashMap};
+use bun_core::Output;
 use bun_core::String as BunString;
-use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -75,12 +75,12 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 
     if ctx.args.entry_points.len() > 1 {
         bun_core::err_generic!("bun build --app only accepts one entrypoint");
-        Global::crash();
+        return Err(crate::Error::BakeBuildFailed);
     }
 
     if ctx.debug.hot_reload != HotReload::None {
         bun_core::err_generic!("Instead of using --watch, use 'bun run'");
-        Global::crash();
+        return Err(crate::Error::BakeBuildFailed);
     }
 
     let mut cwd_buf = PathBuffer::uninit();
@@ -88,7 +88,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         Ok(cwd) => cwd.as_bytes(),
         Err(err) => {
             Output::err(err, "Could not query current working directory", ());
-            Global::crash();
+            return Err(crate::Error::BakeBuildFailed);
         }
     };
     // Note: reshaped for borrowck — clone the cwd slice so the PathBuffer
@@ -187,9 +187,10 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         }
         MacroOptions::Unspecified => {}
     }
-    if vm.transpiler.configure_defines().is_err() {
-        fail_with_build_error(vm);
-    }
+    // The errors are in `ctx.log`, which `Cli::start` prints.
+    vm.transpiler
+        .configure_defines()
+        .map_err(|_| crate::Error::BakeBuildFailed)?;
     // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
@@ -230,20 +231,6 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     }
     vm.on_exit();
     vm.global_exit()
-}
-
-/// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
-/// `bun_runtime → bun (binary)` dep cycle (PORTING.md §Forbidden: dep-cycle
-/// fixes via fn-ptr hooks — move/port the code instead).
-#[cold]
-#[inline(never)]
-fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
-    // `vm.log` is the process-lifetime ctx.log set in build_command;
-    // `log_ref()` is the safe accessor encapsulating the NonNull deref.
-    if let Some(log) = vm.log_ref() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-    }
-    Global::exit(1);
 }
 
 fn write_sourcemap_to_disk(
@@ -316,7 +303,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                          TODO: insert a link to `bun.com/docs`",
                         (),
                     );
-                    Global::crash();
+                    return Err(crate::Error::BakeBuildFailed);
                 }
             }
 
@@ -325,7 +312,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 "could not resolve application config file '{}'",
                 (BStr::new(&unresolved_config_entry_point),),
             );
-            Global::crash();
+            return Err(crate::Error::BakeBuildFailed);
         }
     };
 
@@ -514,7 +501,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             let _ = server_transpiler
                 .log()
                 .print(std::ptr::from_mut(Output::error_writer()));
-            Global::crash();
+            return Err(crate::Error::BakeBuildFailed);
         }
     };
 
@@ -869,7 +856,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                     pt.input_file(server_file).abs_path()
                 ))
             );
-            Global::crash();
+            return Err(crate::Error::BakeBuildFailed);
         };
 
         let server_param_func = if router.dynamic_routes.count() > 0 {
@@ -895,7 +882,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                             pt.input_file(server_file).abs_path()
                         ))
                     );
-                    Global::crash();
+                    return Err(crate::Error::BakeBuildFailed);
                 }
             }
         } else {
@@ -1204,8 +1191,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     Ok(())
 }
 
-/// unsafe function, must be run outside of the event loop
-/// quits the process on exception
+/// Must be run outside of the event loop; failures are returned as `JSError`.
 fn load_module(
     vm: *mut VirtualMachine,
     global: &JSGlobalObject,
@@ -1232,9 +1218,10 @@ fn load_module(
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    if vm_ref.event_loop_mut().drain_microtasks().is_err() {
-        Global::crash();
-    }
+    vm_ref
+        .event_loop_mut()
+        .drain_microtasks()
+        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
     let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
     match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),

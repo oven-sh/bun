@@ -218,7 +218,7 @@ pub enum Error {
     MissingPackageJSON,
     #[error("InstallFailed")]
     InstallFailed,
-    /// Already reported; `bake::production::build_command` exits 1 through the build VM.
+    /// `bun build --app` already reported the failure; like `InstallFailed`, the handler only exits 1.
     #[error("BakeBuildFailed")]
     BakeBuildFailed,
     #[error("InvalidPackageJSON")]

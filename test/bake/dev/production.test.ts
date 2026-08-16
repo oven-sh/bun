@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
 
@@ -394,20 +394,22 @@ export default function Docs() {
     }
   });
 
-  // The failure is reported with the directory's path and, like a build whose page throws, the
-  // process exits through the build VM: the config's 'exit' handler runs and, with
-  // BUN_DESTRUCT_VM_ON_EXIT set, the VM is torn down before the exit code is returned.
-  describe.concurrent("output directory that cannot be opened", () => {
+  // A failure the build reports itself is returned rather than exited on: once the config has been
+  // loaded, build_command exits through the build VM like it does for a build that throws (the
+  // config's 'exit' handler runs; with BUN_DESTRUCT_VM_ON_EXIT set the VM is torn down first), and
+  // before that the error goes back to the CLI, which must not print it as an internal error.
+  describe.concurrent("failures reported by the build", () => {
+    const config = `
+      process.on("exit", code => console.log("exit event: " + code));
+      export default { app: { framework: "react" } };
+    `;
     const app = {
-      "src/index.tsx": `
-        process.on("exit", code => console.log("exit event: " + code));
-        export default { app: { framework: "react" } };
-      `,
+      "src/index.tsx": config,
       "pages/index.tsx": `export default function IndexPage() { return <p>index</p>; }`,
     };
 
-    async function build(dir: string) {
-      const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+    async function build(dir: string, ...entryPoints: string[]) {
+      const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ${entryPoints}`
         .cwd(dir)
         .env({ ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" })
         .quiet()
@@ -415,7 +417,7 @@ export default function Docs() {
       return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
     }
 
-    // Each case bundles a react app, which on a debug build takes most of the default timeout;
+    // The dist cases bundle a react app, which on a debug build takes most of the default timeout;
     // this is the budget bake-harness gives its production builds.
     const timeout = 30_000 * WAIT_MULTIPLIER;
 
@@ -427,7 +429,7 @@ export default function Docs() {
           "dist": "a file in the way of the output directory",
         });
 
-        const { exitCode, stdout, stderr } = await build(dir);
+        const { exitCode, stdout, stderr } = await build(dir, "./src/index.tsx");
         expect(stderr).toContain(
           `ENOTDIR: Not a directory: could not open output directory "${path.join(dir, "dist")}"`,
         );
@@ -444,7 +446,7 @@ export default function Docs() {
         const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-dangling-symlink", app);
         symlinkSync("does-not-exist", path.join(dir, "dist"));
 
-        const { exitCode, stdout, stderr } = await build(dir);
+        const { exitCode, stdout, stderr } = await build(dir, "./src/index.tsx");
         expect(stderr).toContain(
           `ENOENT: No such file or directory: could not open output directory "${path.join(dir, "dist")}"`,
         );
@@ -453,6 +455,26 @@ export default function Docs() {
       },
       timeout,
     );
+
+    test("framework imports that do not resolve", async () => {
+      // No react packages are installed here.
+      using dir = tempDir("bake-production-framework-unresolved", { "app.ts": config });
+
+      const { exitCode, stdout, stderr } = await build(String(dir), "./app.ts");
+      expect(stderr).toContain("error: Failed to resolve all imports required by the framework");
+      expect(stdout).toBe("exit event: 1\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test("more than one entry point", async () => {
+      using dir = tempDir("bake-production-two-entry-points", { "app.ts": config, "other.ts": config });
+
+      const { exitCode, stdout, stderr } = await build(String(dir), "./app.ts", "./other.ts");
+      expect(stderr).toContain("error: bun build --app only accepts one entrypoint");
+      expect(stderr).not.toContain("BakeBuildFailed");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
   });
 
   test("client-side component with default import should work", async () => {

@@ -208,9 +208,8 @@ pub fn make_path_with<'a, T: PathChar, E>(
         return Ok(());
     };
     // A component that reports `NotFound` twice with no `Created` in between
-    // can never succeed (a dangling symlink in the path, or Windows
-    // STATUS_OBJECT_NAME_INVALID surfacing as ENOENT while the parent
-    // EEXISTs); return its error instead of ping-ponging forever (#39357).
+    // can never succeed (dangling symlink, or Windows OBJECT_NAME_INVALID
+    // surfacing as ENOENT); abort instead of ping-ponging forever (#39357).
     let mut last_not_found: Option<usize> = None;
     loop {
         match mkdir(comp.path)? {
@@ -382,8 +381,7 @@ mod tests {
 
     #[test]
     fn make_path_terminates_on_uncreatable_component() {
-        // `x` always reports NotFound while its parent `dangling` EEXISTs
-        // (dangling symlink, or invalid name on Windows). The walk must
+        // `x` always reports NotFound while its parent EEXISTs; the walk must
         // return the error instead of ping-ponging Exists<->NotFound forever.
         let it = ComponentIterator::init(&b"/t/dangling/x"[..], PathFormat::Posix).unwrap();
         let mut calls = 0usize;

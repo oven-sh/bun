@@ -64,23 +64,6 @@ protected:
     DECLARE_DEFAULT_FINISH_CREATION;
 };
 
-class JSPerformanceObserverEntryListOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, PerformanceObserverEntryList*)
-{
-    static NeverDestroyed<JSPerformanceObserverEntryListOwner> owner;
-    return &owner.get();
-}
-
-inline void* wrapperKey(PerformanceObserverEntryList* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceObserverEntryList&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserverEntryList* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceObserverEntryList>&&);

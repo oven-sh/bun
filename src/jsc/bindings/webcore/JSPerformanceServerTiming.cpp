@@ -248,21 +248,6 @@ void JSPerformanceServerTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSPerformanceServerTimingOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSPerformanceServerTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsPerformanceServerTiming = static_cast<JSPerformanceServerTiming*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, jsPerformanceServerTiming->protectedWrapped().ptr(), jsPerformanceServerTiming);
-}
-
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable : 4483)

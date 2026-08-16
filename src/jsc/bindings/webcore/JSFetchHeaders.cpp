@@ -710,14 +710,6 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     RELEASE_AND_RETURN(throwScope, obj);
 }
 
-bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
 template<typename Visitor>
 void JSFetchHeaders::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -728,13 +720,6 @@ void JSFetchHeaders::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSFetchHeaders);
-
-void JSFetchHeadersOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsFetchHeaders = static_cast<JSFetchHeaders*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsFetchHeaders->wrapped(), jsFetchHeaders);
-}
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)

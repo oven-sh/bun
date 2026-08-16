@@ -48,18 +48,6 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-class JSCookieOwner final : public JSC::WeakHandleOwner {
-public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
-    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
-};
-
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Cookie*)
-{
-    static NeverDestroyed<JSCookieOwner> owner;
-    return &owner.get();
-}
-
 inline void* wrapperKey(Cookie* wrappableObject)
 {
     return wrappableObject;

@@ -645,21 +645,6 @@ void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSCookieMapOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSCookieMapOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsCookieMap = static_cast<JSCookieMap*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsCookieMap->wrapped(), jsCookieMap);
-}
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
 {
     return createWrapper<CookieMap>(globalObject, WTF::move(impl));

@@ -774,21 +774,6 @@ void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSURLSearchParamsOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSURLSearchParamsOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsURLSearchParams = static_cast<JSURLSearchParams*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsURLSearchParams->wrapped(), jsURLSearchParams);
-}
-
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<URLSearchParams>&& impl)
 {
     return createWrapper<URLSearchParams>(globalObject, WTF::move(impl));

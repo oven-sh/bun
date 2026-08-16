@@ -67,13 +67,12 @@ pub(crate) extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 #[unsafe(export_name = "Bun__Process__exit")]
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
+    vm.exit_handler.exit_code = code;
     if let Some(worker) = vm.worker_ref() {
-        // This branch returns, so a later call can follow; the stop request's code wins.
-        if worker.exit() {
-            vm.exit_handler.exit_code = code;
-        }
+        // @190n: we may need to use requestTerminate or throwTerminationException
+        // instead to terminate the worker sooner
+        worker.exit();
     } else {
-        vm.exit_handler.exit_code = code;
         // A watch-reload kill-signal handler may call process.exit; node restarts the child
         // regardless. `process.exit()` must never return control to JS, so replace the process
         // here instead of unwinding — the 'exit' event has already been dispatched by the caller.

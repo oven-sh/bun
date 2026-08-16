@@ -898,17 +898,6 @@ impl VirtualMachine {
         self.handle.stop();
     }
 
-    /// A worker stopping by its own script's decision (`process.exit()`, an
-    /// uncaught error): what [`forbid_script`](Self::forbid_script) sets at
-    /// teardown, without the registry teardown that waits for the stack to
-    /// unwind. JSC's own microtask checkpoints consult only its flag, and the
-    /// caller's `notify_need_termination` runs one (it releases the API lock to
-    /// fire the trap), so the flag has to be set first.
-    pub fn stop_script(&self) {
-        self.handle.stop();
-        self.jsc_vm().set_execution_forbidden(true);
-    }
-
     /// Which embedded loop is current (`event_loop` points at the regular loop
     /// except while a macro runs). Off-thread completions carry this so they
     /// land on the loop that was current when their work started.

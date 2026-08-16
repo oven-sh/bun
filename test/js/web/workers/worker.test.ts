@@ -455,9 +455,9 @@ describe("web worker", () => {
       w.onmessage = () => received++;
       // Poll until the flood reaches us (worker startup outlasts a fixed turn
       // count under debug/ASAN), then prove timers keep interleaving with it.
-      const deadline = Date.now() + (isDebug || isASAN ? 60_000 : 8_000);
+      const deadline = performance.now() + (isDebug || isASAN ? 60_000 : 8_000);
       while (received === 0) {
-        if (Date.now() > deadline) throw new Error("timed out waiting for the first flooded message");
+        if (performance.now() > deadline) throw new Error("timed out waiting for the first flooded message");
         await new Promise<void>(r => setTimeout(r, 10));
       }
       const before = received;

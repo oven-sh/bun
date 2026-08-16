@@ -188,6 +188,45 @@ tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }
 
 tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
 
+// Lazy option types (async only)
+{
+  // valid: lazy usable with async spawn
+  const p1 = Bun.spawn(["echo", "hello"], {
+    stdout: "pipe",
+    stderr: "pipe",
+    lazy: true,
+  });
+  tsd.expectType(p1.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+}
+
+{
+  // valid: lazy false is also allowed
+  const p2 = Bun.spawn(["echo", "hello"], {
+    stdout: "pipe",
+    stderr: "pipe",
+    lazy: false,
+  });
+  tsd.expectType(p2.stderr).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+}
+
+{
+  // invalid: lazy is not supported in spawnSync
+  Bun.spawnSync(["echo", "hello"], {
+    stdout: "pipe",
+    stderr: "pipe",
+    // @ts-expect-error lazy applies only to async spawn
+    lazy: true,
+  });
+}
+
+{
+  // invalid: lazy is not supported in spawnSync (object overload)
+  // prettier-ignore
+  // @ts-expect-error lazy applies to async spawn
+  Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
+  });
+}
+
 // An undefined stdout/stderr option means that slot's default, which differs between the two slots
 // of Bun.spawn: stdout defaults to "pipe", stderr to "inherit" (so proc.stderr is undefined).
 // Bun.spawnSync defaults both to "pipe".
@@ -262,42 +301,3 @@ tsd.expectType<Bun.Spawn.ReadableToIO<undefined, "inherit">>().is<undefined>();
 tsd
   .expectType<Bun.Spawn.ReadableToIO<"pipe" | undefined, "inherit">>()
   .is<ReadableStream<Uint8Array<ArrayBuffer>> | undefined>();
-
-// Lazy option types (async only)
-{
-  // valid: lazy usable with async spawn
-  const p1 = Bun.spawn(["echo", "hello"], {
-    stdout: "pipe",
-    stderr: "pipe",
-    lazy: true,
-  });
-  tsd.expectType(p1.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
-}
-
-{
-  // valid: lazy false is also allowed
-  const p2 = Bun.spawn(["echo", "hello"], {
-    stdout: "pipe",
-    stderr: "pipe",
-    lazy: false,
-  });
-  tsd.expectType(p2.stderr).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
-}
-
-{
-  // invalid: lazy is not supported in spawnSync
-  Bun.spawnSync(["echo", "hello"], {
-    stdout: "pipe",
-    stderr: "pipe",
-    // @ts-expect-error lazy applies only to async spawn
-    lazy: true,
-  });
-}
-
-{
-  // invalid: lazy is not supported in spawnSync (object overload)
-  // prettier-ignore
-  // @ts-expect-error lazy applies to async spawn
-  Bun.spawnSync({ cmd: ["echo", "hello"], stdout: "pipe", stderr: "pipe", lazy: true,
-  });
-}

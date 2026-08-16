@@ -196,8 +196,6 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
-    ///
-    /// `framework_view` is `self.as_bundler_view()`, borrowed for the transpiler's lifetime.
     pub(crate) fn init_transpiler<'a>(
         &self,
         arena: &'a bun_alloc::Arena,
@@ -458,8 +456,7 @@ impl Framework {
     }
 }
 
-/// A `Transpiler` built in place by `Framework::init_transpiler` (once configured
-/// it points into its own fields), or nothing yet; drops whichever it holds.
+/// In-place home of a `Transpiler` (configured, it points into its own fields); drops it if filled.
 pub(crate) struct TranspilerSlot<'a> {
     transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
     initialized: bool,

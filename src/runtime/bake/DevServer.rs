@@ -139,8 +139,7 @@ impl DevServer {
     pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         self.ssr_transpiler.get_mut()
     }
-    /// Without a separate SSR graph this is the server transpiler, the alias
-    /// `BundleV2` would set up on its own and never dereferences.
+    /// Falls back to the server transpiler, which the bundler never dereferences as SSR.
     #[inline]
     fn ssr_transpiler_ptr_for_bundle(&mut self) -> *mut Transpiler<'static> {
         if self.ssr_transpiler.is_initialized() {
@@ -486,9 +485,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .map(|sc| sc.separate_ssr_graph)
         .unwrap_or(false);
 
-    // Field by field because the watcher needs the server's address first and the
-    // ~15 KiB struct should not be built on the stack (see `Fallback::new_boxed`).
-    // Nothing fallible may run between the first write and `assume_init()`.
+    // Field by field: the watcher needs the address first, and ~15 KiB is too big for the stack.
     use ::core::mem::MaybeUninit;
     use ::core::ptr::addr_of_mut;
 

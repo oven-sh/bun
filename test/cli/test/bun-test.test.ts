@@ -903,9 +903,7 @@ describe("bun test", () => {
         },
       });
       const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
-      expect(annotations).toEqual([
-        `::error title=error: a beforeEach/afterEach hook timed out for test "never starts"::`,
-      ]);
+      expect(annotations).toEqual([`::error title=error: a hook timed out for test "never starts"::`]);
     });
   });
   describe(".each", () => {

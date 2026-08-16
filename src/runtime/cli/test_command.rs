@@ -1042,7 +1042,7 @@ impl CommandLineReporter {
                 | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
                     if Output::is_github_action() {
                         Output::print_error(format_args!(
-                            "::error title=error: a beforeEach/afterEach hook timed out for test \"{}\"::\n",
+                            "::error title=error: a hook timed out for test \"{}\"::\n",
                             bun_fmt::github_action_property(display_label)
                         ));
                         Output::flush();

@@ -1666,8 +1666,7 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
       } catch {}
     }
 
-    // Like node, `flush` syncs the file this call opened (never a caller's
-    // FileHandle), and only after a write that succeeded.
+    // Node syncs only a file it opened itself, and only after a successful write.
     if (flush && !failed) {
       try {
         await fs.fsync(fdOrPath);

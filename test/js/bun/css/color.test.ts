@@ -774,6 +774,171 @@ describe("color-mix() results outside the sRGB gamut are clipped", () => {
   });
 });
 
+// color-mix(in hsl, ...) and color-mix(in hwb, ...) convert their operands into hsl or hwb first.
+// That conversion used to gamut map an operand outside the sRGB gamut, so the mix was computed
+// from a different color than the one written: display-p3 green went in as #00f942, and the
+// bright lab()/oklch() magentas below went in as plain white (which even came back from the
+// mapping with a stray hue and saturation, see the grey cases). css-color-4 converts the operand
+// as it is: an hsl value with a saturation above 100% or a lightness outside 0%..100%, or an hwb
+// value with a negative whiteness or blackness, which converts back to the same out-of-gamut
+// sRGB channels. The mix is interpolated from those and the result is clipped like any other
+// (the block above). WPT css/css-color/parsing/color-mix-out-of-gamut.html mixes the operands of
+// the first table 100% / 0% with black in both spaces and expects the operand's own unclipped
+// sRGB value back, so the fold is that value clipped to 8 bits: the same color the `in srgb` mixes
+// above fold to. The other expected values are the css-color-4 sample code's results clipped to 8
+// bits; the unclipped result is noted where it is not obvious.
+describe("color-mix() in hsl and hwb mixes out-of-gamut operands as written", () => {
+  const operands: [operand: string, expected: string, before: string][] = [
+    ["color(display-p3 0 1 0)", "#0f0", "#00f942"],
+    ["lab(100% 104.3 -50.9)", "#ff96ff", "#fff"],
+    ["lab(0% 104.3 -50.9)", "#5a004c", "#2a0022"],
+    ["lch(100% 116 334)", "#ff96ff", "#fff"],
+    ["lch(0% 116 334)", "#5a004c", "#2a0022"],
+    ["oklab(100% 0.365 -0.16)", "#ff5cff", "#fff"],
+    ["oklab(0% 0.365 -0.16)", "#130018", "#000"],
+    ["oklch(100% 0.399 336.3)", "#ff5bff", "#fff"],
+    ["oklch(0% 0.399 336.3)", "#140018", "#000"],
+  ];
+  describe.each(["hsl", "hwb"])("in %s, mixed with 0% of black or with itself", space => {
+    test.each(operands)("%s is %s (used to be %s)", (operand, expected) => {
+      expect(color(`color-mix(in ${space}, ${operand} 100%, black 0%)`, "css")).toBe(expected);
+      expect(color(`color-mix(in ${space}, ${operand}, ${operand})`, "css")).toBe(expected);
+    });
+  });
+
+  test.each([
+    // display-p3 green is hsl(127.9 302% 25.3%) and hwb(127.9 -51.2% -1.8%). Mixing with white or
+    // black moves it halfway towards 100% / 0% lightness, or towards 100% whiteness / blackness.
+    ["color-mix(in hsl, color(display-p3 0 1 0), white)", "#10ff36", "#9ddeae"],
+    ["color-mix(in hwb, color(display-p3 0 1 0), white)", "#3eff58", "#80fca0"],
+    ["color-mix(in hsl, color(display-p3 0 1 0), black)", "#005100", "#1f5d30"],
+    ["color-mix(in hwb, color(display-p3 0 1 0), black)", "#008200", "#007c21"],
+    ["color-mix(in hsl, color(display-p3 0 1 0) 25%, white)", "#abf3b5", "#d6e7db"],
+    ["color-mix(in hwb, color(display-p3 0 1 0) 25%, white)", "#9fffab", "#bffdd0"],
+    // The hue is interpolated from the operand's own hue (127.9, not the 135.9 of #00f942), and
+    // the 302% saturation survives the mix: hsl(183.9 201% 37.7%) is color(srgb -0.38 1.03 1.13).
+    ["color-mix(in hsl, color(display-p3 0 1 0), blue)", "#0ff", "#00dafc"],
+    ["color-mix(in hwb, color(display-p3 0 1 0), blue)", "#00ecff", "#00dafc"],
+    ["color-mix(in hsl longer hue, color(display-p3 0 1 0), blue)", "red", "#fc2100"],
+    ["color-mix(in hwb longer hue, color(display-p3 0 1 0), blue)", "red", "#fc2100"],
+    // The alpha is premultiplied into the out-of-range channels like into any other.
+    ["color-mix(in hsl, color(display-p3 0 1 0 / 0.5), black)", "#002b06bf", "#1c3723bf"],
+    ["color-mix(in hwb, color(display-p3 0 1 0 / 0.5), black)", "#005700bf", "#005316bf"],
+    ["color-mix(in hsl, color(display-p3 0 1 0 / 0.5), color(display-p3 0 1 0 / 0.5))", "#00ff0080", "#00f94280"],
+    [
+      "color-mix(in hsl, light-dark(color(display-p3 0 1 0), red), light-dark(color(display-p3 0 1 0), blue))",
+      "light-dark(#0f0, #f0f)",
+      "light-dark(#00f942, #f0f)",
+    ],
+    // lab(100% 104.3 -50.9) is color(srgb 1.59 0.59 1.41): a lightness of 109%, which makes the
+    // rgb-to-hsl saturation negative. The spec (w3c/csswg-drafts#9222) expresses that as the
+    // opposite hue with a positive saturation, hsl(131.2 555% 109%), so in hsl it mixes with red
+    // towards yellow. hwb keeps the hue of the channels themselves, hwb(311.2 58.8% -59.4%), the
+    // only one its whiteness and blackness convert back with, so in hwb it mixes towards magenta.
+    ["color-mix(in hsl, lab(100% 104.3 -50.9), red)", "#ffff20", "#bfef8f"],
+    ["color-mix(in hwb, lab(100% 104.3 -50.9), red)", "#ff4bb3", "#bfff7f"],
+    ["color-mix(in hsl, lab(100% 104.3 -50.9), black)", "#0f0", "#609f9f"],
+    ["color-mix(in hwb, lab(100% 104.3 -50.9), black)", "#cb4bb3", "#7f8080"],
+    ["color-mix(in hwb, lab(100% 104.3 -50.9), lab(0% 104.3 -50.9))", "#f830dc", "#817f94"],
+    // lab(0% 104.3 -50.9) is color(srgb 0.35 -0.21 0.30): hsl(305.5 411% 6.9%), hwb(305.5 -21.4% 64.9%).
+    ["color-mix(in hsl, lab(0% 104.3 -50.9), white)", "#f0f", "#c44fae"],
+    ["color-mix(in hwb, lab(0% 104.3 -50.9), white)", "#ac64a6", "#948090"],
+    ["color-mix(in hsl, oklch(100% 0.399 336.3) 50%, white)", "#ffd5ff", "#fff"],
+    ["color-mix(in hwb, oklch(100% 0.399 336.3) 50%, white)", "#ffadff", "#fff"],
+    // oklch(70% 0.4 145) is color(srgb -0.53 0.82 -0.39), hsl(126.4 466% 14.5%).
+    ["color-mix(in hsl, oklch(70% 0.4 145), oklch(70% 0.4 145))", "#00d200", "#00c30b"],
+    ["color-mix(in hsl, oklch(70% 0.4 145), black)", "#003e00", "#18491b"],
+    ["color-mix(in hwb, oklch(70% 0.4 145), black)", "#006900", "#006105"],
+    ["color-mix(in hsl, color(srgb-linear 0 1.5 0), color(srgb-linear 0 1.5 0))", "#0f0", "#edffea"],
+    ["color-mix(in hwb, color(srgb-linear 0 1.5 0), color(srgb-linear 0 1.5 0))", "#0f0", "#edffea"],
+    // Slightly out of gamut (Tailwind's red-600 is color(srgb 0.91 -0.10 0.04)): the operand is
+    // mixed as written instead of as its gamut mapped #e7000b, which has a different hue.
+    ["color-mix(in hsl, oklch(57.7% 0.245 27.325), white)", "#e28491", "#dc969a"],
+    ["color-mix(in hwb, oklch(57.7% 0.245 27.325), white)", "#f37385", "#f38085"],
+    // Greys outside the gamut: hsl(none 0% 120%) and hwb(none 120% -20%) have no hue to mix, and
+    // hwb lands in the whiteness + blackness >= 100% branch with the out-of-range values. The
+    // gamut mapping used to turn the bright one into a white carrying a noise hue and a 50%
+    // saturation (from the conversion noise of its white), hence the teal hsl mix with black.
+    ["color-mix(in hsl, color(srgb 1.2 1.2 1.2), black)", "#999", "#609f9f"],
+    ["color-mix(in hwb, color(srgb 1.2 1.2 1.2), black)", "#999", "#7f8080"],
+    ["color-mix(in hsl, color(srgb -0.2 -0.2 -0.2), white)", "#666", "gray"],
+    ["color-mix(in hwb, color(srgb -0.2 -0.2 -0.2), white)", "#666", "gray"],
+  ])("%s is %s (used to be %s)", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("the typed output formats get the clipped result too", () => {
+    const formats = (mix: string) => ({
+      rgb: color(mix, "{rgb}"),
+      rgba: color(mix, "[rgba]"),
+      hex: color(mix, "hex"),
+      hsl: color(mix, "hsl"),
+    });
+    const expected = {
+      rgb: { r: 0, g: 255, b: 0 },
+      rgba: [0, 255, 0, 255],
+      hex: "#00ff00",
+      hsl: "hsl(120, 100%, 50%)",
+    };
+    expect(formats("color-mix(in hsl, color(display-p3 0 1 0), color(display-p3 0 1 0))")).toEqual(expected);
+    expect(formats("color-mix(in hwb, color(display-p3 0 1 0), color(display-p3 0 1 0))")).toEqual(expected);
+  });
+
+  // Operands inside the gamut convert exactly as before, so every mix of such operands is unchanged.
+  // These also cover what the conversion change comes closest to: a boundary color written as lab()
+  // converts back with channels a few 1e-7 outside the gamut, greys (8-bit, converted from lab(), or
+  // out of gamut) have a missing hue, and an operand that only clips still folds to its clipped color.
+  test.each([
+    ["color-mix(in hsl, red, white)", "#df9f9f"],
+    ["color-mix(in hsl, red, blue)", "#f0f"],
+    ["color-mix(in hwb, red, blue)", "#f0f"],
+    ["color-mix(in hsl, red 25%, blue)", "#8000ff"],
+    ["color-mix(in hwb, red 25%, blue)", "#8000ff"],
+    ["color-mix(in hsl, #808080, red)", "#bf4040"],
+    ["color-mix(in hwb, #808080, red)", "#c04040"],
+    ["color-mix(in hsl, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891))", "red"],
+    ["color-mix(in hwb, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891))", "red"],
+    ["color-mix(in hsl, lab(50% 0 0), lab(50% 0 0))", "#777"],
+    ["color-mix(in hwb, lab(50% 0 0), lab(50% 0 0))", "#777"],
+    // color(display-p3 0 0 1) is color(srgb 0 0 1.04); it clipped to #00f under the mapping too.
+    ["color-mix(in hsl, color(display-p3 0 0 1), color(display-p3 0 0 1))", "#00f"],
+    ["color-mix(in hwb, color(display-p3 0 0 1), color(display-p3 0 0 1))", "#00f"],
+    ["color-mix(in hsl, color(srgb 1.2 1.2 1.2), color(srgb 1.2 1.2 1.2))", "#fff"],
+    ["color-mix(in hwb, color(srgb -0.2 -0.2 -0.2), color(srgb -0.2 -0.2 -0.2))", "#000"],
+  ])("%s is still %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
+// The "hsl" output format converts the same way. It gamut maps first, like the rgb formats do,
+// so a color outside the sRGB gamut still prints an hsl() inside 0%..100% that describes the
+// same color as its "hex" output, rather than the unclipped hsl(305.5, 411%, 6.9%) of the first one.
+describe('color(wide gamut input, "hsl") is the hsl of the gamut mapped color', () => {
+  test.each([
+    "lab(0% 104.3 -50.9)",
+    "lch(0% 116 334)",
+    "oklch(70% 0.4 145)",
+    "oklab(60% -0.3 0.2)",
+    "lab(100% 104.3 -50.9)",
+  ])("%s", input => {
+    const hsl = color(input, "hsl") as string;
+    const [h, s, l] = hsl.match(/-?[\d.]+(?:e[+-]?\d+)?/g)!.map(Number);
+    expect(hsl).toStartWith("hsl(");
+    expect(h).toBeWithin(0, 360);
+    expect(s).toBeWithin(0, 100.0001);
+    expect(l).toBeWithin(0, 100.0001);
+    expect(color(hsl, "hex")).toBe(color(input, "hex")!);
+  });
+
+  test("a color inside the gamut is converted without quantizing it to 8 bits first", () => {
+    // #777777 is 46.67% lightness; the lab() grey itself is 46.63%.
+    const [, s, l] = (color("lab(50% 0 0)", "hsl") as string).match(/-?[\d.]+(?:e[+-]?\d+)?/g)!.map(Number);
+    expect(s).toBeCloseTo(0, 3);
+    expect(l).toBeCloseTo(46.63, 1);
+    expect(color("lab(50% 0 0)", "hex")).toBe("#777777");
+  });
+});
+
 describe("conversions between color spaces", () => {
   // Each case converts a color whose channels all differ, so a channel landing
   // in another channel's place shows up in the output. Mixing a color with

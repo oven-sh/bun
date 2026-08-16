@@ -102,6 +102,18 @@ mod bun_paths {
             |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
     }
+    /// Like `join_abs_string_buf`, but returns `None` when the normalized
+    /// result does not fit in `buf`. Use it when `parts` may be arbitrarily long.
+    pub(super) fn join_abs_string_buf_checked<'b>(
+        cwd: &'b [u8],
+        buf: &'b mut [u8],
+        parts: &[&[u8]],
+        platform: Platform,
+    ) -> Option<&'b [u8]> {
+        dispatch_platform!(platform, |P| {
+            ::bun_paths::resolve_path::join_abs_string_buf_checked::<P>(cwd, buf, parts)
+        })
+    }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
     }
@@ -2470,11 +2482,13 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        let source_dir = bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO);
         let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
-            bun_paths::platform::Auto,
-        >(source_dir, &mut buf.0, &[specifier]) else {
+        let Some(joined) = bun_paths::join_abs_string_buf_checked(
+            bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
+            &mut buf.0,
+            &[specifier],
+            bun_paths::Platform::AUTO,
+        ) else {
             // Longer than any cache key (see `dir_info_cached_maybe_log`).
             return false;
         };

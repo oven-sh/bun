@@ -1431,9 +1431,11 @@ mod tests {
         assert_eq!(list.swap_remove(1), Foo { a: 1, b: 1, c: 1 });
         assert_eq!(list.items::<"a", u32>(), &[0, 5, 3, 4]);
         assert_eq!(list.items::<"c", u64>(), &[0, 5, 3, 4]);
-        // Removing the last row swaps it with itself.
+        // Removing the last row swaps it with itself / shifts nothing.
         assert_eq!(list.swap_remove(3), Foo { a: 4, b: 4, c: 4 });
         assert_eq!(list.items::<"a", u32>(), &[0, 5, 3]);
+        assert_eq!(list.ordered_remove(2), Foo { a: 3, b: 3, c: 3 });
+        assert_eq!(list.items::<"a", u32>(), &[0, 5]);
     }
 
     struct Owning {

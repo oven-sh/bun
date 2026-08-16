@@ -233,6 +233,73 @@ phase_bun_install() {
 
   cd "$REPO_ROOT"
   ok "bun install 完成"
+
+  # ─── 阶段5b: esbuild 补丁 (OHOS) ──────────────────────────────────────
+  # esbuild 原生 ELF (npm 下载) 无法被 binary-sign-tool 签名, OHOS 内核
+  # 拒绝 exec (EACCES, ninja code=126)。用 bun build 包装脚本替换原生
+  # 二进制 (shell 脚本无需签名)。与本地 node_modules 的既有适配一致。
+  phase_esbuild_patch() {
+    info "=== esbuild 补丁 (bun-build wrapper) ==="
+    local esb
+    esb=$(readlink -f "$REPO_ROOT/node_modules/.bin/esbuild" 2>/dev/null)
+    if [ -n "$esb" ] && [ -f "$esb" ]; then
+      cat > "$esb" << 'ESBUILD'
+#!/bin/sh
+# Use bun build as esbuild replacement
+# Strip esbuild-specific flags that bun build doesn't support
+args=""
+for a in "$@"; do
+  case "$a" in
+    --target=esnext|--target=es2020|--target=es2015|--target=es2017|--target=es2018|--target=es2019|--target=es2021|--target=es2022)
+      # bun build doesn't support esnext/esXXXX targets, use --target=browser
+      args="$args --target=browser"
+      ;;
+    --platform=node)
+      args="$args --target=node"
+      ;;
+    --platform=browser)
+      args="$args --target=browser"
+      ;;
+    --format=iife|--format=esm|--format=cjs)
+      args="$args $a"
+      ;;
+    '--define:process.env.NODE_ENV="production"'|"--define:process.env.NODE_ENV=\"production\"")
+      args="$args --define.process.env.NODE_ENV=\"production\""
+      ;;
+    --define:*)
+      args="$args $a"
+      ;;
+    '--external:/bun:*')
+      args="$args --external /bun/*"
+      ;;
+    --external:*)
+      args="$args $a"
+      ;;
+    --minify)
+      args="$args --minify"
+      ;;
+    --bundle)
+      # bun build bundles by default
+      ;;
+    --outfile=*)
+      args="$args $a"
+      ;;
+    --outdir=*)
+      args="$args $a"
+      ;;
+    *)
+      args="$args $a"
+      ;;
+  esac
+done
+exec /storage/Users/currentUser/.bun/bun build $args
+ESBUILD
+      chmod 755 "$esb"
+      ok "esbuild 已替换为 bun-build wrapper: $esb"
+    else
+      warn "esbuild 二进制未找到, 跳过补丁"
+    fi
+  }
 }
 
 # ─── 阶段6: 构建环境变量 ───────────────────────────────────────────────────
@@ -488,6 +555,7 @@ main() {
   phase_webkit
   phase_setup_layout
   phase_bun_install
+  phase_esbuild_patch
   phase_set_env
   phase_build
   phase_icu_shim

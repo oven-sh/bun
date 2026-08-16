@@ -451,6 +451,58 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("side_effect arr[7]=undefined");
       expect(result).toContain("side_effect script_ran=false");
     });
+
+    // Same ungated functions, but with the exception pending on the engine
+    // (napi_call_function raises the napi_throw_error one before refusing),
+    // which is the state node-addon-api builds its Error object in. They must
+    // still succeed and must leave that exception pending.
+    it("ungated functions succeed while an engine exception is pending and preserve it", async () => {
+      const result = await checkSameOutput("test_ungated_calls_with_engine_exception", []);
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(result.split(/\r?\n/)).toEqual([
+        "napi_call_function: status=10",
+        "napi_get_value_bigint_int64: status=0 value=-7",
+        "napi_get_value_bigint_uint64: status=0 lossless=0",
+        "napi_get_value_string_utf8: status=0 value=ungated",
+        "napi_create_bigint_int64: status=0",
+        "napi_create_bigint_uint64: status=0",
+        "napi_create_symbol: status=0",
+        "napi_create_array_with_length: status=0",
+        "napi_is_array: status=0 is_array=1",
+        "napi_create_string_utf8: status=0",
+        "napi_create_int32: status=0",
+        "exception pending after: true",
+        "pending exception code: EPENDING",
+      ]);
+    });
+
+    // A node:vm timeout requested while the addon is inside those calls, again
+    // with an engine exception pending: none of the calls reports it, the
+    // exception they found is still the one pending when they are done, and the
+    // timeout still stops the script once the addon returns.
+    it("a termination requested during ungated calls is delivered after them, not by them", async () => {
+      const result = await checkSameOutput("test_ungated_calls_through_vm_timeout", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "napi_call_function: status=10",
+        "ungated call failures: 0",
+        "exception pending: before clear=true after clear=false",
+        "ERR_SCRIPT_EXECUTION_TIMEOUT",
+      ]);
+    });
+
+    // A script / worker looping through ungated calls, stopped while inside one
+    // of them nearly every time. Hangs when the request is lost.
+    it("a node:vm timeout interrupts a script looping through ungated functions", async () => {
+      const result = await checkSameOutput("test_ungated_calls_vm_timeout", []);
+      expect(result.split(/\r?\n/)).toEqual(Array(5).fill("ERR_SCRIPT_EXECUTION_TIMEOUT"));
+    });
+
+    // Worker startup dominates this one: about two seconds per worker under a
+    // debug build, before any CI load.
+    it("worker.terminate() stops a worker looping through ungated functions", async () => {
+      const result = await checkSameOutput("test_ungated_calls_worker_terminate", []);
+      expect(result.split(/\r?\n/)).toEqual([...Array(2).fill("terminate() resolved with 1"), "resolved to undefined"]);
+    }, 30_000);
   });
 
   describe("status code alignment with Node.js", () => {
@@ -594,6 +646,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("drains microtasks between callbacks of one dispatch, not before the first", async () => {
       const result = await checkSameOutput("test_threadsafe_function_microtask_order", []);
       expect(result).toContain("callback 1\nmicrotask 1\ncallback 2\nmicrotask 2\ncallback 3");
+    });
+    it("reports what call_js throws as each item's uncaught exception and keeps draining", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_call_js_throws", []);
+      expect(result).toContain("uncaughtException 3 call_js error 3");
+      expect(result).toContain("done 3");
     });
 
     // Node dispatches the callback via CallbackIntoModule, so a throw is a

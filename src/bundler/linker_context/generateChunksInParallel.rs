@@ -17,6 +17,7 @@ use crate::Index;
 use crate::analyze_transpiled_module;
 use crate::analyze_transpiled_module::StringIDExt as _;
 use crate::cheap_prefix_normalizer;
+use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
 
@@ -64,7 +65,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step;
             // write provenance preserved.
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
-            chunks: bun_ptr::BackRef::new_mut(chunks),
+            chunks: bun_ptr::BackRef::new(&*chunks),
         };
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
@@ -98,15 +99,13 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             debug!(" START {} prepare CSS ast (total count)", total_count);
 
+            let group = bun_threading::WaitGroup::init_with_count(total_count);
             let mut batch = ThreadPoolLib::Batch::default();
             let mut tasks: Vec<PrepareCssAstTask> = Vec::with_capacity(total_count);
             for chunk in chunks.iter_mut() {
                 if chunk.content.is_css() {
                     tasks.push(PrepareCssAstTask {
-                        task: ThreadPoolLib::Task {
-                            node: ThreadPoolLib::Node::default(),
-                            callback: prepare_css_asts_for_chunk,
-                        },
+                        task: ThreadPoolLib::CountedTask::new(prepare_css_asts_for_chunk, &group),
                         chunk: std::ptr::from_mut::<Chunk>(chunk),
                         // `PrepareCssAstTask.linker` is `*mut LinkerContext<'static>`
                         // (raw ptr is invariant); `.cast()` erases the inner `'a` to satisfy it.
@@ -114,15 +113,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     });
                     // Capacity pre-reserved → push never reallocates → ptr stays stable.
                     let task = tasks.last_mut().unwrap();
-                    batch.push(ThreadPoolLib::Batch::from(&raw mut task.task));
+                    batch.push(ThreadPoolLib::Batch::from(&raw mut task.task.task));
                 }
             }
             debug_assert_eq!(tasks.len(), total_count);
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool.
-            let worker_pool = c.worker_pool();
-            worker_pool.schedule(batch);
-            worker_pool.wait_for_all();
+            c.worker_pool().schedule(batch);
+            group.wait();
 
             debug!("  DONE {} prepare CSS ast (total count)", total_count);
         } else if cfg!(debug_assertions) {
@@ -138,13 +134,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         {
             let mut total_count: usize = 0;
             // `GenerateChunkCtx` fields are raw pointers; capture them
-            // before the `iter_mut()` borrow so the same `*mut [Chunk]` can be
+            // before the `iter_mut()` borrow so the same slice backref can be
             // stored in every ctx.
             // SAFETY: `c` is the live `&mut LinkerContext` for the link step.
             let c_ref =
                 unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) };
-            let chunks_ref: bun_ptr::BackRef<[Chunk], bun_ptr::Mut> =
-                bun_ptr::BackRef::new_mut(chunks);
+            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
             for chunk in chunks.iter_mut() {
                 chunk_contexts.push(GenerateChunkCtx {
                     c: c_ref,
@@ -179,6 +174,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             debug!(" START {} compiling part ranges", total_count);
             // Pre-reserved to `total_count` so pushes never reallocate; the
             // batch holds raw pointers into this buffer.
+            let group = bun_threading::WaitGroup::init_with_count(total_count);
             let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
             let mut batch = ThreadPoolLib::Batch::default();
             for (chunk, chunk_ctx) in chunks.iter_mut().zip(chunk_contexts.iter_mut()) {
@@ -188,21 +184,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             combined_part_ranges.push(PendingPartRange {
                                 part_range: *part_range,
                                 i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::Task {
-                                    node: ThreadPoolLib::Node::default(),
-                                    callback: generate_compile_result_for_js_chunk,
-                                },
+                                task: ThreadPoolLib::CountedTask::new(
+                                    generate_compile_result_for_js_chunk,
+                                    &group,
+                                ),
                                 // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
                                 // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                                // before `chunk_contexts` drops (we `wait_for_all` below).
+                                // before `chunk_contexts` drops (we `group.wait()` below).
                                 ctx: unsafe {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             });
                             batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task,
+                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
                             ));
                         }
                     }
@@ -211,21 +207,21 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                             combined_part_ranges.push(PendingPartRange {
                                 part_range: Default::default(),
                                 i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::Task {
-                                    node: ThreadPoolLib::Node::default(),
-                                    callback: generate_compile_result_for_css_chunk,
-                                },
+                                task: ThreadPoolLib::CountedTask::new(
+                                    generate_compile_result_for_css_chunk,
+                                    &group,
+                                ),
                                 // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
                                 // conflating the borrow with
                                 // LinkerContext's `'a`. Launder via raw ptr so borrowck
                                 // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                                // before `chunk_contexts` drops (we `wait_for_all` below).
+                                // before `chunk_contexts` drops (we `group.wait()` below).
                                 ctx: unsafe {
                                     bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                                 },
                             });
                             batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task,
+                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
                             ));
                         }
                     }
@@ -233,31 +229,28 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         combined_part_ranges.push(PendingPartRange {
                             part_range: Default::default(),
                             i: 0,
-                            task: ThreadPoolLib::Task {
-                                node: ThreadPoolLib::Node::default(),
-                                callback: generate_compile_result_for_html_chunk,
-                            },
+                            task: ThreadPoolLib::CountedTask::new(
+                                generate_compile_result_for_html_chunk,
+                                &group,
+                            ),
                             // SAFETY: `PendingPartRange.ctx` is `&'a GenerateChunkCtx<'a>`,
                             // conflating the borrow with
                             // LinkerContext's `'a`. Launder via raw ptr so borrowck
                             // doesn't pin `chunk_contexts` for `'a`; tasks complete
-                            // before `chunk_contexts` drops (we `wait_for_all` below).
+                            // before `chunk_contexts` drops (we `group.wait()` below).
                             ctx: unsafe {
                                 bun_ptr::detach_lifetime_ref::<GenerateChunkCtx>(chunk_ctx)
                             },
                         });
                         batch.push(ThreadPoolLib::Batch::from(
-                            &raw mut combined_part_ranges.last_mut().unwrap().task,
+                            &raw mut combined_part_ranges.last_mut().unwrap().task.task,
                         ));
                     }
                 }
             }
             debug_assert_eq!(combined_part_ranges.len(), total_count);
-            // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
-            // the link step); `pool` is the arena-allocated bundler ThreadPool.
-            let worker_pool = c.worker_pool();
-            worker_pool.schedule(batch);
-            worker_pool.wait_for_all();
+            c.worker_pool().schedule(batch);
+            group.wait();
             debug!("  DONE {} compiling part ranges", total_count);
         }
 
@@ -503,10 +496,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
     // those placeholders with the resolved paths and serialize.
-    if c.options.generate_bytecode_cache
-        && c.options.output_format == options::Format::Esm
-        && c.options.compile_mode.is_executable()
-    {
+    if c.options.generates_module_info() {
         // Build map from unique_key -> final resolved path
         // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
         let b: &mut BundleV2 =
@@ -678,8 +668,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 &chunks[ci],
                 chunks,
                 &mut ds,
-                false,
-                sourcemap_option != SourceMapOption::None,
+                ReferencePathStyle::ImporterRelative,
+                SourceMapShiftTracking::for_source_map(sourcemap_option),
                 &scc,
             )?;
             chunks[ci].intermediate_output = intermediate_output;
@@ -910,29 +900,24 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     &chunks[chunk_index_in_chunks_list],
                     chunks,
                     &mut display_size,
-                    false,
-                    false,
+                    ReferencePathStyle::ImporterRelative,
+                    SourceMapShiftTracking::Disabled,
                     standalone_chunk_contents.as_deref().unwrap(),
                 )?
             } else {
-                let force_abs = c.resolver().opts.compile
-                    && !chunks[chunk_index_in_chunks_list]
-                        .flags
-                        .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD);
-                let enable_sm = chunks[chunk_index_in_chunks_list]
-                    .content
-                    .sourcemap(c.options.source_maps)
-                    != SourceMapOption::None;
+                let chunk = &chunks[chunk_index_in_chunks_list];
                 intermediate_output.code(
                     None,
                     c.parse_graph(),
                     &c.graph,
                     public_path,
-                    &chunks[chunk_index_in_chunks_list],
+                    chunk,
                     chunks,
                     &mut display_size,
-                    force_abs,
-                    enable_sm,
+                    ReferencePathStyle::for_chunk(chunk, c.resolver().opts.compile),
+                    SourceMapShiftTracking::for_source_map(
+                        chunk.content.sourcemap(c.options.source_maps),
+                    ),
                 )?
             };
             // Tail of the loop body needs `&mut chunk` (`output_source_map.finalize()`);
@@ -1153,10 +1138,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
             // Create module_info output file for ESM bytecode in --compile builds
             let module_info_output_file: Option<options::OutputFile> = 'brk: {
-                if c.options.generate_bytecode_cache
-                    && c.options.output_format == options::Format::Esm
-                    && c.options.compile_mode.is_executable()
-                {
+                if c.options.generates_module_info() {
                     let loader: Loader = if chunk.entry_point.is_entry_point() {
                         c.parse_graph().input_files.items_loader()
                             [chunk.entry_point.source_index() as usize]

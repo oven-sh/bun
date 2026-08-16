@@ -1982,7 +1982,7 @@ mod spawn_process_body {
             match ipc {
                 WindowsStdio::Dup2(_) => panic!("TODO dup2 extra fd"),
                 WindowsStdio::Inherit => {
-                    stdio.flags = uv::StdioFlags::INHERIT_FD;
+                    stdio.flags = uv::UV_INHERIT_FD;
                     stdio.data.fd = uv::uv_file::try_from(3 + i).expect("int cast");
                 }
                 WindowsStdio::Ignore => {
@@ -2015,7 +2015,7 @@ mod spawn_process_body {
                         cleanup_uv_files(&uv_files_to_close, loop_);
                         return Ok(Err(err));
                     }
-                    stdio.flags = uv::StdioFlags::INHERIT_FD;
+                    stdio.flags = uv::UV_INHERIT_FD;
                     let fd = rc.int();
                     uv_files_to_close.push(fd);
                     stdio.data.fd = fd;
@@ -2049,7 +2049,7 @@ mod spawn_process_body {
                     stdio.data.stream = (*my_pipe).cast::<uv::uv_stream_t>();
                 }
                 WindowsStdio::Pipe(fd) => {
-                    stdio.flags = uv::StdioFlags::INHERIT_FD;
+                    stdio.flags = uv::UV_INHERIT_FD;
                     stdio.data.fd = fd.uv();
                 }
             }

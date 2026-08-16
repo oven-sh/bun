@@ -46,7 +46,7 @@ disallowed-methods = [
   { path = "str::rmatch_indices", reason = "use bun_core::strings on .as_bytes() (highway SIMD)" },
   { path = "str::replace", reason = "use bun_core::strings::replace_owned on .as_bytes() (highway SIMD)" },
   { path = "str::replacen", reason = "use bun_core::strings::replace_owned on .as_bytes() (highway SIMD)" },
-  { path = "slice::windows", reason = "substring search must use bun_core::strings::index_of / index_of_t (highway memmem); for genuine sliding-window iteration, #[allow] with a reason" },
+  { path = "slice::windows", reason = "substring search must use bun_core::strings::index_of (highway memmem); for genuine sliding-window iteration, #[allow] with a reason" },
   { path = "memchr::memchr", reason = "use bun_core::strings::index_of_char (highway SIMD)" },
   { path = "memchr::memchr2", reason = "use bun_core::strings::index_of_any (highway SIMD)" },
   { path = "memchr::memchr3", reason = "use bun_core::strings::index_of_any (highway SIMD)" },

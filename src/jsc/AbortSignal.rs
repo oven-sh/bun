@@ -53,6 +53,7 @@ unsafe extern "C" {
     // the non-`repr(C)` interior of `EventLoopTimer` is irrelevant to FFI.
     #[allow(improper_ctypes)]
     safe fn WebCore__AbortSignal__getTimeout(arg0: &AbortSignal) -> *mut Timeout;
+    safe fn WebCore__AbortSignal__cancelTimer(arg0: &AbortSignal);
     safe fn WebCore__AbortSignal__signal(
         arg0: &AbortSignal,
         arg1: &JSGlobalObject,
@@ -355,6 +356,35 @@ impl Timeout {
         }
     }
 
+    /// The timer heap is dropping this timeout without firing it
+    /// (`useRealTimers()` / `clearAllTimers()` draining the fake heap, the
+    /// `--isolate` file swap, VM teardown).
+    ///
+    /// Routed through the owning signal's `cancelTimer()`, the same path firing
+    /// takes via `markAborted()`: it clears `m_timeout` and frees `this` through
+    /// [`AbortSignal__Timeout__deinit`] (which unlinks the node if it is still in
+    /// a heap). Unlinking the node alone is not enough: while `m_timeout` is set,
+    /// `JSAbortSignalOwner::isReachableFromOpaqueRoots` keeps an observed signal's
+    /// wrapper, and everything its abort listeners close over, alive for a timer
+    /// that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` is a live boxed `Timeout` still owned by its signal; JS thread;
+    /// no borrow of the timer heap may be live (the deinit re-enters
+    /// `timer_remove`). `this` is freed when this returns.
+    pub unsafe fn discard(this: *mut Timeout) {
+        // SAFETY: `this` is live per the fn contract, and a live box implies a
+        // live owning signal (see the `signal` field doc).
+        let signal = AbortSignal::opaque_ref(unsafe { (*this).signal });
+        debug_assert!(
+            signal
+                .get_timeout()
+                .is_some_and(|owned| core::ptr::eq(owned, this)),
+            "AbortSignal.timeout timer is not the one its signal owns"
+        );
+        WebCore__AbortSignal__cancelTimer(signal);
+    }
+
     /// Fire the timeout. May free `this` (re-entrantly via `signal` →
     /// `~AbortSignal` → `AbortSignal__Timeout__deinit`).
     ///
@@ -369,17 +399,17 @@ impl Timeout {
 
             // The signal and its handlers belong to a previous isolated test
             // file's global; firing now would run them against the new global.
-            // The `Timeout` box is still owned by the signal and will be freed
-            // via `~AbortSignal` → `cancelTimer` when the wrapper is collected.
+            // (The file swap's `cancel_all_timeout_objects` normally discards
+            // such timers before they can come due.)
             if (*this).generation != (*vm).test_isolation_generation {
+                Self::discard(this);
                 return;
             }
 
             // `signal` is a raw back-pointer with no refcount of its own;
             // see the field doc for why it is valid here. `dispatch` may free
             // `this` re-entrantly (markAborted → cancelTimer → deinit), so
-            // capture the pointer first. Nulled at VM teardown; that path does
-            // not re-enter `run`.
+            // capture the pointer first.
             let signal_ptr: *mut AbortSignal = (*this).signal;
             debug_assert!(!signal_ptr.is_null());
             Self::dispatch(vm, signal_ptr);

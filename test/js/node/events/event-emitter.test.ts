@@ -572,7 +572,7 @@ describe("EventEmitter.on", () => {
     ]);
   });
 
-  test("AbortController", () => {
+  test("AbortController", async () => {
     const { on, EventEmitter } = require("node:events");
 
     const ac = new AbortController();
@@ -584,32 +584,35 @@ describe("EventEmitter.on", () => {
       ee.emit("foo", 42);
       ee.emit("foo", "baz");
     });
-    (async () => {
+    const consumed = (async () => {
       try {
         for await (const event of on(ee, "foo", { signal: ac.signal })) {
           output.push([1, event]);
         }
-        console.log("unreachable");
+        output.push(["unreachable"]);
       } catch (error: any) {
-        const { code, message } = error;
-        output.push([2, { code, message }]);
-
-        expect(output).toEqual([
-          [1, ["bar"]],
-          [1, [42]],
-          [1, ["baz"]],
-          [
-            2,
-            {
-              code: "ABORT_ERR",
-              message: "The operation was aborted.",
-            },
-          ],
-        ]);
+        const { name, code, message, cause } = error;
+        output.push([2, { name, code, message, cause }]);
       }
     })();
 
     process.nextTick(() => ac.abort());
+    await consumed;
+
+    expect(output).toEqual([
+      [1, ["bar"]],
+      [1, [42]],
+      [1, ["baz"]],
+      [
+        2,
+        {
+          name: "AbortError",
+          code: "ABORT_ERR",
+          message: "The operation was aborted",
+          cause: ac.signal.reason,
+        },
+      ],
+    ]);
   });
 
   // Checks for potential issues with FixedQueue size

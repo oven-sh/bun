@@ -102,13 +102,7 @@ function watch(
     filename,
     options || {},
     guardCallback((eventType: string, filename: string | Buffer | undefined) => {
-      if (
-        eventType !== "close" &&
-        eventType !== "error" &&
-        eventType !== "abort" &&
-        filename != null &&
-        ignoreMatcher?.(filename)
-      ) {
+      if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
         return;
       }
       queue.push({ __proto__: null, eventType, filename });

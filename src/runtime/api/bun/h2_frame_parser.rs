@@ -1132,6 +1132,26 @@ enum BatchSegment {
     Ext { ptr: *const u8, len: u32 },
 }
 
+impl BatchSegment {
+    #[inline(always)]
+    fn raw_parts(self, batch: &[u8]) -> (*const u8, usize) {
+        match self {
+            BatchSegment::Batch { off, len } => (batch[off as usize..].as_ptr(), len as usize),
+            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
+        }
+    }
+}
+
+/// Flags for one `H2FrameParser::send_data` call.
+#[derive(Clone, Copy)]
+struct SendDataOptions {
+    close: bool,
+    /// Report a HALF_CLOSED_LOCAL transition through the return value instead of onStreamEnd.
+    suppress_half_closed_local_dispatch: bool,
+    /// Hand an unqueued payload's write callback back to the caller instead of invoking it here.
+    defer_write_callback: bool,
+}
+
 struct DispatchGuard<'a>(&'a Cell<u32>);
 
 impl Drop for DispatchGuard<'_> {
@@ -1341,6 +1361,8 @@ pub struct H2FrameParser {
     // (RFC 9113 §4.3); 0 when none.
     expecting_continuation: Cell<u32>,
     is_server: Cell<bool>,
+    /// A frame callback left an exception pending in this batch (`Sink::should_stop`).
+    left_exception: Cell<bool>,
     preface_received_len: Cell<u8>,
     // we buffer requests until we get the first settings ACK
     write_buffer: JsCell<Vec<u8>>,
@@ -1889,6 +1911,7 @@ impl Stream {
                         identifier.ensure_still_alive();
                         if self.state == StreamState::HALF_CLOSED_REMOTE {
                             self.state = StreamState::CLOSED;
+                            self.free_resources::<false>(client);
                         } else {
                             self.state = StreamState::HALF_CLOSED_LOCAL;
                         }
@@ -3493,12 +3516,7 @@ impl H2FrameParser {
                     iov.clear();
                     iov.reserve(segments.len());
                     for seg in segments {
-                        let (ptr, len) = match *seg {
-                            BatchSegment::Batch { off, len } => {
-                                (batch[off as usize..].as_ptr(), len as usize)
-                            }
-                            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
-                        };
+                        let (ptr, len) = seg.raw_parts(batch);
                         if len == 0 {
                             continue;
                         }
@@ -3519,17 +3537,10 @@ impl H2FrameParser {
                 // to preserve order.
                 let mut all: Vec<u8> = Vec::new();
                 for seg in segments {
-                    match *seg {
-                        BatchSegment::Batch { off, len } => {
-                            all.extend_from_slice(&batch[off as usize..(off + len) as usize])
-                        }
-                        BatchSegment::Ext { ptr, len } => {
-                            // SAFETY: Ext slices are valid for the send_data call duration
-                            all.extend_from_slice(unsafe {
-                                core::slice::from_raw_parts(ptr, len as usize)
-                            })
-                        }
-                    }
+                    let (ptr, len) = seg.raw_parts(batch);
+                    // SAFETY: Batch ranges were recorded inside `batch`, and Ext slices are
+                    // valid for the send_data call duration, which is still running.
+                    all.extend_from_slice(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
                 let _ = self._write(&all);
                 return;
@@ -3540,17 +3551,12 @@ impl H2FrameParser {
             let mut skip = total_written;
             let mut buffered: usize = 0;
             for seg in segments {
-                let (ptr, len) = match *seg {
-                    BatchSegment::Batch { off, len } => {
-                        (batch[off as usize..].as_ptr(), len as usize)
-                    }
-                    BatchSegment::Ext { ptr, len } => (ptr, len as usize),
-                };
+                let (ptr, len) = seg.raw_parts(batch);
                 if skip >= len {
                     skip -= len;
                     continue;
                 }
-                // SAFETY: same provenance as the iovec build above; skip < len
+                // SAFETY: same as the copy path above; skip < len
                 let rest = unsafe { core::slice::from_raw_parts(ptr.add(skip), len - skip) };
                 skip = 0;
                 let _ = self.write_buffer.with_mut(|wb| wb.write(rest));
@@ -4431,6 +4437,21 @@ impl H2FrameParser {
             return end;
         }
         data.len()
+    }
+
+    /// A frame callback's JS value that could not be built (allocation
+    /// failure, a terminating VM): the frame is dropped and the engine stops
+    /// dispatching this batch; the exception stays pending for `read()` /
+    /// `on_native_read` (see `Sink::should_stop`).
+    #[inline]
+    fn or_stop<T>(&self, built: JsResult<T>) -> Option<T> {
+        match built {
+            Ok(v) => Some(v),
+            Err(_) => {
+                self.left_exception.set(true);
+                None
+            }
+        }
     }
 
     fn string_or_empty_to_js(&self, payload: &[u8]) -> JsResult<JSValue> {
@@ -5348,41 +5369,44 @@ impl H2FrameParser {
         };
 
         let global = self.handlers.get().global();
-        // A prior frame's callback can drain microtasks that tear the worker
-        // down (worker.terminate()); skip rather than calling JS with the
-        // termination exception pending. Same guard as read_bytes().
-        if global.has_exception() {
-            return Some(stream);
-        }
         // The callback runs arbitrary JS while `stream` is held (here and by every
         // caller): arm the dispatch guard so a reentrant read() cannot free the box at
         // depth 0. Bare guard, not enter_stream_dispatch — rst_stream reached from the
         // callback takes its own `&mut` to this stream, so ours must wait for the return.
         let _dispatch = self.enter_dispatch();
-        match callback.call(
+        // A top-level call of its own: a throwing `streamStart` is reported and
+        // yields no stream object. Called bare (no scope of its own, so no
+        // checkpoint per stream on the socket path); the parser drive is the
+        // landing frame that folds it.
+        if global.has_exception() {
+            return Some(stream);
+        }
+        let returned = match callback.call(
             &global,
             ctx_value,
             &[ctx_value, JSValue::js_number(stream_identifier as f64)],
         ) {
-            Err(err) => global.report_active_exception_as_unhandled(err),
-            Ok(returned) => {
-                // streamStart returns the JS stream it created; storing it here saves the
-                // setStreamContext host call the JS layer used to make per stream.
-                // Skipped when the callback closed the stream: free_resources dropped its
-                // sctx root, and re-rooting would pin the dead JS stream until session death.
-                if returned.is_object()
-                    && !self
-                        .pending_engine_stream_closes
-                        .get()
-                        .contains(&stream_identifier)
-                {
-                    self.sctx.with_mut(|m| {
-                        m.insert(stream_identifier, StrongOptional::create(returned, &global));
-                    });
-                    self.enter_stream_dispatch(stream)
-                        .set_context(returned, &global);
-                }
+            Ok(v) => v,
+            Err(err) => {
+                crate::dispatch::fold(Err(err));
+                JSValue::ZERO
             }
+        };
+        // streamStart returns the JS stream it created; storing it here saves the
+        // setStreamContext host call the JS layer used to make per stream.
+        // Skipped when the callback closed the stream: free_resources dropped its
+        // sctx root, and re-rooting would pin the dead JS stream until session death.
+        if returned.is_object()
+            && !self
+                .pending_engine_stream_closes
+                .get()
+                .contains(&stream_identifier)
+        {
+            self.sctx.with_mut(|m| {
+                m.insert(stream_identifier, StrongOptional::create(returned, &global));
+            });
+            self.enter_stream_dispatch(stream)
+                .set_context(returned, &global);
         }
         Some(stream)
     }
@@ -5888,6 +5912,14 @@ impl H2FrameParser {
 
 /// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
 impl crate::api::h2::connection::Sink for H2FrameParser {
+    /// A frame callback left an exception pending (a value it could not build): no later frame
+    /// in this batch is dispatched over it; `read()` throws it and `on_native_read` returns it to
+    /// the socket dispatch. (A termination between frames is what `run_callback`'s gate covers.)
+    #[inline]
+    fn should_stop(&self) -> bool {
+        self.left_exception.get()
+    }
+
     fn on_frame_counters(&self, received: u64, sent: u64) {
         self.engine_frames_received.set(received);
         self.engine_frames_sent.set(sent);
@@ -5907,12 +5939,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // NghttpError from it: code ERR_HTTP2_ERROR, message nghttp2_strerror), then the end
         // callback so the session tears itself down and closes the socket.
         let g = self.global();
-        let chunk = self
-            .handlers
-            .get()
-            .binary_type
-            .to_js(debug, &g)
-            .unwrap_or(JSValue::UNDEFINED);
+        let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(debug, &g)) else {
+            return;
+        };
         if lib_error_code != 0 {
             self.dispatch_with_2_extra(
                 JSH2FrameParser::Gc::onError,
@@ -5931,9 +5960,11 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_too_many_invalid_frames(&self) {
         // The peer exceeded maxSessionInvalidFrames: surface a session error. The JS error handler
         // recognizes the string code and destroys the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
-        let code_js = self
-            .string_or_empty_to_js(b"ERR_HTTP2_TOO_MANY_INVALID_FRAMES")
-            .unwrap_or(JSValue::UNDEFINED);
+        let Some(code_js) =
+            self.or_stop(self.string_or_empty_to_js(b"ERR_HTTP2_TOO_MANY_INVALID_FRAMES"))
+        else {
+            return;
+        };
         self.dispatch_with_2_extra(
             JSH2FrameParser::Gc::onError,
             code_js,
@@ -5955,12 +5986,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             for (id, value) in self.custom_settings.get().iter() {
                 // Custom-setting ids are numeric property keys: route through the index-aware put.
                 let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
-                if let Err(err) =
-                    custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
-                {
-                    g.report_active_exception_as_unhandled(err);
-                    break;
-                }
+                // Left pending: the engine stops before the next frame
+                // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
+                let put = custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64));
+                let Some(()) = self.or_stop(put) else {
+                    return;
+                };
             }
             js.put(&g, b"customSettings".as_slice(), custom);
         }
@@ -6014,12 +6045,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             for (id, value) in self.remote_custom_settings.get().iter() {
                 // Custom-setting ids are numeric property keys: route through the index-aware put.
                 let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
-                if let Err(err) =
-                    custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
-                {
-                    g.report_active_exception_as_unhandled(err);
-                    break;
-                }
+                // Left pending: the engine stops before the next frame
+                // (`Sink::should_stop`) and `read()`/`on_native_read` return it.
+                let put = custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64));
+                let Some(()) = self.or_stop(put) else {
+                    return;
+                };
             }
             js.put(&g, b"customSettings".as_slice(), custom);
         }
@@ -6033,12 +6064,14 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             // "Protocol error"); the JS error handler destroys the session.
             if self.out_standing_pings.get() == 0 {
                 let g = self.global();
-                let chunk = self
-                    .handlers
-                    .get()
-                    .binary_type
-                    .to_js(b"unsolicited PING ACK", &g)
-                    .unwrap_or(JSValue::UNDEFINED);
+                let Some(chunk) = self.or_stop(
+                    self.handlers
+                        .get()
+                        .binary_type
+                        .to_js(b"unsolicited PING ACK", &g),
+                ) else {
+                    return;
+                };
                 self.dispatch_with_2_extra(
                     JSH2FrameParser::Gc::onError,
                     JSValue::js_number(crate::api::h2::wire::lib_error::PROTO as f64),
@@ -6054,8 +6087,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 .set(self.out_standing_pings.get().saturating_sub(1));
         }
         let g = self.global();
-        // Skip the JS dispatch when conversion fails (VM terminating).
-        let Ok(buffer) = self.handlers.get().binary_type.to_js(payload, &g) else {
+        let Some(buffer) = self.or_stop(self.handlers.get().binary_type.to_js(payload, &g)) else {
             return;
         };
         self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(is_ack));
@@ -6066,12 +6098,9 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         // surfaced to JS is the peer's Last-Stream-ID from the GOAWAY payload (node's documented
         // semantics for the 'goaway' event).
         let g = self.global();
-        let chunk = self
-            .handlers
-            .get()
-            .binary_type
-            .to_js(debug, &g)
-            .unwrap_or(JSValue::UNDEFINED);
+        let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(debug, &g)) else {
+            return;
+        };
         self.dispatch_with_2_extra(
             JSH2FrameParser::Gc::onGoAway,
             JSValue::js_number(code as f64),
@@ -6099,12 +6128,12 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     }
 
     fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
-        let origin_js = self
-            .string_or_empty_to_js(origin)
-            .unwrap_or(JSValue::UNDEFINED);
-        let value_js = self
-            .string_or_empty_to_js(value)
-            .unwrap_or(JSValue::UNDEFINED);
+        let Some(origin_js) = self.or_stop(self.string_or_empty_to_js(origin)) else {
+            return;
+        };
+        let Some(value_js) = self.or_stop(self.string_or_empty_to_js(value)) else {
+            return;
+        };
         self.dispatch_with_2_extra(
             JSH2FrameParser::Gc::onAltSvc,
             origin_js,
@@ -6158,22 +6187,29 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 break;
             }
             let origin = &rest[2..2 + len];
-            let Ok(origin_js) = self.string_or_empty_to_js(origin) else {
+            let Some(origin_js) = self.or_stop(self.string_or_empty_to_js(origin)) else {
                 return;
             };
             if count == 0 {
                 origin_value = origin_js;
                 origin_value.ensure_still_alive();
             } else if count == 1 {
-                let Ok(array) = JSValue::create_empty_array(&g, 0) else {
+                let Some(array) = self.or_stop(JSValue::create_empty_array(&g, 0)) else {
                     return;
                 };
                 array.ensure_still_alive();
-                let _ = array.push(&g, origin_value);
-                let _ = array.push(&g, origin_js);
+                let Some(()) = self.or_stop(
+                    array
+                        .push(&g, origin_value)
+                        .and_then(|()| array.push(&g, origin_js)),
+                ) else {
+                    return;
+                };
                 origin_value = array;
             } else {
-                let _ = origin_value.push(&g, origin_js);
+                let Some(()) = self.or_stop(origin_value.push(&g, origin_js)) else {
+                    return;
+                };
             }
             count += 1;
             rest = &rest[2 + len..];
@@ -6235,13 +6271,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
                 v
             })
         });
-        let tuple = match tuple {
-            Ok(v) => v,
-            Err(err) => {
-                // Materialization threw (OOM); surface it and drop the block.
-                g.report_active_exception_as_unhandled(err);
-                return;
-            }
+        let Some(tuple) = self.or_stop(tuple) else {
+            return;
         };
         if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
             // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
@@ -6266,8 +6297,7 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
     fn on_data(&self, stream_id: u32, data: &[u8]) {
         let g = self.global();
         let stream_ctx = self.rewrite_stream_ctx(stream_id);
-        // Skip the JS dispatch when conversion fails (VM terminating).
-        let Ok(chunk) = self.handlers.get().binary_type.to_js(data, &g) else {
+        let Some(chunk) = self.or_stop(self.handlers.get().binary_type.to_js(data, &g)) else {
             return;
         };
         self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamData, stream_ctx, chunk);
@@ -7437,29 +7467,20 @@ impl H2FrameParser {
         ))
     }
 
-    /// Returns `(settled_state, callback_deferred)`.
-    ///
-    /// `settled_state` is the state code the close tail settled on (5 = HALF_CLOSED_LOCAL,
-    /// 7 = CLOSED, 0 = no close-tail transition ran). With
-    /// `suppress_half_closed_local_dispatch` the HALF_CLOSED_LOCAL onStreamEnd dispatch
-    /// is skipped — the synchronous caller (writeStream) hands the state to JS via its
-    /// return value instead of re-entering the VM mid-host-call.
-    ///
-    /// With `defer_write_callback`, when the payload is handed to the socket without being
-    /// queued (no flow-control / socket backpressure) the write callback is NOT invoked here:
-    /// `callback_deferred` is true and the JS caller completes it asynchronously instead, so a
-    /// node Writable's `_write` callback never settles synchronously inside `write()`. When the
-    /// payload is queued, the engine still owns the callback and invokes it once the queued
-    /// frames are flushed (backpressure cleared), exactly as before.
+    /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
+    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether `callback` was left to the caller.
     fn send_data(
         &self,
         stream: &mut Stream,
         payload: &[u8],
-        close: bool,
         callback: JSValue,
-        suppress_half_closed_local_dispatch: bool,
-        defer_write_callback: bool,
+        options: SendDataOptions,
     ) -> (u8, bool) {
+        let SendDataOptions {
+            close,
+            suppress_half_closed_local_dispatch,
+            defer_write_callback,
+        } = options;
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
@@ -7721,7 +7742,16 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        let _ = this.send_data(
+            stream,
+            b"",
+            JSValue::UNDEFINED,
+            SendDataOptions {
+                close: true,
+                suppress_half_closed_local_dispatch: false,
+                defer_write_callback: false,
+            },
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -8253,10 +8283,12 @@ impl H2FrameParser {
         let (settled_state, callback_deferred) = this.send_data(
             &mut stream,
             &payload,
-            close,
             callback_arg,
-            true,
-            defer_callback_arg.to_boolean(),
+            SendDataOptions {
+                close,
+                suppress_half_closed_local_dispatch: true,
+                defer_write_callback: defer_callback_arg.to_boolean(),
+            },
         );
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
@@ -8271,24 +8303,21 @@ impl H2FrameParser {
         Ok(JSValue::js_number(result as f64))
     }
 
+    /// `set_next_stream_id` can park `last_stream_id` anywhere in the u32 range, so the step
+    /// saturates; callers that open the stream reject anything above `MAX_STREAM_ID`.
     fn get_next_stream_id(&self) -> u32 {
-        let mut stream_id: u32 = self.last_stream_id.get();
+        let stream_id = self.last_stream_id.get();
         if self.is_server.get() {
             if stream_id.is_multiple_of(2) {
-                stream_id += 2;
+                stream_id.saturating_add(2)
             } else {
-                stream_id += 1;
+                stream_id.saturating_add(1)
             }
+        } else if stream_id.is_multiple_of(2) {
+            stream_id.saturating_add(1)
         } else {
-            if stream_id.is_multiple_of(2) {
-                stream_id += 1;
-            } else if stream_id == 0 {
-                stream_id = 1;
-            } else {
-                stream_id += 2;
-            }
+            stream_id.saturating_add(2)
         }
-        stream_id
     }
 
     #[bun_jsc::host_fn(method)]
@@ -8301,22 +8330,21 @@ impl H2FrameParser {
         debug_assert!(args_list.len() >= 1);
         let stream_id_arg = args_list[0];
         debug_assert!(stream_id_arg.is_number());
-        let mut last_stream_id = stream_id_arg.to_u32();
-        if this.is_server.get() {
-            if last_stream_id.is_multiple_of(2) {
-                last_stream_id -= 2;
+        // Store the id `get_next_stream_id` steps from. A fractional id passes the JS layer's
+        // `id <= 0` check and truncates to 0 here; 0 (and 1 on a client) has no predecessor,
+        // so the subtraction saturates to the initial state instead of wrapping.
+        let next_stream_id = stream_id_arg.to_u32();
+        let last_stream_id = if this.is_server.get() {
+            if next_stream_id.is_multiple_of(2) {
+                next_stream_id.saturating_sub(2)
             } else {
-                last_stream_id -= 1;
+                next_stream_id.saturating_sub(1)
             }
+        } else if next_stream_id.is_multiple_of(2) {
+            next_stream_id.saturating_sub(1)
         } else {
-            if last_stream_id.is_multiple_of(2) {
-                last_stream_id -= 1;
-            } else if last_stream_id == 1 {
-                last_stream_id = 0;
-            } else {
-                last_stream_id -= 2;
-            }
-        }
+            next_stream_id.saturating_sub(2)
+        };
         this.last_stream_id.set(last_stream_id);
         Ok(JSValue::UNDEFINED)
     }
@@ -8381,6 +8409,7 @@ impl H2FrameParser {
 
         let mut name_buffer = [0u8; 4096];
         let mut encoded_headers: Vec<u8> = Vec::new();
+        let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
         // Pseudo-headers must be encoded first, so iterate twice.
@@ -8438,7 +8467,6 @@ impl H2FrameParser {
                 if js_value.is_empty_or_undefined_or_null() {
                     continue;
                 }
-                let value_str = js_value.to_js_string(global_object)?;
                 // All-digit names can't be passed to get_truthy (integer-index-like names trip
                 // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
                 let never_index = if Self::is_index_like_name(validated_name) {
@@ -8449,32 +8477,93 @@ impl H2FrameParser {
                         None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
                     }
                 };
-                let value_slice = value_str.to_slice(global_object);
-                let value = value_slice.slice();
-                if !is_valid_header_value(value) {
-                    return Err(global_object
-                        .err(
-                            JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
-                            format_args!(
-                                "Invalid value for header \"{}\"",
-                                BStr::new(validated_name)
-                            ),
+                let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
+                    let value_str = item.to_js_string(global_object)?;
+                    let value_slice = value_str.to_slice(global_object);
+                    let value = value_slice.slice();
+                    if !is_valid_header_value(value) {
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!(
+                                    "Invalid value for header \"{}\"",
+                                    BStr::new(validated_name)
+                                ),
+                            )
+                            .throw());
+                    }
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "encode header {} {}",
+                        BStr::new(validated_name),
+                        BStr::new(value)
+                    );
+                    if this
+                        .encode_header_into_list(
+                            &mut encoded_headers,
+                            validated_name,
+                            value,
+                            never_index,
                         )
-                        .throw());
-                }
-                if this
-                    .encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    )
-                    .is_err()
-                {
-                    // Same as the request/respond encode failures: nghttp2 fails the whole
-                    // session, and node never surfaces this through the pushStream callback.
-                    this.schedule_header_compression_session_error();
-                    return Ok(JSValue::js_number(-1.0));
+                        .is_err()
+                    {
+                        // Same as the request/respond encode failures: nghttp2 fails the whole
+                        // session, and node never surfaces this through the pushStream callback.
+                        this.schedule_header_compression_session_error();
+                        return Ok(Some(JSValue::js_number(-1.0)));
+                    }
+                    Ok(None)
+                };
+                if js_value.js_type().is_array() {
+                    let mut value_iter = js_value.array_iterator(global_object)?;
+                    if let Some(idx) = this.single_value_index_checked(validated_name) {
+                        if value_iter.len > 1 || single_value_headers[idx] {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                    format_args!(
+                                        "Header field \"{}\" must only have a single value",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
+                        }
+                        single_value_headers[idx] = true;
+                    }
+                    while let Some(item) = value_iter.next()? {
+                        if item.is_empty_or_undefined_or_null() {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
+                        }
+                        if let Some(ret) = encode_value(item)? {
+                            return Ok(ret);
+                        }
+                    }
+                } else {
+                    if let Some(idx) = this.single_value_index_checked(validated_name) {
+                        if single_value_headers[idx] {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                    format_args!(
+                                        "Header field \"{}\" must only have a single value",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
+                        }
+                        single_value_headers[idx] = true;
+                    }
+                    if let Some(ret) = encode_value(js_value)? {
+                        return Ok(ret);
+                    }
                 }
             }
         }
@@ -9589,6 +9678,9 @@ impl H2FrameParser {
         if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
             let copied = array_buffer.byte_slice().to_vec();
             this.rewrite_read(&copied);
+            if this.left_exception.replace(false) {
+                return Err(bun_jsc::JsError::Thrown);
+            }
             Ok(JSValue::UNDEFINED)
         } else {
             Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
@@ -9600,6 +9692,11 @@ impl H2FrameParser {
         let _keepalive = self.keepalive();
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
+        // What a frame callback left pending stopped the engine (`should_stop`);
+        // it belongs to the socket dispatch that delivered these bytes.
+        if self.left_exception.replace(false) {
+            return Err(bun_jsc::JsError::Thrown);
+        }
         Ok(())
     }
 
@@ -9785,6 +9882,7 @@ impl H2FrameParser {
             last_peer_stream_id: Cell::new(0),
             expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
+            left_exception: Cell::new(false),
             preface_received_len: Cell::new(0),
             write_buffer: JsCell::new(Vec::<u8>::default()),
             write_buffer_offset: Cell::new(0),

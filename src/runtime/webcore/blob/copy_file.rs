@@ -75,11 +75,7 @@ unsafe impl Send for CopyFile {}
 impl jsc::JobContext for CopyFile {
     type OffThread = Self;
     type Js = jsc::JSPromiseStrong;
-    fn run(
-        this: &mut Self,
-        _vm: &jsc::vm_handle::Borrow,
-        done: bun_jsc::Completion<Self>,
-    ) -> Option<bun_jsc::Completion<Self>> {
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
         this.run_async();
         Some(done)
     }
@@ -88,7 +84,7 @@ impl jsc::JobContext for CopyFile {
         mut promise: jsc::JSPromiseStrong,
         cx: &jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
-        Ok(CopyFile::then(&mut this, promise.swap(), cx.global())?)
+        CopyFile::then(&mut this, promise.swap(), cx.global())
     }
 }
 
@@ -132,7 +128,7 @@ impl CopyFile {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> jsc::JsResult<()> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
         if matches!(
             self.source_file_store.pathlike,
@@ -159,7 +155,7 @@ impl CopyFile {
         &mut self,
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
-    ) -> Result<(), jsc::JsTerminated> {
+    ) -> jsc::JsResult<()> {
         drop(self.source_store.take()); // source_store.?.deref()
 
         if self.system_error.is_some() {
@@ -313,6 +309,40 @@ impl CopyFile {
         Ok(())
     }
 
+    /// Copies the rest of the file with [`read_write_fallback`] when
+    /// `copy_file_range`/`sendfile`/`splice` is unavailable or unusable,
+    /// recording a failure in `system_error` the same way the syscall paths do.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn fallback_read_write(
+        &mut self,
+        remain: usize,
+        unknown_size: bool,
+        total_written: &mut u64,
+    ) -> Result<(), crate::Error> {
+        let bun_opened_dest = matches!(
+            self.destination_file_store.pathlike,
+            PathOrFileDescriptor::Path(_)
+        );
+        let cap = if unknown_size {
+            MAX_SIZE
+        } else {
+            remain as SizeType
+        };
+        match read_write_fallback(
+            self.source_fd,
+            self.destination_fd,
+            bun_opened_dest,
+            cap,
+            total_written,
+        ) {
+            bun_sys::Result::Err(err) => {
+                self.system_error = Some(err.to_system_error());
+                Err(bun_errno::from_errno(err.errno as i32).into())
+            }
+            bun_sys::Result::Ok(()) => Ok(()),
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
@@ -334,17 +364,6 @@ impl CopyFile {
         let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
-        let bun_opened_dest = matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Path(_)
-        );
-        let fallback_cap = |remain: usize| -> SizeType {
-            if unknown_size {
-                MAX_SIZE
-            } else {
-                remain as SizeType
-            }
-        };
 
         // defer { this.read_len = @truncate(total_written); }
         let read_len_slot: *mut SizeType = &raw mut self.read_len;
@@ -360,19 +379,7 @@ impl CopyFile {
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            match read_write_fallback(
-                src_fd,
-                dest_fd,
-                bun_opened_dest,
-                fallback_cap(remain),
-                &mut total_written,
-            ) {
-                bun_sys::Result::Err(err) => {
-                    self.system_error = Some(err.to_system_error());
-                    return Err(bun_errno::from_errno(err.errno as i32).into());
-                }
-                bun_sys::Result::Ok(()) => return Ok(()),
-            }
+            return self.fallback_read_write(remain, unknown_size, &mut total_written);
         }
 
         loop {
@@ -425,19 +432,7 @@ impl CopyFile {
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
-                    match read_write_fallback(
-                        src_fd,
-                        dest_fd,
-                        bun_opened_dest,
-                        fallback_cap(remain),
-                        &mut total_written,
-                    ) {
-                        bun_sys::Result::Err(err) => {
-                            self.system_error = Some(err.to_system_error());
-                            return Err(bun_errno::from_errno(err.errno as i32).into());
-                        }
-                        bun_sys::Result::Ok(()) => return Ok(()),
-                    }
+                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
                 }
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
@@ -472,19 +467,7 @@ impl CopyFile {
                     // to a read/write loop
                     if total_written == 0 {
                         // TODO: this should use non-blocking I/O.
-                        match read_write_fallback(
-                            src_fd,
-                            dest_fd,
-                            bun_opened_dest,
-                            fallback_cap(remain),
-                            &mut total_written,
-                        ) {
-                            bun_sys::Result::Err(err) => {
-                                self.system_error = Some(err.to_system_error());
-                                return Err(bun_errno::from_errno(err.errno as i32).into());
-                            }
-                            bun_sys::Result::Ok(()) => return Ok(()),
-                        }
+                        return self.fallback_read_write(remain, unknown_size, &mut total_written);
                     }
 
                     self.system_error = Some(
@@ -1084,8 +1067,6 @@ pub struct CopyFileWindows<'a> {
     // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
-    /// How the mkdirp pool completion gets back to the VM.
-    pub(crate) loop_handle: jsc::LoopHandle,
 
     pub(crate) size: SizeType,
 
@@ -1391,7 +1372,6 @@ impl<'a> CopyFileWindows<'a> {
             promise: jsc::JSPromiseStrong::init(global),
             // SAFETY: all-zero is a valid libuv::fs_t
             io_request: bun_core::ffi::zeroed::<libuv::fs_t>(),
-            loop_handle: jsc::VirtualMachine::VirtualMachine::get().loop_handle(),
             event_loop,
             mkdirp_if_not_exists,
             destination_mode,
@@ -1664,7 +1644,8 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
-        let _ = promise.reject(global_this, err_instance); // TODO: properly propagate exception upwards
+        // This libuv completion is the landing frame for what settling leaves.
+        crate::dispatch::fold(promise.reject(global_this, err_instance));
     }
 
     pub(crate) fn on_complete(&mut self, written_actual: usize) {
@@ -1751,7 +1732,10 @@ impl<'a> CopyFileWindows<'a> {
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
-        let _ = promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)); // TODO: properly propagate exception upwards
+        // As in `throw`: folded at this libuv completion.
+        crate::dispatch::fold(
+            promise.resolve(global_this, JSValue::js_number_from_uint64(written as u64)),
+        );
     }
 
     #[cold]
@@ -1812,7 +1796,8 @@ impl<'a> CopyFileWindows<'a> {
             completion: on_mkdirp_complete_concurrent,
             completion_ctx: core::ptr::from_mut(self).cast::<()>(),
             path,
-            ..Default::default()
+            ticket: jsc::VirtualMachine::VirtualMachine::get().ticket(),
+            task: Default::default(),
         });
     }
 
@@ -1922,7 +1907,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 }
 
 #[cfg(windows)]
-fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
+fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket: &jsc::Ticket) {
     bun_sys::syslog!("mkdirp complete");
     // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
     // by `mkdirp` above; sole owner on this concurrent path.
@@ -1932,7 +1917,7 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
+    // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> jsc::JsResult<()>`.
     fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
         // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
@@ -1940,15 +1925,9 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         unsafe { (*this).on_mkdirp_complete() };
         Ok(())
     }
-    let ct = jsc::ConcurrentTask::create(jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(
-        this,
-        call_erased,
+    ticket.post(jsc::ConcurrentTask::create(
+        jsc::ManagedTask::ManagedTask::new::<CopyFileWindows>(this, call_erased),
     ));
-    if let jsc::vm_handle::Posted::Refused(ct) = this.loop_handle.post_task(ct) {
-        // VM torn down: nobody will settle the promise; free the hop.
-        // SAFETY: refused ⇒ we own the task box.
-        unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct) };
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

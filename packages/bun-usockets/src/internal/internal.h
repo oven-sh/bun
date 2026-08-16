@@ -147,6 +147,10 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 
 
 /* Loop related */
+/* `eof` values for us_internal_dispatch_ready_poll: nonzero = read-side EOF hint (half-open honored);
+ * LIBUS_POLL_HANGUP = epoll EPOLLHUP, both directions down, re-reported until the fd is closed. */
+#define LIBUS_POLL_EOF 1
+#define LIBUS_POLL_HANGUP 2
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events);
 void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
@@ -343,6 +347,21 @@ struct us_socket_t {
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
 
+/* us_socket_adopt relocates a socket whose ext grows and retires the old block
+ * (is_closed + adopted, prev -> replacement; freed by the outermost tick's
+ * us_internal_free_closed_sockets, so it is still readable mid-dispatch). A
+ * callback may adopt more than once before returning, retiring each block in
+ * turn, so walk the whole chain rather than one link: one link can land on a
+ * block that is itself retired. The walk ends on the live block, which never
+ * has adopted set (the copy is taken before the source is flagged). Tolerates
+ * NULL, which callbacks may return. */
+static inline struct us_socket_t *us_internal_socket_follow_adopted(struct us_socket_t *s) {
+    while (s && s->flags.adopted && s->prev) {
+        s = s->prev;
+    }
+    return s;
+}
+
 struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
     struct us_socket_group_t *group;
@@ -390,6 +409,7 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t connected : 1;
+    uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };
 

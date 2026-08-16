@@ -43,7 +43,7 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
-use crate::chunk::Content as ChunkContent;
+use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
 
@@ -83,7 +83,7 @@ pub(crate) fn generate_chunk_json(
         let file_source_index = *file_source_index;
         // Counters are `AtomicUsize` because they're populated by the parallel
         // codegen workers; metafile emission runs strictly after the
-        // `wait_for_all` join in `generate_chunks_in_parallel`, so a relaxed
+        // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
         // load observes the final value.
         let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {
@@ -446,9 +446,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
         b"", // no import prefix for metafile
         &chunks[0],
         chunks,
-        None,  // no display size
-        false, // not force absolute path
-        false, // no source map shifts
+        None, // no display size
+        ReferencePathStyle::ImporterRelative,
+        SourceMapShiftTracking::Disabled,
     )?;
 
     Ok(code_result.buffer)
@@ -475,7 +475,9 @@ enum JsonValue {
     Null,
     Bool(bool),
     Integer(i64),
-    Float(#[expect(dead_code)] f64),
+    /// The metafile only ever reads integers (byte counts), so a float is
+    /// validated and otherwise ignored.
+    Float,
     String(Box<[u8]>),
     Array(Vec<JsonValue>),
     Object(JsonObject),
@@ -714,7 +716,8 @@ impl<'a> JsonParser<'a> {
         }
         let s = &self.input[start..self.pos];
         if is_float {
-            Ok(JsonValue::Float(bun_core::fmt::parse_f64(s).ok_or(())?))
+            bun_core::fmt::parse_f64(s).ok_or(())?;
+            Ok(JsonValue::Float)
         } else {
             Ok(JsonValue::Integer(
                 bun_core::fmt::parse_int::<i64>(s, 10).map_err(|_| ())?,

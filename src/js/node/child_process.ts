@@ -1127,9 +1127,14 @@ class ChildProcess extends EventEmitter {
     const stdinPumps = this.#stdinPumps;
     if (stdinPumps !== undefined) {
       this.#stdinPumps = undefined;
-      for (let j = 0; j < stdinPumps.length; j += 2) {
-        stdinPumps[j].unpipe(stdinPumps[j + 1]);
-        stdinPumps[j + 1].destroy();
+      for (let j = 0; j < stdinPumps.length; j += 3) {
+        const source = stdinPumps[j];
+        const writable = stdinPumps[j + 1];
+        const endSinkOnSourceDeath = stdinPumps[j + 2];
+        source.removeListener("error", endSinkOnSourceDeath);
+        source.removeListener("close", endSinkOnSourceDeath);
+        source.unpipe(writable);
+        writable.destroy();
       }
     }
 
@@ -1323,7 +1328,7 @@ class ChildProcess extends EventEmitter {
         };
         stream.once("error", endSinkOnSourceDeath);
         stream.once("close", endSinkOnSourceDeath);
-        (this.#stdinPumps ??= []).push(stream, writable);
+        (this.#stdinPumps ??= []).push(stream, writable, endSinkOnSourceDeath);
       } else {
         const source = handle[i === 1 ? "stdout" : "stderr"];
         if (!source) continue;

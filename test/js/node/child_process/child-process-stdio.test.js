@@ -211,4 +211,17 @@ describe("stream stdio entries without an fd (post-spawn pump)", () => {
     const [code] = await once(child, "close");
     expect(code).toBe(42);
   });
+
+  it("removes its listeners from a wrapped stdin source once the child exits", async () => {
+    const source = new Readable({ read() {} });
+    source._handle = {}; // no fd: forces the post-spawn pump path
+    const listenerCounts = () => ({ error: source.listenerCount("error"), close: source.listenerCount("close") });
+    const before = listenerCounts();
+    for (let i = 0; i < 3; i++) {
+      const child = spawn(bunExe(), ["-e", ""], { env: bunEnv, stdio: [source, "ignore", "ignore"] });
+      const [code] = await once(child, "close");
+      expect(code).toBe(0);
+    }
+    expect(listenerCounts()).toEqual(before);
+  });
 });

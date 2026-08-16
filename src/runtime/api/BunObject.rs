@@ -1574,8 +1574,18 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             }
             // SAFETY: `init` returned a live heap-allocated server pointer.
             let server_ref: &mut $ServerType = unsafe { &mut *server };
-            // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
+            // Building a startup snapshot (strict I/O): don't bind — this
+            // launch's socket could not exist in a restored one. The server is
+            // queued instead, and every restored launch binds it before its
+            // `"restore"` listeners run; the route list is built then too.
+            let snapshot_deferred = crate::server::startup_snapshot_defers_listen();
+            let route_list_object = if snapshot_deferred {
+                <$ServerType>::defer_listen_until_snapshot_restore(server);
+                JSValue::ZERO
+            } else {
+                // SAFETY: `server` is the live heap-allocated server returned by `init`.
+                <$ServerType>::listen(server)
+            };
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
@@ -1632,33 +1642,39 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // local `config` is defaulted from here on — read `allow_hot`
             // and `id` from the server's own config or the registration is
             // keyed on the wrong (empty) id.
-            if server_ref.config.allow_hot {
-                // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
-                // borrow was released by the `hot_map()` arm above.
-                if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
-                    hot.insert_raw(
-                        &server_ref.config.id,
-                        HotMapEntry {
-                            tag: $tag as u8,
-                            ptr: server.cast::<()>(),
-                        },
-                    );
+            // A snapshot-deferred server skips the hot map (a second serve()
+            // with the same id would try to reload routes on the not-yet-bound
+            // app) and the inspector notification (there is no address to
+            // report until a launch binds it).
+            if !snapshot_deferred {
+                if server_ref.config.allow_hot {
+                    // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
+                    // borrow was released by the `hot_map()` arm above.
+                    if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
+                        hot.insert_raw(
+                            &server_ref.config.id,
+                            HotMapEntry {
+                                tag: $tag as u8,
+                                ptr: server.cast::<()>(),
+                            },
+                        );
+                    }
                 }
-            }
 
-            // SAFETY: bun_vm() returns the live thread-local VM.
-            if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
-                let any = AnyServer::from(server.cast_const());
-                crate::server::http_server_agent::notify_server_started(
-                    &mut debugger.http_server_agent,
-                    any,
-                );
-                bun_core::handle_oom(
-                    crate::server::http_server_agent::notify_server_routes_updated(
+                // SAFETY: bun_vm() returns the live thread-local VM.
+                if let Some(debugger) = global_object.bun_vm().as_mut().debugger.as_deref_mut() {
+                    let any = AnyServer::from(server.cast_const());
+                    crate::server::http_server_agent::notify_server_started(
                         &mut debugger.http_server_agent,
                         any,
-                    ),
-                );
+                    );
+                    bun_core::handle_oom(
+                        crate::server::http_server_agent::notify_server_routes_updated(
+                            &mut debugger.http_server_agent,
+                            any,
+                        ),
+                    );
+                }
             }
 
             Ok(obj)

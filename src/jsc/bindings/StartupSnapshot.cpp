@@ -21,6 +21,7 @@
 #include <wtf/RefCounted.h>
 #include <JavaScriptCore/VMInlines.h>
 #include <JavaScriptCore/StackAlignment.h>
+#include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/HeapIterationScope.h>
@@ -223,8 +224,8 @@ static bool snapshotEnvIsSet()
 static void reexecWithoutASLRIfSlid()
 {
     // The re-exec'd generation is tagged in argv[0] so it never re-execs again even if disabling ASLR silently failed; the tag is
-    // cut off again right here, before anything (Bun's argv capture, ps) can see it.
-    static constexpr const char* kReexecTag = " [snapshot-reexec]";
+    // cut off again right here, before anything (Bun's argv capture, ps) can see it. Only Darwin tags (Linux re-execs via personality()).
+    [[maybe_unused]] static constexpr const char* kReexecTag = " [snapshot-reexec]";
 #if OS(DARWIN)
     bool alreadyReexeced = false;
     if (char* argv0 = (*_NSGetArgv())[0]) {
@@ -540,6 +541,7 @@ extern "C" bool Bun__startupSnapshotDumpNow(JSC::VM* vm, const char* path)
 }
 extern "C" uint32_t Bun__standaloneStartupSnapshotBuildFlags();
 extern "C" void Bun__startupSnapshotRunMain(JSC::JSGlobalObject*);
+extern "C" void Bun__startupSnapshotBindPendingServers(JSC::JSGlobalObject*);
 extern "C" bool Bun__startupSnapshotHasMain();
 // `bun build --snapshot` marks the payload (Flags::TAKE_STARTUP_SNAPSHOT…); a marked run writes `<own path>.snapshot` instead of starting the app. Translated here into the runtime's internal variables, so the app's own env/argv are never involved.
 static void applySnapshotBuildMarking()
@@ -1206,22 +1208,29 @@ static bool snapshotDump(JSC::VM& vm, const char* path)
     }
     size_t settledStrings = 0;
     { // Error objects keep raw StackFrames (CodeBlock pointers) until .stack is first read; resolve them now so nothing in the snapshot points at code we drop or re-link
-        JSC::HeapIterationScope scope(vm.heap);
-        vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
-            if (isJSCellKind(kind)) {
-                JSC::JSCell* cell = static_cast<JSC::JSCell*>(heapCell);
-                if (auto* error = dynamicDowncast<JSC::ErrorInstance>(cell)) error->materializeErrorInfoIfNeeded(vm);
-                // Lazy one-time StringImpl header writes (hash, did-report-cost) would otherwise dirty snapshot pages the first time a string is used after restore.
-                if (auto* str = dynamicDowncast<JSC::JSString>(cell)) {
-                    if (!str->isRope())
-                        if (auto* impl = str->tryGetValueImpl()) {
-                            impl->settleLazyHeaderWritesForStartupSnapshot();
-                            settledStrings++;
-                        }
+        WTF::Vector<JSC::ErrorInstance*, 16> errors;
+        {
+            JSC::HeapIterationScope scope(vm.heap);
+            vm.heap.objectSpace().forEachLiveCell(scope, [&](JSC::HeapCell* heapCell, JSC::HeapCell::Kind kind) {
+                if (isJSCellKind(kind)) {
+                    JSC::JSCell* cell = static_cast<JSC::JSCell*>(heapCell);
+                    if (auto* error = dynamicDowncast<JSC::ErrorInstance>(cell)) errors.append(error);
+                    // Lazy one-time StringImpl header writes (hash, did-report-cost) would otherwise dirty snapshot pages the first time a string is used after restore.
+                    if (auto* str = dynamicDowncast<JSC::JSString>(cell)) {
+                        if (!str->isRope())
+                            if (auto* impl = str->tryGetValueImpl()) {
+                                impl->settleLazyHeaderWritesForStartupSnapshot();
+                                settledStrings++;
+                            }
+                    }
                 }
-            }
-            return IterationStatus::Continue;
-        });
+                return IterationStatus::Continue;
+            });
+        }
+        // Materializing allocates (the stack string, structure transitions), which must not happen while the heap is being iterated; DeferGC keeps the collected pointers valid through those allocations.
+        JSC::DeferGC deferGC(vm);
+        for (auto* error : errors)
+            error->materializeErrorInfoIfNeeded(vm);
     }
     if (auto* table = vm.atomStringTable())
         for (auto& packed : table->table())
@@ -1954,6 +1963,7 @@ static void snapshotRestoreAndRun(const char* path)
         JSC::JSLockHolder lock(*vm);
         NakedPtr<JSC::Exception> exception;
         globalObject->weakRandom().setSeed(WTF::cryptographicallyRandomNumber<unsigned>()); // Math.random's stream came from the builder
+        Bun__startupSnapshotBindPendingServers(globalObject); // servers created before the snapshot listen again, before 'restore' listeners run
         // chdir('.') refreshes libc's cached cwd; after the app's post-restore burst settles, one full GC plus a reclean hands back what it only touched transiently.
         JSC::evaluate(globalObject, JSC::makeSource("try { process.chdir('.'); } catch {} process.emit('restore');"_s, JSC::SourceOrigin {}, JSC::SourceTaintedOrigin::Untainted), JSC::JSValue(), exception);
         if (exception) { // reported before main() runs: main() may end the process, and a listener's failure is the likelier cause of main()'s

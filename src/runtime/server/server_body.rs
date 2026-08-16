@@ -1468,7 +1468,9 @@ where
 
         let topic = topic_value.to_slice(global)?;
 
-        if topic.slice().is_empty() {
+        if topic.slice().is_empty() || self.app.is_none() {
+            // `app` is `None` only for a snapshot-pending server, which cannot
+            // have subscribers: nothing is bound yet.
             return Ok(JSValue::js_number(0.0));
         }
 
@@ -1662,7 +1664,12 @@ where
             return Ok(JSValue::js_number(0.0));
         }
 
-        let app = self.app.unwrap().cast::<c_void>();
+        // `None` only for a snapshot-pending server: nothing is bound, so
+        // there is no subscriber to deliver to.
+        let Some(app) = self.app else {
+            return Ok(JSValue::js_number(0.0));
+        };
+        let app = app.cast::<c_void>();
 
         if topic.len == 0 {
             httplog!("publish() topic invalid");
@@ -2254,12 +2261,17 @@ where
     ) {
         httplog!("onReload");
 
-        // SAFETY: `on_reload` is only reachable while the server is running
-        // (`self.app` set in `listen()`).
-        self.app_mut().clear_routes();
-        if Self::HAS_H3 {
-            if let Some(h3a) = self.h3_app {
-                bun_opaque::opaque_deref_mut(h3a).clear_routes();
+        // `app` is `None` only for a snapshot-pending server (reload() during
+        // a snapshot build): adopt the new config below as usual, and skip the
+        // route (re-)registration — the restore-time bind runs `set_routes()`
+        // against whatever the config holds by then.
+        let has_app = self.app.is_some();
+        if has_app {
+            self.app_mut().clear_routes();
+            if Self::HAS_H3 {
+                if let Some(h3a) = self.h3_app {
+                    bun_opaque::opaque_deref_mut(h3a).clear_routes();
+                }
             }
         }
 
@@ -2343,9 +2355,11 @@ where
             self.user_routes.clear();
         }
 
-        let route_list_value = self.set_routes();
-        if new_config.had_routes_object {
-            Self::js_gc_route_list_set(server_js, global, route_list_value);
+        if has_app {
+            let route_list_value = self.set_routes();
+            if new_config.had_routes_object {
+                Self::js_gc_route_list_set(server_js, global, route_list_value);
+            }
         }
 
         if self.inspector_server_id.get() != 0 {
@@ -2627,7 +2641,10 @@ where
         // `!deinit_running`: a `server.stop()` reached from a close callback
         // that an outer `stop()`'s drain fired would re-enter `stop_listening`
         // with a fresh `&mut self` under the outer frame's borrow.
+        // `SNAPSHOT_PENDING`: no listener exists, but a graceful stop() must
+        // still run so the pending bind-at-restore entry is dropped.
         if self.has_listener()
+            || self.flags.contains(ServerFlags::SNAPSHOT_PENDING)
             || (abrupt
                 && !self.flags.contains(ServerFlags::TERMINATED)
                 && !self.deinit_running.get())
@@ -2649,6 +2666,12 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_port(&self, _: &JSGlobalObject) -> JSValue {
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // Building a snapshot: the port is only known once a launch binds.
+            // `undefined` rather than a throw so code that reads it
+            // incidentally (node:http's listen path does) keeps working.
+            return JSValue::UNDEFINED;
+        }
         let config_port = match &self.config.address {
             server_config::Address::Unix(_) => return JSValue::UNDEFINED,
             server_config::Address::Tcp { port, .. } => *port,
@@ -2744,6 +2767,13 @@ where
 
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_url(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // A URL built now would freeze this build's address into every
+            // launch; throw so the read moves to where the server is bound.
+            return Err(global.throw(format_args!(
+                "server.url is not available while building a snapshot: the server binds again in each restored launch, so the address is only known then. Read it after restore (process.on('restore') or Bun.startupSnapshot.main())"
+            )));
+        }
         let mut url = self
             .get_url_as_string()
             .map_err(|_| global.throw_out_of_memory())?;
@@ -2830,7 +2860,11 @@ where
     }
 
     pub(crate) fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {
-        if !self.has_listener()
+        // A snapshot-pending server has no listener yet but is not "closed":
+        // it binds when a launch restores. Hand out the lazy promise so e.g.
+        // node:http's close tracking does not see an already-settled one.
+        if !self.flags.contains(ServerFlags::SNAPSHOT_PENDING)
+            && !self.has_listener()
             && self.pending_requests.get() == 0
             && !self.has_active_connections()
             && !self.has_active_web_sockets()
@@ -2893,6 +2927,13 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // Nothing is bound, so there is nothing to hold the build's loop
+            // open with (doing so would keep an auto-mode build from ever
+            // draining); the restore-time bind refs like a fresh listen().
+            self.flags.remove(ServerFlags::SNAPSHOT_PENDING_UNREF);
+            return Ok(this_value);
+        }
         self.ref_();
         Ok(this_value)
     }
@@ -2904,6 +2945,12 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // The keep-alive is not active yet, so `unref()` alone would be a
+            // no-op; remember the intent for the restore-time bind.
+            self.flags.insert(ServerFlags::SNAPSHOT_PENDING_UNREF);
+            return Ok(this_value);
+        }
         self.unref();
         Ok(this_value)
     }
@@ -3657,6 +3704,80 @@ where
         resp.end(&json_string, resp.should_close_connection());
     }
 
+    /// uws_sys::App::on_client_error takes the raw C-ABI handler shape; this
+    /// thunk slices raw_packet and forwards to [`Self::on_client_error_callback`].
+    extern "C" fn client_error_thunk(
+        user_data: *mut c_void,
+        _ssl: c_int,
+        socket: *mut uws_sys::us_socket_t,
+        error_code: u8,
+        raw_packet: *mut u8,
+        raw_packet_len: c_int,
+    ) {
+        // SAFETY: user_data is the `*mut Self` registered in
+        // `register_client_error_thunk`; socket is a live uWS socket;
+        // raw_packet/raw_packet_len describe a valid (possibly empty) buffer.
+        // Shared — the callback re-enters JS.
+        let this = unsafe { &*user_data.cast::<Self>() };
+        let packet: &[u8] = if raw_packet_len > 0 {
+            // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
+            // readable bytes when `raw_packet_len > 0`.
+            unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
+        } else {
+            &[]
+        };
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+        this.on_client_error_callback(bun_opaque::opaque_deref_mut(socket), error_code, packet);
+    }
+
+    /// Register the uws client-error handler for the stored `on_clienterror`
+    /// callback; a no-op while the app does not exist yet (snapshot-pending).
+    /// Split from `server_set_on_client_error` so the restore-time bind can
+    /// register what node:http set while nothing was bound.
+    /// # Safety contract
+    /// `this` must be a live server pointer with no `&mut` borrow live.
+    pub(crate) fn register_client_error_thunk(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; borrow scoped to this statement.
+        let Some(app) = (unsafe { &*this }).app else {
+            return;
+        };
+        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        bun_opaque::opaque_deref_mut(app)
+            .on_client_error(Self::client_error_thunk, this.cast::<c_void>());
+    }
+
+    /// uws filters fire with `1` when an HTTP connection is opened (for TLS,
+    /// when its handshake completes) and `-1` on close; only the open
+    /// notification is forwarded to JS.
+    extern "C" fn connection_filter_thunk(
+        socket: *mut uws_sys::us_socket_t,
+        opened: i32,
+        user_data: *mut c_void,
+    ) {
+        if opened != 1 {
+            return;
+        }
+        // SAFETY: user_data is the `*mut Self` registered in
+        // `register_connection_thunk`; socket is a live uWS socket for this
+        // server's group. Shared — the callback re-enters JS.
+        let this = unsafe { &*user_data.cast::<Self>() };
+        this.on_connection_callback(socket.cast::<c_void>());
+    }
+
+    /// Register the uws connection filter for the stored `on_connection`
+    /// callback; a no-op while the app does not exist yet (snapshot-pending).
+    /// # Safety contract
+    /// `this` must be a live server pointer with no `&mut` borrow live.
+    pub(crate) fn register_connection_thunk(this: *mut Self) {
+        // SAFETY: caller contract — `this` is live; borrow scoped to this statement.
+        let Some(app) = (unsafe { &*this }).app else {
+            return;
+        };
+        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+        bun_opaque::opaque_deref_mut(app)
+            .filter(Self::connection_filter_thunk, this.cast::<c_void>());
+    }
+
     pub(crate) fn on_client_error_callback(
         &self,
         socket: &mut uws::Socket,
@@ -3832,49 +3953,18 @@ fn server_set_on_client_error(
             if let Some(this_ptr) = server.as_::<$T>() {
                 // SAFETY: as_ returned a non-null *mut to a live server; nothing
                 // here re-enters through it, so each scoped access is exclusive.
-                if let Some(app) = unsafe { (*this_ptr).app } {
-                    // SAFETY: see above — `&mut` scoped to this statement.
-                    unsafe {
-                        (*this_ptr).on_clienterror = callback;
-                        super::wrap_handler_slot(
-                            &mut (*this_ptr).on_clienterror,
-                            server,
-                            global,
-                            <$T>::js_gc_on_client_error_set,
-                        );
-                    }
-                    // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
-                    // wrap our typed callback in an extern "C" thunk that slices raw_packet.
-                    extern "C" fn thunk(
-                        user_data: *mut c_void,
-                        _ssl: c_int,
-                        socket: *mut uws_sys::us_socket_t,
-                        error_code: u8,
-                        raw_packet: *mut u8,
-                        raw_packet_len: c_int,
-                    ) {
-                        // SAFETY: user_data is the `*mut Self` registered below; socket is a live
-                        // uWS socket; raw_packet/raw_packet_len describe a valid (possibly empty)
-                        // buffer. Shared — the callback re-enters JS.
-                        let this = unsafe { &*user_data.cast::<$T>() };
-                        let packet: &[u8] = if raw_packet_len > 0 {
-                            // SAFETY: uWS guarantees `raw_packet` points to `raw_packet_len`
-                            // readable bytes when `raw_packet_len > 0`.
-                            unsafe { bun_core::ffi::slice(raw_packet, raw_packet_len as usize) }
-                        } else {
-                            &[]
-                        };
-                        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
-                        this.on_client_error_callback(
-                            bun_opaque::opaque_deref_mut(socket),
-                            error_code,
-                            packet,
-                        );
-                    }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app)
-                        .on_client_error(thunk, this_ptr.cast::<c_void>());
+                // The store + GC-root run even when the app does not exist yet
+                // (snapshot-pending): the restore-time bind registers the thunk.
+                unsafe {
+                    (*this_ptr).on_clienterror = callback;
+                    super::wrap_handler_slot(
+                        &mut (*this_ptr).on_clienterror,
+                        server,
+                        global,
+                        <$T>::js_gc_on_client_error_set,
+                    );
                 }
+                <$T>::register_client_error_thunk(this_ptr);
                 return Ok(JSValue::UNDEFINED);
             }
         };
@@ -3909,37 +3999,18 @@ fn server_set_on_connection(
             if let Some(this_ptr) = server.as_::<$T>() {
                 // SAFETY: as_ returned a non-null *mut to a live server; nothing
                 // here re-enters through it, so each scoped access is exclusive.
-                if let Some(app) = unsafe { (*this_ptr).app } {
-                    // SAFETY: see above — `&mut` scoped to this statement.
-                    unsafe {
-                        (*this_ptr).on_connection = callback;
-                        super::wrap_handler_slot(
-                            &mut (*this_ptr).on_connection,
-                            server,
-                            global,
-                            <$T>::js_gc_on_connection_set,
-                        );
-                    }
-                    // uws filters fire with `1` when an HTTP connection is opened
-                    // (for TLS, when its handshake completes) and `-1` on close;
-                    // only the open notification is forwarded to JS.
-                    extern "C" fn thunk(
-                        socket: *mut uws_sys::us_socket_t,
-                        opened: i32,
-                        user_data: *mut c_void,
-                    ) {
-                        if opened != 1 {
-                            return;
-                        }
-                        // SAFETY: user_data is the `*mut Self` registered below;
-                        // socket is a live uWS socket for this server's group.
-                        // Shared — the callback re-enters JS.
-                        let this = unsafe { &*user_data.cast::<$T>() };
-                        this.on_connection_callback(socket.cast::<c_void>());
-                    }
-                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).filter(thunk, this_ptr.cast::<c_void>());
+                // The store + GC-root run even when the app does not exist yet
+                // (snapshot-pending): the restore-time bind registers the filter.
+                unsafe {
+                    (*this_ptr).on_connection = callback;
+                    super::wrap_handler_slot(
+                        &mut (*this_ptr).on_connection,
+                        server,
+                        global,
+                        <$T>::js_gc_on_connection_set,
+                    );
                 }
+                <$T>::register_connection_thunk(this_ptr);
                 return Ok(JSValue::UNDEFINED);
             }
         };

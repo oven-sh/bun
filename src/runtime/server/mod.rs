@@ -221,6 +221,16 @@ bitflags::bitflags! {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
         const HAS_HANDLED_ALL_CLOSED_PROMISE = 1 << 2;
+        /// Created while a startup snapshot was being built: nothing is bound
+        /// (`app`/`listener` are `None`) until a restored launch binds it via
+        /// [`NewServer::bind_snapshot_pending`]. JS-reachable paths must
+        /// tolerate the missing uws app while this is set.
+        const SNAPSHOT_PENDING            = 1 << 3;
+        /// `server.unref()` was called while `SNAPSHOT_PENDING`. The keep-alive
+        /// is a plain active/inactive flag that `listen()` activates, so the
+        /// intent has to be carried separately and re-applied after the
+        /// restore-time bind; `server.ref()` while pending clears it.
+        const SNAPSHOT_PENDING_UNREF      = 1 << 4;
     }
 }
 
@@ -319,6 +329,14 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// Raw shadow of the wrapper's `m_onConnection` WriteBarrier slot.
     /// `JSValue::ZERO` when unset; written by `server_set_on_connection`.
     pub(crate) on_connection: JSValue,
+
+    /// uws-app parser flags (`set_flags` arguments) that arrived while a
+    /// snapshot-pending server had no app — node:http pushes them right after
+    /// `Bun.serve()` returns; applied by [`Self::bind_snapshot_pending`].
+    pub(crate) deferred_app_flags: Option<(bool, bool, u8, bool)>,
+
+    /// Same deferral for `set_max_http_header_size`.
+    pub(crate) deferred_max_http_header_size: Option<u64>,
 
     pub(crate) inspector_server_id: jsc::DebuggerId,
 }
@@ -645,6 +663,75 @@ pub(crate) fn wrap_handler_slot(
     };
     set(server_js, global, v);
     *shadow = v;
+}
+
+// ─── startup-snapshot pending servers ────────────────────────────────────────
+/// Servers created while a startup snapshot was being built, in creation
+/// order. They hold no OS socket; every launch that restores the snapshot
+/// binds them (via [`bind_pending_snapshot_servers`]) before `"restore"`
+/// listeners run. A static (not VM state) so it sits in the data segment the
+/// snapshot captures; stored as `(tag, address)` because `AnyServer`'s
+/// `*mut ()` is not `Send`.
+static PENDING_SNAPSHOT_SERVERS: std::sync::Mutex<Vec<(AnyServerTag, usize)>> =
+    std::sync::Mutex::new(Vec::new());
+
+/// `Bun.serve()` in the run that builds a snapshot (strict I/O policy, main
+/// thread): create the server but bind at restore instead of refusing — the
+/// socket would not exist in a restored launch anyway, and deferring captures
+/// nothing machine-specific. Under `--snapshot-io=local`/`network` the bind
+/// stays immediate (the build opted into real I/O, e.g. to warm caches against
+/// its own server); on a worker thread the strict refusal stays (workers do
+/// not survive a snapshot, so there is no launch that could bind the server).
+pub(crate) fn startup_snapshot_defers_listen() -> bool {
+    bun_core::startup_snapshot::building()
+        && !bun_core::startup_snapshot::io_allowed("Bun.serve")
+        && jsc::VirtualMachine::get().as_mut().is_main_thread
+}
+
+/// Servers currently waiting to bind at restore (for the snapshot writer's report).
+pub(crate) fn pending_snapshot_server_count() -> usize {
+    PENDING_SNAPSHOT_SERVERS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .len()
+}
+
+/// Restore sequence, before `process.emit('restore')`: bind every server
+/// created before the snapshot, in creation order. Stops at the first failure
+/// with that bind's exception left on `global` (the caller reports it the way
+/// a throw at startup is reported and ends the launch).
+pub(crate) fn bind_pending_snapshot_servers(
+    global: &JSGlobalObject,
+) -> Result<(), bun_jsc::JsError> {
+    loop {
+        let next = {
+            let mut pending = PENDING_SNAPSHOT_SERVERS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            if pending.is_empty() {
+                None
+            } else {
+                Some(pending.remove(0))
+            }
+        };
+        let Some((tag, addr)) = next else {
+            return Ok(());
+        };
+        match tag {
+            AnyServerTag::HTTPServer => {
+                HTTPServer::bind_snapshot_pending(addr as *mut HTTPServer, global)?;
+            }
+            AnyServerTag::HTTPSServer => {
+                HTTPSServer::bind_snapshot_pending(addr as *mut HTTPSServer, global)?;
+            }
+            AnyServerTag::DebugHTTPServer => {
+                DebugHTTPServer::bind_snapshot_pending(addr as *mut DebugHTTPServer, global)?;
+            }
+            AnyServerTag::DebugHTTPSServer => {
+                DebugHTTPSServer::bind_snapshot_pending(addr as *mut DebugHTTPSServer, global)?;
+            }
+        }
+    }
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
@@ -1618,6 +1705,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 lenient_http_flags,
                 http_allow_half_open,
             );
+        } else if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // No app to accept them yet; the restore-time bind applies them.
+            self.deferred_app_flags = Some((
+                require_host_header,
+                use_strict_method_validation,
+                lenient_http_flags,
+                http_allow_half_open,
+            ));
         }
     }
 
@@ -1625,6 +1720,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if let Some(app) = self.app {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
             bun_opaque::opaque_deref_mut(app).set_max_http_header_size(max_header_size);
+        } else if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // No app to accept it yet; the restore-time bind applies it.
+            self.deferred_max_http_header_size = Some(max_header_size);
         }
     }
 
@@ -1775,6 +1873,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn stop(&mut self, abrupt: bool) {
+        // A pending snapshot server never bound; stopping it before the
+        // snapshot means no launch binds it either.
+        self.drop_pending_snapshot_entry();
         if self.config.allow_hot && !self.config.id.is_empty() {
             // `hot_map()` is reached via the thread-local VM singleton (raw ptr
             // deref) and does not borrow `self`, so it cannot overlap with the
@@ -1931,19 +2032,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // scheduleDeinit can be called inside a finalizer.
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
-            let app = self.app.unwrap();
-            // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
-            // (non-null for the server's lifetime); single-threaded JS
-            // context, `&mut` scoped to this call.
-            unsafe {
-                (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-                    app,
-                    |app| {
-                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                        bun_opaque::opaque_deref_mut(app).close();
-                        Ok(())
-                    },
-                ));
+            // `None` only for a snapshot-pending server stopped before it ever
+            // bound (listen() never ran, so there is no app to close).
+            if let Some(app) = self.app {
+                // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
+                // (non-null for the server's lifetime); single-threaded JS
+                // context, `&mut` scoped to this call.
+                unsafe {
+                    (*self.vm_mut()).enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
+                        app,
+                        |app| {
+                            // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                            bun_opaque::opaque_deref_mut(app).close();
+                            Ok(())
+                        },
+                    ));
+                }
             }
         }
 
@@ -2103,6 +2207,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // This should've already been handled in stop_listening; however, when
         // the JS VM terminates, it hypothetically might not call stop_listening.
         server.notify_inspector_server_stopped();
+        // Same story for a snapshot-pending entry `stop()` would have dropped.
+        server.drop_pending_snapshot_entry();
         if let Some(handles) = crate::jsc_hooks::active_handles() {
             handles.swap_remove(&crate::jsc_hooks::ActiveHandle::Server(AnyServer::from(
                 this.cast_const(),
@@ -2171,6 +2277,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             user_routes: Vec::new(),
             on_clienterror: JSValue::ZERO,
             on_connection: JSValue::ZERO,
+            deferred_app_flags: None,
+            deferred_max_http_header_size: None,
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
 
@@ -2726,11 +2834,125 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         route_list_value
     }
 
+    // ─── startup-snapshot deferred listen ────────────────────────────────────
+    /// `Bun.serve()` in the run that builds a startup snapshot: skip `listen()`
+    /// entirely — this launch's socket could not exist in a restored one — and
+    /// queue the server so every restored launch binds it (creation order,
+    /// before `"restore"` listeners). `server.stop()` before the snapshot
+    /// drops the entry again. The server holds no event-loop ref while
+    /// pending, so an auto-mode build still drains.
+    /// # Safety contract
+    /// `this` must be the live heap-allocated server from [`Self::init`].
+    pub(crate) fn defer_listen_until_snapshot_restore(this: *mut Self) {
+        // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+        unsafe { (*this).flags.insert(ServerFlags::SNAPSHOT_PENDING) };
+        let any = AnyServer::from(this.cast_const());
+        PENDING_SNAPSHOT_SERVERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((any.tag, this as usize));
+    }
+
+    /// Drop this server's pending-bind entry (no-op unless `SNAPSHOT_PENDING`).
+    fn drop_pending_snapshot_entry(&mut self) {
+        if !self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            return;
+        }
+        self.flags.remove(ServerFlags::SNAPSHOT_PENDING);
+        let addr = core::ptr::from_ref(self) as usize;
+        PENDING_SNAPSHOT_SERVERS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|&(_, a)| a != addr);
+    }
+
+    /// Restored launch: run the `listen()` this server skipped while the
+    /// snapshot was built. On failure the bind exception is left on `global`
+    /// and the server is NOT freed — the JS wrapper from the build run still
+    /// owns it, and the caller ends the launch the way a throw at startup
+    /// would.
+    pub(crate) fn bind_snapshot_pending(
+        this: *mut Self,
+        global: &JSGlobalObject,
+    ) -> Result<(), bun_jsc::JsError>
+    where
+        Self: ServerPools<SSL, DEBUG>,
+    {
+        let route_list = Self::listen(this);
+        if global.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
+        let (wrapper, needs_client_error, needs_connection) = {
+            // SAFETY: `listen()` succeeded, so `this` was not freed; the
+            // borrow ends with this block (the register_* calls below
+            // re-derive from the raw pointer).
+            let this_ref = unsafe { &mut *this };
+            this_ref.flags.remove(ServerFlags::SNAPSHOT_PENDING);
+            // node:http pushed its custom options right after `Bun.serve()`
+            // returned, when there was no app to accept them; apply what the
+            // server held onto.
+            if let Some((require_host, strict_method, lenient, half_open)) =
+                this_ref.deferred_app_flags.take()
+            {
+                this_ref.set_flags(require_host, strict_method, lenient, half_open);
+            }
+            if let Some(max) = this_ref.deferred_max_http_header_size.take() {
+                this_ref.set_max_http_header_size(max);
+            }
+            // `listen()` just activated the keep-alive; a build-time
+            // `server.unref()` asked for it not to be.
+            if this_ref.flags.contains(ServerFlags::SNAPSHOT_PENDING_UNREF) {
+                this_ref.flags.remove(ServerFlags::SNAPSHOT_PENDING_UNREF);
+                this_ref.unref();
+            }
+            (
+                this_ref.js_value.try_get(),
+                !this_ref.on_clienterror.is_empty(),
+                !this_ref.on_connection.is_empty(),
+            )
+        };
+        // The callbacks were stored (and GC-rooted) by the setters during the
+        // build; only the uws registration was waiting for the app.
+        if needs_client_error {
+            Self::register_client_error_thunk(this);
+        }
+        if needs_connection {
+            Self::register_connection_thunk(this);
+        }
+        // The wrapper was created when the build run called `Bun.serve()` and
+        // `js_value` has kept it alive since.
+        if let Some(obj) = wrapper {
+            if route_list != JSValue::ZERO {
+                // Root the fresh RouteList in the wrapper's cached-value slot
+                // exactly as `serve_with!` does.
+                Self::js_gc_route_list_set(obj, global, route_list);
+            }
+            // `server.address` read during the build cached `null` (nothing was
+            // bound); un-cache it so the getter recomputes from the live listener.
+            Self::js_gc_address_set(obj, global, JSValue::ZERO);
+        }
+        Ok(())
+    }
+
+    /// Failure cleanup for `listen()`: frees the server, except when this is a
+    /// snapshot-pending bind at restore — there the JS wrapper from the build
+    /// run still owns the allocation, and the caller reports the error and
+    /// ends the launch, so freeing here would leave the wrapper's finalizer a
+    /// dangling pointer.
+    fn deinit_on_listen_failure(this: *mut Self) {
+        // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+        if unsafe { (*this).flags.contains(ServerFlags::SNAPSHOT_PENDING) } {
+            return;
+        }
+        Self::deinit(this);
+    }
+
     // ─── listen ──────────────────────────────────────────────────────────────
     /// Create the uws `App<SSL>` (and optional H3 app), register routes via
     /// `set_routes()`, and bind the listen socket. On any failure the server
-    /// is `deinit()`ed synchronously and `.zero` is returned with an exception
-    /// pending on `global_this`.
+    /// is `deinit()`ed synchronously (unless a snapshot-pending restore bind —
+    /// see [`Self::deinit_on_listen_failure`]) and `.zero` is returned with an
+    /// exception pending on `global_this`.
     /// # Safety
     /// `this` must point to the live heap-allocated `NewServer` returned by
     /// [`Self::init`], with no other `&`/`&mut` borrow live for the duration
@@ -2766,7 +2988,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             .is_err()
         {
             // SAFETY: caller contract — `this` is the live boxed server from `init()`; freed here like every other failure below.
-            Self::deinit(this);
+            Self::deinit_on_listen_failure(this);
             return JSValue::ZERO; // thrown; every server (node:http included) listens through here
         }
 
@@ -2782,7 +3004,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     "Failed to create HTTPS server: missing tls config"
                 ));
                 // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                Self::deinit(this);
+                Self::deinit_on_listen_failure(this);
                 return JSValue::ZERO;
             };
 
@@ -2795,7 +3017,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
                     unsafe { (*this).app = None };
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
+                    Self::deinit_on_listen_failure(this);
                     return JSValue::ZERO;
                 }
             };
@@ -2811,7 +3033,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             let _ = global.throw(format_args!("Failed to create HTTP/3 server"));
                         }
                         // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                        Self::deinit(this);
+                        Self::deinit_on_listen_failure(this);
                         return JSValue::ZERO;
                     }
                 };
@@ -2855,12 +3077,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         ));
                     }
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
+                    Self::deinit_on_listen_failure(this);
                     return JSValue::ZERO;
                 }
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
+                    Self::deinit_on_listen_failure(this);
                     return JSValue::ZERO;
                 }
 
@@ -2870,7 +3092,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 bun_opaque::opaque_deref_mut(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
+                    Self::deinit_on_listen_failure(this);
                     return JSValue::ZERO;
                 }
 
@@ -2921,7 +3143,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 ));
                             }
                             // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                            Self::deinit(this);
+                            Self::deinit_on_listen_failure(this);
                             return JSValue::ZERO;
                         }
                     }
@@ -2938,14 +3160,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         ));
                     }
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
+                    Self::deinit_on_listen_failure(this);
                     return JSValue::ZERO;
                 }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 bun_opaque::opaque_deref_mut(app).domain(z);
                 if throw_ssl_error_if_necessary(global) {
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
+                    Self::deinit_on_listen_failure(this);
                     return JSValue::ZERO;
                 }
                 // SAFETY: `this` is the live boxed server from `init()`; no
@@ -2961,7 +3183,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         let _ = global.throw(format_args!("Failed to create HTTP server"));
                     }
                     // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
+                    Self::deinit_on_listen_failure(this);
                     return JSValue::ZERO;
                 }
             };
@@ -3150,7 +3372,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if global.has_exception() {
             // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-            Self::deinit(this);
+            Self::deinit_on_listen_failure(this);
             return JSValue::ZERO;
         }
 
@@ -3195,7 +3417,8 @@ mod cached_values {
         ($ty:literal) => {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
-                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong
+                wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
+                address
             );
         };
     }
@@ -3255,6 +3478,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     slot_setter!(js_gc_ws_on_error_set, ws_on_error_set_cached);
     slot_setter!(js_gc_ws_on_ping_set, ws_on_ping_set_cached);
     slot_setter!(js_gc_ws_on_pong_set, ws_on_pong_set_cached);
+    // `server.address` is a `cache: true` getter; ZERO un-caches it (the
+    // generated getter treats an empty slot as never-computed).
+    slot_setter!(js_gc_address_set, address_set_cached);
 
     /// Mirror all 7 `Handler.on_*` shadows into the wrapper's `m_wsOn*`
     /// WriteBarrier slots, applying the async-context wrap (deferred from

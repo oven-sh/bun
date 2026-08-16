@@ -156,6 +156,20 @@ pub extern "C" fn Bun__startupSnapshotRunMain(global: &JSGlobalObject) {
     }
 }
 
+/// Called by the restore sequence before `'restore'` is emitted: servers
+/// created before the snapshot (`Bun.serve()` at module scope) bind now, in
+/// creation order, so `'restore'` listeners already see them listening. A bind
+/// failure ends the launch the way the same failure would end a normal boot.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__startupSnapshotBindPendingServers(global: &JSGlobalObject) {
+    if let Err(err) = crate::server::bind_pending_snapshot_servers(global) {
+        let vm = VirtualMachine::get().as_mut();
+        let exception = global.take_exception(err);
+        vm.run_error_handler(exception, None);
+        crate::cli::run_command::exit_with_unhandled_note(vm);
+    }
+}
+
 /// Asked by the snapshot writer: a snapshot taken with a `main()` registered is valid for any invocation.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__startupSnapshotHasMain() -> bool {

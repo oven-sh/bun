@@ -1,4 +1,5 @@
-// A strict build must refuse anything that would freeze an OS socket into the snapshot: servers and UDP sockets included.
+// A strict build must refuse anything that would freeze an OS socket into the snapshot: UDP sockets included.
+// Bun.serve() is the exception: it defers its bind to restore instead (serve-pending-fixture.js), so it "creates".
 async function attempt(name, make) {
   try {
     let s = make();

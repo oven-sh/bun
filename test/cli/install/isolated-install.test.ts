@@ -32,6 +32,14 @@ function urlHash(url: string): string {
   return Bun.hash(url).toString(16).padStart(16, "0");
 }
 
+// `<name>@<resolution>`, with the resolution cut and hashed past MAX_RESOLUTION_LEN (see "long store entry names").
+const MAX_RESOLUTION_LEN = 80;
+const CUT_RESOLUTION_LEN = MAX_RESOLUTION_LEN - "+".length - 16;
+function storeEntryName(name: string, resolution: string): string {
+  if (resolution.length <= MAX_RESOLUTION_LEN) return `${name}@${resolution}`;
+  return `${name}@${resolution.slice(0, CUT_RESOLUTION_LEN)}+${urlHash(resolution)}`;
+}
+
 beforeAll(async () => {
   await registry.start();
 });
@@ -2105,15 +2113,6 @@ test("tarball URL with query string resolves at runtime", async () => {
 // where the package's lifecycle scripts then fail to spawn with ENOENT, and a
 // resolution longer than NAME_MAX cannot be created at all.
 describe("long store entry names", () => {
-  const MAX_RESOLUTION_LEN = 80;
-  const CUT_RESOLUTION_LEN = MAX_RESOLUTION_LEN - "+".length - 16;
-
-  function storeEntryName(name: string, resolution: string): string {
-    if (resolution.length <= MAX_RESOLUTION_LEN) return `${name}@${resolution}`;
-    const hash = Bun.hash(resolution).toString(16).padStart(16, "0");
-    return `${name}@${resolution.slice(0, CUT_RESOLUTION_LEN)}+${hash}`;
-  }
-
   async function storeEntries(packageDir: string): Promise<string[]> {
     return (await readdirSorted(join(packageDir, "node_modules", ".bun"))).filter(entry => entry !== "node_modules");
   }
@@ -2604,7 +2603,10 @@ describe("store entry names of URL dependencies", () => {
 
       await runBunInstall(env, project);
 
-      const entry = `git-dep@git+http+++127.0.0.1+${server.port}+repo.git${hashed ? `+${urlHash(repo)}` : ""}+${sha}`;
+      const entry = storeEntryName(
+        "git-dep",
+        `git+http+++127.0.0.1+${server.port}+repo.git${hashed ? `+${urlHash(repo)}` : ""}+${sha}`,
+      );
       expect(await storeEntries(project)).toEqual([entry]);
       expect(readlinkSync(join(project, "node_modules", "git-dep"))).toBe(
         join(".bun", entry, "node_modules", "git-dep"),

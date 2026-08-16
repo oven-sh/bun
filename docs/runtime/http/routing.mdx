@@ -246,20 +246,24 @@ Bun.serve({
 
 To send part of a file, use the [`slice(start, end)`](https://developer.mozilla.org/en-US/docs/Web/API/Blob/slice) method on the `Bun.file` object. Bun sets the `Content-Range` and `Content-Length` headers on the `Response` object automatically.
 
+The `Range` header is end-inclusive (`bytes=0-100` includes byte 100), but `slice()`'s `end` argument is exclusive, so the example adds 1 to the parsed `end`.
+
 ```ts
 Bun.serve({
   fetch(req) {
-    // parse `Range` header
-    const [start = 0, end = Infinity] = req.headers
-      .get("Range") // Range: bytes=0-100
-      .split("=") // ["Range: bytes", "0-100"]
+    // parse `Range` header (e.g. "bytes=0-100")
+    const [start = 0, end = Infinity] = (req.headers
+      .get("Range") // "bytes=0-100"
+      ?.split("=") // ["bytes", "0-100"]
       .at(-1) // "0-100"
       .split("-") // ["0", "100"]
-      .map(Number); // [0, 100]
+      .map(Number)) ?? []; // [0, 100]
 
-    // return a slice of the file
+    // `Range` is end-inclusive (`bytes=0-100` includes byte 100), but
+    // `slice()`'s `end` is exclusive, so add 1 to `end`. When no `Range`
+    // header was sent, `end` stays `Infinity` and the whole file is served.
     const bigFile = Bun.file("./big-video.mp4");
-    return new Response(bigFile.slice(start, end));
+    return new Response(bigFile.slice(start, end === Infinity ? undefined : end + 1));
   },
 });
 ```

@@ -406,8 +406,10 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
-    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
-    scope.assertNoException();
+    // JSUint8Array::create throws only on OOM — or with a termination request
+    // pending on this VM (a worker being stopped), which any exception check
+    // materialises. Either way there is no buffer.
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
@@ -2420,13 +2422,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         }
     }
 
-    // Re-check if detached after potential JS execution
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
-        return {};
-    }
-
-    // Now safe to cache byteLength after all JS calls
+    // Now safe to cache byteLength after all JS calls. A detached view reports 0, so it
+    // goes through the same bounds checks as an empty buffer and writes nothing, as in node.
     size_t byteLength = castedThis->byteLength();
 
     // Node.js JS wrapper checks: if (offset < 0 || offset > this.byteLength)
@@ -2478,11 +2475,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
 
     if (!castedThis) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-        return {};
-    }
-
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
 

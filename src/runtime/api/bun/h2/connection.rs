@@ -12,6 +12,7 @@ use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
+use std::num::NonZeroU32;
 
 /// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
 /// request checks in `finish_header_block` (nghttp2's NGHTTP2_HTTP_FLAG__* equivalents).
@@ -101,6 +102,45 @@ struct DataInFlight {
     discard: bool,
 }
 
+/// Header block whose END_HEADERS has not arrived yet (RFC 9113 §4.3). Its fragments accumulate
+/// in `Connection::header_block`.
+struct HeaderBlockInFlight {
+    /// The stream id the next frame MUST be a CONTINUATION for (the parent stream id while
+    /// assembling a PUSH_PROMISE block).
+    continuation_stream: u32,
+    meta: HeaderBlockMeta,
+}
+
+/// Everything `finish_header_block` needs to know about a header block besides its bytes, fixed
+/// by the HEADERS/PUSH_PROMISE frame that opened it.
+struct HeaderBlockMeta {
+    /// The stream id the block belongs to (the promised id for a PUSH_PROMISE).
+    target: u32,
+    /// The parent stream id when the block arrived in a PUSH_PROMISE; `None` for a HEADERS block.
+    push_parent: Option<NonZeroU32>,
+    /// The original HEADERS frame flags (passed to on_headers_complete; 0 for PUSH_PROMISE).
+    flags: u8,
+    end_stream: bool,
+    /// The block opens a new inbound stream (a request block on the server, a PUSH_PROMISE request
+    /// block on the client). False for a later HEADERS on the same stream (a trailer section),
+    /// which RFC 9113 §8.1 forbids from carrying pseudo-headers and which must not be held to the
+    /// request pseudo-header requirements of §8.3.1.
+    is_request: bool,
+    disposition: BlockDisposition,
+}
+
+/// What becomes of a header block once it is complete. Every variant still decodes the whole
+/// block so the connection-scoped HPACK table stays in sync (§4.3); only `Deliver` surfaces it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlockDisposition {
+    Deliver,
+    /// HEADERS arrived on a closed stream: answered with RST_STREAM(STREAM_CLOSED).
+    StreamClosed,
+    /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
+    /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
+    Refused,
+}
+
 pub struct Feed {
     pub consumed: usize,
     pub fatal: bool,
@@ -127,6 +167,12 @@ pub trait Sink {
     fn on_go_away(&self, code: u32, last_stream_id: u32, debug: &[u8]);
     /// After a WINDOW_UPDATE has been applied (for resuming sends).
     fn on_window_update(&self, stream_id: u32, increment: u32);
+
+    /// The embedder cannot take further callbacks in this batch (its VM has an exception pending
+    /// from an earlier one): stop before the next frame; the unconsumed bytes stay queued.
+    fn should_stop(&self) -> bool {
+        false
+    }
 
     // ---- Stream-level (default no-op so simple sinks can ignore them) ----
 
@@ -240,33 +286,15 @@ pub struct Connection {
 
     pub streams: HashMap<u32, Stream>,
 
-    /// Header-block reassembly across CONTINUATION (RFC 9113 §4.3). 0 = not assembling; otherwise
-    /// the stream id whose header block is mid-flight and which the next frame MUST continue.
-    continuation_stream: u32,
+    /// Header-block reassembly across CONTINUATION (RFC 9113 §4.3): `Some` from a HEADERS or
+    /// PUSH_PROMISE without END_HEADERS until the CONTINUATION carrying END_HEADERS.
+    header_block_in_flight: Option<HeaderBlockInFlight>,
+    /// The fragments of the current header block; kept (emptied) across blocks for its capacity.
     header_block: Vec<u8>,
     /// In-progress partial DATA frame streamed incrementally. nghttp2 delivers DATA in
     /// chunks as bytes arrive (node emits 'data' for a partial frame); buffering until the
     /// frame completes would stall consumers behind a peer that trickles one large frame.
     data_in_flight: Option<DataInFlight>,
-    header_end_stream: bool,
-    /// The original HEADERS frame flags (passed to on_headers_complete; 0 for PUSH_PROMISE).
-    header_flags: u8,
-    /// The stream id the assembling header block belongs to (the promised id for a PUSH_PROMISE).
-    header_target: u32,
-    /// 0 for a normal HEADERS block; the parent stream id when assembling a PUSH_PROMISE block.
-    header_push_parent: u32,
-    /// The assembling block opens a new inbound stream (a request block on the server, a
-    /// PUSH_PROMISE request block on the client). False for a later HEADERS on the same stream
-    /// (a trailer section), which RFC 9113 §8.1 forbids from carrying pseudo-headers and which
-    /// must not be held to the request pseudo-header requirements of §8.3.1.
-    header_is_request: bool,
-    /// HEADERS arrived on a closed/half-closed-remote stream: the block is still decoded so the
-    /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
-    /// (STREAM_CLOSED) instead of being dispatched.
-    header_stream_closed: bool,
-    /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory): the
-    /// block is decoded for HPACK sync (§4.3), then answered with RST_STREAM(ENHANCE_YOUR_CALM).
-    header_stream_refused: bool,
     /// A locally-detected connection error already tore the session down: ignore further input.
     terminated: bool,
     /// PING/SETTINGS ACKs queued behind a non-reading peer (nghttp2's
@@ -306,16 +334,9 @@ impl Connection {
             recv_window: RecvWindow::new(wire::DEFAULT_WINDOW_SIZE),
             hpack: hpack::Coder::new(local.header_table_size),
             streams: HashMap::new(),
-            continuation_stream: 0,
+            header_block_in_flight: None,
             header_block: Vec::new(),
             data_in_flight: None,
-            header_end_stream: false,
-            header_flags: 0,
-            header_target: 0,
-            header_push_parent: 0,
-            header_is_request: false,
-            header_stream_closed: false,
-            header_stream_refused: false,
             terminated: false,
             obq_ack_pending: 0,
             enc_buf: Vec::new(),
@@ -479,7 +500,7 @@ impl Connection {
 
         loop {
             let remaining = &bytes[offset..];
-            if remaining.len() < wire::FRAME_HEADER_SIZE {
+            if remaining.len() < wire::FRAME_HEADER_SIZE || sink.should_stop() {
                 break;
             }
             let hdr = FrameHeader::parse(remaining);
@@ -502,7 +523,7 @@ impl Connection {
                 // Incomplete DATA frames stream incrementally (see DataInFlight); everything
                 // else waits for the full frame.
                 if matches!(hdr.typ(), Some(FrameType::Data))
-                    && self.continuation_stream == 0
+                    && self.header_block_in_flight.is_none()
                     && hdr.stream_id != 0
                     && hdr.length > 0
                 {
@@ -599,9 +620,9 @@ impl Connection {
         // ONLY permitted frame is a CONTINUATION for that same stream until the block completes.
         // Checked before structural validation: a malformed non-CONTINUATION frame mid-block is a
         // connection error (§6.2), not the stream error its own size rule would produce.
-        if self.continuation_stream != 0 {
+        if let Some(inflight) = &self.header_block_in_flight {
             let is_continuation = matches!(hdr.typ(), Some(FrameType::Continuation));
-            if !is_continuation || hdr.stream_id != self.continuation_stream {
+            if !is_continuation || hdr.stream_id != inflight.continuation_stream {
                 self.send_go_away(
                     sink,
                     ErrorCode::ProtocolError,
@@ -622,16 +643,6 @@ impl Connection {
                 self.send_rst_stream(sink, id, code);
                 return false;
             }
-        }
-
-        if matches!(hdr.typ(), Some(FrameType::Continuation)) && self.continuation_stream == 0 {
-            // §6.10: a CONTINUATION with no header block in progress is a connection PROTOCOL_ERROR.
-            self.send_go_away(
-                sink,
-                ErrorCode::ProtocolError,
-                b"unexpected CONTINUATION frame",
-            );
-            return true;
         }
 
         match hdr.typ() {
@@ -916,7 +927,6 @@ impl Connection {
         }
 
         let end_stream = wire::flags::has(hdr.flags, wire::flags::END_STREAM);
-        let end_headers = wire::flags::has(hdr.flags, wire::flags::END_HEADERS);
 
         // §5.1.1: a server's inbound HEADERS opens (or continues) a client-initiated odd stream.
         // Our receive window is sized by OUR advertised SETTINGS_INITIAL_WINDOW_SIZE; our send
@@ -937,7 +947,11 @@ impl Connection {
             return true;
         }
         let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut stream_closed = false;
+        let mut disposition = if refused {
+            BlockDisposition::Refused
+        } else {
+            BlockDisposition::Deliver
+        };
         if !refused {
             let cur_state = self
                 .streams
@@ -981,7 +995,7 @@ impl Connection {
                         );
                         return true;
                     }
-                    stream_closed = true;
+                    disposition = BlockDisposition::StreamClosed;
                 }
             }
         }
@@ -999,25 +1013,50 @@ impl Connection {
 
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);
-        self.header_end_stream = end_stream;
-        self.header_flags = hdr.flags;
-        self.header_target = hdr.stream_id;
-        self.header_push_parent = 0;
-        // Only a server receives request blocks via HEADERS; on a client every response block
-        // looks "new" (the engine only tracks inbound-created streams), so without this gate it
-        // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
-        self.header_is_request = self.is_server && is_new;
-        self.header_stream_closed = stream_closed;
-        self.header_stream_refused = refused;
-        if !end_headers {
-            self.continuation_stream = hdr.stream_id;
+        let meta = HeaderBlockMeta {
+            target: hdr.stream_id,
+            push_parent: None,
+            flags: hdr.flags,
+            end_stream,
+            // Only a server receives request blocks via HEADERS; on a client every response block
+            // looks "new" (the engine only tracks inbound-created streams), so without this gate it
+            // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
+            is_request: self.is_server && is_new,
+            disposition,
+        };
+        self.finish_or_park_header_block(sink, hdr, meta)
+    }
+
+    /// Tail of HEADERS/PUSH_PROMISE once the first fragment is in `header_block`: decode the block
+    /// if the frame carried END_HEADERS, otherwise hold it for the CONTINUATION frames, which must
+    /// arrive on the frame's own stream (RFC 9113 §6.10).
+    fn finish_or_park_header_block(
+        &mut self,
+        sink: &impl Sink,
+        hdr: &FrameHeader,
+        meta: HeaderBlockMeta,
+    ) -> bool {
+        if !wire::flags::has(hdr.flags, wire::flags::END_HEADERS) {
+            self.header_block_in_flight = Some(HeaderBlockInFlight {
+                continuation_stream: hdr.stream_id,
+                meta,
+            });
             return false;
         }
-        self.finish_header_block(sink)
+        self.finish_header_block(sink, &meta)
     }
 
     /// RFC 9113 §6.10 CONTINUATION: append the fragment; complete the block on END_HEADERS.
     fn handle_continuation(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+        let Some(inflight) = self.header_block_in_flight.take() else {
+            // §6.10: a CONTINUATION with no header block in progress is a connection PROTOCOL_ERROR.
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"unexpected CONTINUATION frame",
+            );
+            return true;
+        };
         // dispatch() already enforced that we are assembling this exact stream.
         // Cap the reassembled block at the header-list limit (floored so tiny custom settings
         // don't reject normal blocks): HPACK output is never smaller than its input, so a
@@ -1035,26 +1074,30 @@ impl Connection {
         }
         self.header_block.extend_from_slice(payload);
         if !wire::flags::has(hdr.flags, wire::flags::END_HEADERS) {
+            self.header_block_in_flight = Some(inflight);
             return false;
         }
-        self.finish_header_block(sink)
+        self.finish_header_block(sink, &inflight.meta)
     }
 
     /// Decode the assembled header block (HPACK) and dispatch each field, then finalize. The whole
     /// block is always decoded so the connection-scoped HPACK table stays in sync (§4.3). Works for
-    /// both a normal HEADERS block and a PUSH_PROMISE block (header_push_parent != 0).
-    fn finish_header_block(&mut self, sink: &impl Sink) -> bool {
-        self.continuation_stream = 0;
-        let target = self.header_target;
-        let push_parent = self.header_push_parent;
+    /// both a normal HEADERS block and a PUSH_PROMISE block (`meta.push_parent` set).
+    fn finish_header_block(&mut self, sink: &impl Sink, meta: &HeaderBlockMeta) -> bool {
+        let HeaderBlockMeta {
+            target,
+            push_parent,
+            flags,
+            end_stream,
+            is_request,
+            disposition,
+        } = *meta;
         // Surface the push reservation before its request headers so the embedder can create the
         // pushed stream object that the on_header calls populate.
-        if push_parent != 0 {
-            sink.on_push_promise(push_parent, target);
+        if let Some(parent) = push_parent {
+            sink.on_push_promise(parent.get(), target);
         }
         let block = std::mem::take(&mut self.header_block);
-        let stream_closed = std::mem::take(&mut self.header_stream_closed);
-        let stream_refused = std::mem::take(&mut self.header_stream_refused);
         let mut off = 0usize;
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
@@ -1067,20 +1110,19 @@ impl Connection {
         let mut field_count: usize = 0;
         // RFC 9113 §8.1: a trailer section is the final header block on the stream — it must
         // carry END_STREAM and must not contain pseudo-header fields.
-        let is_trailer = push_parent == 0
-            && !stream_closed
+        let is_trailer = push_parent.is_none()
+            && disposition == BlockDisposition::Deliver
             && self
                 .streams
                 .get(&target)
                 .is_some_and(|s| s.recv_final_headers);
         let mut rejected = false;
-        let mut malformed = is_trailer && !self.header_end_stream;
+        let mut malformed = is_trailer && !end_stream;
         let mut seen_regular = false;
         let mut seen_pseudo: u8 = 0;
         // Request-block state for the RFC 9113 §8.3.1 checks below (nghttp2's
         // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
         // block) is a request; a later HEADERS on the same stream is a trailer section.
-        let is_request = self.header_is_request;
         let mut saw_connect = false;
         let mut saw_host = false;
         let mut informational = false;
@@ -1097,7 +1139,7 @@ impl Connection {
                     }
                     // HEADERS on a closed stream: decode for HPACK-table sync only (§4.3); the
                     // fields are never surfaced.
-                    if stream_closed || stream_refused {
+                    if disposition != BlockDisposition::Deliver {
                         continue;
                     }
                     // RFC 9113 §8.2.1/§8.2.2: connection-specific fields, a pseudo-header following a
@@ -1199,23 +1241,26 @@ impl Connection {
         if fatal {
             return true;
         }
-        if stream_refused {
-            // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
-            // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which is
-            // what node's own test-http2-max-session-memory asserts.
-            self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
-            sink.on_stream_rejected(target);
-            return false;
-        }
-        if stream_closed {
-            // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
-            // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
-            self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
-            if let Some(s) = self.streams.get_mut(&target) {
-                s.state = State::Closed;
+        match disposition {
+            BlockDisposition::Refused => {
+                // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
+                // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which
+                // is what node's own test-http2-max-session-memory asserts.
+                self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
+                sink.on_stream_rejected(target);
+                return false;
             }
-            sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
-            return false;
+            BlockDisposition::StreamClosed => {
+                // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
+                // STREAM_CLOSED. The block was decoded above purely for HPACK-table sync.
+                self.send_rst_stream(sink, target, ErrorCode::StreamClosed);
+                if let Some(s) = self.streams.get_mut(&target) {
+                    s.state = State::Closed;
+                }
+                sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
+                return false;
+            }
+            BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
         // non-empty :method, :scheme and :path plus an :authority or Host; plain CONNECT omits
@@ -1233,12 +1278,12 @@ impl Connection {
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
             };
         }
-        if push_parent == 0 && self.is_server && !malformed && !rejected {
+        if push_parent.is_none() && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
                 if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
                 }
-                if self.header_end_stream
+                if end_stream
                     && s.content_length
                         .is_some_and(|declared| declared != s.recv_body_bytes)
                 {
@@ -1278,14 +1323,13 @@ impl Connection {
             sink.on_stream_rejected(target);
             return false;
         }
-        let end_stream = self.header_end_stream;
-        if push_parent == 0
+        if push_parent.is_none()
             && !informational
             && let Some(s) = self.streams.get_mut(&target)
         {
             s.recv_final_headers = true;
         }
-        sink.on_headers_complete(target, end_stream, self.header_flags);
+        sink.on_headers_complete(target, end_stream, flags);
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
             if let Some(state) = state {
@@ -1698,21 +1742,18 @@ impl Connection {
             self.last_stream_id = promised;
         }
 
-        let end_headers = wire::flags::has(hdr.flags, wire::flags::END_HEADERS);
         self.header_block.clear();
         self.header_block.extend_from_slice(&payload[off..end]);
-        self.header_end_stream = false; // PUSH_PROMISE carries a request; it never ends the stream
-        self.header_flags = 0;
-        self.header_target = promised;
-        self.header_push_parent = hdr.stream_id;
-        self.header_is_request = true;
-        self.header_stream_closed = false;
-        self.header_stream_refused = false;
-        if !end_headers {
-            self.continuation_stream = hdr.stream_id;
-            return false;
-        }
-        self.finish_header_block(sink)
+        let meta = HeaderBlockMeta {
+            target: promised,
+            // Always Some: wire::validate_header already rejected PUSH_PROMISE on stream 0.
+            push_parent: NonZeroU32::new(hdr.stream_id),
+            flags: 0,
+            end_stream: false, // PUSH_PROMISE carries a request; it never ends the stream
+            is_request: true,
+            disposition: BlockDisposition::Deliver,
+        };
+        self.finish_or_park_header_block(sink, hdr, meta)
     }
 
     /// RFC 7838 §4 ALTSVC: optional 2-byte origin-length + origin, then the Alt-Svc field value.

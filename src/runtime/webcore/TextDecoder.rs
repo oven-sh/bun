@@ -2,6 +2,7 @@ use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
+use bun_jsc::HostReturn as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -718,7 +719,7 @@ pub extern "C" fn TextDecoder__createForStream(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
     if !this.is_null() {
-        // SAFETY: `this` was returned by `__createForStream` and has not been
+        // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
         unsafe { bun_core::heap::destroy(this) };
     }
@@ -756,5 +757,5 @@ pub extern "C" fn TextDecoder__decodeForStream(
     } else {
         this.decode_slice::<true>(global, slice)
     };
-    result.unwrap_or(JSValue::ZERO)
+    result.or_pending_exception()
 }

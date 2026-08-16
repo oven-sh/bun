@@ -140,7 +140,7 @@ impl SystemError {
 pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
-) -> crate::JsResult<JSValue> {
+) -> JSValue {
     let code: &[u8] = err.code_bytes();
     let reason: &[u8] = err.reason_bytes();
 
@@ -150,7 +150,7 @@ pub fn verify_error_to_js(
         ..Default::default()
     };
 
-    Ok(fallback.to_error_instance(global))
+    fallback.to_error_instance(global)
 }
 
 impl fmt::Display for SystemError {

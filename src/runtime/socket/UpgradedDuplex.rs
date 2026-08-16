@@ -212,12 +212,8 @@ impl UpgradedDuplex {
     }
 
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
-        // `vm` is always set via `from()`; `None` only in the zeroed placeholder
-        // state, which never reaches here.
-        let Some(vm) = self.vm else { return };
-        if vm.is_shutting_down() {
-            return;
-        }
+        // No JS duplex to talk to: the zeroed placeholder, or the owning
+        // socket's finalizer abandoned it (`abandon_js_side`).
         let duplex = self.origin.get();
         if duplex.is_empty() {
             return;
@@ -529,6 +525,15 @@ impl UpgradedDuplex {
         i32::try_from(encoded_data.len()).expect("int cast")
     }
 
+    /// The owning socket wrapper is being finalized: the JS duplex may be dead
+    /// too and a finalizer dispatches nothing, so the SSL shutdown that
+    /// follows writes no close_notify and ends nothing — it only unwinds the
+    /// native side.
+    #[uws_callback(export = "UpgradedDuplex__abandon_js_side", no_catch)]
+    pub(crate) fn abandon_js_side(&self) {
+        self.origin.set(JSValue::ZERO);
+    }
+
     #[uws_callback(export = "UpgradedDuplex__close")]
     pub(crate) fn close(&self) {
         if let Some(w) = self.wrapper_ref() {
@@ -602,7 +607,7 @@ impl UpgradedDuplex {
         // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
-            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
+            bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
         self.event_loop_timer.with_mut(|t| {
             t.next = ElTimespec {
                 sec: next.sec,

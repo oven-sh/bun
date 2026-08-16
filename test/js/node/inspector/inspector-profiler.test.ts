@@ -475,13 +475,27 @@ describe("node:inspector", () => {
     });
 
     // Unlike V8 (which has always-on invocation counters), JSC has none, so
-    // best-effort coverage is empty until startPreciseCoverage has run.
+    // best-effort coverage is empty until startPreciseCoverage has run in the
+    // process (once started, the profiler stays for the VM's lifetime), so this
+    // runs in a fresh process rather than sharing this file's.
     test("getBestEffortCoverage returns [] without a prior startPreciseCoverage", async () => {
-      const session = new inspector.Session();
-      session.connect();
-      const { result } = await post(session, "Profiler.getBestEffortCoverage");
-      expect(result).toEqual([]);
-      session.disconnect();
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Session } = require("node:inspector");
+           const session = new Session();
+           session.connect();
+           session.post("Profiler.getBestEffortCoverage", (err, { result }) => {
+             if (err) throw err;
+             console.log(JSON.stringify(result));
+           });`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
     });
 
     // CDP contract: takePreciseCoverage resets execution counters, so a second
@@ -519,6 +533,41 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
       expect(JSON.parse(stdout.trim())).toEqual({ first: 3, second: 1 });
+    });
+
+    // The VM's profiler outlives a stop, so a later start must re-base its
+    // counters: executions between stop and the next start are not reported.
+    test.concurrent("startPreciseCoverage after a stop counts from zero", async () => {
+      using dir = tempDir("inspector-coverage-restart", {
+        "fixture.mjs": `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+const url = "file:///restart-fixture/virtual.js";
+const f = vm.runInThisContext("function f(){return 1}; f", { filename: url });
+f();
+await session.post("Profiler.takePreciseCoverage");
+await session.post("Profiler.stopPreciseCoverage");
+for (let i = 0; i < 100; i++) f();
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+f(); f();
+const after = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+const bodyOffset = "function f(){".length;
+const entry = after.result.find(s => s.url === url);
+const fn = entry?.functions
+  .filter(f => f.ranges[0].startOffset <= bodyOffset && bodyOffset < f.ranges[0].endOffset)
+  .sort((a, b) => a.ranges[0].endOffset - b.ranges[0].endOffset)[0];
+console.log(JSON.stringify({ count: fn?.ranges[0].count }));
+`,
+      });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "fixture.mjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout.trim())).toEqual({ count: 2 });
     });
 
     test.concurrent("collects block coverage with call counts for vm scripts", async () => {

@@ -1,6 +1,7 @@
 //! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Lives here so
 //! `resolver/` has no JSC references.
 
+use crate::HostReturn as _;
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
@@ -118,7 +119,7 @@ extern "C" fn node_module_paths_js_value(
 
     OwnedString::as_raw_slice(&list)
         .to_js_array(global)
-        .unwrap_or(JSValue::ZERO)
+        .or_pending_exception()
 }
 
 /// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below.

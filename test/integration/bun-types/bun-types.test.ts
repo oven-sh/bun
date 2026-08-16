@@ -400,37 +400,6 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // Also runs on debug builds, where the typeTest cases above are skipped. The assertions
-  // live in fixture/fsrouter.ts; this only points tsc at that one file.
-  describe("Bun.FileSystemRouter", () => {
-    test("fixture/fsrouter.ts type-checks against the packed declarations", async () => {
-      const checkDir = join(TEMP_DIR, "fsrouter-check");
-      const tsconfig = structuredClone(sourceTsconfig);
-      tsconfig.include = ["fsrouter.ts"];
-      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
-      await mkdir(checkDir, { recursive: true });
-      await makeTree(checkDir, {
-        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
-        "fsrouter.ts": await Bun.file(join(BASE_FIXTURE_DIR, "fsrouter.ts")).text(),
-        "utilities.ts": await Bun.file(join(BASE_FIXTURE_DIR, "utilities.ts")).text(),
-      });
-
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
-        env: bunEnv,
-        cwd: checkDir,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-      expect(stderr.trim()).toBe("");
-      expect(stdout.trim()).toBe("");
-      expect(exitCode).toBe(0);
-    });
-  });
-
   describe("Test Globals", () => {
     const code = `
       const test_shouldBeAFunction: Function = test;

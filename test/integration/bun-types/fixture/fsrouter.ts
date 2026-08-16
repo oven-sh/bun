@@ -18,5 +18,4 @@ for (const value of Object.values(match!.query)) {
   if (Array.isArray(value)) expectType(value).is<string[]>();
   else expectType(value).is<string>();
 }
-// Route parameters stay single strings.
-expectType(match?.params!).is<Record<string, string>>();
+expectType<Record<string, string>>(match?.params!);

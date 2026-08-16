@@ -3046,8 +3046,7 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-// Full (not eden) collection on the GC thread, non-blocking (unlike
-// JSC__VM__runGC's synchronous collectNow).
+// Non-blocking full (not eden) collection on the GC thread (unlike JSC__VM__runGC's collectNow).
 void JSC__VM__collectFullAsync(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);

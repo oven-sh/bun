@@ -269,4 +269,27 @@ describe("bunfig.toml test options", () => {
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent.each(["0", "1.5", "-1", "inf", "nan", "4294967296"])(
+    "test.parallel rejects invalid value %s",
+    async value => {
+      using dir = tempDir("bunfig-test-parallel-invalid", {
+        "bunfig.toml": `[test]\nparallel = ${value}`,
+        "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: bunEnv,
+        cwd: dir,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout + stderr).toContain("parallel");
+      expect(exitCode).toBe(1);
+    },
+  );
 });

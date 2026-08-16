@@ -581,34 +581,40 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(expr) = test.get(b"parallel") {
-                    if !self.ctx.test_options.parallel_from_cli {
-                        match expr.data {
-                            ExprData::EBoolean(b) => {
-                                if b.value {
-                                    self.ctx.test_options.parallel =
-                                        u32::from(bun_core::get_thread_count().max(1));
-                                    self.ctx.test_options.isolate = true;
-                                }
-                            }
-                            ExprData::ENumber(n) => {
-                                let parsed = num_to_u32(n.value());
-                                if parsed == 0 {
-                                    self.add_error(
-                                        expr.loc,
-                                        b"\"parallel\" must be a positive integer or boolean",
-                                    )?;
-                                    return Ok(());
-                                }
-                                self.ctx.test_options.parallel = parsed;
+                    match expr.data {
+                        ExprData::EBoolean(b) => {
+                            if b.value && !self.ctx.test_options.parallel_from_cli {
+                                self.ctx.test_options.parallel =
+                                    u32::from(bun_core::get_thread_count().max(1));
                                 self.ctx.test_options.isolate = true;
                             }
-                            _ => {
+                        }
+                        ExprData::ENumber(n) => {
+                            let value = n.value();
+                            // `as u32` would silently truncate fractions and
+                            // saturate overflow, so validate before converting.
+                            if !value.is_finite()
+                                || value < 1.0
+                                || value.fract() != 0.0
+                                || value > u32::MAX as f64
+                            {
                                 self.add_error(
                                     expr.loc,
-                                    b"\"parallel\" must be a boolean or a positive integer",
+                                    b"\"parallel\" must be a positive integer or boolean",
                                 )?;
                                 return Ok(());
                             }
+                            if !self.ctx.test_options.parallel_from_cli {
+                                self.ctx.test_options.parallel = value as u32;
+                                self.ctx.test_options.isolate = true;
+                            }
+                        }
+                        _ => {
+                            self.add_error(
+                                expr.loc,
+                                b"\"parallel\" must be a positive integer or boolean",
+                            )?;
+                            return Ok(());
                         }
                     }
                 }

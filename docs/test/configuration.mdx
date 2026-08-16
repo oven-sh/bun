@@ -258,7 +258,7 @@ rerunEach = 3
 
 #### parallel
 
-Run test files in parallel worker processes. `true` uses one worker per CPU thread, and a positive integer sets the number of workers:
+Run test files in parallel worker processes. `true` uses one worker per CPU thread, and a positive integer sets the number of workers. Parallel workers run each test file in a fresh global scope, equivalent to `--isolate`:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

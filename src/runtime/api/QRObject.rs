@@ -285,15 +285,12 @@ fn encode_err_to_js(global: &JSGlobalObject, err: EncodeError) -> bun_jsc::JsErr
         EncodeError::InvalidVersionRange => global.throw_invalid_arguments(format_args!(
             "options.minVersion must be <= options.maxVersion"
         )),
-        EncodeError::InvalidEci => {
-            global.throw_invalid_arguments(format_args!("invalid ECI assignment"))
-        }
     }
 }
 
 /// `Bun.QR.generate(data, options?)`
 #[bun_jsc::host_fn]
-pub fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [data_value, opts_value] = frame.arguments_as_array::<2>();
 
     if data_value.is_empty_or_undefined_or_null() {
@@ -420,7 +417,7 @@ fn decode_err_to_js(global: &JSGlobalObject, err: DecodeError) -> bun_jsc::JsErr
 /// Accepts the object returned by `generate()` (`{matrix, size}`), or a bare
 /// `BufferSource` whose length is a perfect square with side 21..=177.
 #[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [input_value] = frame.arguments_as_array::<1>();
 
     if input_value.is_empty_or_undefined_or_null() {

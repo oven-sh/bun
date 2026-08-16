@@ -188,6 +188,81 @@ tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }
 
 tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
 
+// An undefined stdout/stderr option means that slot's default, which differs between the two slots
+// of Bun.spawn: stdout defaults to "pipe", stderr to "inherit" (so proc.stderr is undefined).
+// Bun.spawnSync defaults both to "pipe".
+//
+// Without exactOptionalPropertyTypes, TypeScript drops undefined from a union passed to the optional
+// `stderr` property (`stderr: cond ? "pipe" : undefined` infers Err = "pipe"), so the union case is
+// asserted through the stdio tuple and through explicit type arguments below.
+declare const pipeWhenCapturing: boolean;
+{
+  const proc = Bun.spawn(["cat"], { stderr: undefined });
+  tsd.expectType(proc).is<Bun.Subprocess<"ignore", "pipe", undefined>>();
+  tsd.expectType(proc.stderr).is<undefined>();
+}
+{
+  const proc = Bun.spawn({ cmd: ["cat"], stderr: undefined });
+  tsd.expectType(proc.stderr).is<undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdout: undefined });
+  tsd.expectType(proc).is<Bun.Subprocess<"ignore", undefined, "inherit">>();
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+  tsd.expectType(proc.readable).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdio: [undefined, undefined, undefined] });
+  tsd.expectType(proc.stdin).is<undefined>();
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+  tsd.expectType(proc.stderr).is<undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], {
+    stdio: ["ignore", pipeWhenCapturing ? "pipe" : undefined, pipeWhenCapturing ? "pipe" : undefined],
+  });
+  tsd.expectType(proc).is<Bun.Subprocess<"ignore", "pipe" | undefined, "pipe" | undefined>>();
+  tsd.expectType(proc.stdout).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+  tsd.expectType(proc.stderr).is<ReadableStream<Uint8Array<ArrayBuffer>> | undefined>();
+}
+{
+  Bun.spawn(["cat"], {
+    stderr: undefined,
+    onExit(proc) {
+      tsd.expectType(proc.stderr).is<undefined>();
+    },
+    ipc(message, proc) {
+      tsd.expectType(proc.stderr).is<undefined>();
+    },
+  });
+}
+{
+  const proc = Bun.spawnSync(["cat"], { stdout: undefined, stderr: undefined });
+  tsd.expectType(proc.stdout).is<Buffer>();
+  tsd.expectType(proc.stderr).is<Buffer>();
+}
+{
+  const proc = Bun.spawnSync(["cat"], { stdio: ["ignore", undefined, undefined] });
+  tsd.expectType(proc.stdout).is<Buffer>();
+  tsd.expectType(proc.stderr).is<Buffer>();
+}
+tsd
+  .expectType<Bun.Subprocess<"ignore", "pipe", "pipe" | undefined>["stderr"]>()
+  .is<ReadableStream<Uint8Array<ArrayBuffer>> | undefined>();
+tsd
+  .expectType<Bun.Subprocess<"ignore", "pipe" | undefined, "inherit">["stdout"]>()
+  .is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+tsd.expectType<NullSubprocess["stderr"]>().is<undefined>();
+// Configurations that are not known statically still see every possible value.
+tsd.expectType<Bun.Subprocess["stderr"]>().is<ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined>();
+tsd.expectType<WritableSubprocess["stderr"]>().is<ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined>();
+// The one-parameter form of the alias keeps stdout's default.
+tsd.expectType<Bun.Spawn.ReadableToIO<undefined>>().is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+tsd.expectType<Bun.Spawn.ReadableToIO<undefined, "inherit">>().is<undefined>();
+tsd
+  .expectType<Bun.Spawn.ReadableToIO<"pipe" | undefined, "inherit">>()
+  .is<ReadableStream<Uint8Array<ArrayBuffer>> | undefined>();
+
 // Lazy option types (async only)
 {
   // valid: lazy usable with async spawn

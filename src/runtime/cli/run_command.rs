@@ -90,6 +90,20 @@ impl Default for ExecCfg {
     }
 }
 
+/// Per-caller knobs for [`RunCommand::configure_env_for_run`] and
+/// [`RunCommand::configure_env_for_run_without_linker`].
+#[derive(Clone, Copy)]
+pub(crate) struct ConfigureEnvOptions {
+    /// Report a current directory that cannot be read on stderr. When `false`
+    /// it is only returned, as [`crate::Error::CouldntReadCurrentDirectory`].
+    pub(crate) log_errors: bool,
+    /// Keep the current directory's fd open on the returned `DirInfo` (only
+    /// that one: the resolver's `store_fd` is turned back off right after),
+    /// for callers that go on to read files through it, like `bunx` resolving
+    /// a package's `bin`.
+    pub(crate) store_root_fd: bool,
+}
+
 pub(crate) struct RunCommand;
 
 impl RunCommand {
@@ -541,10 +555,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(ctx, this_transpiler, env, log_errors, store_root_fd, true)
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
     }
 
     /// Like [`Self::configure_env_for_run`] but does **not** construct the
@@ -555,17 +568,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
-        Self::configure_env_for_run_impl(
-            ctx,
-            this_transpiler,
-            env,
-            log_errors,
-            store_root_fd,
-            false,
-        )
+        Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
     }
 
     /// `configure_linker()` + `load_tsconfig_json` setup, factored into a
@@ -587,8 +592,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
-        log_errors: bool,
-        store_root_fd: bool,
+        opts: ConfigureEnvOptions,
         with_linker: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
         let args = ctx.args.clone();
@@ -609,7 +613,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.store_fd = opts.store_root_fd;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -625,7 +629,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
                 Err(err) => {
-                    if !log_errors {
+                    if !opts.log_errors {
                         return Err(crate::Error::CouldntReadCurrentDirectory);
                     }
                     // SAFETY: `ctx.log` set in `create_context_data` (single-
@@ -2319,8 +2323,10 @@ impl RunCommand {
             ctx,
             this_transpiler,
             None,
-            log_errors,
-            false,
+            ConfigureEnvOptions {
+                log_errors,
+                store_root_fd: false,
+            },
         )?;
         // SAFETY: `configure_env_for_run_without_linker` returned `Ok`, so the
         // slot is fully initialized via `MaybeUninit::write`.

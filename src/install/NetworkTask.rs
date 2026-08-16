@@ -1,11 +1,11 @@
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
 use crate::bun_fs::{FileSystem, FilenameStore};
 use bun_collections::HashMap;
 use bun_core::{self, fmt::quote};
-use bun_core::{MutableString, StringBuilder, strings};
+use bun_core::{MutableString, strings};
 use bun_http::{
     self as http, AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
@@ -38,7 +38,7 @@ pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
 }
 
 pub struct NetworkTask {
-    // Self-referential: borrows `url_buf` / leaked header content owned by
+    // Self-referential: borrows `url_buf` / `header_buf` owned by
     // sibling fields, so the lifetime is erased to `'static`.
     // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
@@ -60,6 +60,7 @@ pub struct NetworkTask {
     // `tarball.url` in the latter would be a self-reference
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
+    pub(crate) header_buf: Box<[u8]>,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -576,20 +577,19 @@ impl NetworkTask {
 
         if !etag.is_empty() {
             header_builder.count("If-None-Match", etag);
-        }
-
-        if !last_modified.is_empty() {
+        } else if !last_modified.is_empty() {
             header_builder.count("If-Modified-Since", last_modified);
         }
 
-        if header_builder.header_count > 0 {
+        let headers_buf: &'static [u8] = if header_builder.header_count > 0 {
             let accept_header = if needs_extended {
                 ACCEPT_HEADER_VALUE_EXTENDED
             } else {
                 ACCEPT_HEADER_VALUE
             };
             header_builder.count("Accept", accept_header);
-            if !last_modified.is_empty() && !etag.is_empty() {
+            let trailing_last_modified = !last_modified.is_empty() && !etag.is_empty();
+            if trailing_last_modified {
                 header_builder.content.count(last_modified);
             }
             header_builder.allocate()?;
@@ -604,15 +604,19 @@ impl NetworkTask {
 
             header_builder.append("Accept", accept_header);
 
-            if !last_modified.is_empty() && !etag.is_empty() {
-                let appended = header_builder.content.append(last_modified);
-                // SAFETY: lifetime extension — the appended slice points into
-                // `header_builder.content`'s heap buffer, which is moved into
-                // `self.unsafe_http_client.client.header_buf` below and
-                // outlives the request. Detach the borrow so
-                // `header_builder.content` can be read again for `headers_buf`.
-                last_modified = unsafe { bun_ptr::detach_lifetime(appended) };
+            let last_modified_start = header_builder.content.len;
+            if trailing_last_modified {
+                let _ = header_builder.content.append(last_modified);
             }
+            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
+            self.header_buf = header_builder.content.move_to_slice();
+            if trailing_last_modified {
+                // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
+                last_modified =
+                    unsafe { bun_ptr::detach_lifetime(&self.header_buf[last_modified_start..]) };
+            }
+            // SAFETY: same invariant as `last_modified` above.
+            unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
         } else {
             let header_buf: &'static str = if needs_extended {
                 EXTENDED_HEADERS_BUF
@@ -630,34 +634,15 @@ impl NetworkTask {
                 },
             })?;
             header_builder.header_count = 1;
-            // SAFETY: header_buf is &'static str; StringBuilder borrows it
-            // mutably in type but is never written to on this path.
-            header_builder.content = StringBuilder {
-                ptr: NonNull::new(header_buf.as_ptr().cast_mut()),
-                len: header_buf.len(),
-                cap: header_buf.len(),
-            };
-        }
+            self.header_buf = Box::default();
+            header_buf.as_bytes()
+        };
 
         self.response_buffer = MutableString::init(0)?;
 
-        // SAFETY: lifetime extension — `url_buf` and the header content buffer
-        // are heap allocations owned by / leaked into `*self`, which outlives
-        // the HTTP request. `AsyncHTTP::init` demands `'static` borrows
-        // because the HTTP thread reads them concurrently. See the
-        // identical pattern in `s3/simple_request.rs`.
+        // SAFETY: `self.url_buf` outlives the request, same as `header_buf` above (see `s3/simple_request.rs`).
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
-        // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
-        // `'static` erasure remains unsafe — the buffer is leaked into the
-        // HTTP client below (`ManuallyDrop`), so it genuinely outlives this frame.
-        let headers_buf: &'static [u8] =
-            unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
-        // `header_builder.content` is intentionally leaked (ownership
-        // transfers to the HTTP client). Forget it so
-        // `StringBuilder::drop` doesn't free the buffer that `headers_buf` /
-        // `last_modified` now alias.
-        let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
         // MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
@@ -701,11 +686,7 @@ impl NetworkTask {
                 .unwrap_or(false)
         {
             self.http_mut().client.flags.force_last_modified = true;
-            // SAFETY: lifetime extension — `last_modified` either points into
-            // the leaked `header_builder.content` buffer (reassigned above) or
-            // into the manifest's `string_buf`, which is the same allocation
-            // referenced by the `PackageManifest` we just cloned into
-            // `self.callback`. Both outlive the HTTP request.
+            // SAFETY: `last_modified` points into `self.header_buf` or into the manifest `string_buf` cloned into `self.callback`; both outlive the request.
             self.http_mut().client.if_modified_since =
                 unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
@@ -829,29 +810,22 @@ impl NetworkTask {
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
-        let mut header_buf: &'static [u8] = b"";
 
         if send_auth {
             count_auth(&mut header_builder, scope);
         }
 
-        if header_builder.header_count > 0 {
+        let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
-
-            if send_auth {
-                append_auth(&mut header_builder, scope);
-            }
-
-            // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the
-            // `'static` erasure remains unsafe — buffer is leaked below.
-            header_buf =
-                unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
-        }
-        // `header_builder.content` is intentionally leaked (ownership
-        // transfers to the HTTP client). Forget it so
-        // `StringBuilder::drop` doesn't free the buffer that `header_buf` now
-        // aliases.
-        let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
+            append_auth(&mut header_builder, scope);
+            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
+            self.header_buf = header_builder.content.move_to_slice();
+            // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.
+            unsafe { bun_ptr::detach_lifetime(&*self.header_buf) }
+        } else {
+            self.header_buf = Box::default();
+            b""
+        };
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
@@ -992,6 +966,7 @@ impl NetworkTask {
             // Struct-default fields.
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
+            addr_of_mut!((*slot).header_buf).write(Box::default());
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

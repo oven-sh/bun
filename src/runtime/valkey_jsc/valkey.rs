@@ -326,11 +326,10 @@ fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
     reader.pos()
 }
 
-// SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed via
-// `container_of`). `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the
-// field offset is unchanged. R-2: shared `&` only — every `JSValkeyClient`
-// method this reaches is `&self`.
-bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
+// SAFETY: `ValkeyClient` lives at `JSValkeyClient.client` (intrusive embed).
+// `JsCell<ValkeyClient>` is `#[repr(transparent)]`, so the field offset is
+// unchanged. Every `JSValkeyClient` method this reaches is `&self`.
+bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; fn mut parent_ptr; }
 
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
@@ -614,18 +613,23 @@ impl ValkeyClient {
 
         if !self.connection_ready() {
             self.flags.is_manually_closed = true;
-            self.close();
+            let closed = self.close(); // unconditionally, whatever `val` is
+            return val.and(closed);
         }
         val
     }
 
-    pub fn close(&mut self) {
+    /// For a half-open socket this runs `on_close` itself (see below) and returns what its
+    /// `onclose` listener left pending; the caller propagates that like any other callback
+    /// result (or folds it if it is the trampoline), it is never folded here beneath a
+    /// frame that is still going to return its own `Err`.
+    pub fn close(&mut self) -> JsResult<()> {
         let socket = core::mem::replace(
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
         if socket.is_closed() {
-            return;
+            return Ok(());
         }
         // usockets does not dispatch `on_close`/`on_connect_error` when an
         // application explicitly closes a `us_socket_t` whose TCP connect
@@ -642,10 +646,11 @@ impl ValkeyClient {
         socket.close(uws::CloseCode::Normal);
         if is_semi_socket {
             self.status = Status::Disconnected;
-            // A half-open socket never gets uSockets' close dispatch, so this is
-            // its trampoline for the event: fold what `onclose` left pending here.
-            crate::dispatch::fold(self.on_close());
+            // A half-open socket never gets uSockets' close dispatch, so run the
+            // close event here.
+            return self.on_close();
         }
+        Ok(())
     }
 
     /// Handle connection closed event
@@ -908,8 +913,7 @@ impl ValkeyClient {
                 Ok(SubscribeHandled::Handled)
             }
             RESPValue::Push(push) => {
-                let p = self.parent();
-                let sub_count = p._subscription_ctx.get().channels_subscribed_to_count();
+                let sub_count = self.parent().channels_subscribed_to_count();
 
                 let is_pattern_or_sharded =
                     protocol::SubscriptionPushMessage::is_reply_kind(&push.kind);
@@ -923,7 +927,7 @@ impl ValkeyClient {
                             Ok(SubscribeHandled::Handled)
                         }
                         protocol::SubscriptionPushMessage::Subscribe => {
-                            p.add_subscription();
+                            self.parent().add_subscription();
                             self.on_valkey_subscribe(value);
 
                             // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
@@ -1492,12 +1496,13 @@ impl ValkeyClient {
     }
 
     /// Close the Valkey connection
-    pub(crate) fn disconnect(&mut self) {
+    pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
         if self.status == Status::Connected || self.status == Status::Connecting {
-            self.close();
+            return self.close();
         }
+        Ok(())
     }
 
     /// Get a writer for the connected socket
@@ -1520,11 +1525,10 @@ impl ValkeyClient {
     }
 
     pub fn deref(&mut self) {
-        let parent = std::ptr::from_ref(self.parent()).cast_mut();
         // SAFETY: only called in balanced `ref_()`/`deref()` pairs
         // (`on_auto_flush`, `on_writable`), so the count stays > 0 and the
         // outer `&mut self` protector is never invalidated by deallocation.
-        unsafe { JSValkeyClient::deref(parent) };
+        unsafe { JSValkeyClient::deref(self.parent_ptr()) };
     }
 
     #[inline]

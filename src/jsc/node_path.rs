@@ -46,7 +46,7 @@ pub struct ThreadSafe<T: Unprotect>(T);
 
 impl<T: Unprotect> ThreadSafe<T> {
     /// Wrap an **already-protected** `T`. Use when the protect was taken
-    /// elsewhere (e.g. inside `from_js_maybe_async(.., is_async=true)`).
+    /// elsewhere (e.g. inside `from_js_maybe_async(.., Flavor::Async, ..)`).
     #[inline]
     pub fn adopt(value: T) -> Self {
         Self(value)
@@ -228,9 +228,9 @@ impl PathLike {
             }
             Self::Buffer(b) => {
                 // Dropping the `Buffer` arm afterwards releases its own pin.
-                *self = match PinnedArrayBuffer::retain(b.buffer.value, b.slice()) {
+                *self = match PinnedArrayBuffer::retain(b.buffer.value) {
                     Some(pinned) => Self::PinnedBuffer(pinned),
-                    // Detached / no backing store: there are no bytes to keep.
+                    // Detached: there are no bytes to keep.
                     None => Self::default(),
                 };
             }

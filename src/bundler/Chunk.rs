@@ -145,7 +145,7 @@ unsafe impl Sync for Chunk {}
 /// Allocated single-threaded in `generate_chunks_in_parallel` *before* the
 /// `generate_compile_result_for_*_chunk` fan-out, written concurrently by
 /// worker threads at **disjoint** indices (one slot per `PendingPartRange.i`),
-/// then read single-threaded after `worker_pool.wait_for_all()`. Wrapping each
+/// then read single-threaded after the batch's `group.wait()`. Wrapping each
 /// slot in `UnsafeCell` makes the per-task write sound through a shared view —
 /// worker callbacks never need to materialize an aliased `&mut Chunk` or
 /// `&mut [CompileResult]` to publish their result.
@@ -154,7 +154,7 @@ unsafe impl Sync for Chunk {}
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
 
 // SAFETY: writes target disjoint slots (unique `i` per task); reads happen
-// only after the pool join (happens-before via `wait_for_all`).
+// only after the pool join (happens-before via the batch's `group.wait()`).
 // `CompileResult` itself is `Send`.
 unsafe impl Sync for CompileResultSlots {}
 
@@ -170,7 +170,7 @@ impl CompileResultSlots {
         self.0.len()
     }
 
-    /// Post-join read view. Single-threaded callers only (after `wait_for_all`).
+    /// Post-join read view. Single-threaded callers only (after the batch's `group.wait()`).
     #[inline]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = &CompileResult> + '_ {
         // SAFETY: reads happen only after the pool join; no concurrent writer.
@@ -424,6 +424,52 @@ pub struct CodeResult {
     pub(crate) shifts: Vec<source_map::SourceMapShifts>,
 }
 
+/// What the paths `code()` writes over a chunk's references to other outputs
+/// are relative to. A public path makes them outdir-relative either way.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ReferencePathStyle {
+    /// The directory of the chunk being emitted, as in esbuild.
+    ImporterRelative,
+    /// The outdir, wherever the emitting chunk lands (`bun build --compile`).
+    OutdirRelative,
+}
+
+impl ReferencePathStyle {
+    /// An executable loads every chunk from one virtual root, except for the
+    /// browser chunks a server build emits for its HTML imports: those are
+    /// served over HTTP.
+    pub(crate) fn for_chunk(chunk: &Chunk, compile: bool) -> ReferencePathStyle {
+        if compile
+            && !chunk
+                .flags
+                .contains(Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
+        {
+            ReferencePathStyle::OutdirRelative
+        } else {
+            ReferencePathStyle::ImporterRelative
+        }
+    }
+}
+
+/// Whether `code()` records how far each path it writes moves the text after it
+/// (`CodeResult::shifts`, which the chunk's source map is corrected with) and
+/// appends the `//# debugId` comment. Only wanted for a chunk that gets a map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SourceMapShiftTracking {
+    Disabled,
+    Enabled,
+}
+
+impl SourceMapShiftTracking {
+    pub(crate) fn for_source_map(source_map: options::SourceMapOption) -> SourceMapShiftTracking {
+        if source_map == options::SourceMapOption::None {
+            SourceMapShiftTracking::Disabled
+        } else {
+            SourceMapShiftTracking::Enabled
+        }
+    }
+}
+
 // We don't need an allocator vtable here yet. `()` is kept as a token for the
 // caller's `Option<&DynAlloc>` plumbing; the actual
 // allocation goes through `alloc_buf` (global mimalloc) regardless. Real
@@ -549,13 +595,12 @@ impl IntermediateOutput {
         // Accept both `&mut usize` and
         // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        reference_path_style: ReferencePathStyle,
+        shift_tracking: SourceMapShiftTracking,
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
-        // switch (enable_source_map_shifts) { inline else => |b| ... }
-        if enable_source_map_shifts {
-            self.code_with_source_map_shifts::<true>(
+        match shift_tracking {
+            SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -563,11 +608,10 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 None,
-            )
-        } else {
-            self.code_with_source_map_shifts::<false>(
+            ),
+            SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -575,9 +619,9 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 None,
-            )
+            ),
         }
     }
 
@@ -598,13 +642,13 @@ impl IntermediateOutput {
         // Accept both `&mut usize` and
         // `Option<&mut usize>` so call sites spelled either way compile.
         display_size: impl Into<Option<&'d mut usize>>,
-        force_absolute_path: bool,
-        enable_source_map_shifts: bool,
+        reference_path_style: ReferencePathStyle,
+        shift_tracking: SourceMapShiftTracking,
         standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
-        if enable_source_map_shifts {
-            self.code_with_source_map_shifts::<true>(
+        match shift_tracking {
+            SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -612,11 +656,10 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 Some(standalone_chunk_contents),
-            )
-        } else {
-            self.code_with_source_map_shifts::<false>(
+            ),
+            SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
                 parse_graph,
                 linker_graph,
@@ -624,9 +667,9 @@ impl IntermediateOutput {
                 chunk,
                 chunks,
                 display_size,
-                force_absolute_path,
+                reference_path_style,
                 Some(standalone_chunk_contents),
-            )
+            ),
         }
     }
 
@@ -641,7 +684,7 @@ impl IntermediateOutput {
         chunk: &Chunk,
         chunks: &[Chunk],
         display_size: Option<&mut usize>,
-        force_absolute_path: bool,
+        reference_path_style: ReferencePathStyle,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
     ) -> Result<CodeResult, AllocError> {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
@@ -682,8 +725,9 @@ impl IntermediateOutput {
                 // esbuild's `pathBetweenChunks`: with a public path configured, every
                 // reference is `publicPath + outdir-relative path`. Importer-relative
                 // paths would escape the prefix from chunks in subdirectories.
-                let use_outdir_relative_path =
-                    from_chunk_dir.is_empty() || force_absolute_path || !import_prefix.is_empty();
+                let use_outdir_relative_path = from_chunk_dir.is_empty()
+                    || reference_path_style == ReferencePathStyle::OutdirRelative
+                    || !import_prefix.is_empty();
 
                 let urls_for_css: &[&[u8]] = if standalone_chunk_contents.is_some() {
                     graph.ast.items_url_for_css()
@@ -1203,7 +1247,7 @@ impl fmt::Display for UniqueKey {
     }
 }
 
-/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, is_html: bool }
+/// packed struct(u64) { source_index: u32, entry_point_id: u30, is_entry_point: bool, _: u1 }
 #[repr(transparent)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct EntryPoint(u64);
@@ -1213,19 +1257,19 @@ pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
     const ENTRY_POINT_ID_MASK: u64 = (1 << 30) - 1;
+    const IS_ENTRY_POINT_BIT: u64 = 1 << 62;
 
-    pub(crate) fn new(
-        source_index: u32,
-        entry_point_id: u32,
-        is_entry_point: bool,
-        is_html: bool,
-    ) -> Self {
+    /// The chunk that entry point `entry_point_id` itself produces.
+    pub(crate) fn entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
+        EntryPoint(Self::non_entry_point(source_index, entry_point_id).0 | Self::IS_ENTRY_POINT_BIT)
+    }
+
+    /// A chunk generated on behalf of `entry_point_id` (code-split, dev-server
+    /// CSS/HTML) that is not itself an entry point.
+    pub(crate) fn non_entry_point(source_index: u32, entry_point_id: EntryPointId) -> Self {
         debug_assert!((entry_point_id as u64) <= Self::ENTRY_POINT_ID_MASK);
         EntryPoint(
-            (source_index as u64)
-                | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32)
-                | ((is_entry_point as u64) << 62)
-                | ((is_html as u64) << 63),
+            (source_index as u64) | (((entry_point_id as u64) & Self::ENTRY_POINT_ID_MASK) << 32),
         )
     }
 
@@ -1241,7 +1285,7 @@ impl EntryPoint {
 
     #[inline]
     pub(crate) fn is_entry_point(self) -> bool {
-        (self.0 >> 62) & 1 != 0
+        self.0 & Self::IS_ENTRY_POINT_BIT != 0
     }
 
     #[inline]

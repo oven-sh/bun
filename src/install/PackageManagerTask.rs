@@ -575,7 +575,7 @@ impl<'a> Task<'a> {
         if this.status == Status::Success {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
-                pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
+                bun_core::handle_oom(pt.apply());
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {

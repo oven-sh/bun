@@ -121,16 +121,20 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
       const { join } = require("path");
       const { heapStats } = require("bun:jsc");
       const existing = join(process.argv[2], "hello.txt");
+      // > 1000 bytes: a Buffer this long starts out without an ArrayBuffer behind it.
+      const existingLong = join(process.argv[2], "./".repeat(600) + "hello.txt");
       const protectedBefore = heapStats().protectedObjectCount;
       for (let i = 0; i < 2000; i++) {
         Bun.file(Buffer.from(join(process.argv[2], "missing-" + i)));
         Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-u8-" + i)));
         Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-ab-" + i)).buffer);
+        if (i % 8 === 0) Bun.file(Buffer.from(join(process.argv[2], "./".repeat(600) + "missing-long-" + i)));
       }
       const keep = [
         Bun.file(Buffer.from(existing)),
         Bun.file(new TextEncoder().encode(existing)),
         Bun.file(new TextEncoder().encode(existing).buffer),
+        Bun.file(Buffer.from(existingLong)),
       ];
       Bun.gc(true);
       Bun.gc(true);
@@ -155,8 +159,8 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
-    exists: [true, true, true],
-    text: ["hello", "hello", "hello"],
+    exists: [true, true, true, true],
+    text: ["hello", "hello", "hello", "hello"],
     missing: false,
     leakedProtects: false,
     leakedBuffers: false,

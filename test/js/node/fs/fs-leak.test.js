@@ -2,7 +2,6 @@
 const { expect, test } = require("bun:test");
 const fs = require("fs");
 const { tmpdir, devNull } = require("os");
-const { fsStreamInternals } = require("bun:internal-for-testing");
 const { bunExe, bunEnv, tempDir } = require("harness");
 
 function getMaxFd() {

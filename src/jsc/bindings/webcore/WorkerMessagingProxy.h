@@ -90,7 +90,6 @@ public:
     // workerGlobalScopeDestroyedInternal() would have released. Parent thread.
     void parentContextWillDestroy();
 
-    bool askedToTerminate() const { return m_askedToTerminate; }
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
     bool isOnline() const { return m_state.load() == State::Running; }
     bool isClosingOrClosed() const { return m_state.load() >= State::Closing; }
@@ -110,8 +109,6 @@ public:
     // -- Either thread ---------------------------------------------------------------------------
     WorkerOptions& options() { return m_options; }
     ScriptExecutionContextIdentifier workerContextIdentifier() const { return m_workerContextIdentifier; }
-    ScriptExecutionContextIdentifier loaderContextIdentifier() const { return m_loaderContextIdentifier; }
-    void* workerThread() const { return m_workerThread; }
 
     struct MessageInbox {
         Lock lock;

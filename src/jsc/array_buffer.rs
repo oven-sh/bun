@@ -31,6 +31,8 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
+    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
+    pub pinned: bool,
 }
 
 impl Default for ArrayBuffer {
@@ -43,6 +45,7 @@ impl Default for ArrayBuffer {
             typed_array_type: JSType::Cell,
             shared: false,
             resizable: false,
+            pinned: false,
         }
     }
 }
@@ -138,8 +141,7 @@ unsafe extern "C" {
 }
 
 impl JSValue {
-    /// Releases a pin taken on this value's backing `JSC::ArrayBuffer` by
-    /// [`JSValue::as_pinned_arraybuffer`] or a pinning collector.
+    /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value whose pin actually pinned a buffer; prefer [`ArrayBuffer::unpin`], which knows.
     pub fn unpin_array_buffer(self) {
         JSC__JSValue__unpinArrayBuffer(self);
     }
@@ -150,9 +152,11 @@ impl ArrayBuffer {
         self.ptr.is_null()
     }
 
-    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`].
+    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`], if it took one.
     pub fn unpin(&self) {
-        self.value.unpin_array_buffer();
+        if self.pinned {
+            self.value.unpin_array_buffer();
+        }
     }
 
     // require('buffer').kMaxLength.
@@ -293,6 +297,7 @@ impl ArrayBuffer {
         typed_array_type: JSType::Uint8Array,
         shared: false,
         resizable: false,
+        pinned: false,
     };
 
     // Via `#![feature(adt_const_params)]`: `JSType` derives `ConstParamTy`, so
@@ -1058,16 +1063,20 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for JSCArrayBuffer {
 }
 
 unsafe extern "C" {
-    safe fn JSC__JSValue__retainPinnedArrayBuffer(value: JSValue) -> *mut JSCArrayBuffer;
+    safe fn JSC__JSValue__retainPinnedArrayBuffer(
+        value: JSValue,
+        out_ptr: &mut *const u8,
+        out_len: &mut usize,
+    ) -> *mut JSCArrayBuffer;
     safe fn JSC__ArrayBuffer__retainPinned(self_: &JSCArrayBuffer);
     safe fn JSC__ArrayBuffer__releasePinned(self_: &JSCArrayBuffer);
 }
 
-/// A byte range of a JS buffer, kept alive and in place by one ref + one pin
-/// held directly on its `JSC::ArrayBuffer` — the refcounted owner of the
-/// storage, not a GC cell. The typed array / `ArrayBuffer` object may be
-/// collected while this lives. Dropping touches no `JSCell`, so it may run
-/// inside a GC finalizer; JS thread only (the refcount is not atomic).
+/// The byte range of a JS `ArrayBuffer` or view, kept alive and in place by
+/// one ref + one pin held directly on its `JSC::ArrayBuffer` — the refcounted
+/// owner of the storage, not a GC cell. The JS object may be collected while
+/// this lives. Dropping touches no `JSCell`, so it may run inside a GC
+/// finalizer; JS thread only (the refcount is not atomic).
 pub struct PinnedArrayBuffer {
     owner: ptr::NonNull<JSCArrayBuffer>,
     ptr: *const u8,
@@ -1075,20 +1084,21 @@ pub struct PinnedArrayBuffer {
 }
 
 impl PinnedArrayBuffer {
-    /// Ref + pin the `ArrayBuffer` behind `value` (a `JSArrayBuffer` or view)
-    /// and expose `bytes`, which must lie inside it (e.g. the same value's
-    /// `MarkedArrayBuffer::slice()`). `None` if `value` has no backing store.
-    pub fn retain(value: JSValue, bytes: &[u8]) -> Option<Self> {
-        let owner = ptr::NonNull::new(JSC__JSValue__retainPinnedArrayBuffer(value))?;
-        Some(Self {
-            owner,
-            ptr: bytes.as_ptr(),
-            len: bytes.len(),
-        })
+    /// `None` if `value` is not a buffer/view or is detached. A view that has
+    /// no `ArrayBuffer` yet gets one (see `retainPinnedArrayBuffer`).
+    pub fn retain(value: JSValue) -> Option<Self> {
+        let mut ptr: *const u8 = ptr::null();
+        let mut len = 0usize;
+        let owner =
+            ptr::NonNull::new(JSC__JSValue__retainPinnedArrayBuffer(value, &mut ptr, &mut len))?;
+        Some(Self { owner, ptr, len })
     }
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
+        if self.len == 0 {
+            return &[];
+        }
         // SAFETY: `ptr[..len]` lies inside the storage `owner` keeps allocated
         // (ref) and undetachable (pin) until `Drop`.
         unsafe { core::slice::from_raw_parts(self.ptr, self.len) }

@@ -75,6 +75,49 @@ const cwd_root = tempDirWithFiles("testworkspace", {
   }),
 });
 
+// Edges: web -> api -> shared -> pkg-a; pkg-b and the root are isolated.
+const graph_root = tempDirWithFiles("filter-selectors", {
+  packages: {
+    web: {
+      "package.json": JSON.stringify({
+        name: "web",
+        dependencies: { api: "workspace:*" },
+        scripts: { present: "echo out-web" },
+      }),
+    },
+    api: {
+      "package.json": JSON.stringify({
+        name: "api",
+        devDependencies: { shared: "workspace:*" },
+        scripts: { present: "echo out-api" },
+      }),
+    },
+    shared: {
+      "package.json": JSON.stringify({
+        name: "shared",
+        dependencies: { "pkg-a": "*" },
+      }),
+    },
+    "pkg-a": {
+      "package.json": JSON.stringify({
+        name: "pkg-a",
+        scripts: { present: "echo out-pkg-a" },
+      }),
+    },
+    "pkg-b": {
+      "package.json": JSON.stringify({
+        name: "pkg-b",
+        scripts: { present: "echo out-pkg-b" },
+      }),
+    },
+  },
+  "package.json": JSON.stringify({
+    name: "ws",
+    workspaces: ["packages/*"],
+    scripts: { present: "echo out-root" },
+  }),
+});
+
 const cwd_packages = join(cwd_root, "packages");
 const cwd_a = join(cwd_packages, "pkga");
 const cwd_b = join(cwd_packages, "pkgb");
@@ -435,7 +478,19 @@ describe("bun", () => {
   });
 
   test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /No packages matched/);
+    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
+  });
+  test("warns about a filter that matched nothing while running the others", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "pkga", "--filter", "typo", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toMatch(/pkga/);
+    expect(stderr.toString()).toContain('warn: No workspace packages matched the filter "typo"');
+    expect(exitCode).toBe(0);
   });
   test("should warn about malformed package.json", () => {
     runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
@@ -593,6 +648,29 @@ describe("bun", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
+  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+    using dir = tempDir("filter-done-in", {
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: "exit 0" } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "dep0", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    expect(exitCode).toBe(0);
+  });
+
   test("self-referential directory symlink in a workspace does not loop", () => {
     using dir = tempDir("filter-symlink-loop", {
       packages: {
@@ -661,6 +739,246 @@ describe("bun", () => {
     expect(stderr).toContain(`broken${sep}package.json`);
     expect(stderr).toContain("skipping this workspace package");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("selectors", () => {
+  test("'foo...' runs foo and the workspaces it depends on", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api...",
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'foo^...' runs only the dependencies", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api^...",
+      target_pattern: [/out-pkg-a/],
+      antipattern: [/out-api/, /out-web/],
+    });
+  });
+
+  test("'...foo' runs foo and its dependents", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...api",
+      target_pattern: [/out-api/, /out-web/],
+      antipattern: [/out-pkg-a/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'...^foo' runs only the dependents", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...^api",
+      target_pattern: [/out-web/],
+      antipattern: [/out-api/, /out-pkg-a/],
+    });
+  });
+
+  test("a relation on a directory selector", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...{./packages/pkg-a}",
+      target_pattern: [/out-pkg-a/, /out-api/, /out-web/],
+      antipattern: [/out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'{dir}' runs everything under the directory but not the root", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "{packages}",
+      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-root/],
+    });
+  });
+
+  test("'{.}' is resolved from the current directory", () => {
+    runInCwdSuccess({
+      cwd: join(graph_root, "packages"),
+      pattern: "{.}",
+      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-root/],
+    });
+  });
+
+  // `bun run --filter` only runs workspace members; the root's own scripts are never selected.
+  test("a '!' pattern subtracts from '*'", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!web"],
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("a negation-only filter set starts from every workspace", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "!web",
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["!web", "!pkg-b"],
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("a negation-only filter set still skips a package.json without a name", () => {
+    runInCwdSuccess({
+      cwd: cwd_root,
+      pattern: "!pkga",
+      target_pattern: [/scriptb/, /scriptc/, /scriptd/],
+      antipattern: [/scripta/, /malformed1/, /rootscript/],
+    });
+  });
+
+  test("a negated path pattern subtracts from '*'", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!./packages/web"],
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("a negated '{dir}' pattern on its own subtracts from every workspace", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "!{./packages/web}",
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("'foo...' follows optionalDependencies but not peerDependencies", () => {
+    using dir = tempDir("filter-optional-peer", {
+      packages: {
+        app: {
+          "package.json": JSON.stringify({
+            name: "app",
+            optionalDependencies: { optlib: "workspace:*" },
+            peerDependencies: { peerlib: "workspace:*" },
+            scripts: { present: "echo out-app" },
+          }),
+        },
+        optlib: {
+          "package.json": JSON.stringify({ name: "optlib", scripts: { present: "echo out-optlib" } }),
+        },
+        peerlib: {
+          "package.json": JSON.stringify({ name: "peerlib", scripts: { present: "echo out-peerlib" } }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+        scripts: { present: "echo out-root" },
+      }),
+    });
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "app...",
+      target_pattern: [/out-app/, /out-optlib/],
+      antipattern: [/out-peerlib/, /out-root/],
+    });
+  });
+
+  test("a negated relation subtracts the whole group", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!...api"],
+      target_pattern: [/out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-api/, /out-web/, /out-root/],
+    });
+  });
+
+  test("selectors work in the 'bun --filter <script>' form", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api...",
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+      auto: true,
+    });
+  });
+
+  test("selectors work with --parallel", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", "--filter", "api...", "present"],
+      cwd: graph_root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("out-api");
+    expect(stdout).toContain("out-pkg-a");
+    expect(stdout).not.toContain("out-web");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a bare '...' is rejected", () => {
+    runInCwdFailure(graph_root, "...", "present", /is missing a workspace name or path/);
+  });
+
+  test("dependency order is kept inside a relation selection", () => {
+    using dir = tempDir("filter-selectors-order", {
+      dep0: {
+        "index.js": [
+          "await new Promise((resolve) => setTimeout(resolve, 100))",
+          "Bun.write('out.txt', 'success')",
+        ].join(";"),
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep1: {
+        "index.js": 'console.log(await Bun.file("../dep0/out.txt").text())',
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: {
+            dep0: "*",
+          },
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep2: {
+        "package.json": JSON.stringify({
+          name: "dep2",
+          scripts: {
+            script: "echo unrelated",
+          },
+        }),
+      },
+    });
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "dep1...",
+      target_pattern: [/success/],
+      antipattern: [/not found/, /unrelated/],
+      command: ["script"],
+    });
+  });
+
+  test("'*' still skips a package.json without a name", () => {
+    runInCwdSuccess({
+      cwd: cwd_root,
+      pattern: "*",
+      target_pattern: [/scripta/],
+      antipattern: [/malformed1/],
+    });
   });
 });
 

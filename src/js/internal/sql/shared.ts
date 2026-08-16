@@ -6,6 +6,7 @@ const {
   SQLQueryFlags,
   symbols: { _strings, _values },
 } = require("internal/sql/query");
+const AsyncContextFrame = require("internal/async_context_frame");
 
 declare global {
   interface NumberConstructor {
@@ -660,7 +661,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     try {
       // user code; a throw must not abort the pool bookkeeping below
       if (connectionInfo?.onconnect) {
-        connectionInfo.onconnect(err);
+        AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onconnect, connectionInfo, err);
       }
     } finally {
       this.storedError = err;
@@ -761,7 +762,7 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
     try {
       // user code; a throw must not abort the pool bookkeeping below
       if (connectionInfo?.onclose) {
-        connectionInfo.onclose(err);
+        AsyncContextFrame.run(this.adapter.callbackAsyncContext, connectionInfo.onclose, connectionInfo, err);
       }
     } finally {
       this.state = PooledConnectionState.closed;
@@ -927,9 +928,15 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   public closed: boolean = false;
   public totalQueries: number = 0;
   public onAllQueriesFinished: (() => void) | null = null;
+  /// AsyncLocalStorage context the SQL instance was created in. onconnect/onclose run
+  /// inside it rather than in whatever context the native callback happens to fire in
+  /// (none for a socket event, the close() caller's when the socket closes synchronously).
+  public readonly callbackAsyncContext: unknown;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions) {
     this.connectionInfo = connectionInfo;
+    this.callbackAsyncContext =
+      connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
     // Slots are filled one at a time in connect()'s pool-start loop, and
     // createPooledConnection can synchronously run user code (for example a
     // function-valued `password`) that re-enters methods scanning this array,
@@ -1234,19 +1241,27 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return Promise.all(promises);
   }
 
+  /** Runs from close() after `closed` is set; overridden by Postgres for its LISTEN connection. */
+  protected closeDedicatedConnections(): void {}
+
   async close(options?: { timeout?: number }): Promise<void> {
     if (this.closed) {
       return;
     }
 
     let timeout = options?.timeout;
-    if (timeout) {
+    const hasTimeout = !!timeout;
+    if (hasTimeout) {
       timeout = Number(timeout);
       if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
         throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
       }
+    }
 
-      this.closed = true;
+    this.closed = true;
+    this.closeDedicatedConnections();
+
+    if (hasTimeout) {
       if (timeout === 0 || !this.hasPendingQueries()) {
         // close immediately
         await this.#close();
@@ -1268,7 +1283,6 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
       return promise;
     } else {
-      this.closed = true;
       if (!this.hasPendingQueries()) {
         // close immediately
         await this.#close();

@@ -381,6 +381,28 @@ describe.concurrent("socket", () => {
     void stderr;
   }, 30_000);
 
+  // The libuv backend used to close a socket's poll handle while that socket's
+  // own callback was still on the stack. When the callback re-entered the event
+  // loop (expect().resolves, i.e. waitForPromise), the close completed in the
+  // nested run and libuv then freed the handle twice. The fixture runs under
+  // `bun test` because that spin is what it needs; a double free surfaces as a
+  // crash or hang while it churns through the sockets created afterwards.
+  it("closing a socket from its own handler while the handler re-enters the event loop", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", join(import.meta.dir, "close-in-handler-reentrant-tick-fixture.ts")],
+      // Not the repo's test/ directory: its bunfig.toml would preload the harness.
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // bun test reports on stderr.
+    expect(stderr).toContain(" 2 pass");
+    expect(exitCode).toBe(0);
+    void stdout;
+  });
+
   it("it should not crash when getting a ReferenceError on client socket open", async () => {
     using server = Bun.serve({
       port: 0,

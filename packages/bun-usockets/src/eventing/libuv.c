@@ -52,8 +52,48 @@ static int us_internal_poll_cb_socket_is_probeable(struct us_poll_t *wp) {
   return !s->flags.is_closed && s->flags.is_paused;
 }
 
-/* uv_poll_t->data always (except for most times after calling us_poll_stop)
- * points to the us_poll_t */
+enum {
+  US_UV_POLL_OPEN = 0,
+  /* us_poll_stop ran inside one of this handle's own poll_cb frames; the
+   * outermost frame issues uv_close once dispatch returns (see us_poll_stop). */
+  US_UV_POLL_CLOSE_DEFERRED = 1,
+  US_UV_POLL_CLOSE_ISSUED = 2,
+  /* close_cb_free_poll ran: libuv no longer references the handle. */
+  US_UV_POLL_CLOSED = 3,
+};
+
+/* What p->uv_p points at. uv must stay first: p->uv_p and the uv_handle_t
+ * casts in us_socket_ref/unref address it directly. us_poll_resize hands the
+ * whole block to the relocated us_poll_t, so this state follows a socket
+ * through adoption. libuv owns the memory from uv_poll_init_socket until
+ * close_cb_free_poll; the us_poll_t is freed together with it. */
+struct us_internal_uv_poll_t {
+  uv_poll_t uv;
+  /* poll_cb frames for this handle currently on the stack. uv_run is
+   * re-entered from callbacks (waitForPromise), and the nested run can
+   * dispatch the same handle again underneath the outer frame. */
+  unsigned int dispatch_depth;
+  /* uv_poll_init_socket linked the handle into the loop. */
+  unsigned char registered;
+  unsigned char close_state;
+  /* us_poll_free ran while libuv still referenced the handle; close_cb_free_poll
+   * frees both blocks. */
+  unsigned char free_requested;
+};
+
+static struct us_internal_uv_poll_t *us_internal_uv_poll(struct us_poll_t *p) {
+  return (struct us_internal_uv_poll_t *)p->uv_p;
+}
+
+static void close_cb_free_poll(uv_handle_t *h);
+
+static void us_internal_uv_poll_issue_close(struct us_internal_uv_poll_t *up) {
+  up->close_state = US_UV_POLL_CLOSE_ISSUED;
+  uv_close((uv_handle_t *)&up->uv, close_cb_free_poll);
+}
+
+/* uv_poll_t->data points to the us_poll_t (the relocated one after
+ * us_poll_resize). */
 static void poll_cb(uv_poll_t *p, int status, int events) {
   /* UV_DISCONNECT (Windows AFD): the peer closed its write side. A FIN
    * arriving after this side already half-closed and stopped reading never
@@ -162,7 +202,15 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
   if (!error && !eof && !(events & (UV_READABLE | UV_WRITABLE))) {
     return;
   }
+  struct us_internal_uv_poll_t *up = (struct us_internal_uv_poll_t *)p;
+  up->dispatch_depth++;
   us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, error, eof, events);
+  /* `up` is still allocated: a stop during dispatch was deferred below, so no
+   * close callback can have freed it, and us_poll_free only hands it over. */
+  up->dispatch_depth--;
+  if (up->dispatch_depth == 0 && up->close_state == US_UV_POLL_CLOSE_DEFERRED) {
+    us_internal_uv_poll_issue_close(up);
+  }
 }
 
 static void prepare_cb(uv_prepare_t *p) {
@@ -179,13 +227,17 @@ static void check_cb(uv_check_t *p) {
 /* Not used for polls, since polls need two frees */
 static void close_cb_free(uv_handle_t *h) { us_free(h->data); }
 
-/* This one is different for polls, since we need two frees here */
+/* Polls are freed by whichever of close_cb_free_poll and us_poll_free runs
+ * second. A socket closed from a top-level tick sits on the loop's closed list
+ * and us_poll_free runs (loop_post) before libuv completes the close; one
+ * closed inside a nested tick stays on that list until the outermost tick's
+ * loop_post, and libuv may complete the close before that. */
 static void close_cb_free_poll(uv_handle_t *h) {
-  /* It is only in case we called us_poll_stop then quickly us_poll_free that we
-   * enter this. Most of the time, actual freeing is done by us_poll_free. */
-  if (h->data) {
+  struct us_internal_uv_poll_t *up = (struct us_internal_uv_poll_t *)h;
+  up->close_state = US_UV_POLL_CLOSED;
+  if (up->free_requested) {
     us_free(h->data);
-    us_free(h);
+    us_free(up);
   }
 }
 
@@ -208,27 +260,27 @@ void us_poll_init(struct us_poll_t *p, LIBUS_SOCKET_DESCRIPTOR fd,
 }
 
 void us_poll_free(struct us_poll_t *p, struct us_loop_t *loop) {
+  struct us_internal_uv_poll_t *up = us_internal_uv_poll(p);
   // poll was resized and dont own uv_poll_t anymore
-  if(!p->uv_p) {
+  if (!up) {
     us_free(p);
     return;
   }
-  /* The idea here is like so; in us_poll_stop we call uv_close after setting
-   * data of uv-poll to 0. This means that in close_cb_free we call free on 0
-   * with does nothing, since us_poll_stop should not really free the poll.
-   * HOWEVER, if we then call us_poll_free while still closing the uv-poll, we
-   * simply change back the data to point to our structure so that we actually
-   * do free it like we should. */
-  if (uv_is_closing((uv_handle_t *)p->uv_p)) {
-    p->uv_p->data = p;
-  } else {
-    us_free(p->uv_p);
+  if (!up->registered || up->close_state == US_UV_POLL_CLOSED) {
+    us_free(up);
     us_free(p);
+    return;
   }
+  /* libuv still references the handle: close it (no-op if that is already
+   * under way) and let close_cb_free_poll free both blocks. */
+  us_poll_stop(p, loop);
+  up->uv.data = p;
+  up->free_requested = 1;
 }
 
 int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return 0;
+  struct us_internal_uv_poll_t *up = us_internal_uv_poll(p);
+  if (!up) return 0;
   p->poll_type = us_internal_poll_type(p) |
                  ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
                  ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
@@ -239,8 +291,8 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
    * submitted_events_* still unset. Zero first so, on failure, ->type
    * distinguishes the two states and the fields uv__poll_close reads are 0
    * rather than garbage. */
-  memset(p->uv_p, 0, sizeof(uv_poll_t));
-  p->uv_p->data = p;
+  memset(&up->uv, 0, sizeof(uv_poll_t));
+  up->uv.data = p;
 
   int rc;
 #if defined(LIBUS_SOCKET_FAULT_INJECTION) && LIBUS_SOCKET_FAULT_INJECTION
@@ -250,33 +302,33 @@ int us_poll_start_rc(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     rc = (int) injected;
   } else
 #endif
-  rc = uv_poll_init_socket(loop->uv_loop, p->uv_p, p->fd);
+  rc = uv_poll_init_socket(loop->uv_loop, &up->uv, p->fd);
   if (rc < 0) {
     int saved = LIBUS_ERR;
-    if (p->uv_p->type == UV_POLL) {
+    if (up->uv.type == UV_POLL) {
       /* uv__handle_init ran: the handle is in loop->handle_queue. Close it
-       * through libuv so it is unlinked; the caller's us_poll_free sees
-       * uv_is_closing and hands ownership to close_cb_free_poll. */
-      p->uv_p->data = 0;
-      uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
+       * through libuv so it is unlinked; the caller's us_poll_free hands both
+       * blocks to close_cb_free_poll. */
+      up->registered = 1;
+      us_internal_uv_poll_issue_close(up);
     } else {
-      /* Never reached uv__handle_init: uv_p is still our raw block. Free it
-       * here and null the pointer so the caller's us_poll_free takes the
-       * !uv_p fast path (its uv_is_closing check would read garbage). */
-      us_free(p->uv_p);
+      /* Never reached uv__handle_init: still our raw block. Free it here and
+       * null the pointer so the caller's us_poll_free only frees p. */
+      us_free(up);
       p->uv_p = NULL;
     }
     errno = saved ? saved : -rc;
     return rc;
   }
+  up->registered = 1;
   // This unref is okay in the context of Bun's event loop, because sockets have
   // a `Async.KeepAlive` associated with them, which is used instead of the
   // usockets internals. usockets doesnt have a notion of ref-counted handles.
-  uv_unref((uv_handle_t *)p->uv_p);
+  uv_unref((uv_handle_t *)&up->uv);
   /* Always ask for UV_DISCONNECT: a peer FIN must fire even when the poll is
    * writable-only at that moment (a half-closed connection whose reads are
    * paused is exactly the state that otherwise hangs; see poll_cb). */
-  uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
+  uv_poll_start(&up->uv, events | UV_DISCONNECT, poll_cb);
   return 0;
 }
 
@@ -285,7 +337,10 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
 }
 
 int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return 0;
+  struct us_internal_uv_poll_t *up = us_internal_uv_poll(p);
+  /* A stopped poll must not be re-armed: its fd is already closed, and with
+   * the close deferred the handle is not even closing yet from libuv's view. */
+  if (!up || up->close_state != US_UV_POLL_OPEN) return 0;
   if (us_poll_events(p) != events) {
     p->poll_type =
         us_internal_poll_type(p) |
@@ -294,21 +349,33 @@ int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     /* The poll stays initialized across changes here (the dispatcher never
      * parks a libuv poll), so this cannot hit the registration failure the
      * epoll re-add can; uv_poll_start on a live poll only rejects bad args. */
-    uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
+    uv_poll_start(&up->uv, events | UV_DISCONNECT, poll_cb);
   }
   return 0;
 }
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
-  if(!p->uv_p) return;
-  uv_poll_stop(p->uv_p);
+  struct us_internal_uv_poll_t *up = us_internal_uv_poll(p);
+  if (!up || !up->registered || up->close_state != US_UV_POLL_OPEN) return;
+  /* Clears the event mask, so poll_cb is not invoked again and the caller may
+   * close the fd right away (libuv documents closing after uv_poll_stop as
+   * safe; the outstanding AFD poll then completes with AFD_POLL_LOCAL_CLOSE). */
+  uv_poll_stop(&up->uv);
 
-  /* We normally only want to close the poll here, not free it. But if we stop
-   * it, then quickly "free" it with us_poll_free, we postpone the actual
-   * freeing to close_cb_free_poll whenever it triggers. That's why we set data
-   * to null here, so that us_poll_free can reset it if needed */
-  p->uv_p->data = 0;
-  uv_close((uv_handle_t *)p->uv_p, close_cb_free_poll);
+  /* Inside one of this handle's own poll_cb frames, uv_close must wait until
+   * that frame returns. uv_run is re-entered from callbacks (waitForPromise),
+   * and a close issued here could complete inside the nested run: its close
+   * callback frees the handle, and uv__fast_poll_process_poll_req (win/poll.c)
+   * then resumes on the freed handle when poll_cb returns, finds it CLOSING
+   * with nothing submitted, and queues a second endgame, i.e. a second close
+   * callback and a double free of both blocks. poll_cb issues the close once
+   * its outermost frame is done dispatching, at which point libuv handles it
+   * exactly like a close made directly from the callback. */
+  if (up->dispatch_depth > 0) {
+    up->close_state = US_UV_POLL_CLOSE_DEFERRED;
+    return;
+  }
+  us_internal_uv_poll_issue_close(up);
 }
 
 int us_poll_events(struct us_poll_t *p) {
@@ -334,9 +401,11 @@ void us_loop_pump(struct us_loop_t *loop) {
    * timers are never processed. Bun's outer drive loops (wait_for_promise,
    * bun:test) supply their own keep-going predicate, so force exactly one
    * non-blocking iteration; UV_RUN_NOWAIT keeps the poll timeout at 0. */
+  loop->data.tick_depth++;
   loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
   loop->uv_loop->active_handles--;
+  loop->data.tick_depth--;
 }
 
 struct us_loop_t *us_create_loop(void *hint,
@@ -414,15 +483,22 @@ void us_loop_run(struct us_loop_t *loop) {
     Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
   }
 
+  /* Same contract as us_loop_run_bun_tick: loop_post (check_cb) only frees the
+   * closed lists from the outermost tick, since a nested uv_run runs inside
+   * some poll_cb whose dispatch still reads its socket (and, after adoption,
+   * the retired block) once the callback returns. */
+  loop->data.tick_depth++;
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+  loop->data.tick_depth--;
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,
                                  unsigned int ext_size) {
   struct us_poll_t *p =
       (struct us_poll_t *)us_malloc(sizeof(struct us_poll_t) + ext_size);
-  p->uv_p = us_malloc(sizeof(uv_poll_t));
-  p->uv_p->data = p;
+  struct us_internal_uv_poll_t *up = us_calloc(1, sizeof(struct us_internal_uv_poll_t));
+  up->uv.data = p;
+  p->uv_p = &up->uv;
   return p;
 }
 

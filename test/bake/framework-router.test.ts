@@ -196,12 +196,14 @@ describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path b
     return { stdout, stderr, exitCode };
   }
 
-  // Loading any --app config trips the exception check validator until #38949 lands; keep it out of the child.
+  // Every `bun build --app` trips the exception check validator while loading its config (until #38949) and
+  // leaks its transpilers at exit (until #38233), which is why production.test.ts is exempt from both checks.
   const build = (dir: string) =>
     run(dir, ["build", "--app"], {
       ...bunEnv,
       BUN_JSC_validateExceptionChecks: undefined,
       BUN_JSC_dumpSimulatedThrows: undefined,
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
     });
 
   test("the internal FrameworkRouter constructor throws instead of crashing", () => {

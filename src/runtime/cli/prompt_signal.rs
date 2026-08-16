@@ -19,6 +19,11 @@
 //! On Windows we install a `SetConsoleCtrlHandler` that writes the same
 //! sequence and `ExitProcess`es with `STATUS_CONTROL_C_EXIT`.
 //!
+//! Keyboard Ctrl+C in a real Windows console is the other half of #30890:
+//! the prompts unset `ENABLE_PROCESSED_INPUT` on stdin so it arrives as
+//! byte `\x03` and takes the prompt's graceful-cancel branch instead of
+//! the console's default handler, which would `ExitProcess` past the defer.
+//!
 //! The prompt-entry code builds a [`Guard`]; its `Drop` removes the handler
 //! so the CLI's normal signal semantics resume after the prompt.
 //!
@@ -77,15 +82,10 @@ extern "C" fn handler(sig: i32) {
 
 #[cfg(windows)]
 unsafe extern "C" {
-    // Restore the console-mode snapshot `output::stdio::init()` captured at
-    // startup (stdin/stdout/stderr). Without this, the
-    // ENABLE_LINE_INPUT/ECHO_INPUT/PROCESSED_INPUT bits we cleared on
-    // prompt entry would leak to the next process reading the same
-    // console. This is the Windows analogue of `bun_restore_stdio` on
-    // Unix and is what the process-wide `Ctrlhandler` in c-bindings.cpp
-    // would normally do for CTRL_C_EVENT — but our handler runs first in
-    // the SetConsoleCtrlHandler LIFO chain and ExitProcess's directly, so
-    // we have to invoke it ourselves.
+    // Windows analogue of `bun_restore_stdio`: restores the console-mode
+    // snapshot captured at startup. Our handler precedes the process-wide
+    // `Ctrlhandler` (SetConsoleCtrlHandler is LIFO) and exits directly, so
+    // it must restore the prompt-cleared input flags itself.
     safe fn Bun__restoreWindowsStdio();
 }
 
@@ -98,10 +98,8 @@ unsafe extern "system" fn handler(ctrl: bun_sys::windows::DWORD) -> bun_sys::win
             // handle is reentrant-safe for plain VT sequences.
             const RESTORE: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1006l\r\n";
             let mut written: windows::DWORD = 0;
-            // bun_core::windows_sys::GetStdHandle returns `None` for
-            // INVALID_HANDLE_VALUE and for null handles (no console
-            // attached, handle closed, etc.). Skip the write in those
-            // cases — we still need to ExitProcess either way.
+            // `GetStdHandle` returns `None` when no console is attached;
+            // skip the write but still ExitProcess.
             if let Some(h) = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
                 // SAFETY: `h` is a non-null, non-INVALID kernel handle
                 // returned by `GetStdHandle`; `RESTORE` is a 'static
@@ -117,10 +115,6 @@ unsafe extern "system" fn handler(ctrl: bun_sys::windows::DWORD) -> bun_sys::win
                     );
                 }
             }
-            // Windows analogue of the Unix `bun_restore_stdio` call — restores
-            // the ENABLE_LINE_INPUT / ECHO_INPUT / PROCESSED_INPUT flags the
-            // prompt cleared. Keeps both arms symmetric: ANSI restore →
-            // console/termios restore → exit.
             Bun__restoreWindowsStdio();
             // STATUS_CONTROL_C_EXIT = 0xC000013A — matches what the default
             // console ctrl handler would have done.
@@ -183,11 +177,8 @@ pub(crate) fn install() -> Guard {
     }
     #[cfg(windows)]
     {
-        // The Windows-console Ctrl+C path into the prompt is already
-        // covered by unsetting ENABLE_PROCESSED_INPUT (byte 3 reaches the
-        // input loop). This handler picks up the other cases that route:
-        // Ctrl+Break from a parent process, console-close events, and
-        // SIGINT/SIGTERM sent by other Bun subsystems.
+        // Keyboard Ctrl+C arrives as byte 3 (see the module doc); this
+        // catches Ctrl+Break, console-close, and externally sent signals.
         let _ = bun_sys::c::SetConsoleCtrlHandler(Some(handler), bun_sys::windows::TRUE);
     }
     Guard(())

@@ -343,8 +343,9 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
 
   // PTY variant that exercises the raw-mode TTY byte-3 path end-to-end.
   // NOTE: this does NOT reproduce the original #30890 console-ctrl-handler
-  // kill path — `terminal-platform-gaps.test.ts:184` documents that
-  // Windows ConPTY does not translate a written `\x03` into
+  // kill path — the "Ctrl+C input interrupts the child" test in
+  // terminal-platform-gaps.test.ts documents that Windows ConPTY does not
+  // translate a written `\x03` into
   // `CTRL_C_EVENT`; conhost forwards byte `0x03` to the child's input
   // buffer, so even with the pre-fix `ENABLE_PROCESSED_INPUT` flag the
   // child would have taken the same byte-3 graceful-cancel branch. That
@@ -396,9 +397,11 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
       // flushes the cursor-restore, then prints "Cancelled" in a separate
       // prettyln that hits conhost as a separate write. On Windows ConPTY
       // those arrive as independent IOCP completions, and proc.exited races
-      // the final data IOCP (see terminal-platform-gaps.test.ts:56-59). The
-      // exit() callback is not an alternative — it does not fire on child
-      // exit for an externally-created Bun.Terminal (same file, L322-335).
+      // the final data IOCP (see the "do not race on proc.exited" note in
+      // terminal-platform-gaps.test.ts's runInTerminal helper). The exit()
+      // callback is not an alternative — it does not fire on child exit for
+      // an externally-created Bun.Terminal (the "exit callback does NOT fire
+      // on child exit for existing terminal" test in the same file).
       const cancelledSeen = Promise.withResolvers<void>();
 
       await using terminal = new Bun.Terminal({

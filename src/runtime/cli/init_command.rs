@@ -246,21 +246,14 @@ impl InitCommand {
 
     /// `Choices` must implement `RadioChoice`.
     fn radio<C: RadioChoice>(label: &[u8]) -> Result<C, Error> {
-        // Install a signal / console-ctrl handler that restores the cursor
-        // if the process dies mid-prompt. See `crate::cli::prompt_signal`
-        // for the full rationale — shared with `bun update --interactive`.
+        // Restore the cursor if the process dies mid-prompt (#30890);
+        // see `crate::cli::prompt_signal`.
         let _signal_guard = crate::cli::prompt_signal::install();
 
         // Set raw mode to read single characters without echo.
-        //
-        // `ENABLE_PROCESSED_INPUT` is intentionally unset on Windows so the
-        // console delivers Ctrl+C as byte `\x03` rather than terminating the
-        // process via the default console ctrl handler. If the console killed
-        // the process, it would bypass the `scopeguard::defer!` in
-        // `process_radio_button` that re-shows the cursor, leaving the
-        // terminal with an invisible cursor after the prompt died (#30890).
-        // The byte-3 arm in the input loop takes the graceful-cancel branch
-        // instead.
+        // `ENABLE_PROCESSED_INPUT` stays unset so keyboard Ctrl+C arrives as
+        // byte 3 and takes the graceful-cancel arm instead of killing the
+        // process past the cursor-restore defer (#30890).
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {
@@ -278,10 +271,8 @@ impl InitCommand {
         let selection = match Self::process_radio_button::<C>(label) {
             Ok(s) => s,
             Err(crate::Error::Core(bun_core::Error::EndOfStream)) => {
-                // Drop the raw-mode guard BEFORE `Global::exit`, which does
-                // not unwind. The `scopeguard::defer!` inside
-                // `process_radio_button` already restored the cursor; this
-                // restores the console mode.
+                // `Global::exit` does not unwind; drop the guard explicitly
+                // to restore the console mode.
                 drop(_restore);
                 Output::flush();
                 // Add an "x" cancelled

@@ -8,7 +8,6 @@ import zlib from "node:zlib";
 
 describe("zlib native handle bounds checking", () => {
   function createHandle() {
-    const zlib = require("zlib");
     const deflate = zlib.createDeflateRaw();
     return deflate._handle;
   }
@@ -324,7 +323,6 @@ describe("zlib native handle lifecycle", () => {
 
 describe("zlib native handle writeState", () => {
   test("writeSync updates the writeState array", () => {
-    const zlib = require("zlib");
     const deflate = zlib.createDeflateRaw();
     const handle = deflate._handle;
     const ws = deflate._writeState;

@@ -1742,11 +1742,8 @@ define_colorspace! {
     premultiply = rectangular;
     powerless = none;
     into_css = |srgb: &SRGB| {
-        // Serializes through 8-bit RGBA like upstream lightningcss, except that a color
-        // outside the sRGB gamut (a `color-mix()` of wide-gamut operands) is clipped,
-        // which is what browsers paint for it, rather than gamut mapped (`into_rgba`),
-        // which is a different color: gamut mapping is for a fallback that precedes the
-        // real value in the output, whereas this replaces the value.
+        // Clipped, not gamut mapped like the fallbacks (`into_rgba`): this replaces the
+        // value, so an out-of-gamut `color-mix()` result must be what browsers paint for it.
         let srgb = srgb.resolve_missing().clip();
         CssColor::Rgba(RGBA::from_floats(srgb.r, srgb.g, srgb.b, srgb.alpha))
     };

@@ -785,7 +785,7 @@ enum Semantic {
     ModeOnly,
     /// Original lines shown, but what counts as a change was decided on the canonical form; `hidden` textual
     /// differences were folded away as equivalent.
-    Projected { hidden: usize },
+    Projected,
 }
 
 #[derive(Default)]
@@ -809,6 +809,8 @@ struct FileChange<'a> {
     binary: bool,
     /// `*.js.map`: regenerated on every build, never worth reading.
     sourcemap: bool,
+    /// Textually different shown lines folded away as equivalent by the key.
+    hidden: usize,
     /// Un-minified view: per printed line, where it came from in the original (`line:col`, 1-based), per side.
     origin: Option<[Vec<(u32, u32)>; 2]>,
     hunks: Vec<u8>,
@@ -1062,45 +1064,61 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     && (js_family || no.was_minified || nn.was_minified)
                     && (no.was_minified || nn.was_minified || flags.unminify) =>
             {
-                // Minified: the original is one enormous line, so the un-minified re-print is what gets shown.
+                // Minified: the original is one enormous line, so an un-minified re-print stands in as the source —
+                // locals renamed in lockstep, banner comment as written — and the folded key decides what changed.
                 change.semantic = Semantic::Normalized;
-                // The print does not carry the banner comment; it is shown (and compared) as written.
-                let (shown_o, origin_o) = with_banner(o, no);
-                let (shown_n, origin_n) = with_banner(n, nn);
-                if shown_o == shown_n {
-                    change.semantic = Semantic::FormattingOnly;
-                    change.formatting_only = true;
+                let renamed = if js_family {
+                    normalize::normalize_minified_pair(path, o, n, nopts)
                 } else {
-                    change.origin = Some([origin_o, origin_n]);
-                    unified_hunks(&shown_o, &shown_n, flags.context, style, &mut change);
-                    // Minifier name churn: retry with positional names and keep whichever diff is smaller.
-                    if js_family && change.added + change.removed > 2 {
-                        if let Some((co, cn)) =
-                            normalize::normalize_minified_pair(path, o, n, nopts)
+                    None
+                };
+                let (disp_o, disp_n) = match &renamed {
+                    Some((co, cn)) => (co, cn),
+                    None => (no, nn),
+                };
+                let (shown_o, shown_n) = (with_banner(o, disp_o), with_banner(n, disp_n));
+                let keys = if js_family {
+                    normalize::normalize_key_pair(path, o, n)
+                } else {
+                    None
+                };
+                match keys {
+                    Some((mut ko, mut kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                        rebase_key_onto(&mut ko, &shown_o, disp_o);
+                        rebase_key_onto(&mut kn, &shown_n, disp_n);
+                        let projection = semantic::project(&shown_o.text, &shown_n.text, &ko, &kn);
+                        if projection
+                            .ops
+                            .iter()
+                            .any(|op| op.kind != Operation::Equal || op.affected)
                         {
-                            let mut alt = FileChange {
-                                path,
-                                highlight: change.highlight,
-                                ..Default::default()
-                            };
-                            let (shown_o, origin_o) = with_banner(o, &co);
-                            let (shown_n, origin_n) = with_banner(n, &cn);
-                            if shown_o == shown_n {
-                                alt.semantic = Semantic::FormattingOnly;
-                            } else {
-                                alt.semantic = change.semantic;
-                                alt.origin = Some([origin_o, origin_n]);
-                                unified_hunks(&shown_o, &shown_n, flags.context, style, &mut alt);
-                            }
-                            if alt.added + alt.removed < change.added + change.removed {
-                                change.semantic = alt.semantic;
-                                change.formatting_only = alt.semantic == Semantic::FormattingOnly;
-                                change.added = alt.added;
-                                change.removed = alt.removed;
-                                change.hunks = alt.hunks;
-                                change.origin = alt.origin;
-                            }
+                            change.hidden = projection.hidden;
+                            change.origin = Some([shown_o.origin, shown_n.origin]);
+                            render_ops(
+                                &projection.ops,
+                                flags.context,
+                                style,
+                                &mut change,
+                                (false, false),
+                            );
+                        } else {
+                            change.semantic = Semantic::FormattingOnly;
+                            change.formatting_only = true;
                         }
+                    }
+                    _ if shown_o.text == shown_n.text => {
+                        change.semantic = Semantic::FormattingOnly;
+                        change.formatting_only = true;
+                    }
+                    _ => {
+                        change.origin = Some([shown_o.origin, shown_n.origin]);
+                        unified_hunks(
+                            &shown_o.text,
+                            &shown_n.text,
+                            flags.context,
+                            style,
+                            &mut change,
+                        );
                     }
                 }
             }
@@ -1115,9 +1133,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                             .iter()
                             .any(|op| op.kind != Operation::Equal || op.affected);
                         if shown {
-                            change.semantic = Semantic::Projected {
-                                hidden: projection.hidden,
-                            };
+                            change.semantic = Semantic::Projected;
+                            change.hidden = projection.hidden;
                             render_ops(
                                 &projection.ops,
                                 flags.context,
@@ -1151,7 +1168,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
             let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
                 match norm {
-                    Some(nz) if style.pretty && nz.was_minified => with_banner(raw, nz).0,
+                    Some(nz) if style.pretty && nz.was_minified => with_banner(raw, nz).text,
                     _ => raw.to_vec(),
                 }
             };
@@ -1175,7 +1192,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     (old, &norm_old)
                 };
                 if let (Some(raw), Some(nz)) = (raw, nz) {
-                    let origin = with_banner(raw, nz).1;
+                    let origin = with_banner(raw, nz).origin;
                     change.origin = Some([origin.clone(), origin]);
                 }
                 if op == Operation::Insert {
@@ -2123,7 +2140,7 @@ impl Style {
             Semantic::WhitespaceOnly => "\x1b[2mwhitespace only\x1b[0m",
             Semantic::LineEndingsOnly => "\x1b[2mline endings only\x1b[0m",
             Semantic::ModeOnly => "",
-            Semantic::Projected { .. } => "",
+            Semantic::Projected => "",
             Semantic::Normalized => "\x1b[35munminified\x1b[0m ",
         };
         let mut badge = match (c.old, c.new, c.binary) {
@@ -2174,10 +2191,8 @@ impl Style {
                 format!("{mode} {badge}")
             };
         }
-        if let Semantic::Projected { hidden } = c.semantic {
-            if hidden > 0 {
-                badge = format!("\x1b[2m{hidden} folded\x1b[0m {badge}");
-            }
+        if c.hidden > 0 {
+            badge = format!("\x1b[2m{} folded\x1b[0m {badge}", c.hidden);
         }
         if let Some(why) = c.not_normalized {
             badge = format!("\x1b[2m{why}\x1b[0m {badge}");
@@ -2290,7 +2305,15 @@ fn unified_hunks(
 
 /// The un-minified view of a file: its leading comment block as written (the print drops it), then the print;
 /// alongside, each shown line's original `line:col`.
-fn with_banner(raw: &[u8], norm: &normalize::Normalized) -> (Vec<u8>, Vec<(u32, u32)>) {
+struct Shown {
+    text: Vec<u8>,
+    origin: Vec<(u32, u32)>,
+    /// Printed line `g` is shown at line `g + banner - skipped` (lines `< skipped` are not shown).
+    banner: u32,
+    skipped: u32,
+}
+
+fn with_banner(raw: &[u8], norm: &normalize::Normalized) -> Shown {
     let mut i = 0usize;
     loop {
         while i < raw.len() && raw[i].is_ascii_whitespace() {
@@ -2334,9 +2357,44 @@ fn with_banner(raw: &[u8], norm: &normalize::Normalized) -> (Vec<u8>, Vec<(u32, 
         skip += 1;
         offset += line.len() + 1;
     }
+    let banner = origin.len() as u32;
     text.extend_from_slice(&norm.text[offset.min(norm.text.len())..]);
     origin.extend(printed_origin.into_iter().skip(skip));
-    (text, origin)
+    Shown {
+        text,
+        origin,
+        banner,
+        skipped: skip as u32,
+    }
+}
+
+/// Re-address a key's source map from the minified original onto the lines of the un-minified display, so the
+/// projection can treat that display as "the source": same AST nodes, so the original positions coincide.
+fn rebase_key_onto(
+    key: &mut normalize::Normalized,
+    shown: &Shown,
+    display: &normalize::Normalized,
+) {
+    let mut at: bun_collections::HashMap<(u32, u32), (u32, u32)> =
+        bun_collections::HashMap::default();
+    at.reserve(display.map.len());
+    for m in display.map.iter().rev() {
+        if m.gen_line >= shown.skipped {
+            at.insert(
+                (m.orig_line, m.orig_col),
+                (m.gen_line + shown.banner - shown.skipped, m.gen_col),
+            );
+        }
+    }
+    key.map
+        .retain_mut(|m| match at.get(&(m.orig_line, m.orig_col)) {
+            Some(&(line, col)) => {
+                m.orig_line = line;
+                m.orig_col = col;
+                true
+            }
+            None => false,
+        });
 }
 
 /// Printed line → original `line:col` of the first thing on it, for gutters in the un-minified view.

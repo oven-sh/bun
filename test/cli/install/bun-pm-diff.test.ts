@@ -529,7 +529,16 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     );
     expect(v1.length).toBeGreaterThan(256);
     const { text, exitCode } = await pretty({ "a/dist/x.min.js": v1, "b/dist/x.min.js": v2 });
-    expect(text).toMatch(/\ndist\/x\.min\.js ─+ unminified \+4 -1\n/);
+    expect(text).toMatch(/\ndist\/x\.min\.js ─+ unminified \+3 -1\n/);
+    // Two minifiers' spellings of the same thing (`!0`/`true`, `void 0`/`undefined`) fold in this view too.
+    const spelled = await pretty({
+      "a/dist/x.min.js": v1.replace('padEnd(8," ")', "padEnd(8,true)"),
+      "b/dist/x.min.js": v1.replace('padEnd(8," ")', "padEnd(8,!0)").replace("(n,1)*2", "(n,void 0)*2"),
+    });
+    // `true`/`!0` folds; `1` → `void 0` is a real change and shows — in the readable spelling, not the key's.
+    expect(spelled.text).not.toMatch(/│[-+].*(true|!0)/);
+    expect(spelled.text).toContain("│+     return a(a1, void 0) * 2;");
+    expect(spelled.text).toMatch(/\ndist\/x\.min\.js ─+ 1 folded unminified \+1 -1\n/);
     // The banner comment is not in the print, so it is shown and compared as written.
     const bannered = await pretty({
       "a/dist/x.min.js": "/*! x v1 | MIT */\n" + v1,
@@ -549,7 +558,6 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(changed.filter(l => l.startsWith("+"))).toEqual([
       "+   function a(a1) {",
       "+     return a1 == null;",
-      "+   }",
       "+     return b(a1, 1) * 3;",
     ]);
     // --raw turns all of that off: one giant line each way.

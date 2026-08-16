@@ -525,7 +525,8 @@ pub struct ParseArgumentsResult {
 
 #[derive(Default, Clone, Copy)]
 pub struct ParseArgumentsOptions {
-    pub(crate) timeout: u32,
+    /// Only the timeout passed to this call; the file default is applied when the entry starts.
+    pub(crate) timeout: Option<u32>,
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: u32,
 }
@@ -736,10 +737,7 @@ pub(crate) fn parse_arguments(
         return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
     }
 
-    result.options.timeout = match timeout_option {
-        Some(timeout) => timeout as u32,
-        None => jest::Jest::runner().map_or(0, |runner| runner.default_timeout()),
-    };
+    result.options.timeout = timeout_option.map(|timeout| timeout as u32);
 
     Ok(result)
 }

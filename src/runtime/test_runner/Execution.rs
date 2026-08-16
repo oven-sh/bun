@@ -619,11 +619,13 @@ impl Execution {
         }
 
         let _g = group_begin!();
+        entry.timeout = entry
+            .explicit_timeout
+            .unwrap_or_else(|| super::jest::Jest::runner().map_or(0, |runner| runner.default_timeout()));
+        group_log::log(format_args!("-> entry.timeout: {}", entry.timeout));
         if entry.timeout != 0 {
-            group_log::log(format_args!("-> entry.timeout: {}", entry.timeout));
             entry.timespec = Timespec::ms_from_now_force_real_time(entry.timeout as i64);
         } else {
-            group_log::log(format_args!("-> entry.timeout: 0"));
             entry.timespec = Timespec::EPOCH;
         }
     }

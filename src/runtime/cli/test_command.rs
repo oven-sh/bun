@@ -1027,14 +1027,23 @@ impl CommandLineReporter {
                     Output::flush();
                 }
                 bun_test::Execution::Result::FailBecauseTimeout
-                | bun_test::Execution::Result::FailBecauseHookTimeout
-                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback
-                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
+                | bun_test::Execution::Result::FailBecauseTimeoutWithDoneCallback => {
                     if Output::is_github_action() {
                         Output::print_error(format_args!(
                             "::error title=error: Test \"{}\" timed out after {}ms::\n",
                             bun_fmt::github_action_property(display_label),
                             test_entry.timeout
+                        ));
+                        Output::flush();
+                    }
+                }
+                // No `test_entry.timeout` here: it is the test's, and a test whose beforeEach timed out never got one.
+                bun_test::Execution::Result::FailBecauseHookTimeout
+                | bun_test::Execution::Result::FailBecauseHookTimeoutWithDoneCallback => {
+                    if Output::is_github_action() {
+                        Output::print_error(format_args!(
+                            "::error title=error: a hook timed out for test \"{}\"::\n",
+                            bun_fmt::github_action_property(display_label)
                         ));
                         Output::flush();
                     }

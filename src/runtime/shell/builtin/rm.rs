@@ -153,8 +153,7 @@ impl Rm {
                         }
                         RmParseFlag::Done => {
                             let args_start = idx as usize;
-                            // POSIX: no operands is not an error under `-f`. Checked
-                            // before the prompt-flag rejection so `rm -i` stays a usage error.
+                            // POSIX: with `-f`, no operands is not an error.
                             if args_start >= argc {
                                 if Self::state_mut(interp, cmd).opts.force {
                                     return Builtin::done(interp, cmd, 0);

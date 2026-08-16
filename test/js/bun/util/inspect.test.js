@@ -947,6 +947,10 @@ describe.concurrent("property lookup throws while formatting", () => {
     // of the properties must still be printed.
     const fixture = `
       const keys = s => s.split("\\n").filter(l => /^  [^ ]+: /.test(l)).map(l => l.slice(2, l.indexOf(":")));
+      // The formatter loads node:util the first time it runs an inspect.custom
+      // hook, and process.env has one on Windows. Load it while Symbol is intact
+      // so the walk below only hits the throwing static property initializers.
+      Bun.inspect({ [Bun.inspect.custom]() { return 1; } });
       const RealSymbol = Symbol;
       globalThis.Symbol = NaN;
       const broken = keys(Bun.inspect(Bun));

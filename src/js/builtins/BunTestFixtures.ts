@@ -118,7 +118,7 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
     return result;
   }
 
-  /** Names destructured by `fn`'s parameter at `paramIndex` (read from its source, as in vitest); null if the source is unavailable. */
+  /** Names destructured by `fn`'s parameter at `paramIndex` (read from its source, as in vitest); null for bound and native functions. */
   function getUsedProps(fn: Function, paramIndex: number): string[] | null {
     let source: string;
     try {
@@ -126,7 +126,7 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
     } catch {
       return null;
     }
-    if (source.indexOf("[native code]") !== -1) {
+    if (/^function\b[^(]*\([^)]*\)\s*\{\s*\[native code\]\s*\}$/.test(source)) {
       return null;
     }
     const parenIndex = source.indexOf("(");
@@ -254,7 +254,12 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
     for (let i = 0; i < chain.length; i++) $arrayPush(nextChain, chain[i]);
     $arrayPush(nextChain, record);
 
-    const deps = getUsedProps(record.value as Function, 0) ?? [];
+    const deps = getUsedProps(record.value as Function, 0);
+    if (deps === null) {
+      throw new TypeError(
+        `Fixture "${name}" is a bound or native function, so the fixtures it depends on cannot be read from its source. Define it as a function that destructures the fixtures it uses, e.g. ({ db }, use) => { ... }.`,
+      );
+    }
     for (let i = 0; i < deps.length; i++) {
       const dep = deps[i];
       if (dep === name) {
@@ -285,7 +290,7 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
 
     const { length } = fixtures;
     if (length !== 0) {
-      // the `.each` row values precede the context parameter
+      // the `.each` row values precede the context parameter; a bound callback (null) gets every fixture
       const used = getUsedProps(testCallback, caseArgs.length);
       for (let i = 0; i < length; i++) {
         const record = fixtures[i];

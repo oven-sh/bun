@@ -280,6 +280,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Used with unwrap_commonjs_packages
     pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
     pub(crate) unwrap_all_requires: bool,
+    /// Names this file assigns to (`x = ...`, `x++`, `[x] = ...`, `for (x of ...)`) or
+    /// declares more than once. `visit_decls` has to decide whether `var x = require("pkg")`
+    /// can become the import binding itself before the rest of the file has been visited,
+    /// so this is collected during the parse pass, where identifiers are still names rather
+    /// than symbols. A binding whose name is in here stays an ordinary variable. Only
+    /// filled when unwrapping.
+    pub(crate) rebound_names: HashMap<&'a [u8], ()>,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
@@ -752,7 +759,61 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
+        // `T` fixes the variant at each (inlined) call site, so this compiles to
+        // nothing except where a binary or unary expression is built.
+        match expr.data {
+            js_ast::ExprData::EBinary(bin)
+                if js_ast::op::Code::binary_assign_target(bin.op) != js_ast::AssignTarget::None =>
+            {
+                self.record_rebound_target(bin.left);
+            }
+            js_ast::ExprData::EUnary(unary)
+                if js_ast::op::Code::unary_assign_target(unary.op)
+                    != js_ast::AssignTarget::None =>
+            {
+                self.record_rebound_target(unary.value);
+            }
+            _ => {}
+        }
         expr
+    }
+
+    /// Adds every identifier that `target` rebinds to [`rebound_names`](Self::rebound_names).
+    /// `target` is the left side of an assignment, the operand of `++`/`--`, or the head of
+    /// a `for (... in/of)` loop, so it is either an identifier, a member expression (which
+    /// rebinds nothing), or a destructuring pattern. Defaults inside a pattern (`[x = 1] = y`)
+    /// are assignment expressions of their own and were recorded when they were built.
+    pub(crate) fn record_rebound_target(&mut self, target: Expr) {
+        if !self.should_unwrap_common_js_to_esm() {
+            return;
+        }
+        match target.data {
+            js_ast::ExprData::EIdentifier(id) => {
+                let name = self.load_name_from_ref(id.ref_);
+                self.rebound_names.insert(name, ());
+            }
+            js_ast::ExprData::EArray(array) => {
+                for item in array.items.slice() {
+                    self.record_rebound_target(*item);
+                }
+            }
+            js_ast::ExprData::EObject(object) => {
+                for property in object.properties.slice() {
+                    if let Some(value) = property.value {
+                        self.record_rebound_target(value);
+                    }
+                }
+            }
+            js_ast::ExprData::ESpread(spread) => self.record_rebound_target(spread.value),
+            _ => {}
+        }
+    }
+
+    /// Adds a name that is declared a second time to [`rebound_names`](Self::rebound_names).
+    fn record_redeclared_name(&mut self, name: &'a [u8]) {
+        if self.should_unwrap_common_js_to_esm() {
+            self.rebound_names.insert(name, ());
+        }
     }
 
     #[inline]
@@ -3091,6 +3152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(member_in_scope) =
                             _scope.get_member_with_hash(name, hash.unwrap())
                         {
+                            self.record_redeclared_name(name);
                             let existing_idx = member_in_scope.ref_.inner_index() as usize;
                             let existing_kind = self.symbols[existing_idx].kind;
 
@@ -4587,6 +4649,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // arena-owned `Scope` map.
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
         if entry.found_existing {
+            self.record_redeclared_name(name);
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
 
@@ -8793,6 +8856,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
             unwrap_all_requires,
+            rebound_names: Default::default(),
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_needs_conversion: u32::MAX,

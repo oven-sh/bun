@@ -5114,8 +5114,7 @@ impl VirtualMachine {
         self.unhandled_error_counter = 0;
 
         let old_global = self.global;
-        // The C++ callee declares a ThrowScope; hold a Rust-side scope across the
-        // call and query it so exception-check validation stays balanced.
+        // Hold a Rust-side scope across the FFI call so the C++ ThrowScope's exception check is balanced.
         let new_global: *mut JSGlobalObject = {
             crate::top_scope!(scope, self.global());
             let new_global = JSGlobalObject::create_for_test_isolation(
@@ -5137,8 +5136,7 @@ impl VirtualMachine {
             }
         }
 
-        // Reclaim the old file's now-detached module graph; the per-file loop
-        // has no allocation pressure to trigger a collection on its own.
+        // Reclaim the old file's now-detached module graph (the per-file loop has no GC pressure).
         self.global().vm().collect_full_async();
     }
 

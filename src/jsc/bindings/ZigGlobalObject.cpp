@@ -700,8 +700,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
         globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
     }
 
-    // Detach the outgoing file's module graph so it's reclaimed even if the old
-    // global lingers transiently past the swap (otherwise RSS grows per file).
+    // Detach the outgoing file's module graph so it's reclaimed even if the old global lingers.
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
         oldGlobal->clearModuleRegistry();
@@ -4308,17 +4307,10 @@ void GlobalObject::forbidExecution()
     // MicrotaskQueue references Heap.
     vm.defaultMicrotaskQueue().clear();
 
-    // Drop the module registry and require() cache so module-level bindings become unreachable
-    // for the final collection (their ExternalStringImpl deallocators must run before ~VM).
-    {
-        auto* moduleLoader = this->moduleLoader();
-        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread under cellLock().
-        WTF::Locker locker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
+    // Drop module registry + require cache so module bindings die before ~VM.
     {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        requireMap()->clear(this);
+        this->clearModuleRegistry();
         scope.clearException();
     }
 

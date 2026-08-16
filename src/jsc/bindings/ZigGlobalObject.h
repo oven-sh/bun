@@ -769,8 +769,7 @@ public:
 
     void reload();
 
-    // Drop the ESM module registry and CJS require cache so module-level state
-    // becomes collectable. Used by reload() and the `--isolate` global swap.
+    // Drop the ESM module registry and CJS require cache so module state becomes collectable.
     void clearModuleRegistry();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }

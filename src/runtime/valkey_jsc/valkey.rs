@@ -654,10 +654,6 @@ impl ValkeyClient {
     }
 
     /// Handle connection closed event
-    ///
-    /// Ends in `on_valkey_close()` / `on_valkey_reconnect()` even when rejecting the pending
-    /// commands returns `Err` (a stopping VM): they complete the close and release the ref the
-    /// socket held on the client. The `Err` is returned afterwards.
     pub fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
@@ -685,7 +681,7 @@ impl ValkeyClient {
 
                 let rejected = self
                     .reject_in_flight_commands(b"Connection closed", RedisError::ConnectionClosed);
-                // Signal reconnect timer should be started, whatever `rejected` is
+                // Whatever `rejected` is: arms the retry and releases the socket's ref.
                 self.on_valkey_reconnect();
                 return rejected;
             }
@@ -695,7 +691,8 @@ impl ValkeyClient {
         };
 
         let failed = self.fail(reason, RedisError::ConnectionClosed);
-        let closed = self.on_valkey_close(); // unconditionally, whatever `failed` is
+        // Whatever `failed` is: runs `onclose` and releases the socket's ref (see `close()`).
+        let closed = self.on_valkey_close();
         failed.and(closed)
     }
 

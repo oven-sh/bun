@@ -2541,10 +2541,8 @@ async function drainSubtestChain(node: TestNode) {
   } while (chain !== node.subtestChain);
 }
 
-// Node's [kShouldAbort] (test.js:1245), also consulted after the before hooks
-// (test.js:1866): swept by an enclosing suite, or its own signal aborted by now.
-// Node drops the children; cancelling them makes the ones bun:test or the chain
-// still reaches report without running.
+// Node's [kShouldAbort] (test.js:1245 and, after the before hooks, 1866). Node
+// drops the children; cancelled ones report without running when reached.
 function suiteShouldAbort(suite: TestNode): boolean {
   if (suite.cancelError === undefined) {
     const { signal } = suite.options;
@@ -2555,10 +2553,8 @@ function suiteShouldAbort(suite: TestNode): boolean {
   return true;
 }
 
-// stopTest() of Suite.run() (test.js:1865). Node sweeps the children in
-// postRun(), after the after hooks; sweeping as soon as the stop fires is what
-// ends the running child's turn here, so the scope or chain drains and the
-// after hooks follow.
+// stopTest() of Suite.run() (test.js:1865). Node sweeps the children after the
+// after hooks; here the sweep is what lets the children drain before them.
 function armSuiteStop(suite: TestNode) {
   if (suiteShouldAbort(suite)) return;
   const { timeout, signal } = suite.options;
@@ -2575,9 +2571,8 @@ function armSuiteStop(suite: TestNode) {
   });
 }
 
-// First half of Suite.run() for an inline suite, chained ahead of its children;
-// scheduleSuiteSubtest's run() is the second half. Must not reject: the
-// children are chained behind it.
+// First half of Suite.run(); scheduleSuiteSubtest's run() is the second. Must
+// not reject: the children are chained behind it.
 async function startInlineSuite(suite: TestNode) {
   if (suiteShouldAbort(suite)) return;
   suite.suiteStarted = true;
@@ -2679,16 +2674,12 @@ function bunTestOptions(options: TestOptions) {
   return undefined;
 }
 
-// bun:test runs the children of a top-level suite itself, so Suite.run() is
-// spread over hooks of its describe block. Hooks of one kind run in
-// registration order, so the pair registered before the describe callback runs
-// ahead of the suite's own before()/after() hooks and the pair registered after
-// it runs behind them. The hooks take `done` like every callback this module
-// hands to bun:test (it cannot read the arity of a callback registered under
-// an async context, which a nested describe callback is), and fail by throwing:
-// an error passed to done() is only printed, while a throw fails the hook,
-// which is how bun:test reports the suite's own error, and from a beforeAll
-// also skips the block. A todo suite's failure is not a failure in Node.
+// Suite.run() for a top-level suite, whose children bun:test runs itself: hooks
+// of one kind run in registration order, so this pair (registered before the
+// describe callback) runs ahead of the suite's own hooks and the trailing pair
+// behind them. They take `done` like every callback handed to bun:test, and
+// fail by throwing, which bun:test reports as the suite's own failure (from a
+// beforeAll it also skips the block); a todo suite's failure is none in Node.
 function registerTopLevelSuiteLeadingHooks(suite: TestNode) {
   const { beforeAll, afterAll } = bunTest();
   beforeAll((done: (error?: unknown) => void) => {

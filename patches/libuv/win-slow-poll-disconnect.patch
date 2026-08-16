@@ -1,6 +1,6 @@
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
-@@ -269,57 +269,152 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
+@@ -269,57 +269,161 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
    int r;
    uv_single_fd_set_t rfds, wfds, efds;
    struct timeval timeout;
@@ -42,11 +42,14 @@
 +     * watcher that wants only UV_DISCONNECT: with all three sets empty,
 +     * select() fails WSAEINVAL immediately, which stopped the watcher
 +     * and reported a bogus error for every poll parked in that state.
++     * UV_PRIORITIZED gets the same treatment: it is the abort-only watch
++     * a half-open socket parks with after its EOF was consumed, and an
++     * abort turns the peek into an error just like any other death.
 +     * suppress_rfds (set at the bottom of the loop, one lap only) skips
 +     * the read set when pending data the watcher does not want would
 +     * otherwise make select() return instantly instead of blocking on
 +     * writability; the UV_WRITABLE guard keeps the sets non-empty. */
-+    if ((events & (UV_READABLE | UV_DISCONNECT)) &&
++    if ((events & (UV_READABLE | UV_DISCONNECT | UV_PRIORITIZED)) &&
 +        !(suppress_rfds && (events & UV_WRITABLE))) {
 +      rfds.fd_count = 1;
 +      rfds.fd_array[0] = handle->socket;
@@ -114,7 +117,7 @@
 +        assert(rfds.fd_array[0] == handle->socket);
 +        reported_events |= UV_READABLE;
 +
-+        if (events & UV_DISCONNECT) {
++        if (events & (UV_DISCONNECT | UV_PRIORITIZED)) {
 +          char byte;
 +          int peeked;
 +          int peek_error;
@@ -129,12 +132,16 @@
 +           * the connection is gone. */
 +          peeked = recv(handle->socket, &byte, 1, MSG_PEEK);
 +          if (peeked == 0) {
++            /* FIN: a disconnect, not an abort. A watcher that wants only
++             * UV_PRIORITIZED already consumed this FIN (the socket stays
++             * select()-readable forever after it); reporting nothing
++             * sends it to the park below until a real abort. */
 +            reported_events |= UV_DISCONNECT;
 +          } else if (peeked == SOCKET_ERROR) {
 +            peek_error = WSAGetLastError();
 +            if (peek_error != WSAEWOULDBLOCK && peek_error != WSAENOTCONN &&
 +                peek_error != WSAEMSGSIZE)
-+              reported_events |= UV_DISCONNECT;
++              reported_events |= UV_DISCONNECT | UV_PRIORITIZED;
 +          }
 +        }
 +      }
@@ -170,7 +177,9 @@
 +
 +    /* r == 0: a quiet tick; lap to pick up subscription changes. r > 0
 +     * with nothing deliverable: data pending on a poll that does not
-+     * want UV_READABLE (a receive-paused socket). Completing now would
++     * want UV_READABLE (a receive-paused socket), or the permanent
++     * post-FIN readability of a poll that wants only UV_PRIORITIZED.
++     * Completing now would
 +     * be masked to nothing and resubmitted straight back into an
 +     * instantly-readable select(), a hot spin; park instead and keep
 +     * re-peeking, so a connection that dies behind the pending data is
@@ -193,7 +202,7 @@
      }
    }
  
-@@ -346,7 +441,15 @@ static void uv__slow_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
+@@ -346,7 +450,15 @@ static void uv__slow_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
      handle->mask_events_1 = handle->events;
      handle->mask_events_2 = 0;
    } else {
@@ -210,7 +219,7 @@
      return;
    }
  
-@@ -403,6 +506,32 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+@@ -403,6 +515,32 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
  }
  
  
@@ -243,7 +252,7 @@
  int uv_poll_init(uv_loop_t* loop, uv_poll_t* handle, int fd) {
    return uv_poll_init_socket(loop, handle, (SOCKET) uv__get_osfhandle(fd));
  }
-@@ -457,7 +586,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
+@@ -457,7 +595,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
    /* Get the peer socket that is needed to enable fast poll. If the returned
     * value is NULL, the protocol is not implemented by MSAFD and we'll have to
     * use slow mode. */

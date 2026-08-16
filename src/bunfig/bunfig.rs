@@ -581,10 +581,23 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(expr) = test.get(b"testTimeout") {
+                    self.expect(&expr, ExprTag::ENumber)?;
+                    let value = expr.as_number().expect("infallible: type checked");
+                    // `as u32` would silently truncate fractions and saturate
+                    // overflow, so validate before converting.
+                    if !value.is_finite()
+                        || value < 0.0
+                        || value.fract() != 0.0
+                        || value > u32::MAX as f64
+                    {
+                        self.add_error(
+                            expr.loc,
+                            b"\"testTimeout\" must be a non-negative integer (milliseconds)",
+                        )?;
+                        return Ok(());
+                    }
                     if !self.ctx.test_options.timeout_from_cli {
-                        self.expect(&expr, ExprTag::ENumber)?;
-                        self.ctx.test_options.default_timeout_ms =
-                            num_to_u32(expr.as_number().expect("infallible: type checked"));
+                        self.ctx.test_options.default_timeout_ms = value as u32;
                     }
                 }
 

@@ -250,4 +250,45 @@ describe("bunfig.toml test options", () => {
     expect(stdout + stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent.each(["1.5", "-1"])("test.testTimeout rejects invalid value %s", async value => {
+    using dir = tempDir("bunfig-test-timeout-invalid", {
+      "bunfig.toml": `[test]\ntestTimeout = ${value}`,
+      "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout + stderr).toContain("testTimeout");
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("test.testTimeout rejects non-number values even with --timeout", async () => {
+    using dir = tempDir("bunfig-test-timeout-type", {
+      "bunfig.toml": `[test]\ntestTimeout = "abc"`,
+      "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--timeout=5000"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The type is validated even when --timeout overrides the value.
+    expect(stdout + stderr).toContain("expected number but received string");
+    expect(exitCode).toBe(1);
+  });
 });

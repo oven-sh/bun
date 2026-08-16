@@ -10,7 +10,7 @@ use crate::bun_css::css_parser::{
     BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
     SmallList,
 };
-use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
+use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions};
 use crate::bun_fs::Path;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Range};
@@ -84,6 +84,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
     // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };
     let asts = c.graph.ast.items_css();
+    let targets = c.css_targets_for_chunk(chunk);
 
     // Prepare CSS asts
     // Remove duplicate rules across files. This must be done in serial, not
@@ -221,7 +222,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             });
 
                             let printer_options = PrinterOptions {
-                                targets: Targets::for_bundler_target(c.options.target),
+                                targets,
                                 // TODO: make this more configurable
                                 minify: c.options.minify_whitespace
                                     || c.options.minify_syntax

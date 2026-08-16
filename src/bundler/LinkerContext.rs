@@ -339,6 +339,30 @@ impl<'a> LinkerContext<'a> {
             && record.source_index.get() != source_index
     }
 
+    /// The targets to print a CSS chunk with. These must be the targets its
+    /// stylesheets were minified with (`ParseTask`): nesting, media range syntax
+    /// and `light-dark()` references are lowered at print time, and the
+    /// `light-dark()` polyfill is only complete when both halves agree.
+    ///
+    /// The stylesheets were minified by the transpiler of the graph the chunk's
+    /// entry point was parsed in. In a server build, an HTML entry point (passed
+    /// directly or imported from server code) and everything it links go
+    /// through the client transpiler, so the chunk is printed for browsers;
+    /// every other entry point's graph uses the build's own target. The entry
+    /// point's AST target is only trusted for `Browser`: a `#!/usr/bin/env bun`
+    /// hashbang marks the entry of a browser build `Bun`, and the separate SSR
+    /// graph marks its files `ServerComponentsSsr`, while the stylesheets of
+    /// both were still minified with the build's target.
+    pub(crate) fn css_targets_for_chunk(&self, chunk: &Chunk) -> crate::bun_css::Targets {
+        let entry_target = self.graph.ast.items_target()[chunk.entry_point.source_index() as usize];
+        let target = if entry_target == Target::Browser {
+            Target::Browser
+        } else {
+            self.options.target
+        };
+        crate::bun_css::Targets::for_bundler_target(target)
+    }
+
     /// Note: this should call a `MimallocArena` debug hook
     /// (`helpCatchMemoryIssues`), but `Graph.heap` is currently
     /// `bun_alloc::Arena = bumpalo::Bump`, which has no such hook, so this is a

@@ -1,7 +1,9 @@
 use core::fmt;
 
 use bun_core::ZigString;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::{
+    self as jsc, AbortSignal, AbortSignalRef, JSGlobalObject, JSValue, JsError, JsResult,
+};
 
 fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();
@@ -51,19 +53,6 @@ pub(crate) fn throw_err_invalid_arg_type(
             name, expected_type, actual_type
         ),
     )
-}
-
-/// The error `validateAbortSignal(value, name)` throws. Callers pass every
-/// defined value of the option (`JSValue::get`, not `get_truthy`): like Node,
-/// only `undefined` means "no signal", so `null` or `""` end up here too.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L444-L451
-#[cold]
-pub(crate) fn throw_err_invalid_abort_signal(
-    global_this: &JSGlobalObject,
-    name: &str,
-    value: JSValue,
-) -> JsError {
-    global_this.throw_invalid_argument_type_value2(name, "an instance of AbortSignal", value)
 }
 
 #[cold]
@@ -481,6 +470,22 @@ pub(crate) fn validate_function(
         return Err(global.throw_invalid_argument_type_value(name, "function", value));
     }
     Ok(value)
+}
+
+/// `validateAbortSignal(value, name)`, returning a ref to the native signal.
+/// Callers skip `undefined` themselves (Node's `options.signal !== undefined`)
+/// and pass everything else, so `null` and `""` are rejected like any other
+/// non-signal. Only a real `AbortSignal` passes: it is the only kind the native
+/// abort paths can listen to.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L444-L451
+pub(crate) fn validate_abort_signal(
+    global_this: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+) -> JsResult<AbortSignalRef> {
+    AbortSignal::ref_from_js(value).ok_or_else(|| {
+        global_this.throw_invalid_argument_type_value2(name, "an instance of AbortSignal", value)
+    })
 }
 
 /// Rust has no field reflection; enums opt in via this trait.

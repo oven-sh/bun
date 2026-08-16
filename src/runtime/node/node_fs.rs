@@ -4075,16 +4075,10 @@ pub mod args {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(value) = arg.get(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(validators::throw_err_invalid_abort_signal(
-                                ctx,
-                                "options.signal",
-                                value,
-                            ));
-                        }
+                        let signal =
+                            validators::validate_abort_signal(ctx, value, "options.signal")?;
+                        signal.pending_activity_ref();
+                        *abort_signal = Some(signal);
                     }
                 }
             }
@@ -4184,16 +4178,10 @@ pub mod args {
                         mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
                     }
                     if let Some(value) = arg.get(ctx, "signal")? {
-                        if let Some(signal) = AbortSignal::ref_from_js(value) {
-                            signal.pending_activity_ref();
-                            *abort_signal = Some(signal);
-                        } else {
-                            return Err(validators::throw_err_invalid_abort_signal(
-                                ctx,
-                                "options.signal",
-                                value,
-                            ));
-                        }
+                        let signal =
+                            validators::validate_abort_signal(ctx, value, "options.signal")?;
+                        signal.pending_activity_ref();
+                        *abort_signal = Some(signal);
                     }
                     if let Some(flush_) = arg.get(ctx, "flush")? {
                         if flush_.is_boolean() || flush_.is_undefined_or_null() {

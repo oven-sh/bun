@@ -280,12 +280,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Used with unwrap_commonjs_packages
     pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
     pub(crate) unwrap_all_requires: bool,
-    /// Names this file assigns to (`x = ...`, `x++`, `[x] = ...`, `for (x of ...)`) or
-    /// declares more than once. `visit_decls` has to decide whether `var x = require("pkg")`
-    /// can become the import binding itself before the rest of the file has been visited,
-    /// so this is collected during the parse pass, where identifiers are still names rather
-    /// than symbols. A binding whose name is in here stays an ordinary variable. Only
-    /// filled when unwrapping.
+    /// Names this file assigns to or declares twice, collected while parsing (hence by name)
+    /// so `visit_decls` knows whether `var x = require("pkg")` is rebound later in the file.
     pub(crate) rebound_names: HashMap<&'a [u8], ()>,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -759,8 +755,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
-        // `T` fixes the variant, so this compiles to nothing except where a binary
-        // or unary expression is built, and to a check of the operator there.
         match expr.data {
             js_ast::ExprData::EBinary(bin)
                 if js_ast::op::Code::binary_assign_target(bin.op) != js_ast::AssignTarget::None =>
@@ -778,11 +772,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr
     }
 
-    /// Adds every identifier that `target` rebinds to [`rebound_names`](Self::rebound_names).
-    /// `target` is the left side of an assignment, the operand of `++`/`--`, or the head of
-    /// a `for (... in/of)` loop, so it is either an identifier, a member expression (which
-    /// rebinds nothing), or a destructuring pattern. Defaults inside a pattern (`[x = 1] = y`)
-    /// are assignment expressions of their own and were recorded when they were built.
+    /// `target` is an assignment target, `++`/`--` operand or `for (... in/of)` head; a default
+    /// inside a pattern (`[x = 1] = y`) is an assignment of its own and records itself when built.
     #[inline]
     pub(crate) fn record_rebound_target(&mut self, target: Expr) {
         if self.should_unwrap_common_js_to_esm() {
@@ -813,7 +804,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Adds a name that is declared a second time to [`rebound_names`](Self::rebound_names).
     fn record_redeclared_name(&mut self, name: &'a [u8]) {
         if self.should_unwrap_common_js_to_esm() {
             self.rebound_names.insert(name, ());

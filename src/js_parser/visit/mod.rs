@@ -366,9 +366,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         let deferred = &mut self.imports_to_convert_from_require
                                             [unwrapped_id.get_usize()];
                                         if is_rebound {
-                                            // Keep the variable and initialize it from the
-                                            // import's namespace, as require() in any other
-                                            // expression position is.
+                                            // Stays a variable, holding the import's namespace.
                                             decl.value = Some(Expr::init_identifier(
                                                 deferred.namespace.ref_,
                                                 value.loc,

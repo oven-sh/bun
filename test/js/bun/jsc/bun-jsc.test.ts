@@ -570,7 +570,7 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
 
 describe("JsRef::Weak liveness", () => {
   // Bun.gc(false) is collectSync without a sweep, so dead cells stay allocated until the sweeper reaches them.
-  test("dead-but-unswept cells read as not live, kept cells read as live", () => {
+  it("dead-but-unswept cells read as not live, kept cells read as live", () => {
     const { jscInternals } = require("bun:internal-for-testing");
     function make(n: number) {
       const out: bigint[] = [];

@@ -139,6 +139,31 @@ declare module "bun:jsc" {
   function memoryUsage(): MemoryUsage;
 
   /**
+   * Returns how much of the memory available to the process is in use, as a
+   * fraction from `0` to `1`: the process's physical memory footprint divided
+   * by the amount of memory JavaScriptCore sizes its heap against (the cgroup
+   * memory limit when running in a container that has one, otherwise the
+   * machine's RAM), clamped to `1`.
+   *
+   * This is the same reading JavaScriptCore's garbage collector uses to decide
+   * the process is running out of memory: above 0.8 by default, it collects
+   * much more aggressively. For the footprint in bytes, use
+   * {@link memoryUsage}.
+   *
+   * Returns `null` on Windows, where JavaScriptCore does not take this
+   * measurement.
+   *
+   * @example
+   * ```ts
+   * import { percentAvailableMemoryInUse } from "bun:jsc";
+   *
+   * const inUse = percentAvailableMemoryInUse();
+   * if (inUse !== null && inUse > 0.9) console.warn(`${Math.round(inUse * 100)}% of available memory in use`);
+   * ```
+   */
+  function percentAvailableMemoryInUse(): number | null;
+
+  /**
    * Returns the seed of the pseudo-random number generator behind
    * `Math.random()`. The seed is chosen at random when Bun starts; see
    * {@link setRandomSeed}.

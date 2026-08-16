@@ -16,8 +16,6 @@ declare_scope!(FormData, visible);
 
 pub struct FormData {}
 
-// JSC-free, so they live in the lower-tier `bun_core::form_data`; re-exported
-// here so `form_data::*` callers name the same types.
 pub use bun_core::form_data::{AsyncFormData, Encoding};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it

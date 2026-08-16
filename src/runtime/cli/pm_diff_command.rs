@@ -1034,7 +1034,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                 match (ko, kn) {
                     (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
                         let (old_v, new_v) = (view_bytes(o), view_bytes(n));
-                        let projection = semantic::project(&old_v, &new_v, &ko, &kn);
+                        let projection = semantic::project(&old_v, &new_v, ko, kn);
                         let shown = projection
                             .ops
                             .iter()

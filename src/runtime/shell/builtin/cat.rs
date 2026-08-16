@@ -35,6 +35,8 @@ pub enum CatState {
         chunks_done: usize,
         out_done: bool,
         in_done: bool,
+        /// 1 once an operand failed; reported when the operands run out.
+        exit_code: ExitCode,
     },
     WaitingWriteErr,
 }
@@ -81,6 +83,7 @@ impl Cat {
                 chunks_done: 0,
                 out_done: false,
                 in_done: false,
+                exit_code: 0,
             }
         };
 
@@ -104,9 +107,16 @@ impl Cat {
         Builtin::done(interp, cmd, exit_code)
     }
 
-    /// `Some(yield)` if a chunk was enqueued on fd-backed stdout, `None` if written synchronously.
-    fn write_buf_to_stdout(interp: &Interpreter, cmd: NodeId, buf: &[u8]) -> Option<Yield> {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+    /// `Some(yield)` if a chunk was enqueued on an fd-backed stream, `None` if written synchronously.
+    fn write_buf(interp: &Interpreter, cmd: NodeId, io_kind: IoKind, buf: &[u8]) -> Option<Yield> {
+        fn stream(builtin: &mut Builtin, io_kind: IoKind) -> &mut BuiltinIO {
+            match io_kind {
+                IoKind::Stdout => &mut builtin.stdout,
+                IoKind::Stderr => &mut builtin.stderr,
+                IoKind::Stdin => unreachable!("cat writes to stdout and stderr only"),
+            }
+        }
+        if let Some(safeguard) = stream(Builtin::of_mut(interp, cmd), io_kind).needs_io() {
             match &mut Self::state_mut(interp, cmd).state {
                 CatState::ExecStdin {
                     in_done,
@@ -125,13 +135,22 @@ impl Cat {
             }
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
             return Some(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(child, buf, safeguard),
+                stream(Builtin::of_mut(interp, cmd), io_kind).enqueue(child, buf, safeguard),
             );
         }
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
+        let _ = Builtin::write_no_io(interp, cmd, io_kind, buf);
         None
+    }
+
+    /// The message is booked as the operand's output, so its completion moves on to the next operand.
+    fn fail_operand(interp: &Interpreter, cmd: NodeId, err: &bun_sys::Error) -> Option<Yield> {
+        let buf = Builtin::task_error_to_string(interp, cmd, Kind::Cat, err).to_vec();
+        if let CatState::ExecFilepathArgs { exit_code, .. } =
+            &mut Self::state_mut(interp, cmd).state
+        {
+            *exit_code = 1;
+        }
+        Self::write_buf(interp, cmd, IoKind::Stderr, &buf)
     }
 
     pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
@@ -162,7 +181,7 @@ impl Cat {
                         // Copy stdin bytes so the &mut on `stdout`/`write_no_io`
                         // doesn't overlap a borrow of `stdin`.
                         let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
-                        return Self::write_buf_to_stdout(interp, cmd, &buf)
+                        return Self::write_buf(interp, cmd, IoKind::Stdout, &buf)
                             .unwrap_or_else(|| Builtin::done(interp, cmd, 0));
                     }
                     // Clone the `Arc<IOReader>`
@@ -176,7 +195,7 @@ impl Cat {
                     // The fd stays owned by `Builtin::stdin`.
                     if let Some(result) = slurp_regular_file(reader.fd()) {
                         return match result {
-                            Ok(buf) => Self::write_buf_to_stdout(interp, cmd, &buf)
+                            Ok(buf) => Self::write_buf(interp, cmd, IoKind::Stdout, &buf)
                                 .unwrap_or_else(|| Builtin::done(interp, cmd, 0)),
                             Err(e) => {
                                 let buf = Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
@@ -196,13 +215,18 @@ impl Cat {
                     let argc = Builtin::of(interp, cmd).args_slice().len();
                     let n_files = argc - args_start;
                     if idx >= n_files {
+                        let mut exit_code = 0;
                         // Drop the reader if any.
-                        if let CatState::ExecFilepathArgs { reader, .. } =
-                            &mut Self::state_mut(interp, cmd).state
+                        if let CatState::ExecFilepathArgs {
+                            reader,
+                            exit_code: code,
+                            ..
+                        } = &mut Self::state_mut(interp, cmd).state
                         {
                             *reader = None;
+                            exit_code = *code;
                         }
-                        return Builtin::done(interp, cmd, 0);
+                        return Builtin::done(interp, cmd, exit_code);
                     }
                     if let CatState::ExecFilepathArgs {
                         reader,
@@ -231,26 +255,23 @@ impl Cat {
                     let dir = Builtin::cwd(interp, cmd);
                     let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
                         Ok(fd) => fd,
-                        Err(e) => {
-                            let buf =
-                                Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e).to_vec();
-                            // The reader was already taken to `None` above.
-                            return Self::write_failing_error(interp, cmd, &buf, 1);
-                        }
+                        Err(e) => match Self::fail_operand(interp, cmd, &e) {
+                            Some(y) => return y,
+                            None => continue,
+                        },
                     };
 
                     if let Some(result) = slurp_regular_file(fd) {
                         let _ = bun_sys::close(fd);
-                        match result {
-                            Ok(buf) => match Self::write_buf_to_stdout(interp, cmd, &buf) {
-                                Some(y) => return y,
-                                None => continue,
-                            },
+                        let written = match result {
+                            Ok(buf) => Self::write_buf(interp, cmd, IoKind::Stdout, &buf),
                             Err(e) => {
-                                let buf = Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
-                                    .to_vec();
-                                return Self::write_failing_error(interp, cmd, &buf, 1);
+                                Self::fail_operand(interp, cmd, &e.with_path(path.as_bytes()))
                             }
+                        };
+                        match written {
+                            Some(y) => return y,
+                            None => continue,
                         }
                     }
 

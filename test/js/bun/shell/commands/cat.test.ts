@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import path from "node:path";
 
 // On POSIX, `cat` falls through to the subprocess path unless
@@ -147,5 +147,68 @@ describe.concurrent("cat (builtin)", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
+  });
+
+  // Like cat(1), an operand that cannot be opened is reported, the operands
+  // after it are still copied, and the exit status is 1 once they are done.
+  // On Windows the message currently names the operand by its absolute path,
+  // hence the optional directory prefix.
+  const notFound = (...operands: string[]) => {
+    const lines = operands.map(
+      operand => `cat: (.*[\\\\/])?${operand.replaceAll(".", "\\.")}: No such file or directory\\n`,
+    );
+    return new RegExp(`^${lines.join("")}$`);
+  };
+
+  test("keeps going after an operand that does not exist", async () => {
+    using dir = tempDir("shell-cat-missing-between", { "a.txt": "A\n", "b.txt": "B\n" });
+    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat a.txt missing.txt b.txt");
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "A\nB\n",
+      stderr: expect.stringMatching(notFound("missing.txt")),
+      exitCode: 1,
+    });
+  });
+
+  test("reports every operand that does not exist", async () => {
+    using dir = tempDir("shell-cat-all-missing", {});
+    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat missing1.txt missing2.txt");
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringMatching(notFound("missing1.txt", "missing2.txt")),
+      exitCode: 1,
+    });
+  });
+
+  // With stderr on an fd each message is an IOWriter chunk whose completion
+  // has to move cat on to the next operand.
+  test("keeps going with stderr redirected to a file", async () => {
+    using dir = tempDir("shell-cat-missing-stderr-file", { "a.txt": "A\n" });
+    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat missing1.txt a.txt missing2.txt 2> err.txt");
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "A\n", stderr: "", exitCode: 1 });
+    expect(await Bun.file(path.join(String(dir), "err.txt")).text()).toMatch(notFound("missing1.txt", "missing2.txt"));
+  });
+
+  test("keeps going with stderr on a pipe", async () => {
+    using dir = tempDir("shell-cat-missing-stderr-pipe", {});
+    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat missing1.txt missing2.txt 2>&1 | cat");
+    // The pipeline's status is the second cat's.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.stringMatching(notFound("missing1.txt", "missing2.txt")),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // /proc/self/mem is a regular file whose read() fails (EIO at offset 0), so
+  // this takes the read-error arm of the synchronous file path.
+  test.if(isLinux)("keeps going after an operand that cannot be read", async () => {
+    using dir = tempDir("shell-cat-unreadable-between", { "a.txt": "A\n", "b.txt": "B\n" });
+    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat a.txt /proc/self/mem b.txt");
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "A\nB\n",
+      stderr: "cat: /proc/self/mem: Input/output error\n",
+      exitCode: 1,
+    });
   });
 });

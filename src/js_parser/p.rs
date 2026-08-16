@@ -759,8 +759,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
         }
-        // `T` fixes the variant at each (inlined) call site, so this compiles to
-        // nothing except where a binary or unary expression is built.
+        // `T` fixes the variant, so this compiles to nothing except where a binary
+        // or unary expression is built, and to a check of the operator there.
         match expr.data {
             js_ast::ExprData::EBinary(bin)
                 if js_ast::op::Code::binary_assign_target(bin.op) != js_ast::AssignTarget::None =>
@@ -783,10 +783,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// a `for (... in/of)` loop, so it is either an identifier, a member expression (which
     /// rebinds nothing), or a destructuring pattern. Defaults inside a pattern (`[x = 1] = y`)
     /// are assignment expressions of their own and were recorded when they were built.
+    #[inline]
     pub(crate) fn record_rebound_target(&mut self, target: Expr) {
-        if !self.should_unwrap_common_js_to_esm() {
-            return;
+        if self.should_unwrap_common_js_to_esm() {
+            self.record_rebound_names_in(target);
         }
+    }
+
+    fn record_rebound_names_in(&mut self, target: Expr) {
         match target.data {
             js_ast::ExprData::EIdentifier(id) => {
                 let name = self.load_name_from_ref(id.ref_);
@@ -794,17 +798,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EArray(array) => {
                 for item in array.items.slice() {
-                    self.record_rebound_target(*item);
+                    self.record_rebound_names_in(*item);
                 }
             }
             js_ast::ExprData::EObject(object) => {
                 for property in object.properties.slice() {
                     if let Some(value) = property.value {
-                        self.record_rebound_target(value);
+                        self.record_rebound_names_in(value);
                     }
                 }
             }
-            js_ast::ExprData::ESpread(spread) => self.record_rebound_target(spread.value),
+            js_ast::ExprData::ESpread(spread) => self.record_rebound_names_in(spread.value),
             _ => {}
         }
     }

@@ -79,7 +79,9 @@ jobs:
 
     steps:
       # ─── 固定持久工作区 (增量构建的基础) ──────────────────────────────
-      # checkout 到 ~/.cache/ohos-bun-ci/src 固定路径, 工作区里只放 symlink。
+      # checkout 到 ~/.cache/ohos-bun-ci/src 固定路径, 所有步骤直接用该
+      # 绝对路径作 working-directory (不要用 symlink — github-act-runner
+      # 对 symlink 工作目录 exec bash 会 ENOENT)。
       # 效果:
       #   1. 源码 mtime 跨 run 稳定 (git checkout -f 只重写变化的文件) →
       #      cargo 指纹匹配 → Rust 工作区 crate 零重编
@@ -91,7 +93,6 @@ jobs:
           LOCAL=/storage/Users/currentUser/springsources/bun
           REMOTE="https://gh-proxy.com/https://github.com/${{ github.repository }}.git"
           WORK=/storage/Users/currentUser/.cache/ohos-bun-ci/src
-          rm -f bun
           mkdir -p "$(dirname "$WORK")"
 
           if [ -d "$WORK/.git" ]; then
@@ -130,14 +131,12 @@ jobs:
               git -C "$WORK" checkout -f FETCH_HEAD
             fi
           fi
-
-          ln -sfn "$WORK" bun
-          echo "workspace: $WORK -> bun"
+          echo "workspace ready: $WORK ($(git -C "$WORK" rev-parse --short HEAD 2>/dev/null))"
 
       # 同 ohos-build.yml (social4hyq): github-act-runner 不实现 actions/cache
       # 后端 (无 ACTIONS_CACHE_URL), 用固定路径 symlink 实现真正持久化。
       - name: Link persistent build caches
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           CACHE_ROOT=/storage/Users/currentUser/.cache/ohos-bun-ci
           mkdir -p "$CACHE_ROOT/webkit-build" "$CACHE_ROOT/rust-target"
@@ -148,7 +147,7 @@ jobs:
 
       # ─── phase_check ─────────────────────────────────────────────────────
       - name: Environment check
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           fail=0
           for cmd in "$BUN" cmake ninja git perl python3 binary-sign-tool; do
@@ -182,7 +181,7 @@ jobs:
 
       # ─── phase_webkit ────────────────────────────────────────────────────
       - name: Prepare WebKit source
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           WEBKIT_COMMIT=$(grep "export const WEBKIT_VERSION" scripts/build/deps/webkit.ts | head -1 | sed 's/.*"\([a-f0-9]\{40\}\)".*/\1/')
           [ -z "$WEBKIT_COMMIT" ] && { echo "cannot parse WEBKIT_VERSION from scripts/build/deps/webkit.ts"; exit 1; }
@@ -215,7 +214,7 @@ jobs:
 
       # ─── phase_setup_layout ──────────────────────────────────────────────
       - name: Setup build layout (ohos-icu + ohos-cross-libs)
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           # 4a: build/ohos-icu — 指向 brew icu4c@78 的符号链接布局 (原生安装, 无交叉构建)
           rm -rf build/ohos-icu
@@ -257,7 +256,7 @@ jobs:
 
       # ─── phase_bun_install ───────────────────────────────────────────────
       - name: bun install
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           export PATH="$LLVM21/bin:$PATH"
           "$BUN" install 2>&1 | tail -3
@@ -271,7 +270,7 @@ jobs:
       # 内核拒绝 exec (EACCES, ninja code=126)。与本地适配一致: 用
       # bun build 包装脚本替换原生二进制 (shell 脚本无需签名)。
       - name: Patch esbuild (bun-build wrapper)
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           ESB=$(readlink -f node_modules/.bin/esbuild 2>/dev/null)
           if [ -n "$ESB" ] && [ -f "$ESB" ]; then
@@ -395,7 +394,7 @@ jobs:
       # configure-only → patch build.ninja (llvm22.1.7 残留 → llvm@21) →
       # ninja -j1 → 签名错误修复重试 (最多 10 次), 与本地脚本完全一致。
       - name: Configure + Build (retry loop)
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           mkdir -p build/release
           cache_dir="$HOME/.bun/build-cache"
@@ -507,7 +506,7 @@ jobs:
       # ICU 已用 llvm@21 OHOS libc++ 头文件重编, 仅剩 Rust napi 引用的
       # 2 个 V8 符号需要 stub (v8::Array::New / v8::CpuProfiler::CollectSample)。
       - name: Compile + inject V8 stub
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           SHIM_DIR=/data/storage/el2/base/tmp/icu-shim
           mkdir -p "$SHIM_DIR"
@@ -549,13 +548,13 @@ jobs:
       # ─── phase_relink ────────────────────────────────────────────────────
       # stub 注入 build.ninja 后必须重跑 link, 否则运行时报 symbol not found。
       - name: Relink (V8 stub)
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           ninja -C build/release -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"
 
       # ─── phase_sign ──────────────────────────────────────────────────────
       - name: Sign final binary
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           binary="build/release/bun"
           [ -f "$binary" ] || binary="build/release/bun-profile"
@@ -569,7 +568,7 @@ jobs:
 
       # ─── 验证 (参考 ohos-build-rust.yml) ─────────────────────────────────
       - name: Verify binary
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           file build/release/bun
           file build/release/bun | grep -qiE "ELF.*(arm64|aarch64)" || { echo "ERROR: not an ARM64 ELF"; exit 1; }
@@ -582,7 +581,7 @@ jobs:
 
       # ─── 打包 + 上传 (参考 ohos-build-rust.yml) ──────────────────────────
       - name: Package binary
-        working-directory: bun
+        working-directory: /storage/Users/currentUser/.cache/ohos-bun-ci/src
         run: |
           VERSION=$(build/release/bun --version 2>/dev/null || python3 -c "import json; print(json.load(open('package.json'))['version'])")
           COMMIT=$(git rev-parse --short HEAD)

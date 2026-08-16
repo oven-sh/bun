@@ -178,6 +178,49 @@ function depromise<T>(_promise: Promise<T>): T {
   });
   tsd.expectType<number>(proc.stdin);
 }
+
+// `writable` and `readable` are the same values as `stdin` and `stdout`, so they have the same
+// types as `stdin` and `stdout` for every stdio configuration.
+{
+  function aliases<
+    In extends Bun.SpawnOptions.Writable,
+    Out extends Bun.SpawnOptions.Readable,
+    Err extends Bun.SpawnOptions.Readable,
+  >(proc: Bun.Subprocess<In, Out, Err>) {
+    tsd.expectType(proc.writable).is<typeof proc.stdin>();
+    tsd.expectType(proc.readable).is<typeof proc.stdout>();
+  }
+  aliases(Bun.spawn(["cat"]));
+}
+{
+  const proc = Bun.spawn(["cat"], { stdin: "pipe" });
+  tsd.expectType(proc.writable).is<FileSink>();
+  tsd.expectType(proc.readable).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+  proc.writable.write("hello");
+
+  // @ts-expect-error writable is a read-only getter, like stdin
+  proc.writable = proc.stdin;
+}
+{
+  const proc = Bun.spawn(["cat"], { stdin: 0, stdout: 1 });
+  tsd.expectType(proc.writable).is<number>();
+  tsd.expectType(proc.readable).is<number>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdout: "inherit" });
+  tsd.expectType(proc.writable).is<undefined>();
+  tsd.expectType(proc.readable).is<undefined>();
+}
+{
+  const proc = Bun.spawn(["cat"], { stdio: ["pipe", "pipe", "pipe"] });
+  tsd.expectType(proc.writable).is<FileSink>();
+  tsd.expectType(proc.readable).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+}
+tsd.expectType<PipedSubprocess["writable"]>().is<FileSink>();
+tsd.expectType<WritableSubprocess["writable"]>().is<FileSink>();
+tsd.expectType<NullSubprocess["writable"]>().is<undefined>();
+tsd.expectType<ReadableSubprocess["readable"]>().is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+
 tsd.expectAssignable<PipedSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
 tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }));
 tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));

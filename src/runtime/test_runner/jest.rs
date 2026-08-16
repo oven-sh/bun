@@ -131,9 +131,7 @@ pub struct TestRunner<'a> {
 
     pub(crate) default_timeout_ms: u32,
 
-    /// from `setDefaultTimeout() or jest.setTimeout()` in the current file; reset after every
-    /// file. A preload's call lands in `bun_test_root.preload_default_timeout_override` instead.
-    /// maxInt(u32) means override not set.
+    /// from `setDefaultTimeout() or jest.setTimeout()` in the current file. maxInt(u32) means override not set.
     pub(crate) default_timeout_override: u32,
 
     pub(crate) test_options: &'a TestOptions,
@@ -154,6 +152,15 @@ pub struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
+    /// For tests and hooks without a timeout of their own (0 = unlimited): the file's
+    /// `setDefaultTimeout()`, else the preloads', else `--timeout`.
+    pub(crate) fn default_timeout(&self) -> u32 {
+        if self.default_timeout_override != u32::MAX {
+            return self.default_timeout_override;
+        }
+        self.bun_test_root.preload_default_timeout_override.unwrap_or(self.default_timeout_ms)
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
         let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
             return bun_core::Timespec::EPOCH;

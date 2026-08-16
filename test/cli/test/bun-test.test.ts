@@ -482,6 +482,29 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
+    test("setDefaultTimeout(0) turns the timeout off for every file", async () => {
+      const outlivesCliTimeout = `
+        import { test } from "bun:test";
+        test("outlives --timeout 100", () => Bun.sleep(150));
+      `;
+      const { timeouts, exitCode } = await timeoutPerFile(
+        {
+          "preload.ts": `
+            import { setDefaultTimeout } from "bun:test";
+            setDefaultTimeout(0);
+          `,
+          "a.test.ts": outlivesCliTimeout,
+          "b.test.ts": outlivesCliTimeout,
+        },
+        "--preload",
+        "./preload.ts",
+        "./a.test.ts",
+        "./b.test.ts",
+      );
+      expect(timeouts).toEqual({});
+      expect(exitCode).toBe(0);
+    });
+
     test("a file's own setDefaultTimeout() wins in that file only", async () => {
       const { timeouts, exitCode } = await timeoutPerFile(
         {

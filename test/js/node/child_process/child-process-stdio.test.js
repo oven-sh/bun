@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { closeSync, openSync, readFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { connect, createServer } from "node:net";
 import { join } from "node:path";
 
@@ -171,11 +172,12 @@ describe("child.stdin", () => {
 });
 
 // Node shares the descriptor of any stdio entry that has a numeric `fd`
-// property (lib/internal/child_process.js, getValidStdio). Its own
-// test-listen-fd-* tests rely on that to hand `server._handle` to a child as
-// fd 3; in Bun that handle is the Bun.listen() Listener, which exposes `fd`.
-// Socket descriptors cannot be inherited as stdio on Windows (same as Node),
-// so the socket cases are POSIX only.
+// property (lib/internal/child_process.js, getValidStdio): handle wraps,
+// FileHandles, fs/tty streams, plain { fd } objects. Its own test-listen-fd-*
+// tests rely on that to hand `server._handle` to a child as fd 3; in Bun that
+// handle is the Bun.listen() Listener, which exposes `fd`. Socket descriptors
+// cannot be inherited as stdio on Windows (same as Node), so the cases that
+// actually inherit a socket are POSIX only.
 describe("stdio entries carrying a file descriptor", () => {
   async function listeningServer(onConnection) {
     const server = createServer(onConnection);
@@ -262,20 +264,35 @@ describe("stdio entries carrying a file descriptor", () => {
     }
   });
 
-  it("an object with a numeric fd property is used as that fd", () => {
+  it.each([
+    [
+      "a plain { fd } object",
+      file => {
+        const fd = openSync(file, "w");
+        return { entry: { fd }, close: () => closeSync(fd) };
+      },
+    ],
+    [
+      "a FileHandle",
+      async file => {
+        const handle = await open(file, "w");
+        return { entry: handle, close: () => handle.close() };
+      },
+    ],
+  ])("%s as stdout makes the child write to that descriptor", async (_label, prepare) => {
     using dir = tempDir("stdio-fd-object", {});
     const file = join(String(dir), "stdout.txt");
-    const fd = openSync(file, "w");
+    const { entry, close } = await prepare(file);
     let status;
     try {
-      ({ status } = spawnSync(bunExe(), ["-e", `console.log("written through { fd }")`], {
+      ({ status } = spawnSync(bunExe(), ["-e", `console.log("written through the shared fd")`], {
         env: bunEnv,
-        stdio: ["ignore", { fd }, "inherit"],
+        stdio: ["ignore", entry, "inherit"],
       }));
     } finally {
-      closeSync(fd);
+      await close();
     }
-    expect(readFileSync(file, "utf8")).toBe("written through { fd }\n");
+    expect(readFileSync(file, "utf8")).toBe("written through the shared fd\n");
     expect(status).toBe(0);
   });
 
@@ -288,16 +305,39 @@ describe("stdio entries carrying a file descriptor", () => {
     expect(() => spawnSync(bunExe(), ["-e", "0"], options)).toThrow(/stdio/);
   });
 
-  it("a net.Server itself is rejected; only its handle carries the fd", async () => {
-    // Node throws for a server as well (it is not a stream); what its tests
-    // pass is server._handle, as above.
+  it("a handle whose descriptor is already closed is refused, like passing its fd directly", async () => {
     const { server } = await listeningServer(() => {});
-    try {
-      const options = { env: bunEnv, stdio: ["ignore", "ignore", "ignore", server] };
-      expect(() => spawn(bunExe(), ["-e", "0"], options)).toThrow(/stdio/);
-      expect(() => spawnSync(bunExe(), ["-e", "0"], options)).toThrow(/stdio/);
-    } finally {
-      server.close();
-    }
+    const handle = server._handle;
+    const closed = once(server, "close");
+    server.close();
+    await closed;
+    expect(handle.fd).toBe(-1);
+
+    // The handle is only sugar for its `.fd`, so this takes the path a bare -1
+    // takes: Bun.spawn refuses the descriptor (spawn() throws, spawnSync()
+    // returns the error). Node's libuv layer instead spawns the child with
+    // the slot left closed for the negative errno a closed wrap reports
+    // (EINVAL only for exactly -1); silently dropping the socket is not worth
+    // reproducing.
+    const optionsFor = entry => ({ env: bunEnv, stdio: ["ignore", "ignore", "ignore", entry] });
+    const spawnFailure = entry => {
+      try {
+        spawn(bunExe(), ["-e", "0"], optionsFor(entry));
+      } catch (error) {
+        return { code: error.code, message: error.message };
+      }
+    };
+    const spawnSyncFailure = entry => {
+      const { error } = spawnSync(bunExe(), ["-e", "0"], optionsFor(entry));
+      return error && { code: error.code, message: error.message };
+    };
+
+    const viaHandle = spawnFailure(handle);
+    expect(viaHandle).toBeDefined();
+    expect(viaHandle).toEqual(spawnFailure(handle.fd));
+
+    const viaHandleSync = spawnSyncFailure(handle);
+    expect(viaHandleSync).toBeDefined();
+    expect(viaHandleSync).toEqual(spawnSyncFailure(handle.fd));
   });
 });

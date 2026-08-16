@@ -1691,9 +1691,6 @@ function isInternalIpcMessage(message) {
 }
 
 function streamFdOf(item): number | undefined {
-  const itemFd = ObjectHasOwn(item, "fd") ? item.fd : undefined;
-  if (typeof itemFd === "number") return itemFd;
-
   const handle = item._handle;
   const handleFd = handle ? handle.fd : undefined;
   if (typeof handleFd === "number") return handleFd;
@@ -1720,6 +1717,16 @@ function nodeToBun(item, index: number): string | number | null | NodeJS.TypedAr
   if (typeof item === "number") {
     return item;
   }
+  // Anything exposing a numeric `fd` (a server's or socket's _handle, a
+  // FileHandle, an fs/tty stream, a plain { fd }) shares that descriptor with
+  // the child, like node's `typeof stdio.fd === 'number'` branch:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1058
+  // The value is passed through as-is, so a closed handle's negative fd is
+  // refused by Bun.spawn exactly like the same number passed directly.
+  if (typeof item === "object") {
+    const fd = item.fd;
+    if (typeof fd === "number") return fd;
+  }
   if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const fd = streamFdOf(item);
     if (fd !== undefined) return fd;
@@ -1727,14 +1734,6 @@ function nodeToBun(item, index: number): string | number | null | NodeJS.TypedAr
     throw new Error(
       `Passing a stream.${kind} without an underlying file descriptor as stdio[${index}] is not yet implemented in Bun`,
     );
-  }
-  // Any other object carrying a descriptor is shared with the child, like
-  // node's `typeof stdio.fd === 'number'` branch. This is how a handle such as
-  // `server._handle` (a listening socket) ends up as the child's fd 3:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1058
-  if (typeof item === "object") {
-    const fd = item.fd;
-    if (typeof fd === "number") return fd;
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {

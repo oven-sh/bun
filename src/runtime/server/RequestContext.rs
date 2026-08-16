@@ -9,7 +9,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
-use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use crate::server::{RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders,
@@ -341,8 +341,8 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
 // These forward to methods that exist in webcore/ but are currently inside
-// impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal,
-// duplicate InternalJSEventCallback). Adapt on this side per phase-d rules.
+// impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
+// Adapt on this side per phase-d rules.
 mod shim {
     use super::*;
 
@@ -386,22 +386,6 @@ mod shim {
         let signal = bun_ptr::BackRef::from(s);
         signal.pending_activity_unref();
         signal.unref();
-    }
-    #[inline]
-    pub(super) fn iec_trigger(
-        cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
-        ev: request::EventType,
-        g: &JSGlobalObject,
-    ) -> JsResult<bool> {
-        cb.with_mut(|cb| cb.trigger(ev, g))
-    }
-    #[inline]
-    pub(super) fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
-        cb.with_mut(|cb| cb.deinit())
-    }
-    #[inline]
-    pub(super) fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
-        cb.get().has_callback()
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
@@ -686,17 +670,6 @@ where
         drop(self.cookies.replace(
             cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const()))),
         ));
-    }
-
-    pub(crate) fn set_timeout_handler(&self) {
-        if self.flags.has_timeout_handler() {
-            return;
-        }
-        if let Some(resp) = self.resp.get() {
-            self.flags.set_has_timeout_handler(true);
-            // SAFETY: FFI handle valid while resp is Some
-            resp.on_timeout(|this, resp| Self::on_timeout(this, resp), self.as_ctx_ptr());
-        }
     }
 
     pub(crate) fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1226,7 +1199,6 @@ where
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
-            self.flags.set_has_timeout_handler(false);
             self.request_body_buf.set(Vec::new());
             self.end_request_streaming_and_drain();
             self.deref();
@@ -1355,40 +1327,6 @@ where
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
-    fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
-        let pinned = RequestContextRef::pin(this);
-        let this = pinned.ctx();
-        debug_assert!(this.resp.get().is_some());
-        debug_assert!(this.server.get().is_some());
-
-        let any_js_calls = core::cell::Cell::new(false);
-        let server = this.server();
-        let _ = server.vm();
-        let global_this = server.global_this();
-        // This is a task in the event loop.
-        // If we called into JavaScript, we must drain the microtask queue.
-        scopeguard::defer! {
-            if any_js_calls.get() {
-                VirtualMachine::get().as_mut().drain_microtasks();
-            }
-        }
-
-        if let Some(request) = this.request_mut() {
-            match shim::iec_trigger(
-                &request.internal_event_callback,
-                request::EventType::Timeout,
-                global_this,
-            ) {
-                Ok(called) => any_js_calls.set(called),
-                // This uWS callback is the landing frame for what it threw.
-                Err(err) => {
-                    any_js_calls.set(true);
-                    crate::dispatch::fold(Err(err));
-                }
-            }
-        }
-    }
-
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
         let pinned = RequestContextRef::pin(this);
@@ -1432,20 +1370,6 @@ where
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            match shim::iec_trigger(
-                &request.internal_event_callback,
-                request::EventType::Abort,
-                global_this,
-            ) {
-                Ok(called) => any_js_calls.set(called),
-                // This uWS callback is the landing frame for what it threw.
-                Err(err) => {
-                    any_js_calls.set(true);
-                    crate::dispatch::fold(Err(err));
-                }
-            }
-            // we can already clean this strong refs
-            shim::iec_deinit(&request.internal_event_callback);
             this.request_weakref.with_mut(|w| w.deref());
         }
         // if signal is not aborted, abort the signal
@@ -1535,8 +1459,6 @@ where
 
         if let Some(request) = self.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            // we can already clean this strong refs
-            shim::iec_deinit(&request.internal_event_callback);
             self.request_weakref.with_mut(|w| w.deref());
         }
 
@@ -1921,10 +1843,6 @@ where
         if self.flags.is_waiting_for_request_body() {
             self.flags.set_is_waiting_for_request_body(false);
             resp.clear_on_data();
-        }
-        if self.flags.has_timeout_handler() {
-            resp.clear_timeout();
-            self.flags.set_has_timeout_handler(false);
         }
 
         let server = self.server();
@@ -2387,10 +2305,6 @@ where
             if self.flags.has_abort_handler() {
                 resp.clear_aborted();
                 self.flags.set_has_abort_handler(false);
-            }
-            if self.flags.has_timeout_handler() {
-                resp.clear_timeout();
-                self.flags.set_has_timeout_handler(false);
             }
         }
     }
@@ -4381,16 +4295,7 @@ where
         if let Some(resp) = self.resp.get() {
             // SAFETY: FFI handle
             resp.timeout(seconds.min(255) as u8);
-            if seconds > 0 {
-                // we only set the timeout callback if we wanna the timeout event to be triggered
-                // the connection will be closed so the abort handler will be called after the timeout
-                if let Some(req) = self.request_mut() {
-                    if shim::iec_has_callback(&req.internal_event_callback) {
-                        self.set_timeout_handler();
-                    }
-                }
-            } else {
-                // if the timeout is 0, we don't need to trigger the timeout event
+            if seconds == 0 {
                 // SAFETY: FFI handle
                 resp.clear_timeout();
             }
@@ -4608,7 +4513,6 @@ bitflags::bitflags! {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
         const HAS_ABORT_HANDLER           = 1 << 2;
-        const HAS_TIMEOUT_HANDLER         = 1 << 3;
         const HAS_SENDFILE_CTX            = 1 << 4;
         const HAS_CALLED_ERROR_HANDLER    = 1 << 5;
         const NEEDS_CONTENT_LENGTH        = 1 << 6;
@@ -4663,11 +4567,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         HAS_MARKED_PENDING
     );
     flag_accessor!(has_abort_handler, set_has_abort_handler, HAS_ABORT_HANDLER);
-    flag_accessor!(
-        has_timeout_handler,
-        set_has_timeout_handler,
-        HAS_TIMEOUT_HANDLER
-    );
     flag_accessor!(has_sendfile_ctx, set_has_sendfile_ctx, HAS_SENDFILE_CTX);
     flag_accessor!(
         has_called_error_handler,

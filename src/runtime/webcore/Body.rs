@@ -701,20 +701,6 @@ impl Value {
 }
 
 impl Value {
-    // We may not have all the data yet
-    // So we can't know for sure if it's empty or not
-    // We CAN know that it is definitely empty.
-    pub(crate) fn is_definitely_empty(&self) -> bool {
-        match self {
-            Value::Null => true,
-            Value::Used | Value::Empty => true,
-            Value::InternalBlob(b) => b.slice_const().is_empty(),
-            Value::Blob(b) => b.size.get() == 0,
-            Value::WTFStringImpl(s) => wtf_impl(s).length() == 0,
-            Value::Error(_) | Value::Locked(_) => false,
-        }
-    }
-
     pub(crate) fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
             if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {

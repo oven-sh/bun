@@ -3384,12 +3384,12 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    for (auto& structure : thisObject->m_domStructures)
+        visitor.append(structure);
+
     {
         // The GC thread has to grab the GC lock even though it is not mutating the containers.
         Locker locker { thisObject->m_gcLock };
-
-        for (auto& structure : thisObject->m_structures.values())
-            visitor.append(structure);
 
         for (auto& guarded : thisObject->m_guardedObjects)
             guarded->visitAggregate(visitor);

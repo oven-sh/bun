@@ -302,7 +302,7 @@ pub mod semver_string {
 
         #[inline]
         pub fn fmt_store_path<'a>(&'a self, buf: &'a [u8]) -> StorePathFormatter<'a> {
-            StorePathFormatter { buf, str: self }
+            fmt_store_path(self.slice(buf))
         }
 
         #[inline]
@@ -714,13 +714,17 @@ pub mod semver_string {
 
     // ── String.StorePathFormatter ─────────────────────────────────────────
     pub struct StorePathFormatter<'a> {
-        pub(crate) str: &'a String,
-        pub(crate) buf: &'a [u8],
+        bytes: &'a [u8],
+    }
+
+    /// Spells `bytes` as a single path component of the isolated store.
+    pub fn fmt_store_path(bytes: &[u8]) -> StorePathFormatter<'_> {
+        StorePathFormatter { bytes }
     }
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            for &c in self.str.slice(self.buf) {
+            for &c in self.bytes {
                 let n = match c {
                     b'/' => b'+',
                     b'\\' => b'+',

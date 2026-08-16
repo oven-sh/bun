@@ -49,9 +49,8 @@ pub struct FileReader {
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
-    /// Read-only after construction.
+    /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
     pub(crate) max_size: Option<usize>,
-    pub(crate) total_readed: Cell<usize>,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
     pub(crate) event_loop: Cell<EventLoopHandle>,
@@ -78,7 +77,6 @@ impl Default for FileReader {
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
-            total_readed: Cell::new(0),
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
             // Sentinel only; never dispatched (callers must overwrite before use).
@@ -399,6 +397,7 @@ impl FileReader {
                 unsafe { (*self.parent()).increment_count() };
                 self.waiting_for_on_reader_done.set(true);
             }
+            self.reader().set_limit(self.max_size);
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
@@ -620,7 +619,7 @@ impl FileReader {
         true
     }
 
-    pub(crate) fn on_read_chunk(&self, mut chunk: Chunk<'_>, state: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
         bun_core::scoped_log!(
             FileReader,
             "onReadChunk() = {} ({})",
@@ -632,24 +631,10 @@ impl FileReader {
             self.reader().close();
             return false;
         }
-        let mut close = false;
-        let mut has_more = state != ReadState::Eof;
-        if let (Some(max_size), false) = (self.max_size, chunk.is_empty()) {
-            let total_readed = self.total_readed.get();
-            if total_readed >= max_size {
-                return false;
-            }
-            let len = (max_size - total_readed).min(chunk.len());
-            chunk.truncate(len);
-            self.total_readed.set(total_readed + len);
-            if len == 0 {
-                close = true;
-                has_more = false;
-            }
-        }
+        let has_more = state != ReadState::Eof;
 
         let sink = *self.sink.get();
-        let keep_going = if sink.is_some() {
+        if sink.is_some() {
             self.write_chunk_to_sink(sink, &chunk, has_more)
         } else if self.pending.get().state == streams::PendingState::Pending {
             // Pipes may return 0-byte reads short of EOF; keep reading.
@@ -673,11 +658,7 @@ impl FileReader {
                 self.reader().pause();
             }
             keep_going
-        };
-        if close {
-            self.reader().close();
         }
-        keep_going
     }
 
     fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {

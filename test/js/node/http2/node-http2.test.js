@@ -708,7 +708,12 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await promise;
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ABORT_ERR");
+            expect({ name: err.name, code: err.code, message: err.message, cause: err.cause }).toEqual({
+              name: "AbortError",
+              code: "ABORT_ERR",
+              message: "The operation was aborted",
+              cause: abortController.signal.reason,
+            });
           }
         });
         it("aborted event should work with abortController", async () => {

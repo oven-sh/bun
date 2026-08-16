@@ -117,7 +117,6 @@ export default {
   ObjectGetOwnPropertyNames: Object.getOwnPropertyNames,
   ObjectGetPrototypeOf: Object.getPrototypeOf,
   ObjectKeys: Object.keys,
-  ObjectSetPrototypeOf: Object.setPrototypeOf,
   Promise,
   PromisePrototypeThen: (p, onFulfilled, onRejected) => PromisePrototypeThenFn.$call(p, onFulfilled, onRejected),
   PromiseReject: v => PromiseRejectFn.$call(Promise, v),

@@ -507,10 +507,12 @@ When `true`, the bundler enables code splitting. When multiple entrypoints impor
 
 ```ts entry-a.ts icon="/icons/typescript.svg"
 import { shared } from "./shared.ts";
+console.log(shared);
 ```
 
 ```ts entry-b.ts icon="/icons/typescript.svg"
 import { shared } from "./shared.ts";
+console.log(shared);
 ```
 
 ```ts shared.ts icon="/icons/typescript.svg"
@@ -538,7 +540,7 @@ To bundle `entry-a.ts` and `entry-b.ts` with code-splitting enabled:
   </Tab>
 </Tabs>
 
-Running this build results in the following files:
+Running this build with the JavaScript API results in the following files:
 
 ```text title="file system" icon="folder-tree"
 .
@@ -548,10 +550,10 @@ Running this build results in the following files:
 └── out
     ├── entry-a.js
     ├── entry-b.js
-    └── chunk-2fce6291bf86559d.js
+    └── chunk-dqmx6gc8.js
 ```
 
-The generated `chunk-2fce6291bf86559d.js` file contains the shared code. To avoid collisions, the file name includes a content hash by default. Customize this with [`naming`](#naming).
+The generated `chunk-dqmx6gc8.js` file contains the shared code. To avoid collisions, the file name includes a content hash by default. The `bun build` CLI names this chunk `entry-a-t268ez5g.js` instead of `chunk-<hash>.js`. Customize this with [`naming`](#naming).
 
 ### plugins
 
@@ -1099,7 +1101,7 @@ var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 
 ### define
 
-A map of global identifiers to be replaced at build time. Keys of this object are identifier names, and values are JSON strings, identifiers, or property paths that are inlined.
+A map of global identifiers to be replaced at build time. Keys of this object are identifiers or dotted property paths such as `process.env.NODE_ENV`, and values are JSON strings, identifiers, or property paths that are inlined.
 
 <Tabs>
   <Tab title="JavaScript">

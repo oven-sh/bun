@@ -80,7 +80,8 @@ bun add <package> <@version>
 ### Installation Control
 
 <ParamField path="--dry-run" type="boolean">
-  Perform a dry run without making changes
+  Resolve the packages but don't install them, update <code>package.json</code>, or save a lockfile (the project's own
+  lifecycle scripts still run)
 </ParamField>
 
 <ParamField path="--force" type="boolean">

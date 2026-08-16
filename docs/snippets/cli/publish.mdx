@@ -96,7 +96,8 @@ bun publish --otp 123456
 #### Custom Registry
 
 <ParamField path="--registry" type="string">
-  Specify registry URL, overriding .npmrc, bunfig.toml and environment variables
+  Use a specific registry by default, overriding .npmrc, bunfig.toml and environment variables. A registry configured
+  for the package's scope (`@scope:registry=` in .npmrc or `[install.scopes]` in bunfig.toml) still takes precedence.
 </ParamField>
 
 ```bash

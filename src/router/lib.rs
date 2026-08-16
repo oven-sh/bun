@@ -980,10 +980,8 @@ pub(crate) mod sorter {
         }
     }
 
-    /// Match order: `Routes::match_dynamic` takes the first hit. Fully static routes
-    /// lead because `load_all` splits the list there; the rest follow Next.js's
-    /// `getSortedRoutes`: per segment, static before `[x]` before `[...x]` before
-    /// `[[...x]]`, and a route that ends first comes first.
+    /// Next.js's `getSortedRoutes` order, which is also the match order, except that
+    /// fully static routes lead as a group because `load_all` splits the list there.
     pub(crate) fn compare(a: &Route, b: &Route) -> Ordering {
         let a_name = a.match_name.as_bytes();
         let b_name = b.match_name.as_bytes();

@@ -990,12 +990,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
 
     /// Remove the specified item from the list, swapping the last
     /// item in the list into its position. Fast, but does not
-    /// retain list ordering.
-    ///
-    /// Returns the removed element, whose fields the caller now owns (as with
-    /// [`pop`](Self::pop)). Nothing else ever runs a removed row's destructor:
-    /// `Drop` for this list is slab-only and
-    /// [`drop_elements`](Self::drop_elements) only sees rows still in the list.
+    /// retain list ordering. Returns the removed element, like [`pop`](Self::pop).
     pub fn swap_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
@@ -1010,10 +1005,7 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
     }
 
     /// Remove the specified item from the list, shifting items
-    /// after it to preserve order.
-    ///
-    /// Returns the removed element; ownership semantics as in
-    /// [`swap_remove`](Self::swap_remove).
+    /// after it to preserve order. Returns the removed element, like [`pop`](Self::pop).
     pub fn ordered_remove(&mut self, index: usize) -> T {
         assert!(
             index < self.len,
@@ -1449,9 +1441,7 @@ mod tests {
         n: u32,
     }
 
-    // Under Miri (`bun run rust:miri`) this also checks that a removed row's
-    // heap payload is freed exactly once: by the caller dropping the returned
-    // element, not again by `drop_elements`.
+    // Under Miri this also checks that every `name` is freed exactly once.
     #[test]
     fn remove_returns_owned_element() {
         let mut list = MultiArrayList::<Owning>::default();

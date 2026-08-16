@@ -438,8 +438,7 @@ impl Watcher {
             if item == last_item || self.watchlist.len() <= item as usize {
                 continue;
             }
-            // Dropping the removed row frees the `file_path` that
-            // `CLONE_FILE_PATH` entries own; the fd was already closed above.
+            // Frees an owned `file_path`; the fd was closed in the first pass.
             drop(self.watchlist.swap_remove(item as usize));
 
             // swapRemove put a different entry at `item`, but its kqueue registration still
@@ -1053,9 +1052,8 @@ impl fmt::Display for Op {
 // ─── WatchItem ────────────────────────────────────────────────────────────
 
 pub struct WatchItem {
-    /// `Owned` when the entry was added with `CLONE_FILE_PATH`, and freed when
-    /// `flush_evictions` removes the entry. Otherwise `Borrowed`, and the caller
-    /// must keep the bytes alive for as long as the entry exists.
+    /// `Owned` for `CLONE_FILE_PATH` entries (freed by `flush_evictions`);
+    /// otherwise the caller keeps the bytes alive for as long as the entry exists.
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,

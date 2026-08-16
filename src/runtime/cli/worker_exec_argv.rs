@@ -437,11 +437,9 @@ pub fn scan_process_exec_argv() -> WorkerExecArgv {
                     tokens.push(t.strip_suffix(b"\0").unwrap_or(t).to_vec());
                 }
             }
-            for token in graph
-                .compile_exec_argv()
-                .split(|b: &u8| b.is_ascii_whitespace())
-                .filter(|s: &&[u8]| !s.is_empty())
-            {
+            // Same tokenizer as `create_exec_argv`, so this scan sees exactly the
+            // tokens `process.execArgv` exposes.
+            for token in bun_core::strings::tokenize_any(graph.compile_exec_argv(), b" \t\n\r") {
                 tokens.push(token.to_vec());
             }
         } else {

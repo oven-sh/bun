@@ -259,8 +259,6 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
-/// The output directory. A failed write is reported and counted instead of returned, so one build
-/// lists every output it could not write before it fails.
 struct OutputDir {
     dir: bun_sys::Dir,
     failed_writes: usize,

@@ -68,10 +68,10 @@ describe("presign contentLength", () => {
   });
 });
 
-// Only a PUT carries the body this describes. On anything else the option would sign a header
+// Only a PUT is signed with a length here. On anything else the option would sign a header
 // the request is never going to send, so the URL would fail when used rather than when made.
-// GET, PUT, DELETE and HEAD are the methods presign accepts, so these are the whole matrix.
-describe.each(["GET", "DELETE", "HEAD"] as const)("presign contentLength on %s", method => {
+// GET, POST, PUT, DELETE and HEAD are the methods presign accepts, so these are every non-PUT one.
+describe.each(["GET", "POST", "DELETE", "HEAD"] as const)("presign contentLength on %s", method => {
   test("is refused", () => {
     expect(() => presign({ method, contentLength: 1024 })).toThrow(
       "contentLength is only supported when method is PUT",
@@ -95,6 +95,7 @@ describe.each([-1, Number.NEGATIVE_INFINITY] as const)("presign contentLength %p
  */
 describe.each([
   ["a numeric string", "1024", 1024],
+  ["an empty string", "", 0],
   ["a fractional number", 1024.5, 1024],
   ["NaN", Number.NaN, 0],
   ["a value past the 64-bit range", 2 ** 63, Number.POSITIVE_INFINITY],

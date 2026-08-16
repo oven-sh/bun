@@ -752,7 +752,8 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
   });
 
   test("how the source wrapped a literal is not remembered: `{a, b}` on one line vs three is the same", async () => {
-    const one = "module.exports = function m(t, c) {\n  return { $$typeof: 1, type: t, compare: c === void 0 ? null : c };\n};\n";
+    const one =
+      "module.exports = function m(t, c) {\n  return { $$typeof: 1, type: t, compare: c === void 0 ? null : c };\n};\n";
     const three =
       "module.exports = function m(t, c) {\n  return {\n    $$typeof: 1,\n    type: t,\n    compare: c === void 0 ? null : c\n  };\n};\n";
     // readable: folds in the projected view

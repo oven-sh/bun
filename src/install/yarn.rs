@@ -790,9 +790,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
 
     // SAFETY: capacity reserved above to num_deps; we write past `len` through
-    // raw pointers into the reserved capacity and set `len` at the end.
-    let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
-    let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
+    // raw pointers into the reserved capacity and set `len` at the end. The
+    // pointers come from the `Vec`s themselves (`raw_mut()`), so they are valid
+    // for the whole capacity; the slice-derived ones would only cover `len`.
+    let dependencies_base_ptr = this.buffers.dependencies.raw_mut().as_mut_ptr();
+    let resolutions_base_ptr = this.buffers.resolutions.raw_mut().as_mut_ptr();
     let mut dependencies_buf: &mut [Dependency] = unsafe {
         // SAFETY: capacity >= num_deps reserved above
         bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)

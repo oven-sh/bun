@@ -139,7 +139,10 @@ impl<I, T: fmt::Debug> fmt::Debug for IdSlice<I, T> {
 
 /// A `Vec<T>` whose positions are `I`s; derefs to [`IdSlice`]. The `Vec`
 /// itself is reachable through [`raw`](IdVec::raw) / [`raw_mut`](IdVec::raw_mut)
-/// for the operations not forwarded here.
+/// for the operations not forwarded here. Anything not forwarded resolves to
+/// the *slice* through `Deref`; that matters for `as_ptr` / `as_mut_ptr`,
+/// whose slice versions only cover the initialized `len` elements, so code
+/// that fills reserved capacity must take the pointer from `raw_mut()`.
 #[repr(transparent)]
 pub struct IdVec<I, T> {
     raw: Vec<T>,

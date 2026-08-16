@@ -2185,7 +2185,7 @@ impl Style {
             while cut < shown_path.len() && (shown_path[cut] & 0xC0) == 0x80 {
                 cut += 1;
             }
-            shown_path = [&"…".as_bytes()[..], &shown_path[cut..]].concat().into();
+            shown_path = ["…".as_bytes(), &shown_path[cut..]].concat().into();
         }
         let rule = self
             .width

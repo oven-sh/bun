@@ -2341,12 +2341,7 @@ pub struct StyleSheet<AtRule> {
     pub license_comments: Vec<&'static [u8]>, // TODO: lifetime — arena
     pub options: ParserOptions<'static>,      // TODO: lifetime
     pub layer_names: Vec<LayerName>,
-    /// The targets the style sheet is compiled for. [`StyleSheet::minify`]
-    /// records the targets it ran with; until then this is `Targets::default()`.
-    /// Printing finishes what minifying started for these targets (compiling
-    /// nesting, lowering media ranges, rewriting the `light-dark()` references
-    /// whose fallback variables `minify` declared), so the sheet must be printed
-    /// with the same targets.
+    /// Recorded by [`StyleSheet::minify`]; printing must lower for these same targets.
     pub targets: Targets,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.

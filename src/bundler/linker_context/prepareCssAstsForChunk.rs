@@ -436,11 +436,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
     }
 }
 
-/// The targets for the style sheets this pass synthesizes for a chunk (layer
-/// statements, external `@import`s and their `data:` URL wrappers). Every
-/// stylesheet in a chunk comes from the same module graph and so carries the
-/// same `StyleSheet::targets`; the first one speaks for the chunk. A chunk
-/// always contains at least one stylesheet, so the default is never reached.
+/// All of a chunk's stylesheets come from one module graph, so the first one's targets are the chunk's.
 fn chunk_targets(order: &[CssImportOrder], asts: &[crate::bundled_ast::CssCol]) -> Targets {
     order
         .iter()

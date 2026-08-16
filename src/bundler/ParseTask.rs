@@ -623,9 +623,7 @@ pub mod parse_worker {
                 .ok_or(AnyError::ParserError)?,
         );
         let mut css = bun_css::BundlerStyleSheet::empty();
-        // There is nothing to minify, but the linker still prints this sheet
-        // (wrapped in the conditions of the `@import` that reached it) with the
-        // sheet's targets, so record the ones `minify` would have used.
+        // Never minified, but its `@import` conditions are still printed with the sheet's targets.
         css.targets = bun_css::Targets::for_bundler_target(target);
         ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css)));
         Ok(ast)

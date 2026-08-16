@@ -2775,6 +2775,34 @@ int us_socket_server_name_reject_unauthorized(struct us_socket_t *s) {
   return us_ssl_ctx_reject_unauthorized(SSL_get_SSL_CTX(s_ssl(s)));
 }
 
+/* Normalizes an HTTP Host header (or H3 :authority) value for an SNI-name
+ * lookup: lowercased (names are case-insensitive, the lookups match bytes),
+ * `:port` and a trailing root dot stripped. Returns the NUL-terminated length
+ * written to `out`, or 0 when the value cannot name an entry (empty, an IPv6
+ * literal whose colons would confuse the port strip, or longer than a maximal
+ * 253-char DNS name plus the root dot). */
+size_t us_internal_normalize_host_header(const char *host, size_t host_len,
+                                         char *out, size_t out_cap) {
+  if (!host || host_len == 0 || host[0] == '[') return 0;
+  size_t n = 0;
+  for (; n < host_len && host[n] != ':'; n++) {
+    if (n >= out_cap - 1) return 0;
+    char c = host[n];
+    out[n] = (c >= 'A' && c <= 'Z') ? (char)(c | 0x20) : c;
+  }
+  if (n > 1 && out[n - 1] == '.') n--;
+  if (n == 0) return 0;
+  out[n] = 0;
+  return n;
+}
+
+/* Whether a per-serverName entry's context has requestCert recorded on it. */
+int us_internal_ssl_ctx_sni_request_cert(struct ssl_ctx_st *ctx) {
+  if (!ctx || us_ctx_sni_policy_ex_idx < 0) return 0;
+  return ((uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx) &
+          US_SNI_POLICY_REQUEST_CERT) != 0;
+}
+
 /* Whether serving a request whose Host header is `host` on this connection
  * would bypass a per-serverName client-certificate policy: the name resolves
  * in the accepting listener's SNI tree to a context with requestCert
@@ -2790,27 +2818,12 @@ int us_socket_host_header_bypasses_sni_policy(struct us_socket_t *s,
   struct us_listen_socket_t *ls =
       (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
   if (!ls || !ls->sni_has_cert_policy || !ls->sni) return 0;
-  /* An IP literal never names a tree entry (SNI forbids IPs); `[` starts an
-   * IPv6 literal, whose colons would confuse the port strip below. */
-  if (!host || host_len == 0 || host[0] == '[') return 0;
-  /* Host is case-insensitive and may carry :port and a trailing root dot;
-   * the SNI tree matches bytes. Sized for a maximal 253-char DNS name plus
-   * the root dot (stripped below) and NUL; anything longer cannot match. */
+  /* Sized for a maximal 253-char DNS name plus the root dot and NUL. */
   char name[255];
-  size_t n = 0;
-  for (; n < host_len && host[n] != ':'; n++) {
-    if (n >= sizeof(name) - 1) return 0;
-    char c = host[n];
-    name[n] = (c >= 'A' && c <= 'Z') ? (char)(c | 0x20) : c;
-  }
-  if (n > 1 && name[n - 1] == '.') n--;
-  if (n == 0) return 0;
-  name[n] = 0;
+  if (!us_internal_normalize_host_header(host, host_len, name, sizeof(name))) return 0;
   struct sni_node_t *node = (struct sni_node_t *)sni_find(ls->sni, name);
   if (!node || !node->ctx) return 0;
-  uintptr_t policy =
-      (uintptr_t)SSL_CTX_get_ex_data(node->ctx, us_ctx_sni_policy_ex_idx);
-  if (!(policy & US_SNI_POLICY_REQUEST_CERT)) return 0;
+  if (!us_internal_ssl_ctx_sni_request_cert(node->ctx)) return 0;
   return node->ctx != SSL_get_SSL_CTX(ssl);
 }
 

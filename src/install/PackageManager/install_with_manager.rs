@@ -163,32 +163,12 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let source_copy = root_package_json_source(manager, root_package_json_path)?;
-
-                let mut resolver: () = ();
-                // `parse` needs `manager`, `manager.log` and a fresh
-                // stack `lockfile` simultaneously. Route through raw ptrs so
-                // borrowck doesn't see overlapping `&mut PackageManager` /
-                // `&mut Lockfile`.
-                {
-                    // `log_mut()` reads the BACKREF `self.log: *mut Log` and
-                    // returns the disjoint CLI `Log` allocation (lifetime
-                    // decoupled from `&self`), so call it safely through
-                    // `manager` *before* establishing the raw-ptr split — no
-                    // borrow on `*manager` survives into the `&mut *mgr` below.
-                    let log = manager.log_mut();
-                    let mgr: *mut PackageManager = manager;
-                    maybe_root.parse(
-                        &mut lockfile,
-                        // SAFETY: `mgr` is the sole provenance root for `*manager`; `log` is a
-                        // disjoint backref and `lockfile` is a stack local, so this `&mut` is unique.
-                        unsafe { &mut *mgr },
-                        log,
-                        &source_copy,
-                        &mut resolver,
-                        Features::main(),
-                    )?;
-                }
+                parse_root_package(
+                    manager,
+                    root_package_json_path,
+                    &mut lockfile,
+                    &mut maybe_root,
+                )?;
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize]
                     .into_boxed_slice();
                 // @memset already done via vec! init
@@ -1893,6 +1873,39 @@ fn root_package_json_source(
     Global::exit(1);
 }
 
+/// Load the root package.json from the workspace cache (exiting on read/parse
+/// errors) and parse it as the root `Package` into `lockfile`. `lockfile` must
+/// be storage disjoint from `*manager` (a stack local, or the heap allocation
+/// behind `manager.lockfile`'s `Box`).
+fn parse_root_package(
+    manager: &mut PackageManager,
+    root_package_json_path: &ZStr,
+    lockfile: &mut Lockfile,
+    root: &mut lockfile::Package,
+) -> crate::Result<()> {
+    let source_copy = root_package_json_source(manager, root_package_json_path)?;
+
+    let mut resolver: () = ();
+    // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
+    // disjoint CLI `Log` allocation (lifetime decoupled from `&self`), so call
+    // it safely through `manager` *before* establishing the raw-ptr split — no
+    // borrow on `*manager` survives into the `&mut *mgr` below.
+    let log = manager.log_mut();
+    let mgr: *mut PackageManager = manager;
+    root.parse(
+        lockfile,
+        // SAFETY: `mgr` is the sole provenance root for `*manager`; `log` is a
+        // disjoint backref and `lockfile` is caller-guaranteed disjoint
+        // storage, so this `&mut` is unique.
+        unsafe { &mut *mgr },
+        log,
+        &source_copy,
+        &mut resolver,
+        Features::main(),
+    )?;
+    Ok(())
+}
+
 #[cold]
 #[inline(never)]
 fn create_new_lockfile_and_enqueue(
@@ -1930,28 +1943,21 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    let source_copy = root_package_json_source(manager, root_package_json_path)?;
-
-    let mut resolver: () = ();
     {
-        // `log_mut()` reads the BACKREF `self.log` and returns the disjoint
-        // CLI `Log` allocation (lifetime decoupled from `&self`); call it
-        // safely *before* the raw-ptr split.
-        let log = manager.log_mut();
         let mgr: *mut PackageManager = manager;
-        // SAFETY: `mgr` is the sole provenance root; `parse` reborrows the
-        // disjoint `lockfile` field through it. No other live `&mut` to
-        // `*mgr` exists across the call.
-        root.parse(
-            // SAFETY: disjoint field projection through the sole provenance root `mgr`.
-            unsafe { &mut (*mgr).lockfile },
-            // SAFETY: `parse` touches only `PackageManager` fields disjoint from
-            // `lockfile` through this borrow; `mgr` is the sole provenance root.
+        // SAFETY: `mgr` is the sole provenance root; `manager.lockfile` is an
+        // owned `Box`, so this projects its heap allocation, which is disjoint
+        // storage from the `PackageManager` struct itself.
+        let lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
+        parse_root_package(
+            // SAFETY: `parse_root_package` touches only `PackageManager` fields
+            // disjoint from `lockfile` through this borrow; `mgr` is the sole
+            // provenance root.
             unsafe { &mut *mgr },
-            log,
-            &source_copy,
-            &mut resolver,
-            Features::main(),
+            root_package_json_path,
+            // SAFETY: points to the Box-owned heap allocation, disjoint from `*mgr`.
+            unsafe { &mut *lockfile },
+            &mut root,
         )?;
     }
 

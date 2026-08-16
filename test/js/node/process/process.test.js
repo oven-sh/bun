@@ -1088,12 +1088,20 @@ describe.concurrent(() => {
     });
   });
 
-  describe("process.threadCpuUsage", () => {
-    it("works", () => {
-      expect(process.threadCpuUsage()).toEqual({
+  describe.skipIf(process.platform === "sunos")("process.threadCpuUsage", () => {
+    const assertValidCpuUsage = (usage) => {
+      expect(usage).toEqual({
         user: expect.any(Number),
         system: expect.any(Number),
       });
+      expect(Number.isFinite(usage.user)).toBe(true);
+      expect(Number.isFinite(usage.system)).toBe(true);
+      expect(usage.user).toBeGreaterThanOrEqual(0);
+      expect(usage.system).toBeGreaterThanOrEqual(0);
+    };
+
+    it("works", () => {
+      assertValidCpuUsage(process.threadCpuUsage());
     });
 
     it("throws for negative input", () => {
@@ -1102,25 +1110,43 @@ describe.concurrent(() => {
           user: -1,
           system: 100,
         }),
-      ).toThrow("The property 'prevValue.user' is invalid. Received -1");
+      ).toThrow(RangeError);
+      expect(() =>
+        process.threadCpuUsage({
+          user: -1,
+          system: 100,
+        }),
+      ).toThrow("ERR_INVALID_ARG_VALUE");
+
       expect(() =>
         process.threadCpuUsage({
           user: 100,
           system: -1,
         }),
-      ).toThrow("The property 'prevValue.system' is invalid. Received -1");
+      ).toThrow(RangeError);
+      expect(() =>
+        process.threadCpuUsage({
+          user: 100,
+          system: -1,
+        }),
+      ).toThrow("ERR_INVALID_ARG_VALUE");
+    });
+
+    it("throws for invalid numeric values (NaN, Infinity, overflows)", () => {
+      const invalidNumbers = [NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1];
+      for (const val of invalidNumbers) {
+        expect(() => process.threadCpuUsage({ user: val, system: 100 })).toThrow();
+        expect(() => process.threadCpuUsage({ user: 100, system: val })).toThrow();
+      }
     });
 
     it("works with diff", () => {
       const init = process.threadCpuUsage();
-      init.system = 0;
-      init.user = 0;
       const delta = process.threadCpuUsage(init);
-      expect(delta.user).toBeGreaterThanOrEqual(0);
-      expect(delta.system).toBeGreaterThanOrEqual(0);
+      assertValidCpuUsage(delta);
     });
 
-    it("throws on invalid property", () => {
+    it("throws on invalid property type", () => {
       const fixtures = [
         {},
         { user: null },

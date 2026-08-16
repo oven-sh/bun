@@ -675,43 +675,39 @@ describe("keeps the event loop alive while a message listener is attached", () =
     expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
   });
 
-  test(
-    "the listening wrapper is collectable again after a worker-side collection delivers 'close'",
-    async () => {
-      // The merely-collected-peer pin in virtualHasPendingActivity() must release once
-      // 'close' has fired (cross-context collection), or every such port leaks until
-      // context teardown.
-      const { heapStats } = require("bun:jsc");
-      const { Worker } = require("node:worker_threads");
-      const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
-      for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
-      Bun.gc(true);
-      const base = count();
-      await (async () => {
-        for (let i = 0; i < 3; i++) {
-          const channel = new MessageChannel();
-          const closed = Promise.withResolvers<void>();
-          channel.port1.addEventListener("close", () => closed.resolve());
-          channel.port1.addEventListener("message", () => {});
-          const worker = new Worker(
-            `
+  test("the listening wrapper is collectable again after a worker-side collection delivers 'close'", async () => {
+    // The merely-collected-peer pin in virtualHasPendingActivity() must release once
+    // 'close' has fired (cross-context collection), or every such port leaks until
+    // context teardown.
+    const { heapStats } = require("bun:jsc");
+    const { Worker } = require("node:worker_threads");
+    const count = () => heapStats().objectTypeCounts.MessagePort ?? 0;
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+    const base = count();
+    await (async () => {
+      for (let i = 0; i < 3; i++) {
+        const channel = new MessageChannel();
+        const closed = Promise.withResolvers<void>();
+        channel.port1.addEventListener("close", () => closed.resolve());
+        channel.port1.addEventListener("message", () => {});
+        const worker = new Worker(
+          `
             const { workerData } = require("worker_threads");
             workerData.messagePort = null;             // drop the only ref
             for (let i = 0; i < 10; i++) Bun.gc(true); // collect it inside the worker
             `,
-            { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] },
-          );
-          await closed.promise;
-          await new Promise(r => worker.on("exit", r));
-        }
-      })();
-      for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
-      Bun.gc(true);
-      Bun.gc(true);
-      // All 3 listening ports (and their collected peers) must be swept; allow
-      // small slack for GC nondeterminism.
-      expect(count() - base).toBeLessThanOrEqual(2);
-    },
-    60_000,
-  );
+          { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] },
+        );
+        await closed.promise;
+        await new Promise(r => worker.on("exit", r));
+      }
+    })();
+    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    Bun.gc(true);
+    Bun.gc(true);
+    // All 3 listening ports (and their collected peers) must be swept; allow
+    // small slack for GC nondeterminism.
+    expect(count() - base).toBeLessThanOrEqual(2);
+  }, 60_000);
 });

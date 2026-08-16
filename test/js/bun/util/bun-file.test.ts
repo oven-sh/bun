@@ -121,15 +121,18 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
       const { join } = require("path");
       const { heapStats } = require("bun:jsc");
       const existing = join(process.argv[2], "hello.txt");
-      // > 1000 bytes: a Buffer this long starts out without an ArrayBuffer behind it.
-      const existingLong = join(process.argv[2], "./".repeat(600) + "hello.txt");
+      // A Buffer over 1000 bytes starts out without an ArrayBuffer behind it. Pad
+      // with "./" by hand (join() would normalize it away) to just past that,
+      // staying under macOS's 1024-byte PATH_MAX.
+      const longDir = process.argv[2] + "/" + "./".repeat(Math.ceil((1004 - process.argv[2].length) / 2));
+      const existingLong = longDir + "hello.txt";
       const protectedBefore = heapStats().protectedObjectCount;
       const uint8Before = heapStats().objectTypeCounts.Uint8Array ?? 0;
       for (let i = 0; i < 2000; i++) {
         Bun.file(Buffer.from(join(process.argv[2], "missing-" + i)));
         Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-u8-" + i)));
         Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-ab-" + i)).buffer);
-        if (i % 8 === 0) Bun.file(Buffer.from(join(process.argv[2], "./".repeat(600) + "missing-long-" + i)));
+        if (i % 8 === 0) Bun.file(Buffer.from(longDir + "no-" + (i % 10)));
       }
       const keep = [
         Bun.file(Buffer.from(existing)),
@@ -141,6 +144,7 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
       Bun.gc(true);
       const stats = heapStats();
       console.log(JSON.stringify({
+        longPathBytes: Buffer.from(existingLong).length > 1000 && Buffer.from(existingLong).length < 1024,
         exists: await Promise.all(keep.map(f => f.exists())),
         text: await Promise.all(keep.map(f => f.text())),
         missing: await Bun.file(Buffer.from(join(process.argv[2], "missing-0"))).exists(),
@@ -160,6 +164,7 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
 
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
+    longPathBytes: true,
     exists: [true, true, true, true],
     text: ["hello", "hello", "hello", "hello"],
     missing: false,

@@ -1,7 +1,18 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  nodeExe,
+  runBunInstall,
+  shellExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";
@@ -1269,4 +1280,109 @@ describe("spawn/execFile({signal}) does not leak abort listeners on spawn failur
     ac.abort();
     expect(errors.map(e => e.code)).toEqual(["ENOENT"]);
   });
+});
+
+// A 'data' handler runs inside the native read loop that delivered its chunk,
+// and node streams pull again from there, so that pull reads synchronously,
+// nested in the outer loop, and can run all the way to EOF. The reader used to
+// collect a nested read in a heap buffer it freed as soon as the chunk was
+// handed over, while FileReader kept pointing at a tail that did not fit the
+// pull buffer (heap-use-after-free under ASAN, corrupt or short output
+// otherwise).
+//
+// Pinned down with two markers: the head is bigger than half of the reader's
+// 256 KiB scratch, so it is flushed to JS from the middle of the outer loop,
+// and the 'data' handler does not return until the tail and EOF are in the
+// socket. The tail is bigger than the 64 KiB pull buffer.
+describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
+  it("delivers a tail read to EOF that does not fit the pull buffer", async () => {
+    const HEAD = 136 * 1024;
+    const TAIL = 96 * 1024;
+    using dir = tempDir("child-stdout-nested-pull", {
+      "producer.js": `
+        const fs = require("node:fs");
+        const [headMarker, headDone, tailMarker, tailDone] = process.argv.slice(2);
+        const deadline = Date.now() + 15_000;
+        function waitFor(file) {
+          while (!fs.existsSync(file)) {
+            if (Date.now() > deadline) throw new Error("producer timed out waiting for " + file);
+            Bun.sleepSync(1);
+          }
+        }
+        function writeAll(buf) {
+          for (let off = 0; off < buf.length; ) off += fs.writeSync(1, buf, off);
+        }
+        waitFor(headMarker);
+        writeAll(Buffer.alloc(${HEAD}, "h"));
+        fs.writeFileSync(headDone, "");
+        waitFor(tailMarker);
+        writeAll(Buffer.alloc(${TAIL}, "t"));
+        fs.closeSync(1);
+        fs.writeFileSync(tailDone, "");
+      `,
+      "reader.js": `
+        const { spawn } = require("node:child_process");
+        const fs = require("node:fs");
+        const path = require("node:path");
+        const file = name => path.join(__dirname, name);
+        const deadline = Date.now() + 15_000;
+        function waitFor(name) {
+          while (!fs.existsSync(file(name))) {
+            if (Date.now() > deadline) throw new Error("reader timed out waiting for " + name);
+            Bun.sleepSync(1);
+          }
+        }
+        const child = spawn(
+          process.execPath,
+          [file("producer.js"), file("head"), file("head-done"), file("tail"), file("tail-done")],
+          { stdio: ["ignore", "pipe", "inherit"] },
+        );
+        const chunks = [];
+        // 'resume' is emitted after the stream's first read() has been issued
+        // and found the socket empty, so the head written now is picked up by
+        // the poll it armed and arrives in one wake.
+        child.stdout.once("resume", () => {
+          fs.writeFileSync(file("head"), "");
+          waitFor("head-done");
+        });
+        child.stdout.on("data", chunk => {
+          chunks.push(chunk);
+          if (chunks.length === 1) {
+            fs.writeFileSync(file("tail"), "");
+            waitFor("tail-done");
+          }
+        });
+        child.on("close", exitCode => {
+          const out = Buffer.concat(chunks);
+          console.log(
+            JSON.stringify({
+              exitCode,
+              firstChunkOverHalfScratch: chunks[0].length > 128 * 1024,
+              length: out.length,
+              head: out.subarray(0, ${HEAD}).equals(Buffer.alloc(${HEAD}, "h")),
+              tail: out.subarray(${HEAD}).equals(Buffer.alloc(${TAIL}, "t")),
+            }),
+          );
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "reader.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        JSON.stringify({ exitCode: 0, firstChunkOverHalfScratch: true, length: HEAD + TAIL, head: true, tail: true }) +
+        "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    // The budget covers the failure modes: a symbolized ASAN report takes
+    // several seconds, and the fixtures give up on their markers after 15 s so
+    // their own error, not a test timeout, is what gets reported.
+  }, 30_000);
 });

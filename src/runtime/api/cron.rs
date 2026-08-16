@@ -21,7 +21,7 @@ use std::cell::Cell;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
+use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
@@ -1640,6 +1640,17 @@ impl CronJob {
         Self::remove_from_list(this, vm);
     }
 
+    /// The fake heap dropped this job's timer (`useRealTimers()` /
+    /// `clearAllTimers()`): stop the job as `stop()` would, so it does not
+    /// keep the event loop alive for a timer that can no longer fire.
+    ///
+    /// # Safety
+    /// `this` was recovered from a node just popped off the fake heap and no
+    /// JS has run since; a scheduled job's wrapper keeps it alive.
+    pub(crate) unsafe fn stop_dropped_from_fake_heap(this: *mut Self) {
+        Self::self_stop(this, VirtualMachine::get());
+    }
+
     fn self_stop(this: *mut Self, vm: &VirtualMachine) {
         let this_ref = Self::from_ctx_ptr(this);
         // While the callback is on the stack or its promise is pending, defer
@@ -1756,6 +1767,8 @@ impl CronJob {
         );
     }
 
+    /// The tick's callback runs here as a top-level call (what it throws
+    /// synchronously is reported), and the job is rescheduled either way.
     pub(crate) fn on_timer_fire(this: *mut Self, vm: &VirtualMachine) {
         // scheduleNext → finishDeferredStop downgrades this_value and derefs the
         // list entry; bracket-ref so that path can't drop the last ref mid-function.
@@ -1798,39 +1811,23 @@ impl CronJob {
         let _ev_guard = vm.enter_event_loop_scope();
 
         this_ref.in_fire.set(true);
-        let result = match cb.call(&this_ref.global, js_this, &[]) {
-            Ok(v) => {
-                this_ref.in_fire.set(false);
-                v
-            }
-            Err(_) => {
-                this_ref.in_fire.set(false);
-                if let Some(err) = this_ref.global.try_take_exception() {
-                    // terminate() arriving mid-callback leaves the TerminationException
-                    // pending (tryClearException refuses to clear it) while JSC clears
-                    // hasTerminationRequest on VMEntryScope exit. Reporting it would
-                    // enter a DeferTermination scope and assert; match setTimeout's
-                    // Bun__reportUnhandledError and drop it.
-                    if err.is_termination_exception() {
-                        Self::self_stop(this, vm);
-                        return;
-                    }
-                    let global_ref = vm.global();
-                    // SAFETY: single JS thread; `&mut` derived via the thread-local
-                    // raw pointer (avoids `&T` → `&mut T` provenance laundering).
-                    let _ = VirtualMachine::get()
-                        .as_mut()
-                        .uncaught_exception(global_ref, err, false);
-                }
-                Self::schedule_next(this, vm);
-                return;
-            }
-        };
+        // A top-level call: what the tick throws is reported here (before the
+        // job is re-armed, so an `uncaughtException` handler's `stop()` is
+        // observed by `schedule_next`), and does not stop the job — as with a
+        // rejected tick.
+        let result =
+            vm.event_loop_mut()
+                .run_callback_with_result(cb, &this_ref.global, js_this, &[]);
+        this_ref.in_fire.set(false);
 
         // terminate() may have arrived while the callback was running; bail out
         // without touching the timer heap or JS state the teardown path owns.
         if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
             Self::self_stop(this, vm);
+            return;
+        }
+        if result.is_empty() {
+            Self::schedule_next(this, vm);
             return;
         }
 
@@ -1976,7 +1973,7 @@ impl CronJob {
         // The cron_jobs list exists so --hot reload and worker teardown can
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
-        if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
+        if vm.hot_reload == HotReload::Hot || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
             // Note: `RareData::cron_jobs` stores the opaque high-tier
             // placeholder type; cast through `*mut ()` and let inference pick

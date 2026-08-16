@@ -46,10 +46,8 @@ unsafe extern "C" {
     ) -> BrotliDecoderResult;
     // Query fns: opaque handle by reference + scalars only — `BrotliDecoder` is
     // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
-    safe fn BrotliDecoderIsFinished(state: &BrotliDecoder) -> c_int;
     pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
     pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
-    safe fn BrotliDecoderVersion() -> u32;
 }
 
 bun_opaque::opaque_ffi! {
@@ -106,18 +104,6 @@ impl BrotliDecoder {
                     .unwrap_or(core::ptr::null_mut()),
             )
         }
-    }
-
-    pub fn is_finished(state: &BrotliDecoder) -> bool {
-        BrotliDecoderIsFinished(state) != 0
-    }
-
-    pub fn get_error_code(state: &BrotliDecoder) -> BrotliDecoderErrorCode {
-        BrotliDecoderGetErrorCode(state)
-    }
-
-    pub fn version() -> u32 {
-        BrotliDecoderVersion()
     }
 
     pub fn initialize_brotli() -> bool {

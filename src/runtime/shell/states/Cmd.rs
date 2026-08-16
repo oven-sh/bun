@@ -889,7 +889,7 @@ impl Cmd {
             Exec::None => {}
             Exec::Builtin(b) => drop(b),
             Exec::Subproc(sub) if !sub.child.is_null() => {
-                // SAFETY: `child` was set by `initSubproc` from a
+                // SAFETY: `child` was set by `spawn_async` from a
                 // `heap::alloc(ShellSubprocess)` and stays valid until this
                 // drop. Single-threaded. Reclaiming the box runs
                 // `ShellSubprocess::drop` → `finalize_sync` (closes stdio).

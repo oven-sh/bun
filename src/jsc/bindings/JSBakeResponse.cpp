@@ -23,16 +23,6 @@
 
 namespace Bun {
 
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetSymbolFor);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetType);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetKey);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetProps);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetStore);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetOwner);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugInfo);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugStack);
-static JSC_DECLARE_CUSTOM_GETTER(jsBakeResponsePrototypeGetDebugTask);
-
 extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES BakeResponseClass__constructForSSR(JSC::JSGlobalObject*, JSC::CallFrame*, int*, JSC::EncodedJSValue);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructError(JSC::JSGlobalObject*, JSC::CallFrame*);
 extern "C" SYSV_ABI JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ResponseClass__constructJSON(JSC::JSGlobalObject*, JSC::CallFrame*);

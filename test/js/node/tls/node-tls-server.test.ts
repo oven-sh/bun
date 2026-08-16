@@ -878,6 +878,119 @@ it("leaves socket.authorized false unless a client certificate was requested and
   }
 });
 
+it("keeps socket.authorized false when a client without a certificate resumes a TLSv1.3 session", async () => {
+  type Verdict = { reused: boolean; authorized: boolean; authorizationError: unknown };
+  const verdicts: Verdict[] = [];
+  const twoConnections = Promise.withResolvers<void>();
+  await using server = createServer(
+    { ...COMMON_CERT, requestCert: true, rejectUnauthorized: false, minVersion: "TLSv1.3", maxVersion: "TLSv1.3" },
+    socket => {
+      verdicts.push({
+        reused: socket.isSessionReused(),
+        authorized: socket.authorized,
+        authorizationError: socket.authorizationError,
+      });
+      if (verdicts.length === 2) twoConnections.resolve();
+      socket.on("data", () => {});
+      socket.write("x");
+    },
+  );
+  server.on("error", twoConnections.reject);
+  server.on("tlsClientError", twoConnections.reject);
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const opts = {
+    port,
+    host: "127.0.0.1",
+    servername: "localhost",
+    ca: COMMON_CERT.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.3",
+  } as const;
+
+  const first = connect(opts);
+  first.on("error", twoConnections.reject);
+  first.on("data", () => {});
+  const [session] = await once(first, "session");
+  const firstProtocol = first.getProtocol();
+  first.destroy();
+  await once(first, "close");
+  expect(firstProtocol).toBe("TLSv1.3");
+  expect(Buffer.isBuffer(session)).toBe(true);
+
+  const second = connect({ ...opts, session });
+  second.on("error", twoConnections.reject);
+  second.on("data", () => {});
+  await once(second, "secureConnect");
+  const clientReused = second.isSessionReused();
+  await twoConnections.promise;
+  second.destroy();
+  await once(second, "close");
+
+  expect(clientReused).toBe(true);
+  expect(verdicts).toEqual([
+    { reused: false, authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+    { reused: true, authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+  ]);
+});
+
+it("keeps socket.authorized false when a client without a certificate resumes a TLSv1.3 session against an https server", async () => {
+  type Verdict = { authorized: boolean | undefined; authorizationError: unknown };
+  const verdicts: Verdict[] = [];
+  await using server = https.createServer(
+    { ...COMMON_CERT, requestCert: true, rejectUnauthorized: false },
+    (req, res) => {
+      const socket = req.socket as TLSSocket;
+      verdicts.push({ authorized: socket.authorized, authorizationError: socket.authorizationError });
+      const body = String(socket.authorized);
+      res.writeHead(200, { "Connection": "close", "Content-Length": String(body.length) });
+      res.end(body);
+    },
+  );
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+  const opts = {
+    port,
+    host: "127.0.0.1",
+    servername: "localhost",
+    ca: COMMON_CERT.cert,
+    minVersion: "TLSv1.3",
+    maxVersion: "TLSv1.3",
+  } as const;
+
+  async function request(session?: Buffer) {
+    const socket = connect(session ? { ...opts, session } : opts);
+    const gotSession = session ? Promise.resolve([session]) : once(socket, "session");
+    const closed = once(socket, "close");
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    await once(socket, "secureConnect");
+    const protocol = socket.getProtocol();
+    const reused = socket.isSessionReused();
+    socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    const [ticket] = await gotSession;
+    await closed;
+    const body = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n")[1];
+    return { protocol, reused, ticket: ticket as Buffer, body };
+  }
+
+  const first = await request();
+  expect(first.protocol).toBe("TLSv1.3");
+  expect(first.reused).toBe(false);
+  expect(first.body).toBe("false");
+  expect(Buffer.isBuffer(first.ticket)).toBe(true);
+
+  const second = await request(first.ticket);
+  expect(second.protocol).toBe("TLSv1.3");
+  expect(second.reused).toBe(true);
+  expect(second.body).toBe("false");
+
+  expect(verdicts).toEqual([
+    { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+    { authorized: false, authorizationError: "UNABLE_TO_GET_ISSUER_CERT" },
+  ]);
+});
+
 it("keeps req.socket.authorized false for an unverified client after the server socket shuts down", async () => {
   type Verdict = [boolean | undefined, string | null | undefined];
   const { promise, resolve, reject } = Promise.withResolvers<{ before: Verdict; after: Verdict }>();

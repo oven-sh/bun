@@ -725,7 +725,6 @@ export const defines: Flag[] = [
     flag: [
       "_HAS_EXCEPTIONS=0",
       "LIBUS_USE_OPENSSL=1",
-      "LIBUS_USE_BORINGSSL=1",
       "STATICALLY_LINKED_WITH_JavaScriptCore=1",
       "BUILDING_WITH_CMAKE=1",
       "JSC_OBJC_API_ENABLED=0",
@@ -1386,7 +1385,7 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.freebsd,
-    desc: "FreeBSD linker tuning (same as Linux ELF)",
+    desc: "FreeBSD linker tuning (same as Linux ELF; here -z stack-size also sizes the main thread's stack)",
   },
   {
     // rust-lang/llvm-project doesn't enable `LLVM_ENABLE_ZLIB` (or `_ZSTD`) for

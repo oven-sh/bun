@@ -203,8 +203,9 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
     /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
-    /// How the pool thread reaches the VM (captured at construction).
-    fn loop_handle(&self) -> &bun_jsc::LoopHandle;
+    /// The in-flight write's ticket: set in `write` before the task leaves
+    /// the thread, moved out by the pool thread before it posts back.
+    fn ticket(&self) -> &Cell<Option<bun_jsc::Ticket>>;
     fn stream(&self) -> &JsCell<Self::Stream>;
 
     /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
@@ -235,6 +236,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn this_value(&self) -> &JsCell<StrongOptional>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
+    fn pinned_buffers(&self) -> &Cell<u8>;
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
@@ -423,22 +425,26 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
-        let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if arguments[1].is_null() {
+        let in_buf: Option<jsc::ArrayBuffer> = if arguments[1].is_null() {
             None
         } else {
             let Some(buf) = arguments[1].as_pinned_arraybuffer(global_this) else {
                 return Err(global_this.throw_out_of_memory());
             };
-            in_buf = buf;
-            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+            Some(buf)
         };
+        let in_: Option<&[u8]> = in_buf
+            .as_ref()
+            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
-            if !arguments[1].is_null() {
-                arguments[1].unpin_array_buffer();
+            if let Some(buf) = &in_buf {
+                buf.unpin();
             }
             return Err(global_this.throw_out_of_memory());
         };
+        this.pinned_buffers().set(
+            u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
+        );
         let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
@@ -466,9 +472,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             callback: Self::async_job_run_task,
         });
         this.poll_ref().with_mut(|p| p.ref_(vm));
-        // The task is a field of this JS-owned stream: counted, so the VM waits
-        // for it (see `VmHandle::embedded_work_scheduled`).
-        this.loop_handle().embedded_work_scheduled();
+        this.ticket().set(Some(vm.ticket()));
         WorkPool::schedule(this.task().as_ptr());
 
         Ok(JSValue::UNDEFINED)
@@ -493,20 +497,34 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // (R-2). `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
 
-        // The stream reads and writes JS ArrayBuffer backing stores: only while
-        // the VM is running, under a borrow. Either way the completion goes
-        // back to the JS thread, which finishes or releases the write there —
-        // the VM waits for this (embedded work) before its handle closes.
-        let loop_handle = this_ref.loop_handle().clone();
-        if let Some(_vm) = loop_handle.borrow_if_running() {
+        // The stream reads and writes JS ArrayBuffer backing stores, alive
+        // while the ticket is held; skip the work once the VM is stopping.
+        // Either way the completion goes back to the JS thread, which finishes
+        // or releases the write there.
+        let ticket = this_ref
+            .ticket()
+            .take()
+            .expect("scheduled zlib write holds a ticket");
+        if ticket.script_allowed() {
             this_ref.stream().with_mut(|s| s.do_work());
         }
-        let ct = ConcurrentTask::create(Task::init(this));
-        let bun_jsc::vm_handle::Posted::Queued = loop_handle.post_task(ct) else {
-            unreachable!("VM handle closed with an embedded zlib write outstanding");
-        };
-        // `this` may already be freed by the JS thread; the handle is ours.
-        loop_handle.embedded_work_finished();
+        // `this` may be freed by the JS thread the moment this is queued.
+        ticket.post(ConcurrentTask::create(Task::init(this)));
+    }
+
+    /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
+    fn unpin_pending_buffers(this: &T, this_value: JSValue) {
+        let pinned = this.pinned_buffers().replace(0);
+        if pinned & 1 != 0 {
+            if let Some(value) = T::pending_input_get_cached(this_value) {
+                value.unpin_array_buffer();
+            }
+        }
+        if pinned & 2 != 0 {
+            if let Some(value) = T::pending_output_get_cached(this_value) {
+                value.unpin_array_buffer();
+            }
+        }
     }
 
     /// VM teardown, JS thread, heap alive: a completion that was queued but
@@ -520,19 +538,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let vm = global.bun_vm();
         this.write_in_progress().set(false);
         if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
-            for pinned in [
-                T::pending_input_get_cached(this_value),
-                T::pending_output_get_cached(this_value),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if pinned.is_cell() {
-                    if let Some(buf) = pinned.as_array_buffer(global) {
-                        buf.unpin();
-                    }
-                }
-            }
+            Self::unpin_pending_buffers(&this, this_value);
         }
         this.poll_ref().with_mut(|p| p.unref(vm));
         // SAFETY: fn contract — the write's ref.
@@ -575,19 +581,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_value.ensure_still_alive();
 
-        for pinned in [
-            T::pending_input_get_cached(this_value),
-            T::pending_output_get_cached(this_value),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if pinned.is_cell() {
-                if let Some(buf) = pinned.as_array_buffer(global) {
-                    buf.unpin();
-                }
-            }
-        }
+        Self::unpin_pending_buffers(&this, this_value);
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
@@ -1050,12 +1044,13 @@ macro_rules! __impl_compression_stream {
             type Stream = $ctx;
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
-            #[inline] fn loop_handle(&self) -> &::bun_jsc::LoopHandle { &self.loop_handle }
+            #[inline] fn ticket(&self) -> &::core::cell::Cell<Option<::bun_jsc::Ticket>> { &self.ticket }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
+            #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 

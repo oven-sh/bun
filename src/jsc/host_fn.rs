@@ -141,7 +141,6 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
             Ok(v) => v,
             Err(JsError::Thrown) => JSValue::ZERO,
             Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-            Err(JsError::Terminated) => JSValue::ZERO,
         };
         debug_exception_assertion(global_this, value, "_unknown_");
         return value;
@@ -150,7 +149,6 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => JSValue::ZERO,
     }
 }
 
@@ -185,7 +183,6 @@ pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsRes
             let _ = global_this.throw_out_of_memory_value();
             false
         }
-        Err(JsError::Terminated) => false,
         Ok(()) => true,
     }
 }
@@ -666,7 +663,6 @@ pub fn to_js_host_call(
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => JSValue::ZERO,
     };
     scope.assert_exception_presence_matches(normal.is_empty());
     normal

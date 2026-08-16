@@ -568,12 +568,7 @@ pub(crate) fn format_utf16_type_with_path_options(
         } else {
             let mut ptr = to_write;
             while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = match opts.path_sep {
-                    PathSep::Windows => b'\\',
-                    PathSep::Posix => b'/',
-                    PathSep::Auto => crate::SEP,
-                    PathSep::Any => ptr[i],
-                };
+                let sep = opts.path_sep.apply(ptr[i]);
                 write_bytes(writer, &ptr[..i])?;
                 writer.write_char(sep as char)?;
                 if opts.escape_backslashes && sep == b'\\' {
@@ -626,12 +621,7 @@ impl Display for FormatUTF8<'_> {
 
             let mut ptr = self.buf;
             while let Some(i) = crate::strings::index_of_any(ptr, b"\\/") {
-                let sep = match opts.path_sep {
-                    PathSep::Windows => b'\\',
-                    PathSep::Posix => b'/',
-                    PathSep::Auto => crate::SEP,
-                    PathSep::Any => ptr[i],
-                };
+                let sep = opts.path_sep.apply(ptr[i]);
                 write!(f, "{}", bstr::BStr::new(&ptr[..i]))?;
                 f.write_char(sep as char)?;
                 if opts.escape_backslashes && sep == b'\\' {
@@ -674,6 +664,17 @@ pub enum PathSep {
     Posix,
     /// Replace all path separators with `\`.
     Windows,
+}
+
+impl PathSep {
+    fn apply(self, found: u8) -> u8 {
+        match self {
+            PathSep::Windows => b'\\',
+            PathSep::Posix => b'/',
+            PathSep::Auto => crate::SEP,
+            PathSep::Any => found,
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1707,12 +1708,12 @@ impl Keywords {
 
 pub(crate) struct RedactedKeywords;
 impl RedactedKeywords {
-    // 5 entries — a `matches!` chain is plenty at this size (the big keyword
+    // 6 entries — a `matches!` chain is plenty at this size (the big keyword
     // table in `Keywords::get` is where the length-dispatched map pays off).
     pub(crate) fn has(s: &[u8]) -> bool {
         matches!(
             s,
-            b"_auth" | b"_authToken" | b"token" | b"_password" | b"email"
+            b"_auth" | b"_authToken" | b"token" | b"_password" | b"password" | b"email"
         )
     }
 }

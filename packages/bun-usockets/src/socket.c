@@ -405,7 +405,7 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
         return 0;
     }
 
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0);
+    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0, 0);
 #endif
 }
 
@@ -445,10 +445,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     return written < 0 ? 0 : written;
 }
 
-struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int ipc) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
+struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned char kind, struct ssl_ctx_st *ssl_ctx, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR fd, int options, int ipc) {
     struct us_poll_t *p1 = us_create_poll(group->loop, 0, sizeof(struct us_socket_t) + socket_ext_size);
     us_poll_init(p1, fd, POLL_TYPE_SOCKET);
     int rc = us_poll_start_rc(p1, group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
@@ -464,7 +461,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->timeout = 255;
     s->long_timeout = 255;
     s->flags.low_prio_state = 0;
-    s->flags.allow_half_open = 0;
+    s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN) != 0;
     s->flags.is_paused = 0;
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
@@ -490,7 +487,6 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     }
 
     return s;
-#endif
 }
 
 void *us_socket_get_native_handle(struct us_socket_t *s) {
@@ -690,12 +686,21 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS) {
+            s->flags.last_write_failed = 1;
+            us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return 0;
+        }
+        return -1;
+    }
+
     if (sent != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
-    return sent < 0 ? 0 : sent;
+    return sent;
 }
 #endif
 
@@ -889,12 +894,16 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
-    int readable = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
-    if (us_socket_is_shut_down(s)) {
-        // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, readable);
-        return;
+    int events = s->read_eof ? 0 : LIBUS_SOCKET_READABLE;
+    if (!us_socket_is_shut_down(s)) {
+        // still writable: a FIN of ours would have left the socket read-only
+        events |= LIBUS_SOCKET_WRITABLE;
     }
-    // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, readable | LIBUS_SOCKET_WRITABLE);
+    if (us_poll_change(&s->p, s->group->loop, events) != 0) {
+        /* The dispatcher parked this socket while it was paused (loop.c) and the
+         * kernel refused to take it back: nothing would ever deliver its tail,
+         * end or close again, so fail it now like a failed first registration. */
+        int err = errno;
+        us_internal_socket_close_raw(s, err > 2 ? err : ECONNRESET, NULL);
+    }
 }

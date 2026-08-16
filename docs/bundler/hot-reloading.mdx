@@ -27,7 +27,7 @@ import.meta.hot.dispose(() => {
 ```
 
 <Warning>
-For this to work, Bun forces these APIs to be called without indirection. That means the following do not work:
+For this dead-code elimination to work, Bun forces these APIs to be called without indirection. That means the following do not work:
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 // INVALID: Assigning `hot` to a variable
@@ -71,7 +71,7 @@ The HMR API is still a work in progress. Some features are missing. To disable H
 
 ## import.meta.hot.accept()
 
-The `accept()` method indicates that a module can be hot-replaced. Called without arguments, it means this module can be replaced by re-evaluating the file. After a hot update, Bun automatically patches the module's importers.
+The `accept()` method indicates that a module can be hot-replaced. Called without arguments, it means Bun can replace this module by re-evaluating the file. After a hot update, Bun automatically patches the module's importers.
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 // index.ts
@@ -86,14 +86,14 @@ export function getNegativeCount() {
 }
 ```
 
-This creates a hot-reloading boundary for all of the files that `index.ts` imports. Whenever `foo.ts` or any of its dependencies are saved, the update bubbles up to `index.ts`, which re-evaluates. Files that import `index.ts` are then patched to import the new version of `getNegativeCount()`. If only `index.ts` is updated, only that one file is re-evaluated, and the counter in `foo.ts` is reused.
+This call creates a hot-reloading boundary for all of the files that `index.ts` imports. Whenever you save `foo.ts` or any of its dependencies, the update bubbles up to `index.ts`, which re-evaluates. Bun then patches the files that import `index.ts` to import the new version of `getNegativeCount()`. If you update only `index.ts`, Bun re-evaluates only that one file, and the counter in `foo.ts` is reused.
 
 Combine this with `import.meta.hot.data` to transfer state from the previous module to the new one.
 
 <Info>
   When no modules call `import.meta.hot.accept()` (and there isn't React Fast Refresh or a plugin calling it for you),
-  the page reloads when the file updates, and a console warning shows which files were invalidated. This warning is safe
-  to ignore if it makes more sense to rely on full page reloads.
+  the page reloads when the file updates. A console warning shows which files were invalidated. This warning is safe to
+  ignore if it makes more sense to rely on full page reloads.
 </Info>
 
 ### With callback
@@ -111,14 +111,14 @@ import.meta.hot.accept(newModule => {
 });
 ```
 
-<Tip>Prefer `import.meta.hot.accept()` without an argument; it usually makes your code easier to understand.</Tip>
+<Tip>Prefer `import.meta.hot.accept()` without an argument; it usually makes your code clearer.</Tip>
 
 ### Accepting other modules
 
 ```ts title="index.ts" icon="/icons/typescript.svg"
 import { count } from "./foo";
 
-import.meta.hot.accept("./foo", () => {
+import.meta.hot.accept("./foo", newModule => {
   if (!newModule) return;
 
   console.log("updated: count is now ", count);
@@ -150,16 +150,15 @@ const root = (import.meta.hot.data.root ??= createRoot(elem));
 root.render(<App />); // re-use an existing root
 ```
 
-In production, `data` is inlined to be `{}`, meaning it cannot be used as a state holder.
+In production, Bun inlines `data` as `{}`, so you cannot use it as a state holder.
 
 <Tip>
-  This pattern is recommended for stateful modules because Bun can minify `{}.prop ??= value` into `value` in
-  production.
+  We recommend this pattern for stateful modules because Bun can minify `{}.prop ??= value` into `value` in production.
 </Tip>
 
 ## import.meta.hot.dispose()
 
-Attaches an on-dispose callback. This is called:
+Attaches an on-dispose callback. Bun calls it:
 
 - Just before the module is replaced with another copy (before the next is loaded)
 - After the module is detached (removing all imports to this module, see `import.meta.hot.prune()`)
@@ -172,13 +171,13 @@ import.meta.hot.dispose(() => {
 });
 ```
 
-<Warning>This callback is not called on route navigation or when the browser tab closes.</Warning>
+<Warning>Bun does not call this callback on route navigation or when the browser tab closes.</Warning>
 
-Returning a promise delays module replacement until the module is disposed. All dispose callbacks are called in parallel.
+Returning a promise delays module replacement until the module is disposed. Bun calls all dispose callbacks in parallel.
 
 ## import.meta.hot.prune()
 
-Attaches an on-prune callback. This is called when all imports to this module are removed, but the module was previously loaded.
+Attaches an on-prune callback. Bun calls it when all imports to this module are removed, but the module was previously loaded.
 
 Use it to clean up resources that were created when the module was loaded. Unlike `import.meta.hot.dispose()`, it pairs better with `accept` and `data` for managing stateful resources. A full example managing a WebSocket:
 
@@ -195,8 +194,8 @@ import.meta.hot.prune(() => {
 ```
 
 <Info>
-  If `dispose` was used instead, the WebSocket would close and re-open on every hot update. Both versions of the code
-  prevent page reloads when imported files are updated.
+  If you used `dispose` instead, the WebSocket would close and re-open on every hot update. Both versions of the code
+  prevent page reloads when you update imported files.
 </Info>
 
 ## import.meta.hot.on() and off()
@@ -209,7 +208,7 @@ import.meta.hot.on("bun:beforeUpdate", () => {
 });
 ```
 
-When a file is replaced, all of its event listeners are automatically removed.
+When a file is replaced, Bun automatically removes all of its event listeners.
 
 ### Built-in events
 

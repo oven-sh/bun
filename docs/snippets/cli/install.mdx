@@ -89,7 +89,7 @@ bun install <name>@<version>
 ### Installation Process Control
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Perform a dry run without making changes
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -163,7 +163,7 @@ bun install <name>@<version>
 ### Lifecycle Script Management
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's package.json (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies
 </ParamField>
 
 ### Help Information

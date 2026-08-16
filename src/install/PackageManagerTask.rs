@@ -324,7 +324,7 @@ impl<'a> Task<'a> {
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
                         // boundary only (callee touches `cache_directory` /
-                        // `temporary_directory` lazily).
+                        // `get_temporary_directory` lazily).
                         unsafe { &mut *manager },
                         is_extended_manifest,
                     ) {
@@ -469,6 +469,30 @@ impl<'a> Task<'a> {
                                         break 'body;
                                     }
                                 }
+                            } else if this.status != Status::Fail {
+                                // Neither matcher recognized the URL (`file://`,
+                                // `git://`, ...); clone with the URL as written
+                                // instead of finishing with zeroed task data.
+                                match Repository::download(
+                                    req.env,
+                                    &mut this.log,
+                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                    unsafe { &mut *manager }.get_cache_directory(),
+                                    this.id,
+                                    name,
+                                    url,
+                                    attempt,
+                                ) {
+                                    Ok(d) => d,
+                                    Err(err) => {
+                                        this.err = Some(err);
+                                        this.status = Status::Fail;
+                                        this.data = Data {
+                                            git_clone: ManuallyDrop::new(Fd::invalid()),
+                                        };
+                                        break 'body;
+                                    }
+                                }
                             } else {
                                 break 'body;
                             }
@@ -551,7 +575,7 @@ impl<'a> Task<'a> {
         if this.status == Status::Success {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
-                pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
+                bun_core::handle_oom(pt.apply());
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
@@ -659,7 +683,6 @@ pub struct GitCloneRequest {
     // `Map` owns its storage; store a
     // `&'static` into the global `Repository.shared_env` instead — see `SharedEnv::get`.
     pub(crate) env: &'static dot_env::Map,
-    pub(crate) dep_id: DependencyID,
     pub(crate) res: Resolution,
 }
 

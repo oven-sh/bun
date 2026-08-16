@@ -87,6 +87,64 @@ describe("setImmediate", () => {
   });
 });
 
+// node rejects with its own AbortError class (lib/internal/errors.js), whose
+// default message has no trailing period. The DOMException stored in
+// signal.reason keeps the WebIDL text with the period; it is only the cause.
+describe("AbortError shape matches node", () => {
+  function nodeAbortError(signal: AbortSignal) {
+    return {
+      name: "AbortError",
+      code: "ABORT_ERR",
+      message: "The operation was aborted",
+      cause: signal.reason,
+    };
+  }
+
+  async function shapeOf(promise: Promise<unknown>) {
+    const err: any = await promise.then(
+      () => {
+        throw new Error("expected a rejection");
+      },
+      e => e,
+    );
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(DOMException);
+    return { name: err.name, code: err.code, message: err.message, cause: err.cause };
+  }
+
+  it("setTimeout with an already aborted signal", async () => {
+    const signal = AbortSignal.abort();
+    expect(await shapeOf(setTimeout(10, undefined, { signal }))).toEqual(nodeAbortError(signal));
+    expect(signal.reason.message).toBe("The operation was aborted.");
+  });
+
+  it("setTimeout aborted while pending", async () => {
+    const controller = new AbortController();
+    const promise = setTimeout(10_000, undefined, { signal: controller.signal });
+    controller.abort();
+    expect(await shapeOf(promise)).toEqual(nodeAbortError(controller.signal));
+  });
+
+  it("setTimeout aborted with a custom reason", async () => {
+    const reason = new Error("custom reason");
+    const signal = AbortSignal.abort(reason);
+    expect(await shapeOf(setTimeout(10, undefined, { signal }))).toEqual({ ...nodeAbortError(signal), cause: reason });
+  });
+
+  it("setImmediate with an already aborted signal", async () => {
+    const signal = AbortSignal.abort();
+    expect(await shapeOf(setImmediate(undefined, { signal }))).toEqual(nodeAbortError(signal));
+  });
+
+  it("setInterval with an already aborted signal", async () => {
+    const signal = AbortSignal.abort();
+    const iterate = (async () => {
+      for await (const _ of setInterval(1, undefined, { signal })) break;
+    })();
+    expect(await shapeOf(iterate)).toEqual(nodeAbortError(signal));
+  });
+});
+
 describe("setInterval", () => {
   it("ends the iterator even when another listener stopped propagation", async () => {
     const abortController = new AbortController();

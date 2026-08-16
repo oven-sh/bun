@@ -749,3 +749,108 @@ test("my-test", () => {
     });
   }
 });
+
+// expect's promise matchers and Bun.build's async plugin setup() block the
+// calling frame and run the event loop until their promise settles. Here a
+// setImmediate callback settles it (directly, or through an await
+// continuation), so it settles at the start of a loop turn, before that turn
+// polls for I/O. Each check arms a ref'd timer: it keeps the loop active, so
+// the turn is allowed to park in the poll, and it is the only thing that could
+// end such a park. The wait returning with the timer unfired shows the turn did
+// not park; a turn that parks returns only once the timer has fired. (Bun's
+// idle GC timer is disabled because it would otherwise end the park within a
+// second, which is what the bug looks like in practice: every such wait taking
+// up to a second.)
+test("a synchronous wait on a promise returns as soon as an immediate settles it", async () => {
+  using dir = tempDir("wait-settled-by-immediate", {
+    "entry.ts": "export default 1;\n",
+    "wait.fixture.ts": /* ts */ `
+      import { expect } from "bun:test";
+
+      const inImmediate = body =>
+        new Promise((resolve, reject) =>
+          setImmediate(() => {
+            try {
+              resolve(body());
+            } catch (e) {
+              reject(e);
+            }
+          }),
+        );
+      const afterImmediate = async body => {
+        await inImmediate(() => {});
+        return body();
+      };
+      const boom = () => {
+        throw new Error("boom");
+      };
+
+      // Repeating, so that a wait nested in another wait's park is woken too,
+      // and a parked build of any shape fails here instead of hanging.
+      function check(name, wait) {
+        let parked = false;
+        const timer = setInterval(() => (parked = true), 2_000);
+        const rest = wait();
+        clearInterval(timer);
+        if (parked) throw new Error("the wait parked: " + name);
+        console.log("returned: " + name);
+        return rest;
+      }
+
+      check("expect().resolves, resolved by the immediate", () => expect(inImmediate(() => "done")).resolves.toBe("done"));
+      check("expect().resolves, resolved by an await continuation", () =>
+        expect(afterImmediate(() => "done")).resolves.toBe("done"),
+      );
+      check("expect().rejects, rejected by the immediate", () => expect(inImmediate(boom)).rejects.toThrow("boom"));
+      check("expect().toThrow() on an async function, rejected by an await continuation", () =>
+        expect(() => afterImmediate(boom)).toThrow("boom"),
+      );
+      check("a wait whose immediate itself waits", () =>
+        expect(
+          inImmediate(() => {
+            expect(afterImmediate(() => "inner")).resolves.toBe("inner");
+            return "outer";
+          }),
+        ).resolves.toBe("outer"),
+      );
+      await inImmediate(() =>
+        check("a wait started from a setImmediate callback", () =>
+          expect(afterImmediate(() => "done")).resolves.toBe("done"),
+        ),
+      );
+      // Bun.build() waits for setup() before it returns the build's promise.
+      const build = check("Bun.build() with a plugin whose setup() awaits an immediate", () =>
+        Bun.build({
+          entrypoints: [import.meta.dir + "/entry.ts"],
+          plugins: [{ name: "async setup", setup: () => afterImmediate(() => {}) }],
+        }),
+      );
+      console.log("build succeeded: " + (await build).success);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "wait.fixture.ts"],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": "",
+      "stdout": 
+    "returned: expect().resolves, resolved by the immediate
+    returned: expect().resolves, resolved by an await continuation
+    returned: expect().rejects, rejected by the immediate
+    returned: expect().toThrow() on an async function, rejected by an await continuation
+    returned: a wait whose immediate itself waits
+    returned: a wait started from a setImmediate callback
+    returned: Bun.build() with a plugin whose setup() awaits an immediate
+    build succeeded: true
+    "
+    ,
+    }
+  `);
+});

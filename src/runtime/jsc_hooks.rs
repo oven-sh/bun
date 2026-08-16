@@ -877,7 +877,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                         // SAFETY: per fn contract — short-lived `&mut *vm` for the
                         // dispatched `auto_tick` hook (same shape as the
                         // non-watcher `wait_for_promise` arm).
-                        unsafe { (*vm).auto_tick() };
+                        unsafe { (*vm).auto_tick_waiting_on(Some(AnyPromise::Internal(pip))) };
                     }
                 }
             } else {
@@ -952,12 +952,14 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// `eventLoop().autoTick()`. Needs
 /// `timer::All` for the poll-timeout calculation, hence dispatched here.
 ///
+/// `waiting_on`: see `EventLoop::auto_tick_waiting_on`.
+///
 /// PERF: the one fn-ptr indirection is dwarfed by the kqueue/epoll syscall it
 /// gates.
 ///
 /// # Safety
-/// `vm` is the live per-thread VM.
-unsafe fn auto_tick(vm: *mut VirtualMachine) {
+/// `vm` is the live per-thread VM; `waiting_on`, if any, is a live promise.
+unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
     // Note: reshaped for borrowck — `EventLoop` is a value field of
     // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
     // siblings would alias. Dereference per-field via the raw `vm` ptr.
@@ -971,6 +973,17 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
+    if waiting_on.is_some() {
+        // The frame blocked in the wait usually has the loop entered already
+        // (it is a timer, immediate or task callback, or runs in a microtask
+        // drain), so the immediates' own exits above were not the outermost
+        // and did not checkpoint microtasks. What settles the awaited promise
+        // is normally one of those microtasks (an await continuation), and the
+        // wait's next `tick()` would only run them after the poll below: run
+        // them now so the poll sees the promise settled.
+        // SAFETY: as above.
+        let _ = unsafe { (*el).drain_microtasks() };
+    }
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
@@ -1084,11 +1097,23 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // SAFETY: `loop_` is the live per-thread uws loop.
-            unsafe {
-                (*loop_)
-                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
-            };
+            // Checked after `get_timeout`, whose WTFTimer drain is the last
+            // thing before the poll that can settle the promise: the caller
+            // returns as soon as this tick does, so the poll must not park on
+            // its behalf once it has settled.
+            let waiter_satisfied = waiting_on.is_some_and(|p| p.status() != PromiseStatus::Pending);
+            if waiter_satisfied {
+                // SAFETY: `loop_` is the live per-thread uws loop.
+                unsafe { (*loop_).tick_without_idle() };
+            } else {
+                // SAFETY: `loop_` is the live per-thread uws loop.
+                unsafe {
+                    (*loop_).tick_with_timeout(
+                        if have_timeout { Some(&timespec) } else { None },
+                        now_ns,
+                    )
+                };
+            }
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe { (*loop_).tick_without_idle() };

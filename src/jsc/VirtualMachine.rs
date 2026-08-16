@@ -2061,7 +2061,10 @@ pub struct RuntimeHooks {
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
     /// Hoisted here so `event_loop.rs` doesn't need its own hook table.
-    pub auto_tick: unsafe fn(vm: *mut VirtualMachine),
+    /// `waiting_on` is the promise the caller is blocked on, if any: the poll
+    /// must not park once it has settled (see
+    /// [`crate::event_loop::EventLoop::auto_tick_waiting_on`]).
+    pub auto_tick: unsafe fn(vm: *mut VirtualMachine, waiting_on: Option<jsc::AnyPromise>),
     /// `eventLoop().autoTickActive()` — like `auto_tick` but only sleeps in
     /// the uSockets loop while it has active handles.
     /// Separate slot because the body skips `runImminentGCTimer` /
@@ -2642,9 +2645,17 @@ impl VirtualMachine {
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
     pub fn auto_tick(&mut self) {
+        self.auto_tick_waiting_on(None);
+    }
+
+    /// [`auto_tick`](Self::auto_tick) on behalf of a caller blocked until
+    /// `waiting_on` settles; see
+    /// [`crate::event_loop::EventLoop::auto_tick_waiting_on`].
+    #[inline]
+    pub fn auto_tick_waiting_on(&mut self, waiting_on: Option<jsc::AnyPromise>) {
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
-            unsafe { (hooks.auto_tick)(self) };
+            unsafe { (hooks.auto_tick)(self, waiting_on) };
         } else {
             // No high tier (unit tests) — fall back to a non-blocking tick.
             self.event_loop_mut().tick();
@@ -2835,7 +2846,7 @@ impl VirtualMachine {
                 };
                 // SAFETY: see above.
                 if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
+                    self.auto_tick_waiting_on(Some(jsc::AnyPromise::Internal(p)));
                 }
             }
         } else {
@@ -4920,7 +4931,7 @@ impl VirtualMachine {
                 };
                 // SAFETY: see above.
                 if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
+                    self.auto_tick_waiting_on(Some(jsc::AnyPromise::Internal(p)));
                 }
             }
         } else {

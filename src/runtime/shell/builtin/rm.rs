@@ -134,8 +134,7 @@ impl Rm {
                         panic!("Invalid");
                     }
                     let argc = Builtin::of(interp, cmd).args_slice().len();
-                    // Running out of arguments while still parsing flags means
-                    // the (empty) operand list starts here.
+                    // Out of arguments: the operand list starts here, empty.
                     let (arg, parsed) = if (idx as usize) < argc {
                         let arg = Builtin::of(interp, cmd).arg_bytes(idx as usize).to_vec();
                         let parsed = Self::parse_flag(&mut Self::state_mut(interp, cmd).opts, &arg);
@@ -154,11 +153,8 @@ impl Rm {
                         }
                         RmParseFlag::Done => {
                             let args_start = idx as usize;
-                            // No operands. POSIX: `-f` suppresses both the diagnostic
-                            // and the failure status in that case; otherwise it is a
-                            // usage error. Decided before the prompt-flag rejection
-                            // below so that `rm -i` is a usage error too, as in GNU
-                            // and BSD rm.
+                            // POSIX: no operands is not an error under `-f`. Checked
+                            // before the prompt-flag rejection so `rm -i` stays a usage error.
                             if args_start >= argc {
                                 if Self::state_mut(interp, cmd).opts.force {
                                     return Builtin::done(interp, cmd, 0);

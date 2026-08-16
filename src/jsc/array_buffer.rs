@@ -1163,10 +1163,16 @@ fn release_on_owning_thread(owner: ptr::NonNull<JSCArrayBuffer>, vm: &crate::VmH
     let task = ConcurrentTask::create(ManagedTask::new_owned(ctx, run));
     match vm.post(crate::LoopKind::Regular, task) {
         crate::Posted::Queued => {
-            bun_core::scoped_log!(ArrayBuffer, "pinned ArrayBuffer released off its VM's thread: posted back");
+            bun_core::scoped_log!(
+                ArrayBuffer,
+                "pinned ArrayBuffer released off its VM's thread: posted back"
+            );
         }
         crate::Posted::Refused(task) => {
-            bun_core::scoped_log!(ArrayBuffer, "pinned ArrayBuffer outlived its VM: left unreleased");
+            bun_core::scoped_log!(
+                ArrayBuffer,
+                "pinned ArrayBuffer outlived its VM: left unreleased"
+            );
             // SAFETY: refused ⇒ not queued anywhere; ours to free.
             unsafe { ConcurrentTask::release_refused(task) };
         }

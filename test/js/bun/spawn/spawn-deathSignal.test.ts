@@ -26,6 +26,8 @@ async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
 
 function reap(...pids: number[]) {
   for (const pid of pids) {
+    // pid 0 / negative pids address whole process groups, which would include the test runner.
+    if (!(Number.isInteger(pid) && pid > 1)) continue;
     try {
       process.kill(pid, "SIGKILL");
     } catch {}
@@ -52,7 +54,7 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
   // from --no-orphans env-var inheritance.
   const fixture = (deathSignal: string | number | undefined) => `
     const child = Bun.spawn({
-      cmd: ["/bin/sh", "-c", "echo $$; while :; do sleep 30; done"],
+      cmd: ["/bin/sh", "-c", "echo $$; while :; do sleep 1; done"],
       stdio: ["ignore", "pipe", "inherit"],
       ${deathSignal !== undefined ? `deathSignal: ${JSON.stringify(deathSignal)},` : ""}
     });
@@ -79,10 +81,17 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
       env,
       stdio: ["ignore", "pipe", "inherit"],
     });
-    const shPid = Number(await readLine(middle.stdout));
-    expect(shPid).toBeGreaterThan(1);
-    expect(isAlive(shPid)).toBe(true);
-    return { middle, shPid };
+    let shPid = NaN;
+    try {
+      shPid = Number(await readLine(middle.stdout));
+      expect(shPid).toBeGreaterThan(1);
+      expect(isAlive(shPid)).toBe(true);
+      return { middle, shPid };
+    } catch (e) {
+      middle.kill("SIGKILL");
+      reap(shPid);
+      throw e;
+    }
   }
 
   test("without deathSignal, child outlives a SIGKILLed parent", async () => {

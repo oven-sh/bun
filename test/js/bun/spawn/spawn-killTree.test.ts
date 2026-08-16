@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -30,6 +30,8 @@ async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
 
 function reap(...pids: number[]) {
   for (const pid of pids) {
+    // pid 0 / negative pids address whole process groups, which would include the test runner.
+    if (!(Number.isInteger(pid) && pid > 1)) continue;
     try {
       process.kill(pid, "SIGKILL");
     } catch {}
@@ -72,7 +74,7 @@ const fixture = tempDir("spawn-killTree", {
     const gc = Bun.spawn({
       cmd: [
         "/bin/sh", "-c",
-        "/bin/sh -c 'while :; do sleep 30; done' & echo $$ $!; wait",
+        "/bin/sh -c 'while :; do sleep 1; done' & echo $$ $!; wait",
       ],
       stdio: ["ignore", "pipe", "inherit"],
     });
@@ -90,6 +92,7 @@ const fixture = tempDir("spawn-killTree", {
     setInterval(() => {}, 1e6);
   `,
 });
+afterAll(() => fixture[Symbol.dispose]());
 
 async function spawnTree() {
   const env: Record<string, string> = { ...bunEnv };
@@ -103,37 +106,101 @@ async function spawnTree() {
     stdio: ["ignore", "pipe", "inherit"],
   });
 
-  const reader = proc.stdout.getReader();
-  const dec = new TextDecoder();
-  let line = "";
-  while (!line.includes("\n")) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    line += dec.decode(value, { stream: true });
+  // Whatever has been started so far is torn down if a setup assertion below fails.
+  let descendants: number[] = [];
+  try {
+    const reader = proc.stdout.getReader();
+    const dec = new TextDecoder();
+    let line = "";
+    while (!line.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      line += dec.decode(value, { stream: true });
+    }
+    reader.releaseLock();
+
+    const [rootPid, childPid, outerShPid, innerShPid] = line.trim().split(/\s+/).map(Number);
+    descendants = [childPid, outerShPid, innerShPid];
+    expect(rootPid).toBe(proc.pid);
+    expect(childPid).toBeGreaterThan(1);
+    expect(outerShPid).toBeGreaterThan(1);
+    expect(innerShPid).toBeGreaterThan(1);
+    // Four distinct pids: no level of the tree is collapsed.
+    expect(new Set([rootPid, childPid, outerShPid, innerShPid]).size).toBe(4);
+    expect(isAlive(childPid)).toBe(true);
+    expect(isAlive(outerShPid)).toBe(true);
+    expect(isAlive(innerShPid)).toBe(true);
+
+    return { proc, rootPid, childPid, outerShPid, innerShPid };
+  } catch (e) {
+    proc.kill("SIGKILL");
+    reap(...descendants);
+    throw e;
   }
-  reader.releaseLock();
-
-  const [rootPid, childPid, outerShPid, innerShPid] = line.trim().split(/\s+/).map(Number);
-  expect(rootPid).toBe(proc.pid);
-  expect(childPid).toBeGreaterThan(1);
-  expect(outerShPid).toBeGreaterThan(1);
-  expect(innerShPid).toBeGreaterThan(1);
-  // Four distinct pids: no level of the tree is collapsed.
-  expect(new Set([rootPid, childPid, outerShPid, innerShPid]).size).toBe(4);
-  expect(isAlive(childPid)).toBe(true);
-  expect(isAlive(outerShPid)).toBe(true);
-  expect(isAlive(innerShPid)).toBe(true);
-
-  return { proc, rootPid, childPid, outerShPid, innerShPid };
 }
 
-describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
-  test("exists and is a function", async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
-    expect(typeof proc.killTree).toBe("function");
-    expect(proc.killTree.length).toBe(1);
-  });
+// Argument handling and the root-process behaviour are the same on every
+// platform (elsewhere than Linux/macOS, killTree() is exactly kill()).
+test("exists and is a function", async () => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
+  expect(typeof proc.killTree).toBe("function");
+  expect(proc.killTree.length).toBe(1);
+});
 
+test("kills the root process with SIGTERM by default", async () => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
+  proc.killTree();
+  await proc.exited;
+  expect({ killed: proc.killed, exitCode: proc.exitCode, signalCode: proc.signalCode }).toEqual({
+    killed: true,
+    exitCode: null,
+    signalCode: "SIGTERM",
+  });
+});
+
+test("is a no-op once the process has already exited", async () => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+  await proc.exited;
+  expect(() => proc.killTree()).not.toThrow();
+  expect(() => proc.killTree("SIGKILL")).not.toThrow();
+});
+
+test("rejects invalid signals the same way kill() does", async () => {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
+
+  function thrownBy(fn: () => void) {
+    try {
+      fn();
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+    throw new Error("expected a throw");
+  }
+
+  for (const sig of [-1, 32, 1.5, "NOT_A_SIGNAL", {}] as any[]) {
+    expect(thrownBy(() => proc.killTree(sig))).toEqual(thrownBy(() => proc.kill(sig)));
+  }
+
+  expect(() => proc.killTree(-1)).toThrow(
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "Invalid signal: must be >= 0",
+    }),
+  );
+  expect(() => proc.killTree("NOT_A_SIGNAL" as any)).toThrow(
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining("'SIGTERM'"),
+    }),
+  );
+
+  // Nothing above may have signalled the process.
+  expect(proc.killed).toBe(false);
+});
+
+describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () => {
   test("default signal kills the root and every descendant", async () => {
     const { proc, childPid, outerShPid, innerShPid } = await spawnTree();
     await using _ = proc;
@@ -202,7 +269,7 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
     using dir = tempDir("killTree-catchable", {
       "root.js": `
         const child = Bun.spawn({
-          cmd: ["/bin/sh", "-c", "echo $$; while :; do sleep 30; done"],
+          cmd: ["/bin/sh", "-c", "echo $$; while :; do sleep 1; done"],
           stdio: ["ignore", "pipe", "inherit"],
         });
         let line = "";
@@ -239,10 +306,10 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
     }
     reader.releaseLock();
     const [rootPid, shPid] = line.trim().split(/\s+/).map(Number);
-    expect(rootPid).toBe(proc.pid);
-    expect(isAlive(shPid)).toBe(true);
-
     try {
+      expect(rootPid).toBe(proc.pid);
+      expect(isAlive(shPid)).toBe(true);
+
       proc.killTree("SIGTERM");
       await proc.exited;
 
@@ -253,48 +320,6 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
     } finally {
       reap(shPid);
     }
-  });
-
-  test("is a no-op once the process has already exited", async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
-    await proc.exited;
-    expect(() => proc.killTree()).not.toThrow();
-    expect(() => proc.killTree("SIGKILL")).not.toThrow();
-  });
-
-  test("rejects invalid signals the same way kill() does", async () => {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
-
-    function thrownBy(fn: () => void) {
-      try {
-        fn();
-      } catch (e: any) {
-        return { name: e.name, code: e.code, message: e.message };
-      }
-      throw new Error("expected a throw");
-    }
-
-    for (const sig of [-1, 32, 1.5, "NOT_A_SIGNAL", {}] as any[]) {
-      expect(thrownBy(() => proc.killTree(sig))).toEqual(thrownBy(() => proc.kill(sig)));
-    }
-
-    expect(() => proc.killTree(-1)).toThrow(
-      expect.objectContaining({
-        name: "TypeError",
-        code: "ERR_INVALID_ARG_TYPE",
-        message: "Invalid signal: must be >= 0",
-      }),
-    );
-    expect(() => proc.killTree("NOT_A_SIGNAL" as any)).toThrow(
-      expect.objectContaining({
-        name: "TypeError",
-        code: "ERR_INVALID_ARG_TYPE",
-        message: expect.stringContaining("'SIGTERM'"),
-      }),
-    );
-
-    // Nothing above may have signalled the process.
-    expect(proc.killed).toBe(false);
   });
 
   test("killTree(0) is a liveness probe and does not pause descendants", async () => {

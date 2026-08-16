@@ -234,6 +234,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
+    /// Mark the response ended and the connection as closing without writing
+    /// anything, for a response the application destroyed before finishing it
+    /// (the caller closes the socket next). See `uws_res_abandon`.
+    pub(crate) fn abandon(&mut self) {
+        c::uws_res_abandon(Self::ssl_flag(), self.as_raw())
+    }
+
     pub(crate) fn end_send_file(&mut self, write_offset: u64, close_connection: bool) {
         c::uws_res_end_sendfile(
             Self::ssl_flag(),
@@ -864,6 +871,11 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
+    /// See `Response::abandon`.
+    pub fn abandon(self) {
+        any_dispatch!(self, |r| r.abandon())
+    }
+
     pub fn force_close(self) {
         match self {
             AnyResponse::SSL(ptr) => {
@@ -1156,6 +1168,7 @@ pub mod c {
             res: &mut uws_res,
             close_connection: bool,
         );
+        pub(crate) safe fn uws_res_abandon(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_end_sendfile(
             ssl: i32,
             res: &mut uws_res,

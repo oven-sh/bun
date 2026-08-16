@@ -4139,3 +4139,144 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+// Destroying a response (or its request) before anything was written must put
+// nothing on the wire, like Node: the client sees the connection close, not a
+// complete empty 200. The destroy is scheduled with setImmediate so it runs
+// after the request listener's dispatch has returned; while the dispatch is on
+// the stack the connection is corked and a stray write would be discarded
+// together with the cork buffer at close, which would hide the bug.
+describe("destroying a response before its headers are written sends nothing", () => {
+  async function bytesReceivedByClient({
+    listener,
+    https = false,
+    onData,
+  }: {
+    listener: (req: IncomingMessage, res: ServerResponse) => void;
+    https?: boolean;
+    onData?: (received: string) => void;
+  }) {
+    const server = https ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const request = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+      const socket = https
+        ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(request))
+        : connect(port, "127.0.0.1", () => socket.write(request));
+      const closed = Promise.withResolvers<void>();
+      let received = "";
+      socket.on("data", (chunk: Buffer) => {
+        received += chunk.toString("latin1");
+        onData?.(received);
+      });
+      // Only the bytes matter; the teardown may also surface as ECONNRESET.
+      socket.on("error", () => {});
+      socket.on("close", () => closed.resolve());
+      await closed.promise;
+      return received;
+    } finally {
+      server.close();
+    }
+  }
+
+  it.concurrent("res.destroy() after writeHead()", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200, { "x-a": "1" });
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  it.concurrent("res.destroy() after writeHead(500) does not turn into a 200", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(500);
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  it.concurrent("res.destroy() on an untouched response", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  it.concurrent("res.destroy() synchronously inside the request listener", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200);
+        res.destroy();
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  it.concurrent("req.destroy()", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200);
+        setImmediate(() => req.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  it.concurrent("res.destroy() over https", async () => {
+    const received = await bytesReceivedByClient({
+      https: true,
+      listener(req, res) {
+        res.writeHead(200, { "x-a": "1" });
+        setImmediate(() => res.destroy());
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  it.concurrent("res.destroy() once the headers and part of the body are on the wire adds nothing", async () => {
+    const inFlight = Promise.withResolvers<ServerResponse>();
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200, { "content-length": "10" });
+        res.write("hello");
+        inFlight.resolve(res);
+      },
+      // Runs from the client socket's 'data' event, i.e. with the server
+      // connection uncorked, once everything the listener wrote has arrived.
+      onData(received) {
+        if (received.endsWith("hello")) inFlight.promise.then(res => res.destroy());
+      },
+    });
+    expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(received).toEndWith("\r\n\r\nhello");
+  });
+
+  it.concurrent("http.get() sees a socket hang up instead of an empty 200 response", async () => {
+    const server = createServer((req, res) => {
+      res.writeHead(200);
+      setImmediate(() => res.destroy());
+    });
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+      const outcome = await new Promise<unknown>(resolve => {
+        get({ port, host: "127.0.0.1" }, res => {
+          res.resume();
+          resolve({ statusCode: res.statusCode });
+        }).on("error", (err: NodeJS.ErrnoException) => resolve({ code: err.code, message: err.message }));
+      });
+      expect(outcome).toEqual({ code: "ECONNRESET", message: "socket hang up" });
+    } finally {
+      server.close();
+    }
+  });
+});

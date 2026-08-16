@@ -1617,7 +1617,9 @@ impl NodeHTTPResponse {
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
-            raw_response.end_without_body(true);
+            // res.destroy()/req.destroy() put nothing on the wire (Node
+            // behavior); the JS caller closes the socket right after this.
+            raw_response.abandon();
         }
         self.on_request_complete();
         Ok(JSValue::UNDEFINED)

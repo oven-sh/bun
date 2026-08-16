@@ -1461,6 +1461,36 @@ extern "C"
     }
   }
 
+  /* The application gave up on the response (node:http res.destroy() /
+   * req.destroy()) and is about to close the socket. Same state transitions
+   * as uws_res_end_without_body(res, true), without its writes: with the
+   * header section still open those writes form a complete empty
+   * "HTTP/1.1 200 OK" + "Connection: close" response, and after write() they
+   * land inside the body; a destroyed response puts nothing on the wire
+   * (Node writes nothing either). HTTP_CONNECTION_CLOSE keeps the connection
+   * from serving another request, HTTP_END_CALLED makes
+   * JSNodeHTTPServerSocket::close() discard (not flush) whatever is still
+   * corked, and markDone() drops the response's callbacks. */
+  void uws_res_abandon(int ssl, uws_res_r res)
+  {
+    if (ssl)
+    {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<true>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
+      uwsRes->resetTimeout();
+    }
+    else
+    {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto *data = uwsRes->getHttpResponseData();
+      data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE | uWS::HttpResponseData<false>::HTTP_END_CALLED;
+      data->markDone(uwsRes);
+      uwsRes->resetTimeout();
+    }
+  }
+
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;
 
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length)

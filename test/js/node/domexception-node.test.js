@@ -116,11 +116,13 @@ describe.concurrent("DOMExceptions created by Bun record where they were created
       const controller = new AbortController();
       controller.abort();
       const fromNested = nested();
+      const rejectionOf = promise => promise.then(() => { throw new Error("expected a rejection"); }, e => e);
       const exceptions = {
         "AbortSignal.abort().reason": AbortSignal.abort().reason,
         "AbortController#abort() reason": controller.signal.reason,
         "atob() InvalidCharacterError": caught(() => { atob("!"); }),
         "structuredClone() DataCloneError": caught(() => { structuredClone(() => {}); }),
+        "crypto.subtle.importKey() rejection": await rejectionOf(crypto.subtle.importKey("raw", new Uint8Array(3), "AES-GCM", false, ["encrypt"])),
         "created inside a function": fromNested.reason,
       };
       const dump = e => ({
@@ -196,6 +198,12 @@ describe.concurrent("DOMExceptions created by Bun record where they were created
         caughtLine,
         structuredCloneLine,
       ]),
+      // Rejections are created while the API is being called, so they point at the call too.
+      "crypto.subtle.importKey() rejection": expected(
+        "DataError",
+        "Data provided to an operation does not meet requirements",
+        [lineContaining(source, '"crypto.subtle.importKey() rejection":')],
+      ),
       "created inside a function": expected("AbortError", "The operation was aborted.", [nestedLine, nestedCallLine]),
     });
     // The Error created on the same line as the nested DOMException reports the same frames.
@@ -204,6 +212,32 @@ describe.concurrent("DOMExceptions created by Bun record where they were created
       frameLines: framePositions(reference.stack).map(([line]) => line),
     }).toEqual({ sourceURL: "<file>", frameLines: [nestedLine, nestedCallLine] });
     expect(exitCode).toBe(0);
+  });
+
+  // ML key imports reject through SubtleCrypto's rejectWithCause(), which builds the cause
+  // and then the DOMException, while the import call is still on the stack. The reference
+  // Error is created on the same line as the call.
+  it("a rejection that carries a cause is recorded at the call site too", async () => {
+    // prettier-ignore
+    const reference = new Error("reference"), pending = crypto.subtle.importKey("pkcs8", new Uint8Array(64), "ML-DSA-44", false, ["sign"]);
+    const rejection = await pending.then(
+      () => null,
+      e => e,
+    );
+
+    expect({
+      isDOMException: rejection instanceof DOMException,
+      causeIsError: rejection?.cause instanceof Error,
+      header: rejection?.stack.split("\n")[0],
+      line: rejection?.line,
+      sourceURL: rejection?.sourceURL,
+    }).toEqual({
+      isDOMException: true,
+      causeIsError: true,
+      header: "DataError: Invalid keyData",
+      line: reference.line,
+      sourceURL: reference.sourceURL,
+    });
   });
 
   it("a DOMException created with no JavaScript on the stack gets a header-only stack", async () => {

@@ -1067,8 +1067,11 @@ describe("spyOn", () => {
       expect(fn).toHaveBeenCalledTimes(2);
       expect(fn.mock.calls[1]).toEqual([5]);
       expect(obj[9]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(3);
       // Same as named keys: the property is an accessor now, so it can't be spied again.
-      expect(() => spyOn(obj, 9)).toThrow();
+      expect(() => spyOn(obj, 9)).toThrow("does not support accessor properties");
+      expect(obj[9]).toBeUndefined();
+      expect(fn).toHaveBeenCalledTimes(4);
     });
 
     test("spyOn on an existing non-callable indexed property returns the original and can be restored", () => {
@@ -1094,7 +1097,12 @@ describe("spyOn", () => {
       expect(arr[1]).toBe(2);
       expect(fn).toHaveBeenCalledTimes(1);
       fn.mockRestore();
-      expect(arr[1]).toBe(2);
+      expect(Object.getOwnPropertyDescriptor(arr, 1)).toEqual({
+        value: 2,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
       expect(arr).toEqual([1, 2, 3]);
     });
 

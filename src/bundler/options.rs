@@ -1532,10 +1532,8 @@ impl<'a> BundleOptions<'a> {
         !self.dev_server.is_null()
     }
 
-    /// The directory project-relative paths (`Path.pretty`, root-absolute HTML
-    /// specifiers) are relative to. The dev server stores its root in `root_dir`
-    /// and resolves module ids against it; that root is not the process cwd
-    /// under `app.root` or after `process.chdir()`. Other builds use the cwd.
+    /// Base of project-relative paths: the dev server's root (kept in `root_dir`; not
+    /// the cwd under `app.root` or after `process.chdir()`), else the process cwd.
     pub(crate) fn top_level_dir(&self) -> &[u8] {
         if self.has_dev_server() {
             debug_assert!(!self.root_dir.is_empty());

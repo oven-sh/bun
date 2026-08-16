@@ -575,12 +575,11 @@ fn align_by<A, B>(
 }
 
 fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
-    let arena = Arena::new();
-    // SAFETY: the stylesheet and everything it borrows from the arena are dropped before `arena` at the end of this fn.
-    let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(&arena) };
+    // The CSS parser wants a `'static` arena; one per process is plenty for the handful of stylesheets in a package.
+    static ARENA: std::sync::LazyLock<Arena> = std::sync::LazyLock::new(Arena::new);
+    let alloc: &'static Arena = &ARENA;
     let mut opts = bun_css::ParserOptions::default(None);
-    // SAFETY: as for `alloc` above — the arena outlives every use of the options.
-    opts.filename = unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(arena.alloc_slice_copy(path)) };
+    opts.filename = alloc.alloc_slice_copy(path);
     let mut import_records = Vec::<bun_ast::ImportRecord>::default();
     let (sheet, _extra) = bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
         alloc,

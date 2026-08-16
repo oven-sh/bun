@@ -43,10 +43,10 @@ pub(crate) struct DiffFlags {
 }
 
 /// One side of the comparison, as the user wrote it.
-enum Spec<'a> {
-    Registry { name: &'a [u8], version: &'a [u8] },
-    Dir(&'a [u8]),
-    Tarball(&'a [u8]),
+enum Spec {
+    Registry { name: Vec<u8>, version: Vec<u8> },
+    Dir(Vec<u8>),
+    Tarball(Vec<u8>),
 }
 
 /// A materialized side: every file's contents by relative path.
@@ -64,29 +64,26 @@ pub(crate) fn exec(
     flags: DiffFlags,
     original_cwd: &[u8],
 ) -> Result<(), crate::Error> {
-    let mut args: Vec<&[u8]> = diff_args.to_vec();
-    args.extend(positionals.iter().skip(1).copied());
-    let typed: Vec<&[u8]> = args.clone();
-    for arg in &mut args {
-        if let Some(rest) = arg.strip_prefix(b"~/") {
-            if let Some(home) = bun_core::env_var::HOME.get() {
-                *arg = leak(
-                    bun_paths::resolve_path::join_abs_string::<
-                        bun_paths::resolve_path::platform::Auto,
-                    >(home, &[rest])
-                    .to_vec(),
-                );
+    let typed: Vec<&[u8]> = diff_args
+        .iter()
+        .chain(positionals.iter().skip(1))
+        .copied()
+        .collect();
+    let args: Vec<Vec<u8>> = typed
+        .iter()
+        .map(|&arg| {
+            use bun_paths::resolve_path::{join_abs_string, platform};
+            match (arg.strip_prefix(b"~/"), bun_core::env_var::HOME.get()) {
+                (Some(rest), Some(home)) => {
+                    join_abs_string::<platform::Auto>(home, &[rest]).to_vec()
+                }
+                _ if looks_like_path(arg) && !bun_paths::is_absolute(arg) => {
+                    join_abs_string::<platform::Auto>(original_cwd, &[arg]).to_vec()
+                }
+                _ => arg.to_vec(),
             }
-        } else if looks_like_path(arg) && !bun_paths::is_absolute(arg) {
-            *arg =
-                leak(
-                    bun_paths::resolve_path::join_abs_string::<
-                        bun_paths::resolve_path::platform::Auto,
-                    >(original_cwd, &[arg])
-                    .to_vec(),
-                );
-        }
-    }
+        })
+        .collect();
     if args.len() > 2 {
         Output::err_generic("bun pm diff takes at most two package specs or paths", ());
         Global::exit(1);
@@ -94,21 +91,20 @@ pub(crate) fn exec(
 
     let (mut left_spec, right_spec) = resolve_sides(pm, &args, original_cwd);
     let mut right = materialize(pm, &right_spec)?;
-    if let Spec::Registry { name, version } = left_spec {
+    if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
             // `bun pm diff ./pkg`: the registry side is named by the folder/tarball's own package.json.
-            let name = package_name_in(&right).unwrap_or_else(|| {
+            *name = package_name_in(&right).unwrap_or_else(|| {
                 Output::err_generic(
                     "{} has no package.json \"name\" to look up in the registry",
                     (BStr::new(&right.label),),
                 );
                 Global::exit(1);
             });
-            left_spec = Spec::Registry { name, version };
         }
     }
     let mut left = materialize(pm, &left_spec)?;
-    // Show local paths the way they were typed, not as resolved from a scratch cwd.
+    // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
             match args.iter().position(|a| a == p) {
@@ -132,81 +128,73 @@ fn looks_like_path(spec: &[u8]) -> bool {
         || (cfg!(windows) && spec.len() > 2 && spec[1] == b':')
 }
 
-fn classify(spec: &[u8]) -> Spec<'_> {
+fn classify(spec: &[u8]) -> Spec {
     if looks_like_path(spec) {
         if strings::ends_with(spec, b".tgz")
             || strings::ends_with(spec, b".tar.gz")
             || strings::ends_with(spec, b".tar")
         {
-            return Spec::Tarball(spec);
+            return Spec::Tarball(spec.to_vec());
         }
-        return Spec::Dir(spec);
+        return Spec::Dir(spec.to_vec());
     }
     let (name, version) = dependency::split_name_and_version_or_latest(spec);
     // Distinguish "no version given" from an explicit `@latest`.
     let explicit = spec.len() > name.len();
     Spec::Registry {
-        name,
-        version: if explicit { version } else { b"" },
+        name: name.to_vec(),
+        version: if explicit {
+            version.to_vec()
+        } else {
+            Vec::new()
+        },
     }
 }
 
 /// Turns 0, 1 or 2 user arguments into the two sides to compare.
-fn resolve_sides<'a>(
-    pm: &mut PackageManager,
-    args: &[&'a [u8]],
-    original_cwd: &[u8],
-) -> (Spec<'a>, Spec<'a>) {
+fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8]) -> (Spec, Spec) {
+    let registry = |name: &[u8], version: &[u8]| Spec::Registry {
+        name: name.to_vec(),
+        version: version.to_vec(),
+    };
     match args {
         // In a package folder: what is published under this name → the folder.
-        [] => {
-            let name = root_package_name(pm, original_cwd);
-            (
-                Spec::Registry {
-                    name,
-                    version: b"latest",
-                },
-                Spec::Dir(leak(original_cwd.to_vec())),
-            )
-        }
+        [] => (
+            registry(&root_package_name(pm, original_cwd), b"latest"),
+            Spec::Dir(original_cwd.to_vec()),
+        ),
         [one] => match classify(one) {
             Spec::Registry { name, version } => {
                 // `name@a..b`
-                if let Some(dots) = strings::index_of(version, b"..") {
-                    let (a, b) = (&version[..dots], &version[dots + 2..]);
+                if let Some(dots) = strings::index_of(&version, b"..") {
                     return (
-                        Spec::Registry { name, version: a },
-                        Spec::Registry { name, version: b },
+                        registry(&name, &version[..dots]),
+                        registry(&name, &version[dots + 2..]),
                     );
                 }
                 // `name` / `name@b`: the version this project has installed → b (default: latest).
-                let installed = installed_version(pm, name).unwrap_or_else(|| {
-                    Output::err_generic("{} is not in this project's lockfile; give two versions to compare, e.g. `bun pm diff {}@1.0.0 {}@2.0.0`", (BStr::new(name), BStr::new(name), BStr::new(name)));
+                let installed = installed_version(pm, &name).unwrap_or_else(|| {
+                    Output::err_generic("{} is not in this project's lockfile; give two versions to compare, e.g. `bun pm diff {}@1.0.0 {}@2.0.0`", (BStr::new(&name), BStr::new(&name), BStr::new(&name)));
                     Global::exit(1);
                 });
+                let target = if version.is_empty() {
+                    b"latest".to_vec()
+                } else {
+                    version
+                };
                 (
                     Spec::Registry {
-                        name,
-                        version: leak(installed),
+                        name: name.clone(),
+                        version: installed,
                     },
                     Spec::Registry {
                         name,
-                        version: if version.is_empty() {
-                            b"latest"
-                        } else {
-                            version
-                        },
+                        version: target,
                     },
                 )
             }
             // A folder or tarball on its own: what is published under *its* package.json name → it (named once unpacked).
-            local => (
-                Spec::Registry {
-                    name: b"",
-                    version: b"latest",
-                },
-                local,
-            ),
+            local => (registry(b"", b"latest"), local),
         },
         [a, b] => {
             let left = classify(a);
@@ -215,12 +203,14 @@ fn resolve_sides<'a>(
                 (
                     Spec::Registry {
                         name: bare,
-                        version: b"",
+                        version,
                     },
                     Spec::Registry { name, .. },
-                ) if Semver::Version::parse(Semver::SlicedString::init(bare, bare)).valid => {
+                ) if version.is_empty()
+                    && Semver::Version::parse(Semver::SlicedString::init(&bare, &bare)).valid =>
+                {
                     Spec::Registry {
-                        name,
+                        name: name.clone(),
                         version: bare,
                     }
                 }
@@ -232,7 +222,7 @@ fn resolve_sides<'a>(
     }
 }
 
-fn package_name_in(tree: &Tree) -> Option<&'static [u8]> {
+fn package_name_in(tree: &Tree) -> Option<Vec<u8>> {
     let bytes = tree.files.get(b"package.json".as_slice())?;
     let bump = Bump::new();
     let src: &[u8] = bump.alloc_slice_copy(bytes);
@@ -243,14 +233,10 @@ fn package_name_in(tree: &Tree) -> Option<&'static [u8]> {
     )
     .ok()?;
     let name = json.get_string_cloned(&bump, b"name").ok().flatten()?;
-    (!name.is_empty()).then(|| leak(name.to_vec()))
+    (!name.is_empty()).then(|| name.to_vec())
 }
 
-fn leak(v: Vec<u8>) -> &'static [u8] {
-    Vec::leak(v)
-}
-
-fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> &'static [u8] {
+fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
     let mut path = original_cwd.to_vec();
     path.extend_from_slice(b"/package.json");
     // The folder we are in, before the workspace root the manager walked up to.
@@ -264,7 +250,7 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> &'static [u8] 
         ) {
             if let Some(name) = json.get_string_cloned(&bump, b"name").ok().flatten() {
                 if !name.is_empty() {
-                    return leak(name.to_vec());
+                    return name.to_vec();
                 }
             }
         }
@@ -277,22 +263,20 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> &'static [u8] 
         );
         Global::exit(1);
     }
-    leak(name.to_vec())
+    name.to_vec()
 }
 
 /// The npm version of `name` this project's lockfile resolved, if any.
 fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
-    let pm_ptr: *mut PackageManager = pm;
-    // SAFETY: `load_from_cwd` only reads manager options/log; same reshaping as `outdated`.
-    let lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-    // SAFETY: as above.
-    let log = unsafe { &mut *(*pm_ptr).log };
-    // SAFETY: as above; the manager outlives this call.
-    let manager = unsafe { &mut *pm_ptr };
-    if !matches!(
-        lockfile.load_from_cwd::<true>(Some(manager), log),
+    // Detach the lockfile while it loads so it and the manager are not borrowed through each other.
+    let mut lockfile = core::mem::take(&mut pm.lockfile);
+    let mut log = bun_ast::Log::init();
+    let loaded = matches!(
+        lockfile.load_from_cwd::<true>(Some(pm), &mut log),
         LoadResult::Ok(_)
-    ) {
+    );
+    pm.lockfile = lockfile;
+    if !loaded {
         return None;
     }
     let lockfile = &*pm.lockfile;
@@ -314,7 +298,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
 
 // ─── materializing a side ───────────────────────────────────────────────────
 
-fn materialize(pm: &mut PackageManager, spec: &Spec<'_>) -> Result<Tree, crate::Error> {
+fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Error> {
     match spec {
         Spec::Registry { name, version } => fetch_registry_tree(pm, name, version),
         Spec::Tarball(path) => {
@@ -326,7 +310,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec<'_>) -> Result<Tree, crate::
                 }
             };
             let mut tree = Tree {
-                label: path.to_vec(),
+                label: path.clone(),
                 files: BTreeMap::new(),
             };
             read_tarball_into(&bytes, &mut tree)?;
@@ -356,8 +340,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         if next.kind != bun_sys::FileKind::File {
             continue;
         }
-        // SAFETY: entry pointer is live until the next `read_next_header`.
-        let path = unsafe { (*next.entry).pathname() }.as_bytes();
+        let path = next.entry().pathname().as_bytes();
         // npm tarballs root everything under one folder (usually `package/`).
         let rel = match strings::index_of_char(path, b'/') {
             Some(i) => &path[i as usize + 1..],
@@ -366,8 +349,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         if rel.is_empty() {
             continue;
         }
-        // SAFETY: `iter.archive` is the live handle `next` came from.
-        let data = match next.read_entry_data(unsafe { &*iter.archive })? {
+        let data = match iter.read_entry_data(&next)? {
             ArchiveIterResult::Result(d) => d,
             ArchiveIterResult::Err { message, .. } => {
                 Output::err_generic(
@@ -568,7 +550,7 @@ fn fetch_registry_tree(
     let tarball = registry_get(
         pm,
         scope,
-        URL::parse(leak(tarball_url)),
+        URL::parse(&tarball_url),
         b"application/octet-stream",
         None,
     )?;
@@ -671,6 +653,8 @@ enum Semantic {
     Normalized { unminified: bool },
     /// `-w`: the bytes differ but not once runs of whitespace are collapsed.
     WhitespaceOnly,
+    /// CRLF ↔ LF and nothing else.
+    LineEndingsOnly,
 }
 
 #[derive(Default)]
@@ -696,6 +680,16 @@ fn is_js_like(path: &[u8]) -> bool {
         normalize::kind_for(path),
         Some(normalize::Kind::Js(_) | normalize::Kind::Json)
     ) || path.ends_with(b".jsonc")
+}
+
+fn strip_cr(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for (i, &b) in bytes.iter().enumerate() {
+        if !(b == b'\r' && bytes.get(i + 1) == Some(&b'\n')) {
+            out.push(b);
+        }
+    }
+    out
 }
 
 /// Every run of ASCII whitespace becomes one space and leading/trailing runs go, for `-w`.
@@ -728,8 +722,7 @@ fn count_lines(bytes: &[u8]) -> usize {
     }
 }
 
-/// Returns whether anything differed.
-fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
+fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
     let style = Style::detect();
     let mut changes: Vec<FileChange> = Vec::new();
 
@@ -760,6 +753,17 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
         if change.binary || change.sourcemap {
             changes.push(change);
             continue;
+        }
+        if style.pretty {
+            if let (Some(o), Some(n)) = (old, new) {
+                if (strings::contains(o, b"\r\n") || strings::contains(n, b"\r\n"))
+                    && strip_cr(o) == strip_cr(n)
+                {
+                    change.semantic = Semantic::LineEndingsOnly;
+                    changes.push(change);
+                    continue;
+                }
+            }
         }
         // Like `formatting only`, a terminal-view summary; piped output stays a complete patch.
         if flags.ignore_space && style.pretty {
@@ -905,7 +909,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
     print_header(left, right, style);
     if changes.is_empty() {
         prettyln!("<d>No differences ({} files)<r>", left.files.len());
-        return false;
+        return;
     }
     if !style.pretty || flags.name_only || flags.stat {
         prettyln!("");
@@ -946,11 +950,13 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             let (bar_add, bar_del) = ("+".repeat(scale(c.added)), "-".repeat(scale(c.removed)));
             let padded = format!("{:<width$}", BStr::new(c.path), width = path_width);
             let sep = if style.pretty { "│" } else { "|" };
-            if let Semantic::FormattingOnly | Semantic::WhitespaceOnly = c.semantic {
-                let what = if c.semantic == Semantic::FormattingOnly {
-                    "formatting only"
-                } else {
-                    "whitespace only"
+            if let Semantic::FormattingOnly | Semantic::WhitespaceOnly | Semantic::LineEndingsOnly =
+                c.semantic
+            {
+                let what = match c.semantic {
+                    Semantic::FormattingOnly => "formatting only",
+                    Semantic::WhitespaceOnly => "whitespace only",
+                    _ => "line endings only",
                 };
                 pretty!(" {} <d>{}<r> <d>{}<r>\n", padded, sep, what);
                 continue;
@@ -1016,7 +1022,6 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
         Output::print(format_args!("{}", BStr::new(&c.hunks)));
     }
     print_summary(left, right, &changes, style);
-    true
 }
 
 struct PathLabel<'a>(&'a [u8], &'a [u8]);
@@ -1088,6 +1093,13 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
             .count();
         if whitespace_only > 0 {
             line.push_str(&format!("  <d>·  {whitespace_only} whitespace only<r>"));
+        }
+        let endings_only = changes
+            .iter()
+            .filter(|c| c.semantic == Semantic::LineEndingsOnly)
+            .count();
+        if endings_only > 0 {
+            line.push_str(&format!("  <d>·  {endings_only} line endings only<r>"));
         }
         #[allow(clippy::disallowed_methods)]
         Output::pretty(format_args!("{line}\n"));
@@ -1503,6 +1515,9 @@ impl Style {
                         }
                         cut -= 1;
                     }
+                    while cut > 0 && text[cut] & 0xC0 == 0x80 {
+                        cut -= 1;
+                    }
                     out.extend_from_slice("\x1b[2m…\x1b[22m".as_bytes());
                     out.extend_from_slice(bg.as_bytes());
                     prefix = &text[cut..lo];
@@ -1572,13 +1587,14 @@ impl Style {
             Semantic::Text => "",
             Semantic::FormattingOnly => "\x1b[2mformatting only\x1b[0m",
             Semantic::WhitespaceOnly => "\x1b[2mwhitespace only\x1b[0m",
+            Semantic::LineEndingsOnly => "\x1b[2mline endings only\x1b[0m",
             Semantic::Normalized { unminified: true } => "\x1b[35munminified\x1b[0m ",
             Semantic::Normalized { unminified: false } => "\x1b[2mnormalized\x1b[0m ",
         };
         let badge = match (c.old, c.new, c.binary) {
             _ if matches!(
                 c.semantic,
-                Semantic::FormattingOnly | Semantic::WhitespaceOnly
+                Semantic::FormattingOnly | Semantic::WhitespaceOnly | Semantic::LineEndingsOnly
             ) =>
             {
                 note.to_string()
@@ -1693,6 +1709,16 @@ fn unified_hunks(
         m.and_then(|m| m.get(line.wrapping_sub(1)))
             .map_or(line, |&l| l as usize)
     };
+    // The terminal view compares CRLF files as if they were LF, so a line-ending flip is not a wall of -/+.
+    let (old_lf, new_lf);
+    let (old, new) =
+        if style.pretty && (strings::contains(old, b"\r\n") || strings::contains(new, b"\r\n")) {
+            old_lf = strip_cr(old);
+            new_lf = strip_cr(new);
+            (old_lf.as_slice(), new_lf.as_slice())
+        } else {
+            (old, new)
+        };
     let mut dmp = DiffMatchPatch::<usize>::default();
     dmp.config.diff_timeout = 1000;
     let l2c = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(old, new));

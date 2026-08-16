@@ -638,6 +638,14 @@ pub mod lib {
         pub kind: bun_sys::FileKind,
     }
 
+    impl NextEntry {
+        /// The header `next()` just read; valid until the iterator advances.
+        pub fn entry(&self) -> &Entry {
+            // SAFETY: `entry` is the non-null header libarchive handed to `next()` and stays live until the next read.
+            unsafe { &*self.entry }
+        }
+    }
+
     impl ArchiveIterator {
         /// Borrow the underlying libarchive handle.
         ///
@@ -646,9 +654,17 @@ pub mod lib {
         /// until `read_free()` in [`close`]. All `Archive` methods take
         /// `&self` (FFI interior mutability), so a shared borrow suffices.
         #[inline]
-        fn archive(&self) -> &Archive {
+        pub fn archive(&self) -> &Archive {
             // SAFETY: see doc comment — non-null for the lifetime of `self`.
             unsafe { &*self.archive }
+        }
+
+        /// Reads the body of the entry `next()` just returned.
+        pub fn read_entry_data(
+            &self,
+            next: &NextEntry,
+        ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
+            next.read_entry_data(self.archive())
         }
 
         pub fn init(tarball_bytes: &[u8]) -> IteratorResult<Self> {

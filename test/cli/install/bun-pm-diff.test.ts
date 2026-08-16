@@ -414,6 +414,20 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(piped.exitCode).toBe(0);
   });
 
+  test("CRLF files: the terminal view diffs them as LF, and a pure line-ending flip collapses", async () => {
+    const { text, stderr, exitCode } = await pretty({
+      "a/notes.txt": "same line\r\nold value here\r\n",
+      "b/notes.txt": "same line\nnew value here\n",
+      "a/eol.txt": "one\r\ntwo\r\n",
+      "b/eol.txt": "one\ntwo\n",
+    });
+    expect(stderr).toBe("");
+    expect(text).toContain("    1 │  same line\n    2 │- old value here\n    2 │+ new value here\n");
+    expect(text).toMatch(/\neol\.txt ─+ line endings only\n/);
+    expect(text).not.toContain("\r");
+    expect(exitCode).toBe(0);
+  });
+
   test("package.json text in the summary is shown literally, angle brackets and all", async () => {
     const { text } = await pretty({
       "a/package.json": JSON.stringify({ name: "x", version: "1.0.0", dependencies: { y: "^1.0.0" } }),

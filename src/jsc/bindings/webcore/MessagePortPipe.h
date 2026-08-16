@@ -43,10 +43,11 @@ public:
     // lives in the upper bits so it can be bumped with fetch_add(QueuedOne).
     enum State : uint64_t {
         Closed = 1ull << 0, // close() was called on this side; drops further deliveries.
-        DrainScheduled = 1ull << 1, // a drain task for this side is in flight.
+        DrainScheduled = 1ull << 1, // a posted drain task for this side has not yet started draining.
         Attached = 1ull << 2, // ctxId/port are valid; ok to schedule drains.
         ContextKnown = 1ull << 3, // ctxId/port are valid for close-notification only (no drains).
         ClosedByRequest = 1ull << 4, // the Closed above came from close(), not from the port being collected.
+        Dispatching = 1ull << 5, // drainAndDispatch is mid-dispatch on this side (GC liveness; see hasPendingActivity).
 
         QueuedShift = 8,
         QueuedOne = 1ull << QueuedShift,

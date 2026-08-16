@@ -227,25 +227,6 @@ impl File {
             }
         })
     }
-    /// Reads until
-    /// `buf` is full or EOF; returns the filled prefix.
-    pub fn read_fill_buf<'b>(&self, buf: &'b mut [u8]) -> Maybe<&'b mut [u8]> {
-        let mut read_amount: usize = 0;
-        while read_amount < buf.len() {
-            // POSIX uses pread() from offset 0 so a pre-advanced cursor
-            // doesn't truncate; Windows falls back to read().
-            #[cfg(unix)]
-            let rc = pread(self.handle, &mut buf[read_amount..], read_amount as i64);
-            #[cfg(not(unix))]
-            let rc = read(self.handle, &mut buf[read_amount..]);
-            match rc {
-                Err(err) => return Err(err),
-                Ok(0) => break,
-                Ok(n) => read_amount += n,
-            }
-        }
-        Ok(&mut buf[..read_amount])
-    }
     pub fn pwrite_all(&self, mut buf: &[u8], mut off: i64) -> Maybe<()> {
         while !buf.is_empty() {
             let n = pwrite(self.handle, buf, off)?;

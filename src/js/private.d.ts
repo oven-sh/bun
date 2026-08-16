@@ -141,21 +141,6 @@ declare module "bun" {
   var fetch: typeof globalThis.fetch;
 }
 
-/**
- * `JSC::JSModuleLoader`
- */
-declare var Loader: {
-  registry: Map<string, LoaderEntry>;
-
-  parseModule(key: string, sourceCodeObject: JSCSourceCodeObject): Promise<LoaderModule> | LoaderModule;
-  linkAndEvaluateModule(resolvedSpecifier: string, unknown: any);
-  getModuleNamespaceObject(module: LoaderModule): any;
-  requestedModules(module: LoaderModule): string[];
-  dependencyKeysIfEvaluated(specifier: string): string[];
-  resolve(specifier: string, referrer: string): string;
-  ensureRegistered(key: string): LoaderEntry;
-};
-
 interface LoaderEntry {
   key: string;
   state: number;

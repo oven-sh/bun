@@ -7,24 +7,22 @@
 
 #[cfg(windows)]
 use core::ffi::c_short;
-use core::ffi::{c_char, c_int, c_long, c_uint, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_uint, c_ushort, c_void};
 use core::ptr;
 
 #[cfg(windows)]
-use crate::winsock::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
+use crate::winsock::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
 #[cfg(not(windows))]
-use libc::{iovec, sockaddr, sockaddr_in, sockaddr_in6, socklen_t, timeval};
+use libc::{sockaddr, sockaddr_in, sockaddr_in6, socklen_t};
 
 pub type ares_socklen_t = socklen_t;
-pub type ares_ssize_t = isize;
 
 #[cfg(windows)]
 pub type ares_socket_t = usize; // Windows `SOCKET` is `UINT_PTR` (integer, not a pointer).
 #[cfg(not(windows))]
 pub type ares_socket_t = c_int;
 
-pub type ares_sock_state_cb =
-    Option<unsafe extern "C" fn(*mut c_void, ares_socket_t, c_int, c_int)>;
+type ares_sock_state_cb = Option<unsafe extern "C" fn(*mut c_void, ares_socket_t, c_int, c_int)>;
 
 bun_opaque::opaque_ffi! {
     /// Nomicon opaque-FFI pattern. `UnsafeCell` makes the type `!Freeze` so a
@@ -294,9 +292,9 @@ impl Default for Options {
 // hostent in glibc uses int for h_addrtype and h_length, whereas hostent in
 // winsock2.h uses short.
 #[cfg(windows)]
-pub type hostent_int = c_short;
+type hostent_int = c_short;
 #[cfg(not(windows))]
-pub type hostent_int = c_int;
+type hostent_int = c_int;
 
 #[repr(C)]
 pub struct struct_hostent {
@@ -581,8 +579,6 @@ impl struct_nameinfo {
     }
 }
 
-pub(crate) type struct_timeval = timeval;
-
 bun_opaque::opaque_ffi! { pub struct struct_Channeldata; }
 
 #[repr(C)]
@@ -631,15 +627,6 @@ pub trait AddrInfoHandler: Sized {
 
 impl AddrInfo {
     // toJSArray alias deleted — lives in bun_runtime::dns_jsc.
-
-    #[inline]
-    pub fn name(&self) -> &[u8] {
-        if self.name_.is_null() {
-            return b"";
-        }
-        // SAFETY: name_ is a NUL-terminated string allocated by c-ares.
-        unsafe { core::ffi::CStr::from_ptr(self.name_) }.to_bytes()
-    }
 
     // Consumers walk `cnames_` / `node` pointer chains directly.
 
@@ -837,7 +824,7 @@ impl Channel {
 
     pub fn resolve<T: ResolveHandler>(&mut self, name: &[u8], ctx: &mut T) {
         if name.len() >= 1023
-            || name.contains(&0)
+            || bun_core::strings::contains_char(name, 0)
             || (name.is_empty() && !(T::LOOKUP_NAME == b"ns" || T::LOOKUP_NAME == b"soa"))
         {
             // SAFETY: thunk handles ARES_EBADNAME path.
@@ -986,40 +973,21 @@ pub(crate) type ares_host_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut struct_hostent)>;
 pub(crate) type ares_nameinfo_callback =
     Option<unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, *mut u8)>;
-pub(crate) type ares_sock_create_callback =
-    Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
-pub(crate) type ares_sock_config_callback =
-    Option<unsafe extern "C" fn(ares_socket_t, c_int, *mut c_void) -> c_int>;
 pub(crate) type ares_addrinfo_callback =
     unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut AddrInfo);
 
 unsafe extern "C" {
-    pub fn ares_library_init(flags: c_int) -> c_int;
-    pub fn ares_library_init_mem(
+    fn ares_library_init_mem(
         flags: c_int,
         amalloc: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
         afree: Option<unsafe extern "C" fn(*mut c_void)>,
         arealloc: Option<unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void>,
     ) -> c_int;
-    pub safe fn ares_library_initialized() -> c_int;
-    // NOT safe: per ares_library_cleanup(3) this is not thread-safe — must only
-    // be called after all threads using c-ares have terminated; calling it while
-    // a Channel is live or another thread is in c-ares is UB.
-    pub fn ares_library_cleanup();
-    pub fn ares_version(version: *mut c_int) -> *const u8;
-    pub fn ares_init(channelptr: *mut *mut Channel) -> c_int;
     pub fn ares_init_options(
         channelptr: *mut *mut Channel,
         options: *mut Options,
         optmask: c_int,
     ) -> c_int;
-    pub fn ares_save_options(
-        channel: *mut Channel,
-        options: *mut Options,
-        optmask: *mut c_int,
-    ) -> c_int;
-    pub fn ares_destroy_options(options: *mut Options);
-    pub fn ares_dup(dest: *mut Channel, src: *mut Channel) -> c_int;
     pub fn ares_destroy(channel: *mut Channel);
     // Opaque handle by exclusive reference only — `Channel` is `!Freeze`/`!Sync`
     // (UnsafeCell + PhantomData<*mut u8>). Note: `ares_cancel`/`ares_process_fd`
@@ -1031,18 +999,6 @@ unsafe extern "C" {
     pub safe fn ares_cancel(channel: &mut Channel);
     pub safe fn ares_set_local_ip4(channel: &mut Channel, local_ip: c_uint);
     pub fn ares_set_local_ip6(channel: *mut Channel, local_ip6: *const u8);
-    pub fn ares_set_local_dev(channel: *mut Channel, local_dev_name: *const u8);
-    pub fn ares_set_socket_callback(
-        channel: *mut Channel,
-        callback: ares_sock_create_callback,
-        user_data: *mut c_void,
-    );
-    pub fn ares_set_socket_configure_callback(
-        channel: *mut Channel,
-        callback: ares_sock_config_callback,
-        user_data: *mut c_void,
-    );
-    pub fn ares_set_sortlist(channel: *mut Channel, sortstr: *const u8) -> c_int;
     pub fn ares_getaddrinfo(
         channel: *mut Channel,
         node: *const c_char,
@@ -1054,42 +1010,7 @@ unsafe extern "C" {
     pub fn ares_freeaddrinfo(ai: *mut AddrInfo);
 }
 
-#[repr(C)]
-pub struct ares_socket_functions {
-    pub socket: Option<unsafe extern "C" fn(c_int, c_int, c_int, *mut c_void) -> ares_socket_t>,
-    pub close: Option<unsafe extern "C" fn(ares_socket_t, *mut c_void) -> c_int>,
-    pub connect: Option<
-        unsafe extern "C" fn(ares_socket_t, *const sockaddr, ares_socklen_t, *mut c_void) -> c_int,
-    >,
-    pub recvfrom: Option<
-        unsafe extern "C" fn(
-            ares_socket_t,
-            *mut c_void,
-            usize,
-            c_int,
-            *mut sockaddr,
-            *mut ares_socklen_t,
-            *mut c_void,
-        ) -> ares_ssize_t,
-    >,
-    pub sendv: Option<
-        unsafe extern "C" fn(ares_socket_t, *const iovec, c_int, *mut c_void) -> ares_ssize_t,
-    >,
-}
-
 unsafe extern "C" {
-    pub fn ares_set_socket_functions(
-        channel: *mut Channel,
-        funcs: *const ares_socket_functions,
-        user_data: *mut c_void,
-    );
-    pub fn ares_send(
-        channel: *mut Channel,
-        qbuf: *const u8,
-        qlen: c_int,
-        callback: ares_callback,
-        arg: *mut c_void,
-    );
     pub fn ares_query(
         channel: *mut Channel,
         name: *const c_char,
@@ -1098,27 +1019,6 @@ unsafe extern "C" {
         callback: ares_callback,
         arg: *mut c_void,
     );
-    pub fn ares_search(
-        channel: *mut Channel,
-        name: *const c_char,
-        dnsclass: c_int,
-        type_: c_int,
-        callback: ares_callback,
-        arg: *mut c_void,
-    );
-    pub fn ares_gethostbyname(
-        channel: *mut Channel,
-        name: *const c_char,
-        family: c_int,
-        callback: ares_host_callback,
-        arg: *mut c_void,
-    );
-    pub fn ares_gethostbyname_file(
-        channel: *mut Channel,
-        name: *const c_char,
-        family: c_int,
-        host: *mut *mut struct_hostent,
-    ) -> c_int;
     pub fn ares_gethostbyaddr(
         channel: *mut Channel,
         addr: *const c_void,
@@ -1135,54 +1035,12 @@ unsafe extern "C" {
         callback: ares_nameinfo_callback,
         arg: *mut c_void,
     );
-    // pub fn ares_fds(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set) -> c_int;
-    pub fn ares_getsock(channel: *mut Channel, socks: *mut ares_socket_t, numsocks: c_int)
-    -> c_int;
-    pub fn ares_timeout(
-        channel: *mut Channel,
-        maxtv: *mut struct_timeval,
-        tv: *mut struct_timeval,
-    ) -> *mut struct_timeval;
-    // pub fn ares_process(channel: *mut Channel, read_fds: *mut fd_set, write_fds: *mut fd_set);
     // Opaque handle by exclusive reference + scalars only.
     pub safe fn ares_process_fd(
         channel: &mut Channel,
         read_fd: ares_socket_t,
         write_fd: ares_socket_t,
     );
-    pub fn ares_create_query(
-        name: *const c_char,
-        dnsclass: c_int,
-        type_: c_int,
-        id: c_ushort,
-        rd: c_int,
-        buf: *mut *mut u8,
-        buflen: *mut c_int,
-        max_udp_size: c_int,
-    ) -> c_int;
-    pub fn ares_mkquery(
-        name: *const c_char,
-        dnsclass: c_int,
-        type_: c_int,
-        id: c_ushort,
-        rd: c_int,
-        buf: *mut *mut u8,
-        buflen: *mut c_int,
-    ) -> c_int;
-    pub fn ares_expand_name(
-        encoded: *const u8,
-        abuf: *const u8,
-        alen: c_int,
-        s: *mut *mut u8,
-        enclen: *mut c_long,
-    ) -> c_int;
-    pub fn ares_expand_string(
-        encoded: *const u8,
-        abuf: *const u8,
-        alen: c_int,
-        s: *mut *mut u8,
-        enclen: *mut c_long,
-    ) -> c_int;
     // Pure read of opaque `!Sync` handle.
     pub safe fn ares_queue_active_queries(channel: &Channel) -> usize;
 }
@@ -1371,14 +1229,6 @@ impl struct_ares_txt_reply {
 }
 
 #[repr(C)]
-pub struct struct_ares_txt_ext {
-    pub next: *mut struct_ares_txt_ext,
-    pub txt: *mut u8,
-    pub length: usize,
-    pub record_start: u8,
-}
-
-#[repr(C)]
 pub struct struct_ares_naptr_reply {
     pub next: *mut struct_ares_naptr_reply,
     pub flags: *mut u8,
@@ -1412,15 +1262,6 @@ impl AresReply for struct_ares_soa_reply {
         // SAFETY: caller upholds the `AresReply::parse` contract; thin FFI forward.
         unsafe { ares_parse_soa_reply(abuf, alen, out) }
     }
-}
-
-#[repr(C)]
-pub struct struct_ares_uri_reply {
-    pub next: *mut struct_ares_uri_reply,
-    pub priority: c_ushort,
-    pub weight: c_ushort,
-    pub uri: *mut u8,
-    pub ttl: c_int,
 }
 
 pub struct struct_any_reply {
@@ -1677,11 +1518,6 @@ unsafe extern "C" {
         alen: c_int,
         txt_out: *mut *mut struct_ares_txt_reply,
     ) -> c_int;
-    pub fn ares_parse_txt_reply_ext(
-        abuf: *const u8,
-        alen: c_int,
-        txt_out: *mut *mut struct_ares_txt_ext,
-    ) -> c_int;
     pub fn ares_parse_naptr_reply(
         abuf: *const u8,
         alen: c_int,
@@ -1692,29 +1528,9 @@ unsafe extern "C" {
         alen: c_int,
         soa_out: *mut *mut struct_ares_soa_reply,
     ) -> c_int;
-    pub fn ares_parse_uri_reply(
-        abuf: *const u8,
-        alen: c_int,
-        uri_out: *mut *mut struct_ares_uri_reply,
-    ) -> c_int;
-    pub fn ares_free_string(str_: *mut c_void);
     pub fn ares_free_hostent(host: *mut struct_hostent);
     pub fn ares_free_data(dataptr: *mut c_void);
     pub safe fn ares_strerror(code: c_int) -> *const u8;
-}
-
-#[repr(C)]
-#[derive(Copy, Clone)]
-union union_unnamed_3 {
-    addr4: in_addr,
-    addr6: struct_ares_in6_addr,
-}
-
-#[repr(C)]
-pub struct struct_ares_addr_node {
-    pub next: *mut struct_ares_addr_node,
-    pub family: c_int,
-    addr: union_unnamed_3,
 }
 
 #[repr(C)]
@@ -1753,16 +1569,9 @@ impl struct_ares_addr_port_node {
 }
 
 unsafe extern "C" {
-    pub fn ares_set_servers(channel: *mut Channel, servers: *mut struct_ares_addr_node) -> c_int;
     pub fn ares_set_servers_ports(
         channel: *mut Channel,
         servers: *mut struct_ares_addr_port_node,
-    ) -> c_int;
-    pub fn ares_set_servers_csv(channel: *mut Channel, servers: *const u8) -> c_int;
-    pub fn ares_set_servers_ports_csv(channel: *mut Channel, servers: *const u8) -> c_int;
-    pub fn ares_get_servers(
-        channel: *mut Channel,
-        servers: *mut *mut struct_ares_addr_port_node,
     ) -> c_int;
     pub fn ares_get_servers_ports(
         channel: *mut Channel,
@@ -1786,30 +1595,30 @@ unsafe extern "C" {
 
 pub const ARES_SUCCESS: c_int = 0;
 pub(crate) const ARES_ENODATA: c_int = 1;
-pub const ARES_EFORMERR: c_int = 2;
-pub const ARES_ESERVFAIL: c_int = 3;
+const ARES_EFORMERR: c_int = 2;
+const ARES_ESERVFAIL: c_int = 3;
 pub(crate) const ARES_ENOTFOUND: c_int = 4;
 pub(crate) const ARES_ENOTIMP: c_int = 5;
-pub const ARES_EREFUSED: c_int = 6;
-pub const ARES_EBADQUERY: c_int = 7;
+const ARES_EREFUSED: c_int = 6;
+const ARES_EBADQUERY: c_int = 7;
 pub(crate) const ARES_EBADNAME: c_int = 8;
-pub const ARES_EBADFAMILY: c_int = 9;
-pub const ARES_EBADRESP: c_int = 10;
-pub const ARES_ECONNREFUSED: c_int = 11;
-pub const ARES_ETIMEOUT: c_int = 12;
-pub const ARES_EOF: c_int = 13;
-pub const ARES_EFILE: c_int = 14;
-pub const ARES_ENOMEM: c_int = 15;
+const ARES_EBADFAMILY: c_int = 9;
+const ARES_EBADRESP: c_int = 10;
+const ARES_ECONNREFUSED: c_int = 11;
+const ARES_ETIMEOUT: c_int = 12;
+const ARES_EOF: c_int = 13;
+const ARES_EFILE: c_int = 14;
+const ARES_ENOMEM: c_int = 15;
 pub const ARES_EDESTRUCTION: c_int = 16;
-pub const ARES_EBADSTR: c_int = 17;
-pub const ARES_EBADFLAGS: c_int = 18;
+const ARES_EBADSTR: c_int = 17;
+const ARES_EBADFLAGS: c_int = 18;
 pub(crate) const ARES_ENONAME: c_int = 19;
-pub const ARES_EBADHINTS: c_int = 20;
-pub const ARES_ENOTINITIALIZED: c_int = 21;
-pub const ARES_ELOADIPHLPAPI: c_int = 22;
-pub const ARES_EADDRGETNETWORKPARAMS: c_int = 23;
-pub const ARES_ECANCELLED: c_int = 24;
-pub const ARES_ESERVICE: c_int = 25;
+const ARES_EBADHINTS: c_int = 20;
+const ARES_ENOTINITIALIZED: c_int = 21;
+const ARES_ELOADIPHLPAPI: c_int = 22;
+const ARES_EADDRGETNETWORKPARAMS: c_int = 23;
+const ARES_ECANCELLED: c_int = 24;
+const ARES_ESERVICE: c_int = 25;
 pub(crate) const ARES_ENOSERVER: c_int = 26;
 
 #[repr(i32)]
@@ -2055,26 +1864,40 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
             return 0;
         }
     }
-    {
-        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
-        let in6: &mut sockaddr_in6 =
-            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
-        // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is `sin6_addr` storage.
-        if unsafe {
-            ares_inet_pton(
-                AF::INET6,
-                addr_ptr,
-                (&raw mut in6.sin6_addr).cast::<c_void>(),
-            )
-        } == 1
-        {
-            in6.sin6_family = AF::INET6 as _;
-            in6.sin6_port = port.to_be();
-            return 0;
-        }
+    let mut octets = [0u8; 16];
+    // SAFETY: c-ares FFI; `addr_ptr` is a NUL-terminated stack buffer, dst is a
+    // 16-byte `in6_addr`-sized buffer.
+    if unsafe { ares_inet_pton(AF::INET6, addr_ptr, (&raw mut octets).cast::<c_void>()) } != 1 {
+        return -1;
     }
 
-    -1
+    if octets[..12] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff] {
+        // IPv4-mapped `::ffff:a.b.c.d`: store as AF_INET. The consumer is
+        // `ares_getnameinfo`, which (unlike the OS getnameinfo Node uses) has
+        // no v4-mapped handling and would issue an ip6.arpa PTR query that
+        // never resolves.
+        // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in.
+        let in_: &mut sockaddr_in =
+            unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in>() };
+        in_.sin_family = AF::INET as _;
+        in_.sin_port = port.to_be();
+        // SAFETY: `sin_addr` is 4 bytes of POD on every target.
+        unsafe {
+            (&raw mut in_.sin_addr)
+                .cast::<[u8; 4]>()
+                .write([octets[12], octets[13], octets[14], octets[15]]);
+        }
+        return 0;
+    }
+
+    // SAFETY: caller-provided sockaddr storage; reinterpreting as sockaddr_in6.
+    let in6: &mut sockaddr_in6 =
+        unsafe { &mut *std::ptr::from_mut::<sockaddr>(sa).cast::<sockaddr_in6>() };
+    in6.sin6_family = AF::INET6 as _;
+    in6.sin6_port = port.to_be();
+    // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
+    unsafe { (&raw mut in6.sin6_addr).cast::<[u8; 16]>().write(octets) };
+    0
 }
 
 /// The C `struct in_addr` (4-byte IPv4 address), as c-ares' `ares_options.servers`

@@ -1,0 +1,179 @@
+---
+title: "Parallel & isolated test runs"
+description: "Run test files across CPU cores with --parallel, isolate files from each other with --isolate, run tests within a file concurrently, and split suites across CI machines with --shard and --timings"
+---
+
+`bun test` has three independent knobs for running more than one thing at a time:
+
+| Flag                               | Unit of parallelism             | What it does                                                                                                         |
+| ---------------------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--parallel[=N]`                   | test **files**, in processes    | Runs files across `N` worker processes (default: number of CPU cores). Implies `--isolate`; `--no-isolate` opts out. |
+| `--concurrent` / `test.concurrent` | **tests** within one file       | Lets `async` tests in the same file overlap while one is awaiting.                                                   |
+| `--shard=i/n`                      | test files, across **machines** | Runs the `i`-th of `n` deterministic slices of the suite. Combine with `--timings` to balance by duration.           |
+
+They compose: a CI job can run `bun test --shard=2/4 --parallel`, and files in that shard can still contain `test.concurrent` tests.
+
+## `--parallel`
+
+```sh terminal icon="terminal"
+bun test --parallel        # one worker per CPU core
+bun test --parallel=4      # exactly 4 workers
+```
+
+The main `bun test` process becomes a coordinator. It discovers test files as usual, then starts worker processes and hands each one file at a time. Results stream back as each test finishes, so the output looks the same as a serial run. The coordinator prints each file's results together under its filename, and never interleaves `console.log` output from a test with another file's.
+
+```txt
+bun test v1.4.0 8x PARALLEL
+
+src/router.test.ts:
+✓ matches static routes [0.31ms]
+✓ matches params [0.12ms]
+
+src/db.test.ts:
+✓ migrates up [41.02ms]
+✓ migrates down [38.60ms]
+...
+```
+
+Workers start lazily. The first worker starts immediately; the coordinator spawns the rest only once every running worker has been busy for a few milliseconds (`--parallel-delay=<ms>`, default `5`). A suite of tiny files therefore runs on a single worker with no process-spawn overhead, while the first slow file triggers full fan-out.
+
+### How files are distributed
+
+The coordinator sorts files by path and splits them into one contiguous chunk per worker, so files in the same directory, which usually import the same modules, mostly land in the same process (a chunk boundary can fall inside a directory, and stolen files move). When a worker drains its chunk it steals the back half of the largest remaining chunk from another worker. With [`--timings`](#balancing-with---timings) the coordinator cuts the chunks by recorded duration instead of file count, each worker starts its slowest file first, and an idle worker steals the slowest not-yet-started file from whichever chunk has the most time left.
+
+### Every file is isolated (unless you opt out)
+
+`--parallel` implies [`--isolate`](#--isolate): each file runs in a fresh global object even when two files land on the same worker. Tests that pass with `--parallel` don't depend on state leaked by an earlier file.
+
+`--parallel --no-isolate` turns that off: each worker keeps a single global and module registry for all the files it is handed, exactly like a serial `bun test` does for the whole suite. Each worker evaluates imports (and `--preload` modules) once instead of once per file, which is the fastest way to run a large suite of small files. The price is that a file can observe whatever an earlier file on the same worker left behind. Preload-level `beforeAll`/`afterAll` hooks still wrap every file, since a worker never knows which file is its last.
+
+### Worker environment
+
+Each worker gets `BUN_TEST_WORKER_ID` and `JEST_WORKER_ID` set to its 1-based index, so tests can pick a distinct database, port range, or temp directory per worker:
+
+```ts title="db.test.ts" icon="/icons/typescript.svg"
+const dbName = `app_test_${process.env.BUN_TEST_WORKER_ID ?? "1"}`;
+```
+
+Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--coverage`, `--update-snapshots`, `-t`, `--retry`, `--rerun-each`, `--concurrent`, `--randomize`/`--seed`, …) are forwarded to workers. The coordinator handles `--bail` at file granularity: once the failure threshold is reached it starts no new files, but files already running finish.
+
+The coordinator merges coverage, JUnit XML and snapshot writes, so `--parallel --coverage --reporter=junit --reporter-outfile=junit.xml` produces one report.
+
+If a worker crashes (a test calls `process.exit`), the coordinator reports the file that worker was running as failed, and a replacement worker picks up the remaining files. A crash from a fatal signal aborts the whole run, so later passing files can't mask it. With a single effective worker (`--parallel=1`, or a suite with one test file), `bun test` runs the files in the main process, so `process.exit` ends the run with that exit code.
+
+### When `--parallel` helps, and when it doesn't
+
+`--parallel` pays off when the suite is dominated by test execution — I/O waits, real computation, subprocesses, many files. It costs something too: every file re-evaluates its imports in a fresh global (see [`--isolate`](#--isolate)), and each worker is a separate process with its own JIT warm-up. For a suite of very fast files that all import the same large module graph, plain `bun test` (one process, one shared module registry) can be faster. Try both; Bun prints the numbers at the end of every run.
+
+## `--isolate`
+
+```sh terminal icon="terminal"
+bun test --isolate
+```
+
+Runs each test file in a fresh JavaScript global object inside the same process. Between files Bun:
+
+- creates a new `globalThis` (so properties a file stuck on `globalThis`, patched built-ins, and module-level state are gone),
+- clears the ESM and CommonJS module registries (every file re-evaluates its imports),
+- closes servers, sockets, file watchers and subprocesses the file left open, cancels its timers, and restores fake timers,
+- re-runs `--preload` scripts in the new global.
+
+Isolating every file is how Jest and Vitest behave by default. It makes "passes alone, fails in the full suite" bugs go away at the cost of re-evaluating imports per file.
+
+To keep that cost low, Bun caches transpiled source and bytecode at the process level and shares them across globals. The second file to import a module skips reading, transpiling and parsing it and goes straight to evaluation. Only the module's top-level code runs again.
+
+Without `--isolate` (the default), all files share one global and one module registry. That is the fastest mode and is fine for suites whose files don't leak state into each other.
+
+## Concurrent tests within a file
+
+`--parallel` spreads _files_ across cores. Within one file tests still run one at a time unless you opt in to concurrency, which lets `async` tests overlap while one is waiting on I/O:
+
+```ts title="api.test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test.concurrent("GET /users", async () => {
+  const res = await fetch(`${baseUrl}/users`);
+  expect(res.status).toBe(200);
+});
+
+test.concurrent("GET /posts", async () => {
+  const res = await fetch(`${baseUrl}/posts`);
+  expect(res.status).toBe(200);
+});
+
+// runs after the concurrent group, alone
+test.serial("resets the database", async () => {
+  await resetDb();
+});
+```
+
+- `test.concurrent(...)` / `describe.concurrent(...)` mark individual tests or whole groups.
+- `--concurrent` treats every test as concurrent; `test.serial` opts back out.
+- `--max-concurrency=N` caps how many run at once (default 20).
+- [`concurrentTestGlob`](/test/configuration#concurrenttestglob) in `bunfig.toml` turns it on for matching files only.
+
+Concurrent tests share a thread and a global; this is cooperative concurrency for I/O-bound tests, not extra CPU cores. `expect.assertions()` and other per-test global state need care under concurrency — see [Concurrent test execution](/test/index#concurrent-test-execution).
+
+## Splitting a suite across CI machines with `--shard`
+
+```sh terminal icon="terminal"
+bun test --shard=1/3   # machine 1
+bun test --shard=2/3   # machine 2
+bun test --shard=3/3   # machine 3
+```
+
+Every machine sorts the discovered test files by path and takes a deterministic slice, so together the shards cover each file exactly once with no coordination. Without `--timings`, file `i` of the sorted list goes to shard `(i mod n) + 1` — balanced by file count, not by how long files take.
+
+### Balancing with `--timings`
+
+File count is a poor proxy for duration: one shard can end up with all the slow integration tests. Give `bun test` a record of how long each file takes and it cuts shards by total time instead, keeping neighbouring files (which share imports) together:
+
+```sh terminal icon="terminal"
+# Record durations (any run can do this; --parallel is fine)
+bun test --timings=.bun-test-timings.json --update-timings
+
+# Use them
+bun test --shard=2/8 --parallel --timings=.bun-test-timings.json
+```
+
+The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
+
+```json title=".bun-test-timings.json" icon="file-json"
+{
+  "version": 1,
+  "files": {
+    "test/integration/build.test.ts": 41234,
+    "test/db/migrate.test.ts": 9876,
+    "src/router.test.ts": 112
+  }
+}
+```
+
+- Paths are relative to the project root; values are wall-clock milliseconds for the whole file.
+- Without `--shard`, `--update-timings` merges into what it read, so re-running part of the suite locally refreshes those entries and keeps the rest. Entries for files that no longer exist are left alone; delete the file to start over.
+- With `--shard`, `--update-timings` writes **only the files that shard ran** — see below.
+- Bun assumes files with no entry take the median time when cutting shards, and starts them first under `--parallel`.
+- With `--timings`, `--parallel` also uses the durations: the coordinator cuts worker chunks by time and each worker starts its slowest file first.
+
+#### One timings file per shard
+
+You can pass `--timings` more than once. Bun reads the files as one table and skips paths that don't exist yet. `--update-timings` writes to the **first** path. Under `--shard` that output contains only the files the shard ran, so the shards' outputs are disjoint. Read together on the next run, they add up to the whole suite with no merge step. [Large codebases](/test/index#large-codebases) on the main page has the full CI workflow.
+
+## How it compares
+
+2 000 TypeScript test files × 8 small tests each, all importing a small app built on `zod`, `date-fns` and `lodash`, with a shared setup file (custom matcher + `beforeEach`/`afterEach`) loaded via each runner's preload mechanism — the shape of a large application's unit-test suite ([`bench/test/app`](https://github.com/oven-sh/bun/tree/main/bench/test/app), `bun app/setup.ts 2000 20`). 16-core Apple M4 Max:
+
+| Mode                             | Bun                                           | Vitest 4.1                                            | Jest 30 (`@swc/jest`)                                  |
+| -------------------------------- | --------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------ |
+| all cores, one global per worker | `bun test --parallel --no-isolate` **0.75 s** | `vitest run --no-isolate` 3.7 s                       | —                                                      |
+| all cores, fresh global per file | `bun test --parallel` **6.8 s**               | `vitest run` 133 s                                    | `jest` 19.1 s                                          |
+| one thread, one global           | `bun test` **2.4 s**                          | `vitest run --no-isolate --no-file-parallelism` 8.5 s | — (`jest --runInBand`, 80 s, still isolates each file) |
+
+<Note>
+  Wall-clock, `hyperfine --warmup 1`, Bun 1.4, Node.js 25.6, each runner's stock config plus its setup-file option
+  (`bunfig.toml` `test.preload`, `setupFilesAfterEnv`, `setupFiles`). The generator and configs are in the repository so
+  you can rerun it. The ratios move with what your tests do: this suite is deliberately dominated by per-file overhead
+  rather than test bodies.
+</Note>
+
+Where the time goes: with a fresh global per file, every runner re-evaluates the imports and setup file 2 000 times. Bun shares transpiled source and bytecode across those globals so nothing is re-parsed, but module evaluation and JIT warm-up still repeat per file. That repeated work is why, on this shape, one shared global (`bun test`) beats sixteen isolated workers, and sixteen shared globals (`--parallel --no-isolate`) beat both.

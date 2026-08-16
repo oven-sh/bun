@@ -124,7 +124,7 @@ CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* ar
 CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* arg0);
 CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__fromJS(JSC::EncodedJSValue JSValue0);
 CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* arg0);
-CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject*,  uint8_t abortReason);
+CPP_DECL void WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject*, uint8_t abortReason);
 CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__toJS(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void WebCore__AbortSignal__unref(WebCore::AbortSignal* arg0);
 
@@ -167,6 +167,7 @@ CPP_DECL void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0);
 
 CPP_DECL JSC::EncodedJSValue Bun__REPL__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* filenamePtr, size_t filenameLen, JSC::EncodedJSValue* exception);
 CPP_DECL JSC::EncodedJSValue Bun__REPL__getCompletions(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue targetValue, const unsigned char* prefixPtr, size_t prefixLen);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__getProperty(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue baseValue, const unsigned char* namePtr, size_t nameLen);
 CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue valueEncoded, int32_t depth, bool colors);
 
 #pragma mark - JSC::JSGlobalObject
@@ -192,7 +193,7 @@ CPP_DECL JSC::EncodedJSValue JSC__JSMap__get(JSC::JSMap* arg0, JSC::JSGlobalObje
 CPP_DECL bool JSC__JSMap__has(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL bool JSC__JSMap__remove(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__JSMap__set(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2, JSC::EncodedJSValue JSValue3);
-CPP_DECL uint32_t JSC__JSMap__size(JSC::JSMap* arg0, JSC::JSGlobalObject* arg1);
+CPP_DECL uint32_t JSC__JSMap__size(JSC::JSMap* arg0);
 
 #pragma mark - JSC::JSValue
 
@@ -313,7 +314,7 @@ CPP_DECL void JSC__VM__notifyNeedTermination(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);
-CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* arg0, bool arg1);
+CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* arg0);
 CPP_DECL void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC::VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
@@ -589,6 +590,23 @@ ZIG_DECL void FetchRequestBodySink__updateRef(void* arg0, bool arg1);
 BUN_DECLARE_HOST_FUNCTION(FetchRequestBodySink__write);
 #endif
 
+CPP_DECL JSC::EncodedJSValue HTMLRewriterSink__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, void* arg2, void** arg3);
+CPP_DECL JSC::EncodedJSValue HTMLRewriterSink__createObject(JSC::JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
+CPP_DECL void* HTMLRewriterSink__fromJS(JSC::EncodedJSValue JSValue1);
+
+#ifdef __cplusplus
+
+ZIG_DECL JSC::EncodedJSValue HTMLRewriterSink__close(JSC::JSGlobalObject* arg0, void* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__construct);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__end);
+ZIG_DECL JSC::EncodedJSValue SYSV_ABI HTMLRewriterSink__endWithSink(void* arg0, JSC::JSGlobalObject* arg1);
+ZIG_DECL void HTMLRewriterSink__finalize(void* arg0);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__flush);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__start);
+ZIG_DECL void HTMLRewriterSink__updateRef(void* arg0, bool arg1);
+BUN_DECLARE_HOST_FUNCTION(HTMLRewriterSink__write);
+#endif
+
 #ifdef __cplusplus
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
@@ -633,6 +651,7 @@ ZIG_DECL void Bun__WebSocket__freeSSLConfig(void* sslConfig);
 ZIG_DECL void Bun__WebSocketClient__cancel(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClient__close(WebSocketClient* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClient__finalize(WebSocketClient* arg0);
+ZIG_DECL void Bun__WebSocketClient__dropConnectionWithoutCallback(WebSocketClient* arg0);
 ZIG_DECL void* Bun__WebSocketClient__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, unsigned char* arg3, size_t arg4, const PerMessageDeflateParams* arg5, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClient__writeBinaryData(WebSocketClient* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClient__writeString(WebSocketClient* arg0, const ZigString* arg1, unsigned char arg2);
@@ -645,6 +664,7 @@ ZIG_DECL size_t Bun__WebSocketClient__memoryCost(WebSocketClient* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__cancel(WebSocketClientTLS* arg0);
 ZIG_DECL void Bun__WebSocketClientTLS__close(WebSocketClientTLS* arg0, uint16_t arg1, const ZigString* arg2);
 ZIG_DECL void Bun__WebSocketClientTLS__finalize(WebSocketClientTLS* arg0);
+ZIG_DECL void Bun__WebSocketClientTLS__dropConnectionWithoutCallback(WebSocketClientTLS* arg0);
 ZIG_DECL void* Bun__WebSocketClientTLS__init(CppWebSocket* arg0, void* arg1, JSC::JSGlobalObject* arg2, unsigned char* arg3, size_t arg4, const PerMessageDeflateParams* arg5, void* customSSLCtx);
 ZIG_DECL void Bun__WebSocketClientTLS__writeBinaryData(WebSocketClientTLS* arg0, const unsigned char* arg1, size_t arg2, unsigned char arg3);
 ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, const ZigString* arg1, unsigned char arg2);
@@ -763,13 +783,13 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolveStream);
 
 #endif
 
-#pragma mark - Bun__BodyValueBufferer
+#pragma mark - Bun__HTMLRewriter
 
 
 #ifdef __cplusplus
 
-BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onHandlerResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onHandlerReject);
 
 #endif
 
@@ -808,6 +828,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__FetchTasklet__onRejectRequestStream);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onResolveStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectStream);
+
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onResolveInputStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTMLRewriter__onRejectInputStream);
 
 
 #endif

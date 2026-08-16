@@ -8,22 +8,12 @@ pub enum Error {
     NotDir,
     #[error("NameTooLong")]
     NameTooLong,
-    #[error("FileTooBig")]
-    FileTooBig,
     #[error("SymLinkLoop")]
     SymLinkLoop,
-    #[error("ProcessFdQuotaExceeded")]
-    ProcessFdQuotaExceeded,
     #[error("SystemFdQuotaExceeded")]
     SystemFdQuotaExceeded,
     #[error("SystemResources")]
     SystemResources,
-    #[error("ReadOnlyFileSystem")]
-    ReadOnlyFileSystem,
-    #[error("FileSystem")]
-    FileSystem,
-    #[error("FileBusy")]
-    FileBusy,
     #[error("DeviceBusy")]
     DeviceBusy,
     #[error("TarballHTTP400")]
@@ -208,18 +198,8 @@ pub enum Error {
     LockfileValidationFailedInvalidBinTag,
     #[error("Lockfile validation failed: invalid package scripts")]
     LockfileValidationFailedInvalidPackageScripts,
-    #[error("NPMLockfileVersionMismatch")]
-    NPMLockfileVersionMismatch,
     #[error("InvalidNPMLockfile")]
     InvalidNPMLockfile,
-    #[error("PathTooLong")]
-    PathTooLong,
-    #[error("LockfileWorkspaceMissingResolved")]
-    LockfileWorkspaceMissingResolved,
-    #[error("NotAllPackagesGotResolved")]
-    NotAllPackagesGotResolved,
-    #[error("DependencyLoop")]
-    DependencyLoop,
     #[error("NotSupported")]
     NotSupported,
     #[error("Unexpected")]
@@ -271,14 +251,9 @@ impl Error {
             Self::AccessDenied => "AccessDenied",
             Self::NotDir => "NotDir",
             Self::NameTooLong => "NameTooLong",
-            Self::FileTooBig => "FileTooBig",
             Self::SymLinkLoop => "SymLinkLoop",
-            Self::ProcessFdQuotaExceeded => "ProcessFdQuotaExceeded",
             Self::SystemFdQuotaExceeded => "SystemFdQuotaExceeded",
             Self::SystemResources => "SystemResources",
-            Self::ReadOnlyFileSystem => "ReadOnlyFileSystem",
-            Self::FileSystem => "FileSystem",
-            Self::FileBusy => "FileBusy",
             Self::DeviceBusy => "DeviceBusy",
             Self::TarballHTTP400 => "TarballHTTP400",
             Self::TarballHTTP401 => "TarballHTTP401",
@@ -393,12 +368,7 @@ impl Error {
             Self::LockfileValidationFailedInvalidPackageScripts => {
                 "Lockfile validation failed: invalid package scripts"
             }
-            Self::NPMLockfileVersionMismatch => "NPMLockfileVersionMismatch",
             Self::InvalidNPMLockfile => "InvalidNPMLockfile",
-            Self::PathTooLong => "PathTooLong",
-            Self::LockfileWorkspaceMissingResolved => "LockfileWorkspaceMissingResolved",
-            Self::NotAllPackagesGotResolved => "NotAllPackagesGotResolved",
-            Self::DependencyLoop => "DependencyLoop",
             Self::NotSupported => "NotSupported",
             Self::Unexpected => "Unexpected",
             Self::NotSameFileSystem => "NotSameFileSystem",
@@ -458,7 +428,6 @@ impl From<crate::lockfile_real::tree::SubtreeError> for Error {
         use crate::lockfile_real::tree::SubtreeError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
         }
     }
 }
@@ -479,7 +448,6 @@ impl From<crate::pnpm::MigratePnpmLockfileError> for Error {
         use crate::pnpm::MigratePnpmLockfileError as E;
         match e {
             E::OutOfMemory => Self::Alloc(bun_alloc::AllocError),
-            E::DependencyLoop => Self::DependencyLoop,
             _ => Self::InvalidLockfile,
         }
     }

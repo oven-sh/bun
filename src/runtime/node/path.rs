@@ -280,9 +280,7 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
 
         // Translated from the following JS code:
         //   return StringPrototypeSlice(cwd, StringPrototypeIndexOf(cwd, '/'));
-        let index = normalized_cwd
-            .iter()
-            .position(|&b| b == T::from_u8(CHAR_FORWARD_SLASH));
+        let index = strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
         // Account for the -1 case of String#slice in JS land
         if let Some(_index) = index {
             return Ok(&mut normalized_cwd[_index..len]);
@@ -324,9 +322,6 @@ fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
 fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
     T::get_cwd(buf)
 }
-
-// Alias for naming consistency.
-pub(crate) use get_cwd_u8 as get_cwd;
 
 /// Based on Node v21.6.1 path.posix.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1309
@@ -1593,6 +1588,33 @@ pub(crate) fn join(
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
+/// Handles a `..` segment for `normalize_string_t`: drops the last segment of
+/// `res` and returns `(res.len, lastSegmentLength)`. Kept out of line so the
+/// per-byte loop in the caller stays call-free.
+#[inline(never)]
+fn pop_last_segment_t<T: PathCharCwd>(res: &[T], separator: T) -> (usize, usize) {
+    match strings::last_index_of_char_t(res, separator) {
+        None => (0, 0),
+        Some(idx) => {
+            // Translated from the following JS code:
+            //   lastSegmentLength =
+            //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
+            let last_segment_length = match strings::last_index_of_char_t(&res[0..idx], separator) {
+                // Yes (>ლ), Node relies on the -1 result of
+                // StringPrototypeLastIndexOf(res, separator).
+                // A - -1 is a positive 1.
+                // So the code becomes
+                //   lastSegmentLength = res.length - 1 + 1;
+                // or
+                //   lastSegmentLength = res.length;
+                None => idx,
+                Some(sep) => idx - 1 - sep,
+            };
+            (idx, last_segment_length)
+        }
+    }
+}
+
 /// Based on Node v21.6.1 private helper normalizeString:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L65C1-L66C77
 ///
@@ -1643,30 +1665,8 @@ fn normalize_string_t<T: PathCharCwd, const PLATFORM: Platform>(
                     || buf[buf_size - 2] != T::from_u8(CHAR_DOT)
                 {
                     if buf_size > 2 {
-                        match buf[0..buf_size].iter().rposition(|&b| b == separator) {
-                            None => {
-                                buf_size = 0;
-                                last_segment_length = 0;
-                            }
-                            Some(idx) => {
-                                buf_size = idx;
-                                // Translated from the following JS code:
-                                //   lastSegmentLength =
-                                //     res.length - 1 - StringPrototypeLastIndexOf(res, separator);
-                                last_segment_length =
-                                    match buf[0..buf_size].iter().rposition(|&b| b == separator) {
-                                        // Yes (>ლ), Node relies on the -1 result of
-                                        // StringPrototypeLastIndexOf(res, separator).
-                                        // A - -1 is a positive 1.
-                                        // So the code becomes
-                                        //   lastSegmentLength = res.length - 1 + 1;
-                                        // or
-                                        //   lastSegmentLength = res.length;
-                                        None => buf_size,
-                                        Some(sep) => buf_size - 1 - sep,
-                                    };
-                            }
-                        }
+                        (buf_size, last_segment_length) =
+                            pop_last_segment_t(&buf[0..buf_size], separator);
                         last_slash = Some(i);
                         dots = Some(0);
                         continue;
@@ -2396,8 +2396,8 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &'a mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
@@ -2405,8 +2405,8 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     }
 
     // Trim leading forward slashes.
-    // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = resolve_posix_t(&[from], buf2, buf3)?;
+    // Backed by from_buf.
+    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -2415,7 +2415,7 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_posix_t(&[to], buf, buf3)?;
+            let r = resolve_posix_t(&[to], buf, tmp_buf)?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -2484,7 +2484,7 @@ fn relative_posix_t<'a, T: PathCharCwd>(
     let mut buf_offset: usize;
     let mut buf_size: usize = 0;
 
-    // Backed by buf3.
+    // Backed by tmp_buf.
     let mut out_len: usize = 0;
     // Add a block to isolate `i`.
     {
@@ -2501,13 +2501,13 @@ fn relative_posix_t<'a, T: PathCharCwd>(
                 if out_len > 0 {
                     buf_offset = buf_size;
                     buf_size += 3;
-                    buf3[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
-                    buf3[buf_offset + 1] = T::from_u8(CHAR_DOT);
-                    buf3[buf_offset + 2] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset] = T::from_u8(CHAR_FORWARD_SLASH);
+                    tmp_buf[buf_offset + 1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset + 2] = T::from_u8(CHAR_DOT);
                 } else {
                     buf_size = 2;
-                    buf3[0] = T::from_u8(CHAR_DOT);
-                    buf3[1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[0] = T::from_u8(CHAR_DOT);
+                    tmp_buf[1] = T::from_u8(CHAR_DOT);
                 }
                 out_len = buf_size;
             }
@@ -2530,7 +2530,7 @@ fn relative_posix_t<'a, T: PathCharCwd>(
         buf.copy_within(to_start..to_start + slice_size, buf_offset);
     }
     if out_len > 0 {
-        memmove(&mut buf[0..out_len], &buf3[0..out_len]);
+        memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
     }
     buf[buf_size] = T::default();
     Ok(&buf[0..buf_size])
@@ -2542,16 +2542,16 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &'a mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> MaybeSlice<'a, T> {
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
         return Ok(&[]);
     }
 
-    // Backed by expandable buf2 because fromOrig may be long.
-    let from_orig = resolve_windows_t(&[from], buf2, buf3)?;
+    // Backed by from_buf.
+    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf)?;
     let from_orig_len = from_orig.len();
     // Backed by buf.
     // Borrowck: resolve into buf, then operate via raw indices.
@@ -2560,7 +2560,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
-            let r = resolve_windows_t(&[to], buf, buf3)?;
+            let r = resolve_windows_t(&[to], buf, tmp_buf)?;
             (r.as_ptr(), r.len())
         };
         if ptr != buf.as_ptr() {
@@ -2661,7 +2661,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
     let mut buf_offset: usize;
     let mut buf_size: usize = 0;
 
-    // Backed by buf3.
+    // Backed by tmp_buf.
     let mut out_len: usize = 0;
     // Add a block to isolate `i`.
     {
@@ -2675,13 +2675,13 @@ fn relative_windows_t<'a, T: PathCharCwd>(
                 if out_len > 0 {
                     buf_offset = buf_size;
                     buf_size += 3;
-                    buf3[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                    buf3[buf_offset + 1] = T::from_u8(CHAR_DOT);
-                    buf3[buf_offset + 2] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
+                    tmp_buf[buf_offset + 1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[buf_offset + 2] = T::from_u8(CHAR_DOT);
                 } else {
                     buf_size = 2;
-                    buf3[0] = T::from_u8(CHAR_DOT);
-                    buf3[1] = T::from_u8(CHAR_DOT);
+                    tmp_buf[0] = T::from_u8(CHAR_DOT);
+                    tmp_buf[1] = T::from_u8(CHAR_DOT);
                 }
                 out_len = buf_size;
             }
@@ -2715,7 +2715,7 @@ fn relative_windows_t<'a, T: PathCharCwd>(
             // Use copy_within because toOrig and buf overlap.
             buf.copy_within(to_start..to_start + slice_size, buf_offset);
         }
-        memmove(&mut buf[0..out_len], &buf3[0..out_len]);
+        memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
         buf[buf_size] = T::default();
         return Ok(&buf[0..buf_size]);
     }
@@ -2732,10 +2732,10 @@ fn relative_posix_js_t<T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> JsResult<JSValue> {
-    match relative_posix_t(from, to, buf, buf2, buf3) {
+    match relative_posix_t(from, to, buf, from_buf, tmp_buf) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
@@ -2746,10 +2746,10 @@ fn relative_windows_js_t<T: PathCharCwd>(
     from: &[T],
     to: &[T],
     buf: &mut [T],
-    buf2: &mut [T],
-    buf3: &mut [T],
+    from_buf: &mut [T],
+    tmp_buf: &mut [T],
 ) -> JsResult<JSValue> {
-    match relative_windows_t(from, to, buf, buf2, buf3) {
+    match relative_windows_t(from, to, buf, from_buf, tmp_buf) {
         Ok(r) => create_js_string_t::<T>(global_object, r),
         Err(e) => Ok(e.to_js(global_object)),
     }
@@ -2768,14 +2768,14 @@ fn relative_js_t<T: PathCharCwd>(
     let buf_len =
         ((from.len() + max_path_size::<T>() + 1) * 2 + to.len() + max_path_size::<T>() + 1)
             .max(path_size::<T>());
-    // +1 for null terminator; ×3 for buf/buf2/buf3 carved from one slab.
+    // +1 for null terminator; ×3 for buf/from_buf/tmp_buf carved from one slab.
     let mut scratch = PathScratch::<T>::new(pool, (buf_len + 1) * 3);
     let (buf, rest) = scratch.slice().split_at_mut(buf_len + 1);
-    let (buf2, buf3) = rest.split_at_mut(buf_len + 1);
+    let (from_buf, tmp_buf) = rest.split_at_mut(buf_len + 1);
     if is_windows {
-        relative_windows_js_t(global_object, from, to, buf, buf2, buf3)
+        relative_windows_js_t(global_object, from, to, buf, from_buf, tmp_buf)
     } else {
-        relative_posix_js_t(global_object, from, to, buf, buf2, buf3)
+        relative_posix_js_t(global_object, from, to, buf, from_buf, tmp_buf)
     }
 }
 

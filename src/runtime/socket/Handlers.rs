@@ -214,11 +214,6 @@ impl Handlers {
     // corker: Corker = .{},
 
     pub(crate) fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return Ok(());
-        }
-
         let Some(promise) = self.take_promise() else {
             return Ok(());
         };
@@ -230,11 +225,6 @@ impl Handlers {
     }
 
     pub(crate) fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return Ok(true);
-        }
-
         let Some(promise) = self.take_promise() else {
             return Ok(false);
         };
@@ -259,11 +249,6 @@ impl Handlers {
         if self.mode != SocketMode::Server {
             return true;
         }
-        // Nothing to release once the process is exiting, and the listener's
-        // JS wrapper may already be gone.
-        if self.vm.is_shutting_down() {
-            return false;
-        }
         // Let the listener's JS wrapper be GC'd once the last connection is
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
@@ -275,17 +260,20 @@ impl Handlers {
         false
     }
 
-    pub(crate) fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
-            return false;
-        }
-
+    /// Route an error a socket handler produced to the `error` handler, or —
+    /// with none registered — to the VM's uncaught-exception path. The `error`
+    /// handler is a top-level call of its own: what *it* throws is reported here
+    /// and the socket handler goes on (it still has state to settle, and often a
+    /// close to deliver). `Err` is only a termination pending from the preceding
+    /// callback, which nothing may run over.
+    pub(crate) fn call_error_handler(
+        &self,
+        this_value: JSValue,
+        args: &[JSValue; 2],
+    ) -> JsResult<()> {
         let global_object = self.global_object;
-        // Termination raised inside the preceding callback.call() cannot be
-        // cleared; entering JS again trips executeCallImpl's assertNoException.
         if global_object.has_exception() {
-            return false;
+            return Err(bun_jsc::JsError::Thrown);
         }
         let on_error = self.on_error();
 
@@ -296,14 +284,16 @@ impl Handlers {
                     .bun_vm()
                     .as_mut()
                     .uncaught_exception(&global_object, args[1], false);
-            return false;
+            return Ok(());
         }
 
-        if let Err(e) = on_error.call(&global_object, this_value, args) {
-            global_object.report_active_exception_as_unhandled(e);
-        }
-
-        true
+        global_object.bun_vm().event_loop_mut().run_callback(
+            on_error,
+            &global_object,
+            this_value,
+            args,
+        );
+        Ok(())
     }
 
     pub fn from_js(
@@ -507,7 +497,16 @@ impl SocketConfig {
             break 'blk SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),
                 port: None,
-                fd: generated.fd.map(Fd::from_uv),
+                fd: generated.fd.map(|v| {
+                    #[cfg(windows)]
+                    {
+                        Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Fd::from_uv(v)
+                    }
+                }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
                 default_data: if generated.data.is_undefined() {
@@ -523,6 +522,11 @@ impl SocketConfig {
         };
         // On any `?` below, `result` drops and releases what it owns — no
         // manual error-path cleanup needed.
+
+        result.exclusive = generated.exclusive;
+        result.allow_half_open = generated.allow_half_open;
+        result.reuse_port = generated.reuse_port;
+        result.ipv6_only = generated.ipv6_only;
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
@@ -547,7 +551,7 @@ impl SocketConfig {
             }
             result.hostname_or_unix = hostname.to_utf8();
             let slice = result.hostname_or_unix.slice();
-            if slice.contains(&0) {
+            if bun_core::strings::contains_char(slice, 0) {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "\"hostname\" must not contain null bytes"
                 )));
@@ -563,10 +567,6 @@ impl SocketConfig {
                     }
                 },
             });
-            result.exclusive = generated.exclusive;
-            result.allow_half_open = generated.allow_half_open;
-            result.reuse_port = generated.reuse_port;
-            result.ipv6_only = generated.ipv6_only;
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected either \"hostname\" or \"unix\""

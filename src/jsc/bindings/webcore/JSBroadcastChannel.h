@@ -81,11 +81,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, BroadcastChannel*)
     return &owner.get();
 }
 
-inline void* wrapperKey(BroadcastChannel* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, BroadcastChannel&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, BroadcastChannel* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<BroadcastChannel>&&);

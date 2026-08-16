@@ -7,7 +7,8 @@
  */
 
 import { mkdirSync } from "node:fs";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { availableParallelism } from "node:os";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -41,6 +42,9 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     ? { deps: "msvc" }
     : { depfile: "$out.d", deps: "gcc" };
 
+  // Compiles are capped at the core count, below ninja's default -j of cores+2, so cargo / dep builds start the moment they are ready: without a .ninja_log ninja weighs every edge as 1, and the cc → ar → link chain outranks cargo → link.
+  n.pool("compile", availableParallelism());
+
   // ─── C++ compile ───
   // Note: $cxxflags is set per-build (allows per-file overrides).
   n.rule("cxx", {
@@ -49,6 +53,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       : `${ccacheLauncher}${cxx} $cxxflags -MMD -MT $out -MF $out.d -c $in -o $out`,
     description: "cxx $out",
     ...depfileOpts,
+    pool: "compile",
   });
 
   // ─── C++ compile with PCH ───
@@ -74,6 +79,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       : `${ccacheLauncher}${cxx} $cxxflags -Winvalid-pch -Xclang -include-pch -Xclang $pch_file -Xclang -include -Xclang $pch_header -MMD -MT $out -MF $out.d -c $in -o $out`,
     description: "cxx $out",
     ...depfileOpts,
+    pool: "compile",
   });
 
   // ─── C compile ───
@@ -83,6 +89,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       : `${ccacheLauncher}${cc} $cflags -MMD -MT $out -MF $out.d -c $in -o $out`,
     description: "cc $out",
     ...depfileOpts,
+    pool: "compile",
   });
 
   // ─── NASM assemble (Windows-x64 only) ───
@@ -94,6 +101,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       description: "nasm $out",
       depfile: "$out.d",
       deps: "gcc",
+      pool: "compile",
     });
   }
 
@@ -138,6 +146,7 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
       : `${cxx} $cxxflags -Winvalid-pch -fpch-instantiate-templates -Xclang -fno-pch-timestamp -Xclang -emit-pch -Xclang -include -Xclang $pch_header -x c++-header -MD -MT $out -MF $out.d -c $in -o $out`,
     description: "pch $out",
     ...depfileOpts,
+    pool: "compile",
   });
 
   // ─── Link executable ───
@@ -519,7 +528,16 @@ function objectPath(cfg: Config, src: string): string {
     relSrc = relative(cfg.buildDir, absSrc);
   } else {
     relSrc = relative(cfg.cwd, absSrc);
+    // --local-deps checkouts may live outside the repo; map them onto the
+    // vendor/<name>/ path the pinned source would have so obj/ stays a tree.
+    for (const [name, dir] of Object.entries(cfg.localDeps)) {
+      if (absSrc.startsWith(dir + sep)) {
+        relSrc = relative(cfg.cwd, resolve(cfg.vendorDir, name, relative(dir, absSrc)));
+        break;
+      }
+    }
   }
+  assert(!relSrc.startsWith(".."), `object path for ${absSrc} escapes the build dir (obj/${relSrc})`);
 
   return resolve(cfg.buildDir, "obj", relSrc + cfg.objSuffix);
 }

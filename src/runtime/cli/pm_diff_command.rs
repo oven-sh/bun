@@ -809,6 +809,8 @@ struct FileChange<'a> {
     binary: bool,
     /// `*.js.map`: regenerated on every build, never worth reading.
     sourcemap: bool,
+    /// Un-minified view: per printed line, where it came from in the original (`line:col`, 1-based), per side.
+    origin: Option<[Vec<(u32, u32)>; 2]>,
     hunks: Vec<u8>,
 }
 
@@ -1066,6 +1068,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     change.semantic = Semantic::FormattingOnly;
                     change.formatting_only = true;
                 } else {
+                    change.origin = Some([origin_of(no), origin_of(nn)]);
                     unified_hunks(&no.text, &nn.text, flags.context, style, &mut change);
                     // Minifier name churn: retry with positional names and keep whichever diff is smaller.
                     if js_family && change.added + change.removed > 2 {
@@ -1081,6 +1084,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                                 alt.semantic = Semantic::FormattingOnly;
                             } else {
                                 alt.semantic = change.semantic;
+                                alt.origin = Some([origin_of(&co), origin_of(&cn)]);
                                 unified_hunks(&co.text, &cn.text, flags.context, style, &mut alt);
                             }
                             if alt.added + alt.removed < change.added + change.removed {
@@ -1089,6 +1093,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                                 change.added = alt.added;
                                 change.removed = alt.removed;
                                 change.hunks = alt.hunks;
+                                change.origin = alt.origin;
                             }
                         }
                     }
@@ -1159,6 +1164,14 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             };
             if body.len() != new.or(old).map_or(0, <[u8]>::len) {
                 change.semantic = Semantic::Normalized;
+                let nz = if op == Operation::Insert {
+                    &norm_new
+                } else {
+                    &norm_old
+                };
+                if let Some(nz) = nz {
+                    change.origin = Some([origin_of(nz), origin_of(nz)]);
+                }
                 if op == Operation::Insert {
                     change.added = count_lines(body)
                 } else {
@@ -1183,6 +1196,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     change.highlight,
                     None,
                     false,
+                    change
+                        .origin
+                        .as_ref()
+                        .map(|[o, _]| o.get(i).copied().unwrap_or((0, 0))),
                 );
             }
             if unterminated {
@@ -1957,6 +1974,7 @@ impl Style {
         highlight: bool,
         emph: Option<(usize, usize)>,
         affected: bool,
+        pos: Option<(u32, u32)>,
     ) {
         let sign = match op {
             Operation::Equal if affected => b'~',
@@ -1987,12 +2005,18 @@ impl Style {
             Operation::Delete => (old_no, "\x1b[31m", "\x1b[48;5;52m", "\x1b[48;5;88m"),
             Operation::Insert => (new_no, "\x1b[32m", "\x1b[48;5;22m", "\x1b[48;5;28m"),
         };
+        // Re-printed (un-minified) lines are numbered by where they sit in the original: `line:col`.
+        let gutter = match pos {
+            Some((l, c)) => format!("{l}:{c}"),
+            None => format!("{num}"),
+        };
+        let gw = if pos.is_some() { 9 } else { 5 };
         let _ = write!(
             out,
-            "{accent}{num:>5} \x1b[0m\x1b[2m│\x1b[0m{bg}{accent}\x1b[1m{} \x1b[0m{bg}",
+            "{accent}{gutter:>gw$} \x1b[0m\x1b[2m│\x1b[0m{bg}{accent}\x1b[1m{} \x1b[0m{bg}",
             sign as char
         );
-        let budget = self.width.saturating_sub(9);
+        let budget = self.width.saturating_sub(gw + 4);
         match emph {
             Some((lo, hi)) if lo < hi || text.len() > budget => {
                 let mut prefix = &text[..lo];
@@ -2239,6 +2263,31 @@ fn unified_hunks(
     render_ops(&ops, context, style, change, unterminated);
 }
 
+/// Printed line → original `line:col` of the first thing on it, for gutters in the un-minified view.
+fn origin_of(norm: &normalize::Normalized) -> Vec<(u32, u32)> {
+    let lines = strings::count_char(&norm.text, b'\n') + 1;
+    let mut out = vec![(0u32, 0u32); lines];
+    // The first mapping at or after the indentation: one emitted at column 0 belongs to the line break itself.
+    let indents: Vec<u32> = Lines(&norm.text)
+        .map(|l| l.iter().take_while(|&&b| b == b' ').count() as u32)
+        .collect();
+    for m in norm.map.iter().rev() {
+        let g = m.gen_line as usize;
+        if let (Some(slot), Some(&indent)) = (out.get_mut(g), indents.get(g)) {
+            if m.gen_col >= indent || *slot == (0, 0) {
+                *slot = (m.orig_line + 1, m.orig_col + 1);
+            }
+        }
+    }
+    // Lines the printer added on its own (a lone `}`) inherit the position above them.
+    for i in 1..out.len() {
+        if out[i] == (0, 0) {
+            out[i] = out[i - 1];
+        }
+    }
+    out
+}
+
 /// What the terminal view compares and shows for a text file: line-ending CRs dropped.
 fn view_bytes(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if strings::contains_char(bytes, b'\r') {
@@ -2326,6 +2375,14 @@ fn render_ops(
         first = false;
         for (k, op) in window.iter().enumerate() {
             let emph = pair_emphasis(window, k);
+            let pos = change.origin.as_ref().map(|[o, n]| {
+                let (side, no) = if op.kind == Operation::Delete {
+                    (o, op.old_no)
+                } else {
+                    (n, op.new_no)
+                };
+                side.get(no.wrapping_sub(1)).copied().unwrap_or((0, 0))
+            });
             style.line(
                 &mut change.hunks,
                 op.kind,
@@ -2335,6 +2392,7 @@ fn render_ops(
                 change.highlight,
                 emph,
                 op.affected,
+                pos,
             );
             let idx = start + k;
             if !style.pretty

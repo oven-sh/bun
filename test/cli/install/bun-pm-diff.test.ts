@@ -493,7 +493,7 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     const [raw, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
     return { text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode };
   }
-  const changedLines = (text: string) => text.split("\n").filter(l => /^ +\d+ │[-+] /.test(l));
+  const changedLines = (text: string) => text.split("\n").filter(l => /^ +[\d:]+ │[-+] /.test(l));
 
   test("a reformat-only release collapses to 'formatting only'", async () => {
     const { text, exitCode } = await pretty({
@@ -534,7 +534,9 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     const added = await pretty({ "a/README.md": "x\n", "b/README.md": "x\n", "b/dist/x.min.js": v2 });
     expect(added.text).toMatch(/\ndist\/x\.min\.js ─+ unminified new \+\d\d\n/);
     expect(added.text).toContain("│+   function ");
-    const changed = changedLines(text).map(l => l.replace(/^ +\d+ │/, ""));
+    // Un-minified lines are numbered by their original `line:col`.
+    expect(text).toMatch(/\n +1:\d+ │\+   function a\(a1\) \{\n/);
+    const changed = changedLines(text).map(l => l.replace(/^ +[\d:]+ │/, ""));
     expect(changed.filter(l => l.startsWith("-"))).toEqual(["-     return b(a1, 1) * 2;"]);
     expect(changed.filter(l => l.startsWith("+"))).toEqual([
       "+   function a(a1) {",

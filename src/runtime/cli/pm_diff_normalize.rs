@@ -7,6 +7,7 @@ use bun_alloc::Arena;
 #[derive(Clone, Copy)]
 pub(crate) struct MapPoint {
     pub gen_line: u32,
+    pub gen_col: u32,
     pub orig_line: u32,
     pub orig_col: u32,
 }
@@ -290,6 +291,7 @@ fn print_js<'a>(
                 if g.lines.zero_based() >= 0 && o.lines.zero_based() >= 0 {
                     map.push(MapPoint {
                         gen_line: g.lines.zero_based() as u32,
+                        gen_col: g.columns.zero_based().max(0) as u32,
                         orig_line: o.lines.zero_based() as u32,
                         orig_col: o.columns.zero_based().max(0) as u32,
                     });

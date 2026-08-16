@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("bundler files option", () => {
   test("basic in-memory file bundling", async () => {
@@ -600,5 +600,31 @@ describe("bundler files option", () => {
 
     const output = await result.outputs[0].text();
     expect(output).toContain("injected by plugin");
+  });
+
+  // #39252: a data: URL longer than PATH_MAX imported from an in-memory file
+  // overflowed a fixed path buffer in FileMap resolution and crashed the
+  // process. Spawn a subprocess so a panic fails the child, not the runner.
+  // 70000 bytes exceeds the path buffer on every platform.
+  test.concurrent("css data: url longer than PATH_MAX does not crash", async () => {
+    const script = `
+      const url = "data:image/svg+xml," + Buffer.alloc(70000, "A").toString();
+      const css = '.x { background: url("' + url + '") }';
+      const result = await Bun.build({
+        entrypoints: ["/style.css"],
+        files: { "/style.css": css },
+      });
+      const output = await result.outputs[0].text();
+      console.log(JSON.stringify({ success: result.success, hasUrl: output.includes(url) }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ success: true, hasUrl: true });
+    expect(exitCode).toBe(0);
   });
 });

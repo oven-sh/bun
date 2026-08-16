@@ -890,6 +890,9 @@ pub mod bv2_impl {
                     #[cfg(windows)]
                     {
                         let mut buf = bun_paths::path_buffer_pool::get();
+                        if specifier.len() > buf.len() {
+                            return self.map.get(specifier).map(|b| b.as_ref());
+                        }
                         let normalized =
                             bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
                         self.map.get(normalized).map(|b| b.as_ref())
@@ -907,6 +910,9 @@ pub mod bv2_impl {
                     #[cfg(windows)]
                     {
                         let mut buf = bun_paths::path_buffer_pool::get();
+                        if specifier.len() > buf.len() {
+                            return self.map.contains_key(specifier);
+                        }
                         let normalized =
                             bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
                         self.map.contains_key(normalized)
@@ -951,16 +957,22 @@ pub mod bv2_impl {
                     #[cfg(windows)]
                     {
                         let mut buf = bun_paths::path_buffer_pool::get();
-                        let normalized =
-                            bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
-                        if let Some((key, _)) = self.map.get_key_value(normalized) {
+                        if specifier.len() <= buf.len() {
+                            let normalized =
+                                bun_paths::resolve_path::path_to_posix_buf(specifier, &mut **buf);
+                            if let Some((key, _)) = self.map.get_key_value(normalized) {
+                                return Some(Self::result_for_key(dupe(key.as_ref())));
+                            }
+                        } else if let Some((key, _)) = self.map.get_key_value(specifier) {
                             return Some(Self::result_for_key(dupe(key.as_ref())));
                         }
                     }
 
                     // Also try joining a relative specifier against the importer's
                     // directory. Relative = not posix-absolute and not Windows
-                    // drive-absolute (e.g. `C:/`).
+                    // drive-absolute (e.g. `C:/`). Specifiers that can't fit in a
+                    // path buffer (e.g. long `data:` URLs) can't match a map key
+                    // this way; skip so the real resolver handles them (#39252).
                     if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
                         // `source_file` may itself be relative (e.g. on Windows
                         // when the bundler stores paths relative to cwd).
@@ -969,12 +981,15 @@ pub mod bv2_impl {
                             source_file
                         } else {
                             bun_resolver::fs::FileSystem::instance()
-                                .abs_buf(&[source_file], &mut *abs_source_buf)
+                                .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
                         };
 
                         // Normalize `source_file` to forward slashes (Windows paths
                         // from the real filesystem may use backslashes).
                         let mut source_file_buf = bun_paths::path_buffer_pool::get();
+                        if abs_source_file.len() > source_file_buf.len() {
+                            return None;
+                        }
                         let normalized_source_file = bun_paths::resolve_path::path_to_posix_buf::<u8>(
                             abs_source_file,
                             &mut **source_file_buf,
@@ -1004,11 +1019,11 @@ pub mod bv2_impl {
                         };
                         // `.loose` preserves Windows drive letters; normalize
                         // separators in-place on Windows afterwards.
-                        let joined_len = bun_paths::resolve_path::join_abs_string_buf::<
+                        let joined_len = bun_paths::resolve_path::join_abs_string_buf_checked::<
                             bun_paths::platform::Loose,
                         >(
                             effective_source_dir, &mut **buf, &[specifier]
-                        )
+                        )?
                         .len();
                         if cfg!(windows) {
                             bun_paths::resolve_path::platform_to_posix_in_place::<u8>(

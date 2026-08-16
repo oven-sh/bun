@@ -286,10 +286,9 @@ pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub(crate) magic: Magic,
-    /// Absolute path to project root directory (`app.root`, or the cwd when the
-    /// server was created; unlike `top_level_dir` it does not follow chdir).
-    /// Module IDs are paths relative to this, both as printed by the bundler
-    /// (it is the transpilers' `root_dir`) and as computed by `relative_path`.
+    /// Absolute project root: `app.root`, else the cwd at creation (it does not
+    /// follow chdir). Module IDs are relative to this, both as the bundler prints
+    /// them (it is the transpilers' `root_dir`) and as `relative_path` computes them.
     pub(crate) root: Box<[u8]>,
     /// Unique identifier for this DevServer instance. Used to identify it
     /// when using the debugger protocol.

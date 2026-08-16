@@ -5747,11 +5747,9 @@ pub mod bv2_impl {
             false
         }
 
-        /// The directory `Path.pretty` is relative to. In dev server bundles the
-        /// pretty path is the module id, and the dev server resolves ids against
-        /// its root (`DevServer.root`, installed as the transpilers' `root_dir`),
-        /// which is not the cwd when `app.root` is set or the process chdir()s.
-        /// Keep in sync with `LinkerContext::pretty_path_base_dir`.
+        /// Dev server bundles use the dev server's root (its transpilers' `root_dir`):
+        /// pretty paths are the module ids there, and the dev server resolves ids
+        /// against that root, which is not the cwd under `app.root` or after chdir().
         fn pretty_path_base_dir(&self) -> &[u8] {
             if self.dev_server.is_some() {
                 debug_assert!(!self.transpiler.options.root_dir.is_empty());

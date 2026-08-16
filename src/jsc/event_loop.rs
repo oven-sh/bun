@@ -149,7 +149,9 @@ impl Default for EventLoop {
 
 mod drain_result {
     pub(super) const SUCCESS: u8 = 0;
-    pub(super) const JS_TERMINATED: u8 = 1;
+    pub(super) const STOPPED: u8 = 1;
+    /// A (non-termination) exception is pending: no checkpoint ran.
+    pub(super) const PENDING_EXCEPTION: u8 = 2;
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
@@ -163,29 +165,39 @@ impl JSGlobalObject {
     /// JSC microtask queue, and nothing else. No timers, no I/O, no deferred
     /// tasks, so this cannot re-enter the event loop.
     ///
-    /// `Err` means JS was terminated; a termination exception is left pending.
-    pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), JsTerminated> {
+    /// `Err` means the drain found this VM's termination: the loop stands down (the exception stays pending).
+    pub fn drain_microtasks_and_next_ticks(&self) -> Result<(), Stopped> {
         jsc::mark_binding();
         match JSC__JSGlobalObject__drainMicrotasks(self) {
-            drain_result::SUCCESS => Ok(()),
-            drain_result::JS_TERMINATED => Err(JsTerminated::JSTerminated),
+            drain_result::SUCCESS | drain_result::PENDING_EXCEPTION => Ok(()),
+            drain_result::STOPPED => Err(Stopped),
             _ => unreachable!(),
         }
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum JsTerminated {
-    #[error("JSTerminated")]
-    JSTerminated,
-}
+/// This VM no longer runs script (a worker being terminated, or teardown has begun): what loop-level
+/// code -- ticks, task completions, waits, "should I enter JS?" -- returns to say "stand down". Only
+/// loop-level code reads the gate (`script_allowed`) and speaks `Stopped`; code inside a JS operation
+/// (`JsResult`) only ever sees exceptions. A boundary that entered JS produces `Stopped` when the
+/// exception it takes is the termination (WebCore: `isTerminationException(returned)`); the opposite
+/// crossing -- a stop that must become a `JsError` -- is [`Stopped::throw`], never an implicit `From`.
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("Stopped")]
+pub struct Stopped;
 
-/// Short alias for `Result<T, JsTerminated>`.
-pub type JsTerminatedResult<T> = Result<T, JsTerminated>;
-
-impl From<JsTerminated> for crate::CrateError {
-    fn from(_: JsTerminated) -> Self {
-        crate::CrateError::JSTerminated
+impl Stopped {
+    /// Cross into a `JsResult` function: throw the VM's TerminationException for real (what `VMTraps`
+    /// does on trap), so `Err(Thrown)` keeps meaning "an exception is pending" for every caller above.
+    /// For a nested wait/drain *inside a host function* only; loop-level code propagates `Stopped`.
+    #[cold]
+    pub fn throw(self, global: &JSGlobalObject) -> crate::JsError {
+        match crate::cpp::JSC__JSGlobalObject__throwTerminationException(global) {
+            Err(err) => err,
+            Ok(()) => {
+                unreachable!("throwTerminationException returned without an exception pending")
+            }
+        }
     }
 }
 
@@ -205,7 +217,7 @@ unsafe extern "Rust" {
         el: *mut EventLoop,
         vm: *mut VirtualMachine,
         counter: &mut u32,
-    ) -> Result<(), JsTerminated>;
+    ) -> Result<(), Stopped>;
     /// `ImmediateObject::runImmediateTask` — `task` is an erased
     /// `*mut bun_runtime::timer::ImmediateObject`; returns whether the callback
     /// threw. Defined in `bun_runtime::dispatch`. Link-time resolved.
@@ -227,7 +239,7 @@ fn tick_queue_with_count(
     el: &mut EventLoop,
     vm: *mut VirtualMachine,
     counter: &mut u32,
-) -> Result<(), JsTerminated> {
+) -> Result<(), Stopped> {
     // SAFETY: `el` is the queue to drain (may be the isolated spawnSync loop);
     // `vm` is the live per-thread VM (caller contract).
     unsafe { __bun_tick_queue_with_count(el, vm, counter) }
@@ -269,6 +281,11 @@ impl EventLoop {
     }
 
     /// "exit" a microtask context in the event loop. See `enter`.
+    ///
+    /// The outermost exit is a microtask checkpoint — unless the frame is
+    /// leaving with an exception pending (`drainMicrotasks` sees it and does
+    /// nothing): that exception is on its way to a fold, which takes it and
+    /// then drains.
     pub fn exit(&mut self) {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
@@ -296,7 +313,7 @@ impl EventLoop {
     pub fn exit_maybe_drain_microtasks(
         &mut self,
         allow_drain_microtask: bool,
-    ) -> Result<(), JsTerminated> {
+    ) -> Result<(), Stopped> {
         let count = self.entered_event_loop_count;
         bun_core::scoped_log!(EventLoop, "exit() = {}", count - 1);
 
@@ -315,21 +332,13 @@ impl EventLoop {
         result
     }
 
-    /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
-    /// buffer. Caller must not hold another live `&mut` to it.
-    pub unsafe fn pipe_read_buffer(&mut self) -> &mut [u8] {
-        // SAFETY: vm() is the live owning VM; rare_data() lazily inits the
-        // per-VM scratch buffer. Caller contract (see doc): no concurrent &mut.
-        unsafe { &mut (*self.vm()).rare_data().pipe_read_buffer()[..] }
-    }
-
     pub fn drain_microtasks_with_global(
         &mut self,
         global_object: &JSGlobalObject,
         jsc_vm: &jsc::VM,
-    ) -> Result<(), JsTerminated> {
+    ) -> Result<(), Stopped> {
         // Hoist the VM backref once. LLVM can't CSE the `Option<NonNull>` field
-        // load across the FFI calls below (`release_weak_refs`, `drainMicrotasks`,
+        // load across the FFI calls below (`release_weak_refs`, `JSC__JSGlobalObject__drainMicrotasks`,
         // `deferred_tasks.run`), so each `self.vm_ref()` re-loaded
         // `self.virtual_machine` from memory (5× per call, ~2×/request).
         // SAFETY: `virtual_machine` is set in `VirtualMachine::init()` to the
@@ -347,7 +356,10 @@ impl EventLoop {
 
         match JSC__JSGlobalObject__drainMicrotasks(global_object) {
             drain_result::SUCCESS => {}
-            drain_result::JS_TERMINATED => return Err(JsTerminated::JSTerminated),
+            drain_result::STOPPED => return Err(Stopped),
+            // The exception is on its way to a fold, which drains after taking
+            // it; the deferred tasks wait for that checkpoint too.
+            drain_result::PENDING_EXCEPTION => return Ok(()),
             _ => unreachable!(),
         }
 
@@ -368,7 +380,7 @@ impl EventLoop {
     }
 
     #[inline(always)]
-    pub fn drain_microtasks(&mut self) -> Result<(), JsTerminated> {
+    pub fn drain_microtasks(&mut self) -> Result<(), Stopped> {
         // Read `this.global` directly via `global_ref()` instead of
         // round-tripping through `virtual_machine` (saves a dependent load on
         // the hot path).
@@ -378,11 +390,12 @@ impl EventLoop {
     }
 
     // should be called after exit()
-    pub fn maybe_drain_microtasks(&mut self) {
+    pub fn maybe_drain_microtasks(&mut self) -> Result<(), Stopped> {
         if self.entered_event_loop_count == 0 && !self.vm_ref().is_inside_deferred_task_queue.get()
         {
-            let _ = self.drain_microtasks();
+            return self.drain_microtasks();
         }
+        Ok(())
     }
 
     /// When you call a JavaScript function from outside the event loop task
@@ -419,7 +432,9 @@ impl EventLoop {
         // process-lifetime `VirtualMachine`); short-lived `&mut` only.
         unsafe { (*this).enter() };
         if let Err(err) = callback.call(global_object, this_value, arguments) {
-            global_object.report_active_exception_as_unhandled(err);
+            // A top-level call: reported here; a stop stays pending for the
+            // caller's gates and its dispatcher's fold.
+            let _ = crate::task::report_error_or_terminate(global_object, err);
         }
         // Force a re-escape between the JS call and the post-call `exit()` so
         // LLVM cannot forward any `*this` field across `call()`.
@@ -447,7 +462,7 @@ impl EventLoop {
         let result = match callback.call(global_object, this_value, arguments) {
             Ok(v) => v,
             Err(err) => {
-                global_object.report_active_exception_as_unhandled(err);
+                let _ = crate::task::report_error_or_terminate(global_object, err);
                 JSValue::ZERO
             }
         };
@@ -460,7 +475,7 @@ impl EventLoop {
 
     fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> u32 {
         let mut counter: u32 = 0;
-        // On `JsTerminated`, report 0 so the `while tick_with_count() > 0`
+        // On `Stopped`, report 0 so the `while tick_with_count() > 0`
         // drain loops in `tick()` / `tick_tasks_only()` stop immediately. The
         // termination exception is left on the VM (`tryClearException` never
         // clears it), so continuing to drain would re-enter
@@ -677,6 +692,12 @@ impl EventLoop {
                 .is_err()
                 || scope.has_exception()
             {
+                // Every task's exception was folded by the drain above; one
+                // still pending here escaped whoever produced it.
+                debug_assert!(
+                    global.has_pending_termination_exception(),
+                    "a task returned Ok with a JS exception pending"
+                );
                 self.entered_event_loop_count -= 1;
                 return;
             }
@@ -724,10 +745,29 @@ impl EventLoop {
             // again: release the task now, as `release_queued_tasks` would have
             // — the queue owns refusal, like `VmHandle::post` does off-thread.
             // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
-            unsafe { __bun_release_task_unrun(task) };
+            unsafe { self.release_task_unrun(task) };
             return;
         }
         let _ = self.tasks.write_item(task);
+    }
+
+    /// Release one task that will never run, folding what its release left
+    /// pending (a few releases run an addon callback that can enter JS).
+    ///
+    /// # Safety
+    /// JS thread, JSC heap alive; `task` just left (or was refused by) the queue.
+    #[cold]
+    #[inline(never)]
+    unsafe fn release_task_unrun(&mut self, task: Task) {
+        // SAFETY: fn contract.
+        unsafe { __bun_release_task_unrun(task) };
+        if let Some(global) = self.global {
+            // SAFETY: set at VM init; live for the loop's lifetime.
+            let global = unsafe { global.as_ref() };
+            if global.has_exception() {
+                let _ = crate::task::report_error_or_terminate(global, crate::JsError::Thrown);
+            }
+        }
     }
 
     /// Move whatever other threads posted (`concurrent_tasks`) into
@@ -744,30 +784,26 @@ impl EventLoop {
                 break;
             }
             // SAFETY: `node` is non-null and owned by the popped batch; the
-            // iterator advanced past it before returning, so reading then
-            // freeing here is sound.
-            let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
+            // iterator advanced past it before returning.
+            let task =
+                unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
             let _ = self.tasks.write_item(task);
-            if auto_delete {
-                // SAFETY: heap-owned (see `ConcurrentTask::create`); not yet
-                // freed, and the iterator no longer references it.
-                drop(unsafe { bun_core::heap::take(node) });
-            }
         }
     }
 
     /// Release, without running, every task still queued — what other
     /// threads posted and what this thread enqueued — through each type's
     /// `Taskable::release_unrun`, and refuse (release on arrival) anything
-    /// enqueued from here on. Teardown phase B: JS thread, script forbidden,
-    /// JSC heap alive, HTTP thread parked / children joined.
+    /// enqueued from here on. Teardown phase B (JS thread, script forbidden,
+    /// JSC heap alive, children joined): called on every turn of the wait, and
+    /// once more after `Closed`.
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
         self.take_concurrent_tasks();
         let _ = self.promote_yield_tasks();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
-            unsafe { __bun_release_task_unrun(task) };
+            unsafe { self.release_task_unrun(task) };
         }
         // Pending immediates likewise: cancelling one drops its keep-alive on
         // this thread's loop, so it happens now, not after the loop is gone.
@@ -870,7 +906,7 @@ impl EventLoop {
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
-            // until `runImmediateTask` consumes them; `virtual_machine` is the
+            // until `__bun_run_immediate_task` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
             exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
@@ -881,7 +917,7 @@ impl EventLoop {
         // make sure microtasks are drained if the last task had an exception
         if exception_thrown {
             // SAFETY: as above.
-            unsafe { (*this).maybe_drain_microtasks() };
+            let _ = unsafe { (*this).maybe_drain_microtasks() };
         }
 
         // SAFETY: as above; this read MUST observe pushes JS made during the
@@ -972,16 +1008,16 @@ impl EventLoop {
     /// Ticks until `promise` settles. `Err` when it returns with the promise
     /// still pending because the VM can no longer run the script that would
     /// settle it (execution forbidden, or a stop was requested: a worker being
-    /// terminated mid-wait) — a `JsError::Terminated` for the caller.
-    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::JsTerminated> {
+    /// terminated mid-wait). Nothing is thrown for it; a caller inside a `JsResult`
+    /// function crosses explicitly with [`jsc::Stopped::throw`].
+    pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
         if promise.status() != PromiseStatus::Pending {
             return Ok(());
         }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden() || !self.vm_ref().script_allowed() {
-                jsc_vm.ensure_termination_exception_pending();
-                return Err(jsc::JsTerminated::JSTerminated);
+                return Err(jsc::Stopped);
             }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
@@ -1012,7 +1048,7 @@ impl EventLoop {
         }
     }
 
-    /// JS thread: the poster other threads use to reach the loop this
+    /// JS thread: the weak poster other threads use to reach the loop this
     /// `EventLoop` is — the VM's handle for its embedded loops, or the isolated
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
@@ -1067,7 +1103,9 @@ impl EventLoop {
     #[inline(always)]
     pub fn global_ref(&self) -> &'static JSGlobalObject {
         // `self.global` is always assigned `vm.global` at every write site
-        // (`__bun_spawn_sync_*`, `init_runtime_state`, `reload_global`), so
+        // (`VirtualMachine::init`/`init_bake`, `enable_macro_mode`,
+        // `swap_global_for_test_isolation`, `__bun_spawn_sync_*`, bake
+        // `production.rs`), so
         // read it directly instead of the vm→global dependent-load chain.
         // `'static` so callers can hold it across `&mut self` (see
         // `drain_microtasks`), matching `vm_ref()`.
@@ -1107,7 +1145,8 @@ impl EventLoop {
         let result = callback.call(global_object, this_value, arguments)?;
         result.ensure_still_alive();
         let jsc_vm = global_object.bun_vm().jsc_vm();
-        self.drain_microtasks_with_global(global_object, jsc_vm)?;
+        self.drain_microtasks_with_global(global_object, jsc_vm)
+            .map_err(|stopped| stopped.throw(global_object))?;
         Ok(result)
     }
 
@@ -1330,7 +1369,6 @@ bun_event_loop::link_impl_JsEventLoop! {
             (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
         },
         uws_loop() => (*this).usockets_loop(),
-        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
         tick() => (*this).tick(),
         auto_tick() => (*this).auto_tick(),
         auto_tick_active() => (*this).auto_tick_active(),
@@ -1341,6 +1379,7 @@ bun_event_loop::link_impl_JsEventLoop! {
         enter() => (*this).enter(),
         exit() => (*this).exit(),
         enqueue_task(task) => (*this).enqueue_task(task),
+        enqueue_task_after_yield(task) => (*this).enqueue_task_after_yield(task),
         js_poster() => (*this).js_poster(),
         env() => (*this).vm_ref().transpiler.env,
         top_level_dir() => core::ptr::from_ref::<[u8]>((*this).vm_ref().top_level_dir()),

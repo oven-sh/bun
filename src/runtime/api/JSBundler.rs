@@ -548,7 +548,11 @@ pub mod js_bundler {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
                             // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
-                            global_this.bun_vm().as_mut().wait_for_promise(promise)?;
+                            global_this
+                                .bun_vm()
+                                .as_mut()
+                                .wait_for_promise(promise)
+                                .map_err(|stopped| stopped.throw(global_this))?;
                             match promise
                                 .unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled)
                             {
@@ -1505,17 +1509,15 @@ pub mod js_bundler {
 
             // Notify the *bundler thread* about the deferral. This will
             // decrement the pending item counter and increment the deferred
-            // counter. Must land on `parse_task.ctx.loop()` (the loop running
-            // BundleV2), which is distinct from `js_loop_for_plugins()` (the
-            // plugin host's JS loop) when `Bun.build` runs the bundler on its
-            // own Mini event loop.
-            // SAFETY: parse_task.ctx and bv2 are valid backrefs; `r#loop()`
+            // counter. Must land on `parse_task.ctx`'s `r#loop()` (the loop
+            // running BundleV2), which is distinct from the
+            // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
+            // when `Bun.build` runs the bundler on its own Mini event loop.
+            // SAFETY: `parse_task.ctx` and `bv2` are valid backrefs; `r#loop()`
             // points at a live `AnyEventLoop` owned by the bundle thread /
             // runtime for the duration of the bundle.
             unsafe {
-                let ctx = (*self.parse_task)
-                    .completion_ctx
-                    .expect("ParseTask.completion_ctx unset");
+                let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
                 // SAFETY: write provenance from `ParseTask::init`; bundle outlives plugin.
                 let any_loop = ctx
                     .assume_mut()
@@ -1558,7 +1560,7 @@ pub mod js_bundler {
     fn on_notify_defer_mini_wrap(load: *mut Load, ctx: *mut BundleV2<'static>) {
         // SAFETY: callback contract — `load` was passed as the `Context` arg to
         // `enqueue_task_concurrent_with_extra_ctx`; `ctx` is the bundle-thread
-        // `BundleV2` backref the mini loop's tick supplies as `ParentContext`.
+        // `BundleV2` backref the mini loop's tick supplies as `extra`.
         BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
@@ -1613,7 +1615,6 @@ pub mod js_bundler {
                     match err {
                         JsError::OutOfMemory => bun_core::out_of_memory(),
                         JsError::Thrown => {}
-                        JsError::Terminated => {}
                     }
                     panic!("Unexpected: source_code is not a string");
                 }
@@ -1728,8 +1729,11 @@ pub mod js_bundler {
             let rejection_value = match rejection {
                 Ok(v) => v,
                 Err(JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+                // A terminated worker runs no onEnd callbacks: keep its termination pending and unwind.
+                Err(JsError::Thrown) if global_this.has_pending_termination_exception() => {
+                    return Err(JsError::Thrown);
+                }
                 Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
-                Err(JsError::Terminated) => return Err(JsError::Terminated),
             };
 
             // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets

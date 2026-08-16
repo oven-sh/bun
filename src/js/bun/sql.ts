@@ -237,6 +237,43 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
+  const listenable = "listen" in pool ? pool : null;
+  function validateChannel(channel: unknown): asserts channel is string {
+    if (typeof channel !== "string" || channel.length === 0) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be a non-empty string");
+    }
+    if (channel.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must not contain null bytes");
+    }
+    // PostgreSQL truncates longer identifiers, so notifications would arrive under a different name.
+    if (Buffer.byteLength(channel) > 63) {
+      throw $ERR_INVALID_ARG_VALUE("channel", channel, "must be at most 63 bytes");
+    }
+  }
+  function validateCallback(name: string, fn: unknown, optional: boolean) {
+    if (!$isCallable(fn) && !(optional && fn === undefined)) {
+      throw $ERR_INVALID_ARG_TYPE(name, "function", fn);
+    }
+  }
+  const listenUnsupported = () =>
+    Promise.$reject(new Error("LISTEN/NOTIFY is not supported by this adapter (PostgreSQL only)"));
+  const listen: Bun.SQL["listen"] = async (channel, onnotify, onlisten) => {
+    validateChannel(channel);
+    validateCallback("onnotify", onnotify, false);
+    validateCallback("onlisten", onlisten, true);
+    return listenable ? listenable.listen(channel, onnotify, onlisten) : listenUnsupported();
+  };
+  // .execute(): queries are lazy, and notify() must send even when not awaited.
+  function makeNotify(target: { unsafe: Bun.SQL["unsafe"] }): Bun.SQL["notify"] {
+    return (channel, payload) => {
+      validateChannel(channel);
+      if (payload === undefined) payload = "";
+      else if (typeof payload !== "string") throw $ERR_INVALID_ARG_TYPE("payload", "string", payload);
+      if (!listenable) return listenUnsupported();
+      return target.unsafe("SELECT pg_notify($1, $2)", [channel, payload]).execute() as unknown as Promise<void>;
+    };
+  }
+
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
@@ -317,6 +354,8 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     reserved_sql.reserve = () => sql.reserve();
     reserved_sql.array = sql.array;
+    reserved_sql.listen = listen;
+    reserved_sql.notify = makeNotify(reserved_sql);
     function onTransactionFinished(transaction_promise: Promise<any>) {
       reservedTransaction.delete(transaction_promise);
     }
@@ -592,6 +631,8 @@ const SQL: typeof Bun.SQL = function SQL(
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();
     transaction_sql.array = sql.array;
+    transaction_sql.listen = listen;
+    transaction_sql.notify = makeNotify(transaction_sql);
 
     transaction_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -938,6 +979,8 @@ const SQL: typeof Bun.SQL = function SQL(
   sql.transaction = sql.begin;
   sql.distributed = sql.beginDistributed;
   sql.end = sql.close;
+  sql.listen = listen;
+  sql.notify = makeNotify(sql);
   return sql;
 };
 
@@ -1016,6 +1059,14 @@ defaultSQLObject.end = defaultSQLObject.close = (...args: Parameters<typeof lazy
 defaultSQLObject.flush = (...args: Parameters<typeof lazyDefaultSQL.flush>) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.flush(...args);
+};
+defaultSQLObject.listen = (...args: Parameters<typeof lazyDefaultSQL.listen>) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.listen(...args);
+};
+defaultSQLObject.notify = (...args: Parameters<typeof lazyDefaultSQL.notify>) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.notify(...args);
 };
 //define lazy properties
 defineProperties(defaultSQLObject, {

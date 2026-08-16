@@ -380,12 +380,14 @@ impl SpawnSyncEventLoop {
 
     /// Tick the isolated event loop with an optional timeout
     /// This is similar to the main event loop's tick but completely isolated
+    ///
+    /// `timeout` is an absolute deadline on the real (never mocked) clock.
     pub fn tick_with_timeout(&mut self, timeout: Option<&Timespec>) -> TickState {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {
             Some(ts) => {
                 duration_storage =
-                    Some(ts.duration(&Timespec::now(TimespecMockMode::AllowMockedTime)));
+                    Some(ts.duration(&Timespec::now(TimespecMockMode::ForceRealTime)));
                 duration_storage.as_ref()
             }
             None => None,
@@ -454,7 +456,7 @@ impl SpawnSyncEventLoop {
             #[cfg(not(windows))]
             {
                 self.did_timeout.set(
-                    Timespec::now(TimespecMockMode::AllowMockedTime).order(ts)
+                    Timespec::now(TimespecMockMode::ForceRealTime).order(ts)
                         != core::cmp::Ordering::Less,
                 );
             }

@@ -269,18 +269,27 @@ impl SQLDataCell {
     /// the right named/indexed/duplicate flag into `toJS`.
     #[inline]
     pub(crate) fn null_for_column(position: u32, column: &ColumnIdentifier) -> SQLDataCell {
-        SQLDataCell {
-            is_indexed_column: match column {
-                ColumnIdentifier::Duplicate => 2,
-                ColumnIdentifier::Index(_) => 1,
-                ColumnIdentifier::Name(_) => 0,
-            },
-            index: match column {
-                ColumnIdentifier::Index(i) => *i,
-                _ => position,
-            },
-            ..SQLDataCell::default()
-        }
+        let mut cell = SQLDataCell::null();
+        cell.set_column(position, column);
+        cell
+    }
+
+    /// Tags the cell with the column it was decoded for, in the encoding
+    /// SQLClient.cpp's `DataCell` reads: `is_indexed_column` is 0 for a named
+    /// column, 1 for an all-digits name (the object key is that number, not the
+    /// ordinal `position`, so indexed cells can land out of order) and 2 for a
+    /// duplicate, which object-mode results skip.
+    #[inline]
+    pub(crate) fn set_column(&mut self, position: u32, column: &ColumnIdentifier) {
+        self.is_indexed_column = match column {
+            ColumnIdentifier::Duplicate => 2,
+            ColumnIdentifier::Index(_) => 1,
+            ColumnIdentifier::Name(_) => 0,
+        };
+        self.index = match column {
+            ColumnIdentifier::Index(i) => *i,
+            _ => position,
+        };
     }
 
     #[inline]

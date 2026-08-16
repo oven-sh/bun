@@ -47,9 +47,6 @@ unsafe extern "Rust" {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
-const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
-pub type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
-
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
 type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
 
@@ -82,7 +79,7 @@ pub struct MiniEventLoop {
     // Opaque ctx assigned externally; only read/cleared here.
     pub(crate) after_event_loop_callback_ctx: Option<NonNull<c_void>>,
     pub(crate) after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
+    pub pipe_read_scratch: Box<bun_io::PipeReadScratch>,
 }
 
 thread_local! {
@@ -215,14 +212,6 @@ impl MiniEventLoop {
         self.env
     }
 
-    pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
-        // `boxed_zeroed` avoids the 256 KiB stack temporary `Box::new([0u8; N])`
-        // would create in debug builds.
-        &mut self
-            .pipe_read_buffer
-            .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)[..]
-    }
-
     pub fn on_after_event_loop(&mut self) {
         if let Some(cb) = self.after_event_loop_callback {
             let ctx = self.after_event_loop_callback_ctx;
@@ -277,7 +266,7 @@ impl MiniEventLoop {
             top_level_dir: Box::default(),
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
-            pipe_read_buffer: None,
+            pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
         }
     }
 
@@ -438,7 +427,7 @@ bun_io::link_impl_EventLoopCtx! {
             (*this).after_event_loop_callback = cb;
             (*this).after_event_loop_callback_ctx = ctx;
         },
-        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
+        pipe_read_scratch() => &raw const *(*this).pipe_read_scratch,
     }
 }
 

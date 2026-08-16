@@ -17,6 +17,7 @@
 
 #include "helpers.h"
 #include <JavaScriptCore/FrameTracers.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSCellInlines.h>
 #include <wtf/text/ExternalStringImpl.h>
@@ -106,15 +107,37 @@ using namespace Zig;
         NAPI_CHECK_ARG(_env, _env);        \
     } while (0)
 
-// Like NAPI_PREAMBLE but for pure value constructors/accessors, which Node lets an addon call while
-// an exception is pending (CHECK_ENV_NOT_IN_GC only) — node-addon-api relies on that to build the
-// Error it wraps a failed call in. Any exception already on the VM (a napi_throw*, or a termination
-// request that materialised in an earlier call while a worker is being stopped) is stashed for the
-// duration and restored on return; the throw scope still catches what the body itself raises.
-#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                       \
-    NAPI_LOG_CURRENT_FUNCTION;                                                     \
-    NAPI_CHECK_ARG(_env, _env);                                                    \
-    JSC::SuspendExceptionScope napi_preamble_suspended_exception__ { _env->vm() }; \
+// What the value constructors/accessors Node gates with CHECK_ENV only run under (NAPI_PREAMBLE_NO_PENDING_CHECK
+// here, `ungated!` in napi_body.rs): callable with an exception pending (stashed for the call; only then, since the
+// restore is unconditional) and never where a worker.terminate() / node:vm timeout is delivered (DeferTraps: the
+// next exception check after the call delivers it, as in Node). No JS or addon code may run under it.
+struct NapiUngatedScope {
+    explicit NapiUngatedScope(JSC::VM& vm)
+        : deferTraps(vm)
+    {
+        if (vm.exceptionForInspection()) [[unlikely]]
+            suspended.emplace(vm);
+    }
+    std::optional<JSC::SuspendExceptionScope> suspended;
+    JSC::DeferTraps deferTraps;
+};
+
+// Constructed in place in storage owned by the Rust caller (napi_body.rs `UngatedScope`).
+static_assert(sizeof(NapiUngatedScope) <= 80 && alignof(NapiUngatedScope) <= 8, "napi_body.rs UngatedScope storage is 80 bytes, 8-aligned");
+extern "C" void NapiUngatedScope__construct(void* storage, napi_env env)
+{
+    ASSERT(reinterpret_cast<uintptr_t>(storage) % alignof(NapiUngatedScope) == 0);
+    new (storage) NapiUngatedScope(env->vm());
+}
+extern "C" void NapiUngatedScope__destruct(void* storage)
+{
+    static_cast<NapiUngatedScope*>(storage)->~NapiUngatedScope();
+}
+
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                 \
+    NAPI_LOG_CURRENT_FUNCTION;                               \
+    NAPI_CHECK_ARG(_env, _env);                              \
+    NapiUngatedScope napi_preamble_ungated__ { _env->vm() }; \
     auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm());
 
 // Return an error code if arg is null. Only use for input validation.
@@ -1444,23 +1467,17 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::TypeError, result);
 }
 
-extern "C" JS_EXPORT napi_status
-node_api_create_external_string_latin1(napi_env env,
-    char* str,
-    size_t length,
-    napi_finalize finalize_callback,
-    void* finalize_hint,
-    napi_value* result,
-    bool* copied)
+// On `disposeNow` the caller runs the addon's finalizer, which must not run under this function's preamble.
+template<typename ExternalChar, typename Char>
+static napi_status createExternalString(napi_env env, Char* str, size_t length, napi_finalize finalize_callback, void* finalize_hint, napi_value* result, bool* copied, bool& disposeNow)
 {
-    // https://nodejs.org/api/n-api.html#node_api_create_external_string_latin1
     NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     // Node's CHECK_NEW_STRING_ARGS: str may be null when length is 0.
     NAPI_RETURN_EARLY_IF_FALSE(env, length == 0 || str != nullptr, napi_invalid_arg);
     NAPI_CHECK_ARG(env, result);
     NAPI_RETURN_EARLY_IF_FALSE(env, length == NAPI_AUTO_LENGTH || length <= INT_MAX, napi_invalid_arg);
 
-    length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
+    length = length == NAPI_AUTO_LENGTH ? std::char_traits<Char>::length(str) : length;
     Zig::GlobalObject* globalObject = toJS(env);
 
     if (copied) {
@@ -1471,14 +1488,12 @@ node_api_create_external_string_latin1(napi_env env,
     // returning the empty string and disposing the caller's buffer immediately.
     if (length == 0) {
         *result = toNapi(JSC::jsEmptyString(JSC::getVM(globalObject)), globalObject);
-        env->doFinalizer(finalize_callback, str, finalize_hint);
-        // Ownership transferred; return ok even if doFinalizer promoted a
-        // pre-existing napi_throw to the VM, so the caller doesn't double-free.
-        return napi_set_last_error(env, napi_ok);
+        disposeNow = true;
+        NAPI_RETURN_SUCCESS(env);
     }
 
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        NAPI_LOG("latin1 string finalizer");
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const ExternalChar*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned) {
+        NAPI_LOG("external string finalizer");
         env->doFinalizer(finalize_callback, str, hint);
     });
 
@@ -1491,6 +1506,26 @@ node_api_create_external_string_latin1(napi_env env,
 }
 
 extern "C" JS_EXPORT napi_status
+node_api_create_external_string_latin1(napi_env env,
+    char* str,
+    size_t length,
+    napi_finalize finalize_callback,
+    void* finalize_hint,
+    napi_value* result,
+    bool* copied)
+{
+    // https://nodejs.org/api/n-api.html#node_api_create_external_string_latin1
+    bool disposeNow = false;
+    napi_status status = createExternalString<Latin1Character>(env, str, length, finalize_callback, finalize_hint, result, copied, disposeNow);
+    if (disposeNow) {
+        env->doFinalizer(finalize_callback, str, finalize_hint);
+        // napi_ok even if the finalizer threw: the buffer is consumed either way.
+        return napi_set_last_error(env, napi_ok);
+    }
+    return status;
+}
+
+extern "C" JS_EXPORT napi_status
 node_api_create_external_string_utf16(napi_env env,
     char16_t* str,
     size_t length,
@@ -1500,40 +1535,13 @@ node_api_create_external_string_utf16(napi_env env,
     bool* copied)
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_utf16
-    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
-    // Node's CHECK_NEW_STRING_ARGS: str may be null when length is 0.
-    NAPI_RETURN_EARLY_IF_FALSE(env, length == 0 || str != nullptr, napi_invalid_arg);
-    NAPI_CHECK_ARG(env, result);
-    NAPI_RETURN_EARLY_IF_FALSE(env, length == NAPI_AUTO_LENGTH || length <= INT_MAX, napi_invalid_arg);
-
-    length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
-    Zig::GlobalObject* globalObject = toJS(env);
-
-    if (copied) {
-        *copied = false;
-    }
-
-    // WTF::ExternalStringImpl does not allow zero-length strings; match Node.js/V8 by
-    // returning the empty string and disposing the caller's buffer immediately.
-    if (length == 0) {
-        *result = toNapi(JSC::jsEmptyString(JSC::getVM(globalObject)), globalObject);
+    bool disposeNow = false;
+    napi_status status = createExternalString<char16_t>(env, str, length, finalize_callback, finalize_hint, result, copied, disposeNow);
+    if (disposeNow) {
         env->doFinalizer(finalize_callback, str, finalize_hint);
-        // Ownership transferred; return ok even if doFinalizer promoted a
-        // pre-existing napi_throw to the VM, so the caller doesn't double-free.
         return napi_set_last_error(env, napi_ok);
     }
-
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        NAPI_LOG("utf16 string finalizer");
-        env->doFinalizer(finalize_callback, str, hint);
-    });
-
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTF::move(impl)));
-    ensureStillAliveHere(out);
-    *result = toNapi(out, globalObject);
-    ensureStillAliveHere(out);
-
-    NAPI_RETURN_SUCCESS(env);
+    return status;
 }
 
 extern "C" JS_EXPORT napi_status node_api_create_property_key_latin1(napi_env env, const char* str, size_t length, napi_value* result)
@@ -2891,9 +2899,8 @@ extern "C" napi_status napi_get_value_bigint_int64(napi_env env, napi_value valu
     JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
-    // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigInt64(toJS(env));
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
 
     JSBigInt* bigint = jsValue.asHeapBigInt();
     auto length = bigint->length();
@@ -2925,8 +2932,6 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     JSValue jsValue = toJS(value);
     NAPI_RETURN_EARLY_IF_FALSE(env, jsValue.isHeapBigInt(), napi_bigint_expected);
 
-    // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
-    // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
     NAPI_RETURN_IF_VM_EXCEPTION(env);
 

@@ -837,29 +837,27 @@ impl<'a> TablePrinter<'a> {
         row: &CollectedRow,
         cell_text: &[u8],
     ) {
-        writer.write_all("│".as_bytes()).ok();
+        let _ = writer.write_all("│".as_bytes());
         {
             let needed = columns[0].width.saturating_sub(row.key.width());
 
             // Right-align the number column
-            writer
-                .splat_byte_all(b' ', (needed + PADDING) as usize)
-                .ok();
+            let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
             match &row.key {
                 RowKey::Str { text, .. } => {
-                    writer.write_all(text.slice()).ok();
+                    let _ = writer.write_all(text.slice());
                 }
                 RowKey::Num(value) => {
-                    write!(writer, "{value}").ok();
+                    let _ = write!(writer, "{value}");
                 }
             }
-            writer.splat_byte_all(b' ', PADDING as usize).ok();
+            let _ = writer.splat_byte_all(b' ', PADDING as usize);
         }
 
         for col_idx in 1..columns.len() {
             let col = &columns[col_idx];
 
-            writer.write_all("│".as_bytes()).ok();
+            let _ = writer.write_all("│".as_bytes());
 
             let cell = if col_idx == self.values_col_idx {
                 row.values_cell
@@ -869,21 +867,17 @@ impl<'a> TablePrinter<'a> {
 
             match cell {
                 None => {
-                    writer
-                        .splat_byte_all(b' ', (col.width + PADDING * 2) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', (col.width + PADDING * 2) as usize);
                 }
                 Some(cell) => {
                     let needed = col.width.saturating_sub(cell.width);
-                    writer.splat_byte_all(b' ', PADDING as usize).ok();
-                    writer.write_all(cell.text(cell_text)).ok();
-                    writer
-                        .splat_byte_all(b' ', (needed + PADDING) as usize)
-                        .ok();
+                    let _ = writer.splat_byte_all(b' ', PADDING as usize);
+                    let _ = writer.write_all(cell.text(cell_text));
+                    let _ = writer.splat_byte_all(b' ', (needed + PADDING) as usize);
                 }
             }
         }
-        writer.write_all("│\n".as_bytes()).ok();
+        let _ = writer.write_all("│\n".as_bytes());
     }
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
@@ -1027,51 +1021,49 @@ impl<'a> TablePrinter<'a> {
                 );
             }
 
-            writer.write_all("┌".as_bytes()).ok();
+            let _ = writer.write_all("┌".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┬".as_bytes()).ok();
+                    let _ = writer.write_all("┬".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
 
-            writer.write_all("┐\n│".as_bytes()).ok();
+            let _ = writer.write_all("┐\n│".as_bytes());
 
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("│".as_bytes()).ok();
+                    let _ = writer.write_all("│".as_bytes());
                 }
                 let len = col.name.visible_width_exclude_ansi_colors(false);
                 let needed = (col.width as usize).saturating_sub(len);
-                writer.splat_byte_all(b' ', 1).ok();
+                let _ = writer.splat_byte_all(b' ', 1);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r><b>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r><b>", true).as_bytes());
                 }
-                write!(writer, "{}", col.name).ok();
+                let _ = write!(writer, "{}", col.name);
                 if ENABLE_ANSI_COLORS {
-                    writer.write_all(pfmt!("<r>", true).as_bytes()).ok();
+                    let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
                 }
-                writer.splat_byte_all(b' ', needed + PADDING as usize).ok();
+                let _ = writer.splat_byte_all(b' ', needed + PADDING as usize);
             }
 
-            writer.write_all("│\n├".as_bytes()).ok();
+            let _ = writer.write_all("│\n├".as_bytes());
             for (i, col) in columns.iter().enumerate() {
                 if i > 0 {
-                    writer.write_all("┼".as_bytes()).ok();
+                    let _ = writer.write_all("┼".as_bytes());
                 }
-                Self::write_string_n_times(
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (col.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┤\n".as_bytes()).ok();
+            let _ = writer.write_all("┤\n".as_bytes());
         }
 
         // render pass: replay each row's pre-formatted cell bytes
@@ -1081,23 +1073,21 @@ impl<'a> TablePrinter<'a> {
 
         // print the table bottom border
         {
-            writer.write_all("└".as_bytes()).ok();
-            Self::write_string_n_times(
+            let _ = writer.write_all("└".as_bytes());
+            let _ = Self::write_string_n_times(
                 writer,
                 "─".as_bytes(),
                 (columns[0].width + PADDING * 2) as usize,
-            )
-            .ok();
+            );
             for column in columns[1..].iter() {
-                writer.write_all("┴".as_bytes()).ok();
-                Self::write_string_n_times(
+                let _ = writer.write_all("┴".as_bytes());
+                let _ = Self::write_string_n_times(
                     writer,
                     "─".as_bytes(),
                     (column.width + PADDING * 2) as usize,
-                )
-                .ok();
+                );
             }
-            writer.write_all("┘\n".as_bytes()).ok();
+            let _ = writer.write_all("┘\n".as_bytes());
         }
 
         Ok(())

@@ -1205,21 +1205,38 @@ impl Interpreter {
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
-                    let called = buffers.and_then(|(buffered_stdout, buffered_stderr)| {
-                        resolve
-                            .call(
-                                global_this,
-                                JSValue::UNDEFINED,
-                                &[
-                                    JSValue::js_number_from_int32(i32::from(exit_code)),
-                                    buffered_stdout,
-                                    buffered_stderr,
-                                ],
-                            )
-                            .map(|_| ())
-                    });
-                    if let Err(err) = called {
-                        global_this.report_active_exception_as_unhandled(err);
+                    // The shell state machine (`Yield`) has no exception channel,
+                    // so the promise is settled by a top-level call of its own:
+                    // what it throws is reported there, and the interpreter
+                    // finishes. If the output buffers could not be built
+                    // (allocation failure), the promise is rejected with that
+                    // instead; a terminating VM settles nothing.
+                    let event_loop = global_this.bun_vm().event_loop_mut();
+                    match buffers {
+                        Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
+                            resolve,
+                            global_this,
+                            JSValue::UNDEFINED,
+                            &[
+                                JSValue::js_number_from_int32(i32::from(exit_code)),
+                                buffered_stdout,
+                                buffered_stderr,
+                            ],
+                        ),
+                        Err(err) if !global_this.has_pending_termination_exception() => {
+                            let error = global_this.take_exception(err);
+                            if let Some(reject) =
+                                JSShellInterpreter::reject_get_cached(this_jsvalue)
+                            {
+                                event_loop.run_callback(
+                                    reject,
+                                    global_this,
+                                    JSValue::UNDEFINED,
+                                    &[error],
+                                );
+                            }
+                        }
+                        Err(_) => {}
                     }
                     JSShellInterpreter::resolve_set_cached(
                         this_jsvalue,
@@ -1525,7 +1542,7 @@ impl Interpreter {
                 }
 
                 if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
+                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
                     // to a live `*WebWorker` for the worker's lifetime.
                     let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
                     let argv = worker.argv();
@@ -2317,7 +2334,6 @@ pub enum ParseFlagResult {
     Done,
     IllegalOption(*const [u8]),
     Unsupported(*const [u8]),
-    ShowUsage,
 }
 
 /// Returns just `name` and lets the caller's `fmt_error_arena` add the
@@ -2352,7 +2368,6 @@ pub(crate) fn parse_flags<'a, O: FlagParser>(
             ParseFlagResult::ContinueParsing => {}
             ParseFlagResult::IllegalOption(s) => return Err(ParseError::IllegalOption(s)),
             ParseFlagResult::Unsupported(s) => return Err(ParseError::Unsupported(s)),
-            ParseFlagResult::ShowUsage => return Err(ParseError::ShowUsage),
         }
         idx += 1;
     }
@@ -2592,8 +2607,11 @@ pub struct ShellTask {
     /// no-op`).
     pub task: WorkPoolTask,
     pub(crate) event_loop: EventLoopHandle,
-    /// How the pool thread bounces the task back to its owning loop.
-    pub(crate) poster: bun_jsc::ConcurrentPoster,
+    /// How the pool thread bounces the task back to its owning loop; held only
+    /// while the task is out on the pool (`arm` until `on_finish`). For a JS
+    /// loop this is the ticket its VM waits for: the context lives in
+    /// interpreter state a JS wrapper may own.
+    pub(crate) poster: Option<bun_jsc::ConcurrentPoster>,
     pub(crate) keep_alive: bun_io::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
     /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
@@ -2616,13 +2634,19 @@ impl ShellTask {
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.
+    #[track_caller]
     pub(crate) fn new_child(parent: &ShellTask) -> Self {
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: shell_task_unset_callback,
             },
-            poster: parent.poster.clone(),
+            // Spelled out so `#[track_caller]` names this site, not `Option::clone`.
+            #[allow(clippy::manual_map)]
+            poster: match &parent.poster {
+                Some(p) => Some(p.clone()),
+                None => None,
+            },
             event_loop: parent.event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
@@ -2630,7 +2654,6 @@ impl ShellTask {
         }
     }
 
-    /// JS thread (the interpreter's): derives the poster for `event_loop`.
     pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
         ShellTask {
             task: WorkPoolTask {
@@ -2639,7 +2662,7 @@ impl ShellTask {
                 // fires if a caller forgets the `<C>` (debug-asserted there).
                 callback: shell_task_unset_callback,
             },
-            poster: bun_jsc::ConcurrentPoster::from_event_loop_handle(&event_loop),
+            poster: None,
             event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
@@ -2679,11 +2702,20 @@ impl ShellTask {
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
             (*this).task.callback = shell_task_trampoline::<C>;
-            // The context lives in interpreter state a JS wrapper may own:
-            // counted until `on_finish`, so that VM waits for it (see
-            // `VmHandle::embedded_work_scheduled`).
-            (*this).poster.embedded_work_scheduled();
+            (*this).arm();
             WorkPool::schedule(&raw mut (*this).task);
+        }
+    }
+
+    /// About to leave the owning thread: take the poster (for a JS loop, a
+    /// ticket on its VM) unless a pool-thread parent already handed one down
+    /// (`new_child`). Owning thread otherwise.
+    #[track_caller]
+    pub(crate) fn arm(&mut self) {
+        if self.poster.is_none() {
+            self.poster = Some(bun_jsc::ConcurrentPoster::from_event_loop_handle(
+                &self.event_loop,
+            ));
         }
     }
 
@@ -2707,17 +2739,16 @@ impl ShellTask {
         // this thread until the enqueue below.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            let poster = (*this).poster.clone();
+            // Moved out: the owning thread may free `*this` once it is queued.
+            let poster = (*this)
+                .poster
+                .take()
+                .expect("shell task on the pool is armed");
             match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
                     ct.from(ctx, AutoDeinit::ManualDeinit);
-                    // Counted work: the VM has not closed its handle.
-                    let bun_jsc::vm_handle::Posted::Queued =
-                        poster.post_js(core::ptr::NonNull::from(ct))
-                    else {
-                        unreachable!("VM handle closed with shell pool work outstanding");
-                    };
+                    poster.post_js(core::ptr::NonNull::from(ct));
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.
@@ -2725,9 +2756,7 @@ impl ShellTask {
                     poster.post_mini(core::ptr::NonNull::new(at).expect("intrusive task"));
                 }
             }
-            // The pool side is done with this context (`this` may already be
-            // freed by the main thread; the poster is ours).
-            poster.embedded_work_finished();
+            drop(poster);
         }
     }
 

@@ -11,7 +11,7 @@ The result: warm installs are roughly **7× faster** (one symlink per package in
 
 ## Enabling
 
-The global virtual store is **off by default**. It only applies to the [isolated linker](/pm/isolated-installs); it is not used by the hoisted linker.
+The global virtual store is **off by default**. It only applies to the [isolated linker](/pm/isolated-installs); the hoisted linker does not use it.
 
 To enable it for a project:
 
@@ -31,7 +31,7 @@ To explicitly opt out (the default), set `globalStore = false` or `BUN_INSTALL_G
 
 ## Why it's fast
 
-The previous isolated linker called `clonefileat()` (macOS) or `link()`/`copyfile()` (other platforms) for every package on every install, even when the package cache was warm and `node_modules` was the only thing missing. Profiling a warm install of a 1,400-package fixture on macOS showed the main thread spending **95.4 % of its time inside `clonefileat`**:
+Without the global store, the isolated linker calls `clonefileat()` (macOS) or `link()`/`copyfile()` (other platforms) for every package on every install, even when the package cache is warm and `node_modules` is the only thing missing. Profiling a warm install of a 1,400-package fixture on macOS showed the main thread spending **95.4 % of its time inside `clonefileat`**:
 
 ```
 Sort by top of stack (bun install --linker isolated, warm cache):
@@ -40,13 +40,13 @@ Sort by top of stack (bun install --linker isolated, warm cache):
     __read_nocancel     10
 ```
 
-`clonefileat` on APFS holds a volume-wide kernel lock, so spreading the work across more threads barely helps — eight threads only improved a 2,830-directory clone from 959 ms to 743 ms. The fix is to not call it at all on the warm path.
+`clonefileat` on APFS holds a volume-wide kernel lock, so spreading the work across more threads barely helps. Eight threads only improved a 2,830-directory clone from 959 ms to 743 ms. The fix is to not call it at all on the warm path.
 
 With the global store, the warm path is one `access()` (does the global entry exist?) plus one `symlink()` (point the project at it) per package.
 
 ## Benchmarks
 
-Warm CI install — lockfile present, package cache warm, `node_modules` deleted between runs — on a 1,400-package React/webpack/Babel/jest fixture, Apple Silicon macOS, `hyperfine --warmup 3 --runs 10`:
+Warm CI install on a 1,400-package React/webpack/Babel/jest fixture, Apple Silicon macOS, `hyperfine --warmup 3 --runs 10`. The lockfile is present, the package cache is warm, and `node_modules` is deleted between runs:
 
 |                                          | wall time    | system time | `clonefileat` | total syscalls |
 | ---------------------------------------- | ------------ | ----------- | ------------- | -------------- |
@@ -54,7 +54,7 @@ Warm CI install — lockfile present, package cache warm, `node_modules` deleted
 | `--linker isolated`, `globalStore=false` | 840.9 ms     | 1,256 ms    | 1,387         | —              |
 | **`--linker isolated`, global store**    | **124.8 ms** | **94 ms**   | **0**         | **4,957**      |
 
-**6.6× faster** than the same linker without the global store, **6.6× faster** than hoisted.
+**6.7× faster** than the same linker without the global store, **6.6× faster** than hoisted.
 
 ### Disk
 
@@ -104,7 +104,7 @@ project/node_modules/
 └── react -> .bun/react@18.3.1/node_modules/react
 ```
 
-The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path and tarball integrity, plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory; a project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. Packages that participate in a dependency cycle share one hash computed over the whole strongly-connected component, so the key is independent of which member a given project's dependency graph happened to reach first.
+The 16-hex `entry_hash` suffix encodes the entry's **resolved dependency closure**: the package's own store path and tarball integrity, plus the hash of every dependency it links to. Two projects that resolve `react@18.3.1` to the same set of transitive versions share one global directory. A project that resolves a transitive dependency to a different version gets a separate global entry whose dep symlinks point at the right siblings. Packages that participate in a dependency cycle share one hash computed over the whole strongly-connected component. The key is therefore independent of which member a given project's dependency graph happened to reach first.
 
 ## What stays project-local
 
@@ -114,11 +114,11 @@ An entry only lives in the global store when it can be safely shared. Entries fa
 - the package is listed in **`trustedDependencies`** (or trusted via `bun add --trust`) — its lifecycle script may mutate the install directory, and a script running through the project symlink would mutate the shared copy;
 - the package, or **any** dependency it links to, is a `workspace:`, `file:`, or `link:` dependency — those resolve to project-local paths that other projects can't see.
 
-Ineligibility propagates: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it. An entry that loses eligibility between installs (newly patched, newly trusted) is detached from the global store and rebuilt project-locally on the next install; the shared entry is left untouched.
+Ineligibility propagates: if `your-app` depends on `internal-utils` which is a workspace package, `internal-utils` is project-local, and so is every entry that links to it. When an entry loses eligibility between installs (newly patched, newly trusted), Bun detaches it from the global store and rebuilds it project-locally on the next install. The shared entry stays untouched.
 
 ## Peer dependencies
 
-Resolved peer dependencies — required and optional — are folded into each global entry as dep symlinks and contribute to its hash. Bun synthesizes an implicit `"*"` optional peer for packages that list a name only in `peerDependenciesMeta` without a matching `peerDependencies` entry (matching pnpm and yarn), so a package like `webpack` that declares `webpack-cli` only in `peerDependenciesMeta` still gets a `webpack-cli` symlink in its global entry when one is installed in the project.
+Bun folds resolved peer dependencies (required and optional) into each global entry as dep symlinks. These peer dependencies contribute to the entry's hash. Bun synthesizes an implicit `"*"` optional peer for packages that list a name only in `peerDependenciesMeta` without a matching `peerDependencies` entry (matching pnpm and yarn). As a result, a package like `webpack` that declares `webpack-cli` only in `peerDependenciesMeta` still gets a `webpack-cli` symlink in its global entry when one is installed in the project.
 
 ## Tradeoffs
 
@@ -136,11 +136,11 @@ Tools that scan `node_modules` without following symlinks, or that compare file 
 
 ### Disk usage
 
-Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. Across many projects that's a large net win — one copy on disk instead of one per checkout — but the store does grow over time as new versions and new peer-dependency combinations land. Run `bun pm cache rm` to clear the cache including the global store; the next install repopulates only what that project needs.
+Each unique `(package, version, resolved-dependency-set)` triple gets one directory in `<cache>/links/`. Across many projects that's a large net win: one copy on disk instead of one per checkout. But the store does grow over time as new versions and new peer-dependency combinations land. Run `bun pm cache rm` to clear the cache including the global store; the next install repopulates only what that project needs.
 
 ### Concurrency
 
-Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Each process builds the entire entry — package files, dependency symlinks, bin links — under a private `<entry>.tmp-<random>/` staging directory and renames it into place as the final step. The loser of the rename sees `EEXIST` and discards its identical staging tree; a writer that crashes mid-build leaves only an unreferenced staging directory that the next install ignores. A published entry is therefore always complete; there is no separate completeness sentinel.
+Multiple `bun install` processes (parallel CI jobs, concurrent workspace builds) may race to populate the same global entry. Each process builds the entire entry (package files, dependency symlinks, bin links) under a private `<entry>.tmp-<random>/` staging directory. As the final step, it renames that directory into place. The loser of the rename sees `EEXIST` and discards its identical staging tree. A writer that crashes mid-build leaves only an unreferenced staging directory that the next install ignores. A published entry is therefore always complete; there is no separate completeness sentinel.
 
 ## Related documentation
 

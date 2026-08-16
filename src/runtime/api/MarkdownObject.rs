@@ -31,7 +31,6 @@ fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     match e {
         bun_jsc::JsError::Thrown => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
-        bun_jsc::JsError::Terminated => ParserError::JSTerminated,
     }
 }
 
@@ -48,7 +47,6 @@ fn parser_err_to_js(
         // A renderer callback threw (or the VM is terminating); the exception
         // is already pending on the VM.
         ParserError::JSError => bun_jsc::JsError::Thrown,
-        ParserError::JSTerminated => bun_jsc::JsError::Terminated,
         ParserError::OutOfMemory => global_this.throw_out_of_memory(),
         ParserError::StackOverflow => global_this.throw_stack_overflow(),
         ParserError::InputTooLarge => global_this.throw_range_error(
@@ -193,7 +191,7 @@ pub(crate) fn render_to_ansi(
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
         Ok(Some(r)) => r,
         Ok(None) => {
-            // The parser can only return null via JSError / JSTerminated
+            // The parser can only return null via JSError
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
             return Err(global_this.throw_out_of_memory());

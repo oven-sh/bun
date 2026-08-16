@@ -13,15 +13,18 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
   const decoder = new TextDecoder();
   let output = "";
   return {
-    waitFor: async (needle: string) => {
+    waitFor: async (needle: string, closedMessage?: (output: string) => string) => {
       while (!output.includes(needle)) {
         const { value, done } = await reader.read();
-        if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+        if (done) {
+          throw new Error(closedMessage?.(output) ?? `stream closed, output so far: ${JSON.stringify(output)}`);
+        }
         output += decoder.decode(value, { stream: true });
       }
     },
-    release: () => reader.releaseLock(),
     output: () => output,
+    release: () => reader.releaseLock(),
+    cancel: () => reader.cancel(),
   };
 }
 
@@ -179,21 +182,12 @@ for (const [scenario, fixture] of Object.entries(exitScenarios)) {
     // Drain stderr so a full pipe never blocks the child.
     const stderrText = proc.stderr.text();
 
-    const decoder = new TextDecoder();
-    const reader = proc.stdout.getReader();
-    let out = "";
-    const waitForMark = async (n: number) => {
-      const marker = `MARK:${n}`;
-      while (!out.includes(marker)) {
-        const { done, value } = await reader.read();
-        if (done) {
-          throw new Error(
-            `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
-          );
-        }
-        out += decoder.decode(value, { stream: true });
-      }
-    };
+    const waiter = stdoutWaiter(proc);
+    const waitForMark = (n: number) =>
+      waiter.waitFor(
+        `MARK:${n}`,
+        out => `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
+      );
 
     // First run executes and calls process.exit().
     await waitForMark(0);
@@ -206,11 +200,11 @@ for (const [scenario, fixture] of Object.entries(exitScenarios)) {
     }
 
     // process.exit() stops execution: the statement after it never runs.
-    expect(out).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+    expect(waiter.output()).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
     // The watcher is still running (we reloaded twice after process.exit()).
     expect(proc.exitCode).toBeNull();
 
-    await reader.cancel();
+    await waiter.cancel();
     proc.kill();
     // Every scenario's error is consumed before it becomes unhandled, so
     // nothing (like a rendering of the internal termination exception) may
@@ -242,21 +236,12 @@ test("--watch: process.exit() in a --preload script keeps the watcher alive", as
   });
 
   const stderrText = proc.stderr.text();
-  const decoder = new TextDecoder();
-  const reader = proc.stdout.getReader();
-  let out = "";
-  const waitForMark = async (n: number) => {
-    const marker = `MARK:${n}`;
-    while (!out.includes(marker)) {
-      const { done, value } = await reader.read();
-      if (done) {
-        throw new Error(
-          `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
-        );
-      }
-      out += decoder.decode(value, { stream: true });
-    }
-  };
+  const waiter = stdoutWaiter(proc);
+  const waitForMark = (n: number) =>
+    waiter.waitFor(
+      `MARK:${n}`,
+      out => `watcher exited before reload ${n} (process.exit() killed it). stdout so far: ${JSON.stringify(out)}`,
+    );
 
   await waitForMark(0);
   for (let n = 1; n <= 2; n++) {
@@ -265,10 +250,10 @@ test("--watch: process.exit() in a --preload script keeps the watcher alive", as
   }
 
   // Neither the statement after exit nor the entry point may run.
-  expect(out).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
+  expect(waiter.output()).not.toContain("AFTER_EXIT_SHOULD_NOT_PRINT");
   expect(proc.exitCode).toBeNull();
 
-  await reader.cancel();
+  await waiter.cancel();
   proc.kill();
   expect(await stderrText).toBe("");
 });
@@ -320,19 +305,13 @@ for (const [variant, handler] of [
     });
 
     const stderrText = proc.stderr.text();
-    const reader = proc.stdout.getReader();
-    const decoder = new TextDecoder();
-    let out = "";
-    while (!out.includes("READY")) {
-      const { done, value } = await reader.read();
-      if (done) throw new Error(`watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
-      out += decoder.decode(value, { stream: true });
-    }
+    const waiter = stdoutWaiter(proc);
+    await waiter.waitFor("READY", out => `watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
 
     proc.kill("SIGINT");
     // The handler's exit code is honored and the watcher is gone.
     expect(await proc.exited).toBe(7);
-    await reader.cancel();
+    await waiter.cancel();
     expect(await stderrText).toBe("");
   });
 }
@@ -355,18 +334,12 @@ it.skipIf(isWindows)("--watch: SIGINT after a watch exit ends the parked watcher
   });
 
   const stderrText = proc.stderr.text();
-  const reader = proc.stdout.getReader();
-  const decoder = new TextDecoder();
-  let out = "";
-  while (!out.includes("READY")) {
-    const { done, value } = await reader.read();
-    if (done) throw new Error(`watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
-    out += decoder.decode(value, { stream: true });
-  }
+  const waiter = stdoutWaiter(proc);
+  await waiter.waitFor("READY", out => `watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
 
   proc.kill("SIGINT");
   expect(await proc.exited).toBe(3);
-  await reader.cancel();
+  await waiter.cancel();
   expect(await stderrText).toBe("");
 });
 

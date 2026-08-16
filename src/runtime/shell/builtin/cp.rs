@@ -625,9 +625,6 @@ impl ShellCpTask {
         //   folder -> folder
         // We need to check dest to see what it is; if it doesn't exist we
         // need to create it.
-        //
-        // Errors about an operand name it as the user wrote it (like the other
-        // builtins), not the resolved path the check ran on.
         let src_is_dir = match Self::is_dir(src) {
             Ok(x) => x,
             Err(e) => return Some(ShellErr::new_sys(&e.with_path(&self.src))),

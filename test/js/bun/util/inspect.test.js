@@ -928,3 +928,75 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("property lookup throws while formatting", () => {
+  async function run(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("skips a lazy property whose initializer throws and keeps walking", async () => {
+    // Bun.$ and Bun.sql are built lazily on first access by running JS that
+    // uses Symbol, so clobbering it makes those initializers throw. The rest
+    // of the properties must still be printed.
+    const fixture = `
+      const keys = s => s.split("\\n").filter(l => /^  [^ ]+: /.test(l)).map(l => l.slice(2, l.indexOf(":")));
+      const RealSymbol = Symbol;
+      globalThis.Symbol = NaN;
+      const broken = keys(Bun.inspect(Bun));
+      let sqlError;
+      try { Bun.sql; } catch (e) { sqlError = e; }
+      globalThis.Symbol = RealSymbol;
+      const healthy = keys(Bun.inspect(Bun));
+      console.log("dropped $:", healthy.includes("$") && !broken.includes("$"));
+      console.log("kept Archive:", broken.includes("Archive"));
+      console.log("sql getter threw:", sqlError instanceof TypeError);
+    `;
+    expect(await run(fixture)).toEqual({
+      stdout: "dropped $: true\nkept Archive: true\nsql getter threw: true\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("skips an inherited property whose Proxy get trap throws", async () => {
+    const fixture = `
+      const proto = new Proxy({ a: 1, b: 2 }, {
+        get(target, key, receiver) {
+          if (key === "a") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 1;
+      console.log(Bun.inspect(obj));
+    `;
+    expect(await run(fixture)).toEqual({
+      stdout: "{\n  own: 1,\n  b: 2,\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("stops walking the prototype chain when a Proxy getPrototypeOf trap throws", async () => {
+    const fixture = `
+      const proto = new Proxy({ a: 1 }, {
+        getPrototypeOf() { throw new Error("getPrototypeOf trap"); },
+      });
+      const obj = Object.create(proto);
+      obj.own = 1;
+      console.log(Bun.inspect(obj));
+    `;
+    expect(await run(fixture)).toEqual({
+      stdout: "{\n  own: 1,\n  a: 1,\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

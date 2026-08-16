@@ -3060,6 +3060,48 @@ pub mod mock {
         Ok(MockResult::Other)
     }
 
+    /// One `mock.results` entry as `toHaveNthReturnedWith` /
+    /// `toHaveLastReturnedWith` see it: whether its return value matched,
+    /// plus the values their failure messages print.
+    pub(crate) struct ReturnCheck {
+        pub(crate) matched: bool,
+        pub(crate) return_value: JSValue,
+        pub(crate) threw: bool,
+        pub(crate) error_value: JSValue,
+    }
+
+    impl ReturnCheck {
+        /// The selected call does not exist.
+        pub(crate) const MISSING: ReturnCheck = ReturnCheck {
+            matched: false,
+            return_value: JSValue::UNDEFINED,
+            threw: false,
+            error_value: JSValue::UNDEFINED,
+        };
+    }
+
+    /// Compare the entry's return value against `expected`, or pull out the
+    /// thrown value for the failure message.
+    pub(crate) fn check_returned_with(
+        global: &JSGlobalObject,
+        result: JSValue,
+        expected: JSValue,
+    ) -> JsResult<ReturnCheck> {
+        let mut check = ReturnCheck::MISSING;
+        match parse_mock_result(global, result)? {
+            MockResult::Return(value) => {
+                check.return_value = value;
+                check.matched = value.jest_deep_equals(expected, global)?;
+            }
+            MockResult::Throw(result) => {
+                check.threw = true;
+                check.error_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
+            }
+            MockResult::Other => {}
+        }
+        Ok(check)
+    }
+
     // ── shared failure epilogues for the `toHave*With` matcher family ──────
     // Each matcher keeps only its index-selection logic and message verbs;
     // the throw shapes below are byte-identical across the family. The

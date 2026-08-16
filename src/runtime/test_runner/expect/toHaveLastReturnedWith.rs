@@ -20,28 +20,20 @@ pub(crate) fn to_have_last_returned_with(
     )?;
 
     let calls_count = u32::try_from(returns.get_length(global_this)?).unwrap();
-    let mut pass = false;
-    let mut last_return_value: JSValue = JSValue::UNDEFINED;
-    let mut last_call_threw = false;
-    let mut last_error_value: JSValue = JSValue::UNDEFINED;
-
-    if calls_count > 0 {
-        let last_result = returns.get_direct_index(global_this, calls_count - 1)?;
-
-        match mock::parse_mock_result(global_this, last_result)? {
-            mock::MockResult::Return(value) => {
-                last_return_value = value;
-                if last_return_value.jest_deep_equals(expected, global_this)? {
-                    pass = true;
-                }
-            }
-            mock::MockResult::Throw(result) => {
-                last_call_threw = true;
-                last_error_value = result.get(global_this, "value")?.unwrap_or(JSValue::UNDEFINED);
-            }
-            mock::MockResult::Other => {}
-        }
-    }
+    let mock::ReturnCheck {
+        matched: pass,
+        return_value: last_return_value,
+        threw: last_call_threw,
+        error_value: last_error_value,
+    } = if calls_count > 0 {
+        mock::check_returned_with(
+            global_this,
+            returns.get_direct_index(global_this, calls_count - 1)?,
+            expected,
+        )?
+    } else {
+        mock::ReturnCheck::MISSING
+    };
 
     if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);

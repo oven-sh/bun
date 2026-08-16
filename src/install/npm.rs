@@ -502,7 +502,7 @@ pub mod registry {
                             // A blank password (`user:`) or blank username (`:pass`) is
                             // a real registry pattern; leave `user` empty for whoami then.
                             if let Some(colon_idx) =
-                                decoded[..count].iter().position(|&b| b == b':')
+                                strings::index_of_char_usize(&decoded[..count], b':')
                             {
                                 if colon_idx > 0 && colon_idx + 1 < count {
                                     output_buf_owned = decoded;

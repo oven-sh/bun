@@ -57,7 +57,14 @@ test("base64 module containing a '.' keeps its named exports", async () => {
   expect(mod.f.m).toBe(1);
 });
 
-test.each(["text/javascript", "text/javascript;charset=utf-8", "application/javascript", "TEXT/JAVASCRIPT", ""])(
+test.each([
+  "text/javascript",
+  "text/javascript;charset=utf-8",
+  "application/javascript",
+  "TEXT/JAVASCRIPT",
+  " text/javascript ",
+  "",
+])(
   "percent-encoded module with a '.' executes for MIME %j",
   async mime => {
     const code = `export const x = Number.parseFloat("1.5");`;
@@ -80,7 +87,7 @@ test.each(["application/json", "Application/JSON"])("%s data URL imports as JSON
 });
 
 // https://github.com/oven-sh/bun/issues/29159
-test.each(["text/javascript", "application/javascript", "Text/JavaScript"])(
+test.each(["text/javascript", "application/javascript", "Text/JavaScript", " text/javascript"])(
   "TypeScript syntax in a %s data URL is a syntax error",
   async mime => {
     const code = `export const a = "a.b";\nexport enum A { A }\n`;

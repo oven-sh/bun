@@ -313,7 +313,7 @@ fn build_dependency_tree(
     let dependencies = pm.lockfile.buffers.dependencies.as_slice();
     let resolutions = pm.lockfile.buffers.resolutions.as_slice();
 
-    for pkg_idx in 0..pkg_names.len() {
+    for pkg_idx in pkg_names.ids() {
         let package_name = pkg_names[pkg_idx].slice(buf);
 
         if pkg_resolution[pkg_idx].tag != ResolutionTag::Npm {
@@ -324,11 +324,11 @@ fn build_dependency_tree(
         let res_slice = pkg_resolutions[pkg_idx].get(resolutions);
 
         for (_, &resolved_pkg_id) in dep_slice.iter().zip(res_slice.iter()) {
-            if resolved_pkg_id.index() >= pkg_names.len() {
+            if !pkg_names.has(resolved_pkg_id) {
                 continue;
             }
 
-            let resolved_name = pkg_names[resolved_pkg_id.index()].slice(buf);
+            let resolved_name = pkg_names[resolved_pkg_id].slice(buf);
 
             // `StringHashMap::get_or_put` always boxes the key on miss.
             let result = dependency_tree.get_or_put(resolved_name)?;
@@ -474,8 +474,8 @@ fn collect_packages_for_audit(
         HashMap::with_capacity(pkg_names.len());
     let mut ver_scratch: Vec<u8> = Vec::new();
 
-    for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions.iter()).enumerate() {
-        if idx == root_id.index() {
+    for ((idx, name), res) in pkg_names.iter_enumerated().zip(pkg_resolutions.iter()) {
+        if idx == root_id {
             continue;
         }
         if res.tag != ResolutionTag::Npm {
@@ -484,7 +484,7 @@ fn collect_packages_for_audit(
 
         if wanted_packages
             .as_ref()
-            .is_some_and(|wanted| !wanted.is_set(idx))
+            .is_some_and(|wanted| !wanted.is_set(idx.index()))
         {
             continue;
         }
@@ -852,7 +852,7 @@ fn find_dependency_paths(
     let pkg_resolutions = packages.items_resolution();
     let pkg_deps = packages.items_dependencies();
 
-    let root_deps = pkg_deps[root_id.index()];
+    let root_deps = pkg_deps[root_id];
     let dep_slice = root_deps.get(dependencies);
 
     for dependency in dep_slice {

@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
+use bun_collections::{ArrayHashMap, ArrayIdentityContextU64, IdSlice};
 // `Expr` here is the T2 `bun_ast::Expr` (re-exported via
 // `crate::bun_json`), not the T4 `bun_ast::Expr`. The sole caller
 // (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
@@ -91,17 +91,17 @@ impl PostinstallOptimizer {
 
     pub(crate) fn get_native_binlink_replacement_package_id(
         resolutions: &[PackageID],
-        metas: &[Meta],
+        metas: &IdSlice<PackageID, Meta>,
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
     ) -> Option<PackageID> {
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency.
         for &resolution in resolutions {
-            if resolution.index() >= metas.len() {
+            if !metas.has(resolution) {
                 continue;
             }
-            let meta: &Meta = &metas[resolution.index()];
+            let meta: &Meta = &metas[resolution];
             if meta.arch == npm::Architecture::ALL || meta.os == npm::OperatingSystem::ALL {
                 continue;
             }
@@ -168,7 +168,7 @@ impl List {
         &self,
         pkg_info: &PkgInfo<'_>,
         resolutions: &[PackageID],
-        metas: &[Meta],
+        metas: &IdSlice<PackageID, Meta>,
         target_cpu: npm::Architecture,
         target_os: npm::OperatingSystem,
     ) -> bool {

@@ -407,7 +407,7 @@ fn print_apply_hint() {
     Output::flush();
 }
 
-fn is_pruned_workspace(manager: &PackageManager, pkg_id: usize) -> bool {
+fn is_pruned_workspace(manager: &PackageManager, pkg_id: PackageID) -> bool {
     let pruned = &manager.summary.pruned_workspaces;
     !pruned.is_empty() && pruned.contains(&manager.lockfile.packages.items_name_hash()[pkg_id])
 }
@@ -418,8 +418,7 @@ fn collect_workspace_names(manager: &PackageManager) -> Vec<Box<[u8]>> {
     let names = lockfile.packages.items_name();
     let pkg_res = lockfile.packages.items_resolution();
     let mut out: Vec<Box<[u8]>> = pkg_res
-        .iter()
-        .enumerate()
+        .iter_enumerated()
         .filter(|(pkg_id, res)| {
             res.tag == ResolutionTag::Workspace && !is_pruned_workspace(manager, *pkg_id)
         })
@@ -556,7 +555,7 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let dep_slices = lockfile.packages.items_dependencies();
-    let is_importer = |pkg_id: usize| {
+    let is_importer = |pkg_id: PackageID| {
         matches!(
             pkg_res[pkg_id].tag,
             ResolutionTag::Root | ResolutionTag::Workspace
@@ -565,7 +564,7 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
 
     let mut selected = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
     for id in ids {
-        if id.index() < pkg_res.len() {
+        if pkg_res.has(id) {
             selected.set(id.index());
         }
     }
@@ -573,24 +572,21 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
     let mut visited = handle_oom(DynamicBitSet::init_empty(pkg_res.len()));
     let mut protected_aliases: Vec<Box<[u8]>> = Vec::new();
     let mut worklist: Vec<PackageID> = Vec::new();
-    for importer in 0..pkg_res.len() {
-        if selected.is_set(importer)
+    for importer in pkg_res.ids() {
+        if selected.is_set(importer.index())
             || !is_importer(importer)
             || is_pruned_workspace(manager, importer)
         {
             continue;
         }
-        visited.set(importer);
-        worklist.push(PackageID::from_index(importer));
+        visited.set(importer.index());
+        worklist.push(importer);
         while let Some(pkg_id) = worklist.pop() {
-            let slice = dep_slices[pkg_id.index()];
-            for dep_id in slice.begin() as usize..slice.end() as usize {
+            let slice = dep_slices[pkg_id];
+            for dep_id in slice.dependency_ids() {
                 let target = resolutions[dep_id];
-                let valid = target != invalid_package_id && target.index() < pkg_res.len();
-                if valid
-                    && is_importer(target.index())
-                    && is_pruned_workspace(manager, target.index())
-                {
+                let valid = pkg_res.has(target);
+                if valid && is_importer(target) && is_pruned_workspace(manager, target) {
                     continue;
                 }
                 protected_aliases.push(deps[dep_id].name.slice(buf).into());
@@ -601,7 +597,7 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
                     continue;
                 }
                 visited.set(target.index());
-                if !is_importer(target.index()) {
+                if !is_importer(target) {
                     worklist.push(target);
                 }
             }
@@ -677,12 +673,12 @@ impl<'a> HoistedTree<'a> {
             paths.extend_from_slice(folder.relative_path.as_bytes());
 
             scratch.clear();
-            scratch.extend(folder.dependencies.iter().map(|&dep_id| {
-                (
-                    deps[dep_id.index()].name.slice(buf),
-                    resolutions[dep_id.index()],
-                )
-            }));
+            scratch.extend(
+                folder
+                    .dependencies
+                    .iter()
+                    .map(|&dep_id| (deps[dep_id].name.slice(buf), resolutions[dep_id])),
+            );
             index_sort::sort_vec_unstable_by(&mut scratch, |a, b| a.cmp(b));
             let start = expected.len();
             for &item in &scratch {
@@ -805,12 +801,7 @@ impl<'a> HoistedTree<'a> {
 
     fn installed(&self, tree_id: tree::Id, alias: &[u8], pkg_id: PackageID) -> Installed {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
-        let Some(res) = self
-            .lockfile
-            .packages
-            .items_resolution()
-            .get(pkg_id.index())
-        else {
+        let Some(res) = self.lockfile.packages.items_resolution().get(pkg_id) else {
             return Installed::Mismatch;
         };
         let Some(folder) = open_tree_folder(self.lockfile, tree_id) else {
@@ -834,7 +825,7 @@ impl<'a> HoistedTree<'a> {
         let Some(package) = descend(&folder, alias) else {
             return Installed::Mismatch;
         };
-        let expected_name = self.lockfile.packages.items_name()[pkg_id.index()].slice(buf);
+        let expected_name = self.lockfile.packages.items_name()[pkg_id].slice(buf);
         let matches = match res.tag {
             ResolutionTag::Npm => {
                 installed_package_json(&package).is_some_and(|(name, version)| {
@@ -945,9 +936,9 @@ fn plan_hoisted(
         };
         let tree_id = tree_idx as tree::Id;
         let owner = tree_owner(lockfile, tree_idx);
-        if owner != invalid_package_id && owner.index() < pkg_res.len() {
+        if owner != invalid_package_id && pkg_res.has(owner) {
             visited.set(owner.index());
-            let tag = pkg_res[owner.index()].tag;
+            let tag = pkg_res[owner].tag;
             if tag != ResolutionTag::Root
                 && tag != ResolutionTag::Workspace
                 && has_bundled_deps(lockfile, owner)
@@ -963,13 +954,11 @@ fn plan_hoisted(
         };
 
         for &(alias, pkg_id) in expected {
-            if pkg_id.index() >= pkg_res.len()
-                || nested_trees.binary_search(&(tree_id, alias)).is_ok()
-            {
+            if !pkg_res.has(pkg_id) || nested_trees.binary_search(&(tree_id, alias)).is_ok() {
                 continue;
             }
             let extracted = matches!(
-                pkg_res[pkg_id.index()].tag,
+                pkg_res[pkg_id].tag,
                 ResolutionTag::Npm
                     | ResolutionTag::LocalTarball
                     | ResolutionTag::RemoteTarball
@@ -1020,13 +1009,12 @@ fn plan_hoisted(
             scan_folder(dir, b"node_modules", false, &keep_workspaces, plan);
         }
     }
-    for pkg_id in 0..pkg_res.len() {
-        let Some(folder_path) = workspace_node_modules(lockfile, PackageID::from_index(pkg_id))
-        else {
+    for pkg_id in pkg_res.ids() {
+        let Some(folder_path) = workspace_node_modules(lockfile, pkg_id) else {
             continue;
         };
-        if visited.is_set(pkg_id)
-            || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id))
+        if visited.is_set(pkg_id.index())
+            || selection.is_some_and(|sel| !sel.selected.is_set(pkg_id.index()))
             || is_pruned_workspace(&*manager, pkg_id)
         {
             continue;
@@ -1053,7 +1041,7 @@ fn plan_hoisted(
 fn tree_owner(lockfile: &Lockfile, tree_idx: usize) -> PackageID {
     match lockfile.buffers.trees.as_slice()[tree_idx].dependency_id {
         tree::ROOT_DEP_ID => PackageID::ROOT,
-        dep_id => lockfile.buffers.resolutions.as_slice()[dep_id.index()],
+        dep_id => lockfile.buffers.resolutions.as_slice()[dep_id],
     }
 }
 
@@ -1065,9 +1053,7 @@ fn tree_importers(lockfile: &Lockfile) -> Vec<PackageID> {
         let owner = tree_owner(lockfile, tree_idx);
         let importer = if tree_idx == 0 {
             PackageID::ROOT
-        } else if owner.index() < pkg_res.len()
-            && pkg_res[owner.index()].tag == ResolutionTag::Workspace
-        {
+        } else if pkg_res.has(owner) && pkg_res[owner].tag == ResolutionTag::Workspace {
             owner
         } else {
             importers
@@ -1081,12 +1067,13 @@ fn tree_importers(lockfile: &Lockfile) -> Vec<PackageID> {
 }
 
 fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
-    if pkg_id.index() >= lockfile.packages.len() {
-        return false;
-    }
     let deps = lockfile.buffers.dependencies.as_slice();
-    let slice = lockfile.packages.items_dependencies()[pkg_id.index()];
-    (slice.begin() as usize..slice.end() as usize).any(|i| deps[i].behavior.is_bundled())
+    let Some(slice) = lockfile.packages.items_dependencies().get(pkg_id) else {
+        return false;
+    };
+    slice
+        .dependency_ids()
+        .any(|i| deps[i].behavior.is_bundled())
 }
 
 // Hoisted post-install pass for dedupe / audit fix / update (install_with_manager.rs).
@@ -1191,15 +1178,15 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
     let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
     let buf = after.buffers.string_bytes.as_slice();
     let pkg_names = after.packages.items_name();
-    for pkg_id in 0..after.packages.len() {
-        let Some(folder_path) = workspace_node_modules(after, PackageID::from_index(pkg_id)) else {
+    for pkg_id in pkg_names.ids() {
+        let Some(folder_path) = workspace_node_modules(after, pkg_id) else {
             continue;
         };
         if is_pruned_workspace(manager, pkg_id)
             || selected_after
                 .as_ref()
-                .is_some_and(|sel| sel.binary_search(&PackageID::from_index(pkg_id)).is_err())
-            || has_bundled_deps(after, PackageID::from_index(pkg_id))
+                .is_some_and(|sel| sel.binary_search(&pkg_id).is_err())
+            || has_bundled_deps(after, pkg_id)
         {
             continue;
         }
@@ -1285,7 +1272,7 @@ fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
 }
 
 fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<[u8]>> {
-    let res = lockfile.packages.items_resolution().get(pkg_id.index())?;
+    let res = lockfile.packages.items_resolution().get(pkg_id)?;
     if res.tag != ResolutionTag::Workspace {
         return None;
     }
@@ -1427,15 +1414,15 @@ fn scan_folder(
     folder_idx
 }
 
-fn importer_roots(manager: &PackageManager, keep: &dyn Fn(usize) -> bool) -> Vec<PackageID> {
+fn importer_roots(manager: &PackageManager, keep: &dyn Fn(PackageID) -> bool) -> Vec<PackageID> {
     let pkg_res = manager.lockfile.packages.items_resolution();
-    (0..pkg_res.len())
+    pkg_res
+        .ids()
         .filter(|&id| {
-            (id == 0 || pkg_res[id].tag == ResolutionTag::Workspace)
+            (id == PackageID::ROOT || pkg_res[id].tag == ResolutionTag::Workspace)
                 && !is_pruned_workspace(manager, id)
                 && keep(id)
         })
-        .map(PackageID::from_index)
         .collect()
 }
 
@@ -1450,7 +1437,7 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
         reachable::packages_from(lockfile, resolutions, &roots, false, options)
     };
     if let Some(sel) = selection {
-        let unselected = importer_roots(manager, &|id| !sel.selected.is_set(id));
+        let unselected = importer_roots(manager, &|id| !sel.selected.is_set(id.index()));
         if !unselected.is_empty() {
             let full = reachable::Options {
                 dev: true,
@@ -1511,8 +1498,8 @@ fn push_store_entry_names(
     names.reserve(store.entries.len());
     let mut name: Vec<u8> = Vec::new();
     for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
-        let pkg_id = node_pkg_ids[node_id.get() as usize].index();
-        if pkg_res[pkg_id].tag == ResolutionTag::Workspace || !wanted.is_set(pkg_id) {
+        let pkg_id = node_pkg_ids[node_id.get() as usize];
+        if pkg_res[pkg_id].tag == ResolutionTag::Workspace || !wanted.is_set(pkg_id.index()) {
             continue;
         }
         name.clear();
@@ -1554,7 +1541,7 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
-    let slice = lockfile.packages.items_dependencies()[pkg_id.index()];
+    let slice = lockfile.packages.items_dependencies()[pkg_id];
     let mut direct: Vec<Box<[u8]>> = Vec::new();
     for dep_id in slice.dependency_ids() {
         if is_filtered_dependency_or_workspace(
@@ -1568,11 +1555,11 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
         ) {
             continue;
         }
-        let target = resolutions[dep_id.index()];
+        let target = resolutions[dep_id];
         if target == invalid_package_id || target.index() >= lockfile.packages.len() {
             continue;
         }
-        direct.push(deps[dep_id.index()].name.slice(buf).into());
+        direct.push(deps[dep_id].name.slice(buf).into());
     }
     sort_names(&mut direct);
     direct.dedup();
@@ -1619,10 +1606,10 @@ fn plan_isolated(
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
-    for pkg_id in 0..lockfile.packages.len() {
+    for pkg_id in pkg_res.ids() {
         let res = &pkg_res[pkg_id];
         let folder_path: Box<[u8]> = match res.tag {
-            ResolutionTag::Root if pkg_id == 0 => b"node_modules".as_slice().into(),
+            ResolutionTag::Root if pkg_id == PackageID::ROOT => b"node_modules".as_slice().into(),
             ResolutionTag::Workspace => {
                 let path = strings::without_trailing_slash(res.workspace().slice(buf));
                 if path.is_empty() {
@@ -1632,7 +1619,7 @@ fn plan_isolated(
             }
             _ => continue,
         };
-        if selection.is_some_and(|sel| !sel.selected.is_set(pkg_id)) {
+        if selection.is_some_and(|sel| !sel.selected.is_set(pkg_id.index())) {
             continue;
         }
         if is_pruned_workspace(manager, pkg_id) {
@@ -1641,7 +1628,7 @@ fn plan_isolated(
         let Ok(dir) = Dir::open(&folder_path) else {
             continue;
         };
-        let direct = direct_aliases(manager, PackageID::from_index(pkg_id));
+        let direct = direct_aliases(manager, pkg_id);
         let folder_idx = scan_folder(
             dir,
             &folder_path,

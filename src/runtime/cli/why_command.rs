@@ -384,7 +384,7 @@ impl WhyCommand {
         let _pkg_resolutions = packages.items_resolutions();
         let pkg_resolution = packages.items_resolution();
 
-        for pkg_idx in 0..packages.len() {
+        for pkg_idx in pkg_names.ids() {
             let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
 
             if pkg_name.is_empty() {
@@ -436,7 +436,7 @@ impl WhyCommand {
                     version: dep_pkg_version,
                     spec,
                     dep_type,
-                    pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
+                    pkg_id: pkg_idx,
                     workspace,
                 });
             }
@@ -460,7 +460,7 @@ impl WhyCommand {
 
             target_versions.push(VersionInfo {
                 version,
-                pkg_id: PackageID::try_from(pkg_idx).expect("int cast"),
+                pkg_id: pkg_idx,
             });
         }
 
@@ -473,7 +473,7 @@ impl WhyCommand {
         }
 
         for target_version in &target_versions {
-            let target_name = pkg_names[target_version.pkg_id.index()].slice(string_bytes);
+            let target_name = pkg_names[target_version.pkg_id].slice(string_bytes);
             bun_core::prettyln!(
                 "<b>{}@{}<r>",
                 BStr::new(target_name),

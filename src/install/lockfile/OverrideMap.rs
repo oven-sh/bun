@@ -6,7 +6,7 @@ use crate::Error;
 use crate::package_manager::workspace_package_json_cache::{GetJSONOptions, GetResult};
 use crate::resolution::Tag as ResolutionTag;
 use crate::{PackageID, invalid_package_id};
-use bun_collections::{ArrayHashMap, index_sort};
+use bun_collections::{ArrayHashMap, IdSlice, IdVec, index_sort};
 use bun_install::dependency::{
     self, Behavior, Dependency, DependencyExt as _, NpmAliasRegistry, Tag as VersionTag,
     VersionExt as _,
@@ -71,7 +71,7 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
 /// dependency id -> owning package id, filled lazily because packages are only ever appended while a map is live.
 #[derive(Default)]
 struct OwnerIndex {
-    by_dep: Vec<PackageID>,
+    by_dep: IdVec<DependencyID, PackageID>,
     packages_indexed: usize,
 }
 
@@ -131,7 +131,7 @@ fn is_comment_key(key: &[u8]) -> bool {
 struct ParseContext<'a, 'b> {
     field: Field,
     pm: &'a mut PackageManager,
-    lockfile_dependencies: &'a [Dependency],
+    lockfile_dependencies: &'a IdSlice<DependencyID, Dependency>,
     root_package: &'a Package,
     log: &'a mut bun_ast::Log,
     source: &'a bun_ast::Source,
@@ -174,7 +174,7 @@ impl OverrideMap {
         name_hash: PackageNameHash,
     ) -> Option<&'s ScopedOverride> {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let declared = &lockfile.buffers.dependencies[dependency_id.index()].version;
+        let declared = &lockfile.buffers.dependencies[dependency_id].version;
         let mut owner: Option<Option<(PackageNameHash, Option<SemverVersion>)>> = None;
         let mut best: Option<(&'s ScopedOverride, u8)> = None;
 
@@ -249,7 +249,6 @@ impl OverrideMap {
         if owner_id == invalid_package_id {
             return None;
         }
-        let owner_id = owner_id.index();
         let owner_name_hash = lockfile.packages.items_name_hash()[owner_id];
         let resolution = &lockfile.packages.items_resolution()[owner_id];
         let owner_version = match resolution.tag {
@@ -266,24 +265,22 @@ impl OverrideMap {
         let mut index = self.owner_index.borrow_mut();
         let index = &mut *index;
         if index.packages_indexed < dep_slices.len() {
-            for (pkg_id, slice) in dep_slices.iter().enumerate().skip(index.packages_indexed) {
+            for (pkg_id, slice) in dep_slices.iter_enumerated().skip(index.packages_indexed) {
                 let end = (slice.end() as usize).min(dependencies_len);
                 let begin = (slice.begin() as usize).min(end);
                 if end > index.by_dep.len() {
                     index.by_dep.resize(end, invalid_package_id);
                 }
-                index.by_dep[begin..end].fill(PackageID::from_index(pkg_id));
+                index.by_dep.raw_mut()[begin..end].fill(pkg_id);
             }
             index.packages_indexed = dep_slices.len();
         }
         let owner = index
             .by_dep
-            .get(dependency_id.index())
+            .get(dependency_id)
             .copied()
             .unwrap_or(invalid_package_id);
-        debug_assert!(
-            owner == invalid_package_id || dep_slices[owner.index()].contains(dependency_id)
-        );
+        debug_assert!(owner == invalid_package_id || dep_slices[owner].contains(dependency_id));
         owner
     }
 
@@ -651,7 +648,7 @@ impl OverrideMap {
     pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
-        lockfile_dependencies: &[Dependency],
+        lockfile_dependencies: &IdSlice<DependencyID, Dependency>,
         root_package: &Package,
         log: &mut bun_ast::Log,
         json_source: &bun_ast::Source,

@@ -9,7 +9,9 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
-use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
+use bun_collections::{
+    ArrayHashMap, HashMap, HiveArrayFallback, IdVec, LinearFifo, StringArrayHashMap,
+};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -382,7 +384,7 @@ pub struct PackageManager {
     pub lockfile: Box<Lockfile>, // OWNED
 
     pub options: Options,
-    pub(crate) preinstall_state: Vec<PreinstallState>,
+    pub(crate) preinstall_state: IdVec<PackageID, PreinstallState>,
     pub(crate) postinstall_optimizer: crate::postinstall_optimizer::List,
 
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
@@ -2097,7 +2099,7 @@ pub fn init(
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
         wr!(node_gyp_tempdir_name, Box::default());
-        wr!(preinstall_state, Vec::new());
+        wr!(preinstall_state, IdVec::new());
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
@@ -2541,7 +2543,7 @@ fn init_with_runtime_once(
         wr!(total_scripts, 0);
         wr!(root_lifecycle_scripts, None);
         wr!(node_gyp_tempdir_name, Box::default());
-        wr!(preinstall_state, Vec::new());
+        wr!(preinstall_state, IdVec::new());
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);

@@ -7,7 +7,7 @@ use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString};
 use bun_sys::{self, Fd, File, O};
 
-use crate::install::{self as Install, PackageManager, Subcommand};
+use crate::install::{self as Install, PackageID, PackageManager, Subcommand};
 use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile, Migrated,
 };
@@ -423,7 +423,7 @@ fn migrate_npm_lockfile<'a>(
 /// packages (`Package::from_npm`); folder, tarball, git, and workspace packages
 /// install unconditionally, so a migrated lockfile must not constrain them.
 pub(crate) fn clear_non_registry_platform_constraints(lockfile: &mut Lockfile) {
-    for i in 0..lockfile.packages.len() {
+    for i in (0..lockfile.packages.len()).map(PackageID::from_index) {
         match lockfile.packages.items_resolution()[i].tag {
             resolution::Tag::Root | resolution::Tag::Npm => {}
             _ => {

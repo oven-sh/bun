@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use std::io::Write as _;
 
 use bun_ast::Log;
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet, IdSlice, StringHashMap};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
@@ -205,9 +205,9 @@ impl<'a> Installer<'a> {
 
                 let node_id = entry_node_ids[entry_id.get() as usize];
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
-                let pkg_name = pkg_names[pkg_id.index()];
-                let pkg_name_hash = pkg_name_hashes[pkg_id.index()];
-                let pkg_res = &pkg_resolutions[pkg_id.index()];
+                let pkg_name = pkg_names[pkg_id];
+                let pkg_name_hash = pkg_name_hashes[pkg_id];
+                let pkg_res = &pkg_resolutions[pkg_id];
 
                 let patch_info =
                     bun_core::handle_oom(self.package_patch_info(pkg_name, pkg_name_hash, pkg_res));
@@ -331,8 +331,8 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let pkg_id = node_pkg_ids[node_id.get() as usize];
 
-        let pkg_name = pkg_names[pkg_id.index()];
-        let pkg_res = pkg_resolutions[pkg_id.index()];
+        let pkg_name = pkg_names[pkg_id];
+        let pkg_res = pkg_resolutions[pkg_id];
 
         match err {
             TaskError::LinkPackage(link_err) => {
@@ -539,7 +539,7 @@ impl<'a> Installer<'a> {
                 break 'state (StoreNodeId::ROOT, CompleteState::Skipped);
             }
 
-            let dep = &self.lockfile().buffers.dependencies[dep_id.index()];
+            let dep = &self.lockfile().buffers.dependencies[dep_id];
 
             if dep.behavior.is_workspace() {
                 break 'state (node_id, CompleteState::Skipped);
@@ -884,7 +884,7 @@ impl Task {
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_resolutions = pkgs.items_resolution();
         let pkg_resolutions_lists = pkgs.items_resolutions();
-        let pkg_metas: &[package::Meta] = pkgs.items_meta();
+        let pkg_metas = pkgs.items_meta();
         let pkg_bins = pkgs.items_bin();
         let pkg_script_lists = pkgs.items_scripts();
 
@@ -902,9 +902,9 @@ impl Task {
         let pkg_id = node_pkg_ids[node_id.get() as usize];
         let dep_id = node_dep_ids[node_id.get() as usize];
 
-        let pkg_name = pkg_names[pkg_id.index()];
-        let pkg_name_hash = pkg_name_hashes[pkg_id.index()];
-        let pkg_res = pkg_resolutions[pkg_id.index()];
+        let pkg_name = pkg_names[pkg_id];
+        let pkg_name_hash = pkg_name_hashes[pkg_id];
+        let pkg_res = pkg_resolutions[pkg_id];
 
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
@@ -1609,7 +1609,7 @@ impl Task {
 
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
-                    let dep = &lockfile.buffers.dependencies[dep_id.index()];
+                    let dep = &lockfile.buffers.dependencies[dep_id];
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
 
@@ -1639,8 +1639,7 @@ impl Task {
                         {
                             break 'enqueue_lifecycle_scripts;
                         }
-                        let mut pkg_scripts: package::scripts::Scripts =
-                            pkg_script_lists[pkg_id.index()];
+                        let mut pkg_scripts: package::scripts::Scripts = pkg_script_lists[pkg_id];
                         let manager = manager_ref.get();
                         if is_trusted
                             && manager
@@ -1655,7 +1654,7 @@ impl Task {
                                         },
                                         version_buf: lockfile.buffers.string_bytes.as_slice(),
                                     },
-                                    pkg_resolutions_lists[pkg_id.index()]
+                                    pkg_resolutions_lists[pkg_id]
                                         .get(lockfile.buffers.resolutions.as_slice()),
                                     pkg_metas,
                                     manager.options.cpu,
@@ -1760,7 +1759,7 @@ impl Task {
                         continue;
                     }
 
-                    let bin = pkg_bins[pkg_id.index()];
+                    let bin = pkg_bins[pkg_id];
                     if bin.tag == bin::Tag::None {
                         match installer.commit_global_store_entry(self.entry_id) {
                             sys::Result::Ok(()) => {}
@@ -1775,7 +1774,7 @@ impl Task {
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
                     let dependencies = lockfile.buffers.dependencies.as_slice();
 
-                    let dep_name = dependencies[dep_id.index()].name.slice(string_buf);
+                    let dep_name = dependencies[dep_id].name.slice(string_buf);
 
                     let mut abs_target_buf = paths::path_buffer_pool::get();
                     let mut abs_dest_buf = paths::path_buffer_pool::get();
@@ -1815,7 +1814,7 @@ impl Task {
                             entry_node_ids[replacement_entry_id.get() as usize];
                         let replacement_pkg_id = node_pkg_ids[replacement_node_id.get() as usize];
                         target_package_name = strings::StringOrTinyString::init(
-                            lockfile.str(&pkg_names[replacement_pkg_id.index()]),
+                            lockfile.str(&pkg_names[replacement_pkg_id]),
                         );
                     }
 
@@ -2133,7 +2132,7 @@ impl<'a> Installer<'a> {
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-        let pkg_name = self.lockfile().packages.items_name()[pkg_id.index()];
+        let pkg_name = self.lockfile().packages.items_name()[pkg_id];
 
         let mut hidden_hoisted_node_modules = AutoPath::init();
 
@@ -2191,17 +2190,17 @@ impl<'a> Installer<'a> {
         &self,
         entry_node_ids: &[StoreNodeId],
         node_pkg_ids: &[PackageID],
-        name_hashes: &[PackageNameHash],
-        pkg_resolutions_lists: &[PackageIDSlice],
-        pkg_resolutions_buffer: &[PackageID],
-        pkg_metas: &[package::Meta],
+        name_hashes: &IdSlice<PackageID, PackageNameHash>,
+        pkg_resolutions_lists: &IdSlice<PackageID, PackageIDSlice>,
+        pkg_resolutions_buffer: &IdSlice<DependencyID, PackageID>,
+        pkg_metas: &IdSlice<PackageID, package::Meta>,
         pkg_id: PackageID,
     ) -> Option<StoreEntryId> {
         let postinstall_optimizer = &self.manager().postinstall_optimizer;
         if !postinstall_optimizer.is_native_binlink_enabled() {
             return None;
         }
-        let name_hash = name_hashes[pkg_id.index()];
+        let name_hash = name_hashes[pkg_id];
 
         if let Some(optimizer) = postinstall_optimizer.get(&postinstall_optimizer::PkgInfo {
             name_hash,
@@ -2214,7 +2213,7 @@ impl<'a> Installer<'a> {
                     let target_os = manager.options.os;
                     if let Some(replacement_pkg_id) =
                         postinstall_optimizer::PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                            pkg_resolutions_lists[pkg_id.index()].get(pkg_resolutions_buffer),
+                            pkg_resolutions_lists[pkg_id].get(pkg_resolutions_buffer),
                             pkg_metas,
                             target_cpu,
                             target_os,
@@ -2255,7 +2254,7 @@ impl<'a> Installer<'a> {
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
         let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
-        let pkg_res = &pkg_resolutions[pkg_id.index()];
+        let pkg_res = &pkg_resolutions[pkg_id];
 
         let entry_node_modules_name =
             self.entry_store_node_modules_package_name(dep_id, pkg_id, pkg_res, pkg_names);
@@ -2267,7 +2266,7 @@ impl<'a> Installer<'a> {
 
         let mut changed = false;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
-            let dep_name = dependencies[dep.dep_id.index()].name.slice(string_buf);
+            let dep_name = dependencies[dep.dep_id].name.slice(string_buf);
 
             dest.set_length(base_len);
             let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
@@ -2343,11 +2342,11 @@ impl<'a> Installer<'a> {
             let node_id = entry_node_ids[dep.entry_id.get() as usize];
             let dep_id = node_dep_ids[node_id.get() as usize];
             let pkg_id = node_pkg_ids[node_id.get() as usize];
-            let bin = pkg_bins[pkg_id.index()];
+            let bin = pkg_bins[pkg_id];
             if bin.tag == bin::Tag::None {
                 continue;
             }
-            let alias = lockfile.buffers.dependencies[dep_id.index()].name;
+            let alias = lockfile.buffers.dependencies[dep_id].name;
 
             let mut target_node_modules_path: Option<DefaultAbsPath> = None;
             let package_name = strings::StringOrTinyString::init(alias.slice(string_buf));
@@ -2375,7 +2374,7 @@ impl<'a> Installer<'a> {
                 let replacement_pkg_id = node_pkg_ids[replacement_node_id.get() as usize];
                 let pkg_names = pkgs.items_name();
                 target_package_name = strings::StringOrTinyString::init(
-                    self.lockfile().str(&pkg_names[replacement_pkg_id.index()]),
+                    self.lockfile().str(&pkg_names[replacement_pkg_id]),
                 );
             }
 
@@ -2657,7 +2656,7 @@ impl<'a> Installer<'a> {
 
         let node_id = entry_node_ids[entry_id.get() as usize];
         let pkg_id = node_pkg_ids[node_id.get() as usize];
-        let pkg_res = pkg_resolutions[pkg_id.index()];
+        let pkg_res = pkg_resolutions[pkg_id];
 
         match pkg_res.tag {
             ResolutionTag::Root => {
@@ -2707,7 +2706,7 @@ impl<'a> Installer<'a> {
             let string_buf = self.lockfile().buffers.string_bytes.as_slice();
             let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
             let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-            let pkg_name = self.lockfile().packages.items_name()[pkg_id.index()];
+            let pkg_name = self.lockfile().packages.items_name()[pkg_id];
             self.append_global_store_entry_path(buf, entry_id, which);
             buf.append(b"node_modules");
             buf.append(pkg_name.slice(string_buf));
@@ -2735,12 +2734,12 @@ impl<'a> Installer<'a> {
         // let peers = node_peers[node_id.get() as usize];
         let pkg_id = node_pkg_ids[node_id.get() as usize];
         let dep_id = node_dep_ids[node_id.get() as usize];
-        let pkg_res = pkg_resolutions[pkg_id.index()];
+        let pkg_res = pkg_resolutions[pkg_id];
 
         match pkg_res.tag {
             ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
-                    let pkg_name = pkg_names[pkg_id.index()];
+                    let pkg_name = pkg_names[pkg_id];
                     buf.append(NODE_MODULES_BUN.as_bytes());
                     buf.append_fmt(format_args!(
                         "{}",
@@ -2779,7 +2778,7 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.symlink().slice(string_buf));
             }
             _ => {
-                let pkg_name = pkg_names[pkg_id.index()];
+                let pkg_name = pkg_names[pkg_id];
                 buf.append(NODE_MODULES_BUN.as_bytes());
                 buf.append_fmt(format_args!(
                     "{}",
@@ -2802,25 +2801,25 @@ impl<'a> Installer<'a> {
         dep_id: DependencyID,
         pkg_id: PackageID,
         pkg_res: &Resolution,
-        pkg_names: &'b [SemverString],
+        pkg_names: &'b IdSlice<PackageID, SemverString>,
     ) -> Option<&'b [u8]> {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         match pkg_res.tag {
             ResolutionTag::Root => {
                 if dep_id != invalid_dependency_id {
-                    if pkg_names[pkg_id.index()].is_empty() {
+                    if pkg_names[pkg_id].is_empty() {
                         return Some(paths::basename(
                             bun_fs::FileSystem::instance().top_level_dir(),
                         ));
                     }
-                    return Some(pkg_names[pkg_id.index()].slice(string_buf));
+                    return Some(pkg_names[pkg_id].slice(string_buf));
                 }
                 None
             }
             ResolutionTag::Workspace => None,
             ResolutionTag::Symlink => None,
-            _ => Some(pkg_names[pkg_id.index()].slice(string_buf)),
+            _ => Some(pkg_names[pkg_id].slice(string_buf)),
         }
     }
 }

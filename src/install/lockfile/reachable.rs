@@ -3,8 +3,8 @@ use crate::lockfile::DependencySlice;
 use crate::lockfile::package::{Meta, PackageColumns as _};
 use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, OperatingSystem};
-use crate::{PackageID, PackageManager};
-use bun_collections::DynamicBitSet;
+use crate::{DependencyID, PackageID, PackageManager};
+use bun_collections::{DynamicBitSet, IdSlice};
 use bun_core::UnwrapOrOom;
 
 #[derive(Clone, Copy)]
@@ -47,7 +47,11 @@ impl Options {
 }
 
 // `resolutions` is passed separately so callers can walk a candidate resolution buffer (dedupe).
-pub fn packages(lockfile: &Lockfile, resolutions: &[PackageID], options: Options) -> DynamicBitSet {
+pub fn packages(
+    lockfile: &Lockfile,
+    resolutions: &IdSlice<DependencyID, PackageID>,
+    options: Options,
+) -> DynamicBitSet {
     packages_from(
         lockfile,
         resolutions,
@@ -60,7 +64,7 @@ pub fn packages(lockfile: &Lockfile, resolutions: &[PackageID], options: Options
 // `options.root` is ignored; `follow_workspace_edges: false` keeps a root's workspace edges out of the walk (`--filter`).
 pub fn packages_from(
     lockfile: &Lockfile,
-    resolutions: &[PackageID],
+    resolutions: &IdSlice<DependencyID, PackageID>,
     roots: &[PackageID],
     follow_workspace_edges: bool,
     options: Options,
@@ -90,7 +94,7 @@ fn mark(seen: &mut DynamicBitSet, id: PackageID) -> bool {
 // What the devDependencies of `roots` (and of the workspaces they own) pull in — `bun pm licenses --dev`.
 pub fn dev_packages_from(
     lockfile: &Lockfile,
-    resolutions: &[PackageID],
+    resolutions: &IdSlice<DependencyID, PackageID>,
     roots: &[PackageID],
     follow_workspace_edges: bool,
     options: Options,
@@ -105,8 +109,8 @@ pub fn dev_packages_from(
     }
     let mut worklist: Vec<PackageID> = Vec::new();
     while let Some(importer) = importers.pop() {
-        let slice = walk.dep_slices[importer.index()];
-        for dep_id in slice.begin() as usize..slice.end() as usize {
+        let slice = walk.dep_slices[importer];
+        for dep_id in slice.dependency_ids() {
             let behavior = walk.deps[dep_id].behavior;
             let target = walk.resolutions[dep_id];
             if behavior.is_workspace() {
@@ -125,10 +129,10 @@ pub fn dev_packages_from(
 }
 
 struct Walk<'a> {
-    dep_slices: &'a [DependencySlice],
-    metas: &'a [Meta],
-    deps: &'a [Dependency],
-    resolutions: &'a [PackageID],
+    dep_slices: &'a IdSlice<PackageID, DependencySlice>,
+    metas: &'a IdSlice<PackageID, Meta>,
+    deps: &'a IdSlice<DependencyID, Dependency>,
+    resolutions: &'a IdSlice<DependencyID, PackageID>,
     follow_workspace_edges: bool,
     follow_all: bool,
     options: Options,
@@ -137,7 +141,7 @@ struct Walk<'a> {
 impl<'a> Walk<'a> {
     fn new(
         lockfile: &'a Lockfile,
-        resolutions: &'a [PackageID],
+        resolutions: &'a IdSlice<DependencyID, PackageID>,
         follow_workspace_edges: bool,
         options: Options,
     ) -> Walk<'a> {
@@ -185,7 +189,7 @@ impl<'a> Walk<'a> {
             return;
         }
         if let Some((cpu, os)) = self.options.platform
-            && self.metas[target.index()].is_disabled(cpu, os)
+            && self.metas[target].is_disabled(cpu, os)
         {
             return;
         }
@@ -195,8 +199,8 @@ impl<'a> Walk<'a> {
 
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
-            let slice = self.dep_slices[parent.index()];
-            for dep_id in slice.begin() as usize..slice.end() as usize {
+            let slice = self.dep_slices[parent];
+            for dep_id in slice.dependency_ids() {
                 if !(self.follow_all || self.follows(self.deps[dep_id].behavior)) {
                     continue;
                 }

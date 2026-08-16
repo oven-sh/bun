@@ -1,7 +1,7 @@
 use bun_collections::VecExt;
 use core::mem;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
+use bun_collections::{ArrayHashMap, ArrayIdentityContext, IdSlice, MultiArrayList, StringSet};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
@@ -395,7 +395,7 @@ impl PackageField {
 }
 
 bun_collections::multi_array_columns! {
-    pub trait PackageColumns [SemverIntType: VersionInt] for Package<SemverIntType> {
+    pub trait PackageColumns [SemverIntType: VersionInt] for Package<SemverIntType>, indexed by PackageID {
         name: String,
         name_hash: PackageNameHash,
         resolution: ResolutionType<SemverIntType>,
@@ -424,25 +424,20 @@ impl<SemverIntType: VersionInt> Default for Package<SemverIntType> {
 
 pub use bun_install_types::DependencyGroup;
 
-// Borrows into lockfile.packages SoA columns + string_bytes; `RawSlice`
-// carries the outlives-holder invariant (the lockfile outlives every sort
-// pass that constructs an Alphabetizer).
-pub(crate) struct Alphabetizer<SemverIntType: VersionInt> {
-    pub names: bun_ptr::RawSlice<String>,
-    pub buf: bun_ptr::RawSlice<u8>,
-    pub resolutions: bun_ptr::RawSlice<Resolution<SemverIntType>>,
+/// Orders package ids by name, then by resolution. Borrows the lockfile's
+/// `name` and `resolution` columns plus its string bytes.
+pub(crate) struct Alphabetizer<'a, SemverIntType: VersionInt> {
+    pub names: &'a IdSlice<PackageID, String>,
+    pub buf: &'a [u8],
+    pub resolutions: &'a IdSlice<PackageID, Resolution<SemverIntType>>,
 }
 
-impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
+impl<SemverIntType: VersionInt> Alphabetizer<'_, SemverIntType> {
     pub(crate) fn order(&self, lhs: PackageID, rhs: PackageID) -> core::cmp::Ordering {
-        let (names, buf, resolutions) = (
-            self.names.slice(),
-            self.buf.slice(),
-            self.resolutions.slice(),
-        );
-        names[lhs.index()]
-            .order(names[rhs.index()], buf, buf)
-            .then_with(|| resolutions[lhs.index()].order(&resolutions[rhs.index()], buf, buf))
+        let (names, buf, resolutions) = (self.names, self.buf, self.resolutions);
+        names[lhs]
+            .order(names[rhs], buf, buf)
+            .then_with(|| resolutions[lhs].order(&resolutions[rhs], buf, buf))
     }
 }
 
@@ -524,13 +519,15 @@ impl Package<u64> {
         // real cloned value; pre-filling avoids ever forming `&mut T` over
         // uninitialized storage (the old `set_len`-then-assign dropped uninit).
         bun_core::vec::extend_from_fn(
-            &mut new.buffers.dependencies,
+            new.buffers.dependencies.raw_mut(),
             old_dependencies.len(),
             |_| Dependency::default(),
         );
-        bun_core::vec::extend_from_fn(&mut new.buffers.resolutions, old_dependencies.len(), |_| {
-            invalid_package_id
-        });
+        bun_core::vec::extend_from_fn(
+            new.buffers.resolutions.raw_mut(),
+            old_dependencies.len(),
+            |_| invalid_package_id,
+        );
         debug_assert_eq!(new.buffers.dependencies.len(), end as usize);
         debug_assert_eq!(new.buffers.resolutions.len(), end as usize);
 
@@ -571,7 +568,7 @@ impl Package<u64> {
 
         {
             let dependencies: &mut [Dependency] =
-                &mut new.buffers.dependencies[prev_len as usize..end as usize];
+                &mut new.buffers.dependencies.raw_mut()[prev_len as usize..end as usize];
             debug_assert_eq!(old_dependencies.len(), dependencies.len());
             for (old_dep, new_dep) in old_dependencies.iter().zip(dependencies.iter_mut()) {
                 *new_dep = old_dep.clone_in(cloner.manager, old_string_buf, &mut *builder)?;
@@ -585,20 +582,20 @@ impl Package<u64> {
         // `self.meta.id` is range-checked at load time (bun.lockb.rs), but
         // defend here as well since an error returned from `clean_with_logger`
         // is not recoverable — it aborts the install instead of re-resolving.
-        if self.meta.id.index() >= package_id_mapping.len() {
+        if !package_id_mapping.has(self.meta.id) {
             return Err(crate::Error::InvalidLockfile);
         }
-        package_id_mapping[self.meta.id.index()] = new_package.meta.id;
+        package_id_mapping[self.meta.id] = new_package.meta.id;
 
         if cloner.manager.preinstall_state.len() > 0 {
-            cloner.manager.preinstall_state[new_package.meta.id.index()] =
-                cloner.old_preinstall_state[self.meta.id.index()];
+            cloner.manager.preinstall_state[new_package.meta.id] =
+                cloner.old_preinstall_state[self.meta.id];
         }
 
         cloner.trees_count += (old_resolutions.len() > 0) as u32;
 
         let resolutions: &mut [PackageID] =
-            &mut new.buffers.resolutions[prev_len as usize..end as usize];
+            &mut new.buffers.resolutions.raw_mut()[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
         debug_assert_eq!(old_dependencies.len(), resolutions.len());
         for (i, (old_resolution, resolution)) in old_resolutions
@@ -625,7 +622,7 @@ impl Package<u64> {
                 continue;
             }
 
-            let mapped = package_id_mapping[old_resolution.index()];
+            let mapped = package_id_mapping[*old_resolution];
             if mapped.index() < old_packages_len {
                 *resolution = mapped;
             } else {
@@ -735,12 +732,12 @@ impl Package<u64> {
 
             let dep_start = dependencies_list.len();
             bun_core::vec::extend_from_fn(
-                dependencies_list,
+                dependencies_list.raw_mut(),
                 total_dependencies_count as usize,
                 |_| Dependency::default(),
             );
             debug_assert_eq!(dependencies_list.len(), total_len);
-            let dependencies = &mut dependencies_list[dep_start..total_len];
+            let dependencies = &mut dependencies_list.raw_mut()[dep_start..total_len];
 
             total_dependencies_count = 0;
             for group in dependency_groups {
@@ -869,7 +866,7 @@ impl Package<u64> {
 
             debug_assert_eq!(resolutions_list.len(), dep_start);
             bun_core::vec::extend_from_fn(
-                resolutions_list,
+                resolutions_list.raw_mut(),
                 package.dependencies.len as usize,
                 |_| invalid_package_id,
             );
@@ -1514,7 +1511,7 @@ impl Diff {
                             .into();
                         survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
-                        let from_pkg = from_lockfile.packages.get(from_resolutions[i].index());
+                        let from_pkg = from_lockfile.package(from_resolutions[i]);
                         let diff = Self::generate_inner(
                             pm,
                             log,
@@ -1571,7 +1568,7 @@ impl Diff {
                     let from_res_id = from_resolutions[i];
                     if from_res_id.index() < from_lockfile.packages.len() {
                         let from_pkg_resolution =
-                            from_lockfile.packages.items_resolution()[from_res_id.index()];
+                            from_lockfile.packages.items_resolution()[from_res_id];
                         let to_dep = &to_deps!()[cur_to_i];
                         if to_dep.version.tag == dependency::version::Tag::Npm
                             && from_pkg_resolution.tag == ResolutionTag::Npm
@@ -2210,7 +2207,7 @@ impl Package<u64> {
                 resolver.set_new_name(Repository::create_dependency_name_from_version_literal(
                     &repo,
                     string_builder.string_bytes.as_slice(),
-                    &lockfile.buffers.dependencies[resolver.dep_id().index()],
+                    &lockfile.buffers.dependencies[resolver.dep_id()],
                 ));
 
                 string_builder.count(resolver.new_name());

@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashContext, HashMap, StringHashMap};
+use bun_collections::{HashContext, HashMap, IdSlice, StringHashMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_paths::PathBuffer;
@@ -150,13 +150,13 @@ impl Version {
 /// only string compare
 struct TreeDepsSortCtx<'a> {
     string_buf: &'a [u8],
-    deps_buf: &'a [Dependency],
+    deps_buf: &'a IdSlice<DependencyID, Dependency>,
 }
 
 impl<'a> TreeDepsSortCtx<'a> {
     fn is_less_than(&self, lhs: DependencyID, rhs: DependencyID) -> bool {
-        let l = &self.deps_buf[lhs.index()];
-        let r = &self.deps_buf[rhs.index()];
+        let l = &self.deps_buf[lhs];
+        let r = &self.deps_buf[rhs];
         strings::cmp_strings_asc(
             (),
             l.name.slice(self.string_buf),
@@ -232,8 +232,8 @@ impl Stringifier {
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
-        let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
-        let pkg_metas: &[Meta] = pkgs.items_meta();
+        let pkg_resolutions = pkgs.items_resolution();
+        let pkg_metas = pkgs.items_meta();
 
         let mut iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
             lockfile.buffers.trees.as_slice(),
@@ -244,15 +244,14 @@ impl Stringifier {
 
         while let Some(node) = iter.next(None) {
             for &dep_id in node.dependencies {
-                let pkg_id = resolution_buf[dep_id.index()];
+                let pkg_id = resolution_buf[dep_id];
                 if pkg_id == invalid_package_id {
                     continue;
                 }
-                let i = pkg_id.index();
-                let res = &pkg_resolutions[i];
+                let res = &pkg_resolutions[pkg_id];
                 match res.tag {
                     ResolutionTag::Npm => {
-                        if pkg_metas[i].integrity.tag.is_supported() {
+                        if pkg_metas[pkg_id].integrity.tag.is_supported() {
                             continue;
                         }
                         // No supported integrity: only v2-clean if the tarball
@@ -302,11 +301,11 @@ impl Stringifier {
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
-        let pkg_dep_lists: &[DependencySlice] = pkgs.items_dependencies();
-        let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
-        let pkg_names: &[String] = pkgs.items_name();
-        let pkg_name_hashes: &[PackageNameHash] = pkgs.items_name_hash();
-        let pkg_metas: &[Meta] = pkgs.items_meta();
+        let pkg_dep_lists = pkgs.items_dependencies();
+        let pkg_resolutions = pkgs.items_resolution();
+        let pkg_names = pkgs.items_name();
+        let pkg_name_hashes = pkgs.items_name_hash();
+        let pkg_metas = pkgs.items_meta();
         let pkg_bins = pkgs.items_bin();
 
         let mut temp_buf: Vec<u8> = Vec::new();
@@ -343,7 +342,7 @@ impl Stringifier {
         if load_result.loaded_from_binary_lockfile() || load_result.migrated_from_pnpm() {
             while let Some(node) = pkgs_iter.next(None) {
                 for &dep_id in node.dependencies {
-                    let dep = &deps_buf[dep_id.index()];
+                    let dep = &deps_buf[dep_id];
 
                     // clobber, there isn't data
                     let mut key: Vec<u8> = Vec::new();
@@ -404,7 +403,7 @@ impl Stringifier {
 
                 for _pkg_id in 0..pkgs.len() {
                     let pkg_id = PackageID::try_from(_pkg_id).expect("int cast");
-                    let res = &pkg_resolutions[pkg_id.index()];
+                    let res = &pkg_resolutions[pkg_id];
                     if res.tag != ResolutionTag::Workspace {
                         continue;
                     }
@@ -413,13 +412,13 @@ impl Stringifier {
 
                 // local Sorter struct → closure
                 workspace_sort_buf.sort_by(|&l, &r| {
-                    let l_res = &pkg_resolutions[l.index()];
-                    let r_res = &pkg_resolutions[r.index()];
+                    let l_res = &pkg_resolutions[l];
+                    let r_res = &pkg_resolutions[r];
                     l_res.workspace().order(*r_res.workspace(), buf, buf)
                 });
 
                 for &workspace_pkg_id in &workspace_sort_buf {
-                    let res = &pkg_resolutions[workspace_pkg_id.index()];
+                    let res = &pkg_resolutions[workspace_pkg_id];
                     writer.write_all(b"\n")?;
                     Self::write_indent(writer, *indent)?;
                     Self::write_workspace_deps(
@@ -439,7 +438,7 @@ impl Stringifier {
                         &lockfile.workspace_versions,
                         &mut optional_peers_buf,
                         &pkg_map,
-                        pkg_names[workspace_pkg_id.index()].slice(buf),
+                        pkg_names[workspace_pkg_id].slice(buf),
                         &mut path_buf,
                     )?;
                 }
@@ -471,15 +470,15 @@ impl Stringifier {
                 ));
 
                 for &dep_id in node.dependencies {
-                    let pkg_id = resolution_buf[dep_id.index()];
+                    let pkg_id = resolution_buf[dep_id];
                     if pkg_id == invalid_package_id {
                         continue;
                     }
 
-                    let pkg_name = pkg_names[pkg_id.index()];
-                    let pkg_name_hash = pkg_name_hashes[pkg_id.index()];
-                    let res = &pkg_resolutions[pkg_id.index()];
-                    let dep = &deps_buf[dep_id.index()];
+                    let pkg_name = pkg_names[pkg_id];
+                    let pkg_name_hash = pkg_name_hashes[pkg_id];
+                    let res = &pkg_resolutions[pkg_id];
+                    let dep = &deps_buf[dep_id];
 
                     if lockfile.patched_dependencies.count() > 0 {
                         use std::io::Write;
@@ -688,12 +687,12 @@ impl Stringifier {
                 }
 
                 for &dep_id in &tree_deps_sort_buf {
-                    let pkg_id = resolution_buf[dep_id.index()];
+                    let pkg_id = resolution_buf[dep_id];
                     if pkg_id == invalid_package_id {
                         continue;
                     }
 
-                    let res = &pkg_resolutions[pkg_id.index()];
+                    let res = &pkg_resolutions[pkg_id];
                     match res.tag {
                         ResolutionTag::Root
                         | ResolutionTag::Npm
@@ -734,7 +733,7 @@ impl Stringifier {
                         writer.write_byte(b'/')?;
                     }
 
-                    let dep = &deps_buf[dep_id.index()];
+                    let dep = &deps_buf[dep_id];
                     let dep_name = dep.name.slice(buf);
 
                     pkg_key_buf.clear();
@@ -756,10 +755,10 @@ impl Stringifier {
                         ),
                     )?;
 
-                    let pkg_name = pkg_names[pkg_id.index()];
-                    let pkg_meta = &pkg_metas[pkg_id.index()];
-                    let pkg_bin = &pkg_bins[pkg_id.index()];
-                    let pkg_deps_list = pkg_dep_lists[pkg_id.index()];
+                    let pkg_name = pkg_names[pkg_id];
+                    let pkg_meta = &pkg_metas[pkg_id];
+                    let pkg_bin = &pkg_bins[pkg_id];
+                    let pkg_deps_list = pkg_dep_lists[pkg_id];
 
                     pkg_deps_sort_buf.clear();
                     pkg_deps_sort_buf.extend(pkg_deps_list.dependency_ids());
@@ -1065,7 +1064,7 @@ impl Stringifier {
     fn write_package_info_object(
         writer: &mut Writer,
         dep_behavior: Behavior,
-        deps_buf: &[Dependency],
+        deps_buf: &IdSlice<DependencyID, Dependency>,
         pkg_dep_ids: &[DependencyID],
         meta: &Meta,
         bin: &Bin,
@@ -1086,7 +1085,7 @@ impl Stringifier {
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
             let mut first = true;
             for &dep_id in pkg_dep_ids {
-                let dep = &deps_buf[dep_id.index()];
+                let dep = &deps_buf[dep_id];
                 if !dep.behavior.intersects(group_behavior) {
                     continue;
                 }
@@ -1239,13 +1238,13 @@ impl Stringifier {
         indent: &mut u32,
         pkg_id: PackageID,
         res: String,
-        pkg_names: &[String],
-        pkg_name_hashes: &[PackageNameHash],
-        pkg_bins: &[Bin],
-        pkg_deps: &[DependencySlice],
+        pkg_names: &IdSlice<PackageID, String>,
+        pkg_name_hashes: &IdSlice<PackageID, PackageNameHash>,
+        pkg_bins: &IdSlice<PackageID, Bin>,
+        pkg_deps: &IdSlice<PackageID, DependencySlice>,
         buf: &[u8],
         extern_strings: &[ExternalString],
-        deps_buf: &[Dependency],
+        deps_buf: &IdSlice<DependencyID, Dependency>,
         workspace_versions: &VersionHashMap,
         optional_peers_buf: &mut Vec<String>,
         pkg_map: &PkgMap<()>,
@@ -1263,7 +1262,7 @@ impl Stringifier {
         // need a way to detect new/deleted workspaces
         if pkg_id == PackageID::ROOT {
             writer.write_all(b"\"\": {")?;
-            let root_name = pkg_names[0].slice(buf);
+            let root_name = pkg_names[PackageID::ROOT].slice(buf);
             if !root_name.is_empty() {
                 writer.write_byte(b'\n')?;
                 Self::inc_indent(writer, indent)?;
@@ -1288,19 +1287,19 @@ impl Stringifier {
                 writer,
                 "\"name\": {}",
                 bun_core::fmt::format_json_string_utf8(
-                    pkg_names[pkg_id.index()].slice(buf),
+                    pkg_names[pkg_id].slice(buf),
                     Default::default()
                 ),
             )?;
 
-            if let Some(version) = workspace_versions.get(&pkg_name_hashes[pkg_id.index()]) {
+            if let Some(version) = workspace_versions.get(&pkg_name_hashes[pkg_id]) {
                 writer.write_all(b",\n")?;
                 Self::write_indent(writer, *indent)?;
                 write!(writer, "\"version\": \"{}\"", version.fmt(buf))?;
             }
 
-            if pkg_bins[pkg_id.index()].tag != BinTag::None {
-                let bin = &pkg_bins[pkg_id.index()];
+            if pkg_bins[pkg_id].tag != BinTag::None {
+                let bin = &pkg_bins[pkg_id];
                 writer.write_all(b",\n")?;
                 Self::write_indent(writer, *indent)?;
                 if bin.tag == BinTag::Dir {
@@ -1322,7 +1321,7 @@ impl Stringifier {
 
         for &(group_name, group_behavior) in WORKSPACE_DEPENDENCY_GROUPS.iter() {
             let mut first = true;
-            for dep in pkg_deps[pkg_id.index()].get(deps_buf) {
+            for dep in pkg_deps[pkg_id].get(deps_buf) {
                 if !dep.behavior.intersects(group_behavior) {
                     continue;
                 }
@@ -2717,7 +2716,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     {
                         let workspace_pkg_id = PackageID::new(_workspace_pkg_id);
                         if res.eql(
-                            &pkg_resolutions[workspace_pkg_id.index()],
+                            &pkg_resolutions[workspace_pkg_id],
                             lockfile.buffers.string_bytes.as_slice(),
                             lockfile.buffers.string_bytes.as_slice(),
                         ) {
@@ -2725,7 +2724,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             {
                                 debug_assert!(!strings::eql_long(
                                     pkg_path,
-                                    pkg_names[workspace_pkg_id.index()]
+                                    pkg_names[workspace_pkg_id]
                                         .slice(lockfile.buffers.string_bytes.as_slice()),
                                     true,
                                 ));
@@ -3055,14 +3054,14 @@ pub(crate) fn parse_into_binary_lockfile(
         // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
-        lockfile.packages.items_resolution_mut()[0] =
+        lockfile.packages.items_resolution_mut()[PackageID::ROOT] =
             Resolution::init(crate::resolution::TaggedValue::Root);
-        lockfile.packages.items_meta_mut()[0].origin = Origin::Local;
+        lockfile.packages.items_meta_mut()[PackageID::ROOT].origin = Origin::Local;
 
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_names = pkgs.items_name();
-        let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
+        let pkg_resolutions = pkgs.items_resolution();
 
         // Populated by `append_package_dedupe` while the packages object was
         // parsed above; used to bind peer edges by version rather than by
@@ -3076,13 +3075,13 @@ pub(crate) fn parse_into_binary_lockfile(
         // `string_bytes` view.
         let buffers = &mut lockfile.buffers;
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
-        let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
-        let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
+        let dependencies = buffers.dependencies.as_mut_slice();
+        let resolutions = buffers.resolutions.as_mut_slice();
 
         {
             // first the root dependencies are resolved
-            for dep_id in pkg_deps[0].dependency_ids() {
-                let dep = &mut dependencies[dep_id.index()];
+            for dep_id in pkg_deps[PackageID::ROOT].dependency_ids() {
+                let dep = &mut dependencies[dep_id];
 
                 let peer_res_id = resolve_peer_dep_version_based(
                     dep,
@@ -3114,7 +3113,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         .get_or_put(dep.name.slice(string_buf))?
                         .found_existing
                 {
-                    resolutions[dep_id.index()] = res_id;
+                    resolutions[dep_id] = res_id;
                     continue;
                 }
 
@@ -3135,13 +3134,13 @@ pub(crate) fn parse_into_binary_lockfile(
             // then workspace dependencies are resolved
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                 let pkg_id = PackageID::new(_pkg_id);
-                let workspace_name = pkg_names[pkg_id.index()].slice(string_buf);
+                let workspace_name = pkg_names[pkg_id].slice(string_buf);
 
                 seen_deps.clear_retaining_capacity();
 
-                let deps = pkg_deps[pkg_id.index()];
+                let deps = pkg_deps[pkg_id];
                 for dep_id in deps.dependency_ids() {
-                    let dep = &mut dependencies[dep_id.index()];
+                    let dep = &mut dependencies[dep_id];
                     let dep_name = dep.name.slice(string_buf);
 
                     let workspace_node_modules = {
@@ -3194,7 +3193,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     };
 
                     if seen_deps.get_or_put(dep_name)?.found_existing {
-                        resolutions[dep_id.index()] = res_id;
+                        resolutions[dep_id] = res_id;
                         continue;
                     }
 
@@ -3218,7 +3217,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 return Err(ParseError::InvalidPackagesObject);
             };
 
-            let res = &pkg_resolutions[pkg_id.index()];
+            let res = &pkg_resolutions[pkg_id];
 
             if res.tag == ResolutionTag::Workspace {
                 // we've already resolved the workspace dependencies above
@@ -3226,9 +3225,9 @@ pub(crate) fn parse_into_binary_lockfile(
             }
 
             // find resolutions. iterate up to root through the pkg path.
-            let deps = pkg_deps[pkg_id.index()];
+            let deps = pkg_deps[pkg_id];
             'deps: for dep_id in deps.dependency_ids() {
-                let dep = &mut dependencies[dep_id.index()];
+                let dep = &mut dependencies[dep_id];
 
                 // A stripped `catalog:` edge (`CatalogMap::strip_reference`) stays unresolved, as in a fresh install.
                 if dep.version.tag == DependencyVersionTag::Uninitialized {
@@ -3359,7 +3358,7 @@ pub(crate) fn resolve_peer_dep_version_based(
     catalogs: &CatalogMap,
     package_index: &PackageIndexMap,
     overrides: &OverrideMap,
-    pkg_resolutions: &[Resolution],
+    pkg_resolutions: &IdSlice<PackageID, Resolution>,
     string_buf: &[u8],
 ) -> Option<PackageID> {
     let range = deferred_peer_range(dep, catalogs, string_buf)?;
@@ -3403,17 +3402,16 @@ pub(crate) fn resolve_peer_dep_version_based(
 
     let candidates = package_index.get(&name_hash)?.as_slice();
     for &id in candidates {
-        if id.index() < pkg_resolutions.len()
-            && pkg_resolutions[id.index()]
-                .satisfies_dependency_version(range, string_buf, string_buf)
+        if pkg_resolutions.has(id)
+            && pkg_resolutions[id].satisfies_dependency_version(range, string_buf, string_buf)
         {
             return Some(id);
         }
     }
 
     let &first = candidates.first()?;
-    if first.index() < pkg_resolutions.len() {
-        let res_tag = pkg_resolutions[first.index()].tag;
+    if pkg_resolutions.has(first) {
+        let res_tag = pkg_resolutions[first].tag;
         let ver_tag = range.tag;
         if (res_tag == ResolutionTag::Npm && ver_tag == DependencyVersionTag::Npm)
             || (res_tag == ResolutionTag::Git && ver_tag == DependencyVersionTag::Git)
@@ -3435,14 +3433,14 @@ fn map_dep_to_pkg(
     dep: &mut Dependency,
     dep_id: DependencyID,
     pkg_id: PackageID,
-    resolutions: &mut [PackageID],
+    resolutions: &mut IdSlice<DependencyID, PackageID>,
     text_lockfile_version: Version,
-    pkg_resolutions: &[Resolution],
+    pkg_resolutions: &IdSlice<PackageID, Resolution>,
 ) {
-    resolutions[dep_id.index()] = pkg_id;
+    resolutions[dep_id] = pkg_id;
 
     if text_lockfile_version != Version::V0 {
-        let res = &pkg_resolutions[pkg_id.index()];
+        let res = &pkg_resolutions[pkg_id];
         if res.tag == ResolutionTag::Workspace {
             // Whole-struct assign so `DependencyVersion::Drop` frees any prior
             // npm chain. SAFETY: `res.tag == Workspace` checked above.
@@ -3704,7 +3702,7 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
         let bytes = lockfile.buffers.string_bytes.as_slice();
         // `slice::sort_by` is pattern-defeating quicksort; `Dependency::cmp` is the
         // total-order form of `isLessThan` (behavior group, then name ASC).
-        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
+        lockfile.buffers.dependencies.raw_mut()[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
     }
 
     optional_peers_buf.clear();

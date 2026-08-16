@@ -154,7 +154,7 @@ pub fn populate_manifest_cache(
             for _dep_id in 0..dependencies.len() {
                 let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
 
-                let pkg_id = resolutions[dep_id.index()];
+                let pkg_id = resolutions[dep_id];
                 if pkg_id == invalid_package_id {
                     continue;
                 }
@@ -164,12 +164,12 @@ pub fn populate_manifest_cache(
                     continue;
                 }
 
-                let res = &pkg_resolutions[pkg_id.index()];
+                let res = &pkg_resolutions[pkg_id];
                 if res.tag != ResolutionTag::Npm {
                     continue;
                 }
 
-                let pkg_name = pkg_names[pkg_id.index()];
+                let pkg_name = pkg_names[pkg_id];
                 let pkg_name_slice = pkg_name.slice(string_buf);
                 // `options` is not mutated between here and the
                 // `start_manifest_task` call — read via the BACKREF `mgr_ref`.
@@ -213,10 +213,9 @@ pub fn populate_manifest_cache(
         }
         Packages::Ids(ids) => {
             for &root_pkg_id in ids {
-                let pkg_deps = pkg_dependencies[root_pkg_id.index()];
+                let pkg_deps = pkg_dependencies[root_pkg_id];
                 for dep_id in pkg_deps.dependency_ids() {
-                    let dep_id = dep_id.index();
-                    if dep_id >= dependencies.len() {
+                    if !dependencies.has(dep_id) {
                         continue;
                     }
                     let pkg_id = resolutions[dep_id];
@@ -225,7 +224,7 @@ pub fn populate_manifest_cache(
                     }
                     let dep = &dependencies[dep_id];
 
-                    let resolution: &Resolution = &pkg_resolutions[pkg_id.index()];
+                    let resolution: &Resolution = &pkg_resolutions[pkg_id];
                     if resolution.tag != ResolutionTag::Npm {
                         continue;
                     }
@@ -233,7 +232,7 @@ pub fn populate_manifest_cache(
                     // `options` read via BACKREF `mgr_ref` — see provenance-root
                     // note above.
                     let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
-                    let package_name = pkg_names[pkg_id.index()].slice(string_buf);
+                    let package_name = pkg_names[pkg_id].slice(string_buf);
                     // See disjoint-field note on the `.All` arm above.
                     let scope =
                         bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));
@@ -269,10 +268,10 @@ pub fn populate_manifest_cache(
         }
         Packages::Exact(ids) => {
             for &pkg_id in ids {
-                if pkg_resolutions[pkg_id.index()].tag != ResolutionTag::Npm {
+                if pkg_resolutions[pkg_id].tag != ResolutionTag::Npm {
                     continue;
                 }
-                let package_name = pkg_names[pkg_id.index()].slice(string_buf);
+                let package_name = pkg_names[pkg_id].slice(string_buf);
                 let needs_extended_manifest = mgr_ref.options.minimum_release_age_ms.is_some();
                 let scope =
                     bun_ptr::BackRef::new(mgr_ref.options.scope_for_package_name(package_name));

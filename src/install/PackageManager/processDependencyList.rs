@@ -190,7 +190,7 @@ impl PackageManager {
                     let new_name = Repository::create_dependency_name_from_version_literal(
                         &repo,
                         self.lockfile.buffers.string_bytes.as_slice(),
-                        &self.lockfile.buffers.dependencies[dep_id.index()],
+                        &self.lockfile.buffers.dependencies[dep_id],
                     );
                     // `defer manager.allocator.free(new_name)` — `new_name: Vec<u8>` drops at scope end.
 
@@ -331,8 +331,7 @@ impl PackageManager {
                     // effect. (Hoisted above `string_builder()` for borrowck —
                     // `parse_count`/`allocate` don't touch `packages`.)
                     debug_assert!(*package_id != INVALID_PACKAGE_ID);
-                    let mut scripts: Scripts =
-                        self.lockfile.packages.items_scripts()[package_id.index()];
+                    let mut scripts: Scripts = self.lockfile.packages.items_scripts()[*package_id];
                     let mut builder = self.lockfile.string_builder();
                     Scripts::parse_count(&mut builder, json_root);
                     builder.allocate().expect("unreachable");
@@ -356,11 +355,9 @@ impl PackageManager {
             TaskCallbackContext::Dependency(dependency_id) => {
                 // Clone the dependency row out of the buffer before
                 // re-borrowing `self` for enqueue.
-                let dependency = Clone::clone(
-                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id.index()],
-                );
-                let resolution =
-                    self.lockfile.buffers.resolutions.as_slice()[dependency_id.index()];
+                let dependency =
+                    Clone::clone(&self.lockfile.buffers.dependencies.as_slice()[dependency_id]);
+                let resolution = self.lockfile.buffers.resolutions.as_slice()[dependency_id];
 
                 enqueue::enqueue_dependency_with_main(
                     self,
@@ -371,11 +368,9 @@ impl PackageManager {
                 )?;
             }
             TaskCallbackContext::RootDependency(dependency_id) => {
-                let dependency = Clone::clone(
-                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id.index()],
-                );
-                let resolution =
-                    self.lockfile.buffers.resolutions.as_slice()[dependency_id.index()];
+                let dependency =
+                    Clone::clone(&self.lockfile.buffers.dependencies.as_slice()[dependency_id]);
+                let resolution = self.lockfile.buffers.resolutions.as_slice()[dependency_id];
 
                 enqueue::enqueue_dependency_with_main_and_success_fn(
                     self,
@@ -389,7 +384,7 @@ impl PackageManager {
                 )?;
                 if let Some(ptr) = any_root {
                     let new_resolution_id =
-                        self.lockfile.buffers.resolutions.as_slice()[dependency_id.index()];
+                        self.lockfile.buffers.resolutions.as_slice()[dependency_id];
                     if new_resolution_id != resolution {
                         ptr.set(true);
                     }
@@ -404,11 +399,9 @@ impl PackageManager {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
             // Clone the dependency row out of the buffer before re-borrowing
             // `self` for enqueue.
-            let dependency = Clone::clone(
-                &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id.index()],
-            );
-            let resolution =
-                self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id.index()];
+            let dependency =
+                Clone::clone(&self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id]);
+            let resolution = self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id];
 
             enqueue::enqueue_dependency_with_main(
                 self,

@@ -55,7 +55,7 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         missing
             .iter()
             .copied()
-            .find(|&id| name_hashes[id.index()] == dep.name_hash)
+            .find(|&id| name_hashes[id] == dep.name_hash)
     };
 
     let mut found = false;
@@ -70,7 +70,6 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         if silent {
             continue;
         }
-        let target = target.index();
         debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
         bun_core::pretty_errorln!(
             "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
@@ -88,7 +87,6 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
             if silent {
                 continue;
             }
-            let target = target.index();
             debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
@@ -196,7 +194,7 @@ fn catalog_entry_is_referenced(
     let dep_slices = pkgs.items_dependencies();
     let deps = lockfile.buffers.dependencies.as_slice();
 
-    (0..pkgs.len()).any(|pkg_id| match pkg_res[pkg_id].tag {
+    pkg_res.ids().any(|pkg_id| match pkg_res[pkg_id].tag {
         ResolutionTag::Root => dep_slices[pkg_id].get(deps).iter().any(&hits),
         ResolutionTag::Workspace => {
             dep_slices[pkg_id].get(deps).iter().any(&hits)

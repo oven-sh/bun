@@ -27,7 +27,7 @@ use crate::npm as Npm;
 use crate::repository::{Repository, RepositoryExt as _, is_safe_resolved_tag};
 use crate::resolution::{self, Resolution, TaggedValue as ResTagged};
 use crate::versioned_url::VersionedURLType;
-use crate::{ExternalStringList, INVALID_PACKAGE_ID, PackageID, PackageManager};
+use crate::{DependencyID, ExternalStringList, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
 macro_rules! debug {
     ($($args:tt)*) => { bun_output::scoped_log!(super::migrate, $($args)*) };
@@ -416,10 +416,10 @@ impl<'a> Migrator<'a> {
                 );
                 // A bundled copy carries no `resolved`/`integrity`; a registry copy of the same version does.
                 if res.tag == resolution::Tag::Npm && meta.integrity.tag.is_supported() {
-                    let existing_meta = &mut self.this.packages.items_meta_mut()[existing.index()];
+                    let existing_meta = &mut self.this.packages.items_meta_mut()[existing];
                     if !existing_meta.integrity.tag.is_supported() {
                         existing_meta.integrity = meta.integrity;
-                        self.this.packages.items_resolution_mut()[existing.index()] = res;
+                        self.this.packages.items_resolution_mut()[existing] = res;
                     }
                 }
                 self.entry_package_ids[j as usize] = existing;
@@ -675,7 +675,7 @@ impl<'a> Migrator<'a> {
         let start = self.this.buffers.dependencies.len();
         debug_assert_eq!(start, self.this.buffers.resolutions.len());
 
-        let res_tag = self.this.packages.items_resolution()[id.index()].tag;
+        let res_tag = self.this.packages.items_resolution()[id].tag;
         let is_local = matches!(res_tag, resolution::Tag::Root | resolution::Tag::Workspace);
         let bundle = if is_local {
             Bundle::None
@@ -753,10 +753,10 @@ impl<'a> Migrator<'a> {
                 let duplicate_of = if (is_peer_group && skip_peer_dups)
                     || (is_optional_group && replace_optional_dups)
                 {
-                    self.this.buffers.dependencies[start..]
+                    self.this.buffers.dependencies.raw()[start..]
                         .iter()
                         .position(|d| d.name_hash == name_hash)
-                        .map(|k| start + k)
+                        .map(|k| DependencyID::from_index(start + k))
                 } else {
                     None
                 };
@@ -818,8 +818,8 @@ impl<'a> Migrator<'a> {
                 ExternalSlice::new(start as u32, len as u32),
             )
         };
-        self.this.packages.items_dependencies_mut()[id.index()] = deps_slice;
-        self.this.packages.items_resolutions_mut()[id.index()] = res_slice;
+        self.this.packages.items_dependencies_mut()[id] = deps_slice;
+        self.this.packages.items_resolutions_mut()[id] = res_slice;
         Ok(())
     }
 
@@ -916,8 +916,7 @@ impl<'a> Migrator<'a> {
         }
         let id = self.entry_package_ids[t as usize];
         if id != INVALID_PACKAGE_ID {
-            return self.this.packages.items_resolution()[id.index()].tag
-                == resolution::Tag::Folder;
+            return self.this.packages.items_resolution()[id].tag == resolution::Tag::Folder;
         }
         let pkg = entry_object(entry);
         if pkg.get(b"resolved").is_some()
@@ -1054,7 +1053,7 @@ pub(super) fn apply_root_overrides(
 
     let empty = WorkspaceMap::init();
     let names = workspace_map.unwrap_or(&empty);
-    let root_package = *this.packages.get(0);
+    let root_package = this.package(PackageID::ROOT);
     let (mut builder, lf) = this.string_builder_split();
     lf.overrides
         .parse_count(manager, log, &source, names, json, &mut builder);

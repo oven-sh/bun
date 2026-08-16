@@ -970,7 +970,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let workspace_path: &[u8] = if pkg_id == PackageID::ROOT {
                 b"."
             } else {
-                let workspace_res = lockfile.packages.items_resolution()[pkg_id.index()];
+                let workspace_res = lockfile.packages.items_resolution()[pkg_id];
                 let ws = *workspace_res.workspace();
                 workspace_path_buf = ws.slice(string_bytes!(lockfile)).to_vec();
                 &workspace_path_buf
@@ -980,9 +980,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 return Err(invalid_pnpm_lockfile());
             };
 
-            let deps = lockfile.packages.items_dependencies()[pkg_id.index()];
+            let deps = lockfile.packages.items_dependencies()[pkg_id];
             'next_dep: for dep_id in deps.dependency_ids() {
-                let dep = lockfile.buffers.dependencies[dep_id.index()].clone();
+                let dep = lockfile.buffers.dependencies[dep_id].clone();
 
                 if dep.behavior.is_workspace() {
                     continue;
@@ -1424,9 +1424,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         };
 
         // resolve root dependencies first
-        let root_deps = lockfile.packages.items_dependencies()[0];
+        let root_deps = lockfile.packages.items_dependencies()[PackageID::ROOT];
         for dep_id in root_deps.dependency_ids() {
-            let dep = lockfile.buffers.dependencies[dep_id.index()].clone();
+            let dep = lockfile.buffers.dependencies[dep_id].clone();
             let string_buf = string_bytes!(lockfile);
 
             // implicit workspace dependencies
@@ -1436,14 +1436,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id.index()] = *workspace_pkg_id;
+                    lockfile.buffers.resolutions[dep_id] = *workspace_pkg_id;
                     continue;
                 }
             }
 
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
-                lockfile.buffers.resolutions[dep_id.index()] = peer_pkg_id;
+                lockfile.buffers.resolutions[dep_id] = peer_pkg_id;
                 continue;
             }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
@@ -1472,7 +1472,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id.index()] = *pkg_id;
+                    lockfile.buffers.resolutions[dep_id] = *pkg_id;
                     continue;
                 }
             }
@@ -1488,14 +1488,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 ));
             };
 
-            lockfile.buffers.resolutions[dep_id.index()] = *pkg_id;
+            lockfile.buffers.resolutions[dep_id] = *pkg_id;
         }
     }
 
     for _pkg_id in workspace_pkgs_off..workspace_pkgs_end {
         let pkg_id = PackageID::try_from(_pkg_id).expect("int cast");
 
-        let workspace_res = lockfile.packages.items_resolution()[pkg_id.index()];
+        let workspace_res = lockfile.packages.items_resolution()[pkg_id];
         let ws = *workspace_res.workspace();
         let workspace_path = ws.slice(string_bytes!(lockfile));
 
@@ -1503,13 +1503,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             return Err(invalid_pnpm_lockfile());
         };
 
-        let deps = lockfile.packages.items_dependencies()[pkg_id.index()];
+        let deps = lockfile.packages.items_dependencies()[pkg_id];
         for dep_id in deps.dependency_ids() {
-            let dep = lockfile.buffers.dependencies[dep_id.index()].clone();
+            let dep = lockfile.buffers.dependencies[dep_id].clone();
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
-                lockfile.buffers.resolutions[dep_id.index()] = peer_pkg_id;
+                lockfile.buffers.resolutions[dep_id] = peer_pkg_id;
                 continue;
             }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
@@ -1539,7 +1539,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id.index()] = *link_pkg_id;
+                    lockfile.buffers.resolutions[dep_id] = *link_pkg_id;
                     continue;
                 }
             }
@@ -1555,20 +1555,20 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 ));
             };
 
-            lockfile.buffers.resolutions[dep_id.index()] = *res_pkg_id;
+            lockfile.buffers.resolutions[dep_id] = *res_pkg_id;
         }
     }
 
     for _pkg_id in workspace_pkgs_end..lockfile.packages.len() {
         let pkg_id = PackageID::try_from(_pkg_id).expect("int cast");
 
-        let deps = lockfile.packages.items_dependencies()[pkg_id.index()];
+        let deps = lockfile.packages.items_dependencies()[pkg_id];
         for dep_id in deps.dependency_ids() {
-            let dep = lockfile.buffers.dependencies[dep_id.index()].clone();
+            let dep = lockfile.buffers.dependencies[dep_id].clone();
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
-                lockfile.buffers.resolutions[dep_id.index()] = peer_pkg_id;
+                lockfile.buffers.resolutions[dep_id] = peer_pkg_id;
                 continue;
             }
             let mut version_maybe_alias = dep.version.literal.slice(string_buf);
@@ -1591,7 +1591,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                         let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                         if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
-                            lockfile.buffers.resolutions[dep_id.index()] = *link_pkg_id;
+                            lockfile.buffers.resolutions[dep_id] = *link_pkg_id;
                             continue;
                         }
                     }
@@ -1602,7 +1602,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             }
 
             let Some(res_pkg_id) = pkg_map.get(&res_buf) else {
-                let pkg_name = lockfile.packages.items_name()[pkg_id.index()].slice(string_buf);
+                let pkg_name = lockfile.packages.items_name()[pkg_id].slice(string_buf);
                 return Err(missing_package_entry(
                     log,
                     &res_buf,
@@ -1611,7 +1611,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 ));
             };
 
-            lockfile.buffers.resolutions[dep_id.index()] = *res_pkg_id;
+            lockfile.buffers.resolutions[dep_id] = *res_pkg_id;
         }
     }
 
@@ -1921,7 +1921,10 @@ fn parse_append_package_dependencies(
 
     if references_by_name.count() > 0 {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        for (i, dep) in lockfile.buffers.dependencies[off..end].iter().enumerate() {
+        for (i, dep) in lockfile.buffers.dependencies.raw()[off..end]
+            .iter()
+            .enumerate()
+        {
             if let Some(reference) = references_by_name.get(dep.name.slice(bytes)) {
                 let dep_id = DependencyID::try_from(off + i).expect("int cast");
                 snapshot_dep_paths.put(dep_id, reference.clone())?;
@@ -1943,14 +1946,14 @@ fn bind_peers_from_variant(
     snapshot_obj: &Expr,
     snapshot_dep_paths: &mut SnapshotDepPaths,
 ) -> Result<bool, AllocError> {
-    let deps = lockfile.packages.items_dependencies()[pkg_id.index()];
+    let deps = lockfile.packages.items_dependencies()[pkg_id];
     let groups = [
         snapshot_obj.get(b"dependencies"),
         snapshot_obj.get(b"optionalDependencies"),
     ];
     let mut all_bound = true;
     for dep_id in deps.dependency_ids() {
-        let dep = &lockfile.buffers.dependencies[dep_id.index()];
+        let dep = &lockfile.buffers.dependencies[dep_id];
         if !dep.behavior.is_peer() || snapshot_dep_paths.contains(&dep_id) {
             continue;
         }
@@ -2292,7 +2295,7 @@ fn parse_append_importer_dependencies(
 fn sort_appended_dependencies(lockfile: &mut Lockfile, off: usize) {
     let buffers = &mut lockfile.buffers;
     let bytes = buffers.string_bytes.as_slice();
-    let mut appended = buffers.dependencies.split_off(off);
+    let mut appended = buffers.dependencies.raw_mut().split_off(off);
     index_sort::sort_vec_by(&mut appended, |a, b| Dependency::cmp(bytes, a, b));
     buffers.dependencies.append(&mut appended);
 }

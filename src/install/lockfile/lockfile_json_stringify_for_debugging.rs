@@ -13,7 +13,7 @@ use crate::{Dependency, DependencyID, Npm, Origin, PackageID, invalid_package_id
 
 use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
-use super::{FormatVersion, Lockfile, Package, package_index, tree};
+use super::{FormatVersion, Lockfile, package_index, tree};
 
 // Since this output is debug-only and an error mid-stream already yields malformed JSON,
 // the matching `end_*` call is emitted at the natural end of each scope and its error
@@ -206,7 +206,7 @@ where
                 package_index::Entry::Id(id) => *id,
                 package_index::Entry::Ids(ids) => ids.as_slice()[0],
             };
-            let name = this.packages.items_name()[first_id.index()].slice(sb);
+            let name = this.packages.items_name()[first_id].slice(sb);
             w.object_field(name)?;
             match entry {
                 package_index::Entry::Id(id) => w.write(*id)?,
@@ -272,8 +272,8 @@ where
 
                 for tree_dep_id in tree.dependencies.get(hoisted_deps) {
                     let tree_dep_id = *tree_dep_id;
-                    let dep = &dependencies[tree_dep_id.index()];
-                    let package_id = resolutions[tree_dep_id.index()];
+                    let dep = &dependencies[tree_dep_id];
+                    let package_id = resolutions[tree_dep_id];
 
                     w.object_field(dep.name.slice(sb))?;
                     {
@@ -305,16 +305,8 @@ where
         let dependencies = this.buffers.dependencies.as_slice();
         let resolutions = this.buffers.resolutions.as_slice();
 
-        for dep_id in 0..dependencies.len() {
-            let dep = &dependencies[dep_id];
-            let res = resolutions[dep_id];
-            json_stringify_dependency(
-                this,
-                w,
-                DependencyID::try_from(dep_id).expect("int cast"),
-                dep,
-                res,
-            )?;
+        for (dep_id, dep) in dependencies.iter_enumerated() {
+            json_stringify_dependency(this, w, dep_id, dep, resolutions[dep_id])?;
         }
 
         let _ = w.end_array();
@@ -324,8 +316,8 @@ where
         w.object_field(b"packages")?;
         w.begin_array()?;
 
-        for i in 0..this.packages.len() {
-            let pkg: Package = *this.packages.get(i);
+        for i in (0..this.packages.len()).map(PackageID::from_index) {
+            let pkg = this.package(i);
             w.begin_object()?;
 
             w.object_field(b"id")?;

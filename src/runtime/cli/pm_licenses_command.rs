@@ -4,7 +4,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
-use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
+use bun_collections::{DynamicBitSet, IdVec, StringHashMap, index_sort};
 use bun_core::fmt::PathSep;
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
@@ -203,8 +203,8 @@ impl PmLicensesCommand {
         let mut missing: usize = 0;
         let mut checked: usize = 0;
 
-        for pkg_id in 0..packages.len() {
-            if !wanted.is_set(pkg_id) {
+        for pkg_id in pkg_resolution.ids() {
+            if !wanted.is_set(pkg_id.index()) {
                 continue;
             }
             let resolution = &pkg_resolution[pkg_id];
@@ -281,7 +281,9 @@ impl PmLicensesCommand {
                 homepage: info.homepage,
                 author: info.author,
                 description: info.description,
-                dev_only: production.as_ref().is_some_and(|prod| !prod.is_set(pkg_id)),
+                dev_only: production
+                    .as_ref()
+                    .is_some_and(|prod| !prod.is_set(pkg_id.index())),
             });
         }
 
@@ -348,9 +350,8 @@ fn printable(s: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
-    let len = lockfile.packages.len();
-    let mut out: Vec<Option<Box<[u8]>>> = vec![None; len];
+fn tree_locations(lockfile: &Lockfile) -> IdVec<PackageID, Option<Box<[u8]>>> {
+    let mut out: IdVec<PackageID, Option<Box<[u8]>>> = vec![None; lockfile.packages.len()].into();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -358,17 +359,17 @@ fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
     let mut it = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
     while let Some(folder) = it.next(None) {
         for &dep_id in folder.dependencies {
-            let pkg_id = resolutions[dep_id.index()];
-            if pkg_id.index() >= len || out[pkg_id.index()].is_some() {
+            let pkg_id = resolutions[dep_id];
+            if !out.has(pkg_id) || out[pkg_id].is_some() {
                 continue;
             }
             let relative_path = folder.relative_path.as_bytes();
-            let alias = dependencies[dep_id.index()].name.slice(buf);
+            let alias = dependencies[dep_id].name.slice(buf);
             let mut location: Vec<u8> = Vec::with_capacity(relative_path.len() + 1 + alias.len());
             location.extend_from_slice(relative_path);
             location.push(bun_paths::SEP);
             location.extend_from_slice(alias);
-            out[pkg_id.index()] = Some(location.into_boxed_slice());
+            out[pkg_id] = Some(location.into_boxed_slice());
         }
     }
 

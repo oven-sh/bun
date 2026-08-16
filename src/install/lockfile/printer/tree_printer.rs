@@ -1,4 +1,4 @@
-use bun_collections::{DynamicBitSet, HashMap};
+use bun_collections::{DynamicBitSet, HashMap, IdSlice};
 use bun_io::Write;
 use bun_semver as semver;
 
@@ -7,8 +7,8 @@ use crate::package_manager_real::TrackInstalledBin;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID,
-    PackageManager, PackageNameHash, Resolution, Subcommand, bin, resolution,
+    self as install, Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, PackageManager,
+    PackageNameHash, Resolution, Subcommand, bin, resolution,
 };
 use bun_sys::Fd;
 
@@ -36,7 +36,7 @@ where
     let packages_slice = lockfile.packages.slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
-    let workspace_res = &packages_slice.items_resolution()[workspace_package_id.index()];
+    let workspace_res = &packages_slice.items_resolution()[workspace_package_id];
     let names = packages_slice.items_name();
     let pkg_metas = packages_slice.items_meta();
     debug_assert!(
@@ -58,7 +58,7 @@ where
 
     // find the updated packages
     for &owner in update_owners {
-        for dep_id in resolutions_list[owner.index()].dependency_ids() {
+        for dep_id in resolutions_list[owner].dependency_ids() {
             match should_print_package_install(
                 this,
                 manager,
@@ -76,7 +76,7 @@ where
                 | ShouldPrintPackageInstallResult::Return => {}
                 ShouldPrintPackageInstallResult::Update(update_info) => {
                     if update_dedupe
-                        .get_or_put(dependencies[dep_id.index()].name_hash)?
+                        .get_or_put(dependencies[dep_id].name_hash)?
                         .found_existing
                     {
                         continue;
@@ -87,8 +87,7 @@ where
                     if PRINT_SECTION_HEADER {
                         if !printed_section_header {
                             printed_section_header = true;
-                            let workspace_name =
-                                names[workspace_package_id.index()].slice(string_buf);
+                            let workspace_name = names[workspace_package_id].slice(string_buf);
                             bun_core::write_pretty!(
                                 writer,
                                 ENABLE_ANSI_COLORS,
@@ -128,7 +127,7 @@ where
         }
     }
 
-    for dep_id in resolutions_list[workspace_package_id.index()].dependency_ids() {
+    for dep_id in resolutions_list[workspace_package_id].dependency_ids() {
         match should_print_package_install(
             this,
             manager,
@@ -144,8 +143,8 @@ where
             }
         }
 
-        let dep = &dependencies[dep_id.index()];
-        let package_id = resolutions[dep_id.index()];
+        let dep = &dependencies[dep_id];
+        let package_id = resolutions[dep_id];
 
         if dep_dedupe.get_or_put(dep.name_hash)?.found_existing {
             continue;
@@ -156,7 +155,7 @@ where
         if PRINT_SECTION_HEADER {
             if !printed_section_header {
                 printed_section_header = true;
-                let workspace_name = names[workspace_package_id.index()].slice(string_buf);
+                let workspace_name = names[workspace_package_id].slice(string_buf);
                 bun_core::write_pretty!(
                     writer,
                     ENABLE_ANSI_COLORS,
@@ -196,12 +195,12 @@ fn should_print_package_install(
     dep_id: DependencyID,
     installed: &Bitset,
     id_map: Option<&mut [DependencyID]>,
-    pkg_metas: &[PackageMeta],
+    pkg_metas: &IdSlice<PackageID, PackageMeta>,
 ) -> ShouldPrintPackageInstallResult {
     let dependencies = this.lockfile.buffers.dependencies.as_slice();
     let resolutions = this.lockfile.buffers.resolutions.as_slice();
-    let dependency = &dependencies[dep_id.index()];
-    let package_id = resolutions[dep_id.index()];
+    let dependency = &dependencies[dep_id];
+    let package_id = resolutions[dep_id];
 
     if dependency.behavior.is_workspace() || package_id.index() >= this.lockfile.packages.len() {
         return ShouldPrintPackageInstallResult::No;
@@ -238,14 +237,14 @@ fn should_print_package_install(
     if this.lockfile.is_resolved_dependency_disabled(
         dep_id,
         this.options.local_package_features,
-        &pkg_metas[package_id.index()],
+        &pkg_metas[package_id],
         this.options.cpu,
         this.options.os,
     ) {
         return ShouldPrintPackageInstallResult::No;
     }
 
-    let resolution = this.lockfile.packages.items_resolution()[package_id.index()];
+    let resolution = this.lockfile.packages.items_resolution()[package_id];
     if resolution.tag == resolution::Tag::Npm {
         let npm_version = resolution.npm().version;
         let name = dependency
@@ -285,9 +284,8 @@ where
 {
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages_slice = this.lockfile.packages.slice();
-    let package_id = update_info.package_id.index();
-    let dependency =
-        &this.lockfile.buffers.dependencies.as_slice()[update_info.dependency_id.index()];
+    let package_id = update_info.package_id;
+    let dependency = &this.lockfile.buffers.dependencies.as_slice()[update_info.dependency_id];
     let dep_name = dependency.name.slice(string_buf);
     let later = later_version_text(
         manager,
@@ -394,10 +392,10 @@ where
     let pkg_resolutions = packages_slice.items_resolution();
     let mut workspace_targets = Bitset::init_empty(pkg_resolutions.len())?;
     for &owner in update_owners {
-        for &package_id in packages_slice.items_resolutions()[owner.index()]
-            .get(lockfile.buffers.resolutions.as_slice())
+        for &package_id in
+            packages_slice.items_resolutions()[owner].get(lockfile.buffers.resolutions.as_slice())
         {
-            if package_id.index() < pkg_resolutions.len() {
+            if pkg_resolutions.has(package_id) {
                 workspace_targets.set(package_id.index());
             }
         }
@@ -405,8 +403,9 @@ where
 
     let mut printed = false;
     let mut installed_ids = installed.iterator::<true, true>();
-    while let Some(package_id) = installed_ids.next() {
-        if package_id >= pkg_resolutions.len() || workspace_targets.is_set(package_id) {
+    while let Some(package_index) = installed_ids.next() {
+        let package_id = PackageID::from_index(package_index);
+        if !pkg_resolutions.has(package_id) || workspace_targets.is_set(package_index) {
             continue;
         }
         let resolution = &pkg_resolutions[package_id];
@@ -457,10 +456,10 @@ where
 {
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages_slice = this.lockfile.packages.slice();
-    let resolution: Resolution = packages_slice.items_resolution()[package_id.index()];
+    let resolution: Resolution = packages_slice.items_resolution()[package_id];
     let name = dependency.name.slice(string_buf);
 
-    let package_name = packages_slice.items_name()[package_id.index()].slice(string_buf);
+    let package_name = packages_slice.items_name()[package_id].slice(string_buf);
     if let Some(later_version_fmt) =
         manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
     {
@@ -562,16 +561,16 @@ where
     writer.write_str("\n")?;
     // `allocator` param dropped — global mimalloc.
     let slice = this.lockfile.packages.slice();
-    let bins: &[Bin] = slice.items_bin();
-    let resolved: &[Resolution] = slice.items_resolution();
+    let bins = slice.items_bin();
+    let resolved = slice.items_resolution();
     if resolved.is_empty() {
         return Ok(());
     }
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let resolutions_list = slice.items_resolutions();
     let pkg_metas = slice.items_meta();
-    let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
-    let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
+    let resolutions_buffer = this.lockfile.buffers.resolutions.as_slice();
+    let dependencies_buffer = this.lockfile.buffers.dependencies.as_slice();
     if dependencies_buffer.is_empty() {
         return Ok(());
     }
@@ -584,8 +583,8 @@ where
         if log_level.is_verbose() {
             let mut workspaces_to_print: Vec<DependencyID> = Vec::new();
 
-            for dep_id in resolutions_list[0].dependency_ids() {
-                let dep = &dependencies_buffer[dep_id.index()];
+            for dep_id in resolutions_list[PackageID::ROOT].dependency_ids() {
+                let dep = &dependencies_buffer[dep_id];
                 if dep.behavior.is_workspace() {
                     workspaces_to_print.push(dep_id);
                 }
@@ -593,8 +592,8 @@ where
 
             let mut found_workspace_to_print = false;
             for &workspace_dep_id in &workspaces_to_print {
-                let workspace_package_id = resolutions_buffer[workspace_dep_id.index()];
-                for dep_id in resolutions_list[workspace_package_id.index()].dependency_ids() {
+                let workspace_package_id = resolutions_buffer[workspace_dep_id];
+                for dep_id in resolutions_list[workspace_package_id].dependency_ids() {
                     match should_print_package_install(
                         this,
                         manager,
@@ -622,7 +621,7 @@ where
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
-                let workspace_package_id = resolutions_buffer[workspace_dep_id.index()];
+                let workspace_package_id = resolutions_buffer[workspace_dep_id];
                 print_installed_workspace_section::<W, ENABLE_ANSI_COLORS, true>(
                     this,
                     manager,
@@ -638,10 +637,10 @@ where
             // just print installed packages for the current workspace
             let mut workspace_package_id = PackageID::ROOT;
             if let Some(workspace_name_hash) = manager.workspace_name_hash {
-                for dep_id in resolutions_list[0].dependency_ids() {
-                    let dep = &dependencies_buffer[dep_id.index()];
+                for dep_id in resolutions_list[PackageID::ROOT].dependency_ids() {
+                    let dep = &dependencies_buffer[dep_id];
                     if dep.behavior.is_workspace() && dep.name_hash == workspace_name_hash {
-                        workspace_package_id = resolutions_buffer[dep_id.index()];
+                        workspace_package_id = resolutions_buffer[dep_id];
                         break;
                     }
                 }
@@ -653,12 +652,10 @@ where
                 if let Some(targets) = manager.update_target_workspaces.as_deref() {
                     let names = slice.items_name();
                     let name_hashes = slice.items_name_hash();
-                    let members = resolutions_list[0]
+                    let members = resolutions_list[PackageID::ROOT]
                         .dependency_ids()
-                        .filter(|&dep_id| {
-                            dependencies_buffer[dep_id.index()].behavior.is_workspace()
-                        })
-                        .map(|dep_id| resolutions_buffer[dep_id.index()]);
+                        .filter(|&dep_id| dependencies_buffer[dep_id].behavior.is_workspace())
+                        .map(|dep_id| resolutions_buffer[dep_id]);
                     update_owners = core::iter::once(PackageID::ROOT)
                         .chain(members)
                         .filter(|&importer| {
@@ -666,8 +663,8 @@ where
                                 && targets.iter().any(|target| {
                                     target.matches(
                                         importer == PackageID::ROOT,
-                                        name_hashes[importer.index()],
-                                        names[importer.index()].slice(string_buf),
+                                        name_hashes[importer],
+                                        names[importer].slice(string_buf),
                                     )
                                 })
                         })
@@ -723,7 +720,7 @@ where
                 ENABLE_ANSI_COLORS,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
                 bstr::BStr::new(package_name),
-                resolved[package_id.index()].fmt(string_buf, PathSep::Auto),
+                resolved[package_id].fmt(string_buf, PathSep::Auto),
             )?;
         }
     }
@@ -745,10 +742,10 @@ where
             had_printed_new_install = true;
         }
 
-        let dependency = &dependencies_buffer[dependency_id.index()];
-        let package_id = resolutions_buffer[dependency_id.index()];
-        let bin = bins[package_id.index()];
-        let resolution = &resolved[package_id.index()];
+        let dependency = &dependencies_buffer[dependency_id];
+        let package_id = resolutions_buffer[dependency_id];
+        let bin = bins[package_id];
+        let resolution = &resolved[package_id];
 
         match bin.tag {
             bin::Tag::None | bin::Tag::Dir => {

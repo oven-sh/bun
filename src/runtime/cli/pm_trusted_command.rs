@@ -8,7 +8,7 @@ use bun_core::{Global, Output, Progress};
 use bun_install::lockfile::{
     LoadResult, Lockfile,
     package::PackageColumns as _,
-    package::scripts::{List as ScriptsList, PrintFormat, Scripts},
+    package::scripts::{List as ScriptsList, PrintFormat},
     tree,
 };
 use bun_install::package_manager_real::{
@@ -16,7 +16,7 @@ use bun_install::package_manager_real::{
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
-    PackageID, PackageManager, Resolution,
+    PackageID, PackageManager,
 };
 use bun_paths::AutoAbsPath;
 
@@ -79,8 +79,8 @@ impl UntrustedCommand {
         let lockfile: &Lockfile = &pm.lockfile;
 
         let packages = lockfile.packages.slice();
-        let scripts: &[Scripts] = packages.items_scripts();
-        let resolutions: &[Resolution] = packages.items_resolution();
+        let scripts = packages.items_scripts();
+        let resolutions = packages.items_resolution();
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut untrusted_dep_ids: DepIdSet = DepIdSet::new();
@@ -88,15 +88,15 @@ impl UntrustedCommand {
         // loop through dependencies and get trusted and untrusted deps with lifecycle scripts
         for (i, dep) in lockfile.buffers.dependencies.as_slice().iter().enumerate() {
             let dep_id: DependencyID = DependencyID::try_from(i).expect("int cast");
-            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id.index()];
+            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id];
             if package_id == install::INVALID_PACKAGE_ID {
                 continue;
             }
 
             // called alias because a dependency name is not always the package name
             let alias = dep.name.slice(buf);
-            let pkg_name = packages.items_name()[package_id.index()].slice(buf);
-            let resolution = &resolutions[package_id.index()];
+            let pkg_name = packages.items_name()[package_id].slice(buf);
+            let resolution = &resolutions[package_id];
             if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
@@ -128,16 +128,16 @@ impl UntrustedCommand {
                 if !untrusted_dep_ids.contains(&dep_id) {
                     continue;
                 }
-                let dep = &lockfile.buffers.dependencies.as_slice()[dep_id.index()];
+                let dep = &lockfile.buffers.dependencies.as_slice()[dep_id];
                 let alias = dep.name.slice(buf);
-                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id.index()];
+                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id];
 
                 if package_id.index() >= packages.len() {
                     continue;
                 }
 
-                let resolution = &resolutions[package_id.index()];
-                let mut package_scripts = scripts[package_id.index()];
+                let resolution = &resolutions[package_id];
+                let mut package_scripts = scripts[package_id];
 
                 let folder_saved = node_modules_path.len();
                 let _ = node_modules_path.append(alias);
@@ -177,8 +177,8 @@ impl UntrustedCommand {
         while let Some(entry) = iter.next() {
             let dep_id = *entry.key_ptr;
             let scripts_list = &*entry.value_ptr;
-            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id.index()];
-            let resolution = &lockfile.packages.items_resolution()[package_id.index()];
+            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id];
+            let resolution = &lockfile.packages.items_resolution()[package_id];
 
             scripts_list.print_scripts(resolution, buf, PrintFormat::Untrusted);
             bun_core::pretty!("\n");
@@ -293,8 +293,8 @@ impl TrustCommand {
 
         let buf = lockfile.buffers.string_bytes.as_slice();
         let packages = lockfile.packages.slice();
-        let resolutions: &[Resolution] = packages.items_resolution();
-        let scripts: &[Scripts] = packages.items_scripts();
+        let resolutions = packages.items_resolution();
+        let scripts = packages.items_scripts();
 
         let mut untrusted_dep_ids: DepIdSet = DepIdSet::new();
 
@@ -316,8 +316,8 @@ impl TrustCommand {
             }
 
             let alias = dep.name.slice(buf);
-            let pkg_name = packages.items_name()[package_id.index()].slice(buf);
-            let resolution = &resolutions[package_id.index()];
+            let pkg_name = packages.items_name()[package_id].slice(buf);
+            let resolution = &resolutions[package_id];
             if !lockfile.has_trusted_dependency(alias, pkg_name, resolution) {
                 untrusted_dep_ids.put(dep_id, ())?;
             }
@@ -361,16 +361,16 @@ impl TrustCommand {
                 if !untrusted_dep_ids.contains(&dep_id) {
                     continue;
                 }
-                let dep = &lockfile.buffers.dependencies.as_slice()[dep_id.index()];
+                let dep = &lockfile.buffers.dependencies.as_slice()[dep_id];
                 let alias = dep.name.slice(buf);
-                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id.index()];
+                let package_id = lockfile.buffers.resolutions.as_slice()[dep_id];
 
                 if package_id.index() >= packages.len() {
                     continue;
                 }
 
-                let resolution = &resolutions[package_id.index()];
-                let mut package_scripts = scripts[package_id.index()];
+                let resolution = &resolutions[package_id];
+                let mut package_scripts = scripts[package_id];
 
                 let folder_saved = node_modules_path.len();
                 let _ = node_modules_path.append(alias);
@@ -401,7 +401,7 @@ impl TrustCommand {
                             if strings::eql_long(package_name_from_cli, alias, true)
                                 && !lockfile.has_trusted_dependency(
                                     alias,
-                                    packages.items_name()[package_id.index()].slice(buf),
+                                    packages.items_name()[package_id].slice(buf),
                                     resolution,
                                 )
                             {
@@ -595,7 +595,7 @@ impl TrustCommand {
         let buf = lockfile.buffers.string_bytes.as_slice();
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
-                let resolution = &lockfile.packages.items_resolution()[info.package_id.index()];
+                let resolution = &lockfile.packages.items_resolution()[info.package_id];
                 if info.skip {
                     info.scripts_list
                         .print_scripts(resolution, buf, PrintFormat::Untrusted);

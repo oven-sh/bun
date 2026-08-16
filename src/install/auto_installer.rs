@@ -22,6 +22,7 @@
 
 use core::mem::{align_of, size_of};
 
+use bun_collections::IdSlice;
 use bun_install_types::resolver_hooks as hooks;
 use bun_semver::{SlicedString, String as SemverString};
 
@@ -137,7 +138,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_package_dependencies(&self, id: PackageID) -> hooks::DependencySlice {
-        let s = self.lockfile.packages.get(id.index()).dependencies;
+        let s = self.lockfile.package(id).dependencies;
         // `lockfile::DependencySlice` and `hooks::DependencySlice` are both
         // `ExternalSlice<Dependency>` (same `Dependency` after MOVE_DOWN), so
         // this is a no-op; spelled via `new` for nominal-type clarity.
@@ -145,20 +146,20 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_package_resolutions(&self, id: PackageID) -> hooks::ResolutionSlice {
-        let s = self.lockfile.packages.get(id.index()).resolutions;
+        let s = self.lockfile.package(id).resolutions;
         hooks::ResolutionSlice::new(s.off, s.len)
     }
 
     fn lockfile_package_resolution(&self, id: PackageID) -> hooks::Resolution {
-        resolution_to_hooks(&self.lockfile.packages.get(id.index()).resolution)
+        resolution_to_hooks(&self.lockfile.package(id).resolution)
     }
 
-    fn lockfile_dependencies_buf(&self) -> &[hooks::Dependency] {
+    fn lockfile_dependencies_buf(&self) -> &IdSlice<DependencyID, hooks::Dependency> {
         // `dependency::Dependency` IS `hooks::Dependency` (re-export).
         self.lockfile.buffers.dependencies.as_slice()
     }
 
-    fn lockfile_resolutions_buf(&self) -> &[PackageID] {
+    fn lockfile_resolutions_buf(&self) -> &IdSlice<DependencyID, PackageID> {
         self.lockfile.buffers.resolutions.as_slice()
     }
 
@@ -241,8 +242,10 @@ impl hooks::AutoInstaller for PackageManager {
         // Default-fill the tail now and `truncate` back
         // to `dep_start` on the error path so a failed `clone_in` leaves both
         // buffer lengths consistent.
-        let mut dependencies: &mut [dependency::Dependency] =
-            bun_core::vec::grow_default(dependencies_list, total_dependencies_count as usize);
+        let mut dependencies: &mut [dependency::Dependency] = bun_core::vec::grow_default(
+            dependencies_list.raw_mut(),
+            total_dependencies_count as usize,
+        );
 
         for (_, dep) in package_json.dependency_iter() {
             if !dep.behavior.is_enabled(features) {

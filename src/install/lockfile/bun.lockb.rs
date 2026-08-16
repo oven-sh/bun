@@ -821,10 +821,10 @@ pub(crate) fn load(
     // sound and avoids the overlapping borrow.
     if !has_workspace_name_hashes {
         let len = lockfile.packages.len();
-        for id in 0..len {
+        for id in (0..len).map(PackageID::from_index) {
             let name_hash = lockfile.packages.items_name_hash()[id];
             let resolution = lockfile.packages.items_resolution()[id];
-            lockfile.get_or_put_id(PackageID::from_index(id), name_hash)?;
+            lockfile.get_or_put_id(id, name_hash)?;
 
             if matches!(resolution.tag, ResolutionTag::Git | ResolutionTag::Github) {
                 let resolved = lockfile.str(&resolution.repository().resolved);
@@ -855,9 +855,9 @@ pub(crate) fn load(
         }
     } else {
         let len = lockfile.packages.len();
-        for id in 0..len {
+        for id in (0..len).map(PackageID::from_index) {
             let name_hash = lockfile.packages.items_name_hash()[id];
-            lockfile.get_or_put_id(PackageID::from_index(id), name_hash)?;
+            lockfile.get_or_put_id(id, name_hash)?;
         }
     }
 

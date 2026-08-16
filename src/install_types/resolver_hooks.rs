@@ -17,6 +17,7 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
+use bun_collections::IdSlice;
 use bun_core::strings;
 use bun_semver::version::VersionInt;
 use bun_semver::{
@@ -90,6 +91,18 @@ macro_rules! impl_id {
             #[inline]
             fn try_from(index: usize) -> Result<Self, Self::Error> {
                 u32::try_from(index).map(Self)
+            }
+        }
+
+        impl bun_collections::Idx for $name {
+            #[inline]
+            fn from_index(index: usize) -> Self {
+                Self(index as u32)
+            }
+
+            #[inline]
+            fn index(self) -> usize {
+                self.0 as usize
             }
         }
 
@@ -1572,8 +1585,8 @@ pub trait AutoInstaller {
     fn lockfile_package_dependencies(&self, id: PackageID) -> DependencySlice;
     fn lockfile_package_resolutions(&self, id: PackageID) -> ResolutionSlice;
     fn lockfile_package_resolution(&self, id: PackageID) -> Resolution;
-    fn lockfile_dependencies_buf(&self) -> &[Dependency];
-    fn lockfile_resolutions_buf(&self) -> &[PackageID];
+    fn lockfile_dependencies_buf(&self) -> &IdSlice<DependencyID, Dependency>;
+    fn lockfile_resolutions_buf(&self) -> &IdSlice<DependencyID, PackageID>;
     fn lockfile_string_bytes(&self) -> &[u8];
     fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID>;
     fn lockfile_legacy_package_to_dependency_id(

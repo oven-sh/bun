@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use bstr::BStr;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::{ArrayHashMap, IdSlice, MultiArrayList};
 use bun_semver::String as SemverString;
 
 use crate::lockfile::{Lockfile, package};
@@ -432,8 +432,8 @@ pub mod entry {
                 f,
                 "{}",
                 fmt_store_key(
-                    pkgs.items_name()[pkg_id.index()],
-                    &pkgs.items_resolution()[pkg_id.index()],
+                    pkgs.items_name()[pkg_id],
+                    &pkgs.items_resolution()[pkg_id],
                     self.lockfile.buffers.string_bytes.as_slice(),
                 )
             )?;
@@ -528,7 +528,7 @@ pub mod entry {
 
     pub(crate) struct DependenciesOrderedArraySetCtx<'a> {
         pub string_buf: &'a [u8],
-        pub dependencies: &'a [Dependency],
+        pub dependencies: &'a IdSlice<DependencyID, Dependency>,
     }
 
     impl<'a> OrderedArraySetCtx<DependenciesItem> for DependenciesOrderedArraySetCtx<'a> {
@@ -538,16 +538,16 @@ pub mod entry {
             }
 
             let dependencies = self.dependencies;
-            let l_dep = &dependencies[l_item.dep_id.index()];
-            let r_dep = &dependencies[r_item.dep_id.index()];
+            let l_dep = &dependencies[l_item.dep_id];
+            let r_dep = &dependencies[r_item.dep_id];
 
             l_dep.name_hash == r_dep.name_hash
         }
 
         fn order(&self, l: DependenciesItem, r: DependenciesItem) -> Ordering {
             let dependencies = self.dependencies;
-            let l_dep = &dependencies[l.dep_id.index()];
-            let r_dep = &dependencies[r.dep_id.index()];
+            let l_dep = &dependencies[l.dep_id];
+            let r_dep = &dependencies[r.dep_id];
 
             if l.entry_id == r.entry_id && l_dep.name_hash == r_dep.name_hash {
                 return Ordering::Equal;
@@ -639,7 +639,7 @@ pub mod node {
 
     pub(crate) struct TransitivePeerOrderedArraySetCtx<'a> {
         pub(crate) string_buf: &'a [u8],
-        pub(crate) pkg_names: &'a [SemverString],
+        pub(crate) pkg_names: &'a IdSlice<PackageID, SemverString>,
     }
 
     impl<'a> OrderedArraySetCtx<TransitivePeer> for TransitivePeerOrderedArraySetCtx<'a> {
@@ -657,8 +657,8 @@ pub mod node {
 
             let string_buf = self.string_buf;
             let pkg_names = self.pkg_names;
-            let l_pkg_name = pkg_names[l_pkg_id.index()];
-            let r_pkg_name = pkg_names[r_pkg_id.index()];
+            let l_pkg_name = pkg_names[l_pkg_id];
+            let r_pkg_name = pkg_names[r_pkg_id];
 
             l_pkg_name.order(r_pkg_name, string_buf, string_buf)
         }

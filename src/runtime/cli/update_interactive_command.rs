@@ -695,7 +695,7 @@ impl UpdateInteractiveCommand {
             // Get the workspace path for this package
             let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
             let workspace_resolution =
-                manager.lockfile.packages.items_resolution()[pkg.workspace_pkg_id.index()];
+                manager.lockfile.packages.items_resolution()[pkg.workspace_pkg_id];
             let workspace_path: &[u8] = if workspace_resolution.tag == resolution::Tag::Workspace {
                 workspace_resolution.workspace().slice(string_buf)
             } else {
@@ -845,15 +845,15 @@ impl UpdateInteractiveCommand {
         let mut version_buf: String = String::new();
 
         for &workspace_pkg_id in workspace_pkg_ids {
-            let pkg_deps = manager.lockfile.packages.items_dependencies()[workspace_pkg_id.index()];
+            let pkg_deps = manager.lockfile.packages.items_dependencies()[workspace_pkg_id];
             for dep_id in pkg_deps.dependency_ids() {
-                let package_id = manager.lockfile.buffers.resolutions[dep_id.index()];
+                let package_id = manager.lockfile.buffers.resolutions[dep_id];
                 if package_id == INVALID_PACKAGE_ID {
                     continue;
                 }
                 checked += 1;
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id.index()];
+                let dep = &manager.lockfile.buffers.dependencies[dep_id];
                 if !selects(groups, dep.behavior) {
                     continue;
                 }
@@ -866,14 +866,14 @@ impl UpdateInteractiveCommand {
                 {
                     continue;
                 }
-                let resolution = manager.lockfile.packages.items_resolution()[package_id.index()];
+                let resolution = manager.lockfile.packages.items_resolution()[package_id];
                 if resolution.tag != resolution::Tag::Npm {
                     continue;
                 }
 
                 let name_slice = dep.name.slice(string_buf);
                 let package_name =
-                    manager.lockfile.packages.items_name()[package_id.index()].slice(string_buf);
+                    manager.lockfile.packages.items_name()[package_id].slice(string_buf);
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 // Snapshot for `OutdatedPackage.uses_default_registry` (see
@@ -968,11 +968,10 @@ impl UpdateInteractiveCommand {
 
                 // Get workspace name but only show if it's actually a workspace
                 let workspace_resolution =
-                    manager.lockfile.packages.items_resolution()[workspace_pkg_id.index()];
+                    manager.lockfile.packages.items_resolution()[workspace_pkg_id];
                 let workspace_name: &[u8] =
                     if workspace_resolution.tag == resolution::Tag::Workspace {
-                        manager.lockfile.packages.items_name()[workspace_pkg_id.index()]
-                            .slice(string_buf)
+                        manager.lockfile.packages.items_name()[workspace_pkg_id].slice(string_buf)
                     } else {
                         b""
                     };

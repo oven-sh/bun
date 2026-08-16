@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_collections::bit_set::Range as BitRange;
-use bun_collections::{DynamicBitSet, index_sort};
+use bun_collections::{DynamicBitSet, IdVec, index_sort};
 use bun_core::{Output, UnwrapOrOom as _, pretty, prettyln, strings};
 use bun_semver as Semver;
 
@@ -39,7 +39,7 @@ impl DirectDependencies {
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
         let mut out = DirectDependencies::default();
-        for owner in 0..pkg_res.len() {
+        for owner in pkg_res.ids() {
             if !matches!(
                 pkg_res[owner].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
@@ -54,11 +54,8 @@ impl DirectDependencies {
                     .zip(res_slices[owner].get(resolutions))
                     .map(|(dep, &resolved)| (dep.name_hash, dep.behavior, resolved)),
             );
-            out.owners.push((
-                PackageID::from_index(owner),
-                start as u32,
-                (out.rows.len() - start) as u32,
-            ));
+            out.owners
+                .push((owner, start as u32, (out.rows.len() - start) as u32));
         }
         out
     }
@@ -82,8 +79,7 @@ impl DirectDependencies {
 
         let mut pairs: Vec<(PackageID, PackageID)> = Vec::new();
         for &(owner, start, len) in &self.owners {
-            let owner = owner.index();
-            if owner >= packages_len {
+            if owner.index() >= packages_len {
                 continue;
             }
             let rows = &self.rows[start as usize..(start + len) as usize];
@@ -126,8 +122,8 @@ impl DirectDependencies {
                 if old == new
                     || old.index() >= packages_len
                     || new.index() >= packages_len
-                    || pkg_res[new.index()].tag != ResolutionTag::Npm
-                    || name_hashes[old.index()] != name_hashes[new.index()]
+                    || pkg_res[new].tag != ResolutionTag::Npm
+                    || name_hashes[old] != name_hashes[new]
                 {
                     continue;
                 }
@@ -146,13 +142,13 @@ fn rows_between(manager: &mut PackageManager, pairs: Vec<(PackageID, PackageID)>
             let lockfile: &Lockfile = &manager.lockfile;
             let buf = lockfile.buffers.string_bytes.as_slice();
             let pkg_res = lockfile.packages.items_resolution();
-            if pkg_res[old.index()].tag != ResolutionTag::Npm {
+            if pkg_res[old].tag != ResolutionTag::Npm {
                 continue;
             }
             (
-                Box::<[u8]>::from(lockfile.packages.items_name()[old.index()].slice(buf)),
-                text(pkg_res[old.index()].npm().version.fmt(buf)),
-                text(pkg_res[new.index()].npm().version.fmt(buf)),
+                Box::<[u8]>::from(lockfile.packages.items_name()[old].slice(buf)),
+                text(pkg_res[old].npm().version.fmt(buf)),
+                text(pkg_res[new].npm().version.fmt(buf)),
             )
         };
         let later = later_in_cache(manager, new);
@@ -171,9 +167,9 @@ fn later_in_cache(manager: &mut PackageManager, pkg_id: PackageID) -> Box<[u8]> 
         let lockfile: &Lockfile = &manager.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         (
-            Box::<[u8]>::from(lockfile.packages.items_name()[pkg_id.index()].slice(buf)),
-            lockfile.packages.items_name_hash()[pkg_id.index()],
-            lockfile.packages.items_resolution()[pkg_id.index()],
+            Box::<[u8]>::from(lockfile.packages.items_name()[pkg_id].slice(buf)),
+            lockfile.packages.items_name_hash()[pkg_id],
+            lockfile.packages.items_resolution()[pkg_id],
         )
     };
     match manager.format_later_version_in_cache(&name, name_hash, &resolution) {
@@ -193,13 +189,13 @@ fn named_pairs(
     let resolutions = lockfile.buffers.resolutions.as_slice();
     moved
         .iter()
-        .map(|&(dep_id, from)| (from, resolutions[dep_id.index()]))
+        .map(|&(dep_id, from)| (from, resolutions[dep_id]))
         .filter(|&(from, to)| {
             from != to
                 && from.index() < packages_len
                 && to.index() < packages_len
-                && pkg_res[to.index()].tag == ResolutionTag::Npm
-                && name_hashes[from.index()] == name_hashes[to.index()]
+                && pkg_res[to].tag == ResolutionTag::Npm
+                && name_hashes[from] == name_hashes[to]
         })
         .collect()
 }
@@ -209,22 +205,23 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
     if pairs.is_empty() {
         return;
     }
-    let mut new_of: Vec<PackageID> = vec![invalid_package_id; lockfile.packages.len()];
+    let mut new_of: IdVec<PackageID, PackageID> =
+        vec![invalid_package_id; lockfile.packages.len()].into();
     for (old, new) in pairs {
-        let slot = &mut new_of[old.index()];
+        let slot = &mut new_of[old];
         if *slot == invalid_package_id {
             *slot = new;
         }
     }
 
-    let moved: Vec<(usize, PackageID)> = {
+    let moved: Vec<(DependencyID, PackageID)> = {
         let lockfile: &Lockfile = lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         let pkg_res = lockfile.packages.items_resolution();
         let deps = lockfile.buffers.dependencies.as_slice();
         let mut moved = Vec::new();
-        for (j, &target) in lockfile.buffers.resolutions.iter().enumerate() {
-            let Some(&new) = new_of.get(target.index()) else {
+        for (j, &target) in lockfile.buffers.resolutions.iter_enumerated() {
+            let Some(&new) = new_of.get(target) else {
                 continue;
             };
             if new == invalid_package_id {
@@ -234,15 +231,13 @@ fn redirect(lockfile: &mut Lockfile, pairs: Vec<(PackageID, PackageID)>) {
             if dep.behavior.is_bundled() {
                 continue;
             }
-            let Some(range) =
-                dedupe::effective_npm_range(lockfile, DependencyID::from_index(j), dep)
-            else {
+            let Some(range) = dedupe::effective_npm_range(lockfile, j, dep) else {
                 continue;
             };
             if range
                 .npm()
                 .version
-                .satisfies(pkg_res[new.index()].npm().version, buf, buf)
+                .satisfies(pkg_res[new].npm().version, buf, buf)
             {
                 moved.push((j, new));
             }
@@ -280,9 +275,10 @@ impl TransitiveUpdate {
             let scope = UpdateScope::of(&*manager);
             let owners = (!scope.is_whole_workspace()).then(|| scope.reachable(lockfile));
             let mut edges = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len())?;
-            for owner in 0..lockfile.packages.len() {
-                if owners.is_none_or(|reachable| reachable.is_set_allow_out_of_bound(owner, false))
-                {
+            for owner in lockfile.packages.items_resolution().ids() {
+                if owners.is_none_or(|reachable| {
+                    reachable.is_set_allow_out_of_bound(owner.index(), false)
+                }) {
                     set_rows_of(&mut edges, lockfile, owner);
                 }
             }
@@ -320,7 +316,7 @@ impl TransitiveUpdate {
         let _ = manager.get_cache_directory();
         let _ = manager.get_temporary_directory();
         for pin in &self.pins {
-            if manager.lockfile.buffers.resolutions[pin.dep_id.index()] != pin.from {
+            if manager.lockfile.buffers.resolutions[pin.dep_id] != pin.from {
                 continue;
             }
             match pin.to {
@@ -414,7 +410,7 @@ pub(crate) fn refresh_children_of(
         let mut edges = DynamicBitSet::init_empty(lockfile.buffers.dependencies.len())?;
         for &owner in package_ids {
             if owner.index() < lockfile.packages.len() {
-                set_rows_of(&mut edges, lockfile, owner.index());
+                set_rows_of(&mut edges, lockfile, owner);
             }
         }
         edges
@@ -432,9 +428,9 @@ pub(crate) fn refresh_children_of(
 
 /// Only the synchronous resolve sees the cleared peer bit (the manifest callback re-reads the buffer row), so callers fetch the manifest first.
 fn reresolve(manager: &mut PackageManager, dep_id: DependencyID) -> crate::Result<()> {
-    let mut dep = manager.lockfile.buffers.dependencies[dep_id.index()].clone();
+    let mut dep = manager.lockfile.buffers.dependencies[dep_id].clone();
     dep.behavior = dep.behavior.with(Behavior::PEER, false);
-    manager.lockfile.buffers.resolutions[dep_id.index()] = invalid_package_id;
+    manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
     enqueue_dependency_with_main(manager, dep_id, &dep, invalid_package_id, false)
 }
 
@@ -447,14 +443,14 @@ pub(crate) fn enqueue_peer_rows(
     if !rows.is_empty() {
         let mut targets: Vec<PackageID> = rows
             .iter()
-            .map(|&row| manager.lockfile.buffers.resolutions[row.index()])
+            .map(|&row| manager.lockfile.buffers.resolutions[row])
             .collect();
         targets.sort_unstable();
         targets.dedup();
         populate_manifest_cache::populate_manifest_cache(manager, Packages::Exact(&targets))?;
         print_log(manager)?;
         for &row in rows {
-            moved.push((row, manager.lockfile.buffers.resolutions[row.index()]));
+            moved.push((row, manager.lockfile.buffers.resolutions[row]));
             reresolve(manager, row)?;
         }
     }
@@ -481,11 +477,9 @@ pub(crate) fn redirect_moved_edges(lockfile: &mut Lockfile, moved: &[(Dependency
         let resolutions = lockfile.buffers.resolutions.as_slice();
         moved
             .iter()
-            .map(|&(dep_id, from)| (from, resolutions[dep_id.index()]))
+            .map(|&(dep_id, from)| (from, resolutions[dep_id]))
             .filter(|&(from, to)| {
-                to != from
-                    && to.index() < pkg_res.len()
-                    && pkg_res[to.index()].tag == ResolutionTag::Npm
+                to != from && pkg_res.has(to) && pkg_res[to].tag == ResolutionTag::Npm
             })
             .collect()
     };
@@ -510,19 +504,19 @@ pub(crate) fn moved_targets_after_clean(
 
     let mut targets: Vec<PackageID> = Vec::new();
     for &(dep_id, _) in moved {
-        let Some(&old_id) = old_resolutions.get(dep_id.index()) else {
+        let Some(&old_id) = old_resolutions.get(dep_id) else {
             continue;
         };
-        if old_id.index() >= old_res.len() {
+        if !old_res.has(old_id) {
             continue;
         }
-        let Some(entry) = cleaned.package_index.get(&old_name_hashes[old_id.index()]) else {
+        let Some(entry) = cleaned.package_index.get(&old_name_hashes[old_id]) else {
             continue;
         };
         if let Some(&id) = entry
             .as_slice()
             .iter()
-            .find(|&&c| new_res[c.index()].eql(&old_res[old_id.index()], new_buf, old_buf))
+            .find(|&&c| new_res[c].eql(&old_res[old_id], new_buf, old_buf))
         {
             targets.push(id);
         }
@@ -560,11 +554,11 @@ pub(crate) fn register_moved(
     let names = lockfile.packages.items_name();
     let res = lockfile.packages.items_resolution();
     for &pkg_id in moved {
-        if pkg_id.index() >= res.len() || res[pkg_id.index()].tag != ResolutionTag::Npm {
+        if !res.has(pkg_id) || res[pkg_id].tag != ResolutionTag::Npm {
             continue;
         }
-        let current = res[pkg_id.index()].npm().version;
-        let entry = updating.get_or_put(names[pkg_id.index()].slice(buf))?;
+        let current = res[pkg_id].npm().version;
+        let entry = updating.get_or_put(names[pkg_id].slice(buf))?;
         if entry.found_existing {
             let info = &*entry.value_ptr;
             let keep = !info.original_version_literal.is_empty()
@@ -664,9 +658,9 @@ fn kept_patched_rows(manager: &mut PackageManager) -> Vec<Row> {
         let lockfile: &Lockfile = &manager.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
         rows.push(Row {
-            name: Box::from(lockfile.packages.items_name()[id.index()].slice(buf)),
+            name: Box::from(lockfile.packages.items_name()[id].slice(buf)),
             from: text(
-                lockfile.packages.items_resolution()[id.index()]
+                lockfile.packages.items_resolution()[id]
                     .npm()
                     .version
                     .fmt(buf),
@@ -762,14 +756,14 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
             .map_or(&[], PackageIndexEntry::as_slice);
         if installed
             .iter()
-            .any(|&id| pkg_res[id.index()].tag != ResolutionTag::Npm)
+            .any(|&id| pkg_res[id].tag != ResolutionTag::Npm)
         {
             continue;
         }
         let mut now: Vec<u8> = Vec::new();
         let mut still_applies = false;
         for &id in installed {
-            let current = text(pkg_res[id.index()].npm().version.fmt(buf));
+            let current = text(pkg_res[id].npm().version.fmt(buf));
             if &*current == version {
                 still_applies = true;
                 break;
@@ -807,18 +801,17 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
     let excludes = manager.options.minimum_release_age_excludes;
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let pkg = pkg_id.index();
     let res = lockfile.packages.items_resolution();
-    if pkg >= res.len() || res[pkg].tag != ResolutionTag::Npm {
+    if !res.has(pkg_id) || res[pkg_id].tag != ResolutionTag::Npm {
         return None;
     }
-    let current = res[pkg].npm().version;
-    let name = lockfile.packages.items_name()[pkg].slice(buf);
+    let current = res[pkg_id].npm().version;
+    let name = lockfile.packages.items_name()[pkg_id].slice(buf);
     let manifest: &PackageManifest = manager.manifests.by_name_hash_allow_expired(
         cache_ctx,
         manager.options.scope_for_package_name(name),
         name,
-        lockfile.packages.items_name_hash()[pkg],
+        lockfile.packages.items_name_hash()[pkg_id],
         Some(&mut false),
         ManifestLoad::LoadFromMemoryFallbackToDisk,
         min_age.is_some(),
@@ -949,7 +942,7 @@ struct Instance {
 }
 
 /// Workspace-owned rows belong to the differ; rows it orphaned by re-parsing a workspace belong to nobody.
-fn set_rows_of(edges: &mut DynamicBitSet, lockfile: &Lockfile, owner: usize) {
+fn set_rows_of(edges: &mut DynamicBitSet, lockfile: &Lockfile, owner: PackageID) {
     let slice = lockfile.packages.items_dependencies()[owner];
     if slice.len == 0
         || matches!(
@@ -986,7 +979,7 @@ pub(crate) fn plannable_peer_rows(
             providers.set(resolved.index());
         }
     }
-    for owner in 0..packages_len {
+    for owner in dep_slices.ids() {
         let owned = dep_slices[owner]
             .get(deps)
             .iter()
@@ -999,7 +992,7 @@ pub(crate) fn plannable_peer_rows(
     }
 
     let mut rows = DynamicBitSet::init_empty(deps.len()).unwrap_or_oom();
-    for owner in 0..packages_len {
+    for owner in dep_slices.ids() {
         if matches!(
             pkg_res[owner].tag,
             ResolutionTag::Root | ResolutionTag::Workspace
@@ -1037,7 +1030,7 @@ fn plan_edges(
         let res = lockfile.packages.items_resolution();
         let has_patches = lockfile.patched_dependencies.count() > 0;
         const SKIP: u32 = u32::MAX - 1;
-        let mut instance_of: Vec<u32> = vec![u32::MAX; res.len()];
+        let mut instance_of: IdVec<PackageID, u32> = vec![u32::MAX; res.len()].into();
 
         let no_overrides = lockfile.overrides.is_empty();
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -1046,11 +1039,12 @@ fn plan_edges(
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let mut plannable_peers: Option<DynamicBitSet> = None;
         let mut set_edges = edges.iterator::<true, true>();
-        while let Some(dep_id) = set_edges.next() {
+        while let Some(dep_index) = set_edges.next() {
+            let dep_id = DependencyID::from_index(dep_index);
             let Some(&target) = resolutions.get(dep_id) else {
                 break;
             };
-            let Some(&slot) = instance_of.get(target.index()) else {
+            let Some(&slot) = instance_of.get(target) else {
                 continue;
             };
             let dep = &deps[dep_id];
@@ -1060,16 +1054,15 @@ fn plan_edges(
             if dep.behavior.is_peer()
                 && !plannable_peers
                     .get_or_insert_with(|| plannable_peer_rows(lockfile, direct))
-                    .is_set(dep_id)
+                    .is_set(dep_index)
             {
                 continue;
             }
             let instance = if slot != u32::MAX {
                 slot
             } else {
-                let pkg_id = target.index();
-                if res[pkg_id].tag != ResolutionTag::Npm {
-                    instance_of[pkg_id] = SKIP;
+                if res[target].tag != ResolutionTag::Npm {
+                    instance_of[target] = SKIP;
                     continue;
                 }
                 let held = has_patches
@@ -1079,16 +1072,15 @@ fn plan_edges(
                 if held {
                     kept.push(target);
                 }
-                instance_of[pkg_id] = instances.len() as u32;
+                instance_of[target] = instances.len() as u32;
                 instances.push(Instance {
                     pkg_id: target,
-                    current: res[pkg_id].npm().version,
+                    current: res[target].npm().version,
                     wants: Vec::new(),
                     held,
                 });
-                instance_of[pkg_id]
+                instance_of[target]
             };
-            let dep_id = DependencyID::from_index(dep_id);
             let inst = &mut instances[instance as usize];
             let literal = (no_overrides
                 && match dep.version.tag {
@@ -1113,7 +1105,7 @@ fn plan_edges(
                 DependencyVersionTag::DistTag => version.dist_tag().name,
                 _ => continue,
             };
-            if !names.eql(pkg_names[inst.pkg_id.index()], buf, buf) {
+            if !names.eql(pkg_names[inst.pkg_id], buf, buf) {
                 continue;
             }
             inst.wants.push(Want {
@@ -1150,7 +1142,7 @@ fn plan_edges(
         if inst.held {
             continue;
         }
-        let name = pkg_names[inst.pkg_id.index()].slice(buf);
+        let name = pkg_names[inst.pkg_id].slice(buf);
         let mut expired = false;
         let scope = manager.options.scope_for_package_name(name);
         let Some(manifest) = manager.manifests.by_name_allow_expired(

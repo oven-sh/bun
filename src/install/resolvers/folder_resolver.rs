@@ -364,7 +364,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     {
         package.meta.id = existing_id;
         manager.lockfile.packages.set(existing_id.index(), package);
-        return Ok(*manager.lockfile.packages.get(existing_id.index()));
+        return Ok(manager.lockfile.package(existing_id));
     }
 
     Ok(manager.lockfile.append_package(&package)?)

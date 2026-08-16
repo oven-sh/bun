@@ -3,13 +3,10 @@ use core::cmp::Ordering;
 
 use bun_collections::HashMap;
 use bun_core::strings;
-use bun_semver::String as SemverString;
 
 use crate::lockfile_real::package::Alphabetizer;
 use bun_install::Dependency;
-use bun_install::Resolution;
 use bun_install::dependency::{self, Behavior, VersionExt as _};
-use bun_install::lockfile::package;
 use bun_install::{INVALID_PACKAGE_ID, PackageID};
 // `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
@@ -50,15 +47,15 @@ pub(crate) fn print(
 
 fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
     let slice = this.lockfile.packages.slice();
-    let names: &[SemverString] = slice.items_name();
-    let resolved: &[Resolution] = slice.items_resolution();
-    let metas: &[package::Meta] = slice.items_meta();
+    let names = slice.items_name();
+    let resolved = slice.items_resolution();
+    let metas = slice.items_meta();
     if names.is_empty() {
         return Ok(());
     }
     let dependency_lists = slice.items_dependencies();
-    let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
-    let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
+    let resolutions_buffer = this.lockfile.buffers.resolutions.as_slice();
+    let dependencies_buffer = this.lockfile.buffers.dependencies.as_slice();
 
     // Store (start, len) into `all_requested_versions_buf` instead of
     // overlapping &mut [Version] slices.
@@ -82,8 +79,8 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
             let i = PackageID::from_index(index);
             alphabetized_names[index - 1] = i;
 
-            let mut resolutions = resolutions_buffer;
-            let mut dependencies = dependencies_buffer;
+            let mut resolutions = resolutions_buffer.raw();
+            let mut dependencies = dependencies_buffer.raw();
 
             let mut j: usize = 0;
             let requested_version_start = all_requested_versions_buf.len();
@@ -114,19 +111,19 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
 
     {
         let alphabetizer = Alphabetizer::<u64> {
-            names: names.into(),
-            buf: string_buf.into(),
-            resolutions: resolved.into(),
+            names,
+            buf: string_buf,
+            resolutions: resolved,
         };
         alphabetized_names.sort_unstable_by(|&a, &b| alphabetizer.order(a, b));
     }
 
     // When printing, we start at 1
     for &i in alphabetized_names.iter() {
-        let name: &[u8] = names[i.index()].slice(string_buf);
-        let resolution = &resolved[i.index()];
-        let meta = &metas[i.index()];
-        let dependencies: &[Dependency] = dependency_lists[i.index()].get(dependencies_buffer);
+        let name: &[u8] = names[i].slice(string_buf);
+        let resolution = &resolved[i];
+        let meta = &metas[i];
+        let dependencies: &[Dependency] = dependency_lists[i].get(dependencies_buffer);
         let version_formatter = resolution.fmt(string_buf, bun_core::fmt::PathSep::Posix);
 
         // This prints:

@@ -258,7 +258,7 @@ pub fn install_with_manager(
                         .scripts
                         .count(&lockfile.buffers.string_bytes, builder);
                     builder.allocate()?;
-                    lf.packages.items_scripts_mut()[0] = maybe_root
+                    lf.packages.items_scripts_mut()[PackageID::ROOT] = maybe_root
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
@@ -276,9 +276,9 @@ pub fn install_with_manager(
                             Vec::new()
                         } else {
                             root.dependencies
-                                .get(&lf.dependencies[..])
+                                .get(lf.dependencies.as_slice())
                                 .iter()
-                                .zip(root.resolutions.get(&lf.resolutions[..]))
+                                .zip(root.resolutions.get(lf.resolutions.as_slice()))
                                 .filter(|(dep, _)| {
                                     dep.behavior.is_workspace()
                                         && summary.pruned_workspaces.contains(&dep.name_hash)
@@ -313,10 +313,10 @@ pub fn install_with_manager(
 
                     let off = lf.dependencies.len() as u32;
                     let len = (new_dependencies.len() + kept_pruned.len()) as u32;
-                    let old_resolutions_list = lf.packages.items_resolutions()[0];
-                    lf.packages.items_dependencies_mut()[0] =
+                    let old_resolutions_list = lf.packages.items_resolutions()[PackageID::ROOT];
+                    lf.packages.items_dependencies_mut()[PackageID::ROOT] =
                         lockfile::DependencySlice::new(off, len);
-                    lf.packages.items_resolutions_mut()[0] =
+                    lf.packages.items_resolutions_mut()[PackageID::ROOT] =
                         lockfile::PackageIDSlice::new(off, len);
                     builder.allocate()?;
 
@@ -364,10 +364,10 @@ pub fn install_with_manager(
                     // never form `&mut [T]` over uninitialized storage and never drop garbage.
                     debug_assert_eq!(lf.dependencies.len(), off as usize);
                     debug_assert_eq!(lf.resolutions.len(), off as usize);
-                    bun_core::vec::extend_from_fn(lf.dependencies, len as usize, |_| {
+                    bun_core::vec::extend_from_fn(lf.dependencies.raw_mut(), len as usize, |_| {
                         Dependency::default()
                     });
-                    bun_core::vec::extend_from_fn(lf.resolutions, len as usize, |_| {
+                    bun_core::vec::extend_from_fn(lf.resolutions.raw_mut(), len as usize, |_| {
                         invalid_package_id
                     });
                     debug_assert_eq!(lf.dependencies.len(), (off + len) as usize);
@@ -379,18 +379,19 @@ pub fn install_with_manager(
                             &lockfile.buffers.string_bytes,
                             builder,
                         )?;
-                        lf.dependencies[off as usize + i] = cloned;
+                        let dep_id = DependencyID::new(off + i as u32);
+                        lf.dependencies[dep_id] = cloned;
                         if mapping[i] != invalid_package_id {
-                            lf.resolutions[off as usize + i] = old_resolutions[mapping[i].index()];
+                            lf.resolutions[dep_id] = old_resolutions[mapping[i].index()];
                         }
                     }
                     for (k, (dep, res)) in kept_pruned.into_iter().enumerate() {
-                        let slot = off as usize + new_dependencies.len() + k;
+                        let slot = DependencyID::new(off + (new_dependencies.len() + k) as u32);
                         lf.dependencies[slot] = dep;
                         lf.resolutions[slot] = res;
                     }
 
-                    lf.packages.items_scripts_mut()[0] = maybe_root
+                    lf.packages.items_scripts_mut()[PackageID::ROOT] = maybe_root
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
 
@@ -495,14 +496,13 @@ pub fn install_with_manager(
                             if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
                                 continue;
                             }
-                            let dependency =
-                                manager.lockfile.buffers.dependencies[dependency_i].clone();
+                            let dep_id = DependencyID::from_index(dependency_i);
+                            let dependency = manager.lockfile.buffers.dependencies[dep_id].clone();
                             if all_name_hashes.binary_search(&dependency.name_hash).is_ok() {
-                                manager.lockfile.buffers.resolutions[dependency_i] =
-                                    invalid_package_id;
+                                manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
                                 if let Err(err) = enqueue_dependency_with_main(
                                     manager,
-                                    DependencyID::from_index(dependency_i),
+                                    dep_id,
                                     &dependency,
                                     invalid_package_id,
                                     false,
@@ -527,7 +527,7 @@ pub fn install_with_manager(
                             if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
                                 continue;
                             }
-                            let dep = manager.lockfile.buffers.dependencies[dep_id.index()].clone();
+                            let dep = manager.lockfile.buffers.dependencies[dep_id].clone();
                             if dep.version.tag != DependencyVersionTag::Catalog
                                 && (catalog_overridden.is_empty()
                                     || catalog_overridden.binary_search(&dep.name_hash).is_err())
@@ -535,8 +535,7 @@ pub fn install_with_manager(
                                 continue;
                             }
 
-                            manager.lockfile.buffers.resolutions[dep_id.index()] =
-                                invalid_package_id;
+                            manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
                             if let Err(err) = enqueue_dependency_with_main(
                                 manager,
                                 dep_id,
@@ -559,11 +558,9 @@ pub fn install_with_manager(
                         for counter_i in 0..changes {
                             if mapping[counter_i as usize] == invalid_package_id {
                                 let dependency_i = DependencyID::new(counter_i + off);
-                                let dependency = manager.lockfile.buffers.dependencies
-                                    [dependency_i.index()]
-                                .clone();
-                                let resolution =
-                                    manager.lockfile.buffers.resolutions[dependency_i.index()];
+                                let dependency =
+                                    manager.lockfile.buffers.dependencies[dependency_i].clone();
+                                let resolution = manager.lockfile.buffers.resolutions[dependency_i];
                                 if let Err(err) = enqueue_dependency_with_main(
                                     manager,
                                     dependency_i,
@@ -682,7 +679,7 @@ pub fn install_with_manager(
     };
 
     if manager.lockfile.packages.len() > 0 {
-        root = *manager.lockfile.packages.get(0);
+        root = manager.lockfile.package(PackageID::ROOT);
     }
 
     if manager.lockfile.packages.len() > 0 {
@@ -735,7 +732,7 @@ pub fn install_with_manager(
         let packages = &lockfile.packages;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();
         let lockfile_scripts = &mut lockfile.scripts;
-        for pkg_i in 0..packages.len() {
+        for pkg_i in packages.items_resolution().ids() {
             let resolution = packages.items_resolution()[pkg_i];
             if resolution.tag != ResolutionTag::Workspace {
                 continue;
@@ -1560,8 +1557,9 @@ fn enqueue_named_updates(
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
-        let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
-        let package_id = manager.lockfile.buffers.resolutions[dependency_i];
+        let dep_id = DependencyID::from_index(dependency_i);
+        let dependency = manager.lockfile.buffers.dependencies[dep_id].clone();
+        let package_id = manager.lockfile.buffers.resolutions[dep_id];
         let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
             continue;
         };
@@ -1571,30 +1569,22 @@ fn enqueue_named_updates(
         }
         matched.set(request);
         if collect_latest_rows {
-            named
-                .latest_rows
-                .push(DependencyID::from_index(dependency_i));
+            named.latest_rows.push(dep_id);
         }
         if package_id == invalid_package_id || dependency.behavior.is_bundled() {
             continue;
         }
         if dependency.behavior.is_peer() {
             if plannable_peers.is_set(dependency_i) {
-                peer_rows.push(DependencyID::from_index(dependency_i));
+                peer_rows.push(dep_id);
             }
             continue;
         }
-        manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
-        named
-            .moved
-            .push((DependencyID::from_index(dependency_i), package_id));
-        if let Err(err) = enqueue_dependency_with_main(
-            manager,
-            DependencyID::from_index(dependency_i),
-            &dependency,
-            invalid_package_id,
-            false,
-        ) {
+        manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
+        named.moved.push((dep_id, package_id));
+        if let Err(err) =
+            enqueue_dependency_with_main(manager, dep_id, &dependency, invalid_package_id, false)
+        {
             add_dependency_error(manager, &dependency, err);
         }
     }
@@ -1621,11 +1611,11 @@ fn index_of_named_update(
         return Some(i);
     }
     if package_id != invalid_package_id {
-        let name_hash = manager.lockfile.packages.items_name_hash()[package_id.index()];
+        let name_hash = manager.lockfile.packages.items_name_hash()[package_id];
         if name_hash == dependency.name_hash {
             return None;
         }
-        let name = manager.lockfile.packages.items_name()[package_id.index()].slice(buf);
+        let name = manager.lockfile.packages.items_name()[package_id].slice(buf);
         return manager.index_of_update_request(name_hash, name);
     }
     let realname = dependency.realname();
@@ -1721,7 +1711,7 @@ fn workspaces_reaching_request<'a>(
     }
 
     let mut workspaces: Vec<&'a [u8]> = Vec::new();
-    for importer in 0..packages.len() {
+    for importer in package_resolutions.ids() {
         let tag = package_resolutions[importer].tag;
         if !matches!(tag, ResolutionTag::Root | ResolutionTag::Workspace) {
             continue;
@@ -1735,7 +1725,7 @@ fn workspaces_reaching_request<'a>(
         let reached = reachable::packages_from(
             lockfile,
             all_resolutions,
-            &[PackageID::from_index(importer)],
+            &[importer],
             false,
             reachable::Options::all(PackageID::ROOT),
         );
@@ -1776,20 +1766,21 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             let buf = lockfile.buffers.string_bytes.as_slice();
             let names = packages.items_name();
             let name_hashes = packages.items_name_hash();
-            for (id, resolution) in resolutions.iter().enumerate() {
+            for (id, resolution) in resolutions.iter_enumerated() {
                 let is_root = resolution.tag == ResolutionTag::Root;
                 if (is_root || resolution.tag == ResolutionTag::Workspace)
                     && targets.iter().any(|target| {
                         target.matches(is_root, name_hashes[id], names[id].slice(buf))
                     })
                 {
-                    workspaces.set(id);
+                    workspaces.set(id.index());
                 }
             }
         }
     }
     let mut selected = workspaces.iterator::<true, true>();
     while let Some(workspace_package_id) = selected.next() {
+        let workspace_package_id = PackageID::from_index(workspace_package_id);
         let workspace_dep_list = packages.items_dependencies()[workspace_package_id];
         let workspace_res_list = packages.items_resolutions()[workspace_package_id];
         let workspace_deps = workspace_dep_list.get(&lockfile.buffers.dependencies);
@@ -1825,7 +1816,7 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
             if entry_ptr.original_version.is_some() {
                 continue;
             }
-            let original_resolution: Resolution = resolutions[package_id.index()];
+            let original_resolution: Resolution = resolutions[package_id];
             if original_resolution.tag != ResolutionTag::Npm {
                 continue;
             }
@@ -2011,11 +2002,11 @@ fn refresh_children_of_named(
         let pkg_res = lockfile.packages.items_resolution();
         latest_rows
             .iter()
-            .map(|&dep_id| resolutions[dep_id.index()])
+            .map(|&dep_id| resolutions[dep_id])
             .filter(|&id| {
-                id.index() < pkg_res.len()
+                pkg_res.has(id)
                     && !matches!(
-                        pkg_res[id.index()].tag,
+                        pkg_res[id].tag,
                         ResolutionTag::Root | ResolutionTag::Workspace
                     )
             })

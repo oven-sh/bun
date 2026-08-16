@@ -276,7 +276,7 @@ impl PatchTask {
             let pkg_id = state.pkg_id;
             let dep_id = state.dependency_id;
 
-            let pkg: Package = *manager.lockfile.packages.get(pkg_id.index());
+            let pkg: Package = manager.lockfile.package(pkg_id);
             // `Package` is not `Copy`; capture the scalar fields we need
             // after `determine_preinstall_state` consumes it.
             let pkg_meta_id = pkg.meta.id;
@@ -316,7 +316,7 @@ impl PatchTask {
                     // tarball; see the TODO below), which then read garbage
                     // version bytes into the task id, not UB.
                     let pkg_npm_version = unsafe {
-                        manager.lockfile.packages.items_resolution()[pkg_id.index()]
+                        manager.lockfile.packages.items_resolution()[pkg_id]
                             .value
                             .npm
                             .version
@@ -325,10 +325,10 @@ impl PatchTask {
                         TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
-                    let is_required = manager.lockfile.buffers.dependencies[dep_id.index()]
+                    let is_required = manager.lockfile.buffers.dependencies[dep_id]
                         .behavior
                         .is_required();
-                    let pkg_again: Package = *manager.lockfile.packages.get(pkg_id.index());
+                    let pkg_again: Package = manager.lockfile.package(pkg_id);
                     let network_task: *mut crate::NetworkTask =
                         package_manager::generate_network_task_for_tarball(
                             manager,
@@ -444,7 +444,7 @@ impl PatchTask {
             // off-thread.
             let manager = self.manager.get();
             let resolution: &Resolution =
-                &manager.lockfile.packages.items_resolution()[patch.pkg_id.index()];
+                &manager.lockfile.packages.items_resolution()[patch.pkg_id];
             let mut label = Vec::<u8>::new();
             use std::io::Write as _;
             write!(
@@ -752,7 +752,7 @@ impl PatchTask {
         patch_hash: u64,
         name_and_version_hash: u64,
     ) -> Box<PatchTask> {
-        let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id.index()];
+        let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id];
 
         // Borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
         // while `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably.
@@ -762,8 +762,7 @@ impl PatchTask {
             .to_vec();
         // `Resolution` is `Copy`; copy out so the lockfile borrow ends
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
-        let resolution_clone: Resolution =
-            pkg_manager.lockfile.packages.items_resolution()[pkg_id.index()];
+        let resolution_clone: Resolution = pkg_manager.lockfile.packages.items_resolution()[pkg_id];
 
         let mut folder_path_buf = PathBuffer::uninit();
         let stuff = package_manager::compute_cache_dir_and_subpath(

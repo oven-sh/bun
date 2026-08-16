@@ -106,7 +106,7 @@ fn target_for(manager: &PackageManager, owner: PackageID) -> Option<WorkspaceTar
         });
     }
     let lockfile = &manager.lockfile;
-    let res = lockfile.packages.items_resolution()[owner.index()];
+    let res = lockfile.packages.items_resolution()[owner];
     match res.tag {
         ResolutionTag::Root => Some(WorkspaceTarget {
             name: Box::default(),
@@ -118,8 +118,8 @@ fn target_for(manager: &PackageManager, owner: PackageID) -> Option<WorkspaceTar
             let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
             let mut path_buf = path_buffer_pool::get();
             Some(WorkspaceTarget {
-                name: Box::from(lockfile.packages.items_name()[owner.index()].slice(buf)),
-                name_hash: Some(lockfile.packages.items_name_hash()[owner.index()]),
+                name: Box::from(lockfile.packages.items_name()[owner].slice(buf)),
+                name_hash: Some(lockfile.packages.items_name_hash()[owner]),
                 package_json_path: join_abs_string_buf::<platform::Auto>(
                     top_level,
                     &mut path_buf.0,

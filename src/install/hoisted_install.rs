@@ -2,7 +2,7 @@ use crate::lockfile::package::PackageColumns as _;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
+use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, IdVec, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::SEP;
@@ -241,7 +241,7 @@ pub(crate) fn install_hoisted_packages(
             *mut crate::lockfile::Lockfile,
             bun_ptr::BackRef<Vec<tree::Tree>>,
             bun_ptr::BackRef<Vec<DependencyID>>,
-            bun_ptr::BackRef<Vec<crate::Dependency>>,
+            bun_ptr::BackRef<IdVec<DependencyID, crate::Dependency>>,
             bun_ptr::BackRef<Vec<u8>>,
         ) = unsafe {
             let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *(*mgr_ptr).lockfile;
@@ -351,12 +351,12 @@ pub(crate) fn install_hoisted_packages(
             // `fix_cached_lockfile_package_slices` re-snapshots). Read-only
             // projection via the safe `BackRef::Deref`.
             let parts = lockfile_ref.packages.slice();
-            let metas = bun_ptr::RawSlice::new(parts.items_meta());
-            let bins = bun_ptr::RawSlice::new(parts.items_bin());
-            let names = bun_ptr::RawSlice::new(parts.items_name());
-            let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
-            let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
-            let pkg_dependencies = bun_ptr::RawSlice::new(parts.items_dependencies());
+            let metas = bun_ptr::BackRef::new(parts.items_meta());
+            let bins = bun_ptr::BackRef::new(parts.items_bin());
+            let names = bun_ptr::BackRef::new(parts.items_name());
+            let pkg_name_hashes = bun_ptr::BackRef::new(parts.items_name_hash());
+            let resolutions = bun_ptr::BackRef::new(parts.items_resolution());
+            let pkg_dependencies = bun_ptr::BackRef::new(parts.items_dependencies());
 
             // Hoist the by-value reads out of the struct literal so they
             // finish before the long-lived `&mut *mgr_ptr` borrow for

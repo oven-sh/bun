@@ -1,7 +1,7 @@
 use core::marker::ConstParamTy;
 
 use bun_alloc::AllocError;
-use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
+use bun_collections::{ArrayHashMap, DynamicBitSet, IdSlice, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
@@ -88,12 +88,16 @@ pub(crate) fn depth_buf_uninit() -> DepthBuf {
 }
 
 impl Tree {
-    pub(crate) fn folder_name<'b>(&self, deps: &'b [Dependency], buf: &'b [u8]) -> &'b [u8] {
+    pub(crate) fn folder_name<'b>(
+        &self,
+        deps: &'b IdSlice<DependencyID, Dependency>,
+        buf: &'b [u8],
+    ) -> &'b [u8] {
         let dep_id = self.dependency_id;
         if dep_id == invalid_dependency_id {
             return b"";
         }
-        deps[dep_id.index()].name.slice(buf)
+        deps[dep_id].name.slice(buf)
     }
 
     pub(crate) fn to_external(self) -> External {
@@ -184,7 +188,7 @@ pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
 
     trees: &'a [Tree],
     hoisted_dependencies: &'a [DependencyID],
-    dependencies: &'a [Dependency],
+    dependencies: &'a IdSlice<DependencyID, Dependency>,
     string_bytes: &'a [u8],
 
     pub(crate) depth_stack: DepthBuf,
@@ -224,7 +228,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
     pub(crate) fn from_slices(
         trees: &'a [Tree],
         hoisted_dependencies: &'a [DependencyID],
-        dependencies: &'a [Dependency],
+        dependencies: &'a IdSlice<DependencyID, Dependency>,
         string_bytes: &'a [u8],
     ) -> Self {
         let mut iter = Self {
@@ -309,7 +313,7 @@ pub(crate) fn folder_name_is_safe(name: &[u8]) -> bool {
 // `crate::lockfile_real` can use this without a shared `Lockfile` type.
 pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
     trees: &[Tree],
-    dependencies: &[Dependency],
+    dependencies: &IdSlice<DependencyID, Dependency>,
     string_buf: &[u8],
     tree_id: Id,
     path_buf: &'b mut PathBuffer,
@@ -426,9 +430,9 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     // whose allocations are persistent, not arena-scoped. Global mimalloc is
     // correct here; no `&'bump Bump` threading needed.
     pub(crate) list: MultiArrayList<BuilderEntry>,
-    pub(crate) resolutions: &'a mut [PackageID],
-    pub(crate) dependencies: &'a [Dependency],
-    pub(crate) resolution_lists: &'a [PackageIDSlice],
+    pub(crate) resolutions: &'a mut IdSlice<DependencyID, PackageID>,
+    pub(crate) dependencies: &'a IdSlice<DependencyID, Dependency>,
+    pub(crate) resolution_lists: &'a IdSlice<PackageID, PackageIDSlice>,
     pub(crate) queue: TreeFiller,
     pub(crate) log: &'a mut bun_ast::Log,
     /// Stored as `ParentRef` (raw
@@ -517,7 +521,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             // Avoid the `try_from` panic-format path on this per-tree hot loop.
             let off: u32 = dep_ids.len() as u32;
             for &dep_id in child.iter() {
-                let pkg_id = self.resolutions[dep_id.index()];
+                let pkg_id = self.resolutions[dep_id];
                 if pkg_id == invalid_package_id {
                     // optional peers that never resolved
                     continue;
@@ -554,11 +558,11 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     install_root_dependencies: bool,
     manager: &PackageManager,
     lockfile: &Lockfile,
-    resolutions: &[PackageID],
+    resolutions: &IdSlice<DependencyID, PackageID>,
 ) -> bool {
-    let pkg_id = resolutions[dep_id.index()];
+    let pkg_id = resolutions[dep_id];
     if pkg_id.index() >= lockfile.packages.len() {
-        let dep = &lockfile.buffers.dependencies.as_slice()[dep_id.index()];
+        let dep = &lockfile.buffers.dependencies.as_slice()[dep_id];
         if dep.behavior.is_optional_peer() {
             return false;
         }
@@ -570,13 +574,13 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let pkg_metas = pkgs.items_meta();
     let pkg_resolutions = pkgs.items_resolution();
 
-    let dep = &lockfile.buffers.dependencies.as_slice()[dep_id.index()];
-    let parent_res = &pkg_resolutions[parent_pkg_id.index()];
+    let dep = &lockfile.buffers.dependencies.as_slice()[dep_id];
+    let parent_res = &pkg_resolutions[parent_pkg_id];
 
-    if pkg_metas[pkg_id.index()].is_disabled(manager.options.cpu, manager.options.os) {
+    if pkg_metas[pkg_id].is_disabled(manager.options.cpu, manager.options.os) {
         if manager.options.log_level.is_verbose() {
-            let meta = &pkg_metas[pkg_id.index()];
-            let name = lockfile.str(&pkg_names[pkg_id.index()]);
+            let meta = &pkg_metas[pkg_id];
+            let name = lockfile.str(&pkg_names[pkg_id]);
             if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
                 bun_core::pretty_errorln!(
                     "<d>Skip installing<r> <b>{}<r> <d>- cpu & os mismatch<r>",
@@ -640,9 +644,9 @@ impl Tree {
     ) -> Result<(), SubtreeError> {
         let parent_pkg_id = match dependency_id {
             ROOT_DEP_ID => PackageID::ROOT,
-            id => builder.resolutions[id.index()],
+            id => builder.resolutions[id],
         };
-        let resolution_list = builder.resolution_lists[parent_pkg_id.index()];
+        let resolution_list = builder.resolution_lists[parent_pkg_id];
 
         if resolution_list.len == 0 {
             return Ok(());
@@ -670,7 +674,7 @@ impl Tree {
         let pkg_resolutions = pkgs.items_resolution();
         // reshaped for borrowck — copy the `&'a [Dependency]` out of
         // `builder` so `&dependencies[i]` does not keep `builder` borrowed.
-        let dependencies: &[Dependency] = builder.dependencies;
+        let dependencies = builder.dependencies;
 
         builder.sort_buf.clear();
         builder.sort_buf.extend(resolution_list.dependency_ids());
@@ -693,7 +697,7 @@ impl Tree {
         let sort_buf_len = builder.sort_buf.len();
         'dep: for sort_idx in 0..sort_buf_len {
             let dep_id = builder.sort_buf[sort_idx];
-            let pkg_id = builder.resolutions[dep_id.index()];
+            let pkg_id = builder.resolutions[dep_id];
 
             // filter out disabled dependencies
             if METHOD == BuilderMethod::Filter {
@@ -732,7 +736,7 @@ impl Tree {
                 }
             }
 
-            let dependency = &dependencies[dep_id.index()];
+            let dependency = &dependencies[dep_id];
 
             // An empty alias has no `node_modules/<name>` folder to escape, so
             // don't treat it as unsafe — match the lockfile parser and isolated
@@ -778,16 +782,15 @@ impl Tree {
                     continue 'dep;
                 }
 
-                if pkg_resolutions[pkg_id.index()].tag == crate::resolution::Tag::Folder {
+                if pkg_resolutions[pkg_id].tag == crate::resolution::Tag::Folder {
                     // Folder packages never hoist, so a cycle between them would nest forever.
                     let mut tree_id = next_id;
                     while tree_id != INVALID_ID {
                         let tree: Tree = builder.list.items_tree()[tree_id as usize];
                         let ancestor_dep_id = tree.dependency_id;
-                        if ancestor_dep_id.index() < dependencies.len()
-                            && builder.resolutions[ancestor_dep_id.index()] == pkg_id
-                            && dependencies[ancestor_dep_id.index()].name_hash
-                                == dependency.name_hash
+                        if dependencies.has(ancestor_dep_id)
+                            && builder.resolutions[ancestor_dep_id] == pkg_id
+                            && dependencies[ancestor_dep_id].name_hash == dependency.name_hash
                         {
                             continue 'dep;
                         }
@@ -815,7 +818,7 @@ impl Tree {
                 HoistDependencyResult::Resolve(res_id) => {
                     debug_assert!(pkg_id == invalid_package_id);
                     debug_assert!(res_id != invalid_package_id);
-                    builder.resolutions[dep_id.index()] = res_id;
+                    builder.resolutions[dep_id] = res_id;
                     debug_assert!(
                         !builder
                             .pending_optional_peers
@@ -831,10 +834,9 @@ impl Tree {
                             // the dependency should be either unresolved or the same dependency as above
                             debug_assert!(
                                 unresolved_dep_id == dep_id
-                                    || builder.resolutions[unresolved_dep_id.index()]
-                                        == invalid_package_id
+                                    || builder.resolutions[unresolved_dep_id] == invalid_package_id
                             );
-                            builder.resolutions[unresolved_dep_id.index()] = res_id;
+                            builder.resolutions[unresolved_dep_id] = res_id;
                         }
                         // peers drops here
                     }
@@ -842,7 +844,7 @@ impl Tree {
                 HoistDependencyResult::ResolveReplace(replace) => {
                     debug_assert!(pkg_id != invalid_package_id);
                     builder.late_bound_optional_peer = true;
-                    builder.resolutions[replace.dep_id.index()] = pkg_id;
+                    builder.resolutions[replace.dep_id] = pkg_id;
                     if let Some(entry) = builder
                         .pending_optional_peers
                         .fetch_swap_remove(&dependency.name_hash)
@@ -852,10 +854,9 @@ impl Tree {
                             // the dependency should be either unresolved or the same dependency as above
                             debug_assert!(
                                 unresolved_dep_id == replace.dep_id
-                                    || builder.resolutions[unresolved_dep_id.index()]
-                                        == invalid_package_id
+                                    || builder.resolutions[unresolved_dep_id] == invalid_package_id
                             );
-                            builder.resolutions[unresolved_dep_id.index()] = pkg_id;
+                            builder.resolutions[unresolved_dep_id] = pkg_id;
                         }
                     }
                     {
@@ -867,9 +868,7 @@ impl Tree {
                             }
                         }
                     }
-                    if pkg_id != invalid_package_id
-                        && builder.resolution_lists[pkg_id.index()].len > 0
-                    {
+                    if pkg_id != invalid_package_id && builder.resolution_lists[pkg_id].len > 0 {
                         builder.queue.write_item(FillItem {
                             tree_id: replace.id,
                             dependency_id: dep_id,
@@ -879,7 +878,7 @@ impl Tree {
                 }
                 HoistDependencyResult::Rebind(res_id) => {
                     debug_assert!(dependency.behavior.is_optional_peer());
-                    builder.resolutions[dep_id.index()] = res_id;
+                    builder.resolutions[dep_id] = res_id;
                 }
                 HoistDependencyResult::ResolveLater => {
                     // `dep_id` is an unresolved optional peer. while hoisting it deduplicated
@@ -903,9 +902,7 @@ impl Tree {
                             .dependencies
                             .len += 1;
                     }
-                    if pkg_id != invalid_package_id
-                        && builder.resolution_lists[pkg_id.index()].len > 0
-                    {
+                    if pkg_id != invalid_package_id && builder.resolution_lists[pkg_id].len > 0 {
                         builder.queue.write_item(FillItem {
                             tree_id: dest.id,
                             dependency_id: dep_id,
@@ -947,8 +944,8 @@ impl Tree {
         builder: &mut Builder<'_, METHOD>,
     ) -> HoistDependencyResult {
         // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.
-        let deps: &[Dependency] = builder.dependencies;
-        let dependency: &Dependency = &deps[input_dep_id.index()];
+        let deps = builder.dependencies;
+        let dependency: &Dependency = &deps[input_dep_id];
 
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
@@ -966,7 +963,7 @@ impl Tree {
                 continue;
             }
 
-            let res_id = builder.resolutions[dep_id.index()];
+            let res_id = builder.resolutions[dep_id];
 
             if res_id == invalid_package_id && package_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_optional_peer());
@@ -1021,7 +1018,7 @@ impl Tree {
                     .resolve_range(builder.buf(), dependency);
                 if peer_range.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
-                        builder.lockfile().packages.items_resolution()[res_id.index()];
+                        builder.lockfile().packages.items_resolution()[res_id];
                     let version = &peer_range.npm().version;
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())

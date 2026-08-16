@@ -8,7 +8,7 @@ use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
-    HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
+    HashMap as BunHashMap, IdSlice, IdVec, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
@@ -106,7 +106,6 @@ pub type DependencySlice = ExternalSlice<Dependency>;
 pub(crate) type DependencyIDSlice = ExternalSlice<DependencyID>;
 
 pub(crate) type PackageIDList = Vec<PackageID>;
-pub(crate) type DependencyList = Vec<Dependency>;
 pub(crate) type DependencyIDList = Vec<DependencyID>;
 
 pub(crate) type StringBuffer = Vec<u8>;
@@ -228,8 +227,8 @@ impl<'a> DepSorter<'a> {
         let deps_buf = self.lockfile.buffers.dependencies.as_slice();
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
 
-        let l_dep = &deps_buf[l.index()];
-        let r_dep = &deps_buf[r.index()];
+        let l_dep = &deps_buf[l];
+        let r_dep = &deps_buf[r];
 
         match l_dep.behavior.cmp(r_dep.behavior) {
             Ordering::Less => true,
@@ -484,9 +483,14 @@ impl<'a> LoadResult<'a> {
 // ────────────────────────────────────────────────────────────────────────────
 
 impl Lockfile {
+    /// Package `id`, gathered out of the column store by value.
+    pub fn package(&self, id: PackageID) -> Package {
+        *self.packages.get(id.index())
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.packages.len() == 0
-            || (self.packages.len() == 1 && self.packages.get(0).resolutions.len == 0)
+            || (self.packages.len() == 1 && self.package(PackageID::ROOT).resolutions.len == 0)
     }
 
     pub fn load_from_cwd<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
@@ -724,7 +728,7 @@ impl Lockfile {
             return true;
         }
 
-        let dep = &self.buffers.dependencies[dep_id.index()];
+        let dep = &self.buffers.dependencies[dep_id];
 
         dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
     }
@@ -742,7 +746,7 @@ impl Lockfile {
 
     /// Is this a direct dependency of the workspace root package.json?
     pub(crate) fn is_workspace_root_dependency(&self, id: DependencyID) -> bool {
-        self.packages.items_dependencies()[0].contains(id)
+        self.packages.items_dependencies()[PackageID::ROOT].contains(id)
     }
 
     /// Is this a direct dependency of the workspace the install is taking place in?
@@ -755,7 +759,7 @@ impl Lockfile {
         let root_id = manager
             .root_package_id
             .get(self, manager.workspace_name_hash);
-        self.packages.items_dependencies()[root_id.index()].contains(id)
+        self.packages.items_dependencies()[root_id].contains(id)
     }
 
     /// Is `id` a direct dependency of one of the `targets` workspaces?
@@ -768,11 +772,9 @@ impl Lockfile {
         if pkg_id == invalid_package_id {
             return false;
         }
-        let is_root =
-            self.packages.items_resolution()[pkg_id.index()].tag == crate::resolution::Tag::Root;
-        let hash = self.packages.items_name_hash()[pkg_id.index()];
-        let name =
-            self.packages.items_name()[pkg_id.index()].slice(self.buffers.string_bytes.as_slice());
+        let is_root = self.packages.items_resolution()[pkg_id].tag == crate::resolution::Tag::Root;
+        let hash = self.packages.items_name_hash()[pkg_id];
+        let name = self.packages.items_name()[pkg_id].slice(self.buffers.string_bytes.as_slice());
         targets.iter().any(|t| t.matches(is_root, hash, name))
     }
 
@@ -806,7 +808,7 @@ impl Lockfile {
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
         id == 0
-            || self.buffers.dependencies[self.buffers.trees[id as usize].dependency_id.index()]
+            || self.buffers.dependencies[self.buffers.trees[id as usize].dependency_id]
                 .behavior
                 .is_workspace()
     }
@@ -819,10 +821,9 @@ impl Lockfile {
             return false;
         }
         let dependency_id = self.buffers.trees[id as usize].dependency_id;
-        let package_id = self.buffers.resolutions[dependency_id.index()];
+        let package_id = self.buffers.resolutions[dependency_id];
         package_id != invalid_package_id
-            && self.packages.slice().items_resolution()[package_id.index()].tag
-                == ResolutionTag::Folder
+            && self.packages.slice().items_resolution()[package_id].tag == ResolutionTag::Folder
     }
 
     /// Returns the package id of the workspace the install is taking place in.
@@ -873,8 +874,8 @@ impl Lockfile {
                 None => &cwd_workspace,
             };
             for &workspace_package_id in workspace_ids {
-                let dep_list = slice.items_dependencies()[workspace_package_id.index()];
-                let res_list = slice.items_resolutions()[workspace_package_id.index()];
+                let dep_list = slice.items_dependencies()[workspace_package_id];
+                let res_list = slice.items_resolutions()[workspace_package_id];
                 let workspace_deps: &[Dependency] =
                     dep_list.get(self.buffers.dependencies.as_slice());
                 let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
@@ -967,7 +968,8 @@ impl Lockfile {
         // Step 1. Recreate the lockfile with only the packages that are still alive
         let root = old.root_package().ok_or(crate::Error::NoPackage)?;
 
-        let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
+        let mut package_id_mapping: IdVec<PackageID, PackageID> =
+            vec![invalid_package_id; old.packages.len()].into();
         let clone_queue_ = PendingResolutions::new();
         // A frozen install never saves, so dropping peer-held targets could only fail its check.
         let keep_optional_peer_targets =
@@ -1210,10 +1212,11 @@ pub struct Cloner<'a> {
     pub(crate) keep_optional_peer_targets: bool,
     pub lockfile: &'a mut Lockfile,
     pub(crate) old: &'a mut Lockfile,
-    pub(crate) mapping: &'a mut [PackageID],
+    /// Old package id -> new package id (`invalid_package_id` until cloned).
+    pub(crate) mapping: &'a mut IdSlice<PackageID, PackageID>,
     pub(crate) trees_count: u32,
     pub(crate) log: &'a mut bun_ast::Log,
-    pub(crate) old_preinstall_state: Vec<Install::PreinstallState>,
+    pub(crate) old_preinstall_state: IdVec<PackageID, Install::PreinstallState>,
     pub(crate) manager: &'a mut PackageManager,
 }
 
@@ -1221,24 +1224,24 @@ impl<'a> Cloner<'a> {
     pub(crate) fn flush(&mut self) -> Result<(), BunError> {
         let max_package_id = self.old.packages.len();
         while let Some(to_clone) = self.clone_queue.pop() {
-            let mapping = self.mapping[to_clone.old_resolution.index()];
+            let mapping = self.mapping[to_clone.old_resolution];
             if mapping.index() < max_package_id {
-                self.lockfile.buffers.resolutions[to_clone.resolve_id.index()] = mapping;
+                self.lockfile.buffers.resolutions[to_clone.resolve_id] = mapping;
                 continue;
             }
 
-            let old_package = *self.old.packages.get(to_clone.old_resolution.index());
+            let old_package = self.old.package(to_clone.old_resolution);
 
             // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
-            self.lockfile.buffers.resolutions[to_clone.resolve_id.index()] = new_id;
+            self.lockfile.buffers.resolutions[to_clone.resolve_id] = new_id;
         }
 
         // bun.lock.rs binds these before hoisting; the hoist below has to see the same bindings.
         for pending in self.optional_peers.drain(..) {
-            let mapping = self.mapping[pending.old_resolution.index()];
+            let mapping = self.mapping[pending.old_resolution];
             if mapping.index() < max_package_id {
-                self.lockfile.buffers.resolutions[pending.resolve_id.index()] = mapping;
+                self.lockfile.buffers.resolutions[pending.resolve_id] = mapping;
             }
         }
 
@@ -1397,7 +1400,6 @@ impl Lockfile {
             core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
         );
         let mut pkgs = self.packages.slice();
-        let len = pkgs.len();
 
         // `split_mut()` yields disjoint `&mut [_]` per column from one
         // `&mut Slice` borrow.
@@ -1411,10 +1413,13 @@ impl Lockfile {
         } = pkgs.split_mut();
         // One loop serves both modes: bind `pkg_metas` as an empty slice
         // when the const generic is false.
-        let pkg_metas: &mut [self::package::meta::Meta] =
-            if UPDATE_OS_CPU { meta } else { &mut [] };
+        let pkg_metas: &mut IdSlice<PackageID, self::package::meta::Meta> = if UPDATE_OS_CPU {
+            meta
+        } else {
+            IdSlice::from_raw_mut(&mut [])
+        };
 
-        for i in 0..len {
+        for i in pkg_names.ids() {
             let pkg_name = pkg_names[i];
             let pkg_name_hash = pkg_name_hashes[i];
             let pkg_res = pkg_resolutions[i];
@@ -1731,7 +1736,7 @@ impl Lockfile {
         debug_assert!(self.format == FormatVersion::current());
         let mut i: usize = 0;
         while i < self.packages.len() {
-            let package: Package = *self.packages.get(i);
+            let package = self.package(PackageID::from_index(i));
             debug_assert!(self.str(&package.name).len() == package.name.len());
             debug_assert!(
                 SemverStringBuilder::string_hash(self.str(&package.name)) == package.name_hash
@@ -1924,7 +1929,7 @@ impl Lockfile {
             return None;
         }
 
-        Some(*self.packages.get(0))
+        Some(self.package(PackageID::ROOT))
     }
 
     #[inline]
@@ -2020,7 +2025,7 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
-        let resolutions: &[Resolution] = self.packages.items_resolution();
+        let resolutions = self.packages.items_resolution();
         // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
         // list head). `version` is held by-value for the whole fn body so the
         // borrow is sound.
@@ -2049,7 +2054,7 @@ impl Lockfile {
         let loaded_watermark = self.loaded_package_count;
         let exact_pinned = &self.exact_pinned;
         let try_satisfies_dedupe = |id: PackageID| -> bool {
-            let existing = &resolutions[id.index()];
+            let existing = &resolutions[id];
             if existing.tag != ResolutionTag::Npm {
                 return false;
             }
@@ -2091,9 +2096,9 @@ impl Lockfile {
 
         match entry {
             PackageIndexEntry::Id(id) => {
-                debug_assert!(id.index() < resolutions.len());
+                debug_assert!(resolutions.has(*id));
 
-                if resolutions[id.index()].eql(resolution, buf, buf) {
+                if resolutions[*id].eql(resolution, buf, buf) {
                     return Some(*id);
                 }
 
@@ -2103,9 +2108,9 @@ impl Lockfile {
             }
             PackageIndexEntry::Ids(ids) => {
                 for &id in ids.iter() {
-                    debug_assert!(id.index() < resolutions.len());
+                    debug_assert!(resolutions.has(id));
 
-                    if resolutions[id.index()].eql(resolution, buf, buf) {
+                    if resolutions[id].eql(resolution, buf, buf) {
                         return Some(id);
                     }
 
@@ -2144,10 +2149,7 @@ impl Lockfile {
         match entry.value_ptr {
             PackageIndexEntry::Id(existing_id) => {
                 let existing_id = *existing_id;
-                if pkg
-                    .resolution
-                    .eql(&resolutions[existing_id.index()], buf, buf)
-                {
+                if pkg.resolution.eql(&resolutions[existing_id], buf, buf) {
                     pkg.meta.id = existing_id;
                     return Ok(existing_id);
                 }
@@ -2158,9 +2160,7 @@ impl Lockfile {
 
                 resolutions = self.packages.items_resolution();
 
-                let pair = if pkg
-                    .resolution
-                    .order(&resolutions[existing_id.index()], buf, buf)
+                let pair = if pkg.resolution.order(&resolutions[existing_id], buf, buf)
                     == Ordering::Greater
                 {
                     [new_id, existing_id]
@@ -2176,10 +2176,7 @@ impl Lockfile {
             }
             PackageIndexEntry::Ids(existing_ids) => {
                 for &existing_id in existing_ids.iter() {
-                    if pkg
-                        .resolution
-                        .eql(&resolutions[existing_id.index()], buf, buf)
-                    {
+                    if pkg.resolution.eql(&resolutions[existing_id], buf, buf) {
                         pkg.meta.id = existing_id;
                         return Ok(existing_id);
                     }
@@ -2193,9 +2190,7 @@ impl Lockfile {
 
                 for i in 0..existing_ids.len() {
                     let existing_id = existing_ids[i];
-                    if pkg
-                        .resolution
-                        .order(&resolutions[existing_id.index()], buf, buf)
+                    if pkg.resolution.order(&resolutions[existing_id], buf, buf)
                         == Ordering::Greater
                     {
                         existing_ids.insert(i, new_id);
@@ -2226,11 +2221,8 @@ impl Lockfile {
                     let resolutions = self.packages.items_resolution();
                     let buf = self.buffers.string_bytes.as_slice();
 
-                    let pair = if resolutions[id.index()].order(
-                        &resolutions[existing_id.index()],
-                        buf,
-                        buf,
-                    ) == Ordering::Greater
+                    let pair = if resolutions[id].order(&resolutions[existing_id], buf, buf)
+                        == Ordering::Greater
                     {
                         [id, existing_id]
                     } else {
@@ -2247,11 +2239,8 @@ impl Lockfile {
 
                     for i in 0..existing_ids.len() {
                         let existing_id = existing_ids[i];
-                        if resolutions[id.index()].order(
-                            &resolutions[existing_id.index()],
-                            buf,
-                            buf,
-                        ) == Ordering::Greater
+                        if resolutions[id].order(&resolutions[existing_id], buf, buf)
+                            == Ordering::Greater
                         {
                             existing_ids.insert(i, id);
                             return Ok(());
@@ -2387,8 +2376,8 @@ impl Default for Scratch {
 /// / `overrides` / … without raw-pointer reborrow gymnastics.
 pub(crate) struct LockfileFields<'a> {
     pub(crate) packages: &'a mut PackageList,
-    pub(crate) dependencies: &'a mut DependencyList,
-    pub(crate) resolutions: &'a mut PackageIDList,
+    pub(crate) dependencies: &'a mut IdVec<DependencyID, Dependency>,
+    pub(crate) resolutions: &'a mut IdVec<DependencyID, PackageID>,
     pub(crate) overrides: &'a mut OverrideMap,
     pub(crate) catalogs: &'a mut CatalogMap,
     pub(crate) workspace_paths: &'a mut NameHashMap,
@@ -2637,8 +2626,8 @@ impl FormatVersion {
 
 struct EqlSorter<'a> {
     pub string_buf: &'a [u8],
-    pub pkg_names: &'a [SemverString],
-    pub pkg_resolutions: &'a [Resolution],
+    pub pkg_names: &'a IdSlice<PackageID, SemverString>,
+    pub pkg_resolutions: &'a IdSlice<PackageID, Resolution>,
 }
 
 /// Basically placement id
@@ -2656,15 +2645,15 @@ impl<'a> EqlSorter<'a> {
         let r_path = r.tree_path.slice();
         strings::order(l_path, r_path)
             .then_with(|| {
-                let l_name = self.pkg_names[l.pkg_id.index()];
-                let r_name = self.pkg_names[r.pkg_id.index()];
+                let l_name = self.pkg_names[l.pkg_id];
+                let r_name = self.pkg_names[r.pkg_id];
                 l_name.order(r_name, self.string_buf, self.string_buf)
             })
             // npm: aliases allow same-named packages in one tree node, so the
             // resolution is needed for a total order.
             .then_with(|| {
-                let l_res = &self.pkg_resolutions[l.pkg_id.index()];
-                let r_res = &self.pkg_resolutions[r.pkg_id.index()];
+                let l_res = &self.pkg_resolutions[l.pkg_id];
+                let r_res = &self.pkg_resolutions[r.pkg_id];
                 l_res.order(r_res, self.string_buf, self.string_buf)
             })
     }
@@ -2714,7 +2703,7 @@ impl Lockfile {
                 if l_dep_id == invalid_dependency_id {
                     continue;
                 }
-                let l_pkg_id = l.buffers.resolutions[l_dep_id.index()];
+                let l_pkg_id = l.buffers.resolutions[l_dep_id];
                 if l_pkg_id == invalid_package_id {
                     continue;
                 }
@@ -2742,7 +2731,7 @@ impl Lockfile {
                 if r_dep_id == invalid_dependency_id {
                     continue;
                 }
-                let r_pkg_id = r.buffers.resolutions[r_dep_id.index()];
+                let r_pkg_id = r.buffers.resolutions[r_dep_id];
                 if r_pkg_id == invalid_package_id {
                     continue;
                 }
@@ -2797,8 +2786,8 @@ impl Lockfile {
 
         debug_assert_eq!(l_buf.len(), r_buf.len());
         for (l_ids, r_ids) in l_buf.iter().zip(r_buf.iter()) {
-            let l_pkg_id = l_ids.pkg_id.index();
-            let r_pkg_id = r_ids.pkg_id.index();
+            let l_pkg_id = l_ids.pkg_id;
+            let r_pkg_id = r_ids.pkg_id;
             if l_pkg_name_hashes[l_pkg_id] != r_pkg_name_hashes[r_pkg_id] {
                 return Ok(false);
             }
@@ -2863,8 +2852,11 @@ impl Lockfile {
         }
 
         let mut string_builder = bun_core::StringBuilder::default();
-        let names: &[SemverString] = &self.packages.items_name()[..packages_len];
-        let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
+        let names =
+            IdSlice::<PackageID, _>::from_raw(&self.packages.items_name().raw()[..packages_len]);
+        let resolutions = IdSlice::<PackageID, _>::from_raw(
+            &self.packages.items_resolution().raw()[..packages_len],
+        );
         let bytes = self.buffers.string_bytes.as_slice();
         let mut alphabetized_names: Vec<PackageID> =
             vec![invalid_package_id; packages_len.saturating_sub(1)];
@@ -2878,24 +2870,26 @@ impl Lockfile {
 
             while i + 16 < packages_len {
                 for j in 0..16usize {
-                    alphabetized_names[(i + j) - 1] = PackageID::from_index(i + j);
+                    let id = PackageID::from_index(i + j);
+                    alphabetized_names[(i + j) - 1] = id;
                     // posix path separators because we only use posix in the lockfile
                     string_builder.fmt_count(format_args!(
                         "{}@{}\n",
-                        bstr::BStr::new(names[i + j].slice(bytes)),
-                        resolutions[i + j].fmt(bytes, PathSep::Posix)
+                        bstr::BStr::new(names[id].slice(bytes)),
+                        resolutions[id].fmt(bytes, PathSep::Posix)
                     ));
                 }
                 i += 16;
             }
 
             while i < packages_len {
-                alphabetized_names[i - 1] = PackageID::from_index(i);
+                let id = PackageID::from_index(i);
+                alphabetized_names[i - 1] = id;
                 // posix path separators because we only use posix in the lockfile
                 string_builder.fmt_count(format_args!(
                     "{}@{}\n",
-                    bstr::BStr::new(names[i].slice(bytes)),
-                    resolutions[i].fmt(bytes, PathSep::Posix)
+                    bstr::BStr::new(names[id].slice(bytes)),
+                    resolutions[id].fmt(bytes, PathSep::Posix)
                 ));
                 i += 1;
             }
@@ -2925,9 +2919,9 @@ impl Lockfile {
 
         {
             let alphabetizer = package::Alphabetizer::<u64> {
-                names: names.into(),
-                buf: bytes.into(),
-                resolutions: resolutions.into(),
+                names,
+                buf: bytes,
+                resolutions,
             };
             alphabetized_names.sort_unstable_by(|a, b| alphabetizer.order(*a, *b));
         }
@@ -2938,8 +2932,8 @@ impl Lockfile {
         for &i in alphabetized_names.iter() {
             let _ = string_builder.fmt(format_args!(
                 "{}@{}\n",
-                bstr::BStr::new(names[i.index()].slice(bytes)),
-                resolutions[i.index()].fmt(bytes, PathSep::Any)
+                bstr::BStr::new(names[i].slice(bytes)),
+                resolutions[i].fmt(bytes, PathSep::Any)
             ));
         }
 
@@ -3010,8 +3004,8 @@ impl Lockfile {
                     PackageIndexEntry::Id(id) => {
                         let resolutions = self.packages.items_resolution();
 
-                        debug_assert!(id.index() < resolutions.len());
-                        if satisfies(&resolutions[id.index()]) {
+                        debug_assert!(resolutions.has(*id));
+                        if satisfies(&resolutions[*id]) {
                             return Some(*id);
                         }
                     }
@@ -3019,8 +3013,8 @@ impl Lockfile {
                         let resolutions = self.packages.items_resolution();
 
                         for &id in ids.iter() {
-                            debug_assert!(id.index() < resolutions.len());
-                            if satisfies(&resolutions[id.index()]) {
+                            debug_assert!(resolutions.has(id));
+                            if satisfies(&resolutions[id]) {
                                 return Some(id);
                             }
                         }
@@ -3209,15 +3203,15 @@ impl Lockfile {
                 continue;
             }
             for dep_id in dependencies.dependency_ids() {
-                let dep = &self.buffers.dependencies[dep_id.index()];
+                let dep = &self.buffers.dependencies[dep_id];
                 if dep.name.slice(buf) != alias {
                     continue;
                 }
-                let package_id = self.buffers.resolutions[dep_id.index()];
-                if package_id == invalid_package_id || package_id.index() >= resolutions.len() {
+                let package_id = self.buffers.resolutions[dep_id];
+                if package_id == invalid_package_id || !resolutions.has(package_id) {
                     continue;
                 }
-                if resolutions[package_id.index()].eql(resolution, buf, buf) {
+                if resolutions[package_id].eql(resolution, buf, buf) {
                     return true;
                 }
             }

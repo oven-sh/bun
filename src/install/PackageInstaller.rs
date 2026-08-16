@@ -1,6 +1,6 @@
 use core::sync::atomic::Ordering;
 
-use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_collections::{ArrayHashMap, DynamicBitSet, IdSlice, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -75,19 +75,17 @@ pub struct PackageInstaller<'a> {
     // `self.manager().options` so the shared borrow stays a child of the live
     // `&mut PackageManager` Unique tag rather than a sibling raw.
     // The following slice fields alias into `self.lockfile.packages` (BACKREF).
-    // Stored as `RawSlice<T>` (raw `*const [T]`, `usize` len) — the lockfile's
-    // `MultiArrayList<Package>` column buffers outlive this `PackageInstaller`
-    // and are only ever *grown*, never freed; `fix_cached_lockfile_package_slices`
-    // re-snapshots after a grow. `RawSlice` carries no lifetime, so the
-    // assignment sites do not need a `&'a → &'a` lifetime-detach round-trip.
-    // Every `resolutions` call site is a read (`&raw const self.resolutions[i]`),
-    // so it is also `RawSlice` here.
-    pub(crate) metas: bun_ptr::RawSlice<Package::Meta>,
-    pub(crate) names: bun_ptr::RawSlice<String>,
-    pub(crate) pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
-    pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
-    pub(crate) bins: bun_ptr::RawSlice<Bin>,
-    pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
+    // Stored as lifetime-less `BackRef`s to the id-indexed columns — the
+    // lockfile's `MultiArrayList<Package>` column buffers outlive this
+    // `PackageInstaller` and are only ever *grown*, never freed;
+    // `fix_cached_lockfile_package_slices` re-snapshots after a grow. Every
+    // `resolutions` call site is a read, so it is a shared `BackRef` too.
+    pub(crate) metas: bun_ptr::BackRef<IdSlice<PackageID, Package::Meta>>,
+    pub(crate) names: bun_ptr::BackRef<IdSlice<PackageID, String>>,
+    pub(crate) pkg_dependencies: bun_ptr::BackRef<IdSlice<PackageID, DependencySlice>>,
+    pub(crate) pkg_name_hashes: bun_ptr::BackRef<IdSlice<PackageID, PackageNameHash>>,
+    pub(crate) bins: bun_ptr::BackRef<IdSlice<PackageID, Bin>>,
+    pub(crate) resolutions: bun_ptr::BackRef<IdSlice<PackageID, Resolution>>,
     pub(crate) node: &'a mut ProgressNode,
     pub(crate) destination_dir_subpath_buf: PathBuffer,
     pub(crate) folder_path_buf: PathBuffer,
@@ -300,8 +298,8 @@ type TreeContextId = lockfile::tree::Id;
 fn find_native_binlink_target_tree(
     trees: &[Tree],
     hoisted_deps: &[DependencyID],
-    resolutions: &[PackageID],
-    deps: &[crate::Dependency],
+    resolutions: &IdSlice<DependencyID, PackageID>,
+    deps: &IdSlice<DependencyID, crate::Dependency>,
     string_buf: &[u8],
     start_tree: lockfile::tree::Id,
     alias: &[u8],
@@ -312,7 +310,7 @@ fn find_native_binlink_target_tree(
             .dependencies
             .get(hoisted_deps)
             .iter()
-            .any(|&dep_id| resolutions[dep_id.index()] == target_pkg_id)
+            .any(|&dep_id| resolutions[dep_id] == target_pkg_id)
     };
 
     for t in trees {
@@ -593,13 +591,13 @@ impl<'a> PackageInstaller<'a> {
         let mut deferred: Vec<DependencyID> = Vec::new();
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
-            debug_assert!(dep_id.index() < lockfile.buffers.dependencies.as_slice().len());
-            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id.index()];
+            debug_assert!(lockfile.buffers.dependencies.has(dep_id));
+            let package_id = lockfile.buffers.resolutions.as_slice()[dep_id];
             debug_assert!(package_id != invalid_package_id);
-            let bin = self.bins[package_id.index()];
+            let bin = self.bins[package_id];
             debug_assert!(bin.tag != bin::Tag::None);
 
-            let alias = lockfile.buffers.dependencies.as_slice()[dep_id.index()]
+            let alias = lockfile.buffers.dependencies.as_slice()[dep_id]
                 .name
                 .slice(string_buf);
             let package_name_ = strings::StringOrTinyString::init(alias);
@@ -614,7 +612,7 @@ impl<'a> PackageInstaller<'a> {
                     break 'native_binlink_optimization;
                 }
                 // Check for native binlink optimization
-                let name_hash = pkg_name_hashes[package_id.index()];
+                let name_hash = pkg_name_hashes[package_id];
                 if let Some(optimizer) =
                     manager
                         .postinstall_optimizer
@@ -629,8 +627,7 @@ impl<'a> PackageInstaller<'a> {
                             let target_os = manager.options.os;
                             if let Some(replacement_pkg_id) =
                                 PostinstallOptimizer::get_native_binlink_replacement_package_id(
-                                    pkg_resolutions_lists[package_id.index()]
-                                        .get(pkg_resolutions_buffer),
+                                    pkg_resolutions_lists[package_id].get(pkg_resolutions_buffer),
                                     pkg_metas,
                                     target_cpu,
                                     target_os,
@@ -666,7 +663,7 @@ impl<'a> PackageInstaller<'a> {
                                 }
 
                                 let replacement_name =
-                                    pkg_names[replacement_pkg_id.index()].slice(string_buf);
+                                    pkg_names[replacement_pkg_id].slice(string_buf);
                                 target_package_name =
                                     strings::StringOrTinyString::init(replacement_name);
                                 can_retry_without_native_binlink_optimization = true;
@@ -919,9 +916,9 @@ impl<'a> PackageInstaller<'a> {
                 // local, not `*self`, across the `&mut self` call.
                 let resolutions = self.resolutions;
                 for context in core::mem::take(&mut self.trees[i].pending_installs) {
-                    let package_id = self.lockfile().buffers.resolutions.as_slice()
-                        [context.dependency_id.index()];
-                    let name = self.names[package_id.index()];
+                    let package_id =
+                        self.lockfile().buffers.resolutions.as_slice()[context.dependency_id];
+                    let name = self.names[package_id];
                     self.node_modules.tree_id = context.tree_id;
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
@@ -937,7 +934,7 @@ impl<'a> PackageInstaller<'a> {
                         package_id,
                         log_level,
                         name,
-                        &resolutions[package_id.index()],
+                        &resolutions[package_id],
                     );
                 }
             }
@@ -1068,21 +1065,20 @@ impl<'a> PackageInstaller<'a> {
 
     /// Call when you mutate the length of `lockfile.packages`
     pub(crate) fn fix_cached_lockfile_package_slices(&mut self) {
-        // These `RawSlice<T>` fields alias into `self.lockfile.packages`
-        // (BACKREF). `RawSlice::new` stores the raw `(ptr, len)` without a
-        // lifetime, so the borrow of `packages` ends at the end of each
-        // statement — no `&'a → &'a` detach round-trip needed.
-        // SAFETY (RawSlice invariant): `self.lockfile` is a BACKREF whose
+        // These column fields alias into `self.lockfile.packages` (BACKREF).
+        // `BackRef::new` stores the pointer without a lifetime, so the borrow
+        // of `packages` ends at the end of each statement.
+        // SAFETY (BackRef invariant): `self.lockfile` is a BACKREF whose
         // pointee outlives `'a`; the packages column buffers are not freed for
         // the lifetime of this `PackageInstaller` (only grow, which is why
         // this fn exists — to re-snapshot after growth).
         let packages = self.lockfile_mut().packages.slice();
-        self.metas = bun_ptr::RawSlice::new(packages.items_meta());
-        self.names = bun_ptr::RawSlice::new(packages.items_name());
-        self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
-        self.bins = bun_ptr::RawSlice::new(packages.items_bin());
-        self.resolutions = bun_ptr::RawSlice::new(packages.items_resolution());
-        self.pkg_dependencies = bun_ptr::RawSlice::new(packages.items_dependencies());
+        self.metas = bun_ptr::BackRef::new(packages.items_meta());
+        self.names = bun_ptr::BackRef::new(packages.items_name());
+        self.pkg_name_hashes = bun_ptr::BackRef::new(packages.items_name_hash());
+        self.bins = bun_ptr::BackRef::new(packages.items_bin());
+        self.resolutions = bun_ptr::BackRef::new(packages.items_resolution());
+        self.pkg_dependencies = bun_ptr::BackRef::new(packages.items_dependencies());
 
         // fixes an assertion failure where a transitive dependency is a git dependency newly added to the lockfile after the list of dependencies has been resized
         // this assertion failure would also only happen after the lockfile has been written to disk and the summary is being printed.
@@ -1102,8 +1098,8 @@ impl<'a> PackageInstaller<'a> {
         data: &ExtractData,
         log_level: Options::LogLevel,
     ) {
-        let package_id = self.lockfile().buffers.resolutions.as_slice()[dependency_id.index()];
-        let name = self.names[package_id.index()];
+        let package_id = self.lockfile().buffers.resolutions.as_slice()[dependency_id];
+        let name = self.names[package_id];
 
         // const resolution = &this.resolutions[package_id];
         // const task_id = switch (resolution.tag) {
@@ -1120,8 +1116,8 @@ impl<'a> PackageInstaller<'a> {
         // the lockfile gets re-saved with the hash.
         if data.integrity.tag.is_supported() {
             let pkg_metas = self.lockfile_mut().packages.items_meta_mut();
-            if !pkg_metas[package_id.index()].integrity.tag.is_supported() {
-                pkg_metas[package_id.index()].integrity = data.integrity;
+            if !pkg_metas[package_id].integrity.tag.is_supported() {
+                pkg_metas[package_id].integrity = data.integrity;
                 self.manager_mut()
                     .options
                     .enable
@@ -1158,7 +1154,7 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 };
                 let callback_package_id =
-                    self.lockfile().buffers.resolutions.as_slice()[context.dependency_id.index()];
+                    self.lockfile().buffers.resolutions.as_slice()[context.dependency_id];
                 self.node_modules.tree_id = context.tree_id;
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
                 self.node_modules.path.clone_from(&context.path);
@@ -1173,7 +1169,7 @@ impl<'a> PackageInstaller<'a> {
                     callback_package_id,
                     log_level,
                     name,
-                    &resolutions[callback_package_id.index()],
+                    &resolutions[callback_package_id],
                 );
             }
             self.node_modules = prev_node_modules;
@@ -1204,7 +1200,7 @@ impl<'a> PackageInstaller<'a> {
         debug_assert!(package_id != PackageID::ROOT);
         let mut count: usize = 0;
         let scripts = 'brk: {
-            let scripts = self.lockfile().packages.items_scripts()[package_id.index()];
+            let scripts = self.lockfile().packages.items_scripts()[package_id];
             if scripts.filled {
                 break 'brk scripts;
             }
@@ -1287,7 +1283,7 @@ impl<'a> PackageInstaller<'a> {
             };
         }
 
-        let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id.index()].name;
+        let alias = self.lockfile().buffers.dependencies.as_slice()[dependency_id].name;
 
         // The alias is used as a path relative to `node_modules` for delete,
         // rename, and create operations. Refuse anything that could escape it.
@@ -1325,7 +1321,7 @@ impl<'a> PackageInstaller<'a> {
             unsafe { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
         };
 
-        let pkg_name_hash = self.pkg_name_hashes[package_id.index()];
+        let pkg_name_hash = self.pkg_name_hashes[package_id];
 
         let mut resolution_buf = [0u8; 512];
         let mut resolution_spill = Vec::new();
@@ -1488,8 +1484,8 @@ impl<'a> PackageInstaller<'a> {
                             // package.json, so a folder path that reached here via an
                             // override was written by the user and is trusted the same
                             // as a direct dependency of the root.
-                            let dep = &self.lockfile().buffers.dependencies.as_slice()
-                                [dependency_id.index()];
+                            let dep =
+                                &self.lockfile().buffers.dependencies.as_slice()[dependency_id];
                             !self.lockfile().overrides.contains_name(
                                 dep.name_hash,
                                 dep.name.slice(string_buf!()),
@@ -1922,15 +1918,14 @@ impl<'a> PackageInstaller<'a> {
                         self.node.complete_one();
                     }
 
-                    if self.bins[package_id.index()].tag != bin::Tag::None {
+                    if self.bins[package_id].tag != bin::Tag::None {
                         self.trees[self.current_tree_id as usize]
                             .binaries
                             .add(dependency_id)
                             .unwrap_or_oom();
                     }
 
-                    let dep =
-                        &self.lockfile().buffers.dependencies.as_slice()[dependency_id.index()];
+                    let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id];
                     let dep_behavior = dep.behavior;
                     let truncated_dep_name_hash: TruncatedPackageNameHash =
                         dep.name_hash as TruncatedPackageNameHash;
@@ -1975,9 +1970,8 @@ impl<'a> PackageInstaller<'a> {
                                         },
                                         version_buf: string_buf!(),
                                     },
-                                    self.lockfile().packages.items_resolutions()
-                                        [package_id.index()]
-                                    .get(self.lockfile().buffers.resolutions.as_slice()),
+                                    self.lockfile().packages.items_resolutions()[package_id]
+                                        .get(self.lockfile().buffers.resolutions.as_slice()),
                                     self.lockfile().packages.items_meta(),
                                     self.manager().options.cpu,
                                     self.manager().options.os,
@@ -2034,7 +2028,7 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            if !is_trusted && self.metas[package_id.index()].has_install_script() {
+                            if !is_trusted && self.metas[package_id].has_install_script() {
                                 // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
                                 // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
                                 let mut folder_path =
@@ -2099,7 +2093,7 @@ impl<'a> PackageInstaller<'a> {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: <b>{}<r> \"link:{}\" not found (try running 'bun link' in the intended package's folder)<r>",
                             cause.err.name(),
-                            bstr::BStr::new(self.names[package_id.index()].slice(string_buf!())),
+                            bstr::BStr::new(self.names[package_id].slice(string_buf!())),
                         );
                         self.summary.fail += 1;
                     } else if resolution.tag == resolution::Tag::Folder
@@ -2133,11 +2127,9 @@ impl<'a> PackageInstaller<'a> {
                                         Output::err(
                                             "EACCES",
                                             "Permission denied while installing <b>{}<r>",
-                                            (bstr::BStr::new(
-                                                self.names[package_id.index()].slice(
-                                                    self.lockfile().buffers.string_bytes.as_slice(),
-                                                ),
-                                            ),),
+                                            (bstr::BStr::new(self.names[package_id].slice(
+                                                self.lockfile().buffers.string_bytes.as_slice(),
+                                            )),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -2151,11 +2143,9 @@ impl<'a> PackageInstaller<'a> {
                                         Output::err(
                                             "EACCES",
                                             "Permission denied while installing <b>{}<r>",
-                                            (bstr::BStr::new(
-                                                self.names[package_id.index()].slice(
-                                                    self.lockfile().buffers.string_bytes.as_slice(),
-                                                ),
-                                            ),),
+                                            (bstr::BStr::new(self.names[package_id].slice(
+                                                self.lockfile().buffers.string_bytes.as_slice(),
+                                            )),),
                                         );
                                         if cfg!(debug_assertions) {
                                             Output::err(err, "Failed to stat node_modules", ());
@@ -2193,9 +2183,7 @@ impl<'a> PackageInstaller<'a> {
                         Output::err(
                             "EACCES",
                             "Permission denied while installing <b>{}<r>",
-                            (bstr::BStr::new(
-                                self.names[package_id.index()].slice(string_buf!()),
-                            ),),
+                            (bstr::BStr::new(self.names[package_id].slice(string_buf!())),),
                         );
 
                         self.summary.fail += 1;
@@ -2205,9 +2193,7 @@ impl<'a> PackageInstaller<'a> {
                             "failed {} for package <b>{}<r>",
                             (
                                 bstr::BStr::new(cause.step.name()),
-                                bstr::BStr::new(
-                                    self.names[package_id.index()].slice(string_buf!()),
-                                ),
+                                bstr::BStr::new(self.names[package_id].slice(string_buf!())),
                             ),
                         );
                         #[cfg(bun_debug)]
@@ -2241,7 +2227,7 @@ impl<'a> PackageInstaller<'a> {
 
             self.summary.skipped += 1;
 
-            if self.bins[package_id.index()].tag != bin::Tag::None {
+            if self.bins[package_id].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries
                     .add(dependency_id)
@@ -2261,7 +2247,7 @@ impl<'a> PackageInstaller<'a> {
             // `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
             // No early returns after this point, so manual calls at end are equivalent.
 
-            let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id.index()];
+            let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id];
             let dep_behavior = dep.behavior;
             let truncated_dep_name_hash: TruncatedPackageNameHash =
                 dep.name_hash as TruncatedPackageNameHash;
@@ -2315,7 +2301,7 @@ impl<'a> PackageInstaller<'a> {
                                 },
                                 version_buf: string_buf!(),
                             },
-                            self.lockfile().packages.items_resolutions()[package_id.index()]
+                            self.lockfile().packages.items_resolutions()[package_id]
                                 .get(self.lockfile().buffers.resolutions.as_slice()),
                             self.lockfile().packages.items_meta(),
                             self.manager().options.cpu,
@@ -2407,8 +2393,7 @@ impl<'a> PackageInstaller<'a> {
         optional: bool,
         resolution: &Resolution,
     ) -> bool {
-        let mut scripts: PackageScripts =
-            self.lockfile().packages.items_scripts()[package_id.index()];
+        let mut scripts: PackageScripts = self.lockfile().packages.items_scripts()[package_id];
         let log = self.manager().log_mut();
         let scripts_list = match scripts.get_list(
             log,
@@ -2503,9 +2488,9 @@ impl<'a> PackageInstaller<'a> {
     }
 
     pub(crate) fn install_package(&mut self, dep_id: DependencyID, log_level: Options::LogLevel) {
-        let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id.index()];
+        let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id];
 
-        let name = self.names[package_id.index()];
+        let name = self.names[package_id];
         // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out so the
         // `&Resolution` argument borrows the local, not `*self`, across the
         // `&mut self` call.
@@ -2518,7 +2503,7 @@ impl<'a> PackageInstaller<'a> {
             package_id,
             log_level,
             name,
-            &resolutions[package_id.index()],
+            &resolutions[package_id],
         );
     }
 }

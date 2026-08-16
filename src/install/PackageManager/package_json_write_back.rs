@@ -123,7 +123,7 @@ fn edit_update_targets(
         let name_hashes = lockfile.packages.items_name_hash();
         let names = lockfile.packages.items_name();
         let mut path_buf = path_buffer_pool::get();
-        for pkg_id in 0..resolutions.len() {
+        for pkg_id in resolutions.ids() {
             let res = resolutions[pkg_id];
             let (name_hash, rel): (Option<PackageNameHash>, &[u8]) = match res.tag {
                 ResolutionTag::Root => (None, b""),
@@ -251,13 +251,13 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
     }
     let resolutions = lockfile.packages.items_resolution();
     let name_hashes = lockfile.packages.items_name_hash();
-    for pkg_id in 0..resolutions.len() {
+    for pkg_id in resolutions.ids() {
         if resolutions[pkg_id].tag != ResolutionTag::Workspace {
             continue;
         }
         for (i, e) in edited.iter().enumerate() {
             if ids[i] == invalid_package_id && e.target.name_hash == Some(name_hashes[pkg_id]) {
-                ids[i] = PackageID::from_index(pkg_id);
+                ids[i] = pkg_id;
             }
         }
     }
@@ -289,7 +289,7 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
             continue;
         }
         let is_root = edited[*i].target.name_hash.is_none();
-        let row = manager.lockfile.packages.items_dependencies()[target_id.index()];
+        let row = manager.lockfile.packages.items_dependencies()[target_id];
         let scratch_deps = pkg
             .dependencies
             .get(scratch.buffers.dependencies.as_slice());

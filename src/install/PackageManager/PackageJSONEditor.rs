@@ -1,4 +1,4 @@
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_collections::{IdSlice, StringArrayHashMap, VecExt};
 use std::io::Write as _;
 
 use bun_ast as js_ast;
@@ -531,8 +531,8 @@ fn edit_update_entries(
                         lockfile.get_workspace_package_id(workspace_name_hash);
                     let packages = lockfile.packages.slice();
                     let resolutions = packages.items_resolution();
-                    let deps = packages.items_dependencies()[workspace_package_id.index()];
-                    let resolution_ids = packages.items_resolutions()[workspace_package_id.index()];
+                    let deps = packages.items_dependencies()[workspace_package_id];
+                    let resolution_ids = packages.items_resolutions()[workspace_package_id];
                     let workspace_deps: &[Dependency] =
                         deps.get(lockfile.buffers.dependencies.as_slice());
                     let workspace_resolution_ids =
@@ -588,7 +588,7 @@ fn edit_update_entries(
                                         continue;
                                     }
 
-                                    let resolution = &resolutions[package_id.index()];
+                                    let resolution = &resolutions[package_id];
                                     if resolution.tag != resolution::Tag::Npm {
                                         continue;
                                     }
@@ -900,7 +900,7 @@ fn resolve_catalog_literals(
             continue;
         }
 
-        let resolution = &package_resolutions[package_id.index()];
+        let resolution = &package_resolutions[package_id];
         if resolution.tag != resolution::Tag::Npm {
             continue;
         }
@@ -1310,7 +1310,7 @@ pub(crate) fn edit(
     let resolutions = if !options.before_install {
         manager.lockfile.packages.items_resolution()
     } else {
-        &[]
+        IdSlice::from_raw(&[])
     };
     for request in updates.iter_mut() {
         if let Some(e_string) = request.e_string {
@@ -1337,8 +1337,8 @@ pub(crate) fn edit(
             {
                 continue;
             }
-            if request.package_id.index() >= resolutions.len()
-                || resolutions[request.package_id.index()].tag == resolution::Tag::Uninitialized
+            if !resolutions.has(request.package_id)
+                || resolutions[request.package_id].tag == resolution::Tag::Uninitialized
             {
                 // The entry `bun update` is updating keeps its alias target whatever gets resolved.
                 let existing: Option<&[u8]> = (manager.subcommand == Subcommand::Update
@@ -1373,10 +1373,10 @@ pub(crate) fn edit(
 
                 continue;
             }
-            let new_literal: &[u8] = match resolutions[request.package_id.index()].tag {
+            let new_literal: &[u8] = match resolutions[request.package_id].tag {
                 resolution::Tag::Npm => 'npm: {
                     let installed = request.version.literal.slice(request.version_buf());
-                    let resolved = resolutions[request.package_id.index()].npm().version;
+                    let resolved = resolutions[request.package_id].npm().version;
                     let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
                     // `bun update <name>` keeps a dist-tag literal as written unless --latest, like the bare path.
                     if manager.subcommand == Subcommand::Update

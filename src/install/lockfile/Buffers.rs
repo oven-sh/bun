@@ -1,6 +1,7 @@
 use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
+use bun_collections::IdVec;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
@@ -8,14 +9,14 @@ use bun_core::strings;
 // rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067), so the
 // parent-module alias is spelled via its crate path instead.
 use super::{
-    DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
-    StringBuffer, Tree, assert_no_uninitialized_padding, tree,
+    DependencyIDList, ExternalStringBuffer, Lockfile, Stream, StringBuffer, Tree,
+    assert_no_uninitialized_padding, tree,
 };
 use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
 use crate::{
-    Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_dependency_id,
-    invalid_package_id,
+    Aligner, Dependency, DependencyID, PackageID, PackageManager, dependency,
+    invalid_dependency_id, invalid_package_id,
 };
 
 #[derive(Default)]
@@ -23,10 +24,11 @@ pub struct Buffers {
     pub(crate) trees: tree::List,
     pub hoisted_dependencies: DependencyIDList,
     /// This is the underlying buffer used for the `resolutions` external slices inside of `Package`
-    /// Should be the same length as `dependencies`
-    pub resolutions: PackageIDList,
+    /// Should be the same length as `dependencies`: `resolutions[dep_id]` is the package
+    /// `dependencies[dep_id]` resolved to.
+    pub resolutions: IdVec<DependencyID, PackageID>,
     /// This is the underlying buffer used for the `dependencies` external slices inside of `Package`
-    pub dependencies: DependencyList,
+    pub dependencies: IdVec<DependencyID, Dependency>,
     /// This is the underlying buffer used for any `Semver.ExternalString` instance in the lockfile
     pub extern_strings: ExternalStringBuffer,
     /// This is where all non-inlinable `Semver.String`s are stored.
@@ -408,7 +410,7 @@ pub(crate) fn load(
 
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
-            this.$field = read_array::<$elem>(stream)?;
+            this.$field = read_array::<$elem>(stream)?.into();
             if let Some(pm) = pm_.as_deref() {
                 if pm.options.log_level.is_verbose() {
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
@@ -458,7 +460,7 @@ pub(crate) fn load(
     let external_dependency_list = external_dependency_list_.as_slice();
     // Dependencies are serialized separately.
     // This is unfortunate. However, not using pointers for Semver Range's make the code a lot more complex.
-    this.dependencies = DependencyList::with_capacity(external_dependency_list.len());
+    this.dependencies = IdVec::with_capacity(external_dependency_list.len());
     let string_buf = this.string_bytes.as_slice();
     let mut extern_context = dependency::Context {
         log,

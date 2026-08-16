@@ -1,7 +1,7 @@
 use core::cmp::Ordering;
 use std::io::Write as _;
 
-use bun_collections::DynamicBitSet;
+use bun_collections::{DynamicBitSet, IdSlice};
 use bun_core::fmt::PathSep;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var, fmt as bun_fmt};
@@ -38,16 +38,16 @@ pub(crate) struct NodeModulesFolder {
 
 // Transient sort-comparator context; lifetime is fn-local.
 struct ByName<'a> {
-    dependencies: &'a [Dependency],
+    dependencies: &'a IdSlice<DependencyID, Dependency>,
     buf: &'a [u8],
 }
 
 impl<'a> ByName<'a> {
     fn cmp(&self, lhs: DependencyID, rhs: DependencyID) -> Ordering {
-        self.dependencies[lhs.index()]
+        self.dependencies[lhs]
             .name
             .slice(self.buf)
-            .cmp(self.dependencies[rhs.index()].name.slice(self.buf))
+            .cmp(self.dependencies[rhs].name.slice(self.buf))
     }
 }
 
@@ -613,7 +613,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let slice = lockfile.packages.slice();
                 let resolutions = slice.items_resolution();
                 let pkg_names = slice.items_name();
-                let root_deps = slice.items_dependencies()[0];
+                let root_deps = slice.items_dependencies()[PackageID::ROOT];
 
                 Output::println(format_args!(
                     "{} node_modules ({})",
@@ -633,28 +633,23 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {
-                        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id.index()];
+                        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id];
                         if package_id.index() >= lockfile.packages.len() {
                             return false;
                         }
-                        let alias = dependencies[dep_id.index()].name.slice(string_bytes);
-                        let pkg_name = pkg_names[package_id.index()].slice(string_bytes);
-                        lockfile.has_trusted_dependency(
-                            alias,
-                            pkg_name,
-                            &resolutions[package_id.index()],
-                        )
+                        let alias = dependencies[dep_id].name.slice(string_bytes);
+                        let pkg_name = pkg_names[package_id].slice(string_bytes);
+                        lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id])
                     });
                 }
 
                 for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
-                    let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id.index()];
+                    let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id];
                     if package_id.index() >= lockfile.packages.len() {
                         continue;
                     }
-                    let name = dependencies[dependency_id.index()].name.slice(string_bytes);
-                    let resolution =
-                        resolutions[package_id.index()].fmt(string_bytes, PathSep::Auto);
+                    let name = dependencies[dependency_id].name.slice(string_bytes);
+                    let resolution = resolutions[package_id].fmt(string_bytes, PathSep::Auto);
 
                     if index < sorted_dependencies.len() - 1 {
                         bun_core::prettyln!(
@@ -806,10 +801,7 @@ fn print_node_modules_folder_structure(
             }
             let directory_version = buf_print(
                 &mut resolution_buf,
-                format_args!(
-                    "{}",
-                    resolutions[id.index()].fmt(string_bytes, PathSep::Auto)
-                ),
+                format_args!("{}", resolutions[id].fmt(string_bytes, PathSep::Auto)),
             );
             if let Some(j) = strings::index_of(path, b"node_modules") {
                 bun_core::prettyln!(
@@ -851,7 +843,7 @@ fn print_node_modules_folder_structure(
 
     let sorted_len = sorted_dependencies.len();
     for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
-        let package_name = dependencies[dependency_id.index()].name.slice(string_bytes);
+        let package_name = dependencies[dependency_id].name.slice(string_bytes);
         let mut possible_path: Vec<u8> = Vec::new();
         write!(
             &mut possible_path,
@@ -867,7 +859,7 @@ fn print_node_modules_folder_structure(
             more_packages[depth] = false;
         }
 
-        let package_id = lockfile.buffers.resolutions[dependency_id.index()];
+        let package_id = lockfile.buffers.resolutions[dependency_id];
 
         if package_id.index() >= lockfile.packages.len() {
             // in case we are loading from a binary lockfile with invalid package ids
@@ -932,7 +924,7 @@ fn print_node_modules_folder_structure(
             &mut resolution_buf,
             format_args!(
                 "{}",
-                resolutions[package_id.index()].fmt(string_bytes, PathSep::Auto)
+                resolutions[package_id].fmt(string_bytes, PathSep::Auto)
             ),
         );
         bun_core::prettyln!(
@@ -972,16 +964,16 @@ fn print_trusted_dependencies_flat(
     let mut trusted: Vec<DependencyID> = Vec::new();
 
     let mut visit = |dep_id: DependencyID| {
-        let package_id = resolutions_buf[dep_id.index()];
+        let package_id = resolutions_buf[dep_id];
         if package_id.index() >= pkg_count {
             return;
         }
         if seen.is_set(package_id.index()) {
             return;
         }
-        let alias = dependencies[dep_id.index()].name.slice(string_bytes);
-        let pkg_name = pkg_names[package_id.index()].slice(string_bytes);
-        if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id.index()]) {
+        let alias = dependencies[dep_id].name.slice(string_bytes);
+        let pkg_name = pkg_names[package_id].slice(string_bytes);
+        if lockfile.has_trusted_dependency(alias, pkg_name, &resolutions[package_id]) {
             seen.set(package_id.index());
             trusted.push(dep_id);
         }
@@ -1002,9 +994,9 @@ fn print_trusted_dependencies_flat(
     trusted.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
 
     for (index, &dep_id) in trusted.iter().enumerate() {
-        let package_id = resolutions_buf[dep_id.index()];
-        let name = dependencies[dep_id.index()].name.slice(string_bytes);
-        let resolution = resolutions[package_id.index()].fmt(string_bytes, PathSep::Auto);
+        let package_id = resolutions_buf[dep_id];
+        let name = dependencies[dep_id].name.slice(string_bytes);
+        let resolution = resolutions[package_id].fmt(string_bytes, PathSep::Auto);
         if index + 1 < trusted.len() {
             bun_core::prettyln!(
                 "<d>├──<r> {}<r><d>@{}<r>\n",

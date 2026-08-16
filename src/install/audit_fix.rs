@@ -3,7 +3,7 @@ use core::mem::ManuallyDrop;
 use std::io::Write as _;
 
 use bstr::BStr;
-use bun_collections::{DynamicBitSet, HashMap, index_sort};
+use bun_collections::{DynamicBitSet, HashMap, IdVec, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, pretty, prettyln, strings};
 use bun_semver::query::Group;
 use bun_semver::{self as Semver, SlicedString};
@@ -315,7 +315,7 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
 
 fn importer_file(lockfile: &Lockfile, parent: PackageID) -> Option<Box<[u8]>> {
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let parent_res = &lockfile.packages.items_resolution()[parent.index()];
+    let parent_res = &lockfile.packages.items_resolution()[parent];
     match parent_res.tag {
         ResolutionTag::Root => Some(Box::from(&b"package.json"[..])),
         ResolutionTag::Workspace => {
@@ -340,8 +340,8 @@ fn dependent_label(lockfile: &Lockfile, parent: PackageID) -> Box<[u8]> {
         return file;
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
-    let name = lockfile.packages.items_name()[parent.index()].slice(buf);
-    let res = &lockfile.packages.items_resolution()[parent.index()];
+    let name = lockfile.packages.items_name()[parent].slice(buf);
+    let res = &lockfile.packages.items_resolution()[parent];
     if res.tag != ResolutionTag::Npm {
         return Box::from(name);
     }
@@ -430,7 +430,7 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
 
 fn pin_for(
     lockfile: &Lockfile,
-    dep_id: usize,
+    dep_id: DependencyID,
     dep: &Dependency,
     parent: PackageID,
     latest: bool,
@@ -440,7 +440,7 @@ fn pin_for(
     }
     let buf = lockfile.buffers.string_bytes.as_slice();
     let res = lockfile.packages.items_resolution();
-    let parent_res = &res[parent.index()];
+    let parent_res = &res[parent];
     if !matches!(
         parent_res.tag,
         ResolutionTag::Root | ResolutionTag::Workspace
@@ -451,7 +451,7 @@ fn pin_for(
     if !is_alias
         && lockfile
             .overrides
-            .get(lockfile, DependencyID::from_index(dep_id), dep.name_hash)
+            .get(lockfile, dep_id, dep.name_hash)
             .is_some()
     {
         return None;
@@ -512,8 +512,8 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        let mut instance_of: Vec<u32> = vec![u32::MAX; res.len()];
-        for pkg_id in 0..res.len() {
+        let mut instance_of: IdVec<PackageID, u32> = vec![u32::MAX; res.len()].into();
+        for pkg_id in res.ids() {
             if res[pkg_id].tag != ResolutionTag::Npm {
                 continue;
             }
@@ -535,7 +535,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             }
             instance_of[pkg_id] = instances.len() as u32;
             instances.push(Instance {
-                pkg_id: PackageID::from_index(pkg_id),
+                pkg_id,
                 name: Box::from(names[pkg_id].slice(buf)),
                 name_hash: name_hashes[pkg_id],
                 from: fmt_version(current, buf),
@@ -546,19 +546,20 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         }
 
         if !instances.is_empty() {
-            let mut parent_of: Vec<PackageID> = vec![invalid_package_id; deps.len()];
-            for (pkg_id, slice) in dep_slices.iter().enumerate() {
+            let mut parent_of: IdVec<DependencyID, PackageID> =
+                vec![invalid_package_id; deps.len()].into();
+            for (pkg_id, slice) in dep_slices.iter_enumerated() {
                 let end = (slice.end() as usize).min(deps.len());
-                for slot in &mut parent_of[(slice.begin() as usize).min(end)..end] {
-                    *slot = PackageID::from_index(pkg_id);
+                for slot in &mut parent_of.raw_mut()[(slice.begin() as usize).min(end)..end] {
+                    *slot = pkg_id;
                 }
             }
 
-            for (dep_id, &target) in resolutions.iter().enumerate() {
+            for (dep_id, &target) in resolutions.iter_enumerated() {
                 if target == invalid_package_id {
                     continue;
                 }
-                let Some(&instance) = instance_of.get(target.index()) else {
+                let Some(&instance) = instance_of.get(target) else {
                     continue;
                 };
                 if instance == u32::MAX || deps[dep_id].behavior.is_optional_peer() {
@@ -572,13 +573,9 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                     pin = pin_for(lockfile, dep_id, dep, parent, false);
                 }
                 instances[instance as usize].edges.push(Edge {
-                    dep_id: DependencyID::from_index(dep_id),
+                    dep_id,
                     parent,
-                    range: crate::dedupe::effective_npm_range(
-                        lockfile,
-                        DependencyID::from_index(dep_id),
-                        dep,
-                    ),
+                    range: crate::dedupe::effective_npm_range(lockfile, dep_id, dep),
                     literal: Box::from(dep.version.literal.slice(buf)),
                     dependent: dependent_label(lockfile, parent),
                     bundled: dep.behavior.is_bundled(),
@@ -1139,7 +1136,7 @@ impl FixPlan {
             .collect();
 
         let mut still_vulnerable: Vec<StillVulnerable> = Vec::new();
-        for pkg_id in 0..res.len() {
+        for pkg_id in res.ids() {
             if res[pkg_id].tag != ResolutionTag::Npm {
                 continue;
             }
@@ -1251,11 +1248,7 @@ fn live_edge(
     edge: PlannedEdge,
 ) -> Option<(DependencyID, Semver::String)> {
     let deps = lockfile.buffers.dependencies.as_slice();
-    let target = lockfile
-        .buffers
-        .resolutions
-        .get(edge.dep_id.index())?
-        .index();
+    let target = *lockfile.buffers.resolutions.get(edge.dep_id)?;
     let res = lockfile.packages.items_resolution().get(target)?;
     if res.tag != ResolutionTag::Npm
         || lockfile.packages.items_name_hash()[target] != pin.name_hash
@@ -1265,17 +1258,13 @@ fn live_edge(
         return None;
     }
     let pkg_name = lockfile.packages.items_name()[target];
-    let Some(&slice) = lockfile
-        .packages
-        .items_dependencies()
-        .get(edge.parent.index())
-    else {
+    let Some(&slice) = lockfile.packages.items_dependencies().get(edge.parent) else {
         return Some((edge.dep_id, pkg_name));
     };
     if slice.contains(edge.dep_id) {
         return Some((edge.dep_id, pkg_name));
     }
-    let planned = &deps[edge.dep_id.index()];
+    let planned = &deps[edge.dep_id];
     let live = slice
         .get(deps)
         .iter()
@@ -1289,8 +1278,8 @@ pub(crate) fn enqueue_pinned(
     dep_id: DependencyID,
     to_version: Semver::Version,
 ) -> crate::Result<()> {
-    let target = manager.lockfile.buffers.resolutions[dep_id.index()];
-    let pkg_name = manager.lockfile.packages.items_name()[target.index()];
+    let target = manager.lockfile.buffers.resolutions[dep_id];
+    let pkg_name = manager.lockfile.packages.items_name()[target];
     enqueue_pinned_as(manager, dep_id, pkg_name, to_version)
 }
 
@@ -1300,7 +1289,7 @@ fn enqueue_pinned_as(
     pkg_name: Semver::String,
     to_version: Semver::Version,
 ) -> crate::Result<()> {
-    let row = manager.lockfile.buffers.dependencies[dep_id.index()].clone();
+    let row = manager.lockfile.buffers.dependencies[dep_id].clone();
     let pinned = Dependency {
         name: row.name,
         name_hash: row.name_hash,
@@ -1317,6 +1306,6 @@ fn enqueue_pinned_as(
             },
         },
     };
-    manager.lockfile.buffers.resolutions[dep_id.index()] = invalid_package_id;
+    manager.lockfile.buffers.resolutions[dep_id] = invalid_package_id;
     enqueue_dependency_with_main(manager, dep_id, &pinned, invalid_package_id, false)
 }

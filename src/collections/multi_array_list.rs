@@ -72,6 +72,10 @@ use bun_alloc::AllocError;
 /// Each generated method calls `items::<"field", $ty>()`, so the field name
 /// and type are checked against `$T`'s reflected layout at compile time —
 /// a typo or type mismatch is a const-eval error, not UB.
+///
+/// `for Foo, indexed by FooId` (where `FooId: Idx`) makes the accessors return
+/// [`IdSlice<FooId, _>`](crate::IdSlice) instead of plain slices, so the
+/// columns can only be subscripted with the list's own id type.
 #[macro_export]
 macro_rules! multi_array_columns {
     // Non-generic form.
@@ -81,7 +85,16 @@ macro_rules! multi_array_columns {
         }
     ) => {
         $crate::multi_array_columns! {
-            @emit $vis $trait [] [] $elem { $( $field : $ty, )* }
+            @emit $vis $trait [] [] [] $elem { $( $field : $ty, )* }
+        }
+    };
+    (
+        $vis:vis trait $trait:ident for $elem:ty, indexed by $idx:ident {
+            $( $field:ident : $ty:ty ),* $(,)?
+        }
+    ) => {
+        $crate::multi_array_columns! {
+            @emit $vis $trait [] [] [$idx] $elem { $( $field : $ty, )* }
         }
     };
     // Lifetime-only generic form: `['a]` / `['a, 'b]`.
@@ -91,7 +104,16 @@ macro_rules! multi_array_columns {
         }
     ) => {
         $crate::multi_array_columns! {
-            @emit $vis $trait [$($lt),+] [$($lt),+] $elem { $( $field : $ty, )* }
+            @emit $vis $trait [$($lt),+] [$($lt),+] [] $elem { $( $field : $ty, )* }
+        }
+    };
+    (
+        $vis:vis trait $trait:ident [ $($lt:lifetime),+ ] for $elem:ty, indexed by $idx:ident {
+            $( $field:ident : $ty:ty ),* $(,)?
+        }
+    ) => {
+        $crate::multi_array_columns! {
+            @emit $vis $trait [$($lt),+] [$($lt),+] [$idx] $elem { $( $field : $ty, )* }
         }
     };
     // Single bounded type-parameter form: `[T: Bound + ...]`.
@@ -101,10 +123,19 @@ macro_rules! multi_array_columns {
         }
     ) => {
         $crate::multi_array_columns! {
-            @emit $vis $trait [$param: $($bound)+] [$param] $elem { $( $field : $ty, )* }
+            @emit $vis $trait [$param: $($bound)+] [$param] [] $elem { $( $field : $ty, )* }
         }
     };
-    (@emit $vis:vis $trait:ident [$($decl:tt)*] [$($use:tt)*] $elem:ty {
+    (
+        $vis:vis trait $trait:ident [ $param:ident : $($bound:tt)+ ] for $elem:ty, indexed by $idx:ident {
+            $( $field:ident : $ty:ty ),* $(,)?
+        }
+    ) => {
+        $crate::multi_array_columns! {
+            @emit $vis $trait [$param: $($bound)+] [$param] [$idx] $elem { $( $field : $ty, )* }
+        }
+    };
+    (@emit $vis:vis $trait:ident [$($decl:tt)*] [$($use:tt)*] $idx:tt $elem:ty {
         $( $field:ident : $ty:ty, )*
     }) => {
         $crate::__mal_paste! {
@@ -117,7 +148,7 @@ macro_rules! multi_array_columns {
             /// per-site `unsafe { &mut * }` pattern.
             #[allow(dead_code, non_snake_case)]
             $vis struct [<$trait Mut>] <'__mal, $($decl)*> {
-                $( pub $field: &'__mal mut [$ty], )*
+                $( pub $field: &'__mal mut $crate::__mal_column_ty!($idx $ty), )*
                 #[doc(hidden)]
                 pub __mal: ::core::marker::PhantomData<&'__mal mut $elem>,
             }
@@ -147,7 +178,7 @@ macro_rules! multi_array_columns {
 
             #[allow(dead_code, non_snake_case)]
             $vis trait $trait <$($decl)*> {
-                $( $crate::__mal_column_sig!($field : $ty); )*
+                $( $crate::__mal_column_sig!($idx $field : $ty); )*
                 /// Split-borrow every column at once.
                 fn split_mut(&mut self) -> [<$trait Mut>]<'_, $($use)*>;
                 /// Raw column pointers (root provenance, no `&mut` intermediate).
@@ -155,27 +186,60 @@ macro_rules! multi_array_columns {
             }
             #[allow(dead_code, non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::MultiArrayList<$elem> {
-                $( $crate::__mal_column_impl!($field : $ty); )*
-                $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
+                $( $crate::__mal_column_impl!($idx $field : $ty); )*
+                $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] $idx { $( $field : $ty, )* });
                 $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
             #[allow(dead_code, non_snake_case)]
             impl <$($decl)*> $trait <$($use)*> for $crate::multi_array_list::Slice<$elem> {
-                $( $crate::__mal_column_impl!($field : $ty); )*
-                $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] { $( $field : $ty, )* });
+                $( $crate::__mal_column_impl!($idx $field : $ty); )*
+                $crate::__mal_split_mut_impl!([<$trait Mut>] [$($use)*] $idx { $( $field : $ty, )* });
                 $crate::__mal_split_raw_impl!([<$trait Raw>] [$($use)*] { $( $field : $ty, )* });
             }
         }
     };
 }
 
+/// The column type a `multi_array_columns!` accessor hands out: the plain
+/// slice, or the id-indexed one when the trait was declared `indexed by`.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __mal_column_ty {
+    ([] $ty:ty) => { [$ty] };
+    ([$idx:ident] $ty:ty) => { $crate::IdSlice<$idx, $ty> };
+}
+
+/// Wraps a freshly materialized `&[T]` / `&mut [T]` column in the declared
+/// column type (see `__mal_column_ty`).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __mal_column_wrap {
+    ([] $column:expr) => {
+        $column
+    };
+    ([$idx:ident] $column:expr) => {
+        $crate::IdSlice::<$idx, _>::from_raw($column)
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __mal_column_wrap_mut {
+    ([] $column:expr) => {
+        $column
+    };
+    ([$idx:ident] $column:expr) => {
+        $crate::IdSlice::<$idx, _>::from_raw_mut($column)
+    };
+}
+
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __mal_column_sig {
-    ($field:ident : $ty:ty) => {
+    ($idx:tt $field:ident : $ty:ty) => {
         $crate::__mal_paste! {
-            fn [<items_ $field>](&self) -> &[$ty];
-            fn [<items_ $field _mut>](&mut self) -> &mut [$ty];
+            fn [<items_ $field>](&self) -> &$crate::__mal_column_ty!($idx $ty);
+            fn [<items_ $field _mut>](&mut self) -> &mut $crate::__mal_column_ty!($idx $ty);
         }
     };
 }
@@ -183,7 +247,7 @@ macro_rules! __mal_column_sig {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __mal_split_mut_impl {
-    ($struct:ident [$($use:tt)*] { $( $field:ident : $ty:ty, )* }) => {
+    ($struct:ident [$($use:tt)*] $idx:tt { $( $field:ident : $ty:ty, )* }) => {
         #[inline]
         fn split_mut(&mut self) -> $struct<'_, $($use)*> {
             let __len = self.len();
@@ -194,10 +258,10 @@ macro_rules! __mal_split_mut_impl {
             // one `&mut [F]` per column simultaneously cannot alias.
             unsafe {
                 $struct {
-                    $( $field: ::core::slice::from_raw_parts_mut(
+                    $( $field: $crate::__mal_column_wrap_mut!($idx ::core::slice::from_raw_parts_mut(
                         self.items_raw::<{ ::core::stringify!($field) }, $ty>(),
                         __len,
-                    ), )*
+                    )), )*
                     __mal: ::core::marker::PhantomData,
                 }
             }
@@ -226,15 +290,17 @@ macro_rules! __mal_split_raw_impl {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __mal_column_impl {
-    ($field:ident : $ty:ty) => {
+    ($idx:tt $field:ident : $ty:ty) => {
         $crate::__mal_paste! {
             #[inline]
-            fn [<items_ $field>](&self) -> &[$ty] {
-                self.items::<{ ::core::stringify!($field) }, $ty>()
+            fn [<items_ $field>](&self) -> &$crate::__mal_column_ty!($idx $ty) {
+                $crate::__mal_column_wrap!($idx self.items::<{ ::core::stringify!($field) }, $ty>())
             }
             #[inline]
-            fn [<items_ $field _mut>](&mut self) -> &mut [$ty] {
-                self.items_mut::<{ ::core::stringify!($field) }, $ty>()
+            fn [<items_ $field _mut>](&mut self) -> &mut $crate::__mal_column_ty!($idx $ty) {
+                $crate::__mal_column_wrap_mut!(
+                    $idx self.items_mut::<{ ::core::stringify!($field) }, $ty>()
+                )
             }
         }
     };

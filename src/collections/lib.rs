@@ -13,6 +13,7 @@
 #![warn(unused_must_use)]
 
 pub mod hive_array;
+pub mod id_slice;
 pub mod index_sort;
 pub mod multi_array_list;
 pub mod vec_ext;
@@ -35,6 +36,7 @@ pub use bounded_array::BoundedArray;
 pub use hive_array::{
     Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
 };
+pub use id_slice::{IdSlice, IdVec, Idx};
 pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;
 #[doc(hidden)]

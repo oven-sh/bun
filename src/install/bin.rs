@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::Error;
 use bun_alloc::AllocError;
-use bun_collections::{StringHashMap, VecExt};
+use bun_collections::{IdVec, StringHashMap, VecExt};
 use bun_core::ZStr;
 #[cfg(windows)]
 use bun_core::w;
@@ -701,7 +701,7 @@ impl<'a> NamesIterator<'a> {
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
 pub struct PriorityQueueContext {
-    pub(crate) dependencies: bun_ptr::BackRef<Vec<Dependency>>,
+    pub(crate) dependencies: bun_ptr::BackRef<IdVec<DependencyID, Dependency>>,
     pub(crate) string_buf: bun_ptr::BackRef<Vec<u8>>,
 }
 
@@ -715,8 +715,8 @@ impl PriorityQueueContext {
         // `BackRef<Vec>` (header) on every compare instead of caching a slice.
         let deps = self.dependencies.as_slice();
         let buf = self.string_buf.as_slice();
-        let a_name = deps[a.index()].name.slice(buf);
-        let b_name = deps[b.index()].name.slice(buf);
+        let a_name = deps[a].name.slice(buf);
+        let b_name = deps[b].name.slice(buf);
         strings::order(a_name, b_name)
     }
 }

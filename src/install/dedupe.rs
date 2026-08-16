@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_collections::bit_set::Range;
-use bun_collections::{DynamicBitSet, index_sort};
+use bun_collections::{DynamicBitSet, IdSlice, IdVec, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::package::PackageColumns as _;
@@ -18,7 +18,7 @@ use crate::{
 struct Pass<'a> {
     lockfile: &'a Lockfile,
     groups: &'a [Vec<PackageID>],
-    group_of: &'a [u32],
+    group_of: &'a IdSlice<PackageID, u32>,
     pinned: &'a DynamicBitSet,
     edges: Vec<Vec<(DependencyID, bool)>>,
     candidates: Vec<PackageID>,
@@ -40,7 +40,7 @@ impl<'a> Pass<'a> {
     fn new(
         lockfile: &'a Lockfile,
         groups: &'a [Vec<PackageID>],
-        group_of: &'a [u32],
+        group_of: &'a IdSlice<PackageID, u32>,
         pinned: &'a DynamicBitSet,
         max_candidates: usize,
         max_edges: usize,
@@ -132,7 +132,11 @@ impl<'a> Pass<'a> {
     }
 
     // Keeps the fewest versions that satisfy every group edge owned by `voters` and re-points only edges whose version is dropped; `voted` records who voted.
-    fn vote(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
+    fn vote(
+        &mut self,
+        cur: &IdSlice<DependencyID, PackageID>,
+        live: &DynamicBitSet,
+    ) -> IdVec<DependencyID, PackageID> {
         let lockfile = self.lockfile;
         let groups = self.groups;
         let group_of = self.group_of;
@@ -146,31 +150,31 @@ impl<'a> Pass<'a> {
             edges.clear();
         }
         self.voted.unmanaged.set_all(false);
-        for (pkg_id, slice) in dep_slices.iter().enumerate() {
-            if !self.voters.is_set(pkg_id) {
+        for (pkg_id, slice) in dep_slices.iter_enumerated() {
+            if !self.voters.is_set(pkg_id.index()) {
                 continue;
             }
             let direct = matches!(
                 pkg_res[pkg_id].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
             );
-            for dep_id in slice.begin() as usize..slice.end() as usize {
+            for dep_id in slice.dependency_ids() {
                 let target = cur[dep_id];
                 if target == invalid_package_id {
                     continue;
                 }
-                let Some(&g) = group_of.get(target.index()) else {
+                let Some(&g) = group_of.get(target) else {
                     continue;
                 };
                 if g == u32::MAX {
                     continue;
                 }
-                self.edges[g as usize].push((DependencyID::from_index(dep_id), direct));
-                self.voted.set(pkg_id);
+                self.edges[g as usize].push((dep_id, direct));
+                self.voted.set(pkg_id.index());
             }
         }
 
-        let mut next: Vec<PackageID> = cur.to_vec();
+        let mut next: IdVec<DependencyID, PackageID> = cur.to_vec().into();
         for (g, group) in groups.iter().enumerate() {
             if self.edges[g].is_empty() {
                 continue;
@@ -198,8 +202,8 @@ impl<'a> Pass<'a> {
             self.required.unmanaged.set_all(false);
 
             for (e, &(dep_id, _)) in edges.iter().enumerate() {
-                let dep = &deps[dep_id.index()];
-                let target = cur[dep_id.index()];
+                let dep = &deps[dep_id];
+                let target = cur[dep_id];
                 let cur_c = self
                     .candidates
                     .iter()
@@ -223,7 +227,7 @@ impl<'a> Pass<'a> {
                         let query = &range.npm().version;
                         for c in 0..n {
                             let id = self.candidates[c];
-                            if query.satisfies(pkg_res[id.index()].npm().version, buf, buf) {
+                            if query.satisfies(pkg_res[id].npm().version, buf, buf) {
                                 self.sat.set(row + c);
                             }
                         }
@@ -265,7 +269,7 @@ impl<'a> Pass<'a> {
                     continue;
                 }
                 if let Some(p) = self.placement(e) {
-                    next[dep_id.index()] = self.candidates[p];
+                    next[dep_id] = self.candidates[p];
                 }
             }
             self.edges[g] = edges;
@@ -274,9 +278,13 @@ impl<'a> Pass<'a> {
     }
 
     // Packages the pass itself removes must not vote (pnpm/pnpm#9213): shrink voters until the outcome agrees.
-    fn settle(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
+    fn settle(
+        &mut self,
+        cur: &IdSlice<DependencyID, PackageID>,
+        live: &DynamicBitSet,
+    ) -> IdVec<DependencyID, PackageID> {
         live.copy_into(&mut self.voters);
-        let mut best: Option<Vec<PackageID>> = None;
+        let mut best: Option<IdVec<DependencyID, PackageID>> = None;
         loop {
             let next = self.vote(cur, live);
             let after = reachable(self.lockfile, &next);
@@ -299,8 +307,8 @@ pub(crate) fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
     let _ = write!(
         label,
         "{}@{}",
-        BStr::new(lockfile.packages.items_name()[id.index()].slice(buf)),
-        lockfile.packages.items_resolution()[id.index()]
+        BStr::new(lockfile.packages.items_name()[id].slice(buf)),
+        lockfile.packages.items_resolution()[id]
             .npm()
             .version
             .fmt(buf)
@@ -312,7 +320,6 @@ fn order_by_name_then_version(lockfile: &Lockfile, a: PackageID, b: PackageID) -
     let buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let pkg_res = lockfile.packages.items_resolution();
-    let (a, b) = (a.index(), b.index());
     strings::order(names[a].slice(buf), names[b].slice(buf)).then_with(|| {
         pkg_res[a]
             .npm()
@@ -348,21 +355,18 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     let has_patches = lockfile.patched_dependencies.count() > 0;
 
     let mut groups: Vec<Vec<PackageID>> = Vec::new();
-    let mut group_of: Vec<u32> = vec![u32::MAX; pkg_res.len()];
+    let mut group_of: IdVec<PackageID, u32> = vec![u32::MAX; pkg_res.len()].into();
     let mut pinned = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
     let mut max_candidates = 0;
 
     if has_patches {
-        for id in 0..pkg_res.len() {
+        for id in pkg_res.ids() {
             if pkg_res[id].tag == ResolutionTag::Npm
                 && lockfile.patched_dependencies.contains(
-                    &bun_semver::string::Builder::string_hash(&label(
-                        lockfile,
-                        PackageID::from_index(id),
-                    )),
+                    &bun_semver::string::Builder::string_hash(&label(lockfile, id)),
                 )
             {
-                pinned.set(id);
+                pinned.set(id.index());
             }
         }
     }
@@ -374,20 +378,20 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         let mut candidates: Vec<PackageID> = ids
             .iter()
             .copied()
-            .filter(|&id| pkg_res[id.index()].tag == ResolutionTag::Npm)
+            .filter(|&id| pkg_res[id].tag == ResolutionTag::Npm)
             .collect();
         if candidates.len() < 2 {
             continue;
         }
         index_sort::sort_indices(bytemuck::cast_slice_mut(&mut candidates), &mut |a, b| {
-            pkg_res[b as usize]
+            pkg_res[PackageID::new(b)]
                 .npm()
                 .version
-                .order(pkg_res[a as usize].npm().version, buf, buf)
+                .order(pkg_res[PackageID::new(a)].npm().version, buf, buf)
                 .then(a.cmp(&b))
         });
         for &id in &candidates {
-            group_of[id.index()] = groups.len() as u32;
+            group_of[id] = groups.len() as u32;
         }
         max_candidates = max_candidates.max(candidates.len());
         groups.push(candidates);
@@ -403,7 +407,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     // Re-pointing keeps an edge inside its group, so the initial per-group edge counts bound every pass.
     let mut edge_counts: Vec<u32> = vec![0; groups.len()];
     for &target in lockfile.buffers.resolutions.iter() {
-        if let Some(&g) = group_of.get(target.index())
+        if let Some(&g) = group_of.get(target)
             && g != u32::MAX
         {
             edge_counts[g as usize] += 1;
@@ -421,7 +425,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     // Walked over the original resolutions: pinning every removed version that led to the orphan keeps those paths intact on the re-run.
     let (cur, live) = loop {
         let mut live = initial.clone().unwrap_or_oom();
-        let mut cur: Vec<PackageID> = lockfile.buffers.resolutions.clone();
+        let mut cur = lockfile.buffers.resolutions.clone();
         {
             let mut pass = Pass::new(
                 lockfile,
@@ -516,18 +520,18 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     }
 
     sort_by_name_then_version(lockfile, &mut removed);
-    let mut slot: Vec<u32> = vec![u32::MAX; pkg_res.len()];
+    let mut slot: IdVec<PackageID, u32> = vec![u32::MAX; pkg_res.len()].into();
     for (i, &id) in removed.iter().enumerate() {
-        slot[id.index()] = i as u32;
+        slot[id] = i as u32;
     }
     let mut targets: Vec<Vec<PackageID>> = vec![Vec::new(); removed.len()];
     let original = lockfile.buffers.resolutions.as_slice();
-    for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
-        if !live.is_set(owner) {
+    for (owner, slice) in lockfile.packages.items_dependencies().iter_enumerated() {
+        if !live.is_set(owner.index()) {
             continue;
         }
-        for dep_id in slice.begin() as usize..slice.end() as usize {
-            let Some(&s) = slot.get(original[dep_id].index()) else {
+        for dep_id in slice.dependency_ids() {
+            let Some(&s) = slot.get(original[dep_id]) else {
                 continue;
             };
             if s == u32::MAX {
@@ -546,23 +550,23 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         .zip(&targets)
         .map(|(&id, moved_to)| {
             let mut from: Vec<u8> = Vec::new();
-            let _ = write!(from, "{}", pkg_res[id.index()].npm().version.fmt(buf));
+            let _ = write!(from, "{}", pkg_res[id].npm().version.fmt(buf));
             let mut survivors: Vec<PackageID> = moved_to.clone();
             index_sort::sort_vec_by(&mut survivors, |&a, &b| {
-                pkg_res[a.index()]
+                pkg_res[a]
                     .npm()
                     .version
-                    .order(pkg_res[b.index()].npm().version, buf, buf)
+                    .order(pkg_res[b].npm().version, buf, buf)
             });
             let mut to: Vec<u8> = Vec::new();
             for &c in &survivors {
                 if !to.is_empty() {
                     to.extend_from_slice(b", ");
                 }
-                let _ = write!(to, "{}", pkg_res[c.index()].npm().version.fmt(buf));
+                let _ = write!(to, "{}", pkg_res[c].npm().version.fmt(buf));
             }
             (
-                Box::from(names[id.index()].slice(buf)),
+                Box::from(names[id].slice(buf)),
                 from.into_boxed_slice(),
                 to.into_boxed_slice(),
             )
@@ -611,7 +615,7 @@ pub(crate) fn effective_version(
 }
 
 // Optional-peer edges are followed too: with an in-sync package.json `clean` runs with `keep_optional_peer_targets`.
-fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
+fn reachable(lockfile: &Lockfile, resolutions: &IdSlice<DependencyID, PackageID>) -> DynamicBitSet {
     crate::lockfile::reachable::packages(
         lockfile,
         resolutions,

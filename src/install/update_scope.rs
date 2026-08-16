@@ -93,7 +93,8 @@ impl UpdateScope<'_> {
         let name_hashes = lockfile.packages.items_name_hash();
         let names = lockfile.packages.items_name();
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let roots: Vec<PackageID> = (0..pkg_res.len())
+        let roots: Vec<PackageID> = pkg_res
+            .ids()
             .filter(|&id| {
                 let tag = pkg_res[id].tag;
                 matches!(tag, ResolutionTag::Root | ResolutionTag::Workspace)
@@ -103,7 +104,6 @@ impl UpdateScope<'_> {
                         names[id].slice(buf),
                     )
             })
-            .map(PackageID::from_index)
             .collect();
         // The root's `workspaces` listing is not a dependency edge; a `workspace:` dependency between members is.
         reachable::packages_from(
@@ -130,7 +130,7 @@ impl UpdateScope<'_> {
         }
     }
 
-    fn contains_package(&self, lockfile: &Lockfile, id: usize) -> bool {
+    fn contains_package(&self, lockfile: &Lockfile, id: PackageID) -> bool {
         let tag = lockfile.packages.items_resolution()[id].tag;
         match tag {
             ResolutionTag::Root | ResolutionTag::Workspace => self.contains_workspace(
@@ -140,7 +140,10 @@ impl UpdateScope<'_> {
             ),
             // Packages appended after the walk (ids past its end) were resolved for an in-scope row.
             _ => {
-                self.whole_workspace || self.reachable(lockfile).is_set_allow_out_of_bound(id, true)
+                self.whole_workspace
+                    || self
+                        .reachable(lockfile)
+                        .is_set_allow_out_of_bound(id.index(), true)
             }
         }
     }
@@ -150,10 +153,10 @@ impl UpdateScope<'_> {
         match lockfile
             .packages
             .items_dependencies()
-            .iter()
-            .position(|slice| slice.contains(dep_id))
+            .iter_enumerated()
+            .find(|(_, slice)| slice.contains(dep_id))
         {
-            Some(owner) => self.contains_package(lockfile, owner),
+            Some((owner, _)) => self.contains_package(lockfile, owner),
             None => true,
         }
     }
@@ -162,7 +165,7 @@ impl UpdateScope<'_> {
     pub fn walkable_rows(&self, lockfile: &Lockfile) -> DynamicBitSet {
         let mut walk =
             DynamicBitSet::init_empty(lockfile.buffers.dependencies.len()).unwrap_or_oom();
-        for (id, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+        for (id, slice) in lockfile.packages.items_dependencies().iter_enumerated() {
             if slice.len == 0 {
                 continue;
             }
@@ -390,9 +393,9 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             .ids
             .into_iter()
             .map(|id| UpdateTargetWorkspace {
-                is_root: resolutions[id.index()].tag == ResolutionTag::Root,
-                name_hash: name_hashes[id.index()],
-                name: Box::from(names[id.index()].slice(buf)),
+                is_root: resolutions[id].tag == ResolutionTag::Root,
+                name_hash: name_hashes[id],
+                name: Box::from(names[id].slice(buf)),
             })
             .collect()
     });
@@ -421,7 +424,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             decided.insert(StringBuilder::string_hash(name_of_plain_arg(arg)), ());
         }
 
-        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+        for (owner, slice) in lockfile.packages.items_dependencies().iter_enumerated() {
             if slice.len == 0 {
                 continue;
             }
@@ -432,14 +435,14 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             if !owner_is_ws && !include_transitive {
                 continue;
             }
-            for i in slice.begin() as usize..slice.end() as usize {
-                if !walk.is_set(i) {
+            for i in slice.dependency_ids() {
+                if !walk.is_set(i.index()) {
                     continue;
                 }
                 let target = resolutions[i];
                 if target == invalid_package_id
                     || matches!(
-                        pkg_res[target.index()].tag,
+                        pkg_res[target].tag,
                         ResolutionTag::Root | ResolutionTag::Workspace
                     )
                 {
@@ -450,7 +453,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 if owner_is_ws && !selects(groups, dep.behavior) {
                     continue;
                 }
-                let real = pkg_names[target.index()].slice(buf);
+                let real = pkg_names[target].slice(buf);
                 let alias = dep.name.slice(buf);
                 let mut positive_hit = patterns.iter().all(|p| p.negated);
                 let mut excluded = false;
@@ -469,9 +472,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 }
                 if positive_hit
                     && !excluded
-                    && decided
-                        .insert(pkg_name_hashes[target.index()], ())
-                        .is_none()
+                    && decided.insert(pkg_name_hashes[target], ()).is_none()
                 {
                     // The named path matches `npm:` aliases through the real name, so the real name reaches both spellings.
                     names.push(Box::from(real));

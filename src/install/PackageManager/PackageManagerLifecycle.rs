@@ -23,7 +23,7 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{DependencyID, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -48,14 +48,14 @@ impl PackageManager {
     pub(crate) fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
         let count = self.lockfile.packages.len();
         self.ensure_preinstall_state_list_capacity(count);
-        self.preinstall_state[package_id.index()] = value;
+        self.preinstall_state[package_id] = value;
     }
 
     pub(crate) fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        if package_id.index() >= self.preinstall_state.len() {
-            return PreinstallState::Unknown;
-        }
-        self.preinstall_state[package_id.index()]
+        self.preinstall_state
+            .get(package_id)
+            .copied()
+            .unwrap_or(PreinstallState::Unknown)
     }
 
     /// A separate `lockfile` parameter would always be `manager.lockfile` at every call
@@ -443,16 +443,16 @@ impl PackageManager {
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id = self
                 .root_package_id
-                .get(&self.lockfile, self.workspace_name_hash)
-                .index();
+                .get(&self.lockfile, self.workspace_name_hash);
             let root_deps = self.lockfile.packages.items_dependencies()[root_id];
             let mut dep_id = root_deps.off;
             let end = dep_id.saturating_add(root_deps.len);
             while dep_id < end {
-                let root_dep = &self.lockfile.buffers.dependencies[dep_id as usize];
+                let root_dep_id = DependencyID::new(dep_id);
+                let root_dep = &self.lockfile.buffers.dependencies[root_dep_id];
                 for request in self.update_requests.iter() {
                     if request.matches(root_dep, self.lockfile.buffers.string_bytes.as_slice()) {
-                        let package_id = self.lockfile.buffers.resolutions[dep_id as usize];
+                        let package_id = self.lockfile.buffers.resolutions[root_dep_id];
                         if package_id == invalid_package_id {
                             continue;
                         }
@@ -479,12 +479,12 @@ fn add_package_to_set(
     }
     let mut stack: Vec<PackageID> = vec![package_id];
     while let Some(current) = stack.pop() {
-        let dependencies_slice = lockfile.packages.items_dependencies()[current.index()];
+        let dependencies_slice = lockfile.packages.items_dependencies()[current];
         let begin = dependencies_slice.off;
         let end = begin.saturating_add(dependencies_slice.len);
         let mut dep_id = begin;
         while dep_id < end {
-            let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
+            let dep_package_id = lockfile.buffers.resolutions[DependencyID::new(dep_id)];
             if dep_package_id != invalid_package_id
                 && !handle_oom(set.get_or_put(dep_package_id)).found_existing
             {

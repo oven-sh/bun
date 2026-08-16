@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use bstr::BStr;
-use bun_collections::{DynamicBitSet, HashMap, index_sort};
+use bun_collections::{DynamicBitSet, HashMap, IdVec, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
@@ -314,7 +314,7 @@ impl WorkspaceGraph {
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
 
-        let candidate_of: Vec<u32> = pkg_resolutions
+        let candidate_of: IdVec<PackageID, u32> = pkg_resolutions
             .iter()
             .zip(name_hashes)
             .map(|(res, name_hash)| match res.tag {
@@ -328,7 +328,7 @@ impl WorkspaceGraph {
             dependencies: vec![Vec::new(); n],
             dependents: vec![Vec::new(); n],
         };
-        for (pkg_id, &from) in candidate_of.iter().enumerate() {
+        for (pkg_id, &from) in candidate_of.iter_enumerated() {
             if from == u32::MAX {
                 continue;
             }
@@ -338,7 +338,7 @@ impl WorkspaceGraph {
                 if dep.behavior == Behavior::WORKSPACE {
                     continue;
                 }
-                let Some(&to) = candidate_of.get(dep_pkg.index()) else {
+                let Some(&to) = candidate_of.get(dep_pkg) else {
                     continue;
                 };
                 if to == u32::MAX || to == from {
@@ -416,7 +416,7 @@ pub fn select_lockfile_workspaces(
     let dirs: Vec<Box<[u8]>> = ids
         .iter()
         .map(|&pkg_id| {
-            let res = &pkg_resolutions[pkg_id.index()];
+            let res = &pkg_resolutions[pkg_id];
             let rel: &[u8] = match res.tag {
                 ResolutionTag::Workspace => res.workspace().slice(string_buf),
                 _ => b".",
@@ -434,9 +434,9 @@ pub fn select_lockfile_workspaces(
         .iter()
         .zip(&dirs)
         .map(|(&pkg_id, dir)| Candidate {
-            name: pkg_names[pkg_id.index()].slice(string_buf),
+            name: pkg_names[pkg_id].slice(string_buf),
             abs_posix_dir: dir,
-            is_root: pkg_resolutions[pkg_id.index()].tag == ResolutionTag::Root,
+            is_root: pkg_resolutions[pkg_id].tag == ResolutionTag::Root,
         })
         .collect();
 
@@ -444,7 +444,7 @@ pub fn select_lockfile_workspaces(
         let hashes: Vec<Option<PackageNameHash>> = candidates
             .iter()
             .zip(&ids)
-            .map(|(c, &pkg_id)| (!c.is_root).then(|| name_hashes[pkg_id.index()]))
+            .map(|(c, &pkg_id)| (!c.is_root).then(|| name_hashes[pkg_id]))
             .collect();
         WorkspaceGraph::from_lockfile(lockfile, &hashes)
     });
@@ -519,7 +519,7 @@ impl LinkTargets {
     pub(crate) fn package_ids(&self, lockfile: &Lockfile) -> Vec<PackageID> {
         let tags = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
-        (0..tags.len())
+        tags.ids()
             .filter(|&i| match tags[i].tag {
                 ResolutionTag::Root => self.importers.binary_search(&None).is_ok(),
                 ResolutionTag::Workspace => {
@@ -527,7 +527,6 @@ impl LinkTargets {
                 }
                 _ => false,
             })
-            .map(PackageID::from_index)
             .collect()
     }
 }

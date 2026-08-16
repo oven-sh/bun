@@ -120,6 +120,7 @@ const jsFixtures = [
   // DFG/FTL - live-at-catch locals across nested handlers (`using` disposal)
   "using-dispose-throw-after-body-throw-in-jit.js",
   "for-using-dispose-call-live-catch-locals-ftl-validation.js",
+  "using-inlined-dispose-live-catch-locals-ftl-validation.js",
   // Allocation sinking / OSR / LICM
   "varargs-inlined-simple-exit.js",
   "loop-unrolling.js",

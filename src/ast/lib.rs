@@ -1119,15 +1119,17 @@ impl BabyString {
         (self.0 >> 16) as u16
     }
 
-    pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
+    /// Locates `substring` inside `container` (the string later passed to
+    /// [`BabyString::slice`]) and records its offset and length.
+    pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
         // bun_core::strings::index_of deliberately returns None for an empty
-        // needle, but an empty `text` reaches this path via resolve errors for
-        // `import ""`, so short-circuit it here to offset 0.
-        if text.is_empty() {
+        // needle, but an empty `substring` reaches this path via resolve errors
+        // for `import ""`, so short-circuit it here to offset 0.
+        if substring.is_empty() {
             return BabyString::new(0, 0);
         }
-        let off = bun_core::strings::index_of(parent, text).expect("unreachable");
-        BabyString::new(off as u16, text.len() as u16) // @truncate
+        let off = bun_core::strings::index_of(container, substring).expect("unreachable");
+        BabyString::new(off as u16, substring.len() as u16) // @truncate
     }
 
     pub fn slice<'a>(self, container: &'a [u8]) -> &'a [u8] {
@@ -1557,7 +1559,6 @@ impl Log {
             l.into().map(Range::at),
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1636,23 +1637,21 @@ impl Log {
         r: Option<Range>,
         text: Cow<'static, [u8]>,
         notes: Box<[Data]>,
-        clone: bool,
-        redact: bool,
+        redact_sensitive_information: bool,
     ) {
         match kind {
             Kind::Err => self.errors += 1,
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let mut data = self.tracked_range_data(source, r, text);
-        if clone {
-            data = data.clone_line_text(self.clone_line_text);
-        }
+        let data = self
+            .tracked_range_data(source, r, text)
+            .clone_line_text(self.clone_line_text);
         self.add_msg(Msg {
             kind,
             data,
             notes,
-            redact_sensitive_information: redact,
+            redact_sensitive_information,
             ..Default::default()
         })
     }
@@ -1771,15 +1770,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(
-            Kind::Err,
-            source,
-            r.into(),
-            text,
-            Box::default(),
-            true,
-            false,
-        )
+        self.add_formatted_msg(Kind::Err, source, r.into(), text, Box::default(), false)
     }
 
     #[inline]
@@ -1791,7 +1782,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r.into(), text, notes, true, false)
+        self.add_formatted_msg(Kind::Err, source, r.into(), text, notes, false)
     }
 
     #[inline]
@@ -1808,7 +1799,6 @@ impl Log {
             l.into().map(Range::at),
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1823,7 +1813,6 @@ impl Log {
             opts.range(),
             text,
             Box::default(),
-            true,
             opts.redact_sensitive_information,
         )
     }
@@ -1894,7 +1883,6 @@ impl Log {
             l.into().map(Range::at),
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1958,15 +1946,7 @@ impl Log {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(
-            Kind::Warn,
-            source,
-            r.into(),
-            text,
-            Box::default(),
-            true,
-            false,
-        )
+        self.add_formatted_msg(Kind::Warn, source, r.into(), text, Box::default(), false)
     }
 
     #[cold]
@@ -2004,7 +1984,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r.into(), text, notes, true, false)
+        self.add_formatted_msg(Kind::Warn, source, r.into(), text, notes, false)
     }
 
     #[cold]
@@ -2348,6 +2328,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     Cow::Owned(v)
 }
 
+/// In range for every position in a source that passed [`Source::check_parseable_len`].
 #[inline]
 pub fn usize2loc(loc: usize) -> Loc {
     Loc::from_usize(loc)
@@ -2592,6 +2573,10 @@ impl LineColumnTracker {
     }
 }
 
+/// Returned by [`Source::check_parseable_len`] once it has logged the error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceTooLarge;
+
 impl Source {
     /// Borrowed view of the source bytes. Provided as a method so callers that
     /// were written against a future owning-`contents` shape (`Vec<u8>`/`Cow`)
@@ -2599,6 +2584,25 @@ impl Source {
     #[inline]
     pub fn contents(&self) -> &[u8] {
         &self.contents
+    }
+
+    /// A [`Loc`] holds any `u32` offset, but the lengths measured between two
+    /// of them ([`Range::len`], reported columns) are still `i32`, so no
+    /// parser can take a longer source.
+    pub const MAX_PARSEABLE_LEN: usize = i32::MAX as usize;
+
+    /// Parsers call this before reading a source, whichever way it reached them.
+    pub fn check_parseable_len(&self, log: &mut Log, what: &str) -> Result<(), SourceTooLarge> {
+        if self.contents.len() <= Self::MAX_PARSEABLE_LEN {
+            return Ok(());
+        }
+        // Without a position: finding the line of one would scan the oversized source.
+        log.add_error_fmt(
+            Some(self),
+            None,
+            format_args!("{what} is too large to parse (2 GiB maximum)"),
+        );
+        Err(SourceTooLarge)
     }
 
     pub fn fmt_identifier(&self) -> bun_core::fmt::FormatValidIdentifier<'_> {
@@ -3410,14 +3414,18 @@ mod line_column_tracker_tests {
     #[test]
     fn line_column_tracker_interleaved_diagnostic_streams_match_full_scan() {
         let statement = b"try {} catch ([a,a,a,a,a,a,a,a,a,a,a,a, `]) {}\n";
+        // Every lookup below re-scans from an earlier line, so cost grows with
+        // the square of the statement count; under Miri 4 statements still
+        // interleave forward and backward jumps across lines at ~1/9 the work.
+        let statements: usize = if cfg!(miri) { 4 } else { 12 };
         let mut contents = Vec::new();
-        for _ in 0..12 {
+        for _ in 0..statements {
             contents.extend_from_slice(statement);
         }
         let source = Source::init_path_string(b"tracker-test.js" as &[u8], contents.as_slice());
 
         let mut offsets = Vec::new();
-        for statement_index in 0..12usize {
+        for statement_index in 0..statements {
             let start = statement_index * statement.len();
             let first_binding = start + 15;
             offsets.push(start + statement.len() - 6);

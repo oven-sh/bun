@@ -708,7 +708,12 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await promise;
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ABORT_ERR");
+            expect({ name: err.name, code: err.code, message: err.message, cause: err.cause }).toEqual({
+              name: "AbortError",
+              code: "ABORT_ERR",
+              message: "The operation was aborted",
+              cause: abortController.signal.reason,
+            });
           }
         });
         it("aborted event should work with abortController", async () => {
@@ -4716,6 +4721,82 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
     expect(await serverFinish.promise).toBe(true);
     client.close();
   } finally {
+    server.close();
+  }
+});
+
+it("write() completes its callback on a later turn, not inside write()", async () => {
+  // _write hands the chunk to the native session with the write callback deferred, so the
+  // chunk is still counted in writableLength when write() returns and the Writable settles it
+  // later, like node, where a write only completes once the session has flushed it. Were the
+  // callback invoked inside the native call, writableLength would already be 0 here.
+  const server = http2.createServer();
+  let client;
+  try {
+    const lengths = Promise.withResolvers();
+    server.on("stream", async stream => {
+      try {
+        stream.respond({ ":status": 200 });
+        const chunk = Buffer.from("hello");
+        const written = new Promise((resolve, reject) => stream.write(chunk, err => (err ? reject(err) : resolve())));
+        const afterWrite = stream.writableLength;
+        await written;
+        lengths.resolve({ afterWrite, afterCallback: stream.writableLength });
+        stream.end();
+      } catch (err) {
+        lengths.reject(err);
+      }
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", lengths.reject);
+    const req = client.request({ ":path": "/" });
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([lengths.promise, body])).toEqual([{ afterWrite: 5, afterCallback: 0 }, "hello"]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("sendTrailers({}) ends the stream without a trailer block", async () => {
+  // An empty trailer object ends the stream with an empty END_STREAM DATA frame rather than a
+  // HEADERS frame: the peer sees the body end and no 'trailers' event, and the stream closes
+  // cleanly on both sides.
+  const server = http2.createServer();
+  let client;
+  try {
+    const serverClose = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", serverClose.reject);
+      stream.on("wantTrailers", () => stream.sendTrailers({}));
+      stream.on("close", () => serverClose.resolve(stream.rstCode));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.end("OK");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", serverClose.reject);
+    const req = client.request({ ":path": "/" });
+    const trailerEvents = [];
+    req.on("trailers", headers => trailerEvents.push(headers));
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([body, serverClose.promise])).toEqual(["OK", 0]);
+    expect(trailerEvents).toEqual([]);
+  } finally {
+    client?.close();
     server.close();
   }
 });

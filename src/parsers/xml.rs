@@ -90,7 +90,7 @@ impl XML {
 
     /// [`parse`](Self::parse) for a UTF-16 document (a 16-bit JS string):
     /// the strings in the result are UTF-16 as well. `source` is only what
-    /// diagnostics are attributed to.
+    /// diagnostics are attributed to and what the length limit is checked on.
     pub fn parse_utf16<'a>(
         source: &'a Source,
         units: &'a [u16],
@@ -109,6 +109,7 @@ impl XML {
         bump: &'a Bump,
         options: Options,
     ) -> crate::Result<Expr> {
+        source.check_parseable_len(log, "XML document")?;
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
         unsafe { tape.tape.as_mut() }.encoding = if U::WIDE {

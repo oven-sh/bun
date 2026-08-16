@@ -9,7 +9,7 @@ use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
-use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult, VirtualMachine};
+use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use crate::server::{RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders,
@@ -49,17 +49,6 @@ impl AdditionalOnAbortCallback {
 // as `AnyRequestContext` / `AnyServer`. The const params still pick which
 // variant `create()` constructs and gate H3-specific code paths.
 pub type Req<const SSL_ENABLED: bool, const HTTP3: bool> = c_void;
-
-/// Extract the raw FFI pointer from an `AnyResponse` for C-ABI shims that
-/// take `*mut c_void` (e.g. `FetchHeaders::to_uws_response`, `CookieMap::write`).
-#[inline]
-fn any_response_as_ptr(r: uws::AnyResponse) -> *mut c_void {
-    match r {
-        uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
-        uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
-        uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-    }
-}
 
 /// Back-reference to a stack-local "should this RequestContext defer its
 /// deinit until the JS callback returns" flag. The dispatching frame owns the
@@ -352,8 +341,8 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 // ─── sibling-subtree shims ───────────────────────────────────────────────────
 // These forward to methods that exist in webcore/ but are currently inside
-// impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal,
-// duplicate InternalJSEventCallback). Adapt on this side per phase-d rules.
+// impl blocks that fail to compile (codegen gc-slot stubs, opaque AbortSignal).
+// Adapt on this side per phase-d rules.
 mod shim {
     use super::*;
 
@@ -397,22 +386,6 @@ mod shim {
         let signal = bun_ptr::BackRef::from(s);
         signal.pending_activity_unref();
         signal.unref();
-    }
-    #[inline]
-    pub(super) fn iec_trigger(
-        cb: &bun_jsc::JsCell<request::InternalJSEventCallback>,
-        ev: request::EventType,
-        g: &JSGlobalObject,
-    ) -> JsResult<bool> {
-        cb.with_mut(|cb| cb.trigger(ev, g))
-    }
-    #[inline]
-    pub(super) fn iec_deinit(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) {
-        cb.with_mut(|cb| cb.deinit())
-    }
-    #[inline]
-    pub(super) fn iec_has_callback(cb: &bun_jsc::JsCell<request::InternalJSEventCallback>) -> bool {
-        cb.get().has_callback()
     }
     /// `Blob::is_s3()` / `Blob::needs_to_read_file()` have duplicate impls
     /// (E0034); inline the body here.
@@ -689,17 +662,6 @@ where
         drop(self.cookies.replace(
             cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const()))),
         ));
-    }
-
-    pub(crate) fn set_timeout_handler(&self) {
-        if self.flags.has_timeout_handler() {
-            return;
-        }
-        if let Some(resp) = self.resp.get() {
-            self.flags.set_has_timeout_handler(true);
-            // SAFETY: FFI handle valid while resp is Some
-            resp.on_timeout(|this, resp| Self::on_timeout(this, resp), self.as_ctx_ptr());
-        }
     }
 
     pub(crate) fn on_resolve(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1229,7 +1191,6 @@ where
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
-            self.flags.set_has_timeout_handler(false);
             self.request_body_buf.set(Vec::new());
             self.end_request_streaming_and_drain();
             self.deref();
@@ -1358,40 +1319,6 @@ where
         ctx_log!("create<d> ({:p})<r>", this.as_ptr());
     }
 
-    fn on_timeout(this: *mut Self, _resp: uws::AnyResponse) {
-        let pinned = RequestContextRef::pin(this);
-        let this = pinned.ctx();
-        debug_assert!(this.resp.get().is_some());
-        debug_assert!(this.server.get().is_some());
-
-        let any_js_calls = core::cell::Cell::new(false);
-        let server = this.server();
-        let _ = server.vm();
-        let global_this = server.global_this();
-        // This is a task in the event loop.
-        // If we called into JavaScript, we must drain the microtask queue.
-        scopeguard::defer! {
-            if any_js_calls.get() {
-                VirtualMachine::get().as_mut().drain_microtasks();
-            }
-        }
-
-        if let Some(request) = this.request_mut() {
-            match shim::iec_trigger(
-                &request.internal_event_callback,
-                request::EventType::Timeout,
-                global_this,
-            ) {
-                Ok(called) => any_js_calls.set(called),
-                // This uWS callback is the landing frame for what it threw.
-                Err(err) => {
-                    any_js_calls.set(true);
-                    crate::dispatch::fold(Err(err));
-                }
-            }
-        }
-    }
-
     fn on_abort(this: *mut Self, resp: uws::AnyResponse) {
         ctx_log!("onAbort");
         let pinned = RequestContextRef::pin(this);
@@ -1435,20 +1362,6 @@ where
 
         if let Some(request) = this.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            match shim::iec_trigger(
-                &request.internal_event_callback,
-                request::EventType::Abort,
-                global_this,
-            ) {
-                Ok(called) => any_js_calls.set(called),
-                // This uWS callback is the landing frame for what it threw.
-                Err(err) => {
-                    any_js_calls.set(true);
-                    crate::dispatch::fold(Err(err));
-                }
-            }
-            // we can already clean this strong refs
-            shim::iec_deinit(&request.internal_event_callback);
             this.request_weakref.with_mut(|w| w.deref());
         }
         // if signal is not aborted, abort the signal
@@ -1538,8 +1451,6 @@ where
 
         if let Some(request) = self.request_mut() {
             request.request_context = AnyRequestContext::NULL;
-            // we can already clean this strong refs
-            shim::iec_deinit(&request.internal_event_callback);
             self.request_weakref.with_mut(|w| w.deref());
         }
 
@@ -1925,10 +1836,6 @@ where
             self.flags.set_is_waiting_for_request_body(false);
             resp.clear_on_data();
         }
-        if self.flags.has_timeout_handler() {
-            resp.clear_timeout();
-            self.flags.set_has_timeout_handler(false);
-        }
 
         let server = self.server();
         FileResponseStream::start(&file_response_stream::StartOptions {
@@ -2025,17 +1932,10 @@ where
 
         stream.value.ensure_still_alive();
 
-        // `HTTPServerWritable::res` stores the type-erased uws response handle;
-        // `any_res()` reconstructs the variant from the const generics.
-        let raw_res: *mut c_void = match resp {
-            uws::AnyResponse::SSL(p) => p.cast::<c_void>(),
-            uws::AnyResponse::TCP(p) => p.cast::<c_void>(),
-            uws::AnyResponse::H3(p) => p.cast::<c_void>(),
-        };
-
         let response_stream_box = Box::new(ResponseStreamJSSink::<SSL_ENABLED, HTTP3> {
             sink: ResponseStream::<SSL_ENABLED, HTTP3> {
-                res: Some(raw_res),
+                // `any_res()` recovers the variant from the const generics.
+                res: Some(resp.as_ptr()),
                 buffer: Vec::<u8>::default(),
                 on_first_write: Some(Self::handle_first_stream_write_thunk),
                 ctx: Some(this.as_ctx_ptr().cast::<c_void>()),
@@ -2396,10 +2296,6 @@ where
                 resp.clear_aborted();
                 self.flags.set_has_abort_handler(false);
             }
-            if self.flags.has_timeout_handler() {
-                resp.clear_timeout();
-                self.flags.set_has_timeout_handler(false);
-            }
         }
     }
 
@@ -2698,26 +2594,8 @@ where
                 }
                 return;
             } else {
-                // SAFETY: sole `&mut Response` for this cell in scope; the
-                // borrow ends before `render` reborrows the same pointer.
-                let body_value = unsafe { (*response).get_body_value() };
-                body_value.to_blob_if_possible();
-
-                match body_value {
-                    Body::Value::Blob(blob) => {
-                        if shim::blob_needs_to_read_file(blob) {
-                            response_value.protect();
-                            ctx.flags.set_response_protected(true);
-                        }
-                    }
-                    Body::Value::Locked(_) => {
-                        response_value.protect();
-                        ctx.flags.set_response_protected(true);
-                    }
-                    _ => {}
-                }
                 // SAFETY: `response` is the live, rooted cell pointer.
-                unsafe { ctx.render(response) };
+                unsafe { ctx.protect_for_body_and_render(response_value, response) };
             }
             return;
         }
@@ -2776,25 +2654,8 @@ where
                         }
                         return;
                     }
-                    // SAFETY: sole `&mut Response` for this cell in scope; the
-                    // borrow ends before `render` reborrows the same pointer.
-                    let body_value = unsafe { (*response).get_body_value() };
-                    body_value.to_blob_if_possible();
-                    match body_value {
-                        Body::Value::Blob(blob) => {
-                            if shim::blob_needs_to_read_file(blob) {
-                                fulfilled_value.protect();
-                                ctx.flags.set_response_protected(true);
-                            }
-                        }
-                        Body::Value::Locked(_) => {
-                            fulfilled_value.protect();
-                            ctx.flags.set_response_protected(true);
-                        }
-                        _ => {}
-                    }
                     // SAFETY: `response` is the live, rooted cell pointer.
-                    unsafe { ctx.render(response) };
+                    unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
                     return;
                 }
                 jsc::PromiseResult::Rejected(err) => {
@@ -3660,26 +3521,8 @@ where
                             }
                             self.response_jsvalue.set(result);
                             self.flags.set_response_protected(false);
-                            // SAFETY: sole `&mut Response` borrow for this
-                            // cell; it ends before `render` reborrows the
-                            // same pointer.
-                            let body_value = unsafe { (*response).get_body_value() };
-                            body_value.to_blob_if_possible();
-                            match body_value {
-                                Body::Value::Blob(blob) => {
-                                    if shim::blob_needs_to_read_file(blob) {
-                                        result.protect();
-                                        self.flags.set_response_protected(true);
-                                    }
-                                }
-                                Body::Value::Locked(_) => {
-                                    result.protect();
-                                    self.flags.set_response_protected(true);
-                                }
-                                _ => {}
-                            }
                             // SAFETY: as above.
-                            unsafe { self.render(response) };
+                            unsafe { self.protect_for_body_and_render(result, response) };
                             return;
                         }
                     }
@@ -3744,25 +3587,8 @@ where
                 fulfilled_value.ensure_still_alive();
                 ctx.flags.set_response_protected(false);
 
-                // SAFETY: sole `&mut Response` for this cell in scope; the
-                // borrow ends before `render` reborrows the same pointer.
-                let body_value = unsafe { (*response).get_body_value() };
-                body_value.to_blob_if_possible();
-                match body_value {
-                    Body::Value::Blob(blob) => {
-                        if shim::blob_needs_to_read_file(blob) {
-                            fulfilled_value.protect();
-                            ctx.flags.set_response_protected(true);
-                        }
-                    }
-                    Body::Value::Locked(_) => {
-                        fulfilled_value.protect();
-                        ctx.flags.set_response_protected(true);
-                    }
-                    _ => {}
-                }
                 // SAFETY: `response` is the live, rooted cell pointer.
-                unsafe { ctx.render(response) };
+                unsafe { ctx.protect_for_body_and_render(fulfilled_value, response) };
                 return;
             }
             jsc::PromiseResult::Rejected(err) => {
@@ -3843,7 +3669,7 @@ where
             let r = cookies.write(
                 global_this,
                 Self::RESP_KIND,
-                any_response_as_ptr(self.resp.get().expect("infallible: resp bound")),
+                self.resp.get().expect("infallible: resp bound").as_ptr(),
             );
             // `cookies` drops here, releasing the ref taken in `set_cookies`.
             if r.is_err() {
@@ -3956,7 +3782,7 @@ where
             headers.fast_remove(jsc::HTTPHeaderName::Upgrade);
         }
         if let Some(resp) = self.resp.get() {
-            headers.to_uws_response(Self::RESP_KIND, any_response_as_ptr(resp));
+            headers.to_uws_response(Self::RESP_KIND, resp.as_ptr());
         }
     }
 
@@ -4030,6 +3856,32 @@ where
         }
 
         self.do_render();
+    }
+
+    /// [`Self::render`] for the Response a handler just returned, whose JS
+    /// wrapper `response_value` is already stored in `response_jsvalue`. A
+    /// file or streaming body is still being sent after this frame returns,
+    /// so for those the wrapper is protected first; in-memory bodies leave it
+    /// unprotected (see `response_jsvalue`).
+    ///
+    /// # Safety
+    /// Same contract as [`Self::render`].
+    unsafe fn protect_for_body_and_render(&self, response_value: JSValue, response: *mut Response) {
+        // SAFETY: caller contract: `response` is live. This is the only borrow
+        // of its body, and it ends before `render` reborrows the cell.
+        let body_value = unsafe { (*response).get_body_value() };
+        body_value.to_blob_if_possible();
+        let sent_after_return = match body_value {
+            Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
+            Body::Value::Locked(_) => true,
+            _ => false,
+        };
+        if sent_after_return {
+            response_value.protect();
+            self.flags.set_response_protected(true);
+        }
+        // SAFETY: caller contract.
+        unsafe { self.render(response) };
     }
 
     pub(crate) fn on_buffered_body_chunk(this: *mut Self, chunk: &[u8], last: bool) {
@@ -4433,16 +4285,7 @@ where
         if let Some(resp) = self.resp.get() {
             // SAFETY: FFI handle
             resp.timeout(seconds.min(255) as u8);
-            if seconds > 0 {
-                // we only set the timeout callback if we wanna the timeout event to be triggered
-                // the connection will be closed so the abort handler will be called after the timeout
-                if let Some(req) = self.request_mut() {
-                    if shim::iec_has_callback(&req.internal_event_callback) {
-                        self.set_timeout_handler();
-                    }
-                }
-            } else {
-                // if the timeout is 0, we don't need to trigger the timeout event
+            if seconds == 0 {
                 // SAFETY: FFI handle
                 resp.clear_timeout();
             }
@@ -4660,7 +4503,6 @@ bitflags::bitflags! {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
         const HAS_ABORT_HANDLER           = 1 << 2;
-        const HAS_TIMEOUT_HANDLER         = 1 << 3;
         const HAS_SENDFILE_CTX            = 1 << 4;
         const HAS_CALLED_ERROR_HANDLER    = 1 << 5;
         const NEEDS_CONTENT_LENGTH        = 1 << 6;
@@ -4715,11 +4557,6 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         HAS_MARKED_PENDING
     );
     flag_accessor!(has_abort_handler, set_has_abort_handler, HAS_ABORT_HANDLER);
-    flag_accessor!(
-        has_timeout_handler,
-        set_has_timeout_handler,
-        HAS_TIMEOUT_HANDLER
-    );
     flag_accessor!(has_sendfile_ctx, set_has_sendfile_ctx, HAS_SENDFILE_CTX);
     flag_accessor!(
         has_called_error_handler,

@@ -311,14 +311,8 @@ export interface Config {
    * undefined on native Windows builds (VS dev shell supplies the SDK).
    */
   winsysroot: string | undefined;
-  /** Android NDK root. undefined when abi != "android". */
-  androidNdk: string | undefined;
-  /** Android API level (the N in `__ANDROID_API__=N`). undefined when abi != "android". */
-  androidApiLevel: number | undefined;
   /** NDK compiler-rt/libunwind dir: `<ndk>/toolchains/llvm/prebuilt/<host>/lib/clang/<ver>/lib/linux`. */
   androidNdkRuntimeDir: string | undefined;
-  /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
-  freebsdVersion: string | undefined;
 
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
@@ -1280,10 +1274,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     crossTarget,
     sysroot,
     winsysroot,
-    androidNdk,
-    androidApiLevel,
     androidNdkRuntimeDir,
-    freebsdVersion,
     version,
     revision,
     nodejsVersion,

@@ -52,25 +52,21 @@ fn split_npm_alias(literal: &[u8]) -> Option<(&[u8], &[u8])> {
     ))
 }
 
-/// `version_literal` behind `from`'s `npm:<name>@` (if any), unless it already names a target.
-fn with_alias_of<'a>(
-    arena: &'a bun_alloc::Arena,
-    from: &[u8],
-    version_literal: &'a [u8],
-) -> &'a [u8] {
+/// `version` behind `from`'s `npm:<name>@` (if any), unless it already names a target.
+fn with_alias_of<'a>(arena: &'a bun_alloc::Arena, from: &[u8], version: &'a [u8]) -> &'a [u8] {
     match split_npm_alias(from) {
-        Some((alias, _)) if split_npm_alias(version_literal).is_none() => {
+        Some((alias, _)) if split_npm_alias(version).is_none() => {
             let mut v = Vec::new();
             write!(
                 &mut v,
                 "{}@{}",
                 bstr::BStr::new(alias),
-                bstr::BStr::new(version_literal)
+                bstr::BStr::new(version)
             )
             .expect("infallible: in-memory write");
             arena_str(arena, &v)
         }
-        _ => version_literal,
+        _ => version,
     }
 }
 

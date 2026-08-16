@@ -256,6 +256,17 @@ Re-run each test file multiple times to identify flaky tests:
 rerunEach = 3
 ```
 
+#### testTimeout
+
+Default per-test timeout in milliseconds. Tests that take longer than this fail with a timeout error:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+testTimeout = 10000
+```
+
+The `--timeout` CLI flag overrides this setting.
+
 ## Coverage Options
 
 ### Basic Coverage Settings

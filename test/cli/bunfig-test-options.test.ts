@@ -196,4 +196,58 @@ describe("bunfig.toml test options", () => {
     // 2 tests * 2 reruns = 4 total test runs
     expect(output).toContain("4 pass");
   });
+
+  test.concurrent("test.testTimeout option applies a default timeout", async () => {
+    using dir = tempDir("bunfig-test-timeout", {
+      "bunfig.toml": `[test]\ntestTimeout = 200`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("slow", async () => {
+          await Bun.sleep(1000);
+          expect(1).toBe(1);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout + stderr).toContain("timed out after");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("CLI --timeout overrides test.testTimeout", async () => {
+    using dir = tempDir("bunfig-test-timeout-cli", {
+      "bunfig.toml": `[test]\ntestTimeout = 200`,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        test("slow", async () => {
+          await Bun.sleep(1000);
+          expect(1).toBe(1);
+        });
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--timeout=5000"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The CLI flag wins: the 1000ms test passes under the 5000ms CLI timeout
+    // instead of the 200ms config timeout.
+    expect(stdout + stderr).toContain("1 pass");
+    expect(exitCode).toBe(0);
+  });
 });

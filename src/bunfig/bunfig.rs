@@ -580,6 +580,14 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
+                if let Some(expr) = test.get(b"testTimeout") {
+                    if !self.ctx.test_options.timeout_from_cli {
+                        self.expect(&expr, ExprTag::ENumber)?;
+                        self.ctx.test_options.default_timeout_ms =
+                            num_to_u32(expr.as_number().expect("infallible: type checked"));
+                    }
+                }
+
                 if let Some(expr) = test.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {

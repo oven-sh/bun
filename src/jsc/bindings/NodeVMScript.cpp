@@ -335,16 +335,12 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     {
         NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-        // Node performs the afterEvaluate microtask checkpoint inside the
-        // timeout/SIGINT scope, so a `timeout` also bounds microtasks the script
-        // scheduled on the context's own queue (e.g. promise jobs). A script cut short before its
-        // checkpoint keeps what it queued for the next evaluation's, as in Node.
-        JSGlobalObject* checkpointed = globalObject->hasOwnMicrotaskQueue() ? nullptr : globalObject;
-        if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue()) {
-            checkpointed = globalObject;
+        // Node performs the afterEvaluate microtask checkpoint inside the timeout/SIGINT scope, so a
+        // `timeout` also bounds microtasks the script scheduled on the context's own queue. A script cut
+        // short before its checkpoint keeps what it queued for the next evaluation's, as in Node.
+        if (!exception && !vm.hasTerminationRequest() && globalObject->hasOwnMicrotaskQueue())
             globalObject->drainOwnMicrotasks();
-        }
-        termination.finish(globalObject, scope, checkpointed);
+        termination.finish(scope);
     }
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -386,7 +382,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     {
         NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
         result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
-        termination.finish(globalObject, scope, nullptr);
+        termination.finish(scope);
     }
     RETURN_IF_EXCEPTION(scope, {});
 

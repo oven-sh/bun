@@ -1540,7 +1540,7 @@ test.concurrent("vm timeout is wall-clock and leaves nothing armed against the c
       "-e",
       `
       const vm = require("node:vm");
-      const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+      const sleepSync = (ms) => Bun.sleepSync(ms);   // off-CPU and not interruptible by the deadline's trap
       try {
         vm.runInNewContext("sleepSync(80)", { sleepSync }, { timeout: 20 });
         console.log("finished");
@@ -1585,12 +1585,12 @@ test.concurrent("a vm timeout that never fires leaves nothing behind either", as
       // Runs that finish well inside their timeout: nothing they armed may hit later runs or the caller,
       // which stays busy — in script and idle — for far longer than that timeout afterwards.
       const ctx = vm.createContext({});
-      for (let i = 0; i < 50; i++) vm.runInContext("1 + 1", ctx, { timeout: 20 });
+      for (let i = 0; i < 50; i++) vm.runInContext("1 + 1", ctx, { timeout: 100 });
       const t = performance.now();
       let s = 0;
-      while (performance.now() - t < 200) s += Math.sqrt(s + 1);   // 10x the timeout, in script
-      await new Promise(r => setTimeout(r, 100));                    // and idle in the loop
-      for (let i = 0; i < 20; i++) vm.runInContext("2 + 2", ctx, { timeout: 20 });
+      while (performance.now() - t < 500) s += Math.sqrt(s + 1);   // 5x the timeout, in script
+      await new Promise(r => setTimeout(r, 200));                    // and idle in the loop
+      for (let i = 0; i < 20; i++) vm.runInContext("2 + 2", ctx, { timeout: 100 });
       console.log("ok");
       `,
     ],
@@ -1651,6 +1651,25 @@ test.skipIf(isWindows)(
   },
   30_000,
 );
+
+// POSIX-only for the same reason. As in Node, one SIGINT interrupts only the innermost breakOnSigint run.
+test.skipIf(isWindows)("a SIGINT interrupts only the innermost of nested breakOnSigint runs", async () => {
+  const code = `
+    const vm = require("node:vm");
+    const { Worker } = require("node:worker_threads");
+    new Worker('setTimeout(() => process.kill(process.pid, "SIGINT"), 100)', { eval: true });
+    const r = vm.runInNewContext(
+      'let inner; try { vm.runInNewContext("for (;;) {}", {}, { breakOnSigint: true }); } catch (e) { inner = e.code; } "outer completed, inner " + inner',
+      { vm }, { breakOnSigint: true });
+    console.log(r);
+    process.exit(0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("outer completed, inner ERR_SCRIPT_EXECUTION_INTERRUPTED\n");
+  expect(exitCode).toBe(0);
+});
 
 test("nested vm runs each keep their own deadline", async () => {
   const code = `

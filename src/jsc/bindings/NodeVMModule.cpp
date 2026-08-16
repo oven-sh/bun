@@ -90,7 +90,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             {
                 NodeVMRunTermination termination(nodeVmGlobalObject, timeoutSeconds, breakOnSigint);
                 nodeVmGlobalObject->drainOwnMicrotasks();
-                termination.finish(globalObject, scope, nodeVmGlobalObject);
+                termination.finish(scope);
             }
             RETURN_IF_EXCEPTION(scope, {});
         }
@@ -170,16 +170,11 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // the inner queue, which is not drained automatically). Wrap the result
     // in an outer-context promise and checkpoint the inner queue — still
     // inside the timeout scope so `timeout` bounds the microtask drain too.
-    // What finish() may discard on a timeout: the context's own queue only if its checkpoint ran (a module
-    // cut short before that keeps what it queued for the next evaluation's, as in Node); otherwise the
-    // module's microtasks on the VM's queue.
-    JSGlobalObject* checkpointed = nodeVmGlobalObject && nodeVmGlobalObject->hasOwnMicrotaskQueue() ? nullptr : static_cast<JSGlobalObject*>(nodeVmGlobalObject);
     auto drainAfterEvaluate = [&] {
         if (scope.exception() || vm.hasTerminationRequest())
             return;
         if (!nodeVmGlobalObject || !nodeVmGlobalObject->hasOwnMicrotaskQueue())
             return;
-        checkpointed = nodeVmGlobalObject;
         nodeVmGlobalObject->drainOwnMicrotasks();
         if (scope.exception() || vm.hasTerminationRequest())
             return;
@@ -211,11 +206,11 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         drainAfterEvaluate();
         // This run's own termination becomes ERR_SCRIPT_EXECUTION_* here; that error, like a regular one,
         // marks the module errored and is rethrown by VM_RETURN_IF_EXCEPTION below.
-        termination.finish(globalObject, scope, checkpointed);
+        termination.finish(scope);
         // Unwound by the timeout / SIGINT of a module this one is a dependency of (evaluateDependencies runs
         // each in its own scope): that termination keeps propagating to it, but this module's evaluation is
         // over too — errored with the same kind of error, rather than left "evaluating" for good.
-        if (JSObject* error = termination.cutShortByEnclosingRun(globalObject)) {
+        if (JSObject* error = termination.errorForEnclosingRunCutShort()) {
             status(Status::Errored);
             m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
             return {};

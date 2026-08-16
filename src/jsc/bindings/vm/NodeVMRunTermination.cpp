@@ -2,13 +2,10 @@
 
 #include "BunClientData.h"
 #include "ErrorCode.h"
-#include "NodeVM.h"
 #include "SigintWatcher.h"
 
-#include <JavaScriptCore/MicrotaskQueueInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/VM.h>
-#include <JavaScriptCore/VMTrapsInlines.h>
 
 namespace Bun {
 
@@ -18,6 +15,7 @@ static thread_local NodeVMRunTermination* s_innermostRunOnThisThread = nullptr;
 
 NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint)
     : SigintReceiver(realm->vm())
+    , m_realm(realm)
     , m_timeout(timeout)
     , m_enclosing(std::exchange(s_innermostRunOnThisThread, this))
 {
@@ -33,15 +31,13 @@ NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<
 
 NodeVMRunTermination::~NodeVMRunTermination()
 {
-    withdraw();
+    ASSERT(m_finished);
     ASSERT(s_innermostRunOnThisThread == this);
     s_innermostRunOnThisThread = m_enclosing;
 }
 
-void NodeVMRunTermination::withdraw()
+void NodeVMRunTermination::disarm()
 {
-    if (std::exchange(m_withdrawn, true))
-        return;
     if (std::exchange(m_listeningForSigint, false))
         SigintWatcher::get().unregisterReceiver(this);
     if (m_deadline)
@@ -49,13 +45,13 @@ void NodeVMRunTermination::withdraw()
     // From here m_sigintReceived and didFire() are final.
 }
 
-void NodeVMRunTermination::finish(JSGlobalObject* errorRealm, ThrowScope& scope, JSGlobalObject* microtaskContext)
+void NodeVMRunTermination::finish(ThrowScope& scope)
 {
-    ASSERT(!m_withdrawn);
+    ASSERT(!std::exchange(m_finished, true));
     // The caller has observed whatever the run left on `scope` (this satisfies the exception-check validator
     // for it); what happens to it is decided below.
     std::ignore = scope.exception();
-    withdraw();
+    disarm();
     if (!wasCutShort())
         return;
     VM& vm = m_sigintVM;
@@ -63,14 +59,6 @@ void NodeVMRunTermination::finish(JSGlobalObject* errorRealm, ThrowScope& scope,
     if (!WebCore::clientData(vm)->scriptAllowed())
         return;
 
-    if (microtaskContext) {
-        // An afterEvaluate context keeps its own queue; anything else queues on the VM's default one.
-        auto* nodeVmContext = dynamicDowncast<NodeVMGlobalObject>(microtaskContext);
-        if (nodeVmContext && nodeVmContext->hasOwnMicrotaskQueue())
-            nodeVmContext->microtaskQueue().clear();
-        else
-            vm.drainMicrotasksForGlobalObject(microtaskContext);
-    }
     vm.cancelTermination();
     {
         // Whatever else the cut-short run may have left pending: the timeout / interrupt error replaces it.
@@ -80,13 +68,13 @@ void NodeVMRunTermination::finish(JSGlobalObject* errorRealm, ThrowScope& scope,
     }
 
     if (timedOut())
-        throwError(errorRealm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, m_timeout->milliseconds(), "ms"_s));
+        throwError(m_realm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, m_timeout->milliseconds(), "ms"_s));
     else
-        throwError(errorRealm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+        throwError(m_realm, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
 
-    // A run this one is nested in may have been cut short as well by now (its own deadline, its own SIGINT); its
-    // request went with ours, so make it again — after building the error above, which a pending trap would
-    // have cut short. That error is then just what the enclosing script sees while it unwinds.
+    // A run this one is nested in may have been cut short as well by now (its own deadline); its request went
+    // with ours, so make it again — after building the error above, which a pending trap would have cut short.
+    // That error is then just what the enclosing script sees while it unwinds.
     if (enclosingRunCutShort())
         vm.notifyNeedTermination();
 }
@@ -100,27 +88,17 @@ const NodeVMRunTermination* NodeVMRunTermination::enclosingRunCutShort() const
     return nullptr;
 }
 
-JSObject* NodeVMRunTermination::cutShortByEnclosingRun(JSGlobalObject* errorRealm) const
+JSObject* NodeVMRunTermination::errorForEnclosingRunCutShort() const
 {
-    ASSERT(m_withdrawn);
-    if (wasCutShort() || !m_sigintVM.hasPendingTerminationException())
+    ASSERT(m_finished);
+    if (wasCutShort() || !m_sigintVM.hasPendingTermination())
         return nullptr;
     const auto* run = enclosingRunCutShort();
     if (!run)
         return nullptr;
     if (run->timedOut())
-        return createError(errorRealm, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, run->m_timeout->milliseconds(), "ms"_s));
-    return createError(errorRealm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-}
-
-// Bun.spawnSync only blocks in waitpid (its fast path) when nothing can want to interrupt the script meanwhile.
-extern "C" bool Bun__NodeVM__timedRunOnStack()
-{
-    for (auto* run = s_innermostRunOnThisThread; run; run = run->enclosing()) {
-        if (run->hasTimeout())
-            return true;
-    }
-    return false;
+        return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, run->m_timeout->milliseconds(), "ms"_s));
+    return createError(m_realm, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
 }
 
 } // namespace Bun

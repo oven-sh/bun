@@ -35,7 +35,7 @@ private:
 
     void install();
     void uninstall();
-    bool signalAll();
+    bool signalInnermost();
 };
 
 } // namespace Bun

@@ -67,11 +67,11 @@ void SigintWatcher::install()
             if (m_waiting.test_and_set()) {
                 m_waiting.clear();
 #if !OS(WINDOWS)
-                if (!signalAll()) {
+                if (!signalInnermost()) {
                     Bun__onPosixSignal(SIGINT);
                 }
 #else
-                signalAll();
+                signalInnermost();
 #endif
             } else {
                 m_waiting.clear();
@@ -137,7 +137,7 @@ void SigintWatcher::unregisterReceiver(SigintReceiver* receiver)
         m_receivers.removeAt(index);
         nowEmpty = m_receivers.isEmpty();
     }
-    // Not under m_receiversMutex: uninstall() joins the signal thread, which takes it in signalAll().
+    // Not under m_receiversMutex: uninstall() joins the signal thread, which takes it in signalInnermost().
     if (nowEmpty)
         uninstall();
 }
@@ -148,15 +148,15 @@ SigintWatcher& SigintWatcher::get()
     return instance;
 }
 
-bool SigintWatcher::signalAll()
+// As in Node (SigintWatchdogHelper::InformWatchdogsAboutSignal): one SIGINT interrupts the innermost run.
+bool SigintWatcher::signalInnermost()
 {
     WTF::Locker lock(m_receiversMutex);
     if (m_receivers.isEmpty())
         return false;
-    for (auto* receiver : m_receivers) {
-        receiver->setSigintReceived();
-        receiver->sigintVM().notifyNeedTermination();
-    }
+    auto* receiver = m_receivers.last();
+    receiver->setSigintReceived();
+    receiver->sigintVM().notifyNeedTermination();
     return true;
 }
 

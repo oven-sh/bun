@@ -174,12 +174,16 @@ test.skipIf(!isLinux)("Bun.openInEditor bursts do not drop previously installed 
       }
       if (spawned === 0) { console.log("no editor threads spawned"); process.exit(2); }
 
-      // Let every detached thread finish its sleep and unregister.
-      await Bun.sleep(500);
-
-      process.kill(process.pid, "SIGUSR2");
-      const deadline = Date.now() + 2000;
-      while (!fired && Date.now() < deadline) await Bun.sleep(5);
+      // The editor children each run for 100ms, so by now the burst has
+      // started and the forwarding handler owns SIGUSR2; the original handler
+      // only comes back once the last thread unregisters. Keep delivering
+      // until it does (or the table was corrupted and it never does).
+      await Bun.sleep(50);
+      const deadline = Date.now() + 5000;
+      while (!fired && Date.now() < deadline) {
+        process.kill(process.pid, "SIGUSR2");
+        await Bun.sleep(20);
+      }
       console.log(fired ? "ok" : "handler lost");
     `,
   });

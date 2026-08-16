@@ -657,7 +657,7 @@ Server.prototype.listen = function () {
       if (askPrimary) {
         cluster._sendInternal(
           { act: "probePort", address: host ?? null, port, addressType: 4 },
-          onProbePortReply.bind(null, server, notifyListening, tls, port, host, socketPath, onListen, fd),
+          onProbePortReply.bind(null, server, notifyListening, tls, port, host, socketPath, onListen),
         );
       } else {
         server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
@@ -702,7 +702,7 @@ function onShareListenFdReply(server, notifyListening, tls, port, host, socketPa
   }
 }
 
-function onProbePortReply(server, notifyListening, tls, port, host, socketPath, onListen, fd, reply) {
+function onProbePortReply(server, notifyListening, tls, port, host, socketPath, onListen, reply) {
   const replyErrno = reply.errno;
   if (replyErrno) {
     server.removeListener("listening", notifyListening);
@@ -712,7 +712,7 @@ function onProbePortReply(server, notifyListening, tls, port, host, socketPath, 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/child.js#L75-L114 (indexesKey/handles)
   server[kClusterProbeKey] = reply.key;
   try {
-    server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
+    server[kRealListen](tls, port, host, socketPath, true, onListen);
   } catch (err) {
     server.removeListener("listening", notifyListening);
     server[kClusterProbeKey] = undefined;

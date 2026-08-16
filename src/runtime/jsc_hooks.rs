@@ -3273,10 +3273,7 @@ fn transpile_source_code_inner(
 
                 // `module_info.asDeserialized()`: finalize the
                 // printer-filled record into the FFI shape consumed by C++
-                // (freed by C++ `~SourceProvider` via
-                // `zig__ModuleInfoDeserialized__deinit` — ZigSourceProvider.cpp;
-                // `ResolvedSource`/`OwnedResolvedSource` never free it, see the
-                // ownership note in ResolvedSource.rs).
+                // (ownership note in ResolvedSource.rs).
                 let module_info: *mut core::ffi::c_void = module_info
                     .map(|mi| {
                         use bun_bundler::analyze_transpiled_module::ModuleInfoExt;

@@ -82,7 +82,12 @@ impl<'a> Side<'a> {
         // banner must not mark the statement mapped next to it.
         for (g, line) in super::pm_diff_command::Lines(&norm.text).enumerate() {
             let t = line.trim_ascii_start();
-            if t.starts_with(b"/*") || t.starts_with(b"*") || t.starts_with(b"//") {
+            // (`* ` continues a block comment; `*name(` is a generator method and stays.)
+            let continues_block = t.starts_with(b"*")
+                && !t.get(1).is_some_and(|b| {
+                    b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$' || *b == b'['
+                });
+            if t.starts_with(b"/*") || t.starts_with(b"//") || continues_block || t == b"*/" {
                 if let Some(c) = key_changed.get_mut(g) {
                     *c = false;
                 }

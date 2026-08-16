@@ -331,6 +331,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
         let _ = write!(&mut v, "{}", resolutions[i].npm().version.fmt(string_buf));
         // Several copies may be installed; the first listed is the hoisted/root one.
         best.get_or_insert(v);
+        break;
     }
     best
 }
@@ -719,7 +720,7 @@ enum Semantic {
     /// Both sides parse and print identically: whitespace/quotes/semicolons only.
     FormattingOnly,
     /// Hunks were computed on the canonical re-print (gutter shows original lines when known).
-    Normalized { unminified: bool },
+    Normalized,
     /// `-w`: the bytes differ but not once runs of whitespace are collapsed.
     WhitespaceOnly,
     /// CRLF ↔ LF and nothing else.
@@ -996,7 +997,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     && (no.was_minified || nn.was_minified || flags.unminify) =>
             {
                 // Minified: the original is one enormous line, so the un-minified re-print is what gets shown.
-                change.semantic = Semantic::Normalized { unminified: true };
+                change.semantic = Semantic::Normalized;
                 if no.text == nn.text {
                     change.semantic = Semantic::FormattingOnly;
                     change.formatting_only = true;
@@ -1998,8 +1999,7 @@ impl Style {
             Semantic::LineEndingsOnly => "\x1b[2mline endings only\x1b[0m",
             Semantic::ModeOnly => "",
             Semantic::Projected { .. } => "",
-            Semantic::Normalized { unminified: true } => "\x1b[35munminified\x1b[0m ",
-            Semantic::Normalized { unminified: false } => "\x1b[2mnormalized\x1b[0m ",
+            Semantic::Normalized => "\x1b[35munminified\x1b[0m ",
         };
         let mut badge = match (c.old, c.new, c.binary) {
             _ if matches!(
@@ -2056,13 +2056,14 @@ impl Style {
             badge = format!("\x1b[2m{why}\x1b[0m {badge}");
         }
         let badge_width = strip_ansi_len(badge.as_bytes());
+        let shown_path = defang(c.path);
         let rule = self
             .width
-            .saturating_sub(c.path.len() + badge_width + 4)
+            .saturating_sub(strip_ansi_len(&shown_path) + badge_width + 4)
             .max(2);
         Output::print(format_args!(
             "\n\x1b[1m{}\x1b[0m \x1b[2m{}\x1b[0m {}\n",
-            BStr::new(&defang(c.path)),
+            BStr::new(&shown_path),
             "─".repeat(rule),
             badge
         ));

@@ -1792,6 +1792,15 @@ describe("readdir accepts the recursive/withFileTypes values node accepts", () =
     expect(summarize(await promises.readdir(String(dir), options as any))).toEqual(deep);
     expect(options).toEqual({ recursive: 1, withFileTypes: 0 });
   });
+
+  it("promises.readdir still sees inherited options when it coerces recursive", async () => {
+    using dir = tempDir("readdir-option-values", tree);
+    const options = Object.create({ withFileTypes: true });
+    options.recursive = 1;
+    expect(summarize(await promises.readdir(String(dir), options))).toEqual(deepDirents);
+    options.recursive = true;
+    expect(summarize(await promises.readdir(String(dir), options))).toEqual(deepDirents);
+  });
 });
 
 // The error cleanup path previously called MarkedArrayBuffer.destroy() on

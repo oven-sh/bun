@@ -311,7 +311,9 @@ const exports = {
     if (typeof options === "object" && options !== null) {
       const { recursive } = options;
       if (recursive != null && typeof recursive !== "boolean") {
-        options = { ...options, recursive: !!recursive };
+        // The native parser reads the other options through the prototype chain,
+        // so it sees exactly what it would have seen on the caller's object.
+        options = { __proto__: options, recursive: !!recursive };
       }
     }
     return fs.readdir(path, options);

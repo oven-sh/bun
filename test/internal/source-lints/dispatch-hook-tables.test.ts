@@ -36,7 +36,9 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 const sources = new Map<string, string>();
 for (const abs of globAllSources().rust) {
   if (!abs.endsWith(".rs")) continue;
-  const code = readFileSync(abs, "utf8").replace(/^\s*\/\/.*$/gm, "");
+  // `[ \t]*`, not `\s*`: in multiline mode `\s*` would swallow the newline of a
+  // preceding blank line and shift every line number after it.
+  const code = readFileSync(abs, "utf8").replace(/^[ \t]*\/\/.*$/gm, "");
   sources.set(path.relative(root, abs).replaceAll(path.sep, "/"), code);
 }
 

@@ -572,7 +572,7 @@ namespace SpawnOptions {
 }
 
 interface Subprocess extends AsyncDisposable {
-  readonly stdin: FileSink | number | undefined | null;
+  readonly stdin: FileSink | ReadableStream | number | undefined | null;
   readonly stdout: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
   readonly stderr: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
   readonly readable: ReadableStream<Uint8Array<ArrayBuffer>> | number | undefined | null;
@@ -593,8 +593,8 @@ interface Subprocess extends AsyncDisposable {
 }
 
 interface SyncSubprocess {
-  stdout: Buffer | undefined;
-  stderr: Buffer | undefined;
+  stdout: Buffer | number | undefined;
+  stderr: Buffer | number | undefined;
   exitCode: number;
   success: boolean;
   resourceUsage: ResourceUsage;

@@ -1068,31 +1068,42 @@ unsafe extern "C" {
         out_ptr: &mut *const u8,
         out_len: &mut usize,
     ) -> *mut JSCArrayBuffer;
-    safe fn JSC__ArrayBuffer__retainPinned(self_: &JSCArrayBuffer);
     safe fn JSC__ArrayBuffer__releasePinned(self_: &JSCArrayBuffer);
 }
 
 /// The byte range of a JS `ArrayBuffer` or view, kept alive and in place by
 /// one ref + one pin held directly on its `JSC::ArrayBuffer` — the refcounted
 /// owner of the storage, not a GC cell. The JS object may be collected while
-/// this lives. Dropping touches no `JSCell`, so it may run inside a GC
-/// finalizer; JS thread only (the refcount is not atomic).
+/// this lives, and releasing touches no `JSCell`, so it may drop inside a GC
+/// finalizer.
+///
+/// That refcount is not atomic and the owning VM's collector also touches it,
+/// so the release must happen on that VM's thread. `slice()` is fine from
+/// anywhere; a `Drop` anywhere else (another VM's thread letting go of a
+/// shared `Blob` store, a pool thread) is posted back to the owning VM.
 pub struct PinnedArrayBuffer {
     owner: ptr::NonNull<JSCArrayBuffer>,
     ptr: *const u8,
     len: usize,
+    vm: crate::VmHandle,
 }
 
 impl PinnedArrayBuffer {
-    /// `None` if `value` is not a buffer/view or is detached. A view that has
-    /// no `ArrayBuffer` yet gets one (see `retainPinnedArrayBuffer`).
+    /// JS thread. `None` if `value` is not a buffer/view or is detached. A
+    /// view that has no `ArrayBuffer` yet gets one (see
+    /// `retainPinnedArrayBuffer`).
     pub fn retain(value: JSValue) -> Option<Self> {
         let mut ptr: *const u8 = ptr::null();
         let mut len = 0usize;
         let owner = ptr::NonNull::new(JSC__JSValue__retainPinnedArrayBuffer(
             value, &mut ptr, &mut len,
         ))?;
-        Some(Self { owner, ptr, len })
+        Some(Self {
+            owner,
+            ptr,
+            len,
+            vm: crate::virtual_machine::VirtualMachine::get().handle(),
+        })
     }
 
     #[inline]
@@ -1106,34 +1117,59 @@ impl PinnedArrayBuffer {
     }
 }
 
-impl PinnedArrayBuffer {
-    /// The refcount is not atomic: a pool thread may read `slice()` but must
-    /// never clone or drop one of these.
-    #[inline]
-    fn assert_js_thread() {
-        debug_assert!(
-            crate::virtual_machine::VirtualMachine::get_or_null().is_some(),
-            "PinnedArrayBuffer cloned/dropped off the JS thread"
-        );
-    }
-}
-
-impl Clone for PinnedArrayBuffer {
-    fn clone(&self) -> Self {
-        Self::assert_js_thread();
-        JSC__ArrayBuffer__retainPinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
-        Self {
-            owner: self.owner,
-            ptr: self.ptr,
-            len: self.len,
+impl Drop for PinnedArrayBuffer {
+    fn drop(&mut self) {
+        if self.vm.is_current_thread() {
+            JSC__ArrayBuffer__releasePinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
+        } else {
+            release_on_owning_thread(self.owner, &self.vm);
         }
     }
 }
 
-impl Drop for PinnedArrayBuffer {
-    fn drop(&mut self) {
-        Self::assert_js_thread();
-        JSC__ArrayBuffer__releasePinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
+/// Hand a ref taken on `vm`'s thread back to that thread to release. If the
+/// VM has already closed, its heap went with it and the `ArrayBuffer` (whose
+/// wrapper `Weak` lived in that heap) must not be touched again: it is left
+/// unreleased.
+#[cold]
+fn release_on_owning_thread(owner: ptr::NonNull<JSCArrayBuffer>, vm: &crate::VmHandle) {
+    use bun_event_loop::ConcurrentTask::ConcurrentTask;
+    use bun_event_loop::ManagedTask::ManagedTask;
+
+    struct Release {
+        owner: ptr::NonNull<JSCArrayBuffer>,
+        vm: crate::VmHandle,
+    }
+    impl Drop for Release {
+        // Runs on the owning thread (task run, or freed unrun while that VM
+        // drains) — or, if the post was refused, right here: then do nothing.
+        fn drop(&mut self) {
+            if self.vm.is_current_thread() {
+                JSC__ArrayBuffer__releasePinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
+            }
+        }
+    }
+    fn run(this: *mut Release) -> bun_event_loop::JsResult<()> {
+        // SAFETY: `this` is the box handed to `new_owned` below; `run` is its
+        // only consumer on this path (`ManagedTask::run` does not free `ctx`).
+        drop(unsafe { bun_core::heap::take(this) });
+        Ok(())
+    }
+
+    let ctx = bun_core::heap::into_raw(Box::new(Release {
+        owner,
+        vm: vm.clone(),
+    }));
+    let task = ConcurrentTask::create(ManagedTask::new_owned(ctx, run));
+    match vm.post(crate::LoopKind::Regular, task) {
+        crate::Posted::Queued => {
+            bun_core::scoped_log!(ArrayBuffer, "pinned ArrayBuffer released off its VM's thread: posted back");
+        }
+        crate::Posted::Refused(task) => {
+            bun_core::scoped_log!(ArrayBuffer, "pinned ArrayBuffer outlived its VM: left unreleased");
+            // SAFETY: refused ⇒ not queued anywhere; ours to free.
+            unsafe { ConcurrentTask::release_refused(task) };
+        }
     }
 }
 

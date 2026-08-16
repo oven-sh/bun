@@ -409,6 +409,13 @@ impl VmHandle {
         self.0.state() == State::Open
     }
 
+    /// Is the calling thread this VM's thread? Any thread (a pointer compare
+    /// against the thread-local VM; nothing is dereferenced).
+    #[inline]
+    pub fn is_current_thread(&self) -> bool {
+        VirtualMachine::get_or_null() == Some(self.0.hot.vm)
+    }
+
     pub(crate) fn tickets_outstanding(&self) -> u32 {
         self.0.tickets.load(Ordering::SeqCst)
     }

@@ -3553,18 +3553,13 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
 // collected while the bytes stay allocated and in place, and releasing touches
 // no JSCell — so a native holder with no root to lean on, destroyed from a GC
 // finalizer (a Blob store) or at an async op's completion, can release inline.
-// JS thread only: the refcount is not atomic.
+// This VM's thread only: the refcount is not atomic (the Rust holder,
+// `PinnedArrayBuffer`, posts an off-thread release back here).
 //
 // Unlike `pinStorage`, a bufferless view is given its ArrayBuffer here
 // (OversizeTypedArray: adopted in place, no byte copy) because there is no
 // caller root keeping the view alive. `out_ptr`/`out_len` are the view's byte
 // range, read after that so they point into the storage the ArrayBuffer owns.
-CPP_DECL void JSC__ArrayBuffer__retainPinned(JSC::ArrayBuffer* buf)
-{
-    buf->ref();
-    if (!buf->isShared())
-        buf->pin();
-}
 CPP_DECL JSC::ArrayBuffer* JSC__JSValue__retainPinnedArrayBuffer(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
 {
     auto value = JSC::JSValue::decode(v);
@@ -3584,7 +3579,9 @@ CPP_DECL JSC::ArrayBuffer* JSC__JSValue__retainPinnedArrayBuffer(JSC::EncodedJSV
     } else {
         return nullptr;
     }
-    JSC__ArrayBuffer__retainPinned(buf);
+    buf->ref();
+    if (!buf->isShared())
+        buf->pin();
     return buf;
 }
 CPP_DECL void JSC__ArrayBuffer__releasePinned(JSC::ArrayBuffer* buf)

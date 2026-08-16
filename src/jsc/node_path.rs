@@ -106,8 +106,8 @@ pub enum PathLike {
     Buffer(MarkedArrayBuffer),
     /// A `Buffer` after `to_thread_safe`: the same bytes, kept by a ref + pin
     /// on the backing `JSC::ArrayBuffer` instead of by the JS cell, so it can
-    /// be released from a GC finalizer (a `Blob` store's path) as well as
-    /// from an async op's completion.
+    /// be released from a GC finalizer (a `Blob` store's path) or another
+    /// thread as well as from an async op's completion.
     PinnedBuffer(PinnedArrayBuffer),
     SliceWithUnderlyingString(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
@@ -141,7 +141,10 @@ impl Clone for PathLike {
                 owns_buffer: false,
                 pinned: false,
             }),
-            Self::PinnedBuffer(b) => Self::PinnedBuffer(b.clone()),
+            // Non-owning, as for `Buffer`: whoever clones a retained path also
+            // holds what retains it (the `Store`) for at least as long, and a
+            // borrow can be made and dropped on any thread.
+            Self::PinnedBuffer(b) => Self::String(CowSlice::init_unchecked(b.slice(), false)),
             Self::SliceWithUnderlyingString(s) => {
                 // `dupe_ref()` alone leaves `utf8` empty (lib.rs:1603) — a
                 // cloned PathLike would then return b"" from `slice()`. Clone

@@ -4445,21 +4445,24 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
     expect(exitCode).toBe(0);
   }, 15_000);
 
-  it("a half-closed paused socket sees the peer FIN and closes cleanly", async () => {
+  it("a half-closed paused socket defers the peer FIN and closes cleanly on resume", async () => {
     const { stdout, stderr, exitCode } = await runChild(`
         let sawError = null;
         let closeError = null;
+        let closed = false;
+        let paused;
         const serverClosed = Promise.withResolvers();
         using server = Bun.listen({
           hostname: "127.0.0.1",
           port: 0,
           socket: {
             open(s) {
-              // Half-close (FIN) with reads parked: the poll ends up
-              // subscribed to UV_DISCONNECT only, so the peer's answering FIN
-              // is exactly the event the slow path used to never deliver
-              // (hanging teardown). end() would flush-and-close outright;
-              // shutdown() keeps the socket waiting for that FIN.
+              // Half-close (FIN) with reads parked: the poll parks
+              // subscribed to UV_DISCONNECT only, the state the broken slow
+              // path error-closed with WSAEINVAL within one loop iteration.
+              // end() would flush-and-close outright; shutdown() keeps the
+              // socket waiting for the peer's answering FIN.
+              paused = s;
               s.pause();
               s.shutdown();
             },
@@ -4469,6 +4472,7 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
             },
             close(s, e) {
               closeError = e?.code || (e ? String(e) : null);
+              closed = true;
               serverClosed.resolve();
             },
           },
@@ -4477,10 +4481,9 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
           hostname: "127.0.0.1",
           port: server.port,
           // Half-open so receiving the server FIN does not auto-answer with
-          // ours: the delayed reply first holds the server socket parked in
-          // the DISCONNECT-only state across loop iterations (the broken path
-          // error-closes it within one), then delivers the FIN it must not
-          // miss.
+          // ours: the delayed reply holds the server socket parked in the
+          // DISCONNECT-only state across loop iterations before the FIN
+          // arrives.
           allowHalfOpen: true,
           socket: {
             data() {},
@@ -4492,13 +4495,25 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
             close() {},
           },
         });
+        // The FIN lands at ~700ms. The paused-EOF deferral means it must
+        // NOT close the socket while reads are parked (the tail of the
+        // stream may not have been read yet); the broken slow path instead
+        // error-closed the healthy socket within one iteration. Hold the
+        // state across both.
+        await Bun.sleep(1500);
+        if (sawError || closed) {
+          console.log("FAIL early-death error=" + (sawError || closeError) + " closed=" + closed);
+          process.exit(1);
+        }
+        // Resuming reads delivers the deferred EOF and closes cleanly.
+        paused.resume();
         await serverClosed.promise;
         const bad = sawError || closeError;
-        console.log(bad ? "FAIL " + bad : "OK clean close");
+        console.log(bad ? "FAIL " + bad : "OK clean close on resume");
         process.exit(bad ? 1 : 0);
       `);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK clean close");
+    expect(stdout.trim()).toBe("OK clean close on resume");
     expect(exitCode).toBe(0);
   }, 15_000);
 

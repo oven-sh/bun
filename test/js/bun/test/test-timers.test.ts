@@ -1,3 +1,4 @@
+import { expect, jest, setSystemTime, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import path from "node:path";
 
@@ -75,6 +76,127 @@ test("setSystemTime accepts pre-epoch and epoch times and resets with no argumen
   } finally {
     jest.useRealTimers();
   }
+});
+
+function temporalNowInUTC() {
+  return {
+    instant: Temporal.Now.instant().toString(),
+    zonedDateTime: Temporal.Now.zonedDateTimeISO("UTC").toString(),
+    plainDateTime: Temporal.Now.plainDateTimeISO("UTC").toString(),
+    plainDate: Temporal.Now.plainDateISO("UTC").toString(),
+    plainTime: Temporal.Now.plainTimeISO("UTC").toString(),
+  };
+}
+
+test("setSystemTime moves Temporal.Now along with Date", () => {
+  const realBefore = Date.now();
+  try {
+    setSystemTime(new Date("1995-12-19T00:00:00.123Z"));
+    expect(Date.now()).toBe(819331200123);
+    expect(temporalNowInUTC()).toEqual({
+      instant: "1995-12-19T00:00:00.123Z",
+      zonedDateTime: "1995-12-19T00:00:00.123+00:00[UTC]",
+      plainDateTime: "1995-12-19T00:00:00.123",
+      plainDate: "1995-12-19",
+      plainTime: "00:00:00.123",
+    });
+    expect(Temporal.Now.instant().epochNanoseconds).toBe(819331200123000000n);
+
+    // Without a time zone argument the system zone is used, whatever it is: the result has to
+    // describe the same mocked instant as the explicit system zone and as the mocked Date.
+    const systemZone = Temporal.Now.timeZoneId();
+    const zoned = Temporal.Now.zonedDateTimeISO();
+    expect([zoned.epochMilliseconds, zoned.timeZoneId]).toEqual([819331200123, systemZone]);
+    const mockedDate = new Date();
+    const plainDateTimeOfMockedDate = Temporal.PlainDateTime.from({
+      year: mockedDate.getFullYear(),
+      month: mockedDate.getMonth() + 1,
+      day: mockedDate.getDate(),
+      hour: mockedDate.getHours(),
+      minute: mockedDate.getMinutes(),
+      second: mockedDate.getSeconds(),
+      millisecond: mockedDate.getMilliseconds(),
+    });
+    expect(Temporal.Now.plainDateTimeISO().toString()).toBe(plainDateTimeOfMockedDate.toString());
+    expect(Temporal.Now.plainDateTimeISO().toString()).toBe(Temporal.Now.plainDateTimeISO(systemZone).toString());
+    expect(Temporal.Now.plainDateISO().toString()).toBe(plainDateTimeOfMockedDate.toPlainDate().toString());
+    expect(Temporal.Now.plainTimeISO().toString()).toBe(plainDateTimeOfMockedDate.toPlainTime().toString());
+
+    // Numbers work like Dates do, including before the epoch.
+    setSystemTime(-1);
+    expect(Date.now()).toBe(-1);
+    expect(temporalNowInUTC()).toEqual({
+      instant: "1969-12-31T23:59:59.999Z",
+      zonedDateTime: "1969-12-31T23:59:59.999+00:00[UTC]",
+      plainDateTime: "1969-12-31T23:59:59.999",
+      plainDate: "1969-12-31",
+      plainTime: "23:59:59.999",
+    });
+    expect(Temporal.Now.instant().epochNanoseconds).toBe(-1000000n);
+  } finally {
+    setSystemTime();
+  }
+
+  expect(Temporal.Now.instant().epochMilliseconds).toBeGreaterThanOrEqual(realBefore);
+  expect(Temporal.Now.zonedDateTimeISO("UTC").epochMilliseconds).toBeGreaterThanOrEqual(realBefore);
+  expect(Temporal.Now.instant().epochMilliseconds).toBeLessThanOrEqual(Date.now());
+});
+
+test("Temporal.Now follows jest.setSystemTime and advanceTimersByTime under fake timers", () => {
+  const realBefore = Date.now();
+  jest.useFakeTimers();
+  try {
+    const base = Date.UTC(2026, 0, 1, 12);
+    jest.setSystemTime(base);
+    expect(Temporal.Now.instant().epochMilliseconds).toBe(base);
+
+    jest.advanceTimersByTime(1500);
+    expect(Date.now()).toBe(base + 1500);
+    expect(temporalNowInUTC()).toEqual({
+      instant: "2026-01-01T12:00:01.5Z",
+      zonedDateTime: "2026-01-01T12:00:01.5+00:00[UTC]",
+      plainDateTime: "2026-01-01T12:00:01.5",
+      plainDate: "2026-01-01",
+      plainTime: "12:00:01.5",
+    });
+  } finally {
+    jest.useRealTimers();
+  }
+
+  expect(Temporal.Now.instant().epochMilliseconds).toBeGreaterThanOrEqual(realBefore);
+  expect(Temporal.Now.instant().epochMilliseconds).toBeLessThanOrEqual(Date.now());
+});
+
+test("Temporal.Now gets the mocked time clipped the way new Date() does", () => {
+  try {
+    // Fractional milliseconds are truncated, as by new Date().
+    setSystemTime(819331200000.75);
+    expect(new Date().getTime()).toBe(819331200000);
+    expect(Temporal.Now.instant().epochNanoseconds).toBe(819331200000000000n);
+
+    // The ends of the Date range are the ends of the Temporal range.
+    setSystemTime(8.64e15);
+    expect(Temporal.Now.instant().toString()).toBe("+275760-09-13T00:00:00Z");
+    setSystemTime(-8.64e15);
+    expect(Temporal.Now.plainDateISO("UTC").toString()).toBe("-271821-04-20");
+
+    // A mocked time that makes new Date() an Invalid Date has no Temporal equivalent.
+    for (const outOfRange of [8.64e15 + 1, Infinity]) {
+      setSystemTime(outOfRange);
+      expect(Date.now()).toBe(outOfRange);
+      expect(new Date().getTime()).toBeNaN();
+      expect(() => Temporal.Now.instant()).toThrow(RangeError);
+      expect(() => Temporal.Now.zonedDateTimeISO()).toThrow(RangeError);
+      expect(() => Temporal.Now.plainDateTimeISO()).toThrow(RangeError);
+      expect(() => Temporal.Now.plainDateISO("UTC")).toThrow(RangeError);
+      expect(() => Temporal.Now.plainTimeISO("UTC")).toThrow(RangeError);
+      expect(typeof Temporal.Now.timeZoneId()).toBe("string");
+    }
+  } finally {
+    setSystemTime();
+  }
+
+  expect(() => Temporal.Now.instant()).not.toThrow();
 });
 
 test.each(["'x'", "Symbol()", "1n"])("useFakeTimers does not crash when globalThis.setTimeout is %s", async value => {

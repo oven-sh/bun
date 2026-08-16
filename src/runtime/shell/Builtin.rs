@@ -219,7 +219,6 @@ impl Kind {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum IoKind {
-    Stdin,
     Stdout,
     Stderr,
 }
@@ -370,7 +369,7 @@ impl BuiltinIO {
                 unsafe {
                     let captured = match *target {
                         IoKind::Stdout => (*shell).buffered_stdout(),
-                        IoKind::Stderr | IoKind::Stdin => (*shell).buffered_stderr(),
+                        IoKind::Stderr => (*shell).buffered_stderr(),
                     };
                     (*captured).append_slice(buf)
                 };
@@ -925,7 +924,6 @@ impl Builtin {
         let out: &mut BuiltinIO = match io_kind {
             IoKind::Stdout => &mut me.stdout,
             IoKind::Stderr => &mut me.stderr,
-            IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
         unsafe { out.write_no_io_to(shell, buf) }

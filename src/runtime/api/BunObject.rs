@@ -2693,9 +2693,6 @@ pub mod JSZlib {
 pub mod JSZstd {
     use super::*;
 
-    // `no_mangle` dropped: 0 C++ refs, 0 Rust refs.
-    pub use bun_alloc::c_thunks::mi_free_ctx as deallocator;
-
     fn get_level(global_this: &JSGlobalObject, options_val: Option<JSValue>) -> JsResult<i32> {
         if let Some(option_obj) = options_val {
             if let Some(level_val) = option_obj.get(global_this, "level")? {

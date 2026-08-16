@@ -49,12 +49,7 @@ pub mod napi;
 #[path = "../bun.js.rs"]
 pub mod run_main;
 pub mod timer;
-// `generated_classes_list.rs` lives under `src/jsc/` but every type it
-// aliases is defined in this crate (api/webcore/test_runner/bake) or a
-// same-tier dep, so it is `#[path]`-mounted here to avoid a bun_jsc cycle.
-#[path = "../jsc/generated_classes_list.rs"]
-pub mod generated_classes_list;
-pub use generated_classes_list::Classes as GeneratedClassesList;
+
 pub mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
 pub mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
 pub mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs
@@ -72,9 +67,8 @@ pub mod valkey_jsc;
 // so `*_command.rs` and `test/parallel/*.rs` files resolve their
 // `use crate::…` lines without per-file edits.
 pub use cli::{
-    Cli, Command, add_completions, build_command, bunx_command, command, create_command,
-    filter_arg, filter_run, multi_run, package_manager_command, run_command, shell_completions,
-    test_command,
+    Cli, Command, build_command, command, filter_arg, package_manager_command, run_command,
+    shell_completions, test_command,
 };
 
 pub mod webview;

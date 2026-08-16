@@ -20,8 +20,6 @@ use crate::{
     resolution::Resolution,
 };
 
-pub use crate::lockfile::PatchedDep;
-
 bun_output::declare_scope!(InstallPatch, visible);
 
 /// Length of the hex representation of `u64::MAX` (i.e. 16).

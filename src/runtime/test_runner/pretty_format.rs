@@ -395,7 +395,6 @@ pub enum Tag {
 
     JSON,
     NativeCode,
-    ArrayBuffer,
 
     JSX,
     Event,
@@ -2485,7 +2484,6 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"]");
                     }
                 }
-                _ => {}
             }
 
             Ok(())
@@ -2550,7 +2548,7 @@ impl<'a> Formatter<'a> {
             Tag::Error => {
                 self.print_as::<W, { Tag::Error }, ENABLE_ANSI_COLORS>(writer, value, result.cell)
             }
-            Tag::ArrayBuffer | Tag::TypedArray => self
+            Tag::TypedArray => self
                 .print_as::<W, { Tag::TypedArray }, ENABLE_ANSI_COLORS>(writer, value, result.cell),
             Tag::Map => {
                 self.print_as::<W, { Tag::Map }, ENABLE_ANSI_COLORS>(writer, value, result.cell)

@@ -1684,24 +1684,6 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
             bun_uws::AnyResponse::TCP(std::ptr::from_mut::<Self>(self).cast())
         }
     }
-    fn upgrade<D>(
-        &mut self,
-        data: D,
-        sec_web_socket_key: &[u8],
-        sec_web_socket_protocol: &[u8],
-        sec_web_socket_extensions: &[u8],
-        ctx: &mut bun_uws::WebSocketUpgradeContext,
-    ) {
-        let boxed = bun_core::heap::into_raw(Box::new(data));
-        let _ = bun_uws_sys::response::Response::<SSL>::upgrade(
-            self,
-            boxed,
-            sec_web_socket_key,
-            sec_web_socket_protocol,
-            sec_web_socket_extensions,
-            Some(ctx),
-        );
-    }
 }
 
 fn on_not_found(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {

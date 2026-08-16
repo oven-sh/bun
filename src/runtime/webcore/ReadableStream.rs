@@ -688,9 +688,6 @@ pub enum Source {
     /// but with a FileLoader
     /// we can skip the FileLoader and just use the underlying File
     File(*mut FileReader),
-    /// This is a direct readable stream
-    /// That means we can turn it into whatever we want
-    Direct,
     Bytes(*mut ByteStream),
 }
 

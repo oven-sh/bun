@@ -44,7 +44,6 @@ impl ContainerName {
     }
 }
 
-pub use ContainerName as ContainerNameFns;
 pub(crate) type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]

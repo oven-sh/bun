@@ -52,7 +52,7 @@ fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
 // Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
 pub use StreamResult as Result;
 pub mod result {
-    pub use super::{StreamError, StreamResult, Writable};
+    pub use super::{StreamError, Writable};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -378,10 +378,7 @@ pub enum Writable {
     /// awaited via `flush(true)` → `pending_flush`.
     Backpressure(BlobSizeType),
     OwnedAndDone(BlobSizeType),
-    TemporaryAndDone(BlobSizeType),
     Temporary(BlobSizeType),
-    IntoArray(BlobSizeType),
-    IntoArrayAndDone(BlobSizeType),
 }
 
 pub struct WritablePending {
@@ -412,7 +409,6 @@ pub enum WritableFuture {
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global: BackRef<JSGlobalObject>,
     },
-    Handler(WritableHandler),
 }
 
 impl WritablePending {
@@ -437,13 +433,6 @@ impl WritablePending {
     }
 }
 
-pub struct WritableHandler {
-    pub ctx: *mut c_void,
-    pub(crate) handler: WritableHandlerFn,
-}
-
-type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
-
 impl WritablePending {
     /// Settle the parked write (see [`Pending::run`] for what happens to an
     /// exception the settle leaves).
@@ -462,15 +451,6 @@ impl WritablePending {
                 strong.swap(),
                 &global,
             ),
-            WritableFuture::Handler(h) => {
-                self.future = WritableFuture::Handler(WritableHandler {
-                    ctx: h.ctx,
-                    handler: h.handler,
-                });
-                // Reset self.result to Done here —
-                // verify no caller reads it after run().
-                (h.handler)(h.ctx, core::mem::replace(&mut self.result, Writable::Done));
-            }
             WritableFuture::None => {}
         }
     }
@@ -505,10 +485,7 @@ impl Writable {
             // Negative sentinel; the writer awaits the drain via `flush(true)`.
             Writable::Backpressure(len) => JSValue::js_number(-((len as f64) + 1.0)),
             Writable::OwnedAndDone(len) => JSValue::from(len),
-            Writable::TemporaryAndDone(len) => JSValue::from(len),
             Writable::Temporary(len) => JSValue::from(len),
-            Writable::IntoArray(len) => JSValue::from(len),
-            Writable::IntoArrayAndDone(len) => JSValue::from(len),
             // false == controller.close()
             // undefined == noop, but we probably won't send it
             Writable::Done => JSValue::TRUE,

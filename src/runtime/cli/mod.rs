@@ -785,8 +785,6 @@ pub use reserved_command as ReservedCommand;
 // ─── Command (Tag + which() + dispatch skeleton) ─────────────────────────────
 pub mod command {
     use super::*;
-    // Self-referential alias so `crate::command::Command` resolves.
-    pub use super::Command;
 
     /// Collect `bun::argv()` into an indexable slice of `&'static ZStr`.
     /// `Argv` only exposes `.get(i)` / `.iter() -> &[u8]`; several call

@@ -1406,7 +1406,7 @@ pub mod js_bundler {
     // dependency. Only the JSC-aware bits (`on_defer`, `JSBundlerPlugin__*`
     // C-ABI exports) live here.
     pub use bun_bundler::bundle_v2::api::JSBundler::{
-        Load, LoadSuccess, LoadValue, MiniImportRecord, Resolve, ResolveSuccess, ResolveValue,
+        Load, LoadSuccess, LoadValue, Resolve, ResolveSuccess, ResolveValue,
     };
 
     /// `&mut BundleV2` for the live backref stored on `Resolve`/`Load`.
@@ -1885,7 +1885,6 @@ pub mod js_bundler {
 }
 
 pub use js_bundler as JSBundler;
-pub use js_bundler::Config;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
@@ -1904,8 +1903,7 @@ pub struct BuildArtifact {
 
 /// `BuildArtifact.kind` — what role an output file plays. Single canonical
 /// definition lives in `bun_bundler::options` (it backs
-/// `OutputFile.output_kind`); re-exported so `crate::api::OutputKind`
-/// callers stay unchanged.
+/// `OutputFile.output_kind`).
 pub use bun_bundler::options::OutputKind;
 
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared

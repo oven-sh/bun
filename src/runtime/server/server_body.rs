@@ -436,7 +436,7 @@ type ServerH3RequestContext<const SSL: bool, const DEBUG: bool> =
 // `generate()` builds the JSON AST by hand: an `E.Object` with
 // `bun_version` (string) + `platform` (nested `E.Object` of `os`/`arch`/
 // `version`, enums emitted as `@tagName` strings).
-pub mod BunInfo {
+pub(crate) mod BunInfo {
     use bun_analytics::generate_header::generate_platform;
     use bun_analytics::{OperatingSystem, Platform};
     use bun_ast::Loc;
@@ -896,7 +896,7 @@ pub struct ServePlugins {
 // Reference count is incremented while there are other objects waiting on plugin loads.
 // Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
 
-pub enum ServePluginsState {
+pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
         /// Promise may be empty if the plugin load finishes synchronously.
@@ -1311,7 +1311,7 @@ pub(super) use super::{
 /// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
 /// used by the bake/saved-request path; the generic form here is only reached
 /// from the `_for<Ctx>` dispatch helpers below.
-pub struct PreparedRequestFor<Ctx> {
+pub(crate) struct PreparedRequestFor<Ctx> {
     pub(crate) js_request: JSValue,
     pub(crate) request_object: *mut Request,
     pub ctx: *mut Ctx,

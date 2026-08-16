@@ -2774,9 +2774,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    // `archive_write_free` destroys the handle and its error string even
-    // when it reports an error, so a failure here has nothing to report;
-    // real errors surface through `write_close` above.
     // SAFETY: `archive` is freed exactly once here and not used afterwards.
     let _ = unsafe { archive.write_free() };
 
@@ -4138,9 +4135,6 @@ pub mod bindings {
             }
             _ => {}
         }
-        // `archive_read_free` destroys the handle and its error string even
-        // when it reports an error, so a failure here has nothing to report;
-        // real errors surface through `read_close` above.
         // SAFETY: `archive` is freed exactly once here and not used afterwards.
         let _ = unsafe { archive.read_free() };
 

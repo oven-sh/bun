@@ -762,10 +762,6 @@ pub mod lib {
                 }
                 _ => {}
             }
-            // `archive_read_free` destroys the handle and its error string
-            // even when it reports an error, so a failure here has nothing
-            // to report and no handle left to hand to the caller; real
-            // errors surface through `read_close` above.
             // SAFETY: `close` consumes `self` and nothing else frees
             // `self.archive`, so this is the handle's final use.
             let _ = unsafe { a.read_free() };

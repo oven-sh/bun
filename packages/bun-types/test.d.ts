@@ -453,36 +453,45 @@ declare module "bun:test" {
      */
     type ContextOrEmpty<Ctx> = [Ctx] extends [never] ? {} : Ctx;
 
-    /** A fixture value of a function type must be declared with the setup-function form. */
-    type FixtureValue<V, Ctx> = ((...args: any) => any) extends V ? FixtureFn<V, Ctx> : V | FixtureFn<V, Ctx>;
+    /**
+     * A fixture whose value type is itself a function can only be declared with
+     * the setup-function form, since a plain function value would be ambiguous.
+     */
+    type FixtureValue<V, Ctx> = 0 extends 1 & V
+      ? V | FixtureFn<V, Ctx>
+      : ((...args: any) => any) extends V
+        ? FixtureFn<V, Ctx>
+        : V | FixtureFn<V, Ctx>;
   }
 
   /**
    * The `use` function passed to a fixture function. Call `await use(value)` to
    * provide the fixture value; the test runs while `use()` is pending, and code
-   * after `await use(value)` runs as teardown once the test finishes.
+   * after `await use(value)` runs as teardown once the test (and its `afterEach`
+   * hooks) have finished.
    */
   export type Use<V> = (value: V) => Promise<void>;
 
   /**
-   * A fixture setup function. Receives the context (other fixtures it depends
-   * on, referenced by destructuring) and a {@link Use} function.
+   * A fixture setup function. It must call `await use(value)` exactly once;
+   * code before it is setup, code after it is teardown. Its return value is
+   * ignored.
    *
-   * Either call `await use(value)` exactly once (code after it is the
-   * fixture's teardown), or return the fixture value directly without calling
-   * `use()`; a returned value that is disposable (it implements
-   * `Symbol.asyncDispose` or `Symbol.dispose`) is disposed after the test as
-   * the fixture's teardown.
+   * The first parameter is the context holding the other fixtures. Dependencies
+   * are detected from the parameter's object destructuring pattern, so it must
+   * be written as a destructuring pattern (`({ db }, use) => ...`, or `({}, use)`
+   * when the fixture depends on nothing). A fixture passed to `.extend()` under
+   * a name that already exists may destructure that name to receive the value of
+   * the definition it overrides.
    */
-  export type FixtureFn<V, Ctx> = (
-    context: Ctx,
-    use: Use<V>,
-  ) => Exclude<V, undefined> | Promise<Exclude<V, undefined>> | void | Promise<void>;
+  export type FixtureFn<V, Ctx> = (context: Ctx, use: Use<V>) => unknown | Promise<unknown>;
 
   export interface FixtureOptions {
     /**
      * Set up this fixture for every test registered through the extended test
-     * function, even tests that do not destructure it.
+     * function, even tests that do not destructure it. A fixture that overrides
+     * an existing one inherits this from the definition it overrides unless it
+     * specifies its own options.
      *
      * @default false
      */
@@ -491,10 +500,10 @@ declare module "bun:test" {
 
   /**
    * The object passed to `test.extend()`. Each property is either a plain
-   * fixture value or a fixture setup function, optionally wrapped in a
+   * fixture value or a {@link FixtureFn}, optionally wrapped in a
    * `[valueOrFn, options]` tuple.
    */
-  export type Fixtures<FixturesCtx extends Record<string, unknown>, Ctx = {}> = {
+  export type Fixtures<FixturesCtx extends Record<string, any>, Ctx = {}> = {
     [K in keyof FixturesCtx]:
       | __internal.FixtureValue<FixturesCtx[K], Ctx & Omit<FixturesCtx, K>>
       | [__internal.FixtureValue<FixturesCtx[K], Ctx & Omit<FixturesCtx, K>>, FixtureOptions];
@@ -525,7 +534,7 @@ declare module "bun:test" {
    *
    * @category Testing
    */
-  export interface Test<T extends ReadonlyArray<unknown>, Ctx extends Record<string, unknown> = never> {
+  export interface Test<T extends ReadonlyArray<unknown>, Ctx extends Record<string, any> = never> {
     (
       label: string,
 
@@ -632,17 +641,19 @@ declare module "bun:test" {
     /**
      * Returns a new test function with the given fixtures available to every
      * test registered through it. The test callback receives the fixture
-     * context as its last parameter; access fixtures by destructuring it.
+     * context as its last parameter (after any `test.each` arguments).
      *
-     * A fixture is either a plain value or a setup function. A setup function
-     * either calls `await use(value)` (setup code before `use()` runs before
-     * the test, teardown code after it runs after the test, in reverse setup
-     * order) or returns the fixture value directly, in which case a disposable
-     * value (`Symbol.asyncDispose` or `Symbol.dispose`) is disposed after the
-     * test. Fixture setup functions can depend on other fixtures by
-     * destructuring their first parameter. Fixtures are lazy: a fixture is only
-     * set up when the test (or another fixture it uses) destructures it, unless
-     * it is declared with `{ auto: true }`.
+     * The fixtures a test uses are detected from the context parameter's object
+     * destructuring pattern, so the parameter must be written as one
+     * (`({ db }) => ...`); a fixture is only set up when the test, or another
+     * fixture it uses, destructures it, unless it is declared with
+     * `{ auto: true }`. Setup runs after the `beforeEach` hooks, in dependency
+     * order; teardown (the code after `await use()`) runs after the `afterEach`
+     * hooks, in reverse order, including when the test fails or times out.
+     *
+     * `.extend()` calls chain. A fixture with the same name as an existing one
+     * replaces it, and may destructure that name to build on the definition it
+     * replaces.
      *
      * Tests registered through an extended test function do not take a `done`
      * callback; return a promise instead.
@@ -662,7 +673,7 @@ declare module "bun:test" {
      *
      * @param fixtures an object defining the fixtures
      */
-    extend<FixturesCtx extends Record<string, unknown>>(
+    extend<FixturesCtx extends Record<string, any>>(
       fixtures: Fixtures<FixturesCtx, __internal.ContextOrEmpty<Ctx>>,
     ): Test<T, Omit<__internal.ContextOrEmpty<Ctx>, keyof FixturesCtx> & FixturesCtx>;
   }

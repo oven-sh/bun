@@ -62,10 +62,7 @@ pub struct ScopeFunctions {
     /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
     pub(crate) each: JSValue,
-    /// Fixture registry created by `.extend()` (an array of records built by the
-    /// `mergeTestFixtures` builtin), or `.zero` when the function has no fixtures.
-    /// GC-visited the same way as `each`: mirrored into the C++ `m_fixtures`
-    /// WriteBarrier via `js::fixtures_set_cached` in `create_unbound`.
+    /// `.extend()` registry (see BunTestFixtures.ts) or `.zero`; GC-rooted like `each`.
     pub(crate) fixtures: JSValue,
 }
 
@@ -156,7 +153,7 @@ impl ScopeFunctions {
         create_bound(global, this.mode, array, this.fixtures, this.cfg, strings::EACH())
     }
     #[bun_jsc::host_fn(method)]
-    pub fn fn_extend(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn fn_extend(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
         if this.mode == Mode::Describe {
@@ -164,10 +161,33 @@ impl ScopeFunctions {
         }
         let [new_fixtures] = frame.arguments_as_array::<1>();
         let parent = if this.fixtures.is_empty() { JSValue::UNDEFINED } else { this.fixtures };
-        // validates the fixtures object and merges it over the parent registry
         let merged = bun_jsc::cpp::Bun__TestFixtures__merge(global, parent, new_fixtures)?;
         create_bound(global, this.mode, this.each, merged, this.cfg, strings::EXTEND())
     }
+
+    /// Splits a `test.extend()` callback into its `[run, teardown]` pair. The pair holds one
+    /// run's fixture state, so this is called once per scheduled test (once per `.each` row).
+    fn wrap_with_fixtures(
+        &self,
+        global: &JSGlobalObject,
+        callback: JSValue,
+        rooted: &mut bun_jsc::MarkedArgumentBuffer,
+    ) -> JsResult<TestCallbacks> {
+        let pair = bun_jsc::cpp::Bun__TestFixtures__wrapCallback(global, self.fixtures, callback)?;
+        rooted.append(pair);
+        let run = pair.get_index(global, 0)?.with_async_context_if_needed(global);
+        rooted.append(run);
+        let teardown = pair.get_index(global, 1)?.with_async_context_if_needed(global);
+        rooted.append(teardown);
+        Ok(TestCallbacks { callback: Some(run), fixture_teardown: Some(teardown) })
+    }
+}
+
+/// The callback to schedule and, for `test.extend()` tests, the teardown entry that follows it.
+#[derive(Clone, Copy)]
+struct TestCallbacks {
+    callback: Option<JSValue>,
+    fixture_teardown: Option<JSValue>,
 }
 
 #[bun_jsc::host_fn]
@@ -193,30 +213,20 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         _ => CallbackMode::Require,
     };
 
-    let mut args = parse_arguments(
+    let args = parse_arguments(
         global,
         frame,
         Signature::ScopeFunctions(this),
         ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
     )?;
 
-    let mut callback_length: usize = if let Some(callback) = args.callback {
-        callback.get_length(global)? as usize
-    } else {
-        0
+    // `test.extend()` callbacks take the fixture context where a done callback would go,
+    // so their length must not feed the done-callback heuristic.
+    let uses_fixtures = this.mode == Mode::Test && !this.fixtures.is_empty() && args.callback.is_some();
+    let callback_length: usize = match args.callback {
+        Some(callback) if !uses_fixtures => callback.get_length(global)? as usize,
+        _ => 0,
     };
-
-    // Tests registered through an extended test function (`test.extend()`) receive
-    // the fixture context as their last parameter instead of a done callback. Wrap
-    // the callback so fixtures are set up before it runs and torn down after, and
-    // zero the length so the done-callback heuristic below never fires.
-    if this.mode == Mode::Test && !this.fixtures.is_empty() {
-        if let Some(cb) = args.callback {
-            let wrapped = bun_jsc::cpp::Bun__TestFixtures__wrapCallback(global, this.fixtures, cb)?;
-            args.callback = Some(wrapped.with_async_context_if_needed(global));
-            callback_length = 0;
-        }
-    }
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
@@ -256,7 +266,11 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     None
                 };
 
-                let bound = if let Some(cb) = args.callback {
+                let callbacks = match args.callback {
+                    Some(cb) if uses_fixtures => this.wrap_with_fixtures(global, cb, rooted)?,
+                    other => TestCallbacks { callback: other, fixture_teardown: None },
+                };
+                let bound = if let Some(cb) = callbacks.callback {
                     Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
                 } else {
                     None
@@ -267,7 +281,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     &mut *bun_test_ptr,
                     global,
                     frame,
-                    bound,
+                    TestCallbacks { callback: bound, fixture_teardown: callbacks.fixture_teardown },
                     formatted_label.as_deref(),
                     &args.options,
                     callback_length.saturating_sub(args_list.len()),
@@ -278,16 +292,22 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             test_idx += 1;
         }
     } else {
-        this.enqueue_describe_or_test_callback(
-            bun_test_ptr,
-            global,
-            frame,
-            args.callback,
-            args.description.as_deref(),
-            &args.options,
-            callback_length,
-            line_no,
-        )?;
+        bun_jsc::MarkedArgumentBuffer::new(|rooted| -> JsResult<()> {
+            let callbacks = match args.callback {
+                Some(cb) if uses_fixtures => this.wrap_with_fixtures(global, cb, rooted)?,
+                other => TestCallbacks { callback: other, fixture_teardown: None },
+            };
+            this.enqueue_describe_or_test_callback(
+                &mut *bun_test_ptr,
+                global,
+                frame,
+                callbacks,
+                args.description.as_deref(),
+                &args.options,
+                callback_length,
+                line_no,
+            )
+        })?;
     }
 
     Ok(JSValue::UNDEFINED)
@@ -346,13 +366,14 @@ impl ScopeFunctions {
         bun_test: &mut BunTest,
         global: &JSGlobalObject,
         frame: &CallFrame,
-        callback: Option<JSValue>,
+        callbacks: TestCallbacks,
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
         callback_length: usize,
         line_no: u32,
     ) -> JsResult<()> {
         let _g = group_log::begin();
+        let TestCallbacks { callback, fixture_teardown } = callbacks;
 
         // only allow in collection phase
         match bun_test.phase {
@@ -473,6 +494,7 @@ impl ScopeFunctions {
                 let _ = bun_test.collection.active_scope_mut().append_test(
                     description,
                     if matches_filter { callback } else { None },
+                    if matches_filter { fixture_teardown } else { None },
                     bun_test::ExecutionEntryCfg {
                         has_done_parameter,
                         timeout: options.timeout,
@@ -773,11 +795,10 @@ pub(crate) fn parse_arguments(
 // (see jest.classes.ts `values: ["each"]`).
 //
 // Hand-expansion of the cached-value accessors `src/codegen/generate-classes.ts` emits:
-// `eachSetCached` / `eachGetCached` (and the `fixtures` pair) thin-wrap the C++-side
-// `ScopeFunctionsPrototype__{each,fixtures}{Set,Get}CachedValue` shims, which write/read
-// the `JSC::WriteBarrier<Unknown>` slots on the JSCell wrapper so the GC visits the
-// `.each(arr)` / `.extend(fixtures)` arguments between construction and the trailing
-// `("name", cb)` call.
+// `eachSetCached` / `eachGetCached` thin-wrap the C++-side
+// `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
+// `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
+// the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
 pub mod js {
     bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each, fixtures);
 }
@@ -821,9 +842,7 @@ fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, fixtures: 
     // wrapper (m_ctx); freed in `finalize`.
     let value = ScopeFunctions { mode, cfg, each, fixtures }.to_js(global);
     value.ensure_still_alive();
-    // Write into the C++ m_each/m_fixtures WriteBarriers so GC visits them. The Rust
-    // fields live in unmanaged memory that JSC never scans; without this the values
-    // can be collected between construction and the trailing `("name", cb)` call.
+    // The Rust fields are invisible to the GC; the C++ WriteBarriers keep the values alive.
     if !each.is_empty() {
         js::each_set_cached(value, global, each);
     }

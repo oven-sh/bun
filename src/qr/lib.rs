@@ -107,8 +107,6 @@ pub enum EncodeError {
     InvalidMask,
     /// `min_version > max_version`.
     InvalidVersionRange,
-    /// ECI assignment number outside 0..1_000_000.
-    InvalidEci,
 }
 
 impl fmt::Display for EncodeError {
@@ -127,7 +125,6 @@ impl fmt::Display for EncodeError {
             EncodeError::InvalidVersionRange => {
                 write!(f, "minVersion must be <= maxVersion")
             }
-            EncodeError::InvalidEci => write!(f, "ECI assignment must be below 1000000"),
         }
     }
 }
@@ -244,27 +241,6 @@ impl Segment {
         })
     }
 
-    /// ECI designator segment for the given assignment value.
-    pub fn make_eci(value: u32) -> Result<Segment, EncodeError> {
-        let mut bb = BitBuffer::default();
-        if value < (1 << 7) {
-            bb.append_bits(value, 8);
-        } else if value < (1 << 14) {
-            bb.append_bits(0b10, 2);
-            bb.append_bits(value, 14);
-        } else if value < 1_000_000 {
-            bb.append_bits(0b110, 3);
-            bb.append_bits(value, 21);
-        } else {
-            return Err(EncodeError::InvalidEci);
-        }
-        Ok(Segment {
-            mode: Mode::Eci,
-            num_chars: 0,
-            data: bb.0,
-        })
-    }
-
     /// Chooses the most compact single-segment encoding for `text`.
     pub fn make_segments(text: &[u8]) -> Result<Vec<Segment>, EncodeError> {
         if text.is_empty() {
@@ -299,15 +275,25 @@ impl Segment {
 
 const ALNUM_CHARSET: &[u8; 45] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
 
+/// Byte → alphanumeric-mode value, or 0xFF for bytes outside the set.
+static ALNUM_VALUE: [u8; 256] = {
+    let mut table = [0xFFu8; 256];
+    let mut i = 0;
+    while i < ALNUM_CHARSET.len() {
+        table[ALNUM_CHARSET[i] as usize] = i as u8;
+        i += 1;
+    }
+    table
+};
+
 fn is_alnum(b: u8) -> bool {
-    ALNUM_CHARSET.contains(&b)
+    ALNUM_VALUE[usize::from(b)] != 0xFF
 }
 
 fn alnum_value(b: u8) -> u8 {
-    ALNUM_CHARSET
-        .iter()
-        .position(|&c| c == b)
-        .expect("caller guarantees alnum") as u8
+    let v = ALNUM_VALUE[usize::from(b)];
+    debug_assert!(v != 0xFF, "caller guarantees alnum");
+    v
 }
 
 /// An encoded QR symbol.

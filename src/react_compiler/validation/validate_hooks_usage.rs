@@ -19,8 +19,8 @@ use crate::hir::environment::{Environment, is_hook_name};
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors::{each_pattern_operand, each_terminal_operand};
 use crate::hir::{
-    FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, ParamPattern, Place,
-    PropertyLiteral, Type, visitors,
+    FunctionId, HirFunction, Identifier, IdentifierId, InstructionValue, Place, PropertyLiteral,
+    Type, visitors,
 };
 
 /// Value classification for hook validation.
@@ -198,7 +198,7 @@ fn record_dynamic_hook_usage_error(
 }
 
 /// Validates hooks usage rules for a function.
-pub fn validate_hooks_usage(
+pub(crate) fn validate_hooks_usage(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
@@ -208,10 +208,7 @@ pub fn validate_hooks_usage(
 
     // Process params
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         let kind = get_kind_for_place(place, &value_kinds, &env.identifiers);
         value_kinds.insert(place.identifier, kind);
     }
@@ -321,10 +318,7 @@ pub fn validate_hooks_usage(
                     }
                     // Visit all operands except callee
                     for arg in args {
-                        let place = match arg {
-                            crate::hir::PlaceOrSpread::Place(p) => p,
-                            crate::hir::PlaceOrSpread::Spread(s) => &s.place,
-                        };
+                        let place = arg.place();
                         visit_place(place, &value_kinds, &mut errors_by_loc, env)?;
                     }
                 }
@@ -350,10 +344,7 @@ pub fn validate_hooks_usage(
                     // Visit receiver and args (not property)
                     visit_place(receiver, &value_kinds, &mut errors_by_loc, env)?;
                     for arg in args {
-                        let place = match arg {
-                            crate::hir::PlaceOrSpread::Place(p) => p,
-                            crate::hir::PlaceOrSpread::Spread(s) => &s.place,
-                        };
+                        let place = arg.place();
                         visit_place(place, &value_kinds, &mut errors_by_loc, env)?;
                     }
                 }

@@ -72,6 +72,36 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     ZigString__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
+static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
+{
+    // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
+    // (it sizes an intermediate Vector<char16_t> by byte count).
+    if (WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[likely]]
+        return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
+
+    const char* data = reinterpret_cast<const char*>(bytes.data());
+    if (!simdutf::validate_utf8(data, bytes.size())) [[unlikely]]
+        return {};
+    size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
+    if (utf16Length > WTF::String::MaxLength) [[unlikely]]
+        return {};
+    if (utf16Length == bytes.size()) {
+        // all-ASCII: stays 8-bit
+        std::span<Latin1Character> out;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(bytes.size(), out);
+        if (!impl) [[unlikely]]
+            return {};
+        memcpy(out.data(), bytes.data(), bytes.size());
+        return WTF::String(WTF::move(impl));
+    }
+    std::span<char16_t> out;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(utf16Length, out);
+    if (!impl) [[unlikely]]
+        return {};
+    RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(data, bytes.size(), out.data()) == utf16Length);
+    return WTF::String(WTF::move(impl));
+}
+
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
 static const WTF::String toString(ZigString str)
 {
@@ -92,7 +122,7 @@ static const WTF::String toString(ZigString str)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        return convertUTF8ToString(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedExternalPtr(str.ptr)) [[unlikely]] {
@@ -118,16 +148,6 @@ static const WTF::String toString(ZigString str)
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
-static WTF::AtomString toAtomString(ZigString str)
-{
-
-    if (!isTaggedUTF16Ptr(str.ptr)) {
-        return makeAtomString(std::span<const Latin1Character>(untag(str.ptr), str.len));
-    } else {
-        return makeAtomString(std::span<const char16_t>(reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len));
-    }
-}
-
 static const WTF::String toString(ZigString str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
@@ -142,7 +162,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
+        return convertUTF8ToString(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
@@ -170,7 +190,7 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
+        return convertUTF8ToString(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
     // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
@@ -198,7 +218,7 @@ static const WTF::String toStringCopy(ZigString str)
                 return {};
             }
         }
-        return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        return convertUTF8ToString(std::span { untag(str.ptr), str.len });
     }
 
     if (isTaggedUTF16Ptr(str.ptr)) {
@@ -233,7 +253,7 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
                 return;
             }
         }
-        WTF::String converted = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { untag(str.ptr), str.len });
+        WTF::String converted = convertUTF8ToString(std::span { untag(str.ptr), str.len });
         builder.append(converted);
         return;
     }
@@ -244,8 +264,6 @@ static void appendToBuilder(ZigString str, WTF::StringBuilder& builder)
 
     builder.append({ untag(str.ptr), str.len });
 }
-
-static WTF::String toStringNotConst(ZigString str) { return toString(str); }
 
 static const JSC::JSString* toJSString(ZigString str, JSC::JSGlobalObject* global)
 {
@@ -258,22 +276,11 @@ static JSC::JSString* toJSStringGC(ZigString str, JSC::JSGlobalObject* global)
 }
 
 static const ZigString ZigStringEmpty = ZigString { (unsigned char*)"", 0 };
-static const unsigned char __dot_char = '.';
-static const ZigString ZigStringCwd = ZigString { &__dot_char, 1 };
-static const BunString BunStringCwd = BunString { BunStringTag::StaticZigString, ZigStringCwd };
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
 {
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
-}
-
-static ZigString toZigString(WTF::String* str)
-{
-    return str->isEmpty()
-        ? ZigStringEmpty
-        : ZigString { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
-              str->length() };
 }
 
 static ZigString toZigString(WTF::StringImpl& str)
@@ -326,21 +333,6 @@ static ZigString toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
         return toZigString(str->view(global));
     }
     return toZigString(str->value(global));
-}
-
-static ZigString toZigString(JSC::Identifier& str, JSC::JSGlobalObject* global)
-{
-    return toZigString(str.string());
-}
-
-static ZigString toZigString(JSC::Identifier* str, JSC::JSGlobalObject* global)
-{
-    return toZigString(str->string());
-}
-
-static WTF::StringView toStringView(ZigString str)
-{
-    return WTF::StringView(std::span { untag(str.ptr), str.len });
 }
 
 static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)

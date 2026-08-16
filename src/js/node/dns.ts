@@ -2,12 +2,15 @@
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
+const { guardCallback } = require("internal/shared");
 const {
   validateFunction,
   validateArray,
   validateString,
   validateBoolean,
   validateNumber,
+  validateInt32,
+  validatePort,
 } = require("internal/validators");
 
 const errorCodes = {
@@ -95,6 +98,12 @@ function getDefaultResultOrder() {
   return defaultResultOrder();
 }
 
+// ares_inet_pton rejects IPv6 zone identifiers; Node's uv_inet_pton strips them.
+function stripZoneId(host) {
+  const pct = host.indexOf("%");
+  return pct === -1 ? host : host.slice(0, pct);
+}
+
 function setServersOn(servers, object) {
   validateArray(servers, "servers");
 
@@ -105,7 +114,7 @@ function setServersOn(servers, object) {
     let ipVersion = isIP(server);
 
     if (ipVersion !== 0) {
-      triples.push([ipVersion, server, IANA_DNS_PORT]);
+      triples.push([ipVersion, ipVersion === 6 ? stripZoneId(server) : server, IANA_DNS_PORT]);
       return;
     }
 
@@ -116,7 +125,7 @@ function setServersOn(servers, object) {
       ipVersion = isIP(match[1]);
       if (ipVersion !== 0) {
         const port = parseInt(addrSplitRE[Symbol.replace](server, "$2")) || IANA_DNS_PORT;
-        triples.push([ipVersion, match[1], port]);
+        triples.push([ipVersion, stripZoneId(match[1]), port]);
         return;
       }
     }
@@ -143,7 +152,7 @@ function setServersOn(servers, object) {
 }
 
 function validateFlagsOption(options) {
-  if (options.flags === undefined) {
+  if (options.flags == null) {
     return;
   }
 
@@ -179,14 +188,14 @@ function validateFamilyOption(options) {
 
 function validateAllOption(options) {
   const all = options.all;
-  if (all !== undefined) {
+  if (all != null) {
     validateBoolean(all);
   }
 }
 
 function validateVerbatimOption(options) {
   const verbatim = options.verbatim;
-  if (verbatim !== undefined) {
+  if (verbatim != null) {
     validateBoolean(verbatim);
   }
 }
@@ -204,6 +213,8 @@ function validateOrderOption(options) {
   }
 }
 
+// Validates and returns the callback wrapped by guardCallback.
+// Callers must use the return value, not the argument.
 function validateResolve(hostname, callback) {
   if (typeof hostname !== "string") {
     throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
@@ -212,6 +223,8 @@ function validateResolve(hostname, callback) {
   if (typeof callback !== "function") {
     throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
   }
+
+  return guardCallback(callback);
 }
 
 function validateLocalAddresses(first, second) {
@@ -240,6 +253,8 @@ function translateLookupOptions(options) {
     all,
     order,
     verbatim,
+    // dns.lookup()'s contract is getaddrinfo(3), so use the platform resolver, not c-ares.
+    backend: "system",
   };
 }
 
@@ -287,6 +302,7 @@ function lookup(hostname, options, callback) {
     return;
   }
 
+  callback = guardCallback(callback);
   dns
     .lookup(hostname, options)
     .then(res => {
@@ -328,8 +344,10 @@ function lookupService(address, port, callback) {
   }
 
   validateString(address);
+  validatePort(port, "port");
 
-  dns.lookupService(address, port).then(
+  callback = guardCallback(callback);
+  dns.lookupService(address, +port).then(
     results => {
       callback(null, ...results);
     },
@@ -340,32 +358,17 @@ function lookupService(address, port, callback) {
 }
 
 function validateResolverOptions(options) {
-  if (options === undefined) {
-    return;
-  }
-
-  for (const key of ["timeout", "tries"]) {
-    if (key in options) {
-      if (typeof options[key] !== "number") {
-        throw $ERR_INVALID_ARG_TYPE(key, "number", options[key]);
-      }
-    }
-  }
-
-  if ("timeout" in options) {
-    const timeout = options.timeout;
-    if ((timeout < 0 && timeout != -1) || Math.floor(timeout) != timeout || timeout >= 2 ** 31) {
-      throw $ERR_OUT_OF_RANGE("timeout", "Invalid timeout", timeout);
-    }
-  }
+  const { timeout = -1, tries = 4 } = { ...options };
+  validateInt32(timeout, "options.timeout", -1);
+  validateInt32(tries, "options.tries", 1);
+  return { timeout, tries };
 }
 
 var InternalResolver = class Resolver {
   #resolver;
 
   constructor(options) {
-    validateResolverOptions(options);
-    this.#resolver = this._handle = newResolver(options);
+    this.#resolver = this._handle = newResolver(validateResolverOptions(options));
   }
 
   cancel() {
@@ -384,13 +387,11 @@ var InternalResolver = class Resolver {
     if (typeof rrtype === "function") {
       callback = rrtype;
       rrtype = "A";
-    } else if (typeof rrtype === "undefined") {
-      rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, rrtype)
@@ -418,7 +419,7 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, "A")
@@ -438,7 +439,7 @@ var InternalResolver = class Resolver {
       options = null;
     }
 
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolve(hostname, "AAAA")
@@ -453,7 +454,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveAny(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveAny(hostname)
@@ -468,7 +469,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveCname(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveCname(hostname)
@@ -483,7 +484,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveMx(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveMx(hostname)
@@ -498,7 +499,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveNaptr(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveNaptr(hostname)
@@ -513,7 +514,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveNs(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveNs(hostname)
@@ -528,7 +529,7 @@ var InternalResolver = class Resolver {
   }
 
   resolvePtr(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolvePtr(hostname)
@@ -543,7 +544,7 @@ var InternalResolver = class Resolver {
   }
 
   resolveSrv(hostname, callback) {
-    validateResolve(hostname, callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveSrv(hostname)
@@ -561,6 +562,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveCaa(hostname)
@@ -578,6 +580,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveTxt(hostname)
@@ -594,6 +597,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .resolveSoa(hostname)
@@ -611,6 +615,7 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    callback = guardCallback(callback);
 
     Resolver.#getResolver(this)
       .reverse(ip)
@@ -748,9 +753,10 @@ const promises = {
     }
 
     validateString(address);
+    validatePort(port, "port");
 
     try {
-      return translateErrorCode(dns.lookupService(address, port)).then(([hostname, service]) => ({
+      return translateErrorCode(dns.lookupService(address, +port)).then(([hostname, service]) => ({
         hostname,
         service,
       }));
@@ -828,8 +834,7 @@ const promises = {
     #resolver;
 
     constructor(options) {
-      validateResolverOptions(options);
-      this.#resolver = this._handle = newResolver(options);
+      this.#resolver = this._handle = newResolver(validateResolverOptions(options));
     }
 
     cancel() {

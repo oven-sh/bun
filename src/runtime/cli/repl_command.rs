@@ -32,7 +32,7 @@ pub(crate) struct ReplCommand;
 
 impl ReplCommand {
     #[cold]
-    pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context<'_>) -> Result<(), crate::Error> {
         // Initialize the REPL
         let mut repl = Repl::init();
         // `defer repl.deinit()` → handled by Drop
@@ -44,7 +44,7 @@ impl ReplCommand {
     fn boot_repl_vm<'r>(
         ctx: Command::Context<'_>,
         repl: &mut Repl<'r>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // Load bunfig if not already loaded
         if !ctx.debug.loaded_bunfig {
             Arguments::load_config_path(
@@ -104,22 +104,13 @@ impl ReplCommand {
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = ctx
+        let offline = ctx
             .debug
             .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Offline;
-        let prefer_latest = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Latest;
-        // The resolver's `BundleOptions` stub has no `prefer_latest_install` field and the
-        // resolver never reads it; only the bundler-side mirror carries it (matches
-        // run_command.rs / production.rs).
+            .unwrap_or(OfflineMode::Online);
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = prefer_latest;
+        b.options.install_preference = offline;
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
@@ -215,7 +206,7 @@ struct ReplRunner<'a, 'r> {
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
-    pub(crate) fn start(this: &mut ReplRunner<'a, 'r>) {
+    fn start(this: &mut ReplRunner<'a, 'r>) {
         let _ = this.vm;
         let vm = VirtualMachine::get().as_mut();
 
@@ -287,8 +278,6 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         }
 
-        // SAFETY: transpiler.env is valid.
-        unsafe { (*vm.transpiler.env).load_tracy() };
         Ok(())
     }
 }

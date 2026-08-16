@@ -84,20 +84,8 @@ const ArrayPrototypeSymbolIterator = uncurryThis(Array.prototype[Symbol.iterator
 const ArrayIteratorPrototypeNext = uncurryThis(Array.prototype[Symbol.iterator]().next);
 const SafeArrayIterator = createSafeIterator(ArrayPrototypeSymbolIterator, ArrayIteratorPrototypeNext);
 
-const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = $Promise.prototype.$then;
-
-const arrayToSafePromiseIterable = (promises, mapFn) =>
-  new SafeArrayIterator(
-    ArrayPrototypeMap.$call(
-      promises,
-      (promise, i) =>
-        new Promise((a, b) => PromisePrototypeThen.$call(mapFn == null ? promise : mapFn(promise, i), a, b)),
-    ),
-  );
-const PromiseAll = Promise.all;
 const PromiseResolve = Promise.$resolve.bind(Promise);
-const SafePromiseAll = (promises, mapFn) => PromiseAll(arrayToSafePromiseIterable(promises, mapFn));
 // Shared scheduler for SafePromiseAllReturnVoid/ReturnArrayLike: `returnVal`
 // is null for the void variant (no result bookkeeping, resolves with nothing).
 const safePromiseAllCollect = (promises, mapFn, returnVal) =>
@@ -127,12 +115,8 @@ const SafePromiseAllReturnArrayLike = (promises, mapFn) => {
 };
 
 export default {
-  Array,
   SafeArrayIterator,
   MapPrototypeGetSize: getGetter(Map, "size"),
-  Number,
-  Object,
-  RegExp,
   SafeStringIterator: createSafeIterator(StringIterator, uncurryThis(StringIteratorPrototype.next)),
   SafeMap: makeSafe(
     Map,
@@ -142,7 +126,6 @@ export default {
       }
     },
   ),
-  SafePromiseAll,
   SafePromiseAllReturnArrayLike,
   SafePromiseAllReturnVoid,
   SafeSet: makeSafe(
@@ -170,7 +153,9 @@ export default {
     },
   ),
   SetPrototypeGetSize: getGetter(Set, "size"),
-  String,
+  TypedArrayPrototypeGetBuffer: getGetter(Uint8Array, "buffer"),
+  TypedArrayPrototypeGetByteLength: getGetter(Uint8Array, "byteLength"),
+  TypedArrayPrototypeGetByteOffset: getGetter(Uint8Array, "byteOffset"),
   TypedArrayPrototypeGetLength: getGetter(Uint8Array, "length"),
   TypedArrayPrototypeGetSymbolToStringTag: getGetter(Uint8Array, Symbol.toStringTag),
   Uint8ClampedArray,

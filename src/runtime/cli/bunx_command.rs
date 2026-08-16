@@ -1,14 +1,13 @@
 //! `bun x` / `bunx`: resolves a package's executable — installing it into a
 //! shared cache when not already present — and execs it with the given args.
 
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use bstr::BStr;
 
 use crate::cli::command::ContextData;
 use crate::cli::{self, Command};
-use crate::run_command::RunCommand as Run;
+use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
 
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
@@ -42,21 +41,21 @@ pub struct Options {
     /// CLI arguments to pass to the command being run.
     // `Box<[u8]>` to match `ContextData::passthrough` /
     // `Run::run_binary`'s `&[Box<[u8]>]` param.
-    pub passthrough_list: Vec<Box<[u8]>>,
+    pub(crate) passthrough_list: Vec<Box<[u8]>>,
     /// `bunx <package_name>`
-    pub package_name: &'static [u8],
+    pub(crate) package_name: &'static [u8],
     /// The binary name to run (when using --package)
-    pub binary_name: Option<&'static [u8]>,
+    pub(crate) binary_name: Option<&'static [u8]>,
     /// The package to install (when using --package)
-    pub specified_package: Option<&'static [u8]>,
+    pub(crate) specified_package: Option<&'static [u8]>,
     // `--silent` and `--verbose` are not mutually exclusive. Both the
     // global CLI parser and `bun add` parser use them for different
     // purposes.
-    pub verbose_install: bool,
-    pub silent_install: bool,
+    pub(crate) verbose_install: bool,
+    pub(crate) silent_install: bool,
     /// Skip installing the package, only running the target command if its
     /// already downloaded. If its not, `bunx` exits with an error.
-    pub no_install: bool,
+    pub(crate) no_install: bool,
 }
 
 impl Default for Options {
@@ -214,8 +213,6 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
-bun_core::named_error_set!(GetBinNameError);
-
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -289,7 +286,7 @@ impl BunxCommand {
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         subpath_z: &ZStr,
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
@@ -301,29 +298,24 @@ impl BunxCommand {
         bun_ast::initialize_store();
 
         let log = transpiler.log_mut();
-        // The JSON parser takes a bump arena; everything we keep is cloned
-        // into `Box<[u8]>` before returning, so a local arena suffices.
-        let bump = bun_alloc::Arena::new();
-        let expr = json::parse_package_json_utf8(&source, log, &bump)?;
+        let parsed = json::ParsedJson::parse_package_json(&source, log)?;
+        let expr = parsed.root;
 
         // choose the first package that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
-                ExprData::EObject(object) => {
-                    for prop in object.properties.slice() {
-                        if let Some(key) = &prop.key {
-                            if let Some(bin_name) = key.as_string(&bump) {
-                                if !Self::is_safe_bin_name(bin_name) {
-                                    continue;
-                                }
-                                return Ok(Box::<[u8]>::from(bin_name));
-                            }
+                ExprData::EObjectJSON(object) => {
+                    for prop in object.get().properties() {
+                        let bin_name = prop.key.slice();
+                        if !Self::is_safe_bin_name(bin_name) {
+                            continue;
                         }
+                        return Ok(Box::<[u8]>::from(bin_name));
                     }
                 }
                 ExprData::EString(_) => {
                     if let Some(name_expr) = expr.get(b"name") {
-                        if let Some(name) = name_expr.as_string(&bump) {
+                        if let Some(name) = name_expr.as_utf8_string_literal() {
                             // A scoped `name` (`@scope/pkg`) is legitimate here;
                             // the command name is its unscoped portion.
                             let bin_name = if name.is_empty() {
@@ -343,7 +335,7 @@ impl BunxCommand {
 
         if let Some(dirs) = expr.as_property(b"directories") {
             if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                if let Some(dir_name) = bin_prop.expr.as_string(&bump) {
+                if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
@@ -372,14 +364,14 @@ impl BunxCommand {
             }
         }
 
-        Err(bun_core::err!("NoBinFound"))
+        Err(crate::Error::NoBinFound)
     }
 
     fn get_bin_name_from_project_directory(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         package_name: &[u8],
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
         let len = {
             let total = subpath.len();
@@ -407,7 +399,7 @@ impl BunxCommand {
         tempdir_name: &[u8],
         package_name: &[u8],
         with_stale_check: bool,
-    ) -> Result<Box<[u8]>, bun_core::Error> {
+    ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
         if with_stale_check {
             let len = {
@@ -427,7 +419,7 @@ impl BunxCommand {
             let subpath_z = ZStr::from_buf(&subpath[..], len);
             let target_package_json_fd = match bun_sys::openat(Fd::cwd(), subpath_z, O::RDONLY, 0) {
                 Ok(fd) => fd,
-                Err(_) => return Err(bun_core::err!("NeedToInstall")),
+                Err(_) => return Err(crate::Error::NeedToInstall),
             };
             let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
 
@@ -473,7 +465,7 @@ impl BunxCommand {
                 let _ = target_package_json.close();
                 // If delete fails, oh well. Hope installation takes care of it.
                 let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
-                return Err(bun_core::err!("NeedToInstall"));
+                return Err(crate::Error::NeedToInstall);
             }
             let _ = target_package_json.close();
         }
@@ -510,7 +502,7 @@ impl BunxCommand {
         match Self::get_bin_name_from_project_directory(transpiler, toplevel_fd, package_name) {
             Ok(v) => Ok(v),
             Err(err) => {
-                if err == bun_core::err!("NoBinFound") {
+                if matches!(err, crate::Error::NoBinFound) {
                     return Err(GetBinNameError::NoBinFound);
                 }
 
@@ -522,7 +514,7 @@ impl BunxCommand {
                 ) {
                     Ok(v) => Ok(v),
                     Err(err2) => {
-                        if err2 == bun_core::err!("NoBinFound") {
+                        if matches!(err2, crate::Error::NoBinFound) {
                             return Err(GetBinNameError::NoBinFound);
                         }
 
@@ -575,20 +567,99 @@ impl BunxCommand {
     }
 
     #[cfg(unix)]
-    fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
-        match bun_sys::lstat(cache_root) {
-            Ok(st) => {
-                (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                    && st.st_uid == uid
-                    && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+    fn is_trusted_cache_root(cache_root: &[u8], temp_dir_len: usize, uid: libc::uid_t) -> bool {
+        let mut buf = PathBuffer::uninit();
+        if cache_root.len() >= buf.len() || temp_dir_len >= cache_root.len() {
+            return false;
+        }
+        buf[..cache_root.len()].copy_from_slice(cache_root);
+        let is_trusted_dir = |st: &bun_sys::Stat| {
+            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                && st.st_uid == uid
+                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+        };
+        let mut start = temp_dir_len + 1;
+        loop {
+            let end = match strings::index_of_char_pos(cache_root, bun_paths::SEP, start) {
+                Some(i) => i,
+                None => cache_root.len(),
+            };
+            if end == start {
+                if end == cache_root.len() {
+                    return true;
+                }
+                start = end + 1;
+                continue;
             }
-            Err(_) => true,
+            buf[end] = 0;
+            match bun_sys::lstat(ZStr::from_buf(&buf[..], end)) {
+                Ok(st) if is_trusted_dir(&st) => {}
+                Ok(_) => return false,
+                Err(err) => return err.get_errno() == bun_sys::E::ENOENT,
+            }
+            if end == cache_root.len() {
+                return true;
+            }
+            buf[end] = bun_paths::SEP;
+            start = end + 1;
         }
     }
 
     #[cfg(not(unix))]
     #[inline(always)]
-    fn is_trusted_cache_root(_cache_root: &ZStr, _uid: u32) -> bool {
+    fn is_trusted_cache_root(_cache_root: &[u8], _temp_dir_len: usize, _uid: u32) -> bool {
+        true
+    }
+
+    #[cfg(unix)]
+    fn is_trusted_opened_cache_dir(
+        dir: Fd,
+        cache_dir: &[u8],
+        temp_dir_len: usize,
+        uid: libc::uid_t,
+    ) -> bool {
+        let dir_ok = |st: &bun_sys::Stat| {
+            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
+                && st.st_uid == uid
+                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
+        };
+        let opened = match bun_sys::fstat(dir) {
+            Ok(st) if dir_ok(&st) => st,
+            _ => return false,
+        };
+        let mut buf = PathBuffer::uninit();
+        if cache_dir.len() >= buf.len() {
+            return false;
+        }
+        buf[..cache_dir.len()].copy_from_slice(cache_dir);
+        let mut end = cache_dir.len();
+        let mut is_leaf = true;
+        loop {
+            buf[end] = 0;
+            match bun_sys::lstat(ZStr::from_buf(&buf[..], end)) {
+                Ok(st) if dir_ok(&st) => {
+                    if is_leaf && (st.st_dev != opened.st_dev || st.st_ino != opened.st_ino) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+            is_leaf = false;
+            match strings::last_index_of_char(&cache_dir[..end], bun_paths::SEP) {
+                Some(idx) if idx > temp_dir_len => end = idx,
+                _ => return true,
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    #[inline(always)]
+    fn is_trusted_opened_cache_dir(
+        _dir: Fd,
+        _cache_dir: &[u8],
+        _temp_dir_len: usize,
+        _uid: u32,
+    ) -> bool {
         true
     }
 
@@ -597,10 +668,7 @@ impl BunxCommand {
         Global::exit(1);
     }
 
-    pub(crate) fn exec(
-        ctx: &mut ContextData,
-        argv: &[&'static ZStr],
-    ) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
         // Don't log stuff
         ctx.debug.silent = true;
 
@@ -677,8 +745,15 @@ impl BunxCommand {
         let mut this_transpiler_slot = ::core::mem::MaybeUninit::<Transpiler<'static>>::uninit();
         let mut original_path: Vec<u8> = Vec::new();
 
-        let root_dir_info =
-            Run::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, true)?;
+        let root_dir_info = Run::configure_env_for_run(
+            ctx,
+            &mut this_transpiler_slot,
+            None,
+            ConfigureEnvOptions {
+                log_errors: true,
+                store_root_fd: true,
+            },
+        )?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.
         let this_transpiler = unsafe { this_transpiler_slot.assume_init_mut() };
@@ -773,7 +848,7 @@ impl BunxCommand {
                     <&'static str>::from(update_request.version.tag),
                     hash(update_request.name).wrapping_add(hash(display_version)),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             } else {
                 write!(
                     &mut v,
@@ -781,7 +856,7 @@ impl BunxCommand {
                     BStr::new(&update_request.name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             }
             break 'brk v;
         };
@@ -798,7 +873,7 @@ impl BunxCommand {
                     BStr::new(&update_request.name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 (v, update_request.name)
             } else {
                 // When there is not a clear package name (URL/GitHub/etc), we force the package name
@@ -811,7 +886,7 @@ impl BunxCommand {
                     BStr::new(initial_bin_name),
                     BStr::new(display_version),
                 )
-                .map_err(|_| bun_core::err!("OutOfMemory"))?;
+                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
                 (v, initial_bin_name)
             };
         bun_output::scoped_log!(bunx, "install_param: {}", BStr::new(&install_param));
@@ -830,9 +905,7 @@ impl BunxCommand {
 
             // Remove the cwd passed through BUN_WHICH_IGNORE_CWD from path. This prevents temp node-gyp script from finding and running itself
             let mut new_path: Vec<u8> = Vec::with_capacity(path.len());
-            let mut path_iter = path
-                .split(|b| *b == DELIMITER)
-                .filter(|s: &&[u8]| !s.is_empty());
+            let mut path_iter = strings::tokenize(&path, &[DELIMITER]);
             if let Some(segment) = path_iter.next() {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
@@ -888,7 +961,7 @@ impl BunxCommand {
                 uid = uid,
                 pkg = BStr::new(&package_fmt),
             )
-            .map_err(|_| bun_core::err!("OutOfMemory"))?;
+            .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
             if path_is_nonzero {
                 v.push(DELIMITER);
                 v.extend_from_slice(&path);
@@ -922,27 +995,19 @@ impl BunxCommand {
                 bin = BStr::new(initial_bin_name),
                 exe = EXE_SUFFIX,
             )
-            .map_err(|_| bun_core::err!("PathTooLong"))?;
+            .map_err(|_| crate::Error::PathTooLong)?;
             let written = buf_total - cursor.len();
             // Re-slice from the buffer so the borrow on `cursor` ends here.
             // SAFETY: `written` bytes were just initialized above
             unsafe { core::slice::from_raw_parts(absolute_in_cache_dir_buf.as_ptr(), written) }
         };
 
-        {
-            let mut cache_root_buf = PathBuffer::uninit();
-            cache_root_buf[..bunx_cache_dir.len()].copy_from_slice(bunx_cache_dir);
-            cache_root_buf[bunx_cache_dir.len()] = 0;
-            if !Self::is_trusted_cache_root(
-                ZStr::from_buf(&cache_root_buf[..], bunx_cache_dir.len()),
-                uid,
-            ) {
-                Output::err_generic(
-                    "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
-                    format_args!("{}", BStr::new(bunx_cache_dir)),
-                );
-                Global::exit(1);
-            }
+        if !Self::is_trusted_cache_root(bunx_cache_dir, temp_dir.len(), uid) {
+            Output::err_generic(
+                "refusing to use bunx cache directory <b>{}<r> because it or a parent directory is not a directory owned by the current user. Remove it and try again.",
+                format_args!("{}", BStr::new(bunx_cache_dir)),
+            );
+            Global::exit(1);
         }
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
@@ -1232,6 +1297,18 @@ impl BunxCommand {
         }
 
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
+        if !Self::is_trusted_opened_cache_dir(
+            bunx_install_dir.fd,
+            bunx_cache_dir,
+            temp_dir.len(),
+            uid,
+        ) {
+            Output::err_generic(
+                "refusing to use bunx cache directory <b>{}<r> because it is not a directory owned by the current user. Remove it and try again.",
+                format_args!("{}", BStr::new(bunx_cache_dir)),
+            );
+            Global::exit(1);
+        }
 
         'create_package_json: {
             // create package.json, but only if it doesn't exist

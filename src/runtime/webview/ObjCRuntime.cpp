@@ -21,6 +21,7 @@ SEL Ref::s_init;
 SEL Ref::s_release;
 SEL Ref::s_retain;
 SEL Ref::s_description;
+SEL Ref::s_isKindOfClass;
 
 Class NSString::cls;
 SEL NSString::s_stringWithUTF8String;
@@ -43,6 +44,7 @@ SEL NSData::s_length;
 Class NSNumber::cls;
 SEL NSNumber::s_numberWithDouble;
 
+Class NSArray::cls;
 SEL NSArray::s_count;
 SEL NSArray::s_objectAtIndex;
 
@@ -209,9 +211,13 @@ static void delegateDidReceiveScriptMessage(id self, SEL, id /*controller*/, id 
     ObjCRuntime::ARPool pool;
     auto* host = objc::NavigationDelegate(self).host();
     if (!host) return;
-    objc::NSDictionary body(objc::WKScriptMessage(message).body());
+    id rawBody = objc::WKScriptMessage(message).body();
+    if (!objc::Ref(rawBody).isKindOf(objc::NSDictionary::cls)) return;
+    objc::NSDictionary body(rawBody);
     id type = body.objectForKey(objc::NSString::fromWTF("type"_s).m_id);
     id args = body.objectForKey(objc::NSString::fromWTF("args"_s).m_id);
+    if (!objc::Ref(type).isKindOf(objc::NSString::cls)) return;
+    if (args && !objc::Ref(args).isKindOf(objc::NSArray::cls)) return;
     host->onConsoleMessage(type, args);
 }
 
@@ -342,6 +348,7 @@ bool ObjCRuntime::load()
     Ref::s_release = sel("release");
     Ref::s_retain = sel("retain");
     Ref::s_description = sel("description");
+    Ref::s_isKindOfClass = sel("isKindOfClass:");
 
     // --- populate wrapper classes -----------------------------------------
     // A missing class at load time beats a nil-message (silent no-op) at
@@ -376,6 +383,7 @@ bool ObjCRuntime::load()
     CLS(NSNumber::cls, "NSNumber");
     NSNumber::s_numberWithDouble = sel("numberWithDouble:");
 
+    CLS(NSArray::cls, "NSArray");
     NSArray::s_count = sel("count");
     NSArray::s_objectAtIndex = sel("objectAtIndex:");
 

@@ -110,6 +110,7 @@ static bool canPerformFastEnumeration(Structure* s)
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
+extern "C" void Bun__VM__noteCommonJSEvaluation(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
 {
@@ -120,6 +121,16 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
     if (code.isNull()) [[unlikely]] {
         throwException(globalObject, scope, createError(globalObject, "Failed to evaluate module"_s));
         return false;
+    }
+
+    // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
+    // "unhandledRejection"; record the entry mode for the run command. Only the root
+    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
+    if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
+        auto view = id->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (view == "."_s)
+            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
     }
 
     JSFunction* resolveFunction = nullptr;
@@ -247,6 +258,8 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
         this->m_filename.get());
 
     if (auto exception = scope.exception()) {
+        if (vm.hasPendingTerminationException()) [[unlikely]]
+            return false;
         (void)scope.tryClearException();
 
         // On error, remove the module from the require map/
@@ -1008,7 +1021,7 @@ void populateESMExports(
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
-            scope.assertNoException();
+            RETURN_IF_EXCEPTION(scope, );
             if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 CLEAR_IF_EXCEPTION(scope);
@@ -1239,6 +1252,22 @@ void JSCommonJSModule::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
             analyzer.analyzePropertyNameEdge(cell, overriddenParent.asCell(), overriddenParentIdentifier.impl());
         }
     }
+
+    if (thisObject->m_childrenValue) {
+        JSValue childrenValue = thisObject->m_childrenValue.get();
+        if (childrenValue.isCell()) {
+            const Identifier childrenIdentifier = Identifier::fromString(vm, "children"_s);
+            analyzer.analyzePropertyNameEdge(cell, childrenValue.asCell(), childrenIdentifier.impl());
+        }
+    }
+
+    if (thisObject->m_overriddenCompile) {
+        JSValue overriddenCompile = thisObject->m_overriddenCompile.get();
+        if (overriddenCompile.isCell()) {
+            const Identifier overriddenCompileIdentifier = Identifier::fromString(vm, "_compile"_s);
+            analyzer.analyzePropertyNameEdge(cell, overriddenCompile.asCell(), overriddenCompileIdentifier.impl());
+        }
+    }
 }
 
 const JSC::ClassInfo JSCommonJSModule::s_info = { "Module"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSModule) };
@@ -1247,8 +1276,13 @@ const JSC::ClassInfo RequireFunctionPrototype::s_info = { "require"_s, &Base::s_
 
 ALWAYS_INLINE EncodedJSValue finishRequireWithError(Zig::GlobalObject* globalObject, JSC::ThrowScope& throwScope, JSC::JSValue specifierValue)
 {
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue exception = throwScope.exception();
     ASSERT(exception);
+    // tryClearException() cannot clear a termination, and JSMap::remove with
+    // it still pending returns false, tripping ASSERT(wasRemoved).
+    if (vm.hasPendingTerminationException()) [[unlikely]]
+        RELEASE_AND_RETURN(throwScope, {});
     (void)throwScope.tryClearException();
 
     // On error, remove the module from the require map/
@@ -1558,6 +1592,8 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 moduleObject->m_dirname.get(),
                                 moduleObject->m_filename.get());
                             if (auto exception = scope.exception()) {
+                                if (vm.hasPendingTerminationException()) [[unlikely]]
+                                    return;
                                 (void)scope.tryClearException();
 
                                 // On error, remove the module from the require map

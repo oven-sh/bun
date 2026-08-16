@@ -4,6 +4,9 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
+pub mod error;
+pub use error::{Error, Result};
+
 pub use bun_resolver::fs as bun_fs;
 pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 
@@ -43,9 +46,8 @@ pub use options_impl::PathTemplate;
 pub use HTMLImportManifest::html_import_manifest;
 pub use bun_core::cheap_prefix_normalizer;
 pub use bundle_v2::{
-    CompileResult, CompileResultForSourceMap, ContentHasher, DeclInfo, DeclInfoKind, EventLoop,
-    ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
-    target_from_hashbang,
+    CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
+    StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
 };
 pub use chunk::{
     CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
@@ -87,7 +89,7 @@ pub mod output_file;
 #[path = "ThreadPool.rs"]
 pub mod thread_pool;
 
-pub mod AstBuilder;
+pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
 pub use bundled_ast::BundledAst;
@@ -122,7 +124,7 @@ pub mod linker_context {
     pub mod compute_cross_chunk_dependencies;
 
     #[path = "convertStmtsForChunk.rs"]
-    pub mod convert_stmts_for_chunk;
+    pub(crate) mod convert_stmts_for_chunk;
 
     #[path = "convertStmtsForChunkForDevServer.rs"]
     pub mod convert_stmts_for_chunk_for_dev_server;
@@ -134,7 +136,7 @@ pub mod linker_context {
     pub mod find_all_imported_parts_in_js_order;
 
     #[path = "findImportedCSSFilesInJSOrder.rs"]
-    pub mod find_imported_css_files_in_js_order;
+    pub(crate) mod find_imported_css_files_in_js_order;
 
     #[path = "findImportedFilesInCSSOrder.rs"]
     pub mod find_imported_files_in_css_order;
@@ -149,19 +151,19 @@ pub mod linker_context {
     pub mod generate_code_for_lazy_export;
 
     #[path = "generateCompileResultForCssChunk.rs"]
-    pub mod generate_compile_result_for_css_chunk;
+    pub(crate) mod generate_compile_result_for_css_chunk;
 
     #[path = "generateCompileResultForHtmlChunk.rs"]
     pub mod generate_compile_result_for_html_chunk;
 
     #[path = "generateCompileResultForJSChunk.rs"]
-    pub mod generate_compile_result_for_js_chunk;
+    pub(crate) mod generate_compile_result_for_js_chunk;
 
     #[path = "postProcessCSSChunk.rs"]
-    pub mod post_process_css_chunk;
+    pub(crate) mod post_process_css_chunk;
 
     #[path = "postProcessHTMLChunk.rs"]
-    pub mod post_process_html_chunk;
+    pub(crate) mod post_process_html_chunk;
 
     #[path = "postProcessJSChunk.rs"]
     pub mod post_process_js_chunk;
@@ -170,7 +172,7 @@ pub mod linker_context {
     pub mod prepare_css_asts_for_chunk;
 
     #[path = "renameSymbolsInChunk.rs"]
-    pub mod rename_symbols_in_chunk;
+    pub(crate) mod rename_symbols_in_chunk;
 
     #[path = "writeOutputFilesToDisk.rs"]
     pub mod write_output_files_to_disk;
@@ -189,9 +191,6 @@ pub mod linker_context {
     pub use crate::linker_context_mod::{
         ChunkMeta, GenerateChunkCtx, LinkerContext, PendingPartRange,
     };
-
-    pub use output_file_list_builder::OutputFileList as OutputFileListBuilder;
-    pub use static_route_visitor::StaticRouteVisitor;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,7 +198,6 @@ pub mod linker_context {
 // modules above.
 // ---------------------------------------------------------------------------
 
-pub use Graph::Graph as GraphStruct;
 /// See `bundle_v2`.
 pub use bundle_v2::BundleV2;
 /// See `chunk` module.
@@ -242,14 +240,12 @@ pub mod options {
     pub use super::output_file::BakeExtra;
     pub use super::output_file::IndexOptional;
     /// `OutputFile.init` argument struct.
-    pub use super::output_file::Options as OutputFileInit;
-    pub use super::output_file::OptionsData as OutputFileData;
-    pub use super::output_file::Value as OutputValue;
+    pub(crate) use super::output_file::Options as OutputFileInit;
+    pub(crate) use super::output_file::OptionsData as OutputFileData;
     pub use super::output_file::Value as OutputFileValue;
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
-    pub type Options<'a> = super::BundleOptions<'a>;
 
     /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///
@@ -295,26 +291,14 @@ pub mod options {
     /// Re-export of the canonical def in `crate::bake_types` (bundle_v2.rs).
     pub use crate::bake_types::Side;
 
-    /// Legacy `options::Framework` (referenced by the resolver's
-    /// `FrameworkRouterPair`). The full struct is `bake::Framework` which
-    /// lives in a higher-tier crate; minimal real struct lives in `bake_types`.
     pub use crate::bake_types::Framework;
-
-    // `Env`, `EnvEntry`, `RouteConfig`, `jsx`/`JSX` are intentionally NOT
-    // redefined here — the `pub use super::options_impl::*` glob above exposes
-    // the single canonical defs (options.rs:1141/2493/2501/2722). The previous
-    // inline shadows produced 4+ incompatible `jsx::Pragma`/`Runtime` types and
-    // a `&'static [&'static [u8]]` `factory`/`fragment` that could not hold the
-    // heap allocation from `member_list_to_components_if_different`
-    // without `Box::leak`.
 }
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
 /// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled`/`set_disabled`
-/// live on `RuntimeTranspilerCacheExt`.
+/// is canonical in `bun_js_parser`; the bundler-tier `disabled` lives on
+/// `RuntimeTranspilerCacheExt`.
 pub use cache::RuntimeTranspilerCacheExt;
-pub use cache::Set as Cache;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `bake_types` defs from
@@ -339,14 +323,14 @@ bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
         fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
-        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), bun_core::Error>;
-        fn handle_parse_task_failure(err: bun_core::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), bun_core::Error>;
-        fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), bun_core::Error>;
-        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), bun_core::Error>;
+        fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
+        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
+        fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
+        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
         fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();
-        fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), bun_core::Error>;
+        fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;
         fn register_barrel_export(barrel_path: &[u8], alias: &[u8]);
     }
 }

@@ -9,19 +9,15 @@ use crate::webcore::streams;
 pub struct ByteBlobLoader {
     pub offset: blob::SizeType,
     // LIFETIMES.tsv: SHARED — ref() on setup, deref() in clearData
-    pub store: Option<StoreRef>,
-    pub chunk_size: blob::SizeType,
-    pub remain: blob::SizeType,
-    pub done: bool,
-    pub pulled: bool,
+    pub(crate) store: Option<StoreRef>,
+    pub(crate) chunk_size: blob::SizeType,
+    pub(crate) remain: blob::SizeType,
+    pub(crate) done: bool,
 
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    // Always-owned `Box<[u8]>`; the flag is kept because it is
-    // transferred to Blob in to_any_blob.
-    pub content_type: Box<[u8]>,
-    pub content_type_allocated: bool,
+    pub(crate) content_type: blob::BlobContentType,
 }
 
 impl Default for ByteBlobLoader {
@@ -32,9 +28,7 @@ impl Default for ByteBlobLoader {
             chunk_size: 1024 * 1024 * 2,
             remain: 1024 * 1024 * 2,
             done: false,
-            pulled: false,
-            content_type: Box::default(),
-            content_type_allocated: false,
+            content_type: blob::BlobContentType::default(),
         }
     }
 }
@@ -55,7 +49,7 @@ impl readable_stream::SourceContext for ByteBlobLoader {
         Self::on_pull(self, buf, view)
     }
     fn on_cancel(&mut self) {
-        Self::on_cancel(self)
+        Self::on_cancel(self);
     }
     fn deinit_fn(&mut self) {
         Self::deinit(self)
@@ -75,24 +69,18 @@ impl readable_stream::SourceContext for ByteBlobLoader {
     }
 }
 
-bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_const; pub fn parent; }
+bun_core::impl_field_parent! { ByteBlobLoader => Source.context; fn parent; }
 
 impl ByteBlobLoader {
-    pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
+    pub(crate) fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
         // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
         let (offset, size) = blob.resolved_size();
-        // `content_type` is an always-owned `Box<[u8]>` (we dupe in both
-        // arms), so the flag must be `true` whenever the box is non-empty —
-        // it's later transferred verbatim to a `Blob` in `to_any_blob`, and a
-        // `false` there strands the `into_raw`'d allocation behind
-        // `Blob::free_content_type`'s `content_type_allocated` gate.
-        let (content_type, content_type_allocated) = if blob.content_type_was_set.get() {
-            let ct = blob.content_type_slice();
-            (Box::<[u8]>::from(ct), !ct.is_empty())
+        let content_type = if blob.content_type_was_set.get() {
+            blob.content_type.get().clone()
         } else {
-            (Box::default(), false)
+            blob::BlobContentType::default()
         };
         *self = ByteBlobLoader {
             offset,
@@ -105,21 +93,18 @@ impl ByteBlobLoader {
             .min(1024 * 1024 * 2),
             remain: size,
             done: false,
-            pulled: false,
             content_type,
-            content_type_allocated,
         };
     }
 
-    pub fn on_start(&mut self) -> streams::Start {
+    pub(crate) fn on_start(&mut self) -> streams::Start {
         // `streams::BlobSizeType` and `blob::SizeType` are both u64 in the Rust port.
         streams::Start::ChunkSize(self.chunk_size)
     }
 
-    pub fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
+    pub(crate) fn on_pull(&mut self, buffer: &mut [u8], array: JSValue) -> streams::Result {
         array.ensure_still_alive();
         let _keep = bun_jsc::EnsureStillAlive(array);
-        self.pulled = true;
         let Some(store) = self.store.clone() else {
             return streams::Result::Done;
         };
@@ -157,7 +142,7 @@ impl ByteBlobLoader {
         })
     }
 
-    pub fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
+    pub(crate) fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
         // Take ownership via detach_store() up front.
         let store = self.detach_store()?;
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
@@ -178,20 +163,14 @@ impl ByteBlobLoader {
         if !self.content_type.is_empty() {
             let ct = core::mem::take(&mut self.content_type);
             blob.content_type_was_set.set(!ct.is_empty());
-            blob.content_type
-                .set(bun_core::heap::into_raw(ct).cast_const());
-            // `content_type` is an always-owned `Box<[u8]>` in the Rust port
-            // (see `setup`); `into_raw` just handed the new blob a heap
-            // allocation it must free regardless of the flag's prior value.
-            blob.content_type_allocated.set(true);
-            self.content_type_allocated = false;
+            blob.content_type.set(ct);
         }
 
-        self.parent_const().is_closed.set(true);
+        self.parent().is_closed.set(true);
         Some(blob::Any::Blob(blob))
     }
 
-    pub fn detach_store(&mut self) -> Option<StoreRef> {
+    pub(crate) fn detach_store(&mut self) -> Option<StoreRef> {
         if let Some(store) = self.store.take() {
             self.done = true;
             return Some(store);
@@ -199,7 +178,7 @@ impl ByteBlobLoader {
         None
     }
 
-    pub fn on_cancel(&mut self) {
+    pub(crate) fn on_cancel(&mut self) {
         self.clear_data();
     }
 
@@ -207,22 +186,19 @@ impl ByteBlobLoader {
     // Only side-effect teardown lives here; the enclosing `Box<Source>` is freed by
     // the caller (`NewSource::decrement_count`) *after* this returns. Freeing the
     // parent here would deallocate the storage backing `&mut self` (dangling UAF).
-    pub fn deinit(&mut self) {
+    pub(crate) fn deinit(&mut self) {
         self.clear_data();
     }
 
     fn clear_data(&mut self) {
-        if self.content_type_allocated {
-            self.content_type = Box::default();
-            self.content_type_allocated = false;
-        }
+        self.content_type = blob::BlobContentType::default();
 
         if let Some(store) = self.store.take() {
             drop(store); // store.deref()
         }
     }
 
-    pub fn drain(&mut self) -> Vec<u8> {
+    pub(crate) fn drain(&mut self) -> Vec<u8> {
         let Some(store) = self.store.clone() else {
             return Vec::new();
         };
@@ -239,7 +215,7 @@ impl ByteBlobLoader {
         cloned
     }
 
-    pub fn to_buffered_value(
+    pub(crate) fn to_buffered_value(
         &mut self,
         global: &JSGlobalObject,
         action: streams::BufferActionTag,
@@ -247,7 +223,7 @@ impl ByteBlobLoader {
         if let Some(mut blob) = self.to_any_blob(global) {
             let result = blob.to_promise(global, action);
             blob.detach();
-            return Ok(result?);
+            return result;
         }
 
         // globalThis.ERR(.BODY_ALREADY_USED, "...", .{}).reject()
@@ -259,7 +235,7 @@ impl ByteBlobLoader {
             .reject())
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
         if let Some(store) = &self.store {
             return store.memory_cost();

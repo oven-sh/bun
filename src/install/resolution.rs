@@ -16,12 +16,48 @@ use crate::versioned_url::VersionedURLType;
 
 pub type Resolution = ResolutionType<u64>;
 
+impl Resolution {
+    /// True when this resolution can satisfy `dep_version`: npm ranges by
+    /// semver, git/github by exact repo equality. Any other kind pairing
+    /// (workspace, folder, tarball, dist-tag, …) never satisfies. This is
+    /// the comparison the resolver's deferred-peer phase uses to bind peer
+    /// edges against already-resolved packages.
+    pub(crate) fn satisfies_dependency_version(
+        &self,
+        dep_version: &dependency::Version,
+        dep_version_buf: &[u8],
+        resolution_buf: &[u8],
+    ) -> bool {
+        if self.tag == Tag::Npm && dep_version.tag == dependency::VersionTag::Npm {
+            return dep_version.npm().version.satisfies(
+                self.npm().version,
+                dep_version_buf,
+                resolution_buf,
+            );
+        }
+
+        if self.tag == Tag::Git && dep_version.tag == dependency::VersionTag::Git {
+            return self
+                .git()
+                .eql(dep_version.git(), resolution_buf, dep_version_buf);
+        }
+
+        if self.tag == Tag::Github && dep_version.tag == dependency::VersionTag::Github {
+            return self
+                .github()
+                .eql(dep_version.github(), resolution_buf, dep_version_buf);
+        }
+
+        false
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ResolutionType<SemverInt: VersionInt> {
     pub tag: Tag,
-    pub _padding: [u8; 7],
-    pub value: Value<SemverInt>,
+    pub(crate) _padding: [u8; 7],
+    pub(crate) value: Value<SemverInt>,
 }
 
 /// Compat alias for the stub-era flat `npm` field type. Identical layout to
@@ -65,7 +101,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     /// Only the tag/padding are guaranteed zero — the union payload is the
     /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
     /// reader may legally access.
-    pub const ZEROED: Self = Self {
+    pub(crate) const ZEROED: Self = Self {
         tag: Tag::Uninitialized,
         _padding: [0; 7],
         value: Value { uninitialized: () },
@@ -73,7 +109,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 
     /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
     #[inline]
-    pub fn init(value: TaggedValue<SemverInt>) -> Self {
+    pub(crate) fn init(value: TaggedValue<SemverInt>) -> Self {
         Self {
             tag: value.tag(),
             _padding: [0; 7],
@@ -83,13 +119,13 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 
     /// Convenience constructor for a root resolution.
     #[inline]
-    pub fn init_root() -> Self {
+    pub(crate) fn init_root() -> Self {
         Self::init(TaggedValue::Root)
     }
 
     /// Convenience constructor for a symlink resolution.
     #[inline]
-    pub fn init_symlink(s: String) -> Self {
+    pub(crate) fn init_symlink(s: String) -> Self {
         Self::init(TaggedValue::Symlink(s))
     }
 
@@ -111,22 +147,18 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
     /// `git` or `github` payload — they share the [`Repository`] shape.
     #[inline]
-    pub fn repository(&self) -> &Repository {
+    pub(crate) fn repository(&self) -> &Repository {
         debug_assert!(self.tag == Tag::Git || self.tag == Tag::Github);
         // SAFETY: `git` and `github` occupy the same union slot type
         // (`Repository`); tag asserted to be one of the two.
         unsafe { &(*core::ptr::from_ref(&self.value)).git }
     }
 
-    pub fn is_git(&self) -> bool {
-        self.tag.is_git()
-    }
-
-    pub fn can_enqueue_install_task(&self) -> bool {
+    pub(crate) fn can_enqueue_install_task(&self) -> bool {
         self.tag.can_enqueue_install_task()
     }
 
-    pub fn from_text_lockfile(
+    pub(crate) fn from_text_lockfile(
         res_str: &[u8],
         string_buf: &mut StringBuf,
     ) -> Result<Self, FromTextLockfileError> {
@@ -219,7 +251,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn from_pnpm_lockfile(
+    pub(crate) fn from_pnpm_lockfile(
         res_str: &[u8],
         string_buf: &mut StringBuf,
     ) -> Result<Resolution, FromPnpmLockfileError> {
@@ -316,7 +348,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn order(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
+    pub(crate) fn order(&self, rhs: &Self, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
         if self.tag != rhs.tag {
             return self.tag.0.cmp(&rhs.tag.0);
         }
@@ -343,7 +375,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn count<B>(&self, buf: &[u8], builder: &mut B)
+    pub(crate) fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
         B: StringBuilderLike,
     {
@@ -363,7 +395,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
     /// that `ResolutionType: Clone + Copy`.
-    pub fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
+    pub(crate) fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
     where
         B: StringBuilderLike,
     {
@@ -400,7 +432,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn copy(&self) -> Self {
+    pub(crate) fn copy(&self) -> Self {
         match self.tag {
             Tag::Npm => Self::init(TaggedValue::Npm(*self.npm())),
             Tag::LocalTarball => Self::init(TaggedValue::LocalTarball(*self.local_tarball())),
@@ -438,21 +470,24 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub fn fmt_url<'a>(&'a self, string_bytes: &'a [u8]) -> URLFormatter<'a, SemverInt> {
+    pub(crate) fn fmt_url<'a>(&'a self, string_bytes: &'a [u8]) -> URLFormatter<'a, SemverInt> {
         URLFormatter {
             resolution: self,
             buf: string_bytes,
         }
     }
 
-    pub fn fmt_for_debug<'a>(&'a self, string_bytes: &'a [u8]) -> DebugFormatter<'a, SemverInt> {
+    pub(crate) fn fmt_for_debug<'a>(
+        &'a self,
+        string_bytes: &'a [u8],
+    ) -> DebugFormatter<'a, SemverInt> {
         DebugFormatter {
             resolution: self,
             buf: string_bytes,
         }
     }
 
-    pub fn eql(&self, rhs: &Self, lhs_string_buf: &[u8], rhs_string_buf: &[u8]) -> bool {
+    pub(crate) fn eql(&self, rhs: &Self, lhs_string_buf: &[u8], rhs_string_buf: &[u8]) -> bool {
         if self.tag != rhs.tag {
             return false;
         }
@@ -651,7 +686,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
     /// See [`URLFormatter::write_to`] for rationale — `Display` is lossy on
     /// non-UTF-8 path bytes; this writes the lockfile string-buffer slices
     /// verbatim via `write_all`.
-    pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
+    pub(crate) fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
     {
@@ -846,7 +881,7 @@ impl<'a, SemverInt: VersionInt> fmt::Display for DebugFormatter<'a, SemverInt> {
 pub type Value<SemverInt> = bun_install_types::resolver_hooks::ResolutionValue<SemverInt>;
 
 #[inline]
-pub(crate) fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
+fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
     // SAFETY: all-zero is a valid Value — every variant is POD with a valid
     // all-zero representation (Semver String, Repository, VersionedURLType are
     // all #[repr(C)] with no NonNull/NonZero fields).
@@ -854,7 +889,7 @@ pub(crate) fn value_zero<SemverInt: VersionInt>() -> Value<SemverInt> {
 }
 
 /// To avoid undefined memory between union values, we must zero initialize the union first.
-pub(crate) fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<SemverInt> {
+fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -> Value<SemverInt> {
     let mut value = value_zero::<SemverInt>();
     match field {
         TaggedValue::Uninitialized => value.uninitialized = (),
@@ -890,22 +925,22 @@ impl Default for Tag {
 
 #[allow(non_upper_case_globals)]
 impl Tag {
-    pub const Uninitialized: Tag = Tag(0);
+    pub(crate) const Uninitialized: Tag = Tag(0);
     pub const Root: Tag = Tag(1);
     pub const Npm: Tag = Tag(2);
     pub const Folder: Tag = Tag(4);
 
-    pub const LocalTarball: Tag = Tag(8);
+    pub(crate) const LocalTarball: Tag = Tag(8);
 
-    pub const Github: Tag = Tag(16);
+    pub(crate) const Github: Tag = Tag(16);
 
-    pub const Git: Tag = Tag(32);
+    pub(crate) const Git: Tag = Tag(32);
 
     pub const Symlink: Tag = Tag(64);
 
     pub const Workspace: Tag = Tag(72);
 
-    pub const RemoteTarball: Tag = Tag(80);
+    pub(crate) const RemoteTarball: Tag = Tag(80);
 
     // This is a placeholder for now.
     // But the intent is to eventually support URL imports at the package manager level.
@@ -924,15 +959,15 @@ impl Tag {
     // This is similar to how Go does it, except it wouldn't clone the whole repo.
     // There are more efficient ways to do this, e.g. generate a .bun file just for all URL imports.
     // There are questions of determinism, but perhaps that's what Integrity would do.
-    pub const SingleFileModule: Tag = Tag(100);
+    pub(crate) const SingleFileModule: Tag = Tag(100);
 }
 
 impl Tag {
-    pub fn is_git(self) -> bool {
+    pub(crate) fn is_git(self) -> bool {
         self == Tag::Git || self == Tag::Github
     }
 
-    pub fn can_enqueue_install_task(self) -> bool {
+    pub(crate) fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball
             || self == Tag::RemoteTarball
@@ -942,7 +977,7 @@ impl Tag {
 
     /// Returns the snake_case tag name, or `None` for an unnamed
     /// (non-exhaustive) value.
-    pub fn name(self) -> Option<&'static str> {
+    pub(crate) fn name(self) -> Option<&'static str> {
         Some(match self {
             Tag::Uninitialized => "uninitialized",
             Tag::Root => "root",
@@ -966,13 +1001,9 @@ pub enum FromTextLockfileError {
     OutOfMemory,
     #[error("unexpected resolution")]
     UnexpectedResolution,
-    #[error("invalid semver")]
-    InvalidSemver,
 }
 
 bun_core::oom_from_alloc!(FromTextLockfileError);
-
-bun_core::named_error_set!(FromTextLockfileError);
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum FromPnpmLockfileError {
@@ -983,5 +1014,3 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-
-bun_core::named_error_set!(FromPnpmLockfileError);

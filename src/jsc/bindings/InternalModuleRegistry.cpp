@@ -73,10 +73,13 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     return result;
 }
 
+// Accepts both generator signatures (BUN_FOREACH_ESM_NATIVE_MODULE and BUN_FOREACH_LAZY_ESM_NATIVE_MODULE);
+// only the default export is used here, and a lazy generator always provides that one eagerly.
+template<typename Generator>
 ALWAYS_INLINE JSC::JSValue generateNativeModule(
     JSC::JSGlobalObject* globalObject,
     JSC::VM& vm,
-    const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
+    Generator generator)
 {
     Vector<JSC::Identifier, 4> propertyNames;
     JSC::MarkedArgumentBuffer arguments;
@@ -111,12 +114,18 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, c
         CRASH();
     }
 }
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString) \
     return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
 
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    return generateModule(globalObject, vm, SOURCE, moduleId, urlString)
+// The module sources are linked as one read-only blob (bun_internal_modules_data,
+// see the generated InternalModuleRegistryConstants.S); each module is a span at
+// a known offset/length. createWithoutCopying is the same path the old
+// ASCIILiteral → String conversion took.
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString)                         \
+    return generateModule(globalObject, vm,                                                                                        \
+        WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + (OFFSET), (LENGTH)))), \
+        moduleId, urlString)
 #endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };

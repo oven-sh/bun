@@ -202,6 +202,48 @@ test("new File('123', '123') is NOT supported", async () => {
   expect(() => new File("123", "123")).toThrow();
 });
 
+describe("new File() lastModified option", () => {
+  const lm = (o: any) => new File([], "n", o).lastModified;
+
+  test.each([
+    // [input, expected] — present member goes through ToNumber; NaN → 0
+    [NaN, 0],
+    ["not a number", 0],
+    [{}, 0],
+    [{ valueOf: () => NaN }, 0],
+    [null, 0],
+    ["", 0],
+    [false, 0],
+    [true, 1],
+    ["123", 123],
+    [1234, 1234],
+    [-1, -1],
+  ] as const)("lastModified: %p -> %p", (input, expected) => {
+    expect(lm({ lastModified: input })).toBe(expected);
+  });
+
+  // The default comes from a native wall-clock read that may differ from JS
+  // Date.now() by a few ms on Windows; assert "current time" within a wide
+  // tolerance rather than an exact bracket.
+  test.each([[{ lastModified: undefined }], [{}]])("%p defaults to the current time", opts => {
+    const value = lm(opts);
+    expect(Number.isFinite(value)).toBe(true);
+    expect(Math.abs(value - Date.now())).toBeLessThan(60_000);
+  });
+
+  test("valueOf throwing propagates", () => {
+    expect(() =>
+      lm({
+        lastModified: {
+          valueOf() {
+            throw new Error("boom");
+          },
+        },
+      }),
+    ).toThrow("boom");
+  });
+});
+
 test("new Blob('123') is NOT supported", async () => {
   expect(() => new Blob("123")).toThrow();
 });
@@ -339,15 +381,16 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
     "data.txt": "hello",
   });
   const script = `
+    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
     const p = ${JSON.stringify(path.join(String(dir), "data.txt"))};
     const type = "application/x-" + Buffer.alloc(64 * 1024, "a").toString();
     const file = Bun.file(p, { type });
     for (let i = 0; i < 100; i++) await file.text();
     Bun.gc(true);
-    const before = process.memoryUsage.rss();
+    const before = rss();
     for (let i = 0; i < 1024; i++) await file.text();
     Bun.gc(true);
-    const after = process.memoryUsage.rss();
+    const after = rss();
     console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
   `;
   await using proc = Bun.spawn({
@@ -554,5 +597,208 @@ describe("slice bounds are respected when streaming and serving", () => {
     const get = await fetch(`http://localhost:${server.port}/`);
     expect(get.headers.get("content-length")).toBe("4");
     expect(await get.text()).toBe("3456");
+  });
+});
+
+// Wrapping a Blob whose type is heap-owned (not in the mime table) with a
+// known mime type overwrote content_type with a static pointer without
+// clearing content_type_allocated, so GC sweep freed a static pointer.
+test.skipIf(!isASAN).each(["Blob", "File"] as const)(
+  "new %s([typedBlob], {type}) with a known mime type does not free a static pointer",
+  async Ctor => {
+    const make =
+      Ctor === "Blob" ? `new Blob([inner], { type: "text/plain" })` : `new File([inner], "f", { type: "text/plain" })`;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const inner = new Blob(["y"], { type: "x/not-in-the-table" });
+          for (let i = 0; i < 2000; i++) {
+            ${make};
+            if ((i & 127) === 0) Bun.gc(true);
+          }
+          Bun.gc(true); Bun.gc(true);
+          console.log(${make}.type);
+        `,
+      ],
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0"].filter(Boolean).join(":") },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: expect.stringMatching(/^text\/plain(;charset=utf-8)?\n$/),
+      stderr: expect.not.stringContaining("AddressSanitizer"),
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
+
+// File-backed twin of "slice bounds are respected when streaming and serving"
+// above: the File arm of resolve_size()/resolved_size() must not widen a
+// sliced Bun.file() to the end of the file either.
+describe("file-backed slice bounds are respected when streaming and serving", () => {
+  test("Bun.file(path).slice(start, end) streams only the slice", async () => {
+    using dir = tempDir("blob-file-slice", { "data.txt": "0123456789".repeat(10) });
+    const s = Bun.file(`${dir}/data.txt`).slice(3, 7);
+    expect(await new Response(s).text()).toBe("3456");
+    // Streaming must not mutate the slice either.
+    expect(s.size).toBe(4);
+
+    let streamed = 0;
+    for await (const chunk of new Response(Bun.file(`${dir}/data.txt`).slice(0, 5)).body!) {
+      streamed += chunk.length;
+    }
+    expect(streamed).toBe(5);
+  });
+
+  test("content-length of a sliced Bun.file response body", async () => {
+    using dir = tempDir("blob-file-slice-cl", { "data.txt": "0123456789".repeat(10) });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(Bun.file(`${dir}/data.txt`).slice(3, 7)),
+    });
+
+    const head = await fetch(server.url, { method: "HEAD" });
+    expect(head.headers.get("content-length")).toBe("4");
+
+    const get = await fetch(server.url);
+    expect(get.headers.get("content-length")).toBe("4");
+    expect(await get.text()).toBe("3456");
+  });
+
+  test("structuredClone keeps the slice size and does not mutate the original", async () => {
+    using dir = tempDir("blob-file-slice-clone", { "data.txt": "0123456789".repeat(10) });
+    const s = Bun.file(`${dir}/data.txt`).slice(0, 5);
+    expect(s.size).toBe(5);
+    const clone = structuredClone(s);
+    expect(clone.size).toBe(5);
+    expect(s.size).toBe(5);
+    expect(await clone.text()).toBe("01234");
+    expect(await s.text()).toBe("01234");
+  });
+
+  test("slice end beyond EOF clamps to the file size", async () => {
+    using dir = tempDir("blob-file-slice-eof", { "data.txt": "0123456789" });
+    const s = Bun.file(`${dir}/data.txt`).slice(5, 5000);
+    expect(await new Response(s).text()).toBe("56789");
+    const clone = structuredClone(s);
+    expect(await clone.text()).toBe("56789");
+    // Serializing resolves the original's size, clamping the window to EOF.
+    expect(s.size).toBe(5);
+  });
+
+  // A sliced Bun.file() is streamed by FileReader, which hands bytes out two
+  // ways: a JS pull reads straight into the pull buffer, while a native sink
+  // (HTMLRewriter here; also pollable fds and Windows) is fed from the read
+  // loop's on_read_chunk. Both have to stop at the end of the slice while the
+  // file goes on past it, and a used-up slice has to end the stream, not hang it.
+  describe("a slice of a file that continues past it", () => {
+    const size = 1024 * 1024;
+    // 61-byte period: coprime with every chunk size involved, so bytes streamed
+    // from the wrong offset compare unequal, not just a wrong number of them.
+    const data = Buffer.alloc(size, "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY");
+    const windows: [start: number, end: number][] = [
+      [0, 5], // inside the first read
+      [3, 7],
+      [0, 256 * 1024], // exactly the first pull's buffer: the window ends on a read that fills it
+      [100, 700_000], // several pulls; the last one has to be cut short
+      [size - 10, size], // ends at EOF
+      [size - 10, size + 100], // the file ends first (the slice is taken before the size is known)
+      [4096, 4096], // nothing to deliver at all
+    ];
+
+    async function collect(stream: ReadableStream<Uint8Array>): Promise<Buffer> {
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of stream) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    }
+
+    // `subarray` clamps at EOF like the stream has to.
+    function expectWindow(delivered: Buffer, start: number, end: number) {
+      const expected = data.subarray(start, end);
+      expect(delivered.length).toBe(expected.length);
+      expect(delivered).toEqual(expected);
+    }
+
+    test.each(windows)("Bun.file(path).slice(%d, %d).stream()", async (start, end) => {
+      using dir = tempDir("blob-file-slice-stream", { "data.bin": data });
+      expectWindow(await collect(Bun.file(`${dir}/data.bin`).slice(start, end).stream()), start, end);
+    });
+
+    // Buffered consumers size their pulls from the slice and need the stream to
+    // close once it is delivered (#18192, #31675).
+    test.each(windows)("Bun.file(path).slice(%d, %d).stream().bytes()", async (start, end) => {
+      using dir = tempDir("blob-file-slice-bytes", { "data.bin": data });
+      const bytes = await Bun.file(`${dir}/data.bin`).slice(start, end).stream().bytes();
+      expectWindow(Buffer.from(bytes), start, end);
+    });
+
+    test.each(windows)("new Response(Bun.file(path).slice(%d, %d)).body", async (start, end) => {
+      using dir = tempDir("blob-file-slice-body", { "data.bin": data });
+      expectWindow(await collect(new Response(Bun.file(`${dir}/data.bin`).slice(start, end)).body!), start, end);
+    });
+
+    test.each(windows)("HTMLRewriter.transform(new Response(Bun.file(path).slice(%d, %d)))", async (start, end) => {
+      using dir = tempDir("blob-file-slice-rewriter", { "data.bin": data });
+      const response = new HTMLRewriter().transform(new Response(Bun.file(`${dir}/data.bin`).slice(start, end)));
+      expectWindow(Buffer.from(await response.arrayBuffer()), start, end);
+    });
+
+    // Reading .size gives the unsliced file's stream a window that ends exactly
+    // where the file does; ending the stream there must not drop the last chunk.
+    test("Bun.file(path) with a resolved size still streams the whole file", async () => {
+      using dir = tempDir("blob-file-resolved-size-stream", { "data.bin": data });
+      const file = Bun.file(`${dir}/data.bin`);
+      expect(file.size).toBe(size);
+      expectWindow(await collect(file.stream()), 0, size);
+    });
+  });
+});
+
+// Blob conversion accepts every ArrayBuffer-like type, both as a direct body
+// value and as a part inside an array.
+describe("Blob from ArrayBuffer-like values", () => {
+  const bytes = Uint8Array.from({ length: 16 }, (_, i) => i + 1);
+  const views = [
+    ["ArrayBuffer", () => bytes.slice().buffer],
+    ["DataView", () => new DataView(bytes.slice().buffer)],
+    ["Int8Array", () => new Int8Array(bytes.slice().buffer)],
+    ["Uint8Array", () => bytes.slice()],
+    ["Uint8ClampedArray", () => new Uint8ClampedArray(bytes.slice().buffer)],
+    ["Int16Array", () => new Int16Array(bytes.slice().buffer)],
+    ["Uint16Array", () => new Uint16Array(bytes.slice().buffer)],
+    ["Int32Array", () => new Int32Array(bytes.slice().buffer)],
+    ["Uint32Array", () => new Uint32Array(bytes.slice().buffer)],
+    ["Float16Array", () => new Float16Array(bytes.slice().buffer)],
+    ["Float32Array", () => new Float32Array(bytes.slice().buffer)],
+    ["Float64Array", () => new Float64Array(bytes.slice().buffer)],
+    ["BigInt64Array", () => new BigInt64Array(bytes.slice().buffer)],
+    ["BigUint64Array", () => new BigUint64Array(bytes.slice().buffer)],
+  ] as const;
+
+  test.each(views)("new Blob([%s]) copies the bytes", async (_name, make) => {
+    const view = make();
+    const blob = new Blob([view as any]);
+    expect(blob.size).toBe(view.byteLength);
+    expect(await blob.bytes()).toEqual(bytes);
+  });
+
+  test.each(views)("new Response(%s).blob() copies the bytes", async (_name, make) => {
+    const view = make();
+    const blob = await new Response(view as any).blob();
+    expect(blob.size).toBe(view.byteLength);
+    expect(await blob.bytes()).toEqual(bytes);
+  });
+
+  test("string, view, and Blob parts concatenate in order", async () => {
+    const blob = new Blob([
+      "ab",
+      new Uint8Array([0x63, 0x64]),
+      new Blob(["ef"]),
+      new DataView(new Uint8Array([0x67, 0x68]).buffer),
+    ]);
+    expect(await blob.text()).toBe("abcdefgh");
   });
 });

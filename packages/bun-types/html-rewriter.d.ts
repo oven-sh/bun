@@ -79,9 +79,9 @@ declare namespace HTMLRewriterTypes {
     /** Whether the element is explicitly self-closing, e.g. <foo /> */
     readonly selfClosing: boolean;
     /**
-     * Whether the element can have inner content. Returns `true` unless
+     * Whether the element can have inner content. `true` unless
      * - the element is an [HTML void element](https://html.spec.whatwg.org/multipage/syntax.html#void-elements)
-     * - or it's self-closing in a foreign context (eg. in SVG, MathML).
+     * - or it's self-closing in a foreign context (e.g. in SVG, MathML).
      */
     readonly canHaveContent: boolean;
     /** The element's namespace URI */
@@ -129,13 +129,9 @@ declare namespace HTMLRewriterTypes {
 /**
  * [HTMLRewriter](https://developers.cloudflare.com/workers/runtime-apis/html-rewriter?bun) is a fast API for transforming HTML.
  *
- * Bun leverages a native implementation powered by [lol-html](https://github.com/cloudflare/lol-html).
+ * Bun's implementation is native, built on [lol-html](https://github.com/cloudflare/lol-html).
  *
- * HTMLRewriter can be used to transform HTML in a variety of ways, including:
- * * Rewriting URLs
- * * Adding meta tags
- * * Removing elements
- * * Adding elements to the head
+ * Use it to rewrite URLs, add meta tags, remove elements, or add elements to the head.
  *
  * @example
  * ```ts
@@ -155,32 +151,51 @@ declare class HTMLRewriter {
   /**
    * Add handlers for elements matching a CSS selector
    * @param selector - A CSS selector (e.g. "div", "a[href]", ".class")
-   * @param handlers - Object containing handler functions for elements, comments, and text nodes
+   * @param handlers - Handlers for matching elements, comments, and text nodes
    */
   on(selector: string, handlers: HTMLRewriterTypes.HTMLRewriterElementContentHandlers): HTMLRewriter;
 
   /**
    * Add handlers for document-level events
-   * @param handlers - Object containing handler functions for doctype, comments, text nodes and document end
+   * @param handlers - Handlers for the doctype, comments, text nodes, and the end of the document
    */
   onDocument(handlers: HTMLRewriterTypes.HTMLRewriterDocumentContentHandlers): HTMLRewriter;
 
   /**
    * Transform HTML content
+   *
+   * Returns immediately; the rewrite continues in the background. Reading
+   * the returned response's body paces it — a streamed input (a file, a
+   * `fetch()` response, a `ReadableStream`) is pulled through only as fast
+   * as that body is consumed — and an unread body still runs every handler
+   * and buffers the output. An error thrown by a content handler (or a
+   * Promise it returns that rejects) rejects that body rather than throwing
+   * from `transform()`.
+   *
    * @param input - The HTML to transform
    * @returns A new {@link Response} with the transformed HTML
    */
-  transform(input: Response | Blob | Bun.BufferSource): Response;
+  transform(input: Response): Response;
   /**
    * Transform HTML content
+   *
    * @param input - The HTML string to transform
-   * @returns A new {@link String} containing the transformed HTML
+   * @returns The transformed HTML as a string
+   * @throws {TypeError} If a content handler returns a Promise that needs the
+   * event loop to turn (a timer, I/O, a `fetch`). The result has to be produced
+   * synchronously, so pass a {@link Response} and await its body instead.
    */
   transform(input: string): string;
   /**
    * Transform HTML content
-   * @param input - The HTML to transform as a {@link ArrayBuffer}
+   *
+   * Every {@link Bun.BufferSource} (a TypedArray, DataView, or ArrayBuffer)
+   * produces an `ArrayBuffer`, not a `Response`.
+   *
+   * @param input - The HTML to transform as bytes
    * @returns A new {@link ArrayBuffer} with the transformed HTML
+   * @throws {TypeError} If a content handler returns a Promise that needs the
+   * event loop to turn. See {@link transform} for `string` inputs.
    */
-  transform(input: ArrayBuffer): ArrayBuffer;
+  transform(input: Bun.BufferSource): ArrayBuffer;
 }

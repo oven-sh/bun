@@ -69,22 +69,25 @@ describe("Bun.stdin.slice(0, N).stream() over a pipe that stays open", () => {
   });
 
   // Same, through a native sink (HTMLRewriter pulls the stream itself) instead of a JS reader.
-  test.concurrent.skipIf(isWindows)("a zero-length slice piped into a native sink ends without waiting for a byte", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const res = new HTMLRewriter().transform(new Response(Bun.stdin.slice(0, 0).stream()));
+  test.concurrent.skipIf(isWindows)(
+    "a zero-length slice piped into a native sink ends without waiting for a byte",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const res = new HTMLRewriter().transform(new Response(Bun.stdin.slice(0, 0).stream()));
          process.stdout.write(String((await res.arrayBuffer()).byteLength));`,
-      ],
-      env: bunEnv,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
-  });
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
+    },
+  );
 
   test.concurrent.skipIf(isWindows)("ends after N bytes of a larger write", async () => {
     await using proc = spawnSliceEcho(3);

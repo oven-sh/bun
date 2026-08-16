@@ -530,6 +530,9 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(v1.length).toBeGreaterThan(256);
     const { text, exitCode } = await pretty({ "a/dist/x.min.js": v1, "b/dist/x.min.js": v2 });
     expect(text).toMatch(/\ndist\/x\.min\.js ─+ unminified \+4 -1\n/);
+    // The banner comment is not in the print, so it is shown and compared as written.
+    const bannered = await pretty({ "a/dist/x.min.js": "/*! x v1 | MIT */\n" + v1, "b/dist/x.min.js": "/*! x v2 | MIT */\n" + v1 });
+    expect(bannered.text).toMatch(/\ndist\/x\.min\.js ─+ unminified \+1 -1\n +1:1 │- \/\*! x v1 \| MIT \*\/\n +1:1 │\+ \/\*! x v2 \| MIT \*\/\n/);
     // A brand-new minified bundle is shown un-minified too, not as one enormous `+` line.
     const added = await pretty({ "a/README.md": "x\n", "b/README.md": "x\n", "b/dist/x.min.js": v2 });
     expect(added.text).toMatch(/\ndist\/x\.min\.js ─+ unminified new \+\d\d\n/);

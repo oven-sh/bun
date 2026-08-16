@@ -174,8 +174,14 @@ pub(crate) fn normalize_key_pair(
     Some((o, n))
 }
 
+/// Most of the file's bytes sit on very long lines (a banner comment or a trailing source-map line aside).
 pub(crate) fn looks_minified(bytes: &[u8]) -> bool {
-    bytes.len() > 256 && bun_core::strings::count_char(bytes, b'\n') * 200 < bytes.len()
+    let long: usize = bytes
+        .split(|&b| b == b'\n')
+        .map(<[u8]>::len)
+        .filter(|&l| l > 256)
+        .sum();
+    bytes.len() > 256 && long * 2 > bytes.len()
 }
 
 /// The parser allocates nodes from thread-local stores; keep them alive for the ASTs in this scope, reset after.

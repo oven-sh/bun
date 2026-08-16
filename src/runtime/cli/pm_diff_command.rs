@@ -1064,12 +1064,15 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             {
                 // Minified: the original is one enormous line, so the un-minified re-print is what gets shown.
                 change.semantic = Semantic::Normalized;
-                if no.text == nn.text {
+                // The print does not carry the banner comment; it is shown (and compared) as written.
+                let (shown_o, origin_o) = with_banner(o, no);
+                let (shown_n, origin_n) = with_banner(n, nn);
+                if shown_o == shown_n {
                     change.semantic = Semantic::FormattingOnly;
                     change.formatting_only = true;
                 } else {
-                    change.origin = Some([origin_of(no), origin_of(nn)]);
-                    unified_hunks(&no.text, &nn.text, flags.context, style, &mut change);
+                    change.origin = Some([origin_o, origin_n]);
+                    unified_hunks(&shown_o, &shown_n, flags.context, style, &mut change);
                     // Minifier name churn: retry with positional names and keep whichever diff is smaller.
                     if js_family && change.added + change.removed > 2 {
                         if let Some((co, cn)) =
@@ -1080,12 +1083,14 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                                 highlight: change.highlight,
                                 ..Default::default()
                             };
-                            if co.text == cn.text {
+                            let (shown_o, origin_o) = with_banner(o, &co);
+                            let (shown_n, origin_n) = with_banner(n, &cn);
+                            if shown_o == shown_n {
                                 alt.semantic = Semantic::FormattingOnly;
                             } else {
                                 alt.semantic = change.semantic;
-                                alt.origin = Some([origin_of(&co), origin_of(&cn)]);
-                                unified_hunks(&co.text, &cn.text, flags.context, style, &mut alt);
+                                alt.origin = Some([origin_o, origin_n]);
+                                unified_hunks(&shown_o, &shown_n, flags.context, style, &mut alt);
                             }
                             if alt.added + alt.removed < change.added + change.removed {
                                 change.semantic = alt.semantic;
@@ -1146,7 +1151,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
             let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
                 match norm {
-                    Some(nz) if style.pretty && nz.was_minified => nz.text.clone(),
+                    Some(nz) if style.pretty && nz.was_minified => with_banner(raw, nz).0,
                     _ => raw.to_vec(),
                 }
             };
@@ -1164,13 +1169,14 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             };
             if body.len() != new.or(old).map_or(0, <[u8]>::len) {
                 change.semantic = Semantic::Normalized;
-                let nz = if op == Operation::Insert {
-                    &norm_new
+                let (raw, nz) = if op == Operation::Insert {
+                    (new, &norm_new)
                 } else {
-                    &norm_old
+                    (old, &norm_old)
                 };
-                if let Some(nz) = nz {
-                    change.origin = Some([origin_of(nz), origin_of(nz)]);
+                if let (Some(raw), Some(nz)) = (raw, nz) {
+                    let origin = with_banner(raw, nz).1;
+                    change.origin = Some([origin.clone(), origin]);
                 }
                 if op == Operation::Insert {
                     change.added = count_lines(body)
@@ -2280,6 +2286,57 @@ fn unified_hunks(
         !new.is_empty() && !new.ends_with(b"\n"),
     );
     render_ops(&ops, context, style, change, unterminated);
+}
+
+/// The un-minified view of a file: its leading comment block as written (the print drops it), then the print;
+/// alongside, each shown line's original `line:col`.
+fn with_banner(raw: &[u8], norm: &normalize::Normalized) -> (Vec<u8>, Vec<(u32, u32)>) {
+    let mut i = 0usize;
+    loop {
+        while i < raw.len() && raw[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if raw[i..].starts_with(b"//") {
+            i = strings::index_of_char(&raw[i..], b'\n').map_or(raw.len(), |e| i + e as usize);
+        } else if raw[i..].starts_with(b"/*") {
+            i = strings::index_of(&raw[i + 2..], b"*/").map_or(raw.len(), |e| i + 2 + e + 2);
+        } else {
+            break;
+        }
+    }
+    // Back to the end of the banner's last full line, so code sharing a line with it stays with the print.
+    let end = strings::last_index_of_char(&raw[..i], b'\n').map_or(0, |p| p + 1);
+    let banner = &raw[..end];
+    let mut text = Vec::with_capacity(banner.len() + norm.text.len());
+    let mut origin = Vec::new();
+    for (l, line) in Lines(banner).enumerate() {
+        text.extend_from_slice(line.trim_ascii_end());
+        text.push(b'\n');
+        origin.push((l as u32 + 1, 1));
+    }
+    // The printer keeps some of those comments (`/*!`, `@license`) itself; the written banner supersedes them.
+    let printed_origin = origin_of(norm);
+    let mut skip = 0usize;
+    let mut in_block = false;
+    let mut offset = 0usize;
+    for line in Lines(&norm.text) {
+        let t = line.trim_ascii();
+        let comment = in_block || t.is_empty() || t.starts_with(b"//") || t.starts_with(b"/*");
+        if !comment || banner.is_empty() {
+            break;
+        }
+        if t.starts_with(b"/*") {
+            in_block = true;
+        }
+        if in_block && strings::contains(t, b"*/") {
+            in_block = false;
+        }
+        skip += 1;
+        offset += line.len() + 1;
+    }
+    text.extend_from_slice(&norm.text[offset.min(norm.text.len())..]);
+    origin.extend(printed_origin.into_iter().skip(skip));
+    (text, origin)
 }
 
 /// Printed line → original `line:col` of the first thing on it, for gutters in the un-minified view.

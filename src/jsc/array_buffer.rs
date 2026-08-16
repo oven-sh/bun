@@ -1089,8 +1089,9 @@ impl PinnedArrayBuffer {
     pub fn retain(value: JSValue) -> Option<Self> {
         let mut ptr: *const u8 = ptr::null();
         let mut len = 0usize;
-        let owner =
-            ptr::NonNull::new(JSC__JSValue__retainPinnedArrayBuffer(value, &mut ptr, &mut len))?;
+        let owner = ptr::NonNull::new(JSC__JSValue__retainPinnedArrayBuffer(
+            value, &mut ptr, &mut len,
+        ))?;
         Some(Self { owner, ptr, len })
     }
 

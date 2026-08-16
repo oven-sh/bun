@@ -314,35 +314,40 @@ describe("node:test", () => {
     });
   });
 
-  test("should cancel subtests still pending when their parent settles after an earlier batch, like node", async () => {
-    const { exitCode, stdout, stderr } = await runTests(["30-cancelled-subtests.js"]);
-    // A cancelled in-flight subtest is not waited for: its after hooks run at
-    // once and see the cancellation; subtests queued behind it never run.
-    expect(stdout).toContain("SLOW_AFTER_HOOK failureType=cancelledByParent passed=false");
-    expect(stdout).toContain("IN_FLIGHT_AFTER_HOOK failureType=cancelledByParent");
-    expect(stdout).not.toContain("QUEUED_TEST_RAN");
-    expect(stdout).not.toContain("QUEUED_SUITE_CHILD_RAN");
-    // The first batch of subtests is still waited for, and so is a later one
-    // that needs no timer or I/O to finish, or finishes during the parent's
-    // after hooks.
-    expect(stdout).toContain("SYNC_PARENT_SUBTEST_FINISHED");
-    expect(stdout).toContain("ASYNC_PARENT_SUBTEST_FINISHED");
-    expect(stdout).toContain("SECOND_OF_BATCH_FINISHED");
-    expect(stdout).toContain("LATER_SYNC_SUBTEST_RAN");
-    expect(stdout).toContain("LATER_MICROTASK_SUBTEST_FINISHED");
-    expect(stdout).toContain("STRAGGLER_FINISHED_DURING_AFTER_HOOK");
-    expect(stderr).toContain("test did not finish before its parent and was cancelled");
-    // slow + queued test + queued suite.
-    expect(stderr).toContain("error: 3 subtests failed");
-    expect(stderr).toContain("8 pass");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 1,
-      stderr: expect.stringContaining("4 fail"),
-    });
-  });
+  // 30-cancelled-subtests.js drives 12 node:test cases, and the run() variant
+  // pays a second debug+ASAN startup for the `bun test` child run() spawns, so
+  // both get the same headroom as the heavy fixtures at the top of this file.
+  test.concurrent(
+    "should cancel subtests still pending when their parent settles after an earlier batch, like node",
+    async () => {
+      const { exitCode, stdout, stderr } = await runTests(["30-cancelled-subtests.js"]);
+      // A cancelled in-flight subtest is not waited for: its after hooks run at
+      // once and see the cancellation; subtests queued behind it never run.
+      expect(stdout).toContain("SLOW_AFTER_HOOK failureType=cancelledByParent passed=false");
+      expect(stdout).toContain("IN_FLIGHT_AFTER_HOOK failureType=cancelledByParent");
+      expect(stdout).not.toContain("QUEUED_TEST_RAN");
+      expect(stdout).not.toContain("QUEUED_SUITE_CHILD_RAN");
+      // The first batch of subtests is still waited for, and so is a later one
+      // that needs no timer or I/O to finish, or finishes during the parent's
+      // after hooks.
+      expect(stdout).toContain("SYNC_PARENT_SUBTEST_FINISHED");
+      expect(stdout).toContain("ASYNC_PARENT_SUBTEST_FINISHED");
+      expect(stdout).toContain("SECOND_OF_BATCH_FINISHED");
+      expect(stdout).toContain("LATER_SYNC_SUBTEST_RAN");
+      expect(stdout).toContain("LATER_MICROTASK_SUBTEST_FINISHED");
+      expect(stdout).toContain("STRAGGLER_FINISHED_DURING_AFTER_HOOK");
+      expect(stderr).toContain("test did not finish before its parent and was cancelled");
+      // slow + queued test + queued suite.
+      expect(stderr).toContain("error: 3 subtests failed");
+      expect(stderr).toContain("8 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("4 fail"),
+      });
+    },
+    30_000,
+  );
 
-  // run() spawns a second `bun test` child, so this pays two debug+ASAN
-  // startups; give it the same headroom as the heavy fixtures above.
   test.concurrent(
     "should report cancelled subtests and suites as cancelled through run()",
     async () => {

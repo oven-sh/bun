@@ -1614,7 +1614,7 @@ impl VirtualMachine {
             if fatal_exit
                 && !self.suppress_fatal_uncaught
                 && self.is_main_thread()
-                && self.hot_reload == 0
+                && self.hot_reload == HotReload::None
                 && origin != UncaughtExceptionOrigin::EntryPointRejection
             {
                 self.unhandled_error_counter += 1;
@@ -3725,7 +3725,7 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                if self.hot_reload == 0 {
+                if self.hot_reload == HotReload::None {
                     let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
                         global_object,
                         reason,

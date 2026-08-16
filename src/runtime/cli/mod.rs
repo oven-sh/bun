@@ -581,6 +581,85 @@ pub mod cli {
             bun_crash_handler::handle_root_error(err, None);
         }
     }
+
+    /// Run the `bun` CLI as this process, from a C `argc`/`argv`.
+    ///
+    /// This is the body of the `bun` executable's `main`
+    /// (`src/bun_bin/lib.rs`), kept in the library so a host binary that links
+    /// `bun_runtime` can start the runtime on a thread of its own without
+    /// re-implementing the init order:
+    ///
+    ///   0. argv capture (`bun_core::init_argv`) — first, so the crash handler
+    ///      can dump the command line
+    ///   1. crash handler / signal dispositions
+    ///   2. Windows-only libuv allocator + env conversion
+    ///   3. `Output.Source.Stdio.init()` — stdout/stderr writers
+    ///   4. `StackCheck.configureThread()` + parent-death watchdog
+    ///   5. [`start`] → `Global::exit(0)`
+    ///
+    /// Never returns: every CLI path ends in `Global::exit`. The process
+    /// allocator is not set here — the executable (or host) declares its
+    /// `#[global_allocator]` (`bun_alloc::Mimalloc` in `bun_bin`).
+    ///
+    /// # Safety
+    /// `argv` must point to `argc` valid NUL-terminated C strings that live
+    /// for the entire process. Call at most once per process, before any
+    /// other Bun API is used, on the thread that will own the runtime.
+    pub unsafe fn run_main(argc: core::ffi::c_int, argv: *const *const core::ffi::c_char) -> ! {
+        // 0. Capture argv FIRST — before the crash handler, whose panic path
+        //    dumps the command line via `bun_core::argv()`.
+        //    SAFETY: forwarded from the caller's contract; the argv block
+        //    lives for the entire process.
+        unsafe { bun_core::init_argv(argc, argv) };
+
+        // 1. Crash handler first so anything below gets a usable trace.
+        bun_crash_handler::init();
+
+        // SIGPIPE/SIGXFSZ → SIG_IGN.
+        // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN`
+        // is a valid disposition; called once at process startup before any
+        // other thread is spawned, so there is no concurrent sigaction.
+        #[cfg(unix)]
+        unsafe {
+            libc::signal(libc::SIGPIPE, libc::SIG_IGN);
+            libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
+        }
+
+        // 2. Windows-only startup. Must run BEFORE the first libuv call (uv
+        //    allocator) and before anything reads `Bun.env`/`process.env`
+        //    (env conversion).
+        #[cfg(windows)]
+        {
+            // SAFETY: mimalloc fns match the libuv allocator signatures;
+            // called exactly once before any uv handle is created.
+            unsafe {
+                let _ = bun_sys::windows::libuv::uv_replace_allocator(
+                    Some(bun_alloc::mimalloc::mi_malloc),
+                    Some(bun_alloc::mimalloc::mi_realloc),
+                    Some(bun_alloc::mimalloc::mi_calloc),
+                    Some(bun_alloc::mimalloc::mi_free),
+                );
+            }
+            // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
+            // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
+            // Without this, `Bun.env`/`process.env` see only `.env`-file vars.
+            bun_core::handle_oom(bun_sys::windows::env::convert_env_to_wtf8());
+        }
+
+        // 3. Stdio + Output sink. `bun_core::OutputSink[Sys]` is link-time
+        //    provided by `bun_sys`; `stdio::init()` calls C's
+        //    `bun_initialize_process()` and wires stdout/stderr `Source`s.
+        Output::stdio::init();
+        let _flush = Output::flush_guard();
+
+        // 4. Per-thread stack-limit cache for the JS recursion guard.
+        bun_core::StackCheck::configure_thread();
+        bun_io::ParentDeathWatchdog::install();
+
+        // 5. CLI dispatch.
+        start();
+        Global::exit(0)
+    }
 }
 pub use cli as Cli;
 

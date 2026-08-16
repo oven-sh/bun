@@ -5,9 +5,9 @@
 //! The clang++ driver supplies the
 //! C runtime startup (`_start` → `main`); `main` below is the process entry.
 //!
-//! Init order:
+//! Init order (see `bun_runtime::cli::Cli::run_main`, which `main` calls):
 //!   1. crash handler / signal masks
-//!   2. allocator wiring (mimalloc as `#[global_allocator]`)
+//!   2. allocator wiring (mimalloc as `#[global_allocator]`, declared here)
 //!   3. argv / start-time capture
 //!   4. `Output.Source.Stdio.init()` — stdout/stderr writers
 //!   5. `StackCheck.configureThread()`
@@ -35,15 +35,9 @@
 
 use core::ffi::{c_char, c_int};
 
-mod c_abi_exports;
-
 // Force-link `bun_platform` so its `#[no_mangle]` C exports
 // (`sys_epoll_pwait2`, …) reach the linker.
 use bun_platform as _;
-
-use bun_core::Global;
-use bun_core::StackCheck;
-use bun_core::output;
 
 /// mimalloc as the process allocator.
 #[cfg(not(bun_asan))]
@@ -138,6 +132,12 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
 /// Process entry point. `extern "C"` so the linker resolves crt1.o's
 /// undefined `main` against this symbol.
 ///
+/// The whole init sequence (argv capture, crash handler, stdio, stack
+/// check, `Cli::start`) lives in `bun_runtime::cli::Cli::run_main` so a host
+/// binary that links the runtime crates can run the same entry on a thread
+/// of its own; this crate only adds what is specific to the `bun`
+/// executable: the global allocator and the ASAN/LSAN option overrides above.
+///
 /// `argc`/`argv` are forwarded to `bun_core::init_argv` immediately: on
 /// glibc/macOS/Windows libstd also captures them via a `.init_array` hook /
 /// `_NSGetArgv` / `GetCommandLineW`, but on **musl** static builds that hook
@@ -151,61 +151,8 @@ pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_ch
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
-    // 0. Capture argv FIRST — before the crash handler, whose panic path
-    //    dumps the command line via `bun_core::argv()`.
-    //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
-    //    for the entire process.
-    unsafe { bun_core::init_argv(argc, argv) };
-
-    // 1. Crash handler first so anything below gets a usable trace.
-    bun_crash_handler::init();
-
-    // SIGPIPE/SIGXFSZ → SIG_IGN.
-    // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
-    // valid disposition; called once on the main thread before any other
-    // thread is spawned, so there is no concurrent sigaction.
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_IGN);
-        libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
-    }
-
-    // Windows-only startup. Must run BEFORE the first libuv
-    // call (uv allocator) and before anything reads `Bun.env`/`process.env`
-    // (env conversion).
-    #[cfg(windows)]
-    {
-        // SAFETY: mimalloc fns match the libuv allocator signatures; called
-        // exactly once before any uv handle is created.
-        unsafe {
-            let _ = bun_sys::windows::libuv::uv_replace_allocator(
-                Some(bun_alloc::mimalloc::mi_malloc),
-                Some(bun_alloc::mimalloc::mi_realloc),
-                Some(bun_alloc::mimalloc::mi_calloc),
-                Some(bun_alloc::mimalloc::mi_free),
-            );
-        }
-        // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
-        // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
-        // Without this, `Bun.env`/`process.env` see only `.env`-file vars.
-        bun_core::handle_oom(bun_sys::windows::env::convert_env_to_wtf8());
-    }
-
-    // 2/3. Allocator is static above; argv was captured at step 0; start_time
-    //      is lazy in `bun_core::start_time()`.
-
-    // 4. Stdio + Output sink. `bun_core::OutputSink[Sys]` is link-time provided
-    //    by `bun_sys`; `stdio::init()` calls C's `bun_initialize_process()` and
-    //    wires stdout/stderr `Source`s.
-    output::stdio::init();
-    let _flush = output::flush_guard();
-
-    // 5. Per-thread stack-limit cache for the JS recursion guard.
-    StackCheck::configure_thread();
-    bun_io::ParentDeathWatchdog::install();
-
-    // 7. CLI dispatch.
-    bun_runtime::cli::Cli::start();
-    // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
-    Global::exit(0)
+    // SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
+    // for the entire process, and this is the first thing the process does.
+    // `run_main` is `-> !`; it coerces to the `c_int` return type.
+    unsafe { bun_runtime::cli::Cli::run_main(argc, argv) }
 }

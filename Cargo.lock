@@ -238,11 +238,9 @@ dependencies = [
 name = "bun_bin"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_core",
  "bun_crash_handler",
- "bun_io",
  "bun_mimalloc_sys",
  "bun_platform",
  "bun_runtime",

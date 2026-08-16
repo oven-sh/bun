@@ -2887,6 +2887,16 @@ pub mod asan {
     }
 }
 
+/// Out-of-memory entry point for C callers (bun-usockets) that cannot
+/// propagate an allocation failure. Same crash report as `handle_oom`. Lives
+/// here rather than in the executable crate so any binary that links the
+/// runtime provides it.
+#[cold]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__outOfMemory() -> ! {
+    out_of_memory()
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // glibc-compat / link wraps.
 // build.ninja links with `-Wl,--wrap=gettid` so libc/std references land here.

@@ -1000,6 +1000,23 @@ pub fn disable_buffering_scope() -> DisableBufferingScope {
     DisableBufferingScope::init()
 }
 
+/// Panic entry point for C/C++ callers (`bindings.cpp`, `bun-usockets`;
+/// declared in `headers-handwritten.h`). Routes through [`panic`] so the
+/// crash report matches Rust-originated panics. Lives here rather than in the
+/// executable crate so any binary that links the runtime provides it.
+#[cold]
+#[unsafe(no_mangle)]
+extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
+    let bytes = if msg.is_null() {
+        &b""[..]
+    } else {
+        // SAFETY: `msg` is non-null (checked above) and the C++ caller
+        // guarantees it is valid for reading `len` bytes for this call.
+        unsafe { core::slice::from_raw_parts(msg, len) }
+    };
+    panic(format_args!("{}", crate::BStr::new(bytes)));
+}
+
 #[cold]
 pub fn panic(args: fmt::Arguments<'_>) -> ! {
     // Callers use `panic!(pretty_fmt!(...))`

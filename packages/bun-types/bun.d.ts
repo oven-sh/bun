@@ -1139,14 +1139,8 @@ declare module "bun" {
       data: string | Bun.BufferSource,
       options: GenerateOptions & { format: "image" },
     ): Bun.Image;
-    export function generate(
-      data: string | Bun.BufferSource,
-      options: GenerateOptions & { format?: "object" },
-    ): QRCode;
-    export function generate(
-      data: string | Bun.BufferSource,
-      options?: GenerateOptions,
-    ): QRCode | string | Bun.Image;
+    export function generate(data: string | Bun.BufferSource, options: GenerateOptions & { format?: "object" }): QRCode;
+    export function generate(data: string | Bun.BufferSource, options?: GenerateOptions): QRCode | string | Bun.Image;
 
     /**
      * Decode a QR module matrix (as returned by {@link generate}) back to its payload.

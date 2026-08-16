@@ -320,7 +320,10 @@ describe("Bun.QR", () => {
       expect(() => Bun.QR.generate(Buffer.alloc(64 * 1024 * 1024, "7").toString("latin1"))).toThrow(RangeError);
       // Alphanumeric max is 4296 at v40-L; 4297 is rejected even though it
       // is well under the numeric max.
-      expect(Bun.QR.generate(Buffer.alloc(4296, "A").toString(), { errorCorrection: "L", boostErrorCorrection: false }).version).toBe(40);
+      expect(
+        Bun.QR.generate(Buffer.alloc(4296, "A").toString(), { errorCorrection: "L", boostErrorCorrection: false })
+          .version,
+      ).toBe(40);
       expect(() => Bun.QR.generate(Buffer.alloc(4297, "A").toString())).toThrow(RangeError);
     });
 

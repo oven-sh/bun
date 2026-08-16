@@ -105,7 +105,10 @@ impl Default for Options {
 }
 
 fn rgba_pack(c: RGBA) -> u32 {
-    (u32::from(c.red) << 24) | (u32::from(c.green) << 16) | (u32::from(c.blue) << 8) | u32::from(c.alpha)
+    (u32::from(c.red) << 24)
+        | (u32::from(c.green) << 16)
+        | (u32::from(c.blue) << 8)
+        | u32::from(c.alpha)
 }
 
 /// `#rrggbb` (opaque) or `#rrggbbaa`, for SVG `fill=`.
@@ -216,10 +219,24 @@ fn parse_options(global: &JSGlobalObject, value: JSValue) -> JsResult<Options> {
 
     let vmin = i64::from(VERSION_MIN);
     let vmax = i64::from(VERSION_MAX);
-    if let Some(n) = int_option(global, value, "minVersion", b"options.minVersion", vmin, vmax)? {
+    if let Some(n) = int_option(
+        global,
+        value,
+        "minVersion",
+        b"options.minVersion",
+        vmin,
+        vmax,
+    )? {
         opts.min_version = n as u8;
     }
-    if let Some(n) = int_option(global, value, "maxVersion", b"options.maxVersion", vmin, vmax)? {
+    if let Some(n) = int_option(
+        global,
+        value,
+        "maxVersion",
+        b"options.maxVersion",
+        vmin,
+        vmax,
+    )? {
         opts.max_version = n as u8;
     }
     if let Some(n) = int_option(global, value, "mask", b"options.mask", 0, 7)? {
@@ -392,9 +409,14 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             Ok(Image::from_owned_bytes_js(global, png))
         }
         OutputFormat::Object => {
-            let ec = bun_jsc::bun_string_jsc::create_utf8_for_js(global, ecc_name(qr.ecc()).as_bytes())?;
+            let ec =
+                bun_jsc::bun_string_jsc::create_utf8_for_js(global, ecc_name(qr.ecc()).as_bytes())?;
             let obj = JSValue::create_empty_object(global, 5);
-            obj.put(global, b"version", JSValue::js_number(f64::from(qr.version())));
+            obj.put(
+                global,
+                b"version",
+                JSValue::js_number(f64::from(qr.version())),
+            );
             obj.put(global, b"size", JSValue::js_number(f64::from(qr.size())));
             obj.put(global, b"errorCorrection", ec);
             obj.put(global, b"mask", JSValue::js_number(f64::from(qr.mask())));
@@ -465,7 +487,11 @@ fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let ec = bun_jsc::bun_string_jsc::create_utf8_for_js(global, ecc_name(decoded.ecc).as_bytes())?;
     let obj = JSValue::create_empty_object(global, 5);
     obj.put(global, b"text", text);
-    obj.put(global, b"version", JSValue::js_number(f64::from(decoded.version)));
+    obj.put(
+        global,
+        b"version",
+        JSValue::js_number(f64::from(decoded.version)),
+    );
     obj.put(global, b"errorCorrection", ec);
     obj.put(global, b"mask", JSValue::js_number(f64::from(decoded.mask)));
     // Last: the typed-array constructor opens a throw scope, and the

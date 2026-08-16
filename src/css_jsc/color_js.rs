@@ -256,9 +256,21 @@ pub fn js_color_input_to_rgba(
         }));
     }
     if input.is_object() {
-        let r = color_int_from_js(global, input.get(global, b"r")?.unwrap_or(JSValue::ZERO), "r")?;
-        let g = color_int_from_js(global, input.get(global, b"g")?.unwrap_or(JSValue::ZERO), "g")?;
-        let b = color_int_from_js(global, input.get(global, b"b")?.unwrap_or(JSValue::ZERO), "b")?;
+        let r = color_int_from_js(
+            global,
+            input.get(global, b"r")?.unwrap_or(JSValue::ZERO),
+            "r",
+        )?;
+        let g = color_int_from_js(
+            global,
+            input.get(global, b"g")?.unwrap_or(JSValue::ZERO),
+            "g",
+        )?;
+        let b = color_int_from_js(
+            global,
+            input.get(global, b"b")?.unwrap_or(JSValue::ZERO),
+            "b",
+        )?;
         let a: u8 = match input.get_truthy(global, b"a")? {
             Some(a_value) if a_value.is_number() => {
                 ((a_value.as_number().clamp(0.0, 1.0) * 255.0).round()) as u8

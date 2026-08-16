@@ -567,3 +567,42 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
 });
+
+it("samplingProfilerStackTraces returns parsed traces and survives BUN_JSC_validateExceptionChecks", async () => {
+  // samplingProfilerStackTraces JSON-parses the profiler's stack traces, and
+  // JSONParse can throw (OOM on a large profile), so the enclosing throw scope
+  // must release before returning instead of asserting no exception after the
+  // parse. With validateExceptionChecks enabled the process aborts on unchecked
+  // scopes; on release builds the option is a no-op and this just exercises the
+  // stack-trace path.
+  const script = `
+    const jsc = require("bun:jsc");
+    try {
+      jsc.samplingProfilerStackTraces();
+      console.log("no-throw");
+    } catch (e) {
+      console.log("threw", e.message);
+    }
+    jsc.startSamplingProfiler();
+    let j = 0;
+    for (let i = 0; i < 999999; i++) j += i % 7;
+    const traces = jsc.samplingProfilerStackTraces();
+    console.log("ok", typeof traces, Array.isArray(traces.traces));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const uncheckedScopes = stderr
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+  expect({ stdout, uncheckedScopes, exitCode }).toEqual({
+    stdout: "threw Sampling profiler was never started\nok object true\n",
+    uncheckedScopes: [],
+    exitCode: 0,
+  });
+});

@@ -64,7 +64,11 @@ beforeAll(async () => {
         for (const v of ["1.0.0", "2.0.0"]) {
           versions[v] = { name: "diffme", version: v, dist: { tarball: `${registry}/diffme/-/diffme-${v}.tgz` } };
         }
-        return Response.json({ name: "diffme", "dist-tags": { latest: "2.0.0", next: "2.0.0", legacy: "1.0.0" }, versions });
+        return Response.json({
+          name: "diffme",
+          "dist-tags": { latest: "2.0.0", next: "2.0.0", legacy: "1.0.0" },
+          versions,
+        });
       }
       const m = url.pathname.match(/^\/diffme\/-\/diffme-(.+)\.tgz$/);
       if (m && tarballs[m[1]]) return new Response(Bun.file(tarballs[m[1]]));
@@ -408,7 +412,11 @@ diffme@1.0.0 → diffme@2.0.0
         if (decodeURIComponent(url.pathname) === "/@priv/diffme") {
           const versions: any = {};
           for (const v of ["1.0.0", "2.0.0"]) {
-            versions[v] = { name: "@priv/diffme", version: v, dist: { tarball: `${scoped.url.origin}/@priv/diffme/-/diffme-${v}.tgz` } };
+            versions[v] = {
+              name: "@priv/diffme",
+              version: v,
+              dist: { tarball: `${scoped.url.origin}/@priv/diffme/-/diffme-${v}.tgz` },
+            };
           }
           return Response.json({ name: "@priv/diffme", "dist-tags": { latest: "2.0.0" }, versions });
         }
@@ -419,7 +427,11 @@ diffme@1.0.0 → diffme@2.0.0
     using dir = tempDir("pm-diff-scope", {
       "bunfig.toml": `[install.scopes]\n"@priv" = { url = "${scoped.url.origin}/", token = "scopetok" }\n`,
     });
-    for (const args of [["@priv/diffme@1.0.0", "2.0.0"], ["@priv/diffme@1.0.0..2.0.0"], ["@priv/diffme@1.0.0", "@priv/diffme@2.0.0"]]) {
+    for (const args of [
+      ["@priv/diffme@1.0.0", "2.0.0"],
+      ["@priv/diffme@1.0.0..2.0.0"],
+      ["@priv/diffme@1.0.0", "@priv/diffme@2.0.0"],
+    ]) {
       await using p = Bun.spawn({
         cmd: [bunExe(), "pm", "diff", ...args, "--name-only"],
         cwd: String(dir),

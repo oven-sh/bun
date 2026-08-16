@@ -22,6 +22,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "JSDOMException.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -414,10 +415,15 @@ static String computeErrorInfoWithoutPrepareStackTrace(
             if (!lexicalGlobalObject) {
                 lexicalGlobalObject = errorInstance->globalObject();
             }
-            name = instance->sanitizedNameString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            message = instance->sanitizedMessageString(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(instance)) {
+                name = domException->displayName(vm);
+                message = domException->displayMessage(vm);
+            } else {
+                name = instance->sanitizedNameString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                message = instance->sanitizedMessageString(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
     }
 
@@ -673,8 +679,12 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (source->stackTrace()) {
-        destination->stackTrace()->appendVector(*source->stackTrace());
-        source->stackTrace()->clear();
+        // setStackFrames takes the cellLock that JSDOMException::visitChildren reads under.
+        WTF::Vector<JSC::StackFrame> combined;
+        combined.appendVector(*destination->stackTrace());
+        combined.appendVector(*source->stackTrace());
+        destination->setStackFrames(vm, WTF::move(combined));
+        source->setStackFrames(vm, {});
     }
 
     return JSC::JSValue::encode(jsUndefined());
@@ -724,7 +734,8 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
+        // Copy: a move here races JSDOMException::visitChildren reading under the cellLock.
+        auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(*stackTrace);
         JSC::MarkedArgumentBuffer protectedFrameCells;
         protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
         for (auto& frame : *ownedStackTrace) {

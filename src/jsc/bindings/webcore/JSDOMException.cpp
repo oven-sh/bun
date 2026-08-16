@@ -38,12 +38,15 @@
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include <wtf/text/MakeString.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -152,19 +155,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstru
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    auto object = DOMException::create(WTF::move(message), WTF::move(name));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<DOMException>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<DOMException>(lexicalGlobalObject, callFrame, asObject(jsValue));
+    // Not toJSNewlyCreated: own properties must wait until after the subclass structure swap.
+    auto* wrapper = createWrapper<DOMException>(castedThis->globalObject(), DOMException::create(WTF::move(message), WTF::move(name)));
+    setSubclassStructureIfNeeded<DOMException>(lexicalGlobalObject, callFrame, wrapper);
     RETURN_IF_EXCEPTION(throwScope, {});
-    if (!cause.isEmpty()) {
-        jsValue.getObject()->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
-    }
-    return JSValue::encode(jsValue);
+    wrapper->putHeaderStackIfNoFrames(vm);
+    if (!cause.isEmpty())
+        wrapper->putDirect(vm, vm.propertyNames->cause, cause, JSC::PropertyAttribute::DontEnum | 0);
+    return JSValue::encode(wrapper);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSDOMExceptionDOMConstructorConstruct, JSDOMExceptionDOMConstructor::construct);
 
@@ -232,17 +230,84 @@ void JSDOMExceptionPrototype::finishCreation(VM& vm)
 const ClassInfo JSDOMException::s_info = { "DOMException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMException) };
 
 JSDOMException::JSDOMException(Structure* structure, JSDOMGlobalObject& globalObject, Ref<DOMException>&& impl)
-    : JSDOMWrapper<DOMException>(structure, globalObject, WTF::move(impl))
+    : Base(globalObject.vm(), structure, JSC::ErrorType::Error)
+    , m_wrapped(WTF::move(impl))
 {
 }
 
 void JSDOMException::finishCreation(VM& vm)
 {
-    Base::finishCreation(vm);
+    // Null message/cause: those stay prototype accessors over the wrapped impl.
+    Base::finishCreation(vm, String(), JSValue(), nullptr, JSC::TypeNothing, true);
     ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, DOMException>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
+    // No own properties here: the constructor may still swap in a subclass structure.
 }
+
+void JSDOMException::setStackString(VM& vm, String&& stack)
+{
+    putDirect(vm, vm.propertyNames->stack, jsString(vm, WTF::move(stack)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    setStackFrames(vm, {}); // Nothing will read the captured frames now; stop visitChildren from rooting them.
+    setStackPropertyAlreadyMaterialized();
+}
+
+// ErrorInstance leaves .stack unset on an empty trace; other engines still give the header line.
+void JSDOMException::putHeaderStackIfNoFrames(VM& vm)
+{
+    auto* trace = stackTrace();
+    if (trace && !trace->isEmpty())
+        return;
+    setStackString(vm, displayHeader(vm));
+}
+
+// Same joining rule as formatStackTrace: either side may be empty.
+String JSDOMException::displayHeader(VM& vm) const
+{
+    auto name = displayName(vm);
+    auto message = displayMessage(vm);
+    if (name.isEmpty())
+        return message;
+    if (message.isEmpty())
+        return name;
+    return makeString(name, ": "_s, message);
+}
+
+String JSDOMException::ownStringOr(VM& vm, PropertyName propertyName, String&& fallback) const
+{
+    JSValue own = getDirect(vm, propertyName);
+    if (!own || !own.isString())
+        return WTF::move(fallback);
+    auto* string = asString(own);
+    if (string->isRope()) // Resolving would allocate; callers may be inside a finalizer.
+        return WTF::move(fallback);
+    return String(string->tryGetValue(false));
+}
+
+String JSDOMException::displayName(VM& vm) const
+{
+    return ownStringOr(vm, vm.propertyNames->name, wrapped().name());
+}
+
+String JSDOMException::displayMessage(VM& vm) const
+{
+    return ownStringOr(vm, vm.propertyNames->message, wrapped().message());
+}
+
+template<typename Visitor>
+void JSDOMException::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSDOMException>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+
+    // Heap sweeps dead frames only for vm.errorInstanceSpace(); this subspace must keep its own alive.
+    Locker locker { thisObject->cellLock() };
+    if (auto* stackTrace = thisObject->stackTrace()) {
+        for (auto& frame : *stackTrace)
+            frame.visitAggregate(visitor);
+    }
+}
+
+DEFINE_VISIT_CHILDREN(JSDOMException);
 
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -316,12 +381,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobal
 
 JSC::GCClient::IsoSubspace* JSDOMException::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::No>(
+    return WebCore::subspaceForImpl<JSDOMException, UseCustomHeapCellType::Yes>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForDOMException.get(); },
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMException = std::forward<decltype(space)>(space); },
         [](auto& spaces) { return spaces.m_subspaceForDOMException.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = std::forward<decltype(space)>(space); });
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMException = std::forward<decltype(space)>(space); },
+        [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSDOMException; });
 }
 
 void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -350,7 +416,9 @@ void JSDOMExceptionOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* conte
 
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
 {
-    return createWrapper<DOMException>(globalObject, WTF::move(impl));
+    auto* wrapper = createWrapper<DOMException>(globalObject, WTF::move(impl));
+    wrapper->putHeaderStackIfNoFrames(globalObject->vm());
+    return wrapper;
 }
 
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMException& impl)

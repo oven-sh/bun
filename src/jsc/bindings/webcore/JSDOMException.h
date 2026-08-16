@@ -24,14 +24,21 @@
 
 #include "DOMException.h"
 #include "JSDOMWrapper.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ErrorPrototype.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class JSDOMException : public JSDOMWrapper<DOMException> {
+// An ErrorInstance so DOMException has [[ErrorData]] and a stack, as WebIDL requires.
+class JSDOMException : public JSC::ErrorInstance {
 public:
-    using Base = JSDOMWrapper<DOMException>;
+    using Base = JSC::ErrorInstance;
+    using DOMWrapped = DOMException;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+
     static JSDOMException* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<DOMException>&& impl)
     {
         JSDOMException* ptr = new (NotNull, JSC::allocateCell<JSDOMException>(globalObject->vm())) JSDOMException(structure, *globalObject, WTF::move(impl));
@@ -45,10 +52,11 @@ public:
     static void destroy(JSC::JSCell*);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ErrorInstanceType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -61,10 +69,31 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
 
+    DOMException& wrapped() const { return m_wrapped; }
+    Ref<DOMException> protectedWrapped() const { return m_wrapped; }
+    static constexpr ptrdiff_t offsetOfWrapped() { return OBJECT_OFFSETOF(JSDOMException, m_wrapped); }
+    constexpr static bool hasCustomPtrTraits() { return false; }
+
+    JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
+
+    // Installs `stack` as an own property and keeps the lazily captured trace from overwriting it.
+    void setStackString(JSC::VM&, WTF::String&&);
+    void putHeaderStackIfNoFrames(JSC::VM&);
+
+    // An own data property wins over the wrapped impl, as it does for a plain Error. Never allocates or runs JS.
+    WTF::String displayName(JSC::VM&) const;
+    WTF::String displayMessage(JSC::VM&) const;
+    WTF::String displayHeader(JSC::VM&) const;
+
 protected:
     JSDOMException(JSC::Structure*, JSDOMGlobalObject&, Ref<DOMException>&&);
 
     void finishCreation(JSC::VM&);
+
+private:
+    WTF::String ownStringOr(JSC::VM&, JSC::PropertyName, WTF::String&& fallback) const;
+
+    Ref<DOMException> m_wrapped;
 };
 
 class JSDOMExceptionOwner final : public JSC::WeakHandleOwner {

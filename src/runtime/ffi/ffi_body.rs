@@ -208,7 +208,7 @@ impl Offsets {
 }
 
 // R-2 (host-fn re-entrancy): the JS-exposed `close()` method takes `&self`;
-// per-field interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
+// per-field interior mutability via `Cell` / `JsCell`.
 // `close()` does not itself re-enter JS, but routing mutation through
 // `UnsafeCell`-backed fields suppresses `noalias` on the `&Self` the codegen
 // shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
@@ -217,7 +217,7 @@ pub struct FFI {
     pub dylib: JsCell<Option<bun_sys::DynLib>>,
     pub functions: JsCell<StringArrayHashMap<Function>>,
     pub closed: Cell<bool>,
-    pub shared_state: Cell<Option<NonNull<TCC::State>>>,
+    pub shared_state: Cell<Option<TCC::StateHandle>>,
 }
 
 impl Default for FFI {
@@ -615,7 +615,7 @@ impl CompileC {
     pub(crate) fn compile(
         &mut self,
         global_this: &JSGlobalObject,
-    ) -> crate::Result<NonNull<TCC::State>> {
+    ) -> crate::Result<TCC::StateHandle> {
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
@@ -629,7 +629,7 @@ impl CompileC {
         };
 
         // TODO: correctly handle invalid user-provided options
-        let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
+        let mut handle = match TCC::State::init::<CompileC, true>(&TCC::Config {
             options: Some(NonNull::from(compile_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
@@ -646,9 +646,7 @@ impl CompileC {
                 return Err(crate::Error::DeferredErrors);
             }
         };
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
-        // we hold the only reference for the rest of this function.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
+        let state: &mut TCC::State = &mut handle;
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
@@ -886,13 +884,13 @@ impl CompileC {
                 ));
                 return Err(crate::Error::JSError);
             };
-            entry.value_ptr.symbol_from_dynamic_library = Some(sym.as_ptr().cast::<c_void>());
+            entry.value_ptr.symbol_from_dynamic_library = Some(sym.as_ptr());
         }
 
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        Ok(state_ptr)
+        Ok(handle)
     }
 }
 
@@ -1174,8 +1172,8 @@ impl FFI {
         }
 
         // Now we compile the code with tinycc.
-        let mut tcc_state: Option<NonNull<TCC::State>> = match compile_c.compile(global_this) {
-            Ok(s) => Some(s),
+        let tcc_state = match compile_c.compile(global_this) {
+            Ok(s) => s,
             Err(err) => match err {
                 crate::Error::DeferredErrors => {
                     let mut combined: Vec<u8> = Vec::new();
@@ -1204,12 +1202,6 @@ impl FFI {
                 }
             },
         };
-        let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
-            if let Some(state) = s {
-                // SAFETY: state is a valid TCC::State pointer from compile()
-                unsafe { TCC::State::destroy(state.as_ptr()) };
-            }
-        });
 
         let napi_env = make_napi_env_if_needed(compile_c.symbols.map.values(), global_this);
 
@@ -1246,7 +1238,7 @@ impl FFI {
                         global_this,
                         &str,
                         u32::try_from(function.arg_types.len()).expect("int cast"),
-                        compiled.ptr.cast_const(),
+                        compiled.entry().as_ptr().cast_const(),
                         true,
                         function.symbol_from_dynamic_library,
                     );
@@ -1259,7 +1251,7 @@ impl FFI {
         // TODO: pub const new = bun.TrivialNew(FFI)
         let lib = Box::new(FFI {
             dylib: JsCell::new(None),
-            shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
+            shared_state: Cell::new(Some(tcc_state)),
             functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
             closed: Cell::new(false),
         });
@@ -1356,10 +1348,7 @@ impl FFI {
         if let Some(dylib) = self.dylib.replace(None) {
             dylib.close();
         }
-        if let Some(state) = self.shared_state.take() {
-            // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
-            unsafe { TCC::State::destroy(state.as_ptr()) };
-        }
+        drop(self.shared_state.take());
         self.functions.with_mut(|f| f.clear_retaining_capacity());
     }
 
@@ -1925,7 +1914,6 @@ pub(super) fn generate_symbols(
 pub struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: ZBox,
-    pub state: Option<NonNull<TCC::State>>,
 
     pub return_type: ABIType,
     pub arg_types: Vec<ABIType>,
@@ -1939,21 +1927,10 @@ impl Default for Function {
         Self {
             symbol_from_dynamic_library: None,
             base_name: ZBox::default(),
-            state: None,
             return_type: ABIType::Void,
             arg_types: Vec::new(),
             step: Step::Pending,
             threadsafe: false,
-        }
-    }
-}
-
-impl Drop for Function {
-    fn drop(&mut self) {
-        // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
-        if let Some(state) = self.state.take() {
-            // SAFETY: state is a valid TCC::State pointer; we own it
-            unsafe { TCC::State::destroy(state.as_ptr()) };
         }
     }
 }
@@ -2021,7 +1998,7 @@ impl Function {
         } else {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
-        let state = match TCC::State::init::<Function, false>(&TCC::Config {
+        let mut handle = match TCC::State::init::<Function, false>(&TCC::Config {
             options: Some(NonNull::from(tcc_options)),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
@@ -2032,20 +2009,7 @@ impl Function {
             Ok(s) => s,
             Err(_) => return Err(crate::Error::TCCMissing),
         };
-
-        self.state = Some(state);
-        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
-            // SAFETY: this_ptr is &mut self for the duration of compile()
-            if matches!(unsafe { &(*this_ptr).step }, Step::Failed { .. }) {
-                // SAFETY: as above.
-                if let Some(s) = unsafe { (*this_ptr).state.take() } {
-                    // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
-                }
-            }
-        });
-        // SAFETY: state is non-null, just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
+        let state: &mut TCC::State = &mut handle;
 
         if let Some(env) = napi_env {
             // `env` is the live VM-owned napi env; process-lifetime.
@@ -2089,15 +2053,12 @@ impl Function {
             return Ok(());
         }
 
-        let Some(symbol) = state.get_symbol(zstr!("JSFunctionCall")) else {
+        let Some(compiled) = Compiled::new(handle) else {
             self.fail(b"missing generated symbol in source code");
             return Ok(());
         };
 
-        self.step = Step::Compiled(Compiled {
-            ptr: symbol.as_ptr().cast::<c_void>(),
-            ..Default::default()
-        });
+        self.step = Step::Compiled(compiled);
         Ok(())
     }
 
@@ -2290,15 +2251,27 @@ pub enum Step {
     Failed { msg: Box<[u8]> },
 }
 
-pub struct Compiled {
-    pub ptr: *mut c_void,
-}
+/// A state whose relocated code defines the trampoline entry point. The state
+/// owns the code, and [`Self::entry`] hands the entry point out as a borrow of
+/// it, so within Rust the address cannot outlive the state. The one copy that
+/// leaves Rust is baked into the JS function, which `close()` invalidates
+/// along with everything else in the library.
+pub struct Compiled(TCC::StateHandle);
 
-impl Default for Compiled {
-    fn default() -> Self {
-        Self {
-            ptr: core::ptr::null_mut(),
-        }
+impl Compiled {
+    const ENTRY: &'static ZStr = zstr!("JSFunctionCall");
+
+    /// `None` if the code does not define the entry point; the state is
+    /// deleted in that case.
+    fn new(state: TCC::StateHandle) -> Option<Self> {
+        state.get_symbol(Self::ENTRY)?;
+        Some(Self(state))
+    }
+
+    pub fn entry(&self) -> TCC::SymbolAddr<'_> {
+        self.0
+            .get_symbol(Self::ENTRY)
+            .expect("Compiled::new checked that the entry point is defined")
     }
 }
 

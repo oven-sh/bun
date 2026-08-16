@@ -1,51 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { setTimeout as sleep } from "node:timers/promises";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isProcessAlive,
+  killProcesses,
+  readFirstLine,
+  tempDir,
+  waitForProcessExit,
+} from "harness";
 
 // Bun.spawn({ deathSignal }): sets prctl(PR_SET_PDEATHSIG) in the child
 // between vfork and exec, so the kernel delivers `deathSignal` to the child
 // when the spawning thread dies. Linux only; no-op elsewhere.
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isAlive(pid)) return true;
-    await sleep(20);
-  }
-  return !isAlive(pid);
-}
-
-function reap(...pids: number[]) {
-  for (const pid of pids) {
-    // pid 0 / negative pids address whole process groups, which would include the test runner.
-    if (!(Number.isInteger(pid) && pid > 1)) continue;
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
-}
-
-async function readLine(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const dec = new TextDecoder();
-  let line = "";
-  while (!line.includes("\n")) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    line += dec.decode(value, { stream: true });
-  }
-  reader.releaseLock();
-  return line.trim();
-}
 
 describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
   // Middle bun process spawns a plain sh with deathSignal set, prints the
@@ -83,13 +50,13 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     });
     let shPid = NaN;
     try {
-      shPid = Number(await readLine(middle.stdout));
+      shPid = Number(await readFirstLine(middle.stdout));
       expect(shPid).toBeGreaterThan(1);
-      expect(isAlive(shPid)).toBe(true);
+      expect(isProcessAlive(shPid)).toBe(true);
       return { middle, shPid };
     } catch (e) {
       middle.kill("SIGKILL");
-      reap(shPid);
+      killProcesses(shPid);
       throw e;
     }
   }
@@ -101,10 +68,10 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
       process.kill(middle.pid!, "SIGKILL");
       await middle.exited;
       // sh must NOT die; it is simply orphaned.
-      const died = await waitUntilDead(shPid, 1000);
+      const died = await waitForProcessExit(shPid, 1000);
       expect(died).toBe(false);
     } finally {
-      reap(shPid);
+      killProcesses(shPid);
     }
   });
 
@@ -116,10 +83,10 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
       await middle.exited;
       // PR_SET_PDEATHSIG delivers SIGKILL to sh as soon as the spawning
       // thread (middle's main thread) exits.
-      const died = await waitUntilDead(shPid, 10000);
+      const died = await waitForProcessExit(shPid, 10000);
       expect(died).toBe(true);
     } finally {
-      reap(shPid);
+      killProcesses(shPid);
     }
   });
 
@@ -129,10 +96,10 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     try {
       process.kill(middle.pid!, "SIGKILL");
       await middle.exited;
-      const died = await waitUntilDead(shPid, 10000);
+      const died = await waitForProcessExit(shPid, 10000);
       expect(died).toBe(true);
     } finally {
-      reap(shPid);
+      killProcesses(shPid);
     }
   });
 
@@ -142,10 +109,10 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     try {
       process.kill(middle.pid!, "SIGKILL");
       await middle.exited;
-      const died = await waitUntilDead(shPid, 10000);
+      const died = await waitForProcessExit(shPid, 10000);
       expect(died).toBe(true);
     } finally {
-      reap(shPid);
+      killProcesses(shPid);
     }
   });
 
@@ -153,10 +120,10 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     const { middle, shPid } = await spawnPair("SIGKILL");
     await using _ = middle;
     try {
-      const diedEarly = await waitUntilDead(shPid, 1000);
+      const diedEarly = await waitForProcessExit(shPid, 1000);
       expect(diedEarly).toBe(false);
     } finally {
-      reap(shPid);
+      killProcesses(shPid);
     }
   });
 });

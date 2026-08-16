@@ -1,7 +1,16 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isMacOS,
+  isProcessAlive,
+  killProcesses,
+  readFirstLine,
+  tempDir,
+  waitForProcessExit,
+} from "harness";
 import { readFileSync } from "node:fs";
-import { setTimeout as sleep } from "node:timers/promises";
 
 // Subprocess.killTree(signal): walks the process tree rooted at the
 // subprocess and signals every descendant. Shares the freeze-verify-signal
@@ -9,34 +18,6 @@ import { setTimeout as sleep } from "node:timers/promises";
 // proc_listchildpids on macOS). On Windows and other POSIX targets it
 // falls back to signalling just the root, so the descendant-death
 // assertions below are gated on Linux/macOS specifically.
-
-function isAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!isAlive(pid)) return true;
-    await sleep(20);
-  }
-  return !isAlive(pid);
-}
-
-function reap(...pids: number[]) {
-  for (const pid of pids) {
-    // pid 0 / negative pids address whole process groups, which would include the test runner.
-    if (!(Number.isInteger(pid) && pid > 1)) continue;
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
-}
 
 // Linux only. The state char follows the parenthesised comm, which may itself contain spaces.
 function procState(pid: number): string {
@@ -109,17 +90,8 @@ async function spawnTree() {
   // Whatever has been started so far is torn down if a setup assertion below fails.
   let descendants: number[] = [];
   try {
-    const reader = proc.stdout.getReader();
-    const dec = new TextDecoder();
-    let line = "";
-    while (!line.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      line += dec.decode(value, { stream: true });
-    }
-    reader.releaseLock();
-
-    const [rootPid, childPid, outerShPid, innerShPid] = line.trim().split(/\s+/).map(Number);
+    const line = await readFirstLine(proc.stdout);
+    const [rootPid, childPid, outerShPid, innerShPid] = line.split(/\s+/).map(Number);
     descendants = [childPid, outerShPid, innerShPid];
     expect(rootPid).toBe(proc.pid);
     expect(childPid).toBeGreaterThan(1);
@@ -127,14 +99,14 @@ async function spawnTree() {
     expect(innerShPid).toBeGreaterThan(1);
     // Four distinct pids: no level of the tree is collapsed.
     expect(new Set([rootPid, childPid, outerShPid, innerShPid]).size).toBe(4);
-    expect(isAlive(childPid)).toBe(true);
-    expect(isAlive(outerShPid)).toBe(true);
-    expect(isAlive(innerShPid)).toBe(true);
+    expect(isProcessAlive(childPid)).toBe(true);
+    expect(isProcessAlive(outerShPid)).toBe(true);
+    expect(isProcessAlive(innerShPid)).toBe(true);
 
     return { proc, rootPid, childPid, outerShPid, innerShPid };
   } catch (e) {
     proc.kill("SIGKILL");
-    reap(...descendants);
+    killProcesses(...descendants);
     throw e;
   }
 }
@@ -208,9 +180,9 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
       proc.killTree();
       await proc.exited;
 
-      const childDied = await waitUntilDead(childPid, 10000);
-      const outerShDied = await waitUntilDead(outerShPid, 10000);
-      const innerShDied = await waitUntilDead(innerShPid, 10000);
+      const childDied = await waitForProcessExit(childPid, 10000);
+      const outerShDied = await waitForProcessExit(outerShPid, 10000);
+      const innerShDied = await waitForProcessExit(innerShPid, 10000);
 
       expect(proc.exitCode === null ? proc.signalCode : proc.exitCode).not.toBe(0);
       expect({ childDied, outerShDied, innerShDied }).toEqual({
@@ -219,7 +191,7 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
         innerShDied: true,
       });
     } finally {
-      reap(childPid, outerShPid, innerShPid);
+      killProcesses(childPid, outerShPid, innerShPid);
     }
   });
 
@@ -232,10 +204,10 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
 
       // The direct child becomes orphaned (reparented to init) but keeps
       // running. This is what killTree() fixes.
-      const childDied = await waitUntilDead(childPid, 1000);
+      const childDied = await waitForProcessExit(childPid, 1000);
       expect(childDied).toBe(false);
     } finally {
-      reap(childPid, outerShPid, innerShPid);
+      killProcesses(childPid, outerShPid, innerShPid);
     }
   });
 
@@ -246,9 +218,9 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
       proc.killTree("SIGKILL");
       await proc.exited;
 
-      const childDied = await waitUntilDead(childPid, 10000);
-      const outerShDied = await waitUntilDead(outerShPid, 10000);
-      const innerShDied = await waitUntilDead(innerShPid, 10000);
+      const childDied = await waitForProcessExit(childPid, 10000);
+      const outerShDied = await waitForProcessExit(outerShPid, 10000);
+      const innerShDied = await waitForProcessExit(innerShPid, 10000);
 
       expect(proc.signalCode).toBe("SIGKILL");
       expect({ childDied, outerShDied, innerShDied }).toEqual({
@@ -257,7 +229,7 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
         innerShDied: true,
       });
     } finally {
-      reap(childPid, outerShPid, innerShPid);
+      killProcesses(childPid, outerShPid, innerShPid);
     }
   });
 
@@ -296,29 +268,20 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
       stdio: ["ignore", "pipe", "inherit"],
     });
 
-    const reader = proc.stdout.getReader();
-    const dec = new TextDecoder();
-    let line = "";
-    while (!line.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      line += dec.decode(value, { stream: true });
-    }
-    reader.releaseLock();
-    const [rootPid, shPid] = line.trim().split(/\s+/).map(Number);
+    const [rootPid, shPid] = (await readFirstLine(proc.stdout)).split(/\s+/).map(Number);
     try {
       expect(rootPid).toBe(proc.pid);
-      expect(isAlive(shPid)).toBe(true);
+      expect(isProcessAlive(shPid)).toBe(true);
 
       proc.killTree("SIGTERM");
       await proc.exited;
 
-      const shDied = await waitUntilDead(shPid, 10000);
+      const shDied = await waitForProcessExit(shPid, 10000);
 
       expect(proc.signalCode).toBe("SIGTERM");
       expect(shDied).toBe(true);
     } finally {
-      reap(shPid);
+      killProcesses(shPid);
     }
   });
 
@@ -327,9 +290,9 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
     await using _ = proc;
     try {
       expect(() => proc.killTree(0)).not.toThrow();
-      expect(isAlive(childPid)).toBe(true);
-      expect(isAlive(outerShPid)).toBe(true);
-      expect(isAlive(innerShPid)).toBe(true);
+      expect(isProcessAlive(childPid)).toBe(true);
+      expect(isProcessAlive(outerShPid)).toBe(true);
+      expect(isProcessAlive(innerShPid)).toBe(true);
       expect(proc.killed).toBe(false);
       if (isLinux) {
         // Not merely alive, but not left SIGSTOPped (state "T") either.
@@ -341,7 +304,7 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree() process tree", () 
         }).toEqual({ child: running, outerSh: running, innerSh: running });
       }
     } finally {
-      reap(childPid, outerShPid, innerShPid);
+      killProcesses(childPid, outerShPid, innerShPid);
     }
   });
 });

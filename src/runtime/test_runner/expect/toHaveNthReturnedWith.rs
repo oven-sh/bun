@@ -34,28 +34,17 @@ pub(crate) fn to_have_nth_returned_with(
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let index = u32::try_from(n - 1).unwrap(); // Convert to 0-based index
 
-    let mut pass = false;
-    let mut nth_return_value: JSValue = JSValue::UNDEFINED;
-    let mut nth_call_threw = false;
-    let mut nth_error_value: JSValue = JSValue::UNDEFINED;
     let nth_call_exists = index < calls_count;
-
-    if nth_call_exists {
-        let nth_result = returns.get_direct_index(global, index)?;
-        match mock::parse_mock_result(global, nth_result)? {
-            mock::MockResult::Return(value) => {
-                nth_return_value = value;
-                if nth_return_value.jest_deep_equals(expected, global)? {
-                    pass = true;
-                }
-            }
-            mock::MockResult::Throw(result) => {
-                nth_call_threw = true;
-                nth_error_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
-            }
-            mock::MockResult::Other => {}
-        }
-    }
+    let mock::ReturnCheck {
+        matched: pass,
+        return_value: nth_return_value,
+        threw: nth_call_threw,
+        error_value: nth_error_value,
+    } = if nth_call_exists {
+        mock::check_returned_with(global, returns.get_direct_index(global, index)?, expected)?
+    } else {
+        mock::ReturnCheck::MISSING
+    };
 
     if pass != this.flags.get().not() {
         return Ok(JSValue::UNDEFINED);

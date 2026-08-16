@@ -619,11 +619,9 @@ impl ValkeyClient {
         val
     }
 
-    /// Returns what the close event's handler (ultimately the user's `onclose`) left pending —
-    /// whether uSockets dispatched the event synchronously from in here or, for a half-open
-    /// socket, `on_close` had to be run by hand — so the caller propagates it like any other
-    /// callback result (or folds it if it is the trampoline). It is never folded in here,
-    /// beneath frames that may still be about to return their own `Err`.
+    /// Never runs the close event beneath a frame that is unwinding an exception (it closes from the task
+    /// queue instead); `Err` when the event left a termination pending, or, for a half-open socket whose
+    /// `on_close` runs by hand here, whatever that left.
     pub fn close(&mut self) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
@@ -653,19 +651,11 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
-        // The close event uSockets dispatches synchronously from inside `close()` re-enters this
-        // client through the socket's ext pointer; the handshake with it lives on the parent, in
-        // `Cell`s, so nothing derived from `self` is held across the dispatch.
-        let parent: *const JSValkeyClient = self.parent();
-        // SAFETY: the parent box outlives its `client` field (this `self`).
-        unsafe { (*parent).in_close.set(true) };
+        // On an established socket uSockets dispatches the close event synchronously from in here; its
+        // trampoline folds whatever the handler (the user's `onclose`) throws. Still pending afterwards
+        // is only a termination that fold left for the script frame this runs beneath.
         socket.close(uws::CloseCode::Normal);
-        // SAFETY: as above.
-        let threw = unsafe {
-            (*parent).in_close.set(false);
-            (*parent).close_event_threw.replace(false)
-        };
-        if threw {
+        if global.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
         if is_semi_socket {

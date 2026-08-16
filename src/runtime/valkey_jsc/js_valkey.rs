@@ -329,11 +329,6 @@ pub struct JSValkeyClient {
     pub(crate) timer: RefCountedTimer,
     pub(crate) reconnect_timer: RefCountedTimer,
     pub(crate) ref_count: bun_ptr::RefCount<JSValkeyClient>,
-    /// `ValkeyClient::close()` is closing the socket itself: a close event uSockets dispatches
-    /// synchronously from inside it is `close()`'s to return, not the socket trampoline's to fold.
-    pub(crate) in_close: Cell<bool>,
-    /// Set by that close event when its handler left an exception pending.
-    pub(crate) close_event_threw: Cell<bool>,
 }
 
 /// Intrusive [`EventLoopTimer`] slot that owns one strong ref on
@@ -748,8 +743,6 @@ impl JSValkeyClient {
         // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
-            in_close: Cell::new(false),
-            close_event_threw: Cell::new(false),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
@@ -856,8 +849,6 @@ impl JSValkeyClient {
 
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
-            in_close: Cell::new(false),
-            close_event_threw: Cell::new(false),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
             client: JsCell::new(valkey::ValkeyClient {
                 vm,
@@ -1889,14 +1880,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        let closed = this.client_mut().on_close();
-        if this.in_close.get() {
-            // Dispatched synchronously from `ValkeyClient::close()`: hand the result to it rather
-            // than to the socket trampoline's fold (see `close()`).
-            this.close_event_threw.set(closed.is_err());
-            return Ok(());
-        }
-        closed
+        this.client_mut().on_close()
     }
 
     pub(crate) fn on_end(this: &JSValkeyClient, socket: SocketType<SSL>) {
@@ -1921,13 +1905,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.update_poll_ref();
         });
 
-        let closed = this.client_mut().on_close();
-        if this.in_close.get() {
-            // A connecting socket closed by `ValkeyClient::close()` lands here instead of `on_close`.
-            this.close_event_threw.set(closed.is_err());
-            return Ok(());
-        }
-        closed
+        this.client_mut().on_close()
     }
 
     pub(crate) fn on_timeout(this: &JSValkeyClient, socket: SocketType<SSL>) {

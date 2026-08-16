@@ -65,18 +65,6 @@ fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 }
 
 impl KnownGlobal {
-    #[inline(always)]
-    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
-        let call = E::Call {
-            target: e.target,
-            args: bun_alloc::AstAlloc::take(&mut e.args),
-            close_paren_loc: e.close_parens_loc,
-            can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
-            ..Default::default()
-        };
-        js_ast::Expr::init(call, loc)
-    }
-
     // `_bump` is unused; the `Vec` uses the global arena.
     #[inline(never)]
     pub fn minify_global_constructor(
@@ -102,8 +90,10 @@ impl KnownGlobal {
         let original_name = symbol.original_name.slice();
         let constructor = lookup(original_name)?;
 
+        // `new X(...)` is only ever folded into a literal, never rewritten into the call `X(...)`:
+        // in strict mode `return X(...)` is a proper tail call, so the frame creating the value is
+        // gone by the time `X` captures a stack trace, reads its source origin (`Function`) or throws.
         match constructor {
-            // Error constructors can be called without 'new' with identical behavior
             KnownGlobal::Error
             | KnownGlobal::TypeError
             | KnownGlobal::SyntaxError
@@ -111,10 +101,10 @@ impl KnownGlobal {
             | KnownGlobal::ReferenceError
             | KnownGlobal::EvalError
             | KnownGlobal::URIError
-            | KnownGlobal::AggregateError => {
-                // Convert `new Error(...)` to `Error(...)` to save bytes
-                Some(Self::call_from_new(e, loc))
-            }
+            | KnownGlobal::AggregateError
+            | KnownGlobal::Function
+            // `RegExp(re)` would also return `re` itself where `new RegExp(re)` copies it.
+            | KnownGlobal::RegExp => None,
 
             KnownGlobal::Object => {
                 let n = e.args.len_u32();
@@ -141,11 +131,20 @@ impl KnownGlobal {
                     }
                 }
 
-                // For other cases, just remove 'new'
-                Some(Self::call_from_new(e, loc))
+                None
             }
 
             KnownGlobal::Array => {
+                // `new Array(5, ...rest)` is `new Array(5)`, a length, when `rest` is empty.
+                if e
+                    .args
+                    .slice()
+                    .iter()
+                    .any(|arg| matches!(arg.data, js_ast::ExprData::ESpread(_)))
+                {
+                    return None;
+                }
+
                 let n = e.args.len_u32();
 
                 match n {
@@ -176,7 +175,6 @@ impl KnownGlobal {
                         // For other types, check via knownPrimitive
                         let primitive = arg.known_primitive();
                         // Only convert if we know for certain it's not a number
-                        // unknown could be a number at runtime, so we must preserve Array() call
                         match primitive {
                             js_ast::expr::PrimitiveType::Null
                             | js_ast::expr::PrimitiveType::Undefined
@@ -195,7 +193,7 @@ impl KnownGlobal {
                             js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
                                     js_ast::ExprData::ENumber(num) => num.value(),
-                                    _ => return Some(Self::call_from_new(e, loc)),
+                                    _ => return None,
                                 };
                                 if
                                 // only want this with whitespace minification
@@ -231,13 +229,11 @@ impl KnownGlobal {
                                         loc,
                                     ));
                                 }
-                                Some(Self::call_from_new(e, loc))
+                                None
                             }
+                            // Could be a number, so `new Array(x)` may mean a length.
                             js_ast::expr::PrimitiveType::Unknown
-                            | js_ast::expr::PrimitiveType::Mixed => {
-                                // Could be a number, preserve Array() call
-                                Some(Self::call_from_new(e, loc))
-                            }
+                            | js_ast::expr::PrimitiveType::Mixed => None,
                         }
                     }
                     // > 1
@@ -255,18 +251,6 @@ impl KnownGlobal {
                 }
             }
 
-            KnownGlobal::Function => {
-                // Just remove 'new' for Function
-                Some(Self::call_from_new(e, loc))
-            }
-            KnownGlobal::RegExp => {
-                // Don't optimize RegExp - the semantics are too complex:
-                // - new RegExp(re) creates a copy, but RegExp(re) returns the same instance
-                // - This affects object identity and lastIndex behavior
-                // - The difference only applies when flags are undefined
-                // Keep the original new RegExp() call to preserve correct semantics
-                None
-            }
             KnownGlobal::WeakSet | KnownGlobal::WeakMap => {
                 let n = e.args.len_u32();
 

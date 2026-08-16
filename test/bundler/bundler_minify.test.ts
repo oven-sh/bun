@@ -819,7 +819,10 @@ describe("bundler", () => {
     },
   });
 
-  itBundled("minify/ErrorConstructorOptimization", {
+  // `Error(...)` creates the same object as `new Error(...)`, but in strict mode JSC compiles
+  // `return Error(...)` to a tail call, which removes the creating function from the stack trace.
+  // `new` is never a tail call, so it has to stay.
+  itBundled("minify/ErrorConstructorKeepsNew", {
     files: {
       "/entry.js": /* js */ `
         // Test all Error constructors
@@ -862,31 +865,66 @@ describe("bundler", () => {
       `,
     },
     capture: [
-      "Error()",
-      'Error("message")',
-      'Error("message", { cause: "cause" })',
-      "TypeError()",
-      'TypeError("type error")',
-      "SyntaxError()",
-      'SyntaxError("syntax error")',
-      "RangeError()",
-      'RangeError("range error")',
-      "ReferenceError()",
-      'ReferenceError("ref error")',
-      "EvalError()",
-      'EvalError("eval error")',
-      "URIError()",
-      'URIError("uri error")',
-      'AggregateError([], "aggregate error")',
-      'AggregateError([Error("e1")], "multiple")',
-      "Error(msg)",
-      "TypeError(getErrorMessage())",
+      "new Error",
+      'new Error("message")',
+      'new Error("message", { cause: "cause" })',
+      "new TypeError",
+      'new TypeError("type error")',
+      "new SyntaxError",
+      'new SyntaxError("syntax error")',
+      "new RangeError",
+      'new RangeError("range error")',
+      "new ReferenceError",
+      'new ReferenceError("ref error")',
+      "new EvalError",
+      'new EvalError("eval error")',
+      "new URIError",
+      'new URIError("uri error")',
+      'new AggregateError([], "aggregate error")',
+      'new AggregateError([new Error("e1")], "multiple")',
+      "new Error(msg)",
+      "new TypeError(getErrorMessage())",
       "/* @__PURE__ */ new Date",
       "/* @__PURE__ */ new Map",
       "/* @__PURE__ */ new Set",
     ],
     minifySyntax: true,
     target: "bun",
+  });
+
+  itBundled("minify/ReturnedConstructorKeepsItsFrame", {
+    files: {
+      "/entry.js": /* js */ `
+        function makeError() {
+          return new Error("made");
+        }
+        function makeTypeError() {
+          const err = new TypeError("made");
+          return err;
+        }
+        function makeArray(...lengths) {
+          return new Array(...lengths);
+        }
+        function thrownBy(make) {
+          try {
+            make(-1);
+          } catch (err) {
+            return err;
+          }
+        }
+        const frames = [
+          [makeError, makeError()],
+          [makeTypeError, makeTypeError()],
+          [makeArray, thrownBy(makeArray)],
+        ].map(([fn, err]) => err.stack.includes("at " + fn.name + " "));
+        console.log(JSON.stringify(frames));
+      `,
+    },
+    minifySyntax: true,
+    target: "bun",
+    run: {
+      stdout: "[true,true,true]",
+    },
   });
 
   itBundled("minify/ErrorConstructorWithVariables", {
@@ -987,6 +1025,9 @@ describe("bundler", () => {
         // Test Array constructor
         capture(new Array());
         capture(new Array(3));
+        capture(new Array(unknownValue));
+        capture(new Array(...unknownValue));
+        capture(new Array(5, ...unknownValue));
         capture(new Array(1, 2, 3));
         
         // Test Array with non-numeric single arguments (should convert to literal)
@@ -1000,6 +1041,7 @@ describe("bundler", () => {
         capture(new Object());
         capture(new Object(null));
         capture(new Object({ a: 1 }));
+        capture(new Object(unknownValue));
         
         // Test Function constructor
         capture(new Function("return 42"));
@@ -1022,7 +1064,13 @@ describe("bundler", () => {
     },
     capture: [
       "[]", // new Array() -> []
-      "Array(3)", // new Array(3) stays as Array(3) because it creates sparse array
+      // A single argument (possibly what a spread leaves behind at runtime) may be a length, so these
+      // cannot become literals. They are not turned into `Array(...)` calls either (see
+      // ErrorConstructorKeepsNew); `new` stays as written.
+      "new Array(3)",
+      "new Array(unknownValue)",
+      "new Array(...unknownValue)",
+      "new Array(5, ...unknownValue)",
       `[
   1,
   2,
@@ -1046,8 +1094,9 @@ describe("bundler", () => {
       "{}", // new Object() -> {}
       "{}", // new Object(null) -> {}
       "{ a: 1 }", // new Object({ a: 1 }) -> { a: 1 }
-      'Function("return 42")',
-      'Function("a", "b", "return a + b")',
+      "new Object(unknownValue)", // nothing to fold into a literal; kept as written
+      'new Function("return 42")',
+      'new Function("a", "b", "return a + b")',
       'new RegExp("test")',
       'new RegExp("test", "gi")',
       "new RegExp(/abc/)",
@@ -1090,8 +1139,8 @@ describe("bundler", () => {
       "[,,,,,,,,]", // new Array(8) -> [undefined x 8]
       "[,,,,,,,,,]", // new Array(9) -> [undefined x 9]
       "[,,,,,,,,,,]", // new Array(10) -> [undefined x 10]
-      "Array(11)", // new Array(11) -> Array(11)
-      "Array(4.5)", // new Array(4.5) is Array(4.5) because it's not an integer
+      "new Array(11)", // too long to spell out as a literal; kept as written
+      "new Array(4.5)", // not an integer; kept as written
     ],
     minifySyntax: true,
     minifyWhitespace: true,
@@ -1120,6 +1169,12 @@ describe("bundler", () => {
         const a3 = new Array(n);
         const a4 = Array(n);
         capture(a3.length === a4.length && a3.length === 3 && a3[0] === undefined);
+
+        // A spread can leave a single number behind at runtime, and then it is a length
+        const none = [];
+        const a5 = new Array(5, ...none);
+        capture(a5.length === 5);
+        capture(0 in a5 === false);
         
         // Test Object semantics
         const o1 = new Object();
@@ -1148,6 +1203,8 @@ describe("bundler", () => {
       "0 in sparse === !1",
       'JSON.stringify(sparse) === "[null,null,null,null,null]"',
       "a3.length === a4.length && a3.length === 3 && a3[0] === void 0",
+      "a5.length === 5",
+      "0 in a5 === !1",
       "typeof o1 === typeof o2",
       "o1.constructor === o2.constructor",
       "typeof f1 === typeof f2",
@@ -1158,7 +1215,7 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     run: {
-      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
+      stdout: "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue",
     },
   });
 

@@ -823,33 +823,36 @@ snapshotTest("auto mode: Bun.serve() at module scope snapshots with no code chan
 });
 
 for (const mode of ["unref", "reref"] as const) {
-  snapshotTest(`server.${mode === "unref" ? "unref()" : "unref() then ref()"} before the snapshot applies to the restored bind`, async () => {
-    using dir = tempDir(`bun-snapshot-serve-${mode}`, {});
-    const img = join(String(dir), "s.snapshot");
-    const fixture = join(import.meta.dir, "serve-pending-unref-fixture.js");
-    await using build = Bun.spawn({
-      cmd: [bunExe(), fixture],
-      env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_AUTO: "1", SERVE_REF_MODE: mode },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, buildErr] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect(buildErr).toContain("[snapshot] wrote"); // neither call held the build's loop open: auto mode still drained
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), fixture],
-      env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout, stderr.slice(-600)).toContain("[js] restore port type: number");
-    if (mode === "unref") {
-      expect(stdout).not.toContain("loop held open"); // exited on its own: the bound server does not hold the loop
-    } else {
-      expect(stdout).toContain("[js] loop held open by the server");
-    }
-    expect(exitCode).toBe(0);
-  });
+  snapshotTest(
+    `server.${mode === "unref" ? "unref()" : "unref() then ref()"} before the snapshot applies to the restored bind`,
+    async () => {
+      using dir = tempDir(`bun-snapshot-serve-${mode}`, {});
+      const img = join(String(dir), "s.snapshot");
+      const fixture = join(import.meta.dir, "serve-pending-unref-fixture.js");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...buildEnv, BUN_STARTUP_SNAPSHOT_OUT: img, BUN_STARTUP_SNAPSHOT_AUTO: "1", SERVE_REF_MODE: mode },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, buildErr] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildErr).toContain("[snapshot] wrote"); // neither call held the build's loop open: auto mode still drained
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: { ...restoreEnv, BUN_STARTUP_SNAPSHOT_IN: img },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout, stderr.slice(-600)).toContain("[js] restore port type: number");
+      if (mode === "unref") {
+        expect(stdout).not.toContain("loop held open"); // exited on its own: the bound server does not hold the loop
+      } else {
+        expect(stdout).toContain("[js] loop held open by the server");
+      }
+      expect(exitCode).toBe(0);
+    },
+  );
 }
 
 snapshotTest("Bun.enableANSIColors reified during a piped build is re-derived for a launch on a terminal", async () => {

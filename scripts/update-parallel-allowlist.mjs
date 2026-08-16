@@ -137,7 +137,8 @@ const slowest = file => {
 };
 // bun install / link / global tests share the user-level bin and cache dirs;
 // run together they race on linking (EEXIST) even though each passes alone.
-const sharedStatePrefixes = ["cli/install/"];
+// napi tests build their addons with node-gyp through the same shared bin.
+const sharedStatePrefixes = ["cli/install/", "napi/"];
 const sharedStateExempt = ["cli/install/hosted-git-info/", "cli/install/migration/"];
 const isGood = file => {
   if (dockerPrefixes.some(prefix => file.startsWith(prefix))) return false;
@@ -178,7 +179,7 @@ const out = {
     builds_scanned: builds.length,
     build_range: [Math.min(...builds), Math.max(...builds)],
     fast_ms: FAST_MS,
-    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
+    rule: `a bun test file qualifies when its slowest lane median in expected-durations.json is <= ${FAST_MS}ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named, napi and cli/install tests (shared bin/cache dirs; cli/install/hosted-git-info and cli/install/migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles`,
     stats: { dirs: dirs.length, files: eligibleFiles, excluded: excludeFiles.length },
   },
   dirs,

@@ -148,6 +148,46 @@ impl Drop for ParentKeepAlive {
     }
 }
 
+/// Bytes the reader may still take out of its source (a blob slice window), or `None` to read to EOF.
+///
+/// Enforced at the read itself: every read is cut to what is left, so the bytes after the window stay
+/// in a pipe or socket for the next reader, and using the window up is reported exactly like EOF
+/// (`Stop::Eof` / `ReadState::Eof` followed by `on_reader_done`), which is what ends the parent's stream.
+/// A window that is already used up is reported on the parent's first read request without touching
+/// the source, so an empty slice of a pipe ends without waiting for bytes it would not deliver anyway.
+#[derive(Clone, Copy)]
+struct ReadLimit(Option<usize>);
+
+impl ReadLimit {
+    const NONE: ReadLimit = ReadLimit(None);
+
+    fn reached(self) -> bool {
+        self.0 == Some(0)
+    }
+
+    fn clamp_len(self, len: usize) -> usize {
+        self.0.map_or(len, |remaining| len.min(remaining))
+    }
+
+    fn clamp(self, buf: &mut [u8]) -> &mut [u8] {
+        let len = self.clamp_len(buf.len());
+        &mut buf[..len]
+    }
+
+    /// Charges `n` bytes read from the source; `true` once the window is used up.
+    fn charge(&mut self, n: usize) -> bool {
+        let Some(remaining) = &mut self.0 else {
+            return false;
+        };
+        debug_assert!(
+            n <= *remaining,
+            "read past the limit: the read was not clamped"
+        );
+        *remaining = remaining.saturating_sub(n);
+        *remaining == 0
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PosixBufferedReader
 // ──────────────────────────────────────────────────────────────────────────
@@ -156,6 +196,7 @@ pub struct PosixBufferedReader {
     pub handle: PollOrFd,
     pub _buffer: Vec<u8>,
     pub(crate) _offset: usize,
+    limit: ReadLimit,
     pub(crate) vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
     // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
@@ -192,6 +233,7 @@ impl PosixBufferedReader {
             handle: PollOrFd::Closed,
             _buffer: Vec::new(),
             _offset: 0,
+            limit: ReadLimit::NONE,
             vtable: BufferedReaderVTable::init::<T>(),
             flags: PosixFlags::new(),
             maxbuf: None,
@@ -225,12 +267,14 @@ impl PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
+            limit: other.limit,
             flags: other.flags,
             vtable: BufferedReaderVTable { kind, parent },
             maxbuf: None,
         };
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
+        other.limit = ReadLimit::NONE;
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // Capture *mut Self before borrowing `handle` so the owner pointer
         // doesn't conflict with the field borrow.
@@ -517,7 +561,8 @@ impl PosixBufferedReader {
         if self.get_fd() != fd {
             self.handle = PollOrFd::Fd(fd);
         }
-        if !self.flags.contains(PosixFlags::IS_PAUSED) {
+        // With nothing left to read the fd is never waited on: like a non-pollable source, the parent's first read request ends the reader.
+        if !self.flags.contains(PosixFlags::IS_PAUSED) && !self.limit.reached() {
             // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
             // a protector across the (maybe-freeing) error dispatch — pre-existing
             // on the parent chain, tracked with the raw-dispatch follow-up.
@@ -531,6 +576,11 @@ impl PosixBufferedReader {
         self._offset = offset;
         self.flags.insert(PosixFlags::USE_PREAD);
         self.start(fd, poll)
+    }
+
+    /// Ends the reader after the next `len` bytes of the source as if they were followed by EOF (`ReadLimit`); `None` reads to EOF. Set before starting.
+    pub fn set_limit(&mut self, len: Option<usize>) {
+        self.limit = ReadLimit(len);
     }
 
     // Exists for consistently with Windows.
@@ -575,7 +625,9 @@ impl PosixBufferedReader {
         // afterwards, so the parent (which embeds this reader) must outlive it.
         let _parent = vtable.ref_parent();
         let mut received_hup = false;
-        if file_type == FileType::Pipe {
+        // A used-up limit is reported without reading, so there is nothing to wait for.
+        // SAFETY: caller contract; borrow ends at `;`.
+        if file_type == FileType::Pipe && !unsafe { (*this).limit.reached() } {
             match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready => {}
                 bun_core::Pollable::Hup => received_hup = true,
@@ -631,15 +683,21 @@ impl PosixBufferedReader {
         }
     }
 
-    /// One syscall into `buf`; charges the byte budget and advances the offset.
+    /// One syscall into `buf`, cut to the limit and the byte budget; charges both and advances the offset. A limit that is (or gets) used up is this reader's EOF.
     fn read_once(&mut self, file_type: FileType, fd: Fd, buf: &mut [u8]) -> ReadOnce {
-        let buf = MaxBuf::clamp_read_buf(self.maxbuf, buf);
+        if self.limit.reached() {
+            return ReadOnce::Stop(Stop::Eof);
+        }
+        let buf = MaxBuf::clamp_read_buf(self.maxbuf, self.limit.clamp(buf));
         match self.sys_read(file_type, fd, buf) {
             sys::Result::Ok(0) => ReadOnce::Stop(Stop::Eof),
             sys::Result::Ok(n) => {
                 self._offset += n;
+                let limit_reached = self.limit.charge(n);
                 if self.charge_max_buffer(n) {
                     ReadOnce::Read(n, Some(Stop::OverBudget))
+                } else if limit_reached {
+                    ReadOnce::Read(n, Some(Stop::Eof))
                 } else {
                     ReadOnce::Read(n, None)
                 }
@@ -865,7 +923,9 @@ impl PosixBufferedReader {
             return (0, ReadState::Progress);
         }
         let _parent = vtable.ref_parent();
-        if file_type == FileType::Pipe {
+        // As in `read`: a used-up limit is reported without reading.
+        // SAFETY: caller contract; borrow ends at `;`.
+        if file_type == FileType::Pipe && !unsafe { (*this).limit.reached() } {
             match bun_core::is_readable(fd) {
                 bun_core::Pollable::Ready | bun_core::Pollable::Hup => {}
                 bun_core::Pollable::NotReady => {
@@ -937,6 +997,7 @@ pub struct WindowsBufferedReader {
     /// It cannot change because we don't know what libuv will do with it.
     pub source: Option<Source>,
     pub(crate) _offset: usize,
+    limit: ReadLimit,
     pub _buffer: Vec<u8>,
     // for compatibility with Linux
     pub flags: WindowsFlags,
@@ -980,6 +1041,7 @@ impl WindowsBufferedReader {
         WindowsBufferedReader {
             source: None,
             _offset: 0,
+            limit: ReadLimit::NONE,
             _buffer: Vec::new(),
             flags: WindowsFlags::new(),
             maxbuf: None,
@@ -1002,6 +1064,7 @@ impl WindowsBufferedReader {
         self.flags = other.flags;
         self._buffer = mem::take(other.buffer());
         self._offset = other._offset;
+        self.limit = other.limit;
         // Ownership of the handle (or listed file) moves with the source;
         // `set_parent` below re-records this reader as the one a VM teardown
         // stops it through.
@@ -1009,6 +1072,7 @@ impl WindowsBufferedReader {
 
         other.flags.insert(WindowsFlags::IS_DONE);
         other._offset = 0;
+        other.limit = ReadLimit::NONE;
         // other._buffer / other.source already cleared by mem::take above.
         // The field-by-field assigns above leave `self.maxbuf` untouched, so
         // drop any prior owner-count first to avoid leaking a MaxBuf ref when
@@ -1166,12 +1230,15 @@ impl WindowsBufferedReader {
     fn get_read_buffer_with_stable_memory_address(&mut self, suggested_size: usize) -> &mut [u8] {
         self.flags.insert(WindowsFlags::HAS_INFLIGHT_READ);
         // Spare capacity grows well past `suggested_size`, so an unclamped read
-        // overshoots `maxBuffer` by however much the buffer had room for.
+        // overshoots the limit or `maxBuffer` by however much the buffer had room for.
         let maxbuf = self.maxbuf;
-        self._buffer.reserve(suggested_size);
+        let limit = self.limit;
+        // Never empty: reads are only issued while the limit has not been reached (`start_reading`, `on_read`), and libuv treats an empty buffer as an error.
+        debug_assert!(!limit.reached());
+        self._buffer.reserve(limit.clamp_len(suggested_size));
         // SAFETY: returning spare capacity for libuv to write into; len updated in on_read.
         let buf = unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) };
-        MaxBuf::clamp_read_buf(maxbuf, buf)
+        MaxBuf::clamp_read_buf(maxbuf, limit.clamp(buf))
     }
 
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
@@ -1247,6 +1314,11 @@ impl WindowsBufferedReader {
         self._offset = offset;
         self.flags.insert(WindowsFlags::USE_PREAD);
         self.start(fd, poll)
+    }
+
+    /// See `PosixBufferedReader::set_limit`.
+    pub fn set_limit(&mut self, len: Option<usize>) {
+        self.limit = ReadLimit(len);
     }
 
     pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {
@@ -1502,8 +1574,10 @@ impl WindowsBufferedReader {
 
     #[cfg(windows)]
     fn start_reading(&mut self) -> sys::Result<()> {
+        // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
         if self.flags.contains(WindowsFlags::IS_DONE)
             || !self.flags.contains(WindowsFlags::IS_PAUSED)
+            || self.limit.reached()
         {
             return sys::Result::Ok(());
         }
@@ -1777,8 +1851,10 @@ impl WindowsBufferedReader {
         // SAFETY: slice is inside _buffer's spare capacity; libuv wrote `amount_result` bytes.
         unsafe { bun_core::vec::commit_spare(&mut self._buffer, amount_result) };
 
+        // Using the limit up is this reader's EOF (`ReadLimit`); so is exhausting `maxBuffer`.
+        let limit_reached = self.limit.charge(amount_result);
         let over_budget = self.charge_max_buffer(amount_result);
-        let has_more = if over_budget {
+        let has_more = if limit_reached || over_budget {
             ReadState::Eof
         } else {
             has_more
@@ -1786,7 +1862,7 @@ impl WindowsBufferedReader {
         // Parents that want the reader paused call `reader().pause()` themselves; stopping here could free a parent whose caller still holds `this` (FileResponseStream on abort).
         let _ = self.on_read_chunk(has_more);
 
-        if has_more == ReadState::Eof || over_budget {
+        if has_more == ReadState::Eof {
             self.close();
         }
     }
@@ -1796,6 +1872,11 @@ impl WindowsBufferedReader {
     }
 
     pub fn unpause(&mut self) {
+        if self.limit.reached() && !self.is_done() {
+            // Nothing left to read: report EOF the way a completed read does instead of issuing one.
+            self.on_read(sys::Result::Ok(0), &mut [], ReadState::Eof);
+            return;
+        }
         let _ = self.start_reading();
     }
 

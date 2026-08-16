@@ -21,7 +21,7 @@ use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
-use crate::server::jsc::{EventLoopHandle, Task, VirtualMachine};
+use crate::server::jsc::{EventLoopHandle, VirtualMachine};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
@@ -46,7 +46,6 @@ pub(crate) struct FileResponseStream {
 
     mode: Cell<Mode>,
     reader: JsCell<BufferedReader>,
-    max_size: Cell<Option<u64>>,
     sendfile: JsCell<Sendfile>,
 
     state: Cell<State>,
@@ -146,7 +145,6 @@ impl FileResponseStream {
                     Mode::Reader
                 }),
                 reader: JsCell::new(BufferedReader::init::<FileResponseStream>()),
-                max_size: Cell::new(None),
                 sendfile: JsCell::new(Sendfile::default()),
                 state: Cell::new(State::default()),
             }));
@@ -192,7 +190,6 @@ impl FileResponseStream {
         }
 
         // BufferedReader path
-        this_ref.max_size.set(opts.length);
         this_ref.reader.with_mut(|reader| {
             reader.flags.remove(ReaderFlags::CLOSE_HANDLE); // we own fd via auto_close
             reader.flags.set(ReaderFlags::POLLABLE, opts.pollable);
@@ -203,6 +200,8 @@ impl FileResponseStream {
             if opts.file_type == FileType::Socket {
                 reader.flags.insert(ReaderFlags::SOCKET);
             }
+            // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
+            reader.set_limit(opts.length.map(|len| len as usize));
             reader.set_parent(this.cast::<c_void>());
         });
 
@@ -268,34 +267,10 @@ impl FileResponseStream {
         unsafe { &mut *self.reader.as_ptr() }
     }
 
-    fn on_read_chunk(&self, chunk_: &[u8], state_: ReadState) -> bool {
+    fn on_read_chunk(&self, chunk: &[u8], state: ReadState) -> bool {
         if self.state.get().contains(State::RESPONSE_DONE) {
             return false;
         }
-
-        let (chunk, state) = 'brk: {
-            if let Some(max) = self.max_size.get() {
-                let c = &chunk_[..chunk_.len().min(usize::try_from(max).unwrap_or(usize::MAX))];
-                let remaining = max.saturating_sub(c.len() as u64);
-                self.max_size.set(Some(remaining));
-                if state_ != ReadState::Eof && remaining == 0 {
-                    #[cfg(not(unix))]
-                    // SAFETY: reader entry point; `pause()` does not call back
-                    // into this object.
-                    self.reader_mut().pause();
-                    // Ref for the queued task; adopted in the
-                    // `FileResponseStreamEof` dispatch/shutdown arms.
-                    self.ref_();
-                    // SAFETY: `vm.event_loop()` returns the live JS loop.
-                    unsafe {
-                        (*self.vm.get().event_loop()).enqueue_task(Task::init(self.as_ptr()));
-                    }
-                    break 'brk (c, ReadState::Eof);
-                }
-                break 'brk (c, state_);
-            }
-            (chunk_, state_)
-        };
 
         let resp = self.resp.get();
         resp.timeout(self.idle_timeout.get());
@@ -531,8 +506,9 @@ impl FileResponseStream {
     /// Clear all uWS callbacks pointing at us. Must run while `resp` is still
     /// live (i.e., before `resp.end()` / `end_send_file()` / `force_close()` give
     /// the socket back to uWS, which may free it on the next loop tick). After
-    /// this runs, `finish()` — which can be reached from the deferred `eof_task`
-    /// — will not touch `resp` again.
+    /// this runs, `finish()` — which the reader still reaches through
+    /// `on_reader_done` after the chunk that ended the response — will not
+    /// touch `resp` again.
     fn detach_resp(&self) {
         if self.state.get().contains(State::RESP_DETACHED) {
             return;
@@ -599,7 +575,11 @@ impl FileResponseStream {
 // BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
 // cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
-// the duration of the handler since it can end in `finish()`.
+// the duration of the handler since it can end in `finish()`. `ref_`/`deref`
+// pin the stream for the whole of a read dispatch: the chunk that uses the
+// body length up is followed by `on_reader_done` (which releases the owning
+// ref) while the reader's read loop or libuv completion still has the reader
+// embedded here on its stack.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
@@ -617,6 +597,8 @@ bun_io::impl_buffered_reader_parent! {
     };
     loop_           = |this| (*this).r#loop();
     event_loop      = |this| (*this).event_loop_handle.get().as_event_loop_ctx();
+    ref_            = |this| (*this).ref_();
+    deref           = |this| Self::deref(this);
 }
 
 impl Drop for FileResponseStream {
@@ -656,14 +638,5 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
         let Some(len) = length else { return false };
         // Below ~1MB the syscall + dual-readiness overhead doesn't pay off.
         len >= (1 << 20)
-    }
-}
-
-impl bun_event_loop::Taskable for FileResponseStream {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileResponseStreamEof;
-    /// `on_read_chunk` took a ref for the queued EOF hop; drop it.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; adopts the ref the enqueue took.
-        drop(unsafe { bun_ptr::ScopedRef::<FileResponseStream>::adopt(this) });
     }
 }

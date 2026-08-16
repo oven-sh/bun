@@ -939,11 +939,7 @@ extern "C" int ffi_fileno(FILE* file)
 #include <pthread.h>
 #include <mutex>
 
-// bun.spawnSync is primarily used from the main thread (e.g. `bun run`), but
-// Bun.openInEditor spawns detached threads that also go through this path.
-// The depth counter + lock below keep previous_actions[] from being corrupted
-// by overlapping register/unregister calls; only the outermost pair touches
-// process-wide signal dispositions.
+// Bun.openInEditor runs spawnSync on detached threads, so register/unregister can overlap.
 extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];

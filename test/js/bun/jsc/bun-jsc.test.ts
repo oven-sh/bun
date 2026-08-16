@@ -567,3 +567,28 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, exitCode }).toEqual({ stdout: "rejected\n65\n", exitCode: 0 });
 });
+
+describe("JsRef::Weak liveness", () => {
+  // Bun.gc(false) is collectSync without a sweep, so dead cells stay allocated until the sweeper reaches them.
+  test("dead-but-unswept cells read as not live, kept cells read as live", () => {
+    const { jscInternals } = require("bun:internal-for-testing");
+    function make(n: number) {
+      const out: bigint[] = [];
+      for (let i = 0; i < n; i++) out.push(jscInternals.rawCellAddress({ i, pad: [i] }));
+      return out;
+    }
+    const dropped = make(2000);
+    const kept = { keep: true };
+    const keptAddr = jscInternals.rawCellAddress(kept);
+    expect(dropped.every(a => jscInternals.isLiveCellAtRawAddress(a))).toBe(true);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+
+    Bun.gc(false);
+
+    // A few may survive via the conservative stack scan; the bulk must read as dead.
+    const stillLive = dropped.filter(a => jscInternals.isLiveCellAtRawAddress(a)).length;
+    expect(stillLive).toBeLessThan(dropped.length / 2);
+    expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
+    expect(kept.keep).toBe(true);
+  });
+});

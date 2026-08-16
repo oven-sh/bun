@@ -78,22 +78,26 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # 本机仓库做 hardlink reference, 网络走 gh-proxy; 断网时回退到
-      # git clone --local (纯本地硬链接, 不依赖 cp --link — OHOS toybox cp 不支持)。
-      - name: Checkout Bun source (incremental)
+      # ─── 固定持久工作区 (增量构建的基础) ──────────────────────────────
+      # checkout 到 ~/.cache/ohos-bun-ci/src 固定路径, 工作区里只放 symlink。
+      # 效果:
+      #   1. 源码 mtime 跨 run 稳定 (git checkout -f 只重写变化的文件) →
+      #      cargo 指纹匹配 → Rust 工作区 crate 零重编
+      #   2. 工作区路径固定 → WebKit 构建里 baked 的绝对路径稳定 →
+      #      webkit-build 缓存真正生效 (之前每 run 换路径导致全量重编)
+      # 网络走 gh-proxy (直连 github.com 间歇性不可达); 断网时回退到已有 checkout。
+      - name: Checkout Bun source (persistent workspace)
         run: |
           LOCAL=/storage/Users/currentUser/springsources/bun
           REMOTE="https://gh-proxy.com/https://github.com/${{ github.repository }}.git"
-          rm -rf bun
-          if [ -d "$LOCAL/.git" ]; then
-            # 1. 优先: reference clone (fetch 最新 refs)
-            if ! git clone --reference "$LOCAL/.git" "$REMOTE" bun 2>/dev/null; then
-              echo "⚠️  reference clone failed (network?) — falling back to git clone --local"
-              git clone --local "$LOCAL" bun
-            fi
-            cd bun
+          WORK=/storage/Users/currentUser/.cache/ohos-bun-ci/src
+          rm -f bun
+          mkdir -p "$(dirname "$WORK")"
+
+          if [ -d "$WORK/.git" ]; then
+            echo "persistent workspace exists: $WORK"
+            cd "$WORK"
             git remote set-url origin "$REMOTE"
-            # 2. 尝试同步最新 ohos-aarch64 (重试 3 次, gh-proxy 间歇性)
             attempt=1
             while [ $attempt -le 3 ]; do
               echo "fetch attempt $attempt/3"
@@ -104,13 +108,31 @@ jobs:
               sleep 5
             done
             if git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+              # checkout -f 只重写变化的文件, 未变文件 mtime 保持 → 增量构建
               git checkout -f FETCH_HEAD
+              echo "checked out $(git rev-parse --short HEAD)"
             else
-              echo "⚠️  Bun fetch failed — using local reference checkout ($(git rev-parse --short HEAD))"
+              echo "⚠️  fetch failed — building existing checkout ($(git rev-parse --short HEAD 2>/dev/null || echo none))"
             fi
           else
-            git clone --depth 1 --branch ohos-aarch64 "$REMOTE" bun
+            echo "no persistent workspace — cloning..."
+            rm -rf "$WORK"
+            if [ -d "$LOCAL/.git" ]; then
+              # reference clone (fetch 最新 refs); 断网回退 git clone --local
+              git clone --reference "$LOCAL/.git" "$REMOTE" "$WORK" 2>/dev/null || \
+                git clone --local "$LOCAL" "$WORK"
+              git -C "$WORK" remote set-url origin "$REMOTE"
+            else
+              git clone --depth 1 --branch ohos-aarch64 "$REMOTE" "$WORK"
+            fi
+            git -C "$WORK" fetch "$REMOTE" ohos-aarch64 --depth=1 2>/dev/null || true
+            if git -C "$WORK" rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
+              git -C "$WORK" checkout -f FETCH_HEAD
+            fi
           fi
+
+          ln -sfn "$WORK" bun
+          echo "workspace: $WORK -> bun"
 
       # 同 ohos-build.yml (social4hyq): github-act-runner 不实现 actions/cache
       # 后端 (无 ACTIONS_CACHE_URL), 用固定路径 symlink 实现真正持久化。
@@ -415,13 +437,24 @@ jobs:
             fi
           }
 
-          attempt=0
-          max_attempts=10
-          while [ $attempt -lt $max_attempts ]; do
-            attempt=$((attempt + 1))
-            echo "=== build attempt #$attempt ==="
+          # ─── configure (仅当需要) ───────────────────────────────────────
+          # build.ninja 存在 + HEAD 未变 + scripts/build 输入未变 → 跳过。
+          # HEAD 记录在 stamp 里 (persistent workspace 下 git checkout 只改
+          # 变化的文件, 未变文件 mtime 保持, 所以同一 HEAD 无需重新 configure)。
+          nf="build/release/build.ninja"
+          stamp="build/release/.configure-head"
+          head_now=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+          need_configure=0
+          if [ ! -f "$nf" ]; then
+            need_configure=1
+          elif [ ! -f "$stamp" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$head_now" ]; then
+            need_configure=1
+          elif find scripts/build -newer "$nf" -type f 2>/dev/null | grep -q .; then
+            need_configure=1
+          fi
 
-            # 1. 只 configure (生成 build.ninja), 不运行 ninja
+          if [ "$need_configure" = "1" ]; then
+            echo "=== configure (first run or inputs changed) ==="
             if ! "$BUN" scripts/build.ts \
               --profile=release \
               --os=ohos \
@@ -435,17 +468,27 @@ jobs:
               echo "configure failed (see $TMPDIR/build.log)"
               exit 1
             fi
+            echo "$head_now" > "$stamp"
+          else
+            echo "configure skipped (build.ninja up to date)"
+          fi
 
-            # 2. 统一工具链
+          attempt=0
+          max_attempts=10
+          while [ $attempt -lt $max_attempts ]; do
+            attempt=$((attempt + 1))
+            echo "=== build attempt #$attempt ==="
+
+            # 统一工具链 (幂等; 覆盖 ninja regen 可能覆盖 patch 的情况)
             patch_ninja_llvm21 || exit 1
 
-            # 3. ninja 编译 (并行度 NINJA_JOBS, 同 scripts/ohos/build.sh)
+            # ninja 编译 (并行度 NINJA_JOBS, 同 scripts/ohos/build.sh)
             if ninja -C build/release -j"$NINJA_JOBS" bun 2>&1 | tee "$TMPDIR/build.log"; then
               echo "build succeeded"
               exit 0
             fi
 
-            # 4. 检测可恢复错误 (Text file busy / Permission denied — build-script 签名问题)
+            # 检测可恢复错误 (Text file busy / Permission denied — build-script 签名问题)
             if grep -qaE "Text file busy|Permission denied|could not execute process" "$TMPDIR/build.log"; then
               echo "build-script signing issue detected, fixing and retrying..."
               sign_build_scripts

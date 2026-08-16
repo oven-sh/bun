@@ -162,6 +162,8 @@ test("dead Rust symbols do not reappear", () => {
     ["src/jsc/bindgen.rs", /\bBindgenOptionalRepr\b/],
     ["src/jsc/bindgen.rs", /\bBindgenOptionalCustom\b/],
     ["src/jsc/bindgen.rs", /\bBindgenExternalShared\b/],
+    // ExternalSharedOptional — only consumers were the bindgen impls above
+    ["src/bun_core/external_shared.rs", /\bExternalSharedOptional\b/],
     // Optional::adopt — only consumer was the bindgen machinery above
     // (Strong::adopt, taking a bare NonNull, is live)
     ["src/jsc/Strong.rs", /fn adopt\(handle: Option<NonNull<Impl>>\)/],

@@ -27,7 +27,7 @@ pub mod cow_slice;
 // impl moved down to `bun_core::external_shared` (cycle-break for the
 // `bun_string → bun_core` merge); re-exported here unchanged.
 pub use bun_core::external_shared;
-pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional, WTFString};
+pub use bun_core::{ExternalShared, ExternalSharedDescriptor, WTFString};
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
 

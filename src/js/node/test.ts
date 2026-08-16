@@ -1390,8 +1390,7 @@ function makeCancelledByParentError() {
   return makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
 }
 
-// Port of Node's Test#abortHandler (test.js:1059): the `signal` option's reason
-// is the verdict, with Node's own error standing in for a falsy one.
+// Node's Test#abortHandler (test.js:1059): a falsy reason is replaced by Node's own AbortError.
 function abortFailure(signal: AbortSignal): unknown {
   return signal.reason || $makeAbortError("The test was aborted");
 }
@@ -1554,21 +1553,18 @@ class TestNode {
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
   subtestChain: Promise<void> = Promise.resolve();
-  // The inline subtests and suites scheduled on subtestChain, so cancelling
-  // this node reaches the ones that have not finished.
+  // Everything scheduled on subtestChain, for cancelSubtests().
   subtests: TestNode[] = [];
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
-  // Set by cancel(). Like Node's first-error-wins Test#fail, it is the verdict
-  // no matter how the body settles afterwards.
+  // Set by cancel(); once set it is the verdict, whatever the body does afterwards.
   cancelError: unknown = undefined;
   #ctx: TestContext | undefined;
   #suiteCtx: SuiteContext | undefined;
   #tags: string[] | undefined;
-  // `t.signal`, created on first use; #aborted remembers an abort() that
-  // happened before anything asked for it.
+  // t.signal, created on first use; #aborted carries an abort() over to that creation.
   #abortController: AbortController | undefined;
   #aborted = false;
 
@@ -1647,18 +1643,14 @@ class TestNode {
     this.#abortController?.abort();
   }
 
-  // Port of Node's Test#cancel (test.js:1064): `error` is the timeout or the
-  // `signal` option's reason; a subtest swept up because its parent finished
-  // without it gets cancelledByParent. The first cancellation wins, and a node
-  // that already has its verdict (say, cancelled during its after hooks) keeps it.
+  // Node's Test#cancel (test.js:1064); like its fail(), the first error a node gets is the one it keeps.
   cancel(error: unknown) {
     if (this.finished || this.cancelError !== undefined) return;
     this.cancelError = error ?? makeCancelledByParentError();
     this.abort();
   }
 
-  // Port of Node's postRun() sweep: a finished node cancels the subtests it did
-  // not wait for (because it was itself stopped), and those cancel theirs.
+  // Node's postRun() sweep (test.js:1486): whatever a stopped test did not wait for is cancelled, recursively.
   cancelSubtests() {
     for (const subtest of this.subtests) {
       if (subtest.finished) continue;
@@ -2063,10 +2055,8 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
 function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
   const { concurrency, tags, plan } = options;
 
-  // Tests enforce timeout and signal in executeTestNode. On suites, and
-  // concurrency anywhere, they are only validated for Node's error contract:
-  // top-level suites are bun:test describes, inline suites just drain their
-  // children, and subtests always run serially.
+  // Suites only validate timeout/signal (tests enforce them in executeTestNode);
+  // concurrency is only validated anywhere, subtests always run serially.
   validateTimeoutAndSignal(options);
   if (concurrency != null && typeof concurrency !== "boolean") {
     if (typeof concurrency === "number") {
@@ -2182,13 +2172,8 @@ function invokeTestFn(fn: Function, arg: unknown) {
 
 let addAbortListener;
 
-// Node's stopTest()/stopPromise: armed once per test or hook, before the body
-// starts (so a long synchronous prefix counts against the timeout), and raced
-// against everything the run then waits on. `promise` never resolves; it
-// rejects with the timeout failure or the `signal` option's reason (on the next
-// microtask if the signal is already aborted, as addAbortListener delivers it;
-// callers that must not start at all in that case check `aborted` first).
-// Callers must dispose().
+// Node's stopTest(): armed before the body (a synchronous prefix counts) and raced against everything the
+// run then waits on. `promise` only ever rejects, with the timeout or the signal's reason. Callers must dispose().
 function createStopController(timeout: number | undefined, signal: AbortSignal | undefined) {
   const hasTimeout = typeof timeout === "number" && Number.isFinite(timeout);
   if (!hasTimeout && signal === undefined) {
@@ -2220,8 +2205,7 @@ function createStopController(timeout: number | undefined, signal: AbortSignal |
 
 async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
   const { timeout, signal } = hook;
-  // Hooks are Tests of their own in Node, so one whose signal has already
-  // aborted never runs; the owning test's t.signal is not involved either way.
+  // A hook is a Test of its own in Node ([kShouldAbort] applies to it, the owning test's t.signal does not).
   if (signal?.aborted) throw abortFailure(signal);
   const stop = createStopController(timeout, signal);
   try {
@@ -2286,10 +2270,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   if (outerSignal?.aborted) node.cancel(abortFailure(outerSignal));
   const cancelledBeforeStart = node.cancelError;
   if (cancelledBeforeStart !== undefined) {
-    // By its `signal` option or by the parent that stopped waiting for it:
-    // Node's run() goes straight to postRun() ([kShouldAbort], test.js:1306),
-    // so no hook and no body runs, and fail() still puts the cancellation
-    // through expectFailure.
+    // Node's [kShouldAbort] (test.js:1306): straight to postRun(), no hooks or body, but fail() still applies xfail.
     failure = applyExpectFailure(node, cancelledBeforeStart);
     node.passed = failure === undefined;
     node.error = failure ?? cancelledBeforeStart;
@@ -2324,8 +2305,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     // AND the plan wait against it. Arm it once here so plan({wait:true})
     // is bounded by the same test timeout, not left unbounded.
     const stop = createStopController(node.options.timeout, outerSignal);
-    // Node's #cancel runs the moment the stop fires, not when the race below is
-    // observed: t.signal is already aborted by the time the after hooks run.
+    // Cancelled as soon as the stop fires (Node's #cancel), not once a race below gets around to it.
     stop?.promise.catch(error => node.cancel(error));
     try {
       const runBody = async () => {
@@ -2383,9 +2363,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
-  // Cancelled while running, by its own stop or by a parent that stopped
-  // waiting for it: Node's fail() keeps the first error, so however the body
-  // (or a plan wait) settled afterwards, the cancellation is the verdict.
+  // A cancellation (own stop, or the parent's sweep) came first, so it is the verdict, as with Node's fail().
   failure = node.cancelError ?? failure;
 
   const bodyFailure = failure;
@@ -2420,9 +2398,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
-  // Node's run() finally and postRun(): once the test is over, t.signal aborts
-  // whatever the outcome (the documented way to cancel a test's subtasks), and
-  // the subtests a stopped test did not wait for are cancelled.
+  // Node's run() finally (t.signal aborts after every test, passing or not) and its postRun() sweep.
   node.abort();
   node.cancelSubtests();
 
@@ -2447,8 +2423,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
     }
     let failure: unknown;
     try {
-      // A subtest cancelled while it was still queued (its parent was stopped)
-      // is not what triggers the before hooks; executeTestNode just reports it.
+      // A subtest cancelled while still queued must not be what triggers the before hooks.
       if (child.cancelError === undefined) await runOwnBeforeHooks(parent);
       failure = await executeTestNode(child, fn);
     } catch (err) {
@@ -2499,9 +2474,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         recordSuiteFailure(suite, err);
       }
     }
-    // A suite cancelled while it was still queued (the enclosing test was
-    // stopped) never starts in Node, so neither of its hook sets runs here; its
-    // children were cancelled along with it and still report as the chain drains.
+    // Node never starts a suite cancelled while still queued: no hooks run, its children report themselves.
     const cancelledBeforeStart = suite.cancelError !== undefined;
     if (!cancelledBeforeStart) {
       try {
@@ -2523,9 +2496,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       }
     }
     suite.finished = true;
-    // Read after the drain: the sweep can also reach a suite while it drains.
-    // Being cancelled fails it even when none of its children did (it may have
-    // none), and is what Node reports for it.
+    // Re-read after the drain (the sweep can land mid-drain); a cancelled suite fails even with no children.
     const { cancelError } = suite;
     suite.passed = cancelError === undefined && suite.failedSubtests === 0;
     if (runChildReporterEnabled) {

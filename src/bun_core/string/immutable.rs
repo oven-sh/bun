@@ -353,8 +353,6 @@ pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u
 
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
-    // The generic index_of_t below returns Some(0) for an empty needle, so
-    // dispatch to the u8-specific index_of (which returns None for empty).
     index_of(self_, str).is_some()
 }
 

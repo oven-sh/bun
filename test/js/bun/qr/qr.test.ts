@@ -135,7 +135,7 @@ describe("Bun.QR", () => {
         dark: { r: 0, g: 0, b: 0, a: 0.5 },
       });
       expect(svg2).toContain('fill="#ff0080"');
-      expect(svg2).toContain('fill="#00000080"');
+      expect(svg2).toContain('fill="#0000007f"'); // same truncation as Bun.color
 
       const svg3 = Bun.QR.generate("x", { format: "svg", dark: 0x336699 });
       expect(svg3).toContain('fill="#336699"');
@@ -162,7 +162,8 @@ describe("Bun.QR", () => {
     test("invert option", () => {
       const a = Bun.QR.generate("hi", { format: "text", border: 0 });
       const b = Bun.QR.generate("hi", { format: "text", border: 0, invert: true });
-      expect(a).not.toBe(b);
+      const swap: Record<string, string> = { " ": "\u2588", "\u2588": " ", "\u2580": "\u2584", "\u2584": "\u2580" };
+      expect(b).toBe(Array.from(a, ch => swap[ch] ?? ch).join(""));
     });
   });
 
@@ -282,6 +283,20 @@ describe("Bun.QR", () => {
       expect(() => Bun.QR.generate("x", { format: "bmp" as any })).toThrow(TypeError);
     });
 
+    test("non-number and non-integer options throw", () => {
+      expect(() => Bun.QR.generate("x", { minVersion: "10" as any })).toThrow(TypeError);
+      expect(() => Bun.QR.generate("x", { scale: 2.5 })).toThrow(TypeError);
+      expect(() => Bun.QR.generate("x", { mask: "3" as any })).toThrow(TypeError);
+      expect(() => Bun.QR.parse({ matrix: new Uint8Array(21 * 21), size: "21" as any })).toThrow(TypeError);
+      // undefined is the same as absent.
+      expect(Bun.QR.generate("x", { minVersion: undefined, mask: undefined }).version).toBe(1);
+    });
+
+    test("only the documented format and errorCorrection names are accepted", () => {
+      expect(() => Bun.QR.generate("x", { format: "png" as any })).toThrow(TypeError);
+      expect(() => Bun.QR.generate("x", { errorCorrection: "l" as any })).toThrow(TypeError);
+    });
+
     test("minVersion out of range", () => {
       expect(() => Bun.QR.generate("x", { minVersion: 0 })).toThrow(RangeError);
       expect(() => Bun.QR.generate("x", { minVersion: 41 })).toThrow(RangeError);
@@ -315,9 +330,9 @@ describe("Bun.QR", () => {
     test("oversized input is rejected up front", () => {
       // Far beyond any symbol's capacity; must throw rather than build the
       // intermediate bit buffer (which is 8x the input).
-      const big = new Uint8Array(64 * 1024 * 1024);
+      const big = new Uint8Array(1024 * 1024);
       expect(() => Bun.QR.generate(big)).toThrow(RangeError);
-      expect(() => Bun.QR.generate(Buffer.alloc(64 * 1024 * 1024, "7").toString("latin1"))).toThrow(RangeError);
+      expect(() => Bun.QR.generate(Buffer.alloc(1024 * 1024, "7").toString("latin1"))).toThrow(RangeError);
       // Alphanumeric max is 4296 at v40-L; 4297 is rejected even though it
       // is well under the numeric max.
       expect(

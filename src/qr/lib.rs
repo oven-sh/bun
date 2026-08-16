@@ -195,7 +195,7 @@ impl Segment {
     }
 
     /// Numeric-mode segment. Caller guarantees every byte is `b'0'..=b'9'`.
-    pub fn make_numeric(digits: &[u8]) -> Result<Segment, EncodeError> {
+    fn make_numeric(digits: &[u8]) -> Result<Segment, EncodeError> {
         Segment::check_capacity(Mode::Numeric, digits.len())?;
         let mut bb = BitBuffer::default();
         let mut i = 0;
@@ -222,7 +222,7 @@ impl Segment {
 
     /// Alphanumeric-mode segment. Caller guarantees each byte is in the
     /// 45-char alphanumeric set.
-    pub fn make_alphanumeric(text: &[u8]) -> Result<Segment, EncodeError> {
+    fn make_alphanumeric(text: &[u8]) -> Result<Segment, EncodeError> {
         Segment::check_capacity(Mode::Alphanumeric, text.len())?;
         let mut bb = BitBuffer::default();
         let mut i = 0;
@@ -1025,7 +1025,6 @@ pub fn to_text(qr: &QrCode, border: u32, invert: bool) -> String {
 pub enum DecodeError {
     InvalidSize,
     InvalidFormatInfo,
-    InvalidVersionInfo,
     ReedSolomonFailure,
     InvalidStructure,
 }
@@ -1037,7 +1036,6 @@ impl fmt::Display for DecodeError {
                 write!(f, "matrix size must be 21..=177 and congruent to 1 mod 4")
             }
             DecodeError::InvalidFormatInfo => write!(f, "unable to read format information"),
-            DecodeError::InvalidVersionInfo => write!(f, "version information mismatch"),
             DecodeError::ReedSolomonFailure => {
                 write!(
                     f,
@@ -1661,6 +1659,73 @@ mod tests {
         }
         let decoded = decode_matrix(&m, usize::from(qr.size())).unwrap();
         assert_eq!(decoded.bytes, b"Hello, world!");
+    }
+
+    /// Writes raw `bits` (15 wide) into both format-info copies, mirroring
+    /// the placement in `draw_format_bits` but without BCH encoding.
+    fn write_raw_format_bits(m: &mut [u8], size: usize, bits: u32) {
+        let s = size;
+        let mut set = |x: usize, y: usize, i: u32| m[y * s + x] = ((bits >> i) & 1) as u8;
+        for i in 0..6 {
+            set(8, i as usize, i);
+        }
+        set(8, 7, 6);
+        set(8, 8, 7);
+        set(7, 8, 8);
+        for i in 9..15 {
+            set(14 - i as usize, 8, i);
+        }
+        for i in 0..8 {
+            set(s - 1 - i as usize, 8, i);
+        }
+        for i in 8..15 {
+            set(8, s - 15 + i as usize, i);
+        }
+    }
+
+    #[test]
+    fn decoder_rejects_unrecoverable_format_info() {
+        // BCH(15,5) corrects 3 bits but is not a perfect code, so words at
+        // distance >= 4 from every codeword exist; find one and plant it.
+        let codewords: Vec<u32> = (0u32..32)
+            .map(|data| {
+                let mut rem = data;
+                for _ in 0..10 {
+                    rem = (rem << 1) ^ ((rem >> 9) * 0x537);
+                }
+                ((data << 10) | rem) ^ 0x5412
+            })
+            .collect();
+        let far_word = (0u32..1 << 15)
+            .find(|w| codewords.iter().all(|cw| (cw ^ w).count_ones() > 3))
+            .expect("BCH(15,5) is not perfect");
+
+        let qr = QrCode::encode_text(b"format", Ecc::Low).unwrap();
+        let size = usize::from(qr.size());
+        let mut m = qr.modules().to_vec();
+        write_raw_format_bits(&mut m, size, far_word);
+        assert!(matches!(
+            decode_matrix(&m, size),
+            Err(DecodeError::InvalidFormatInfo)
+        ));
+    }
+
+    #[test]
+    fn decoder_rejects_damage_beyond_ecc_capacity() {
+        // v1-L is a single block with 7 ECC codewords, so it corrects at most
+        // 3 bytes; inverting the whole data region is far past that.
+        let qr = QrCode::encode_text(b"too much damage", Ecc::Low).unwrap();
+        let size = usize::from(qr.size());
+        let mut m = qr.modules().to_vec();
+        for y in 9..size - 8 {
+            for x in 9..size {
+                m[y * size + x] ^= 1;
+            }
+        }
+        assert!(matches!(
+            decode_matrix(&m, size),
+            Err(DecodeError::ReedSolomonFailure | DecodeError::InvalidStructure)
+        ));
     }
 
     #[test]

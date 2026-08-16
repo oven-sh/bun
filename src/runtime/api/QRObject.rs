@@ -5,7 +5,7 @@ use bun_css_jsc::js_color_input_to_rgba;
 use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_qr::{DecodeError, Ecc, EncodeError, QrCode, Segment, VERSION_MAX, VERSION_MIN};
 
-use crate::image::{Image, codec_png, codecs};
+use crate::image::{Image, codecs};
 use crate::node::StringOrBuffer;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -32,30 +32,17 @@ bun_core::comptime_string_map! {
         b"object" => OutputFormat::Object,
         b"svg" => OutputFormat::Svg,
         b"text" => OutputFormat::Text,
-        b"terminal" => OutputFormat::Text,
-        b"ansi" => OutputFormat::Text,
         b"data-url" => OutputFormat::DataUrl,
-        b"dataURL" => OutputFormat::DataUrl,
-        b"url" => OutputFormat::DataUrl,
         b"image" => OutputFormat::Image,
-        b"png" => OutputFormat::Image,
     };
 }
 
 bun_core::comptime_string_map! {
     static ECC_MAP: Ecc = {
         b"L" => Ecc::Low,
-        b"l" => Ecc::Low,
-        b"low" => Ecc::Low,
         b"M" => Ecc::Medium,
-        b"m" => Ecc::Medium,
-        b"medium" => Ecc::Medium,
         b"Q" => Ecc::Quartile,
-        b"q" => Ecc::Quartile,
-        b"quartile" => Ecc::Quartile,
         b"H" => Ecc::High,
-        b"h" => Ecc::High,
-        b"high" => Ecc::High,
     };
 }
 
@@ -71,6 +58,9 @@ const BLACK: RGBA = RGBA {
     blue: 0,
     alpha: 255,
 };
+
+const MAX_BORDER: i128 = 1024;
+const MAX_SCALE: i128 = 1024;
 
 struct Options {
     ecc: Ecc,
@@ -145,33 +135,29 @@ fn ecc_name(ecc: Ecc) -> &'static str {
     }
 }
 
-fn int_option(
+/// Reads an integer option. Absent or `undefined` yields `default`; a
+/// non-number or non-integer throws a TypeError; out of range throws a
+/// RangeError.
+fn int_option<T: bun_core::Integer>(
     global: &JSGlobalObject,
-    value: JSValue,
+    object: JSValue,
     name: &'static str,
     field_name: &'static [u8],
-    min: i64,
-    max: i64,
-) -> JsResult<Option<i64>> {
-    let Some(v) = value.get(global, name)? else {
-        return Ok(None);
-    };
-    if !v.is_number() {
-        return Ok(None);
-    }
-    let n = v.coerce_to_int64(global)?;
-    if !(min..=max).contains(&n) {
-        return Err(global.throw_range_error(
-            n,
-            bun_jsc::RangeErrorOptions {
-                min,
-                max,
-                field_name,
-                ..Default::default()
-            },
-        ));
-    }
-    Ok(Some(n))
+    default: T,
+    min: i128,
+    max: i128,
+) -> JsResult<T> {
+    let value = object.get(global, name)?.unwrap_or_default();
+    global.validate_integer_range::<T>(
+        value,
+        default,
+        bun_jsc::IntegerRange {
+            min,
+            max,
+            field_name,
+            always_allow_zero: false,
+        },
+    )
 }
 
 fn color_option(
@@ -217,36 +203,58 @@ fn parse_options(global: &JSGlobalObject, value: JSValue) -> JsResult<Options> {
         opts.format = format;
     }
 
-    let vmin = i64::from(VERSION_MIN);
-    let vmax = i64::from(VERSION_MAX);
-    if let Some(n) = int_option(
+    let vmin = i128::from(VERSION_MIN);
+    let vmax = i128::from(VERSION_MAX);
+    opts.min_version = int_option(
         global,
         value,
         "minVersion",
         b"options.minVersion",
+        opts.min_version,
         vmin,
         vmax,
-    )? {
-        opts.min_version = n as u8;
-    }
-    if let Some(n) = int_option(
+    )?;
+    opts.max_version = int_option(
         global,
         value,
         "maxVersion",
         b"options.maxVersion",
+        opts.max_version,
         vmin,
         vmax,
-    )? {
-        opts.max_version = n as u8;
-    }
-    if let Some(n) = int_option(global, value, "mask", b"options.mask", 0, 7)? {
-        opts.mask = Some(n as u8);
-    }
-    if let Some(n) = int_option(global, value, "border", b"options.border", 0, 1024)? {
-        opts.border = n as u32;
-    }
-    if let Some(n) = int_option(global, value, "scale", b"options.scale", 1, 1024)? {
-        opts.scale = n as u32;
+    )?;
+    opts.border = int_option(
+        global,
+        value,
+        "border",
+        b"options.border",
+        opts.border,
+        0,
+        MAX_BORDER,
+    )?;
+    opts.scale = int_option(
+        global,
+        value,
+        "scale",
+        b"options.scale",
+        opts.scale,
+        1,
+        MAX_SCALE,
+    )?;
+    // No numeric default: an absent mask means "choose by penalty score".
+    if let Some(mask_value) = value.get(global, "mask")? {
+        if !mask_value.is_undefined() {
+            opts.mask = Some(global.validate_integer_range::<u8>(
+                mask_value,
+                0,
+                bun_jsc::IntegerRange {
+                    min: 0,
+                    max: 7,
+                    field_name: b"options.mask",
+                    always_allow_zero: false,
+                },
+            )?);
+        }
     }
 
     if let Some(v) = value.get_boolean_loose(global, "boostErrorCorrection")? {
@@ -394,7 +402,13 @@ fn generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 rgba_pack(opts.light),
                 rgba_pack(opts.dark),
             );
-            let enc = match codec_png::encode_indexed(&rgba, w, h, -1, 2, false, None) {
+            let png_opts = codecs::EncodeOptions {
+                format: codecs::Format::Png,
+                palette: true,
+                colors: 2,
+                ..Default::default()
+            };
+            let enc = match codecs::encode(&rgba, w, h, png_opts) {
                 Ok(e) => e,
                 Err(codecs::Error::OutOfMemory) => return Err(global.throw_out_of_memory()),
                 Err(_) => {
@@ -450,7 +464,19 @@ fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     let (matrix_value, declared_size) = match input_value.get(global, "matrix")? {
         Some(m) if input_value.is_object() && !m.is_undefined_or_null() => {
-            let size = int_option(global, input_value, "size", b"size", 21, 177)?;
+            let size = match input_value.get(global, "size")? {
+                Some(v) if !v.is_undefined() => Some(global.validate_integer_range::<usize>(
+                    v,
+                    0,
+                    bun_jsc::IntegerRange {
+                        min: 21,
+                        max: 177,
+                        field_name: b"size",
+                        always_allow_zero: false,
+                    },
+                )?),
+                _ => None,
+            };
             (m, size)
         }
         _ => (input_value, None),
@@ -464,7 +490,7 @@ fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let modules = ab.byte_slice();
 
     let size = match declared_size {
-        Some(n) => n as usize,
+        Some(n) => n,
         None => {
             let len = modules.len();
             let root = (len as f64).sqrt() as usize;

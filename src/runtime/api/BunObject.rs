@@ -347,7 +347,9 @@ pub mod bun_object {
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
         BunObject_lazyPropCb_aws => super::get_aws_object,
+        BunObject_lazyPropCb_AWSClient => super::get_aws_client_constructor,
         BunObject_lazyPropCb_gcp => super::get_gcp_object,
+        BunObject_lazyPropCb_GCPClient => super::get_gcp_client_constructor,
         BunObject_lazyPropCb_cron => super::get_cron_object,
         BunObject_lazyPropCb_cwd => super::get_cwd,
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
@@ -1988,12 +1990,24 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     Ok(array)
 }
 
-fn get_aws_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::webcore::cloud::aws::js::create(global_this)
+fn get_aws_object(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
+    use crate::webcore::cloud::aws::AWSClient;
+    let client = AWSClient::default(global_this)?;
+    Ok(<AWSClient as bun_jsc::JsClass>::to_js(*client, global_this))
 }
 
-fn get_gcp_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::webcore::cloud::gcp::js::create(global_this)
+fn get_aws_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::webcore::cloud::aws::AWSClient>(global_this)
+}
+
+fn get_gcp_object(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
+    use crate::webcore::cloud::gcp::GCPClient;
+    let client = GCPClient::default(global_this)?;
+    Ok(<GCPClient as bun_jsc::JsClass>::to_js(*client, global_this))
+}
+
+fn get_gcp_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::webcore::cloud::gcp::GCPClient>(global_this)
 }
 
 fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

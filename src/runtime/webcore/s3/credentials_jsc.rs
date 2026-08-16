@@ -98,7 +98,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.credentials.secret_access_key = Box::default();
                 new_credentials.credentials.session_token = Box::default();
                 new_credentials.credentials.provider =
-                    Some(crate::webcore::aws::shared(Some(utf8.slice())));
+                    Some(crate::webcore::aws::default_provider(Some(utf8.slice())));
                 new_credentials.changed_credentials = true;
             }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
@@ -299,6 +299,6 @@ pub(crate) fn get_credentials_with_options(
     Ok(new_credentials)
 }
 
-fn contains_newline_or_cr(value: &[u8]) -> bool {
+pub(crate) fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }

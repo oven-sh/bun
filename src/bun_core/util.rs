@@ -3716,6 +3716,7 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
 pub use bun_alloc::free_sensitive_cstr as free_sensitive;
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
 pub use bun_alloc::secure_zero;
+pub use bun_alloc::secure_zero_slice;
 
 // ── argv ──────────────────────────────────────────────────────────────────
 // `bun.argv` — process argv as a slice of NUL-terminated byte strings.

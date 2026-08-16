@@ -9,7 +9,6 @@ pub mod js;
 pub mod provider;
 pub mod sign_options;
 
-pub use provider::{
-    DefaultProvider, default_provider, resolve_async, resolve_shared_async, shared,
-};
+pub use js::AWSClient;
+pub use provider::{DefaultProvider, default_provider, resolve_shared_async};
 pub use sign_options::AwsSignOptions;

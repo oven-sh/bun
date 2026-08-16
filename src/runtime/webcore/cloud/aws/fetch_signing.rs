@@ -33,15 +33,20 @@ const RESERVED: &[&[u8]] = &[
 ];
 
 pub fn sign_fetch_request(
+    global: &bun_jsc::JSGlobalObject,
     opts: &AwsSignOptions,
     method: Method,
     url: &URL<'_>,
     headers: &mut Option<Headers>,
     body: Body<'_>,
 ) -> Result<Signed, String> {
-    let creds = opts
-        .resolve_credentials()
-        .map_err(|m| format!("{}", bstr::BStr::new(&m)))?;
+    let creds = opts.available_credentials().ok_or_else(|| {
+        let message = opts
+            .provider()
+            .map(|p| p.pending_message())
+            .unwrap_or_default();
+        format!("{}", bstr::BStr::new(&message))
+    })?;
 
     // Sign the Host the HTTP client will send: the user's override, else the URL's.
     let user_host = headers
@@ -49,7 +54,7 @@ pub fn sign_fetch_request(
         .and_then(|h| h.get(b"host"))
         .map(<[u8]>::to_vec);
     let host: &[u8] = user_host.as_deref().unwrap_or(url.host);
-    let (service, region) = opts.scope_for(host, &creds)?;
+    let (service, region) = opts.scope_for(global, host, &creds)?;
     let s3 = sigv4::is_s3_service(&service);
 
     let payload = match body {

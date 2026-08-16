@@ -276,7 +276,7 @@ describe.concurrent("Bun.gcp", () => {
     expect(e.error.message).toContain('type "external_account"');
     // a missing GOOGLE_APPLICATION_CREDENTIALS file is a hard error
     const missing = await token({ GOOGLE_APPLICATION_CREDENTIALS: join(ext, "nope.json") });
-    expect(missing.error.message).toContain("could not read GOOGLE_APPLICATION_CREDENTIALS");
+    expect(missing.error.message).toContain("could not read credentials file");
   });
 
   test("metadata server (GCE / GKE / Cloud Run)", async () => {
@@ -374,11 +374,49 @@ describe.concurrent("Bun.gcp", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("GCPClient instances: keyFile / inline credentials / default audience", async () => {
+    using dir = tempDir("gcp-clients", {
+      "a.json": serviceAccountFile("a@proj.iam.gserviceaccount.com"),
+      "b.json": serviceAccountFile("b@proj.iam.gserviceaccount.com"),
+    });
+    const { stdout, stderr, exitCode } = await run(
+      `
+        const echo = ${JSON.stringify(echo.url.href)};
+        const a = new Bun.GCPClient({ keyFile: ${JSON.stringify(join(dir, "a.json"))} });
+        const b = new Bun.GCPClient({ credentials: await Bun.file(${JSON.stringify(join(dir, "b.json"))}).json(), scopes: ["bigquery"] });
+        const c = new Bun.GCPClient({ credentials: await Bun.file(${JSON.stringify(join(dir, "a.json"))}).text(), audience: "https://svc.run.app" });
+        const [ta, tb, tc] = await Promise.all([a.accessToken(), b.accessToken(), c.idToken()]);
+        const viaFetch = await (await b.fetch(echo)).json();
+        const override = await (await b.fetch(echo, { scopes: "pubsub" })).json();
+        console.log(JSON.stringify({
+          a: ta.token, aEmail: ta.email, b: tb.token, cAud: JSON.parse(atob(tc.token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).aud,
+          viaFetch: viaFetch.authorization, override: override.authorization,
+          isInstance: Bun.gcp instanceof Bun.GCPClient && a instanceof Bun.GCPClient,
+        }));
+      `,
+      {},
+    );
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect(out).toEqual({
+      a: "sa-token-for:a@proj.iam.gserviceaccount.com:https://www.googleapis.com/auth/cloud-platform:kid=key-1",
+      aEmail: "a@proj.iam.gserviceaccount.com",
+      b: "sa-token-for:b@proj.iam.gserviceaccount.com:https://www.googleapis.com/auth/bigquery:kid=key-1",
+      cAud: "https://svc.run.app",
+      viaFetch: "Bearer sa-token-for:b@proj.iam.gserviceaccount.com:https://www.googleapis.com/auth/bigquery:kid=key-1",
+      override: "Bearer sa-token-for:b@proj.iam.gserviceaccount.com:https://www.googleapis.com/auth/pubsub:kid=key-1",
+      isInstance: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("argument validation", () => {
     // @ts-expect-error
     expect(() => Bun.gcp.accessToken("cloud-platform")).toThrow("options object");
-    expect(() => Bun.gcp.accessToken({ scopes: [123 as any] })).toThrow("scope");
     // @ts-expect-error
+    expect(() => new Bun.GCPClient(1)).toThrow("options must be an object");
+    expect(() => new Bun.GCPClient({ credentials: 1 as any })).toThrow("credentials must be");
+    expect(() => Bun.gcp.accessToken({ scopes: [123 as any] })).toThrow("scope");
     expect(() => Bun.gcp.idToken()).toThrow("audience");
     expect(() => Bun.gcp.idToken({ audience: "" })).toThrow("audience");
   });

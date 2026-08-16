@@ -351,11 +351,7 @@ impl S3Credentials {
             } else if self.uses_provider()
                 && let Some(provider) = &self.provider
             {
-                resolved = Some(
-                    provider
-                        .resolve_blocking()
-                        .map_err(|_| SignError::MissingCredentials)?,
-                );
+                resolved = Some(provider.cached().ok_or(SignError::MissingCredentials)?);
                 let r = resolved.as_deref().unwrap();
                 (&r.access_key_id, &r.secret_access_key, r.session_token())
             } else {

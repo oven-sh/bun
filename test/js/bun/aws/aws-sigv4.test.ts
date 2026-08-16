@@ -248,9 +248,9 @@ describe("Bun.aws.fetch", () => {
         }).authorization,
       );
     }
-    expect(new URL(Bun.aws.presign("https://bkt.s3.amazonaws.com/a", { accessKeyId, secretAccessKey })).pathname).toBe(
-      "/a",
-    );
+    expect(
+      new URL(await Bun.aws.presign("https://bkt.s3.amazonaws.com/a", { accessKeyId, secretAccessKey })).pathname,
+    ).toBe("/a");
   });
 
   test("s3:// URLs are rejected (use fetch's s3 option / Bun.s3)", async () => {
@@ -352,6 +352,45 @@ describe("Bun.aws.fetch", () => {
     expect(followed.status).toBe(200);
   });
 
+  test("AWSClient instances carry their own defaults; per-call options override", async () => {
+    const east = new Bun.AWSClient({
+      accessKeyId,
+      secretAccessKey,
+      region: "us-east-1",
+      service: "sqs",
+      signingDate: datetime,
+    });
+    const west = new Bun.AWSClient({ accessKeyId: "AKIAOTHER", secretAccessKey, region: "us-west-2", service: "sqs" });
+    expect(east).toBeInstanceOf(Bun.AWSClient);
+    expect(Bun.aws).toBeInstanceOf(Bun.AWSClient);
+    expect(east.region).toBe("us-east-1");
+    expect(west.region).toBe("us-west-2");
+    expect(east.profile).toBeUndefined();
+    const a: Echo = await (await east.fetch(echo.url)).json();
+    expect(a.headers.authorization).toContain("Credential=AKIDEXAMPLE/20150830/us-east-1/sqs/");
+    const b: Echo = await (await west.fetch(echo.url, { signingDate: datetime })).json();
+    expect(b.headers.authorization).toContain("Credential=AKIAOTHER/20150830/us-west-2/sqs/");
+    const c: Echo = await (await east.fetch(echo.url, { region: "ap-south-1", service: "sns" })).json();
+    expect(c.headers.authorization).toContain("/ap-south-1/sns/");
+    expect(await east.credentials()).toEqual({ accessKeyId, secretAccessKey, source: "explicit" });
+    expect((await west.credentials()).accessKeyId).toBe("AKIAOTHER");
+    expect(
+      new URL(await east.presign("https://bkt.s3.amazonaws.com/k")).searchParams.get("X-Amz-Credential"),
+    ).toStartWith("AKIDEXAMPLE/");
+    // endpoint: base URL for relative paths (LocalStack-style)
+    const local = new Bun.AWSClient({
+      accessKeyId,
+      secretAccessKey,
+      region: "us-east-1",
+      service: "sqs",
+      endpoint: echo.url.href,
+    });
+    const d: Echo = await (await local.fetch("/queue?Action=Purge")).json();
+    expect(new URL(d.url).pathname + new URL(d.url).search).toBe("/queue?Action=Purge");
+    // @ts-expect-error
+    expect(() => new Bun.AWSClient("nope")).toThrow(/expected an options object/);
+  });
+
   test("Request objects and the init-object form work too", async () => {
     const req = new Request(new URL("/from-request", echo.url), { method: "DELETE" });
     const hit: Echo = await (
@@ -379,14 +418,17 @@ describe("Bun.aws.fetch", () => {
 });
 
 describe("Bun.aws.presign", () => {
-  test("S3 object URL", () => {
-    const url = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/some dir/photo (1).jpg?versionId=3", {
-      accessKeyId,
-      secretAccessKey,
-      sessionToken: "the token",
-      expiresIn: 3600,
-      signingDate: datetime,
-    });
+  test("S3 object URL", async () => {
+    const url = await Bun.aws.presign(
+      "https://my-bucket.s3.eu-west-1.amazonaws.com/some dir/photo (1).jpg?versionId=3",
+      {
+        accessKeyId,
+        secretAccessKey,
+        sessionToken: "the token",
+        expiresIn: 3600,
+        signingDate: datetime,
+      },
+    );
     const parsed = new URL(url);
     expect(parsed.origin).toBe("https://my-bucket.s3.eu-west-1.amazonaws.com");
     expect(parsed.pathname).toBe("/some%20dir/photo%20%281%29.jpg");
@@ -399,8 +441,8 @@ describe("Bun.aws.presign", () => {
     expect(actual).toBe(expected);
   });
 
-  test("method, URL objects, non-S3 services, defaults", () => {
-    const put = Bun.aws.presign(new URL("https://bucket.s3.amazonaws.com/upload.bin"), {
+  test("method, URL objects, non-S3 services, defaults", async () => {
+    const put = await Bun.aws.presign(new URL("https://bucket.s3.amazonaws.com/upload.bin"), {
       accessKeyId,
       secretAccessKey,
       method: "PUT",
@@ -421,7 +463,7 @@ describe("Bun.aws.presign", () => {
     });
     expect(actual).toBe(expected);
 
-    const iot = Bun.aws.presign("https://data-ats.iot.us-east-1.amazonaws.com/mqtt", {
+    const iot = await Bun.aws.presign("https://data-ats.iot.us-east-1.amazonaws.com/mqtt", {
       accessKeyId,
       secretAccessKey,
       service: "iotdevicegateway",
@@ -432,16 +474,18 @@ describe("Bun.aws.presign", () => {
     expect(check.actual).toBe(check.expected);
   });
 
-  test("validation", () => {
+  test("validation", async () => {
     const base = { accessKeyId, secretAccessKey };
+    // Argument errors throw synchronously; anything that needs credentials rejects.
     expect(() => Bun.aws.presign("ftp://x/y", base)).toThrow(/http: or https:/);
     expect(() => Bun.aws.presign("https://bucket.s3.amazonaws.com/k", { ...base, expiresIn: 0 })).toThrow(/expiresIn/);
     expect(() => Bun.aws.presign("https://bucket.s3.amazonaws.com/k", { ...base, expiresIn: 604801 })).toThrow(
       /expiresIn/,
     );
-    expect(() => Bun.aws.presign("https://localhost/k", base)).toThrow(/cannot tell which AWS service/);
     // @ts-expect-error
     expect(() => Bun.aws.presign()).toThrow(/expects a URL/);
     expect(() => Bun.aws.presign("https://bucket.s3.amazonaws.com/k", { ...base, method: "NOPE" })).toThrow(/method/);
+    await expect(Bun.aws.presign("https://localhost/k", base)).rejects.toThrow(/cannot tell which AWS service/);
+    expect(Bun.aws.presign("https://bucket.s3.amazonaws.com/k", base)).toBeInstanceOf(Promise);
   });
 });

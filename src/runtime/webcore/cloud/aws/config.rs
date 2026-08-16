@@ -1,6 +1,5 @@
-//! Everything the credential chain reads from the environment, captured on
-//! the JS thread (where `process.env` / `.env` files live) so resolution can
-//! run on any thread.
+//! Everything the credential chain reads from the environment, captured
+//! from `process.env` up front so one resolution sees one consistent view.
 
 use bun_core::strings;
 use bun_jsc::JSGlobalObject;
@@ -15,7 +14,6 @@ fn truthy(v: Option<&[u8]>) -> bool {
     matches!(v, Some(s) if s.eq_ignore_ascii_case(b"true") || s == b"1")
 }
 
-#[derive(Default)]
 pub struct ChainConfig {
     /// Explicit profile from options; wins over `AWS_PROFILE`.
     pub profile: Option<Box<[u8]>>,
@@ -52,14 +50,6 @@ pub struct ChainConfig {
     pub https_proxy: Option<Box<[u8]>>,
     pub http_proxy: Option<Box<[u8]>>,
     pub no_proxy: Option<Box<[u8]>>,
-    pub reject_unauthorized: bool,
-
-    /// Snapshot for `credential_process` children.
-    pub env_map: bun_sys::EnvMap,
-    /// Set by VM teardown to abandon in-flight network waits.
-    pub cancel: std::sync::Arc<core::sync::atomic::AtomicBool>,
-    /// Only the env source is consulted (used by tests and `credential_source = Environment`).
-    pub skip_env: bool,
 }
 
 impl ChainConfig {
@@ -83,8 +73,6 @@ impl ChainConfig {
             })
             .filter(|v: &u32| *v > 0)
             .unwrap_or(3);
-        let reject_unauthorized = global.bun_vm().get_tls_reject_unauthorized();
-        let env_map = env.to_map();
         ChainConfig {
             profile: profile.filter(|s| !s.is_empty()).map(Box::from),
             aws_profile: owned(env.get(b"AWS_PROFILE")),
@@ -128,10 +116,6 @@ impl ChainConfig {
             https_proxy: owned(env.get_proxy_var(b"https_proxy", b"HTTPS_PROXY")),
             http_proxy: owned(env.get_proxy_var(b"http_proxy", b"HTTP_PROXY")),
             no_proxy: owned(env.get_proxy_var(b"no_proxy", b"NO_PROXY")),
-            reject_unauthorized,
-            env_map,
-            cancel: Default::default(),
-            skip_env: false,
         }
     }
 

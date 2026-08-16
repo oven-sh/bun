@@ -330,89 +330,22 @@ fn send_list_objects(
 
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
 
-    let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        // Written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
-        sign_result: result,
-        callback_context,
-        callback: s3_simple_request::Callback::ListObjects(callback),
-        headers,
-        http_ticket: None,
-        response_buffer: MutableString::default(),
-        result: bun_http::HTTPClientResult::default(),
-        concurrent_task: Default::default(),
-        proxy_url: Box::default(),
-        body: Box::default(),
-        poll_ref: bun_io::KeepAlive::init(),
-        signal_store: Default::default(),
-    }));
-    // SAFETY: just allocated, non-null
-    let task = unsafe { &mut *task_ptr };
-
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
-
-    let proxy = proxy_url.unwrap_or(b"");
-    task.proxy_url = if !proxy.is_empty() {
-        Box::<[u8]>::from(proxy)
-    } else {
-        Box::<[u8]>::default()
-    };
-
-    // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
-    // heap-allocated fields of `*task` which the task outlives. AsyncHTTP::init wants
-    // `'static` borrows because the HTTP thread reads them concurrently; they remain valid
-    // until `task` is dropped in `on_response`.
-    let url = bun_url::URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
-    // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is
-    // heap-owned by `*task` and outlives the AsyncHTTP request.
-    let headers_buf: &'static [u8] =
-        unsafe { bun_ptr::detach_lifetime(task.headers.buf.as_slice()) };
-    let http_proxy = if !task.proxy_url.is_empty() {
-        // SAFETY: same lifetime-extension invariant as `url` above — `task.proxy_url` is
-        // heap-owned by `*task` and outlives the AsyncHTTP request.
-        Some(bun_url::URL::parse(unsafe {
-            bun_ptr::detach_lifetime_ref(&*task.proxy_url)
-        }))
-    } else {
-        None
-    };
-    // JS thread (request setup): read options from the current VM.
-    let vm = VirtualMachine::get();
-
-    task.http.write(bun_http::AsyncHTTP::init(
-        bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
-        b"",
-        bun_http::HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            signals: Some(task.signal_store.to()),
-            ..Default::default()
+    let task_ptr = S3HttpSimpleTask::create(
+        result,
+        s3_simple_request::Completion::S3 {
+            callback: s3_simple_request::Callback::ListObjects(callback),
+            context: callback_context,
         },
-    ));
-
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
-    unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: the VM aborts it at
-    // teardown (registry) and waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
-    crate::jsc_hooks::ActiveHandle::S3Request(core::ptr::NonNull::new(task_ptr).expect("task"))
-        .register();
-    bun_http::HTTPThread::schedule(batch);
+        headers,
+        proxy_url,
+        Box::default(),
+    );
+    s3_simple_request::send(
+        task_ptr,
+        bun_http::Method::GET,
+        bun_http::FetchRedirect::Follow,
+        Default::default(),
+    );
     Ok(())
 }
 
@@ -1554,11 +1487,7 @@ pub(crate) fn readable_stream(
                         &MutableString::default(),
                         false,
                         Some(Error::S3Error {
-                            code: if err.code == "ERR_AWS_MISSING_CREDENTIALS" {
-                                b"ERR_S3_MISSING_CREDENTIALS"
-                            } else {
-                                err.code.as_bytes()
-                            },
+                            code: err.s3_code().as_bytes(),
                             message: &err.message,
                         }),
                         wrapper.cast::<c_void>(),

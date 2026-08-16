@@ -1,22 +1,24 @@
 //! Cloud credentials without an SDK: the AWS default credential provider
-//! chain + SigV4 (`Bun.s3`, `fetch("s3://…")`, `fetch(url, { aws })`,
-//! `Bun.aws`) and Google application default credentials (`fetch(url, { gcp })`,
-//! `Bun.gcp`). `http_sync`/`json`/`env`/`cache` are the shared plumbing.
+//! chain + SigV4 (`Bun.s3`, `fetch("s3://…")`, `Bun.aws` / `Bun.AWSClient`)
+//! and Google application default credentials (`Bun.gcp` / `Bun.GCPClient`).
+//! `flight`/`io`/`cache`/`json`/`env` are the shared plumbing.
 
 pub mod aws;
 pub mod cache;
 pub mod env;
+pub mod flight;
 pub mod gcp;
-pub mod http_sync;
+pub mod io;
 pub mod json;
 
 /// Per-VM state (lives in `RareData`, dropped with the VM): the credential
-/// caches and the resolutions currently in flight, for both clouds. A Worker
-/// has its own, so its own `env` yields its own credentials.
+/// providers, the resolutions currently in flight and their waiters, for
+/// both clouds. A Worker has its own, so its own `env` yields its own
+/// credentials.
 #[derive(Default)]
 pub(crate) struct PerVm {
-    pub aws: aws::provider::State,
-    pub gcp: gcp::provider::State,
+    pub aws: flight::Flights<aws::DefaultProvider>,
+    pub gcp: flight::Flights<gcp::provider::TokenProvider>,
 }
 
 impl PerVm {

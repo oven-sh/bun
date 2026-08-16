@@ -51,6 +51,8 @@ pub struct AwsCredentials {
 impl AwsCredentials {
     /// Credentials are refreshed this long before they expire.
     pub const REFRESH_WINDOW_SECONDS: u64 = 300;
+    /// Credentials this close to expiry count as expired.
+    pub const EXPIRY_MARGIN_SECONDS: u64 = 5;
 
     pub fn session_token(&self) -> Option<&[u8]> {
         if self.session_token.is_empty() {
@@ -78,14 +80,8 @@ impl AwsCredentials {
 
 impl Drop for AwsCredentials {
     fn drop(&mut self) {
-        // SAFETY: exclusively borrowed boxed slices; `len` bytes writable.
-        unsafe {
-            bun_core::secure_zero(
-                self.secret_access_key.as_mut_ptr(),
-                self.secret_access_key.len(),
-            );
-            bun_core::secure_zero(self.session_token.as_mut_ptr(), self.session_token.len());
-        }
+        bun_core::secure_zero_slice(&mut self.secret_access_key);
+        bun_core::secure_zero_slice(&mut self.session_token);
     }
 }
 
@@ -113,6 +109,16 @@ impl ProviderError {
             message: message.into().into_boxed_slice(),
         }
     }
+
+    /// The code S3 APIs report: they have always said
+    /// `ERR_S3_MISSING_CREDENTIALS` when there was nothing to sign with.
+    pub fn s3_code(&self) -> &'static str {
+        if self.code == "ERR_AWS_MISSING_CREDENTIALS" {
+            "ERR_S3_MISSING_CREDENTIALS"
+        } else {
+            self.code
+        }
+    }
 }
 
 pub type ProviderResult = Result<Arc<AwsCredentials>, Arc<ProviderError>>;
@@ -123,16 +129,10 @@ pub trait CredentialsProvider: Send + Sync {
     /// inside the refresh window).
     fn cached(&self) -> Option<Arc<AwsCredentials>>;
 
-    /// Nothing usable is cached, so signing now would block on I/O;
-    /// asynchronous callers resolve first when this is set. Implementations
-    /// may use this as the cue to refresh soon-to-expire credentials in the
-    /// background.
+    /// Nothing usable is cached: callers resolve (asynchronously) before
+    /// signing. Implementations may use this as the cue to refresh
+    /// soon-to-expire credentials in the background.
     fn needs_resolution(&self) -> bool;
-
-    /// Resolve, doing whatever I/O is needed on the calling thread. Returns
-    /// cached credentials without I/O when they are still usable. Used by
-    /// synchronous entry points (`presign`) and as the signer's fallback.
-    fn resolve_blocking(&self) -> ProviderResult;
 
     /// A stable label for `console.log` / errors (e.g. `default`, a profile
     /// name, or `function`).

@@ -251,6 +251,22 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("Bun.aws re-reads the environment on refresh (env keys are not frozen at first use)", async () => {
+    const { stdout, exitCode } = await run(
+      `
+        const a = await Bun.aws.credentials();
+        process.env.AWS_ACCESS_KEY_ID = "AKIAROTATED";
+        process.env.AWS_REGION = "ap-south-1";
+        const cached = await Bun.aws.credentials();
+        const b = await Bun.aws.credentials({ refresh: true });
+        console.log(a.accessKeyId, a.accountId, cached.accessKeyId, b.accessKeyId, Bun.aws.region);
+      `,
+      { AWS_ACCESS_KEY_ID: "AKIAFIRST", AWS_SECRET_ACCESS_KEY: "s", AWS_ACCOUNT_ID: "111122223333" },
+    );
+    expect(stdout.trim()).toBe("AKIAFIRST 111122223333 AKIAFIRST AKIAROTATED ap-south-1");
+    expect(exitCode).toBe(0);
+  });
+
   test("static profile in ~/.aws/credentials, region from ~/.aws/config", async () => {
     using dir = tempDir("aws-static-profile", {
       ".aws": {
@@ -331,6 +347,20 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(bad.error.code).toBe("ERR_AWS_CREDENTIALS");
     expect(bad.error.message).toContain("credential_process exited with");
     expect(bad.error.message).toContain("this went wrong");
+  });
+
+  test.skipIf(isWindows)("credentials that arrive already expired are an error, not cached", async () => {
+    using bin = tempDir("aws-credproc-expired", {
+      "old.sh": `#!/bin/sh\necho '{"Version": 1, "AccessKeyId": "ASIAOLD", "SecretAccessKey": "s", "SessionToken": "t", "Expiration": "2020-01-01T00:00:00Z"}'\n`,
+    });
+    chmodSync(join(bin, "old.sh"), 0o755);
+    const files = writeAwsFiles("aws-credproc-expired-cfg", {
+      config: `[default]\ncredential_process = ${join(bin, "old.sh")}\n`,
+    });
+    using _ = files.dir;
+    const result = await creds(files.env);
+    expect(result.error.code).toBe("ERR_AWS_CREDENTIALS");
+    expect(result.error.message).toMatch(/credentials from process were already expired .*2020-?01-?01/);
   });
 
   test("role_arn + source_profile → STS AssumeRole signed with the source profile's keys", async () => {
@@ -533,6 +563,30 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(Date.now() - started).toBeLessThan(20_000);
   });
 
+  test.skipIf(isWindows)("a hung credential_process does not hold up worker termination", async () => {
+    const files = writeAwsFiles("aws-credproc-hung", {
+      config: `[default]\ncredential_process = /bin/sh -c "sleep 20"\n`,
+    });
+    using _ = files.dir;
+    const started = Date.now();
+    const { stdout, exitCode } = await run(
+      `
+        const w = new Worker("data:text/javascript," + encodeURIComponent(\`
+          Bun.aws.credentials().catch(() => {});
+          self.postMessage("started");
+        \`));
+        await new Promise(r => (w.onmessage = r));
+        await w.terminate();
+        console.log("terminated");
+      `,
+      files.env,
+    );
+    expect(stdout.trim()).toBe("terminated");
+    expect(exitCode).toBe(0);
+    // The helper sleeps 20s; termination must not wait for it.
+    expect(Date.now() - started).toBeLessThan(15_000);
+  });
+
   test("an unreachable IMDS is 'not configured', not an error", async () => {
     // Port 9 (discard) on loopback refuses connections immediately.
     const result = await creds({
@@ -594,6 +648,93 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(stdout.trim()).toBe("ASIASOON1 ASIASOON1");
     expect(n).toBe(1);
     expect(exitCode).toBe(0);
+  });
+
+  test("credentials are refreshed in the background before they expire, without any call", async () => {
+    let n = 0;
+    let second!: () => void;
+    const refreshed = new Promise<void>(r => (second = r));
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        if (++n >= 2) second();
+        return Response.json({
+          AccessKeyId: "ASIATIMER" + n,
+          SecretAccessKey: "s",
+          Token: "t",
+          // 7s left: past the 5s expiry margin, so usable, and short enough
+          // that the refresh timer is armed for ~1s out.
+          Expiration: new Date(Date.now() + 7_000).toISOString(),
+        });
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log((await Bun.aws.credentials()).accessKeyId); process.stdin.on("data", () => {}); // stay alive, idle`,
+      ],
+      env: { ...baseEnv, AWS_CONTAINER_CREDENTIALS_FULL_URI: `http://127.0.0.1:${server.port}/` } as any,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    // The second fetch comes from the timer, not from a call.
+    await Promise.race([
+      refreshed,
+      proc.exited.then(code => Promise.reject(new Error(`child exited early (${code})`))),
+    ]);
+    proc.kill();
+    expect(await proc.stdout.text()).toBe("ASIATIMER1\n");
+    expect(n).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a background refresh nobody is waiting for does not keep the process alive", async () => {
+    let n = 0;
+    let refreshing!: () => void;
+    const refreshSeen = new Promise<void>(r => (refreshing = r));
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        if (++n > 1) {
+          refreshing();
+          return new Promise<Response>(() => {}); // the refresh hangs
+        }
+        return Response.json({
+          AccessKeyId: "ASIAEXIT",
+          SecretAccessKey: "s",
+          Token: "t",
+          Expiration: new Date(Date.now() + 7_000).toISOString(), // refresh timer ~1s out
+        });
+      },
+    });
+    const started = Date.now();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        // Idle (stdin keeps it up) until told the refresh went out, then let go
+        // of stdin: nothing but the hung refresh is left, and that must not count.
+        `console.log((await Bun.aws.credentials()).accessKeyId);
+         process.stdin.once("data", () => { console.log("done"); process.stdin.destroy(); });`,
+      ],
+      env: {
+        ...baseEnv,
+        AWS_CONTAINER_CREDENTIALS_FULL_URI: `http://127.0.0.1:${server.port}/`,
+        AWS_METADATA_SERVICE_TIMEOUT: "30",
+      } as any,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    await Promise.race([refreshSeen, proc.exited]);
+    proc.stdin.write("go\n");
+    await proc.stdin.flush();
+    expect(await proc.stdout.text()).toBe("ASIAEXIT\ndone\n");
+    expect(await proc.exited).toBe(0);
+    expect(n).toBe(2);
+    // Well short of the hung refresh's 30s deadline.
+    expect(Date.now() - started).toBeLessThan(15_000);
   });
 
   test("SSO profile without a cached token explains how to log in", async () => {
@@ -690,6 +831,99 @@ describe("S3Client with ambient credentials", () => {
     expect(exitCode).toBe(0);
     const akids = hits.s3.slice(before).map(h => h.headers.authorization.match(/Credential=([^/]+)\//)![1]);
     expect(akids).toEqual(["AKIAEXPLICIT", "AKIAPROFILECI", "AKIAPROFILECI"]);
+  });
+
+  test("synchronous presign: uses env/profile credentials on the spot, but never waits on the network", async () => {
+    const files = writeAwsFiles("aws-s3-presign-sync", {
+      credentials: `[default]\naws_access_key_id = AKIASTATICPROFILE\naws_secret_access_key = p\n`,
+    });
+    using _ = files.dir;
+    // Static profile keys need no I/O, so the very first synchronous call works.
+    const fromProfile = await run(
+      `
+        import { s3 } from "bun";
+        console.log(new URL(s3.file("a").presign()).searchParams.get("X-Amz-Credential").split("/")[0]);
+      `,
+      { S3_ENDPOINT: s3.url.href, S3_BUCKET: "bucket", ...files.env },
+    );
+    expect(fromProfile.stdout.trim()).toBe("AKIASTATICPROFILE");
+    expect(fromProfile.exitCode).toBe(0);
+
+    // Instance-metadata credentials need a round-trip: the first synchronous
+    // call says so (and starts resolving in the background); once anything
+    // asynchronous has resolved them, synchronous calls work.
+    const fromImds = await run(
+      `
+        import { s3 } from "bun";
+        try { s3.file("a").presign(); console.log("unexpected"); } catch (e) { console.log(e.code, /have not been resolved yet.*await Bun\.aws\.credentials\(\)/.test(e.message)); }
+        await Bun.aws.credentials();
+        console.log(new URL(s3.file("a").presign()).searchParams.get("X-Amz-Credential").split("/")[0]);
+      `,
+      imdsEnv(),
+    );
+    expect(fromImds.stdout.trim().split("\n")).toEqual(["ERR_S3_MISSING_CREDENTIALS true", "ASIAIMDS"]);
+    expect(fromImds.exitCode).toBe(0);
+
+    // Once the chain has actually failed, the synchronous error says why
+    // rather than "not resolved yet".
+    using broken = Bun.serve({ port: 0, fetch: () => new Response("nope", { status: 500 }) });
+    const afterFailure = await run(
+      `
+        import { s3 } from "bun";
+        try { s3.file("a").presign(); } catch (e) { console.log(/have not been resolved yet/.test(e.message)); }
+        await Bun.aws.credentials().catch(e => console.log(e.code));
+        try { s3.file("a").presign(); } catch (e) { console.log(e.code, /answered HTTP 500/.test(e.message)); }
+      `,
+      { ...imdsEnv(), AWS_EC2_METADATA_SERVICE_ENDPOINT: broken.url.href },
+    );
+    expect(afterFailure.stdout.trim().split("\n")).toEqual(["true", "ERR_AWS_CREDENTIALS", "ERR_AWS_CREDENTIALS true"]);
+    expect(afterFailure.exitCode).toBe(0);
+  });
+
+  test("resolution does not block the JavaScript thread", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(r => (release = r));
+    using slow = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (req.method === "PUT") return new Response("tok");
+        if (path.endsWith("/security-credentials/")) {
+          await gate; // held until the child proves its event loop is still turning
+          return new Response("role");
+        }
+        return Response.json({
+          Code: "Success",
+          AccessKeyId: "ASIASLOW",
+          SecretAccessKey: "s",
+          Token: "t",
+          Expiration: "2099-01-01T00:00:00Z",
+        });
+      },
+    });
+    using ping = Bun.serve({
+      port: 0,
+      fetch() {
+        release();
+        return new Response("pong");
+      },
+    });
+    const { stdout, exitCode } = await run(
+      `
+        const pending = Bun.aws.credentials();
+        // While IMDS is stalling, unrelated work keeps running: this fetch is
+        // what lets IMDS answer at all.
+        console.log(await (await fetch(process.env.PING_URL)).text());
+        console.log((await pending).accessKeyId);
+      `,
+      {
+        AWS_EC2_METADATA_DISABLED: undefined,
+        AWS_EC2_METADATA_SERVICE_ENDPOINT: slow.url.href,
+        PING_URL: ping.url.href,
+      },
+    );
+    expect(stdout.trim().split("\n")).toEqual(["pong", "ASIASLOW"]);
+    expect(exitCode).toBe(0);
   });
 
   test("no ambient credentials anywhere → ERR_S3_MISSING_CREDENTIALS with the chain's explanation", async () => {

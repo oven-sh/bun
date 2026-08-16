@@ -556,8 +556,7 @@ fn signing_key(secret: &[u8], date: &[u8], scope: Scope<'_>) -> Result<[u8; KEY_
     k_secret.extend_from_slice(b"AWS4");
     k_secret.extend_from_slice(secret);
     let k_date = hmac(&k_secret, date)?;
-    // SAFETY: exclusively owned Vec; zero the derived-from-secret bytes.
-    unsafe { bun_core::secure_zero(k_secret.as_mut_ptr(), k_secret.len()) };
+    bun_core::secure_zero_slice(&mut k_secret);
     let k_region = hmac(&k_date, scope.region)?;
     let k_service = hmac(&k_region, scope.service)?;
     hmac(&k_service, b"aws4_request")

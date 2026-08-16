@@ -1148,6 +1148,13 @@ pub(crate) unsafe fn __bun_fire_timer(
             crate::node::quic::QuicEndpoint::on_timer_fire(c);
             Ok(())
         }
+        EventLoopTimerTag::CallbackTimer => {
+            let c: *mut crate::timer::CallbackTimer =
+                owner!(crate::timer::CallbackTimer, event_loop_timer);
+            // SAFETY: per fn contract.
+            unsafe { crate::timer::CallbackTimer::fire(c) };
+            Ok(())
+        }
     };
     fired
 }

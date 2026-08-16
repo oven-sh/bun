@@ -3,7 +3,7 @@ title: AWS & Google Cloud auth
 description: Call AWS and Google Cloud APIs from Bun with the machine's own credentials — no SDK required
 ---
 
-Bun can authenticate requests to AWS and Google Cloud the same way their CLIs and SDKs do: from environment variables, config files, SSO sessions, or the instance / container / pod the code is running on. Credentials are resolved off the JavaScript thread, cached for the whole process, and refreshed shortly before they expire.
+Bun can authenticate requests to AWS and Google Cloud the same way their CLIs and SDKs do: from environment variables, config files, SSO sessions, or the instance / container / pod the code is running on. Bun fetches credentials without blocking the JavaScript thread on the network, caches them, and refreshes ones that are in use in the background shortly before they expire.
 
 ```ts
 // SigV4-signed request with whatever credentials this machine has
@@ -11,6 +11,13 @@ const queues = await Bun.aws.fetch("https://sqs.us-east-1.amazonaws.com/?Action=
 
 // Bearer token from Application Default Credentials
 const buckets = await Bun.gcp.fetch("https://storage.googleapis.com/storage/v1/b?project=my-project");
+```
+
+`Bun.aws` and `Bun.gcp` are ready-made clients using ambient credentials. For several accounts, regions or key files at once, construct more:
+
+```ts
+const prod = new Bun.AWSClient({ profile: "prod", region: "eu-west-1" });
+const deployer = new Bun.GCPClient({ keyFile: "/secrets/deployer.json" });
 ```
 
 `Bun.s3`, `new S3Client()` and `fetch("s3://…")` use the AWS chain automatically when no `accessKeyId`/`secretAccessKey` is configured — see [S3 › Credentials](/runtime/s3#credentials).
@@ -31,7 +38,17 @@ A source that isn't configured is skipped. A source that _is_ configured but fai
 
 As in the AWS SDKs, selecting a profile (`AWS_PROFILE` or the `profile` option) takes precedence over exported `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. Environment variables are read from `process.env` when credentials are resolved, so setting `process.env.AWS_PROFILE` at startup works.
 
-### `Bun.aws.credentials()`
+### `new Bun.AWSClient(options?)` / `Bun.aws`
+
+An `AWSClient` bundles signing defaults: `region`, `service`, `profile` or `accessKeyId`/`secretAccessKey`/`sessionToken`, and `endpoint` (a base URL for path-only requests, e.g. LocalStack). Every method accepts the same options to override them per call. `Bun.aws` is the instance with no overrides.
+
+```ts
+const prod = new Bun.AWSClient({ profile: "prod", region: "eu-west-1" });
+prod.region; // "eu-west-1"
+prod.profile; // "prod"
+```
+
+### `client.credentials()`
 
 Resolve (or return the cached) credentials. Useful for handing them to another SDK, or just to see what Bun found.
 
@@ -47,13 +64,13 @@ const creds = await Bun.aws.credentials();
 //   source: "sso",              // "env" | "profile" | "assume-role" | "web-identity" | "process" | "sso" | "container" | "imds"
 // }
 
-await Bun.aws.credentials({ profile: "prod" }); // a specific profile
 await Bun.aws.credentials({ refresh: true }); // ignore the cache
+await new Bun.AWSClient({ profile: "prod" }).credentials(); // a specific profile
 ```
 
 When nothing is found, the promise rejects with `code: "ERR_AWS_MISSING_CREDENTIALS"` and a message listing each source and why it was skipped. A configured source that failed rejects with `code: "ERR_AWS_CREDENTIALS"`.
 
-### `Bun.aws.fetch(input, init?)`
+### `client.fetch(input, init?)`
 
 `fetch()`, with the request signed using [Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html). `init` accepts everything `fetch` does plus the signing options below; with none, the service and region are inferred from `*.amazonaws.com` / `*.on.aws` hostnames and ambient credentials are used.
 
@@ -89,16 +106,17 @@ A signature is only valid for the exact host and path it was computed for, so `r
 
 For `s3://` URLs keep using `fetch("s3://…", { s3: {...} })` or `Bun.s3`.
 
-### `Bun.aws.presign(url, options?)`
+### `client.presign(url, options?)`
 
-Returns a query-string-signed URL — typically an S3 object URL to hand to a browser. Takes the same signing options as `Bun.aws.fetch`, plus `method` (default `"GET"`) and `expiresIn` (seconds, default `900`, max `604800`).
+Returns a query-string-signed URL — typically an S3 object URL to hand to a browser. Takes the same signing options as `fetch`, plus `method` (default `"GET"`) and `expiresIn` (seconds, default `900`, max `604800`).
 
 ```ts
-const download = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/report.pdf", { expiresIn: 3600 });
-const upload = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/upload.bin", { method: "PUT" });
+const download = await Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/report.pdf", { expiresIn: 3600 });
+const upload = await Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/upload.bin", { method: "PUT" });
+const queue = await Bun.aws.presign("/123456789012/jobs?Action=ReceiveMessage", { service: "sqs" });
 ```
 
-`presign` is synchronous. If ambient credentials haven't been resolved yet it resolves them once, blocking; `await Bun.aws.credentials()` beforehand to avoid that. For `s3://`-style paths and ACLs, [`S3File.presign()`](/runtime/s3#presigning-urls) is usually more convenient.
+It returns a promise because the credentials may still have to be fetched; the signing itself is local. For `s3://`-style paths and ACLs, [`S3File.presign()`](/runtime/s3#presigning-urls) is usually more convenient.
 
 ## Google Cloud
 
@@ -112,7 +130,19 @@ const upload = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/upl
 
 Service-account keys are exchanged for tokens with a self-signed RS256 JWT; user credentials use their refresh token. `external_account` (workload identity federation) files are not supported yet.
 
-### `Bun.gcp.accessToken()` / `Bun.gcp.idToken()`
+### `new Bun.GCPClient(options?)` / `Bun.gcp`
+
+`Bun.gcp` uses Application Default Credentials. A `GCPClient` can instead be given a `keyFile` path or the key's `credentials` (object or JSON string), plus default `scopes` or an `audience` (making `fetch()` send ID tokens by default).
+
+```ts
+const deployer = new Bun.GCPClient({ keyFile: "/secrets/deployer.json", scopes: ["cloud-platform"] });
+const invoker = new Bun.GCPClient({
+  credentials: JSON.parse(process.env.SA_KEY!),
+  audience: "https://my-service-abc123.a.run.app",
+});
+```
+
+### `client.accessToken()` / `client.idToken()`
 
 ```ts
 const { token, expiration, source } = await Bun.gcp.accessToken();
@@ -128,7 +158,7 @@ const { token: idToken } = await Bun.gcp.idToken("https://my-service-abc123.a.ru
 
 Tokens are cached per scope set / audience; pass `refresh: true` to force a new one. Failures reject with `code: "ERR_GCP_MISSING_CREDENTIALS"` (nothing configured) or `"ERR_GCP_CREDENTIALS"` (a configured source failed).
 
-### `Bun.gcp.fetch(input, init?)`
+### `client.fetch(input, init?)` (GCP)
 
 ```ts
 await Bun.gcp.fetch("https://pubsub.googleapis.com/v1/projects/my-project/topics");

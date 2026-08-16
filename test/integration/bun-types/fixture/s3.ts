@@ -36,21 +36,23 @@ doFileOps(
   client.file("x").presign();
   const creds: Bun.AWSCredentials = await Bun.aws.credentials({ profile: "prod", refresh: true });
   console.log(creds.accessKeyId, creds.secretAccessKey, creds.sessionToken, creds.expiration?.getTime(), creds.source);
-  const url: string = Bun.aws.presign("https://b.s3.amazonaws.com/k", { expiresIn: 60, method: "PUT" });
+  const url: Promise<string> = Bun.aws.presign("https://b.s3.amazonaws.com/k", { expiresIn: 60, method: "PUT" });
   await Bun.aws.fetch("https://sqs.us-east-1.amazonaws.com/");
   await Bun.aws.fetch("/?Action=ListQueues", { service: "sqs", method: "GET" });
-  await Bun.aws.fetch("https://example.com/", {
+  const prod = new Bun.AWSClient({ profile: "prod", region: "eu-west-1", endpoint: "http://localhost:4566" });
+  const r: Response = await prod.fetch("https://example.com/", {
     service: "execute-api",
-    region: "us-east-1",
     signQuery: true,
     body: "x",
     method: "POST",
   });
+  console.log(prod.region, prod.profile, r.status, Bun.aws instanceof Bun.AWSClient);
   const t: Bun.GCPToken = await Bun.gcp.accessToken({ scopes: ["cloud-platform"] });
   console.log(t.token, t.expiration.getTime(), t.source, t.email, t.projectId, t.quotaProjectId, url);
   await Bun.gcp.idToken("https://run.app");
   await Bun.gcp.idToken({ audience: "https://run.app" });
   await Bun.gcp.fetch("https://storage.googleapis.com/");
-  await Bun.gcp.fetch("https://x.run.app/", { audience: "https://x.run.app", method: "POST", body: "{}" });
-  await Bun.gcp.fetch(new Request("https://storage.googleapis.com/"), { scopes: "devstorage.read_only" });
+  const sa = new Bun.GCPClient({ keyFile: "/x.json", scopes: "devstorage.read_only" });
+  await sa.fetch("https://x.run.app/", { audience: "https://x.run.app", method: "POST", body: "{}" });
+  await new Bun.GCPClient({ credentials: { type: "service_account" }, audience: "https://x" }).idToken();
 }

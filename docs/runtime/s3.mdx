@@ -185,7 +185,7 @@ When your production service needs to let users upload files to your server, it'
 
 To let users upload directly to S3, presign URLs for S3 files. Presigning generates a URL with a signature that lets a user upload that specific file to S3, without exposing your credentials or granting them unnecessary access to your bucket.
 
-By default, Bun generates a `GET` URL that expires in 24 hours. Presigning is synchronous and purely local when keys are configured; with [ambient credentials](#ambient-credentials-profiles-sso-iam-roles) the first call resolves them (blocking once), so servers that only presign may want to `await Bun.aws.credentials()` at startup.
+By default, Bun generates a `GET` URL that expires in 24 hours. Presigning is synchronous and never touches the network. [Ambient credentials](#ambient-credentials-profiles-sso-iam-roles) from SSO, STS, a container endpoint or instance metadata need one network round-trip first: run any S3 operation or `await Bun.aws.credentials()` at startup. Until that has happened, `presign()` throws `ERR_S3_MISSING_CREDENTIALS`. Bun refreshes credentials that are in use in the background before they expire.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 import { s3 } from "bun";
@@ -273,7 +273,7 @@ const url = s3file.presign({
 
 To redirect users to a presigned URL for an S3 file, pass an `S3File` instance to a `Response` object as the body.
 
-The response redirects the user to a presigned URL for the S3 file. The redirect saves you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
+The response redirects the user to a presigned URL for the S3 file (so, like [`presign()`](#presigning-urls), it needs credentials that are already at hand). The redirect saves you the memory, time, and bandwidth cost of downloading the file to your server and sending it back to the user.
 
 ```ts s3.ts icon="/icons/typescript.svg"
 const response = new Response(s3file);
@@ -483,7 +483,7 @@ Pick a profile with `AWS_PROFILE` or the `profile` option (which takes precedenc
 const prod = new S3Client({ profile: "prod", bucket: "my-bucket" });
 ```
 
-Resolution happens off the JavaScript thread on first use; the result is cached for the process and refreshed a few minutes before it expires. See [AWS & Google Cloud auth](/runtime/networking/cloud-auth) for the full order, `Bun.aws.credentials()`, and signing arbitrary AWS requests with `Bun.aws.fetch`.
+Bun resolves them on first use without blocking the JavaScript thread on the network. It caches the result and refreshes it in the background a few minutes before it expires. See [AWS & Google Cloud auth](/runtime/networking/cloud-auth) for the full order, `Bun.aws.credentials()`, and signing arbitrary AWS requests with `Bun.aws.fetch`.
 
 Options you pass to `s3.file(credentials)`, `new Bun.S3Client(credentials)`, or any of the methods that accept credentials override these defaults. So if you use the same credentials for different buckets, you can set the credentials once in your `.env` file and pass only `bucket: "my-bucket"` to `s3.file()`.
 

@@ -13,8 +13,10 @@
 //! is configured but *fails* stops the chain with that error, so a broken
 //! IRSA/SSO setup does not silently fall through to the node's instance role.
 //!
-//! Everything here is synchronous and thread-agnostic; `provider.rs` runs it
-//! on the work pool and caches the result.
+//! Written as straight-line `async` code; every network round-trip and the
+//! `credential_process` spawn go through [`Io`], which `provider.rs` drives
+//! from the JS thread without blocking it. File reads (a few small dotfiles)
+//! are done inline.
 
 use std::io::Write as _;
 
@@ -27,26 +29,48 @@ use bun_sys::{Fd, File};
 
 use super::config::ChainConfig;
 use super::ini::{IniFile, Profile, SectionKind};
-use crate::webcore::cloud::http_sync;
+use crate::webcore::cloud::io::{
+    ChainFuture, HttpError, HttpRequest, HttpResponse, Io, SpawnRequest,
+};
 use crate::webcore::cloud::json;
 use crate::webcore::s3::xml_response;
 
 type Outcome = Result<Option<AwsCredentials>, ProviderError>;
+pub type ChainResult = Result<AwsCredentials, ProviderError>;
 
 const MAX_PROFILE_DEPTH: usize = 8;
+const STS_TIMEOUT_MS: u32 = 30_000;
 
-pub fn resolve(cfg: &ChainConfig) -> Result<AwsCredentials, ProviderError> {
-    let mut r = Resolver {
-        cfg,
-        config: None,
-        credentials: None,
-        notes: Vec::new(),
-    };
-    r.run()
+pub fn resolve(cfg: ChainConfig, io: Io) -> ChainFuture<ChainResult> {
+    Box::pin(async move {
+        let mut r = Resolver {
+            cfg,
+            io,
+            config: None,
+            credentials: None,
+            notes: Vec::new(),
+        };
+        let c = r.run().await?;
+        if let Some(exp) = c.expiration
+            && exp <= now_secs() + AwsCredentials::EXPIRY_MARGIN_SECONDS
+        {
+            let at = sigv4::amz_datetime(exp);
+            return Err(err(
+                "ERR_AWS_CREDENTIALS",
+                format_args!(
+                    "credentials from {} were already expired when they arrived (Expiration {}); check this machine's clock",
+                    c.source.as_str(),
+                    BStr::new(&at)
+                ),
+            ));
+        }
+        Ok(c)
+    })
 }
 
-struct Resolver<'c> {
-    cfg: &'c ChainConfig,
+struct Resolver {
+    cfg: ChainConfig,
+    io: Io,
     config: Option<IniFile>,
     credentials: Option<IniFile>,
     /// Why each skipped source was skipped, for the final "nothing found" error.
@@ -130,7 +154,7 @@ fn snippet(body: &[u8]) -> &BStr {
     BStr::new(&body[..body.len().min(240)])
 }
 
-impl<'c> Resolver<'c> {
+impl Resolver {
     fn note(&mut self, args: core::fmt::Arguments<'_>) {
         if !self.notes.is_empty() {
             self.notes.extend_from_slice(b"; ");
@@ -138,13 +162,21 @@ impl<'c> Resolver<'c> {
         let _ = self.notes.write_fmt(args);
     }
 
-    fn run(&mut self) -> Result<AwsCredentials, ProviderError> {
+    /// One round-trip on the HTTP thread, through the configured proxy if any.
+    async fn http(&self, mut req: HttpRequest, proxied: bool) -> Result<HttpResponse, HttpError> {
+        if proxied {
+            req.proxy_url = self.cfg.proxy_for(&req.url).map(Box::from);
+        }
+        self.io.http(req).await
+    }
+
+    async fn run(&mut self) -> ChainResult {
         if let Some(c) = self.from_env()? {
             return Ok(c);
         }
         let profile = self.cfg.effective_profile().to_vec();
         let mut visited: Vec<Box<[u8]>> = Vec::new();
-        if let Some(mut c) = self.from_profile(&profile, &mut visited, 0)? {
+        if let Some(mut c) = self.from_profile(&profile, &mut visited, 0).await? {
             if c.region.is_none() {
                 c.region = self
                     .profile_region(&profile)
@@ -152,7 +184,7 @@ impl<'c> Resolver<'c> {
             }
             return Ok(c);
         }
-        if let Some(mut c) = self.from_web_identity_env()? {
+        if let Some(mut c) = self.from_web_identity_env().await? {
             c.region = self
                 .cfg
                 .region
@@ -160,7 +192,7 @@ impl<'c> Resolver<'c> {
                 .or_else(|| self.profile_region(&profile));
             return Ok(c);
         }
-        if let Some(mut c) = self.from_container()? {
+        if let Some(mut c) = self.from_container().await? {
             c.region = self
                 .cfg
                 .region
@@ -168,7 +200,7 @@ impl<'c> Resolver<'c> {
                 .or_else(|| self.profile_region(&profile));
             return Ok(c);
         }
-        if let Some(mut c) = self.from_imds()? {
+        if let Some(mut c) = self.from_imds().await? {
             c.region = self
                 .cfg
                 .region
@@ -255,7 +287,22 @@ impl<'c> Resolver<'c> {
             .and_then(|p| p.get(b"region").map(Box::from))
     }
 
-    fn from_profile(&mut self, name: &[u8], visited: &mut Vec<Box<[u8]>>, depth: usize) -> Outcome {
+    /// Boxed because `source_profile` makes it recursive.
+    fn from_profile<'a>(
+        &'a mut self,
+        name: &'a [u8],
+        visited: &'a mut Vec<Box<[u8]>>,
+        depth: usize,
+    ) -> core::pin::Pin<Box<dyn core::future::Future<Output = Outcome> + 'a>> {
+        Box::pin(self.from_profile_inner(name, visited, depth))
+    }
+
+    async fn from_profile_inner(
+        &mut self,
+        name: &[u8],
+        visited: &mut Vec<Box<[u8]>>,
+        depth: usize,
+    ) -> Outcome {
         if depth >= MAX_PROFILE_DEPTH {
             return Err(fail!(
                 "profile \"{}\": source_profile chain is too deep",
@@ -369,7 +416,7 @@ impl<'c> Resolver<'c> {
                         }
                     }
                 } else {
-                    match self.from_profile(src, visited, depth + 1)? {
+                    match self.from_profile(src, visited, depth + 1).await? {
                         Some(c) => c,
                         None => {
                             return Err(fail!(
@@ -385,9 +432,9 @@ impl<'c> Resolver<'c> {
                 let got = if cs.eq_ignore_ascii_case(b"Environment") {
                     self.env_static()
                 } else if cs.eq_ignore_ascii_case(b"Ec2InstanceMetadata") {
-                    self.from_imds()?
+                    self.from_imds().await?
                 } else if cs.eq_ignore_ascii_case(b"EcsContainer") {
-                    self.from_container()?
+                    self.from_container().await?
                 } else {
                     return Err(fail!(
                         "profile \"{}\": unsupported credential_source \"{}\" (expected Environment, Ec2InstanceMetadata or EcsContainer)",
@@ -407,15 +454,17 @@ impl<'c> Resolver<'c> {
                 }
             };
             let region = p.region.clone().or_else(|| self.cfg.region.clone());
-            let mut c = self.assume_role(
-                name,
-                &source,
-                role_arn,
-                p.role_session_name.as_deref(),
-                p.external_id.as_deref(),
-                p.duration_seconds.as_deref(),
-                region.as_deref(),
-            )?;
+            let mut c = self
+                .assume_role(
+                    name,
+                    &source,
+                    role_arn,
+                    p.role_session_name.as_deref(),
+                    p.external_id.as_deref(),
+                    p.duration_seconds.as_deref(),
+                    region.as_deref(),
+                )
+                .await?;
             c.region.clone_from(&p.region);
             return Ok(Some(c));
         }
@@ -437,19 +486,22 @@ impl<'c> Resolver<'c> {
         // (c) web identity token file
         if let (Some(token_file), Some(role_arn)) = (&p.web_identity_token_file, &p.role_arn) {
             let region = p.region.clone().or_else(|| self.cfg.region.clone());
-            let mut c = self.assume_role_with_web_identity(
-                &self.cfg.expand_home(token_file),
-                role_arn,
-                p.role_session_name.as_deref(),
-                region.as_deref(),
-            )?;
+            let token_file = self.cfg.expand_home(token_file);
+            let mut c = self
+                .assume_role_with_web_identity(
+                    &token_file,
+                    role_arn,
+                    p.role_session_name.as_deref(),
+                    region.as_deref(),
+                )
+                .await?;
             c.region.clone_from(&p.region);
             return Ok(Some(c));
         }
 
         // (d) credential_process
         if let Some(cmd) = &p.credential_process {
-            let mut c = self.from_process(name, cmd)?;
+            let mut c = self.from_process(name, cmd).await?;
             c.region.clone_from(&p.region);
             return Ok(Some(c));
         }
@@ -498,14 +550,16 @@ impl<'c> Resolver<'c> {
                 };
                 (u.clone(), r.clone(), None)
             };
-            let mut c = self.from_sso(
-                name,
-                &start_url,
-                &sso_region,
-                session_name.as_deref(),
-                account_id,
-                role_name,
-            )?;
+            let mut c = self
+                .from_sso(
+                    name,
+                    &start_url,
+                    &sso_region,
+                    session_name.as_deref(),
+                    account_id,
+                    role_name,
+                )
+                .await?;
             c.region.clone_from(&p.region);
             return Ok(Some(c));
         }
@@ -618,7 +672,7 @@ impl<'c> Resolver<'c> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn assume_role(
+    async fn assume_role(
         &self,
         profile: &[u8],
         source: &AwsCredentials,
@@ -674,30 +728,19 @@ impl<'c> Resolver<'c> {
             )
         })?;
 
-        let mut headers: Vec<(&[u8], &[u8])> = vec![
-            (
+        let mut req = HttpRequest::post(url.clone(), body)
+            .header(
                 b"content-type",
                 b"application/x-www-form-urlencoded; charset=utf-8",
-            ),
-            (b"authorization", &signed.authorization),
-            (b"x-amz-date", &signed.amz_date),
-            (b"accept", b"application/xml"),
-        ];
+            )
+            .header(b"authorization", &signed.authorization)
+            .header(b"x-amz-date", &signed.amz_date)
+            .header(b"accept", b"application/xml")
+            .timeout(STS_TIMEOUT_MS);
         if let Some(t) = source.session_token() {
-            headers.push((b"x-amz-security-token", t));
+            req = req.header(b"x-amz-security-token", t);
         }
-        let res = http_sync::fetch(&http_sync::Request {
-            method: Method::POST,
-            url: &url,
-            headers: &headers,
-            body: &body,
-            timeout_ms: 30_000,
-            follow_redirects: false,
-            proxy: self.cfg.proxy_for(&url),
-            reject_unauthorized: self.cfg.reject_unauthorized,
-            cancel: Some(&self.cfg.cancel),
-        })
-        .map_err(|e| {
+        let res = self.http(req, true).await.map_err(|e| {
             fail!(
                 "profile \"{}\": STS AssumeRole request to {} failed: {e}",
                 BStr::new(profile),
@@ -713,7 +756,7 @@ impl<'c> Resolver<'c> {
         )
     }
 
-    fn assume_role_with_web_identity(
+    async fn assume_role_with_web_identity(
         &self,
         token_file: &[u8],
         role_arn: &[u8],
@@ -752,24 +795,14 @@ impl<'c> Resolver<'c> {
                 (b"WebIdentityToken", token),
             ],
         );
-        let res = http_sync::fetch(&http_sync::Request {
-            method: Method::POST,
-            url: &url,
-            headers: &[
-                (
-                    b"content-type",
-                    b"application/x-www-form-urlencoded; charset=utf-8",
-                ),
-                (b"accept", b"application/xml"),
-            ],
-            body: &body,
-            timeout_ms: 30_000,
-            follow_redirects: false,
-            proxy: self.cfg.proxy_for(&url),
-            reject_unauthorized: self.cfg.reject_unauthorized,
-            cancel: Some(&self.cfg.cancel),
-        })
-        .map_err(|e| {
+        let req = HttpRequest::post(url.clone(), body)
+            .header(
+                b"content-type",
+                b"application/x-www-form-urlencoded; charset=utf-8",
+            )
+            .header(b"accept", b"application/xml")
+            .timeout(STS_TIMEOUT_MS);
+        let res = self.http(req, true).await.map_err(|e| {
             fail!(
                 "STS AssumeRoleWithWebIdentity request to {} failed: {e}",
                 BStr::new(&url)
@@ -786,7 +819,7 @@ impl<'c> Resolver<'c> {
 
     // ── 3. web identity from env (IRSA) ───────────────────────────────────
 
-    fn from_web_identity_env(&mut self) -> Outcome {
+    async fn from_web_identity_env(&mut self) -> Outcome {
         let (Some(file), Some(role)) = (
             self.cfg.web_identity_token_file.clone(),
             self.cfg.role_arn.clone(),
@@ -798,12 +831,13 @@ impl<'c> Resolver<'c> {
         };
         let region = self.cfg.region.clone();
         self.assume_role_with_web_identity(&file, &role, None, region.as_deref())
+            .await
             .map(Some)
     }
 
     // ── credential_process ────────────────────────────────────────────────
 
-    fn from_process(
+    async fn from_process(
         &self,
         profile: &[u8],
         command: &[u8],
@@ -812,17 +846,19 @@ impl<'c> Resolver<'c> {
         let argv: [&[u8]; 3] = [b"cmd.exe", b"/C", command];
         #[cfg(not(windows))]
         let argv: [&[u8]; 3] = [b"/bin/sh", b"-c", command];
-        let result = bun_spawn::run(bun_spawn::RunOptions {
-            argv: &argv,
-            env_map: &self.cfg.env_map,
-            windows_verbatim_arguments: true,
-        })
-        .map_err(|e| {
-            fail!(
-                "profile \"{}\": could not run credential_process: {e:?}",
-                BStr::new(profile)
-            )
-        })?;
+        let result = self
+            .io
+            .spawn(SpawnRequest {
+                argv: argv.iter().map(|a| Box::from(*a)).collect(),
+                windows_verbatim_arguments: true,
+            })
+            .await
+            .map_err(|e| {
+                fail!(
+                    "profile \"{}\": could not run credential_process: {e}",
+                    BStr::new(profile)
+                )
+            })?;
         match result.term {
             bun_spawn::Term::Exited(0) => {}
             term => {
@@ -887,7 +923,7 @@ impl<'c> Resolver<'c> {
 
     // ── SSO ───────────────────────────────────────────────────────────────
 
-    fn from_sso(
+    async fn from_sso(
         &self,
         profile: &[u8],
         start_url: &[u8],
@@ -977,7 +1013,9 @@ impl<'c> Resolver<'c> {
                 &tok.client_secret,
                 registration_ok,
             ) {
-                access_token = self.sso_refresh(profile, sso_region, &path, &cache, rt, cid, cs)?;
+                access_token = self
+                    .sso_refresh(profile, sso_region, &path, &cache, rt, cid, cs)
+                    .await?;
             } else {
                 return Err(fail!(
                     "profile \"{}\": the cached SSO token has expired; {}",
@@ -1005,21 +1043,11 @@ impl<'c> Resolver<'c> {
             &mut url,
             &[(b"account_id", account_id), (b"role_name", role_name)],
         );
-        let res = http_sync::fetch(&http_sync::Request {
-            method: Method::GET,
-            url: &url,
-            headers: &[
-                (b"x-amz-sso_bearer_token", &access_token),
-                (b"accept", b"application/json"),
-            ],
-            body: b"",
-            timeout_ms: 30_000,
-            follow_redirects: false,
-            proxy: self.cfg.proxy_for(&url),
-            reject_unauthorized: self.cfg.reject_unauthorized,
-            cancel: Some(&self.cfg.cancel),
-        })
-        .map_err(|e| {
+        let req = HttpRequest::get(url)
+            .header(b"x-amz-sso_bearer_token", &access_token)
+            .header(b"accept", b"application/json")
+            .timeout(STS_TIMEOUT_MS);
+        let res = self.http(req, true).await.map_err(|e| {
             fail!(
                 "profile \"{}\": SSO GetRoleCredentials request failed: {e}",
                 BStr::new(profile)
@@ -1072,7 +1100,7 @@ impl<'c> Resolver<'c> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn sso_refresh(
+    async fn sso_refresh(
         &self,
         profile: &[u8],
         sso_region: &[u8],
@@ -1113,18 +1141,10 @@ impl<'c> Resolver<'c> {
         body.extend_from_slice(b",\"grantType\":\"refresh_token\",\"refreshToken\":");
         body.extend_from_slice(&js(refresh_token));
         body.push(b'}');
-        let res = http_sync::fetch(&http_sync::Request {
-            method: Method::POST,
-            url: &url,
-            headers: &[(b"content-type", b"application/json")],
-            body: &body,
-            timeout_ms: 30_000,
-            follow_redirects: false,
-            proxy: self.cfg.proxy_for(&url),
-            reject_unauthorized: self.cfg.reject_unauthorized,
-            cancel: Some(&self.cfg.cancel),
-        })
-        .map_err(|e| {
+        let req = HttpRequest::post(url, body)
+            .header(b"content-type", b"application/json")
+            .timeout(STS_TIMEOUT_MS);
+        let res = self.http(req, true).await.map_err(|e| {
             fail!(
                 "profile \"{}\": refreshing the SSO token failed: {e}",
                 BStr::new(profile)
@@ -1181,7 +1201,7 @@ impl<'c> Resolver<'c> {
 
     // ── 4. container credentials ──────────────────────────────────────────
 
-    fn from_container(&mut self) -> Outcome {
+    async fn from_container(&mut self) -> Outcome {
         let url: Vec<u8> = if let Some(rel) = &self.cfg.container_relative_uri {
             let mut u = b"http://169.254.170.2".to_vec();
             if !rel.starts_with(b"/") {
@@ -1235,23 +1255,15 @@ impl<'c> Resolver<'c> {
                 ));
             }
         }
-        let mut headers: Vec<(&[u8], &[u8])> = vec![(b"accept", b"application/json")];
-        if let Some(t) = &token {
-            headers.push((b"authorization", t));
-        }
         let mut last_err = None;
         for _ in 0..self.cfg.imds_attempts.max(1) {
-            match http_sync::fetch(&http_sync::Request {
-                method: Method::GET,
-                url: &url,
-                headers: &headers,
-                body: b"",
-                timeout_ms: self.cfg.imds_timeout_ms.max(1000),
-                follow_redirects: false,
-                proxy: None,
-                reject_unauthorized: self.cfg.reject_unauthorized,
-                cancel: Some(&self.cfg.cancel),
-            }) {
+            let mut req = HttpRequest::get(url.clone())
+                .header(b"accept", b"application/json")
+                .timeout(self.cfg.imds_timeout_ms.max(1000));
+            if let Some(t) = &token {
+                req = req.header(b"authorization", t);
+            }
+            match self.http(req, false).await {
                 Ok(res) if res.status == 200 => {
                     return parse_json_credentials(
                         "container credentials endpoint",
@@ -1277,19 +1289,23 @@ impl<'c> Resolver<'c> {
                     ));
                 }
                 Err(e) => {
+                    let interrupted = e.is_interruption();
                     last_err = Some(fail!(
                         "container credentials endpoint {} is unreachable: {e}",
                         BStr::new(&url)
                     ));
+                    if interrupted {
+                        break;
+                    }
                 }
             }
         }
-        Err(last_err.unwrap())
+        Err(last_err.expect("attempts >= 1"))
     }
 
     // ── 5. EC2 instance metadata ──────────────────────────────────────────
 
-    fn from_imds(&mut self) -> Outcome {
+    async fn from_imds(&mut self) -> Outcome {
         if self.cfg.imds_disabled {
             self.note(format_args!(
                 "EC2 instance metadata (AWS_EC2_METADATA_DISABLED is set)"
@@ -1319,20 +1335,12 @@ impl<'c> Resolver<'c> {
         };
 
         // IMDSv2 session token.
-        let token_url = join("/latest/api/token");
         let mut token: Option<Vec<u8>> = None;
-        let mut token_put_error: Option<http_sync::Error> = None;
-        match http_sync::fetch(&http_sync::Request {
-            method: Method::PUT,
-            url: &token_url,
-            headers: &[(b"x-aws-ec2-metadata-token-ttl-seconds", b"21600")],
-            body: b"",
-            timeout_ms: timeout,
-            follow_redirects: false,
-            proxy: None,
-            reject_unauthorized: self.cfg.reject_unauthorized,
-            cancel: Some(&self.cfg.cancel),
-        }) {
+        let mut token_put_error: Option<HttpError> = None;
+        let put = HttpRequest::new(Method::PUT, join("/latest/api/token"))
+            .header(b"x-aws-ec2-metadata-token-ttl-seconds", b"21600")
+            .timeout(timeout);
+        match self.http(put, false).await {
             Ok(res) if res.status == 200 => {
                 let t = strings::trim(&res.body, b" \t\r\n");
                 if t.is_empty() || strings::index_of_any(t, b"\r\n").is_some() {
@@ -1373,50 +1381,17 @@ impl<'c> Resolver<'c> {
             }
         }
 
-        let token_header: Vec<(&[u8], &[u8])> = match &token {
-            Some(t) => vec![(b"x-aws-ec2-metadata-token".as_slice(), t.as_slice())],
-            None => vec![],
-        };
         let attempts = if token_put_error.is_some() {
             1
         } else {
             attempts
         };
-        let get = |url: &[u8]| -> Result<http_sync::Response, ProviderError> {
-            let mut last = None;
-            for _ in 0..attempts {
-                match http_sync::fetch(&http_sync::Request {
-                    method: Method::GET,
-                    url,
-                    headers: &token_header,
-                    body: b"",
-                    timeout_ms: timeout,
-                    follow_redirects: false,
-                    proxy: None,
-                    reject_unauthorized: self.cfg.reject_unauthorized,
-                    cancel: Some(&self.cfg.cancel),
-                }) {
-                    Ok(res) if res.status >= 500 => {
-                        last = Some(fail!(
-                            "EC2 instance metadata {} answered HTTP {}",
-                            BStr::new(url),
-                            res.status
-                        ));
-                    }
-                    Ok(res) => return Ok(res),
-                    Err(e) => {
-                        last = Some(fail!(
-                            "EC2 instance metadata {} is unreachable: {e}",
-                            BStr::new(url)
-                        ));
-                    }
-                }
-            }
-            Err(last.unwrap())
-        };
 
         let role_url = join("/latest/meta-data/iam/security-credentials/");
-        let res = match (get(&role_url), &token_put_error) {
+        let res = match (
+            self.imds_get(&role_url, token.as_deref(), attempts).await,
+            &token_put_error,
+        ) {
             (Ok(res), _) => res,
             (Err(_), Some(e)) => {
                 self.note(format_args!(
@@ -1465,7 +1440,9 @@ impl<'c> Resolver<'c> {
         }
         let mut creds_url = role_url;
         creds_url.extend_from_slice(&role);
-        let res = get(&creds_url)?;
+        let res = self
+            .imds_get(&creds_url, token.as_deref(), attempts)
+            .await?;
         if res.status != 200 {
             return Err(fail!(
                 "EC2 instance metadata {} answered HTTP {}: {}",
@@ -1476,6 +1453,42 @@ impl<'c> Resolver<'c> {
         }
         parse_json_credentials("EC2 instance metadata", &res.body, CredentialsSource::Imds)
             .map(Some)
+    }
+
+    async fn imds_get(
+        &self,
+        url: &[u8],
+        token: Option<&[u8]>,
+        attempts: u32,
+    ) -> Result<HttpResponse, ProviderError> {
+        let mut last = None;
+        for _ in 0..attempts.max(1) {
+            let mut req = HttpRequest::get(url.to_vec()).timeout(self.cfg.imds_timeout_ms);
+            if let Some(t) = token {
+                req = req.header(b"x-aws-ec2-metadata-token", t);
+            }
+            match self.http(req, false).await {
+                Ok(res) if res.status >= 500 => {
+                    last = Some(fail!(
+                        "EC2 instance metadata {} answered HTTP {}",
+                        BStr::new(url),
+                        res.status
+                    ));
+                }
+                Ok(res) => return Ok(res),
+                Err(e) => {
+                    let interrupted = e.is_interruption();
+                    last = Some(fail!(
+                        "EC2 instance metadata {} is unreachable: {e}",
+                        BStr::new(url)
+                    ));
+                    if interrupted {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(last.expect("attempts >= 1"))
     }
 }
 

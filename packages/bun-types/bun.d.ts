@@ -5009,11 +5009,11 @@ declare module "bun" {
 
   /**
    * How to sign a request for AWS. Every field is optional: credentials
-   * default to the ambient ones (see {@link Bun.aws.credentials}) and
+   * default to the ambient ones (see {@link AWSClient.credentials}) and
    * `service`/`region` are inferred from `*.amazonaws.com` hostnames.
    */
   interface AWSSignOptions {
-    /** e.g. `"s3"`, `"dynamodb"`, `"execute-api"`, `"lambda"`, `"bedrock-runtime"`. Inferred from the hostname when omitted. */
+    /** SigV4 signing name, e.g. `"s3"`, `"dynamodb"`, `"execute-api"`, `"lambda"`, `"bedrock"`. Inferred from the hostname when omitted. */
     service?: string;
     /** e.g. `"us-east-1"`. Inferred from the hostname, then `AWS_REGION` / `AWS_DEFAULT_REGION`, then the profile's `region`. */
     region?: string;
@@ -5023,6 +5023,12 @@ declare module "bun" {
     sessionToken?: string;
     /** Resolve credentials for this profile from `~/.aws/config` / `~/.aws/credentials` instead of the default chain. */
     profile?: string;
+    /**
+     * Base URL for path-only requests, e.g. `"http://localhost:4566"` for
+     * LocalStack. By default a path-only URL goes to
+     * `https://{service}.{region}.amazonaws.com`.
+     */
+    endpoint?: string;
     /**
      * Sign with `UNSIGNED-PAYLOAD` instead of hashing the body. Only S3-style
      * services accept this; it is implied for `ReadableStream` bodies sent to S3.
@@ -5045,24 +5051,31 @@ declare module "bun" {
   }
 
   /**
-   * AWS credentials and request signing, without an SDK.
+   * An AWS request signer bound to a set of defaults (credentials / profile,
+   * region, service, endpoint). {@link Bun.aws} is the instance with no
+   * overrides; make more when you talk to several accounts or regions.
    *
    * @example
    * ```ts
-   * const res = await Bun.aws.fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues");
-   * const { accessKeyId, source } = await Bun.aws.credentials();
-   * const url = Bun.aws.presign("https://my-bucket.s3.us-east-1.amazonaws.com/report.pdf", { expiresIn: 3600 });
+   * const prod = new Bun.AWSClient({ profile: "prod", region: "eu-west-1" });
+   * const res = await prod.fetch("/?Action=ListQueues", { service: "sqs" });
    * ```
    */
-  namespace aws {
+  class AWSClient {
+    constructor(options?: AWSSignOptions);
+
+    /** The configured region (option, `AWS_REGION`, or the resolved profile's), if known yet. */
+    readonly region: string | undefined;
+    /** The profile ambient credentials come from (`"default"` unless set), or `undefined` for static keys. */
+    readonly profile: string | undefined;
+
     /**
      * `fetch()`, with the request signed using [AWS Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_sigv.html)
      * so it can go straight to an AWS (or AWS-compatible) API.
      *
-     * `init` takes everything `fetch()` does plus {@link AWSSignOptions}. By
-     * default the service and region are inferred from the hostname and
-     * credentials come from the ambient chain (see {@link credentials}). A
-     * path-only URL is sent to the service's standard endpoint,
+     * `init` takes everything `fetch()` does plus {@link AWSSignOptions},
+     * which override this client's defaults for the one request. A path-only
+     * URL is sent to `endpoint`, or to the service's standard endpoint
      * `https://{service}.{region}.amazonaws.com`.
      *
      * Adds `Authorization`, `x-amz-date`, `x-amz-security-token` (temporary
@@ -5076,19 +5089,21 @@ declare module "bun" {
      *   headers: { "content-type": "application/x-amz-json-1.0", "x-amz-target": "DynamoDB_20120810.ListTables" },
      *   body: "{}",
      * });
-     * // relative to the service's endpoint in $AWS_REGION
+     * // relative to the service's endpoint in the client's region
      * await Bun.aws.fetch("/?Action=ListQueues", { service: "sqs" });
-     * // Lambda function URL with IAM auth, using a named profile
-     * await Bun.aws.fetch("https://abc123.lambda-url.eu-west-1.on.aws/", { profile: "prod" });
+     * // Lambda function URL with IAM auth
+     * await Bun.aws.fetch("https://abc123.lambda-url.eu-west-1.on.aws/");
      * ```
      */
-    function fetch(input: string | URL | Request, init?: BunFetchRequestInit & AWSSignOptions): Promise<Response>;
+    fetch(input: string | URL | Request, init?: BunFetchRequestInit & AWSSignOptions): Promise<Response>;
 
     /**
-     * Resolve AWS credentials using the same default chain as the AWS CLI and SDKs:
+     * Resolve this client's credentials — static keys as given, otherwise the
+     * same default chain as the AWS CLI and SDKs:
      *
      * 1. `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN`
-     * 2. The profile named by `options.profile`, `AWS_PROFILE` or `default` in
+     *    (skipped when a profile is selected via `profile` or `AWS_PROFILE`)
+     * 2. The profile (`profile`, `AWS_PROFILE` or `default`) in
      *    `~/.aws/credentials` and `~/.aws/config` (`AWS_SHARED_CREDENTIALS_FILE` /
      *    `AWS_CONFIG_FILE`): static keys, `role_arn` + `source_profile` /
      *    `credential_source`, `web_identity_token_file`, `credential_process`,
@@ -5103,54 +5118,71 @@ declare module "bun" {
      * A source that is not configured is skipped; a source that is configured
      * but fails rejects with that error rather than falling through.
      *
-     * Results are cached per profile for the whole process and refreshed
-     * about five minutes before they expire, so calling this repeatedly is cheap.
-     * `Bun.s3`, `new S3Client()`, `fetch("s3://…")` and `Bun.aws.fetch()`
-     * use this automatically when no explicit keys are given.
+     * Results are cached (per profile, per thread) and refreshed about five
+     * minutes before they expire, so calling this repeatedly is cheap.
+     * `Bun.s3`, `new S3Client()` and `fetch("s3://…")` use the same chain
+     * when no explicit keys are given.
      *
-     * @param options.profile Profile name; defaults to `AWS_PROFILE` or `"default"`.
+     * @param options.profile Resolve a different profile than the client's.
      * @param options.refresh Discard cached credentials and resolve again.
-     *
-     * @example
-     * ```ts
-     * const creds = await Bun.aws.credentials();
-     * console.log(creds.source); // "sso"
-     * ```
      */
-    function credentials(options?: { profile?: string; refresh?: boolean }): Promise<AWSCredentials>;
+    credentials(options?: { profile?: string; refresh?: boolean }): Promise<AWSCredentials>;
 
     /**
      * Create a presigned (query-string signed) URL for any AWS endpoint —
-     * most commonly an S3 object URL to hand to a browser.
+     * most commonly an S3 object URL to hand to a browser. A path-only `url`
+     * is resolved against the service's endpoint in the client's region
+     * (needs `service`).
      *
-     * Credentials come from `options` or the ambient chain; if ambient
-     * credentials have not been resolved yet this resolves them synchronously
-     * once (call `await Bun.aws.credentials()` first to avoid that).
+     * Resolves once credentials are available; the signing itself is local.
      *
      * @example
      * ```ts
-     * const url = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/photo.jpg", {
-     *   expiresIn: 60 * 60,
-     * });
-     * // PUT upload URL
-     * const upload = Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/upload.bin", { method: "PUT" });
+     * const url = await Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/photo.jpg", { expiresIn: 3600 });
+     * const upload = await Bun.aws.presign("https://my-bucket.s3.eu-west-1.amazonaws.com/upload.bin", { method: "PUT" });
      * ```
      */
-    function presign(
+    presign(
       url: string | URL,
       options?: AWSSignOptions & {
         /** @default "GET" */
         method?: "GET" | "PUT" | "POST" | "DELETE" | "HEAD" | "PATCH" | (string & {});
       },
-    ): string;
+    ): Promise<string>;
   }
 
-  interface GCPTokenOptions {
+  /**
+   * The default {@link AWSClient}: ambient credentials, region from the
+   * environment / profile.
+   *
+   * @example
+   * ```ts
+   * const res = await Bun.aws.fetch("https://sqs.us-east-1.amazonaws.com/?Action=ListQueues");
+   * const { accessKeyId, source } = await Bun.aws.credentials();
+   * ```
+   */
+  var aws: AWSClient;
+
+  interface GCPClientOptions {
     /**
-     * OAuth scopes for the access token. Bare names expand to
+     * Path to a service-account (or `authorized_user`) key file. Defaults to
+     * `GOOGLE_APPLICATION_CREDENTIALS`, then gcloud's application-default file.
+     */
+    keyFile?: string;
+    /** The key file's contents, as an object or JSON string, instead of a path. */
+    credentials?: string | Record<string, unknown>;
+    /**
+     * Default OAuth scopes for access tokens. Bare names expand to
      * `https://www.googleapis.com/auth/<name>`.
      * @default ["https://www.googleapis.com/auth/cloud-platform"]
      */
+    scopes?: string | string[];
+    /** Make `fetch()` send an ID token for this audience by default (Cloud Run / IAP). */
+    audience?: string;
+  }
+
+  interface GCPTokenOptions {
+    /** OAuth scopes for this token; defaults to the client's. */
     scopes?: string | string[];
     /** Discard the cached token and fetch a new one. */
     refresh?: boolean;
@@ -5163,7 +5195,7 @@ declare module "bun" {
     expiration: Date;
     /**
      * Where the token came from:
-     * - `"service-account"`: a service-account key file (`GOOGLE_APPLICATION_CREDENTIALS` or the gcloud ADC file)
+     * - `"service-account"`: a service-account key (file, inline, or the gcloud ADC file)
      * - `"authorized-user"`: user credentials from `gcloud auth application-default login`
      * - `"metadata"`: the metadata server (Compute Engine, GKE, Cloud Run, Cloud Functions, App Engine, Cloud Build …)
      */
@@ -5177,27 +5209,25 @@ declare module "bun" {
   }
 
   /**
-   * Google Cloud tokens from Application Default Credentials, without an SDK.
+   * Google Cloud tokens from a service-account key or
+   * [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials),
+   * without an SDK. {@link Bun.gcp} is the instance using ADC.
    *
    * @example
    * ```ts
-   * const { token } = await Bun.gcp.accessToken();
-   * const res = await fetch("https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets", {
-   *   headers: { Authorization: `Bearer ${token}` },
-   * });
-   * // or simply
-   * await Bun.gcp.fetch("https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets");
+   * const ci = new Bun.GCPClient({ keyFile: "/secrets/deployer.json" });
+   * await ci.fetch("https://storage.googleapis.com/storage/v1/b?project=my-project");
    * ```
    */
-  namespace gcp {
+  class GCPClient {
+    constructor(options?: GCPClientOptions);
+
     /**
-     * `fetch()`, authenticated with Application Default Credentials: adds
-     * `Authorization: Bearer <token>` (and `x-goog-user-project` when the
-     * credentials carry a quota project).
-     *
-     * With no options (or `{ scopes }`) an access token is used; with
-     * `{ audience }` an OIDC **ID token** is sent instead — what Cloud Run,
-     * Cloud Functions and IAP expect for service-to-service calls.
+     * `fetch()` with `Authorization: Bearer <token>` (and `x-goog-user-project`
+     * when the credentials carry a quota project). `init` takes everything
+     * `fetch()` does plus `scopes` (access token) or `audience` (OIDC **ID
+     * token**, for Cloud Run / Cloud Functions / IAP) to override the
+     * client's default for one request.
      *
      * @example
      * ```ts
@@ -5205,14 +5235,14 @@ declare module "bun" {
      * await Bun.gcp.fetch("https://my-service-abc123.a.run.app/api", { audience: "https://my-service-abc123.a.run.app" });
      * ```
      */
-    function fetch(
+    fetch(
       input: string | URL | Request,
       init?: BunFetchRequestInit & (GCPTokenOptions | { audience: string; refresh?: boolean }),
     ): Promise<Response>;
 
     /**
-     * Get an OAuth2 access token using
-     * [Application Default Credentials](https://cloud.google.com/docs/authentication/application-default-credentials):
+     * Get an OAuth2 access token. With no `keyFile`/`credentials` this uses
+     * Application Default Credentials:
      *
      * 1. `GOOGLE_APPLICATION_CREDENTIALS` — a service-account key file or an
      *    `authorized_user` file
@@ -5222,15 +5252,14 @@ declare module "bun" {
      * 3. The metadata server on Compute Engine, GKE, Cloud Run, Cloud
      *    Functions, App Engine … (honouring `GCE_METADATA_HOST` and `NO_GCE_CHECK`)
      *
-     * Tokens are cached per scope set for the whole process and refreshed
-     * shortly before they expire.
+     * Tokens are cached per scope set and refreshed shortly before they expire.
      */
-    function accessToken(options?: GCPTokenOptions): Promise<GCPToken>;
+    accessToken(options?: GCPTokenOptions): Promise<GCPToken>;
 
     /**
      * Get an OpenID Connect **identity** token asserting this workload's
      * identity to `audience` — what Cloud Run, Cloud Functions and IAP expect
-     * for service-to-service calls. Requires a service account (key file or
+     * for service-to-service calls. Requires a service account (key or
      * metadata server); user credentials cannot mint ID tokens.
      *
      * @example
@@ -5238,9 +5267,20 @@ declare module "bun" {
      * const { token } = await Bun.gcp.idToken("https://my-service-abc123.a.run.app");
      * ```
      */
-    function idToken(audience: string): Promise<GCPToken>;
-    function idToken(options: { audience: string; refresh?: boolean }): Promise<GCPToken>;
+    idToken(audience?: string): Promise<GCPToken>;
+    idToken(options: { audience?: string; refresh?: boolean }): Promise<GCPToken>;
   }
+
+  /**
+   * The default {@link GCPClient} (Application Default Credentials).
+   *
+   * @example
+   * ```ts
+   * const { token } = await Bun.gcp.accessToken();
+   * await Bun.gcp.fetch("https://bigquery.googleapis.com/bigquery/v2/projects/my-project/datasets");
+   * ```
+   */
+  var gcp: GCPClient;
 
   /**
    * Bun.semver parses and compares version numbers.

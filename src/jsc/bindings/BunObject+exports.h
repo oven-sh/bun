@@ -3,11 +3,13 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(AWSClient) \
     macro(Archive) \
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
+    macro(GCPClient) \
     macro(Glob) \
     macro(Image) \
     macro(JSON5) \

@@ -1,5 +1,6 @@
-//! `{ aws: … }` on `fetch()` and the options bag of `Bun.aws.sign/presign`:
-//! which credentials to sign with and for what service/region.
+//! Options shared by `new Bun.AWSClient(...)`, `client.fetch(url, init)` and
+//! `client.presign(...)`: which credentials to sign with, for what
+//! service/region, and how.
 
 use std::sync::Arc;
 
@@ -7,15 +8,19 @@ use bstr::BStr;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_s3_signing::sigv4;
-use bun_s3_signing::{AwsCredentials, CredentialsSource, SharedProvider};
+use bun_s3_signing::{AwsCredentials, CredentialsProvider as _, CredentialsSource};
+
+use super::DefaultProvider;
 
 use crate::webcore::s3::credentials_jsc::get_truthy_string_utf8;
 
+#[derive(Clone)]
 pub enum Credentials {
     Static(Arc<AwsCredentials>),
-    Provider(SharedProvider),
+    Provider(Arc<DefaultProvider>),
 }
 
+#[derive(Clone)]
 pub struct AwsSignOptions {
     pub credentials: Credentials,
     pub service: Option<Box<[u8]>>,
@@ -27,9 +32,18 @@ pub struct AwsSignOptions {
     pub expires_in: u32,
     /// Test hook / reproducible signatures: `YYYYMMDDTHHMMSSZ`.
     pub datetime: Option<[u8; 16]>,
-    /// `AWS_REGION` at parse time, used when neither the options nor the
-    /// hostname give a region.
-    env_region: Option<Box<[u8]>>,
+    /// Base URL for path-only requests (e.g. LocalStack); otherwise the
+    /// service's standard endpoint is used.
+    pub endpoint: Option<Box<[u8]>>,
+}
+
+/// `AWS_REGION` (or `AWS_DEFAULT_REGION`) right now.
+fn env_region(global: &JSGlobalObject) -> Option<Box<[u8]>> {
+    let env = crate::webcore::cloud::env::Env::new(global);
+    env.get(b"AWS_REGION")
+        .or_else(|| env.get(b"AWS_DEFAULT_REGION"))
+        .filter(|s| !s.is_empty())
+        .map(Vec::into_boxed_slice)
 }
 
 fn contains_crlf(s: &[u8]) -> bool {
@@ -37,66 +51,41 @@ fn contains_crlf(s: &[u8]) -> bool {
 }
 
 impl AwsSignOptions {
-    /// `value` is `true` (everything inferred/ambient) or an options object.
-    /// Returns `None` for `false`/`undefined`/`null`.
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
-        if value.is_undefined_or_null() || (value.is_boolean() && !value.as_boolean()) {
-            return Ok(None);
-        }
-        let env = crate::webcore::cloud::env::Env::new(global);
-        let env_region: Option<Box<[u8]>> = env
-            .get(b"AWS_REGION")
-            .or_else(|| env.get(b"AWS_DEFAULT_REGION"))
-            .filter(|s| !s.is_empty())
-            .map(Vec::into_boxed_slice);
-        // As in the SDKs, `AWS_PROFILE` means "use that profile", even if key
-        // variables are also exported.
-        let has_env_profile = env.get(b"AWS_PROFILE").is_some_and(|p| !p.is_empty());
-        let env_static = match (
-            env.get(b"AWS_ACCESS_KEY_ID"),
-            env.get(b"AWS_SECRET_ACCESS_KEY"),
-        ) {
-            (Some(a), Some(s)) if !a.is_empty() && !s.is_empty() && !has_env_profile => {
-                Some(Arc::new(AwsCredentials {
-                    access_key_id: a.into_boxed_slice(),
-                    secret_access_key: s.into_boxed_slice(),
-                    session_token: env
-                        .get(b"AWS_SESSION_TOKEN")
-                        .map(Vec::into_boxed_slice)
-                        .unwrap_or_default(),
-                    expiration: None,
-                    account_id: None,
-                    region: env_region.clone(),
-                    source: CredentialsSource::Env,
-                }))
-            }
-            _ => None,
-        };
-
-        let mut out = AwsSignOptions {
-            credentials: match env_static {
-                Some(c) => Credentials::Static(c),
-                None => Credentials::Provider(super::shared(None)),
-            },
+    /// No overrides: ambient credentials, everything else inferred.
+    pub fn ambient() -> Self {
+        AwsSignOptions {
+            credentials: Credentials::Provider(super::default_provider(None)),
             service: None,
             region: None,
             unsigned_payload: false,
             sign_query: false,
             expires_in: 900,
             datetime: None,
-            env_region,
-        };
-        if value.is_boolean() {
-            return Ok(Some(out));
+            endpoint: None,
+        }
+    }
+
+    /// These options with the fields of `value` (an options object, or
+    /// `undefined`/`null` for none) laid over them.
+    pub fn with_overrides(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        let mut out = self.clone();
+        if value.is_undefined_or_null() {
+            return Ok(out);
         }
         if !value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
-                "expected an options object like {{ service, region, accessKeyId, secretAccessKey }}"
+                "expected an options object like {{ region, profile, service, accessKeyId, secretAccessKey }}"
             )));
         }
+        out.apply(global, value)?;
+        Ok(out)
+    }
 
+    /// Overlay the fields present in `value`.
+    fn apply(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        let out = self;
         if let Some(profile) = get_truthy_string_utf8(value, global, b"profile", true)? {
-            out.credentials = Credentials::Provider(super::shared(Some(profile.slice())));
+            out.credentials = Credentials::Provider(super::default_provider(Some(profile.slice())));
         }
         let access_key_id = get_truthy_string_utf8(value, global, b"accessKeyId", true)?;
         let secret_access_key = get_truthy_string_utf8(value, global, b"secretAccessKey", true)?;
@@ -207,12 +196,25 @@ impl AwsSignOptions {
                 }
             }
         }
-        Ok(Some(out))
+        if let Some(endpoint) = get_truthy_string_utf8(value, global, b"endpoint", true)? {
+            let e = endpoint.slice();
+            let parsed = bun_url::URL::parse(e);
+            if !(parsed.is_http() || parsed.is_https()) || parsed.host.is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "endpoint must be an http:// or https:// URL"
+                )));
+            }
+            out.endpoint = Some(Box::from(bun_core::strings::trim_right(e, b"/")));
+        }
+        Ok(())
     }
 
     /// `https://{service}.{region}.amazonaws.com` (or the partition /
     /// global-service equivalent) for `Bun.aws.fetch("/path", { service })`.
-    pub fn default_endpoint(&self) -> Result<Vec<u8>, EndpointError> {
+    pub fn default_endpoint(&self, global: &JSGlobalObject) -> Result<Vec<u8>, EndpointError> {
+        if let Some(e) = &self.endpoint {
+            return Ok(e.to_vec());
+        }
         let Some(service) = self.service.as_deref() else {
             return Err(EndpointError::NoService);
         };
@@ -240,7 +242,7 @@ impl AwsSignOptions {
         let region: Option<Box<[u8]>> = if GLOBAL.contains(&service) {
             None
         } else {
-            match self.region.clone().or_else(|| self.env_region.clone()) {
+            match self.region.clone().or_else(|| env_region(global)) {
                 Some(r) => Some(r),
                 None => match &self.credentials {
                     Credentials::Static(c) => c.region.clone(),
@@ -271,7 +273,7 @@ impl AwsSignOptions {
         .into_bytes())
     }
 
-    pub fn provider(&self) -> Option<&SharedProvider> {
+    pub fn provider(&self) -> Option<&Arc<DefaultProvider>> {
         match &self.credentials {
             Credentials::Provider(p) => Some(p),
             Credentials::Static(_) => None,
@@ -282,11 +284,12 @@ impl AwsSignOptions {
         self.provider().is_some_and(|p| p.needs_resolution())
     }
 
-    /// Cached / static credentials, resolving synchronously as a last resort.
-    pub fn resolve_credentials(&self) -> Result<Arc<AwsCredentials>, Box<[u8]>> {
+    /// Static or already-resolved credentials. Asynchronous callers resolve
+    /// the provider first, so `None` here means a caller skipped that.
+    pub fn available_credentials(&self) -> Option<Arc<AwsCredentials>> {
         match &self.credentials {
-            Credentials::Static(c) => Ok(Arc::clone(c)),
-            Credentials::Provider(p) => p.resolve_blocking().map_err(|e| e.message.clone()),
+            Credentials::Static(c) => Some(Arc::clone(c)),
+            Credentials::Provider(p) => p.cached(),
         }
     }
 
@@ -294,6 +297,7 @@ impl AwsSignOptions {
     /// the environment. Errors name what is missing.
     pub fn scope_for(
         &self,
+        global: &JSGlobalObject,
         host: &[u8],
         creds: &AwsCredentials,
     ) -> Result<(Box<[u8]>, Box<[u8]>), String> {
@@ -313,7 +317,7 @@ impl AwsSignOptions {
             .region
             .clone()
             .or(inferred_region)
-            .or_else(|| self.env_region.clone())
+            .or_else(|| env_region(global))
             .or_else(|| creds.region.clone())
             .ok_or_else(|| {
                 format!(
@@ -330,7 +334,7 @@ pub enum EndpointError {
     NoRegion,
     NeedsHost(Box<[u8]>),
     /// The region may come with the credentials, which are not resolved yet.
-    RegionPending(SharedProvider),
+    RegionPending(Arc<DefaultProvider>),
 }
 
 impl core::fmt::Display for EndpointError {
@@ -347,6 +351,28 @@ impl core::fmt::Display for EndpointError {
                 "\"{}\" endpoints are per-resource; pass the full https:// URL",
                 BStr::new(svc)
             ),
+        }
+    }
+}
+
+impl AwsSignOptions {
+    /// Explicit region, else `AWS_REGION`, else the region already known from
+    /// resolved/static credentials.
+    pub fn configured_region(&self, global: &JSGlobalObject) -> Option<Box<[u8]>> {
+        self.region
+            .clone()
+            .or_else(|| env_region(global))
+            .or_else(|| match &self.credentials {
+                Credentials::Static(c) => c.region.clone(),
+                Credentials::Provider(p) => p.cached().and_then(|c| c.region.clone()),
+            })
+    }
+
+    /// The profile the credentials come from, if they are ambient.
+    pub fn profile_label(&self) -> Option<&[u8]> {
+        match &self.credentials {
+            Credentials::Provider(p) => Some(p.label()),
+            Credentials::Static(_) => None,
         }
     }
 }

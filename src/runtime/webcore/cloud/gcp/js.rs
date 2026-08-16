@@ -1,30 +1,201 @@
-//! `Bun.gcp`: `accessToken()` / `idToken()`, and the `{ gcp }` fetch option.
+//! `Bun.GCPClient` (and `Bun.gcp`, an instance with default options):
+//! `fetch()`, `accessToken()`, `idToken()`.
+
+use std::sync::Arc;
 
 use bun_jsc::bun_string_jsc::create_utf8_for_js;
-use bun_jsc::{
-    CallFrame, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StringJsc as _,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
-use super::chain::{DEFAULT_SCOPE, Token, TokenRequest};
-use super::provider::{TokenProvider, provider_for, resolve_async};
+use super::chain::{CredentialSource, DEFAULT_SCOPE, Token, TokenRequest};
+use super::provider::{TokenProvider, provider_for};
 use crate::webcore::cloud::aws::fetch_signing::provider_error_to_js;
+use crate::webcore::cloud::flight;
+use crate::webcore::fetch::{FetchAuth, fetch_with_auth};
 use crate::webcore::s3::credentials_jsc::get_truthy_string_utf8;
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
-        global,
-        &[
-            ("fetch", __jsc_host_gcp_fetch, 2),
-            ("accessToken", __jsc_host_access_token, 1),
-            ("idToken", __jsc_host_id_token, 1),
-        ],
-    )
+/// A `GCPClient`'s configuration: where credentials come from and the
+/// default token to mint.
+pub struct ClientOptions {
+    pub source: CredentialSource,
+    /// Space-joined default scopes for access tokens.
+    pub scopes: Box<[u8]>,
+    /// When set, `fetch()` sends an ID token for this audience by default.
+    pub audience: Option<Box<[u8]>>,
+    /// The provider for requests that override neither.
+    pub default_provider: Arc<TokenProvider>,
 }
 
-/// `Bun.gcp.fetch(input, { scopes? | audience?, ...RequestInit })`
-#[bun_jsc::host_fn]
-fn gcp_fetch(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    crate::webcore::fetch::fetch_with_auth(global, frame, crate::webcore::fetch::FetchAuth::Gcp)
+impl ClientOptions {
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        struct Parsed {
+            source: CredentialSource,
+            scopes: Box<[u8]>,
+            audience: Option<Box<[u8]>>,
+        }
+        impl Parsed {
+            fn finish(self) -> ClientOptions {
+                let request = match &self.audience {
+                    Some(a) => TokenRequest::Identity {
+                        audience: a.clone(),
+                    },
+                    None => TokenRequest::Access {
+                        scopes: self.scopes.clone(),
+                    },
+                };
+                ClientOptions {
+                    default_provider: provider_for(request, &self.source),
+                    source: self.source,
+                    scopes: self.scopes,
+                    audience: self.audience,
+                }
+            }
+        }
+        let mut out = Parsed {
+            source: CredentialSource::Default,
+            scopes: Box::from(DEFAULT_SCOPE),
+            audience: None,
+        };
+        if !value.is_object() {
+            return Ok(out.finish());
+        }
+        if let Some(path) = get_truthy_string_utf8(value, global, b"keyFile", true)? {
+            out.source = CredentialSource::File(Arc::from(path.slice()));
+        }
+        if let Some(v) = value.get_truthy(global, "credentials")? {
+            let json: Vec<u8> = if v.is_string() {
+                let s = bun_core::OwnedString::new(bun_core::String::from_js(v, global)?);
+                s.to_utf8().slice().to_vec()
+            } else if v.is_object() {
+                let mut s = bun_core::String::empty();
+                v.json_stringify_fast(global, &mut s)?;
+                let s = bun_core::OwnedString::new(s);
+                s.to_utf8().slice().to_vec()
+            } else {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "credentials must be a service-account / authorized_user key object or its JSON string"
+                )));
+            };
+            out.source = CredentialSource::Inline(Arc::from(json.into_boxed_slice()));
+        }
+        if let Some(a) = audience_from_js(global, value)? {
+            out.audience = Some(a);
+        }
+        if value.get_truthy(global, "scopes")?.is_some() {
+            out.scopes = scopes_from_js(global, Some(value))?;
+        }
+        Ok(out.finish())
+    }
+}
+
+#[bun_jsc::JsClass]
+pub struct GCPClient {
+    pub(crate) options: Arc<ClientOptions>,
+}
+
+impl GCPClient {
+    pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
+        let arg = frame
+            .arguments()
+            .first()
+            .copied()
+            .unwrap_or(JSValue::UNDEFINED);
+        if !arg.is_undefined_or_null() && !arg.is_object() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "GCPClient options must be an object like {{ keyFile, credentials, scopes, audience }}"
+            )));
+        }
+        Ok(Box::new(GCPClient {
+            options: Arc::new(ClientOptions::from_js(global, arg)?),
+        }))
+    }
+
+    /// `Bun.gcp`.
+    pub fn default(global: &JSGlobalObject) -> JsResult<Box<Self>> {
+        Ok(Box::new(GCPClient {
+            options: Arc::new(ClientOptions::from_js(global, JSValue::UNDEFINED)?),
+        }))
+    }
+
+    /// `client.fetch(input, init?)` — `fetch()` with a bearer token attached.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn fetch(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        fetch_with_auth(global, frame, FetchAuth::Gcp(Arc::clone(&this.options)))
+    }
+
+    /// `client.accessToken({ scopes?, refresh? })`
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn access_token(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let opts = frame.arguments().first().copied();
+        if let Some(v) = opts {
+            if !v.is_undefined_or_null() && !v.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "accessToken() expects an options object like {{ scopes?: string | string[] }}"
+                )));
+            }
+        }
+        let scopes = match opts.filter(|o| o.is_object()) {
+            Some(o) if o.get_truthy(global, "scopes")?.is_some() => {
+                scopes_from_js(global, Some(o))?
+            }
+            _ => this.options.scopes.clone(),
+        };
+        let refresh = refresh_from(global, opts)?;
+        this.start(global, TokenRequest::Access { scopes }, refresh)
+    }
+
+    /// `client.idToken(audience | { audience, refresh? })`
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn id_token(
+        this: &Self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let arg = frame
+            .arguments()
+            .first()
+            .copied()
+            .unwrap_or(JSValue::UNDEFINED);
+        let audience: Box<[u8]> = if arg.is_string() {
+            let s = bun_core::OwnedString::new(bun_core::String::from_js(arg, global)?);
+            checked_audience(global, s.to_utf8().slice())?
+        } else if arg.is_object()
+            && let Some(a) = audience_from_js(global, arg)?
+        {
+            a
+        } else {
+            this.options.audience.clone().unwrap_or_default()
+        };
+        if audience.is_empty() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "idToken() needs an audience: idToken(\"https://my-service.run.app\") or idToken({{ audience }})"
+            )));
+        }
+        let refresh = refresh_from(global, Some(arg))?;
+        this.start(global, TokenRequest::Identity { audience }, refresh)
+    }
+
+    fn start(
+        &self,
+        global: &JSGlobalObject,
+        request: TokenRequest,
+        refresh: bool,
+    ) -> JsResult<JSValue> {
+        let provider = provider_for(request, &self.options.source);
+        if refresh {
+            provider.mark_stale();
+        }
+        flight::promise(global, &provider, provider_error_to_js, |global, t| {
+            token_to_js(global, t)
+        })
+    }
 }
 
 pub fn token_to_js(global: &JSGlobalObject, t: &Token) -> JsResult<JSValue> {
@@ -66,6 +237,23 @@ pub fn token_to_js(global: &JSGlobalObject, t: &Token) -> JsResult<JSValue> {
 
 fn is_valid_scope(s: &[u8]) -> bool {
     !s.is_empty() && s.iter().all(|c| c.is_ascii_graphic() && *c != b',')
+}
+
+/// `options.audience`, checked.
+fn audience_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Option<Box<[u8]>>> {
+    match get_truthy_string_utf8(options, global, b"audience", true)? {
+        Some(a) => checked_audience(global, a.slice()).map(Some),
+        None => Ok(None),
+    }
+}
+
+fn checked_audience(global: &JSGlobalObject, audience: &[u8]) -> JsResult<Box<[u8]>> {
+    if crate::webcore::s3::credentials_jsc::contains_newline_or_cr(audience) {
+        return Err(
+            global.throw_invalid_arguments(format_args!("audience must not contain newlines"))
+        );
+    }
+    Ok(Box::from(audience))
 }
 
 /// `scopes: string | string[]` → space-joined; default cloud-platform.
@@ -130,45 +318,42 @@ pub fn scopes_from_js(global: &JSGlobalObject, options: Option<JSValue>) -> JsRe
     Ok(joined.into_boxed_slice())
 }
 
+/// The per-request view: which token this `fetch()` should carry.
 pub struct GcpFetchOptions {
-    pub provider: std::sync::Arc<TokenProvider>,
+    pub provider: Arc<TokenProvider>,
 }
 
 impl GcpFetchOptions {
-    /// `gcp: true | { scopes?, audience? }`; `None` for false/undefined.
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
-        if value.is_undefined_or_null() || (value.is_boolean() && !value.as_boolean()) {
-            return Ok(None);
-        }
-        if value.is_boolean() {
-            return Ok(Some(Self {
-                provider: provider_for(TokenRequest::Access {
-                    scopes: Box::from(DEFAULT_SCOPE),
-                }),
-            }));
-        }
+    /// `init` may override `scopes` / `audience`; otherwise the client's default.
+    pub fn from_js_with_base(
+        global: &JSGlobalObject,
+        value: JSValue,
+        base: &ClientOptions,
+    ) -> JsResult<Self> {
         if !value.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "expected an options object like {{ scopes }} or {{ audience }}"
-            )));
+            return Ok(Self {
+                provider: Arc::clone(&base.default_provider),
+            });
         }
-        let request = if let Some(aud) = get_truthy_string_utf8(value, global, b"audience", true)? {
+        let request = if let Some(audience) = audience_from_js(global, value)? {
             if value.get_truthy(global, "scopes")?.is_some() {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "audience (an ID token) and scopes (an access token) are mutually exclusive"
                 )));
             }
-            TokenRequest::Identity {
-                audience: Box::from(aud.slice()),
-            }
-        } else {
+            TokenRequest::Identity { audience }
+        } else if value.get_truthy(global, "scopes")?.is_some() {
             TokenRequest::Access {
                 scopes: scopes_from_js(global, Some(value))?,
             }
+        } else {
+            return Ok(Self {
+                provider: Arc::clone(&base.default_provider),
+            });
         };
-        Ok(Some(Self {
-            provider: provider_for(request),
-        }))
+        Ok(Self {
+            provider: provider_for(request, &base.source),
+        })
     }
 
     pub fn needs_resolution(&self) -> bool {
@@ -176,87 +361,9 @@ impl GcpFetchOptions {
     }
 }
 
-fn start(global: &JSGlobalObject, request: TokenRequest, refresh: bool) -> JsResult<JSValue> {
-    let provider = provider_for(request);
-    if refresh {
-        provider.forget();
-    }
-    let promise = JSPromiseStrong::init(global);
-    let value = promise.value();
-    let global_ref = GlobalRef::from(global);
-    resolve_async(
-        global,
-        &provider,
-        Box::new(move |result| {
-            let global: &JSGlobalObject = &global_ref;
-            let mut promise = promise;
-            if !global.bun_vm().script_allowed() {
-                return Ok(());
-            }
-            match result {
-                Ok(t) => {
-                    let js = token_to_js(global, &t)?;
-                    promise.resolve(global, js)
-                }
-                Err(e) => promise.reject(global, Ok(provider_error_to_js(global, &e))),
-            }
-        }),
-    )?;
-    Ok(value)
-}
-
 fn refresh_from(global: &JSGlobalObject, opts: Option<JSValue>) -> JsResult<bool> {
     match opts.filter(|o| o.is_object()) {
         Some(o) => Ok(o.get_boolean_strict(global, "refresh")?.unwrap_or(false)),
         None => Ok(false),
     }
-}
-
-/// `Bun.gcp.accessToken({ scopes?, refresh? })`
-#[bun_jsc::host_fn]
-fn access_token(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let opts = frame.arguments().first().copied();
-    if let Some(v) = opts {
-        if !v.is_undefined_or_null() && !v.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "accessToken() expects an options object like {{ scopes?: string | string[] }}"
-            )));
-        }
-    }
-    let scopes = scopes_from_js(global, opts)?;
-    let refresh = refresh_from(global, opts)?;
-    start(global, TokenRequest::Access { scopes }, refresh)
-}
-
-/// `Bun.gcp.idToken({ audience, refresh? })` / `Bun.gcp.idToken(audience)`
-#[bun_jsc::host_fn]
-fn id_token(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arg = frame
-        .arguments()
-        .first()
-        .copied()
-        .unwrap_or(JSValue::UNDEFINED);
-    let audience: Box<[u8]> = if arg.is_string() {
-        let s = bun_core::OwnedString::new(bun_core::String::from_js(arg, global)?);
-        Box::from(s.to_utf8().slice())
-    } else if arg.is_object() {
-        match get_truthy_string_utf8(arg, global, b"audience", true)? {
-            Some(a) => Box::from(a.slice()),
-            None => Box::default(),
-        }
-    } else {
-        Box::default()
-    };
-    if audience.is_empty() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "idToken() needs an audience: idToken(\"https://my-service.run.app\") or idToken({{ audience }})"
-        )));
-    }
-    if bun_core::strings::index_of_any(&audience, b"\r\n").is_some() {
-        return Err(
-            global.throw_invalid_arguments(format_args!("audience must not contain newlines"))
-        );
-    }
-    let refresh = refresh_from(global, Some(arg))?;
-    start(global, TokenRequest::Identity { audience }, refresh)
 }

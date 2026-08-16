@@ -119,6 +119,12 @@ unsafe impl<T: ?Sized> JsAffine for JsPtr<T> {}
 // SAFETY: see the group note above.
 unsafe impl JsAffine for Protected {}
 
+/// A completion closure for a job's JS half: whatever it captured was
+/// captured on the JS thread, and `Job` only runs or drops it there.
+pub struct JsCallback<A>(pub Box<dyn FnOnce(A) -> JsResult<()>>);
+// SAFETY: see the group note above.
+unsafe impl<A> JsAffine for JsCallback<A> {}
+
 /// A GC-protected value a job's completion needs (Node: a `Global<Value>` on
 /// the req_wrap). Unprotected on drop.
 pub struct Protected(crate::JSValue);
@@ -223,7 +229,25 @@ pub trait JobContext: Sized + 'static {
     unsafe fn cancel(off: *mut Self::OffThread) {
         let _ = off;
     }
+
+    /// The safe form of [`cancel`](Self::cancel): a closure over whatever
+    /// shared handles (atomics, `Arc`s) the off-thread half was built with,
+    /// taken on the JS thread at [`Job::schedule`] — so it never aliases the
+    /// job — and called by the VM's stop phase. Only consulted when
+    /// [`CANCELLABLE`](Self::CANCELLABLE).
+    fn canceller(off: &Self::OffThread) -> Option<Canceller> {
+        let _ = off;
+        None
+    }
+
+    /// Whether a pending job keeps the event loop (and so the process)
+    /// running. Background refresh work says no: if nothing else is going
+    /// on, the process may exit without it.
+    const HOLDS_EVENT_LOOP: bool = true;
 }
+
+/// See [`JobContext::canceller`].
+pub type Canceller = Box<dyn Fn() + Send + Sync>;
 
 /// The type-erased head of every [`Job<C>`] (one task tag serves every `C`),
 /// linked into its VM's [`JobList`] while the job is live.
@@ -232,6 +256,7 @@ pub struct JobHeader {
     complete: unsafe fn(*mut JobHeader, &JsThread<'_>) -> JsResult<()>,
     release_unrun: unsafe fn(*mut JobHeader),
     cancel: unsafe fn(*mut JobHeader),
+    canceller: Option<Canceller>,
     prev: *mut JobHeader,
     next: *mut JobHeader,
 }
@@ -276,6 +301,9 @@ impl JobList {
             // SAFETY: linked ⇒ live (jobs unlink, on this thread, before they
             // are freed); `cancel` neither frees nor unlinks.
             unsafe {
+                if let Some(c) = &(*job).canceller {
+                    c();
+                }
                 ((*job).cancel)(job);
                 job = (*job).next;
             }
@@ -313,9 +341,17 @@ impl<C: JobContext> Job<C> {
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
         let mut keep_alive = KeepAlive::default();
-        keep_alive.ref_(bun_io::js_vm_ctx());
+        if C::HOLDS_EVENT_LOOP {
+            keep_alive.ref_(bun_io::js_vm_ctx());
+        }
+        let canceller = if C::CANCELLABLE {
+            C::canceller(&off)
+        } else {
+            None
+        };
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
+                canceller,
                 // SAFETY: (this and the entry below) the erased dispatchers are
                 // only reached through this header, so `p` is this `Job<C>`.
                 complete: |p, cx| unsafe { Self::complete(p.cast::<Self>(), cx) },

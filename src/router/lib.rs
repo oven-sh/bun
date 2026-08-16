@@ -980,8 +980,7 @@ pub(crate) mod sorter {
         }
     }
 
-    /// Next.js's `getSortedRoutes` order, which is also the match order, except that
-    /// fully static routes lead as a group because `load_all` splits the list there.
+    /// Next.js's `getSortedRoutes` order, but static routes lead: `load_all` splits the list there.
     pub(crate) fn compare(a: &Route, b: &Route) -> Ordering {
         let a_name = a.match_name.as_bytes();
         let b_name = b.match_name.as_bytes();

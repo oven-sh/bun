@@ -786,6 +786,26 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("line tints follow the terminal background (COLORFGBG light → light palette; truecolor when offered)", async () => {
+    const files = { "a/x.txt": "one\n", "b/x.txt": "two\n" };
+    using dir = tempDir("pm-diff-theme", files);
+    const run = async (env: Record<string, string>) => {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+        cwd: String(dir),
+        env: { ...bunEnv, FORCE_COLOR: "1", COLUMNS: "100", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      return await p.stdout.text();
+    };
+    expect(await run({ COLORFGBG: "15;0", COLORTERM: "" })).toContain("\x1b[48;5;52m");
+    expect(await run({ COLORFGBG: "0;15", COLORTERM: "" })).toContain("\x1b[48;5;224m");
+    expect(await run({ COLORFGBG: "0;15", COLORTERM: "truecolor" })).toContain("\x1b[48;2;255;235;233m");
+    expect(await run({ COLORFGBG: "15;0", COLORTERM: "truecolor" })).toContain("\x1b[48;2;68;20;24m");
+  });
+
   test("JSX inside .js still normalizes", async () => {
     const { text, exitCode } = await pretty({
       "a/App.js": "export const App = () => <div className='a'>hi</div>;\n",

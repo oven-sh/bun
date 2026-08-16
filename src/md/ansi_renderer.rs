@@ -2437,8 +2437,14 @@ fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
 
 /// Detect whether the terminal background is light. Preference order:
 /// 1. `COLORFGBG` env var (set by rxvt, xterm, Konsole, iTerm2 in some modes)
-/// 2. Dark mode (default)
+/// 2. Ask the terminal (OSC 11) when we are attached to one; the answer is cached
+/// 3. Dark mode (default)
 pub fn detect_light_background() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(detect_light_background_uncached)
+}
+
+fn detect_light_background_uncached() -> bool {
     if let Some(value) = bun_core::getenv_z(bun_core::zstr!("COLORFGBG")) {
         // Format: "fg;bg" or "fg;default;bg" — only 7 (white) and 15
         // (bright white) are light terminal backgrounds. Bright colors
@@ -2455,7 +2461,87 @@ pub fn detect_light_background() -> bool {
             return bg == 7 || bg == 15;
         }
     }
-    false
+    probe_background_luminance().is_some_and(|l| l > 0.5)
+}
+
+/// OSC 11 (`ESC ] 11 ; ? BEL`): the terminal answers with its background as `rgb:RRRR/GGGG/BBBB`. xterm, iTerm2,
+/// Terminal.app, GNOME/VTE, Konsole, kitty, WezTerm, Alacritty, Ghostty, Windows Terminal and tmux (3.4+) all
+/// answer; anything else stays silent and we give up after a short wait. Returns relative luminance in 0..=1.
+fn probe_background_luminance() -> Option<f32> {
+    #[cfg(not(unix))]
+    {
+        None
+    }
+    #[cfg(unix)]
+    {
+        if !bun_core::Output::is_stdin_tty() {
+            return None;
+        }
+        // The reply comes back on the tty regardless of where stdout points, so `| less` still gets a theme.
+        let out = if bun_core::Output::is_stdout_tty() {
+            bun_sys::Fd::stdout()
+        } else if bun_core::Output::is_stderr_tty() {
+            bun_sys::Fd::stderr()
+        } else {
+            return None;
+        };
+        if let Some(term) = bun_core::getenv_z(bun_core::zstr!("TERM")) {
+            if strings::eql_case_insensitive_ascii(term, b"dumb", true) {
+                return None;
+            }
+        }
+        let saved_termios = bun_sys::posix::tcgetattr(0).ok()?;
+        let mut tty_state = bun_core::tty::State::new();
+        let _ = tty_state.set_mode(
+            0,
+            bun_core::tty::Mode::Raw,
+            bun_core::tty::SetAttrWhen::Drain,
+        );
+        let _restore = scopeguard::guard((saved_termios, tty_state), |(saved, mut state)| {
+            if bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &saved).is_err() {
+                let _ = state.set_mode(
+                    0,
+                    bun_core::tty::Mode::Normal,
+                    bun_core::tty::SetAttrWhen::Drain,
+                );
+            }
+        });
+        bun_sys::write(out, b"\x1b]11;?\x07").ok()?;
+        let mut buf = [0u8; 64];
+        let mut len = 0usize;
+        // Replies arrive within a frame; allow a couple of short reads for terminals that dribble bytes.
+        for _ in 0..4 {
+            let mut pfd = [bun_sys::posix::PollFd {
+                fd: 0,
+                events: bun_sys::posix::POLL_IN,
+                revents: 0,
+            }];
+            if bun_sys::posix::poll(&mut pfd, 60).ok()? <= 0 {
+                break;
+            }
+            len += bun_sys::read(bun_sys::Fd::stdin(), &mut buf[len..]).ok()?;
+            if buf[..len].contains(&0x07)
+                || strings::index_of(&buf[..len], b"\x1b\\").is_some()
+                || len == buf.len()
+            {
+                break;
+            }
+        }
+        let reply = &buf[..len];
+        let at = strings::index_of(reply, b"rgb:")? + 4;
+        let mut channels = [0f32; 3];
+        let mut parts = strings::split(&reply[at..], b"/");
+        for c in &mut channels {
+            let part = parts.next()?;
+            let hex: &[u8] = &part[..part.iter().take_while(|b| b.is_ascii_hexdigit()).count()];
+            if hex.is_empty() || hex.len() > 4 {
+                return None;
+            }
+            let v = u32::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok()?;
+            *c = v as f32 / ((1u32 << (4 * hex.len())) - 1) as f32;
+        }
+        Some(0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2])
+    }
 }
 
 /// Detect whether the current terminal likely supports the Kitty

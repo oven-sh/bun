@@ -894,6 +894,10 @@ pub fn is_stdout_tty() -> bool {
 pub fn is_stdin_tty() -> bool {
     stdio_tty_flag(0)
 }
+#[inline]
+pub fn is_stderr_tty() -> bool {
+    stdio_tty_flag(2)
+}
 
 pub fn is_github_action() -> bool {
     if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {

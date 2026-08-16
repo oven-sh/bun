@@ -1953,10 +1953,52 @@ impl<'a> Iterator for Lines<'a> {
 }
 
 /// Plain output is a valid unified patch; a terminal gets a gutter with line numbers instead of `@@` headers.
+/// Line tints for removed/added lines and the stronger tint for the differing span within them.
+struct Palette {
+    del: &'static str,
+    del_strong: &'static str,
+    ins: &'static str,
+    ins_strong: &'static str,
+}
+
+/// GitHub's diff colours where the terminal can show them exactly, the nearest xterm-256 cells otherwise; the
+/// light set keeps default (dark) text readable, the dark set keeps default (light) text readable.
+static PALETTES: [Palette; 4] = [
+    // dark, 256
+    Palette {
+        del: "\x1b[48;5;52m",
+        del_strong: "\x1b[48;5;88m",
+        ins: "\x1b[48;5;22m",
+        ins_strong: "\x1b[48;5;28m",
+    },
+    // dark, truecolor
+    Palette {
+        del: "\x1b[48;2;68;20;24m",
+        del_strong: "\x1b[48;2;134;40;48m",
+        ins: "\x1b[48;2;18;54;30m",
+        ins_strong: "\x1b[48;2;30;104;52m",
+    },
+    // light, 256
+    Palette {
+        del: "\x1b[48;5;224m",
+        del_strong: "\x1b[48;5;217m",
+        ins: "\x1b[48;5;194m",
+        ins_strong: "\x1b[48;5;157m",
+    },
+    // light, truecolor
+    Palette {
+        del: "\x1b[48;2;255;235;233m",
+        del_strong: "\x1b[48;2;255;193;192m",
+        ins: "\x1b[48;2;218;251;225m",
+        ins_strong: "\x1b[48;2;172;238;187m",
+    },
+];
+
 #[derive(Clone, Copy)]
 struct Style {
     pretty: bool,
     width: usize,
+    palette: &'static Palette,
 }
 
 impl Style {
@@ -1976,7 +2018,20 @@ impl Style {
             .or_else(|| winsize(bun_core::Fd::stderr()))
             .unwrap_or(80)
             .clamp(40, 160);
-        Style { pretty, width }
+        let palette = if pretty {
+            let truecolor = bun_core::env_var::COLORTERM.get().is_some_and(|v| {
+                strings::eql_comptime(v, b"truecolor") || strings::eql_comptime(v, b"24bit")
+            });
+            let light = bun_md::root::detect_light_background();
+            &PALETTES[usize::from(light) * 2 + usize::from(truecolor)]
+        } else {
+            &PALETTES[0]
+        };
+        Style {
+            pretty,
+            width,
+            palette,
+        }
     }
 
     fn hunk_header(
@@ -2035,8 +2090,18 @@ impl Style {
             // Unchanged text whose meaning moved (now dead, or newly live): flagged, not tinted.
             Operation::Equal if affected => (new_no, "\x1b[33m", "", ""),
             Operation::Equal => (new_no, "\x1b[2m", "", ""),
-            Operation::Delete => (old_no, "\x1b[31m", "\x1b[48;5;52m", "\x1b[48;5;88m"),
-            Operation::Insert => (new_no, "\x1b[32m", "\x1b[48;5;22m", "\x1b[48;5;28m"),
+            Operation::Delete => (
+                old_no,
+                "\x1b[31m",
+                self.palette.del,
+                self.palette.del_strong,
+            ),
+            Operation::Insert => (
+                new_no,
+                "\x1b[32m",
+                self.palette.ins,
+                self.palette.ins_strong,
+            ),
         };
         // Re-printed (un-minified) lines are numbered by where they sit in the original: `line:col`.
         let gutter = match pos {

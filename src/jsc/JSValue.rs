@@ -227,6 +227,14 @@ impl JSValue {
         const NOT_CELL_MASK: usize = 0xfffe_0000_0000_0002;
         !self.is_empty() && (self.0 & NOT_CELL_MASK) == 0
     }
+    /// False for a cell the last completed GC found dead but the sweeper has not destroyed yet.
+    #[inline]
+    pub fn is_live_cell(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isLiveCell(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isLiveCell(self)
+    }
     #[inline]
     pub fn is_int32(self) -> bool {
         const NUMBER_TAG: usize = 0xfffe_0000_0000_0000;

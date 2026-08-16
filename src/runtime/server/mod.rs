@@ -148,7 +148,8 @@ pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<S
 // a second header and break the round-trip). Hold them as raw intrusive
 // pointers.
 pub enum AnyRoute {
-    /// Serve a static file — `"/robots.txt": new Response(...)`
+    /// Serve a static file — `"/robots.txt": new Response(...)`, or any `Blob`
+    /// whose bytes are already in memory
     Static(core::ptr::NonNull<StaticRoute>),
     /// Serve a file from disk
     File(core::ptr::NonNull<FileRoute>),

@@ -620,7 +620,16 @@ declare module "bun" {
       statCache?: boolean;
     }
 
-    type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;
+    /**
+     * Route values other than handler functions.
+     *
+     * A `Blob` backed by a file on disk (`Bun.file(path)`) is read from disk on
+     * each request. Any other `Blob` (`new Blob()`, `Bun.file()` of a file
+     * embedded in a compiled executable, a {@link Bun.embeddedFiles} entry) is
+     * served from memory, like `new Response(blob)`, with its `type` as the
+     * `Content-Type`. An {@link S3File} is rejected.
+     */
+    type BaseRouteValue = Response | false | HTMLBundle | Blob | DirectoryRouteOptions;
 
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:

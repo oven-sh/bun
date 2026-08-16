@@ -930,12 +930,11 @@ import "./public/styles.css" with { type: "file" };
 import { embeddedFiles, serve } from "bun";
 
 // Build static routes from all embedded files
-const staticRoutes: Record<string, Response> = {};
+const staticRoutes: Record<string, Blob> = {};
 for (const blob of embeddedFiles) {
   // Remove hash from filename: "icon-a1b2c3d4.png" -> "icon.png"
   const name = blob.name.replace(/-[a-z0-9]+\./, ".");
-  // embeddedFiles are plain Blobs, which routes does not accept directly
-  staticRoutes[`/${name}`] = new Response(blob);
+  staticRoutes[`/${name}`] = blob;
 }
 
 serve({

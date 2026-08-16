@@ -258,14 +258,14 @@ rerunEach = 3
 
 #### parallel
 
-Run test files in parallel worker processes. `true` uses one worker per CPU thread, and a positive integer sets the number of workers. Parallel workers run each test file in a fresh global scope, equivalent to `--isolate`:
+Run test files in parallel worker processes. `true` uses one worker per CPU thread, and a positive integer sets the number of workers. `false` keeps test files sequential and is the default. A value of `0` is rejected. Parallel workers run each test file in a fresh global scope, equivalent to `--isolate`:
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 parallel = 2
 ```
 
-The `--parallel` CLI flag overrides this setting.
+When both values are valid, the `--parallel` CLI flag overrides this setting. Invalid `test.parallel` values still fail validation.
 
 ## Coverage Options
 

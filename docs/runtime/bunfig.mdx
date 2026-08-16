@@ -375,7 +375,7 @@ Run test files in parallel worker processes. `true` uses one worker per CPU thre
 parallel = 2
 ```
 
-Equivalent CLI flag: `--parallel`. CLI flags override the `bunfig.toml` value entirely.
+Equivalent CLI flag: `--parallel`. When both values are valid, the CLI value takes precedence. Invalid `test.parallel` values still fail validation.
 
 ### `test.reporter`
 

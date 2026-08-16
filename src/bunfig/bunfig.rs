@@ -598,9 +598,13 @@ impl<'a> Parser<'a> {
                                 || value.fract() != 0.0
                                 || value > u32::MAX as f64
                             {
-                                self.add_error(
+                                self.add_error_format(
                                     expr.loc,
-                                    b"\"parallel\" must be a positive integer or boolean",
+                                    format_args!(
+                                        "\"parallel\" must be a finite integer in the range 1..={} or a boolean; received {}",
+                                        u32::MAX,
+                                        value
+                                    ),
                                 )?;
                                 return Ok(());
                             }

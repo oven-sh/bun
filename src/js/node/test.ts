@@ -2171,23 +2171,23 @@ function invokeTestFn(fn: Function, arg: unknown) {
 
 let addAbortListener;
 
-// Node's stopTest(): armed before the body starts, only ever rejects (timeout or signal reason); callers dispose().
+function onAbort(signal: AbortSignal, listener: () => void): Disposable {
+  addAbortListener ??= require("internal/abort_listener").addAbortListener;
+  return addAbortListener(signal, listener);
+}
+
+// Node's stopTest(): armed before the body starts, only ever rejects (timeout or `signal` aborting); callers dispose().
 function createStopController(timeout: number | undefined, signal: AbortSignal | undefined) {
-  const hasTimeout = typeof timeout === "number" && Number.isFinite(timeout);
-  if (!hasTimeout && signal === undefined) {
-    return undefined;
-  }
   let timer: ReturnType<typeof setTimeout> | undefined;
   let abortListener: Disposable | undefined;
   const promise = new Promise<never>((_, reject) => {
-    if (hasTimeout) {
+    if (typeof timeout === "number" && Number.isFinite(timeout)) {
       // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
       // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
       timer = realSetTimeout(() => reject(makeTestFailure(`test timed out after ${timeout}ms`)), timeout);
     }
     if (signal !== undefined) {
-      addAbortListener ??= require("internal/abort_listener").addAbortListener;
-      abortListener = addAbortListener(signal, () => reject(abortFailure(signal)));
+      abortListener = onAbort(signal, () => reject(abortFailure(signal)));
     }
   });
   // Swallow the rejection when nothing is racing it anymore.
@@ -2207,13 +2207,12 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
   if (signal?.aborted) throw abortFailure(signal);
   const stop = createStopController(timeout, signal);
   try {
-    const result = runWithNode(owner, () => invokeTestFn(hook.fn as Function, arg));
-    await (stop === undefined ? result : Promise.race([stop.promise, result]));
+    await Promise.race([stop.promise, runWithNode(owner, () => invokeTestFn(hook.fn as Function, arg))]);
   } catch (err) {
     // A hook that throws a nullish value must still fail the owning test.
     throw err ?? makeTestFailure("hook failed");
   } finally {
-    stop?.dispose();
+    stop.dispose();
   }
 }
 
@@ -2279,6 +2278,9 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
+  // Node's #abortHandler: the `signal` option cancels the test, and t.signal (aborted by cancel()) is what stops it.
+  const outerAbort =
+    outerSignal === undefined ? undefined : onAbort(outerSignal, () => node.cancel(abortFailure(outerSignal)));
 
   // Node applies the plan option before the beforeEach hooks run, and only for a
   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
@@ -2299,12 +2301,10 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   }
 
   if (failure === undefined) {
-    // Node arms one stopPromise (timeout + signal) and races both the body
-    // AND the plan wait against it. Arm it once here so plan({wait:true})
-    // is bounded by the same test timeout, not left unbounded.
-    const stop = createStopController(node.options.timeout, outerSignal);
-    // Cancelled as soon as the stop fires (Node's #cancel), not once a race below gets around to it.
-    stop?.promise.catch(error => node.cancel(error));
+    // Node's stopPromise, raced against the body and the plan wait: the timeout, or t.signal once cancel() aborts it.
+    const stop = createStopController(node.options.timeout, node.signal);
+    // Node's #cancel: a timeout cancels too (a no-op when the stop was itself a cancellation).
+    stop.promise.catch(error => node.cancel(error));
     try {
       const runBody = async () => {
         await runWithNode(node, () => invokeTestFn(fn, ctx));
@@ -2314,7 +2314,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       };
 
       try {
-        await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
+        await Promise.race([stop.promise, runBody()]);
       } catch (err) {
         // A body that throws or rejects with a nullish value must still fail.
         failure = err ?? makeTestFailure("test failed");
@@ -2332,19 +2332,18 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             // Defuse: if stop wins the race, plan's own wait-timeout may still
             // reject `pending` afterward with no one listening.
             pending.catch(() => {});
-            await (stop === undefined ? pending : Promise.race([stop.promise, pending]));
+            await Promise.race([stop.promise, pending]);
             // A t.test() that fulfilled the plan from an async callback was
             // scheduled onto subtestChain during the wait; drain again so its
             // failure reaches failedSubtests below (Node fails the parent).
-            const drain = drainSubtestChain(node);
-            await (stop === undefined ? drain : Promise.race([stop.promise, drain]));
+            await Promise.race([stop.promise, drainSubtestChain(node)]);
           }
         } catch (err) {
           failure = err;
         }
       }
     } finally {
-      stop?.dispose();
+      stop.dispose();
       node.plan?.cancel();
     }
 
@@ -2360,8 +2359,9 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       failure = error;
     }
   }
+  outerAbort?.[Symbol.dispose]();
 
-  // A cancellation (own stop, or the parent's sweep) came first, so it is the verdict, as with Node's fail().
+  // A cancellation (timeout, `signal` option, or the parent's sweep) is the verdict, as with Node's first-wins fail().
   failure = node.cancelError ?? failure;
 
   const bodyFailure = failure;

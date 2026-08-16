@@ -1,7 +1,8 @@
 // A test that times out cancels the subtests it stopped waiting for, like
 // Node v26.3.0's postRun(): the running one has its t.signal aborted and is
-// failed as cancelled, and the queued subtest and suites never start. The first
-// test fails on purpose (the timeout); the second checks what it left behind.
+// failed as cancelled without waiting for its body (which never settles here),
+// and the queued subtest and suites never start. The first test fails on
+// purpose (the timeout); the second checks what it left behind.
 // node-test.test.ts also runs this file through run(), which must report every
 // cancelled node (the empty suite included) as a failure.
 const { test, describe, it, before, after } = require("node:test");
@@ -28,8 +29,9 @@ test("parent times out while a subtest is still running", { timeout: 20 }, async
     child.after(() => {
       state.runningAbortedInAfterHook = child.signal.aborted;
     });
-    // Only the cancellation lets this body settle.
-    await new Promise(resolve => child.signal.addEventListener("abort", resolve));
+    // Ignores its signal on purpose: the runner must not need the body's
+    // cooperation to finish a cancelled subtest and move on to its siblings.
+    await new Promise(() => {});
   });
   t.test("queued", () => {
     state.queuedBodyRan = true;

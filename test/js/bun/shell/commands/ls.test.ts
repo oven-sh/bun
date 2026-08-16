@@ -66,13 +66,10 @@ describe.concurrent("bunshell ls", () => {
     test("node_modules", async () => {
       const tree: DirectoryTree = { ...nodeModulesTree(), "outside/keep.txt": "" };
       using dir = tempDir("ls-node_modules", tree);
-      const expected = expectedRecursiveListing(tree);
-      if (isPosix) {
-        // A symlink to a directory is listed but not descended into.
-        symlinkSync("../outside", join(String(dir), "node_modules", "linked"));
-        expected.push("linked");
-        expected.sort();
-      }
+      // A link to a directory is listed but not descended into ("junction" is
+      // ignored on POSIX and needs no privilege on Windows).
+      symlinkSync("../outside", join(String(dir), "node_modules", "linked"), "junction");
+      const expected = [...expectedRecursiveListing(tree), "linked"].sort();
 
       const { stdout, stderr, exitCode } = await $`ls -RA .`.quiet().cwd(String(dir));
       expect(stderr.toString()).toBe("");

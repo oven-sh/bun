@@ -21,8 +21,10 @@ describe.concurrent("bunshell rm", () => {
   test("node_modules", async () => {
     using dir = tempDir("rm-node_modules", { ...nodeModulesTree(), "outside/keep.txt": "" });
     const nodeModules = path.join(String(dir), "node_modules");
+    // A directory link on every platform ("junction" is ignored on POSIX and
+    // needs no privilege on Windows); file and dangling symlinks need one there.
+    symlinkSync("../outside", path.join(nodeModules, "linked-dir"), "junction");
     if (isPosix) {
-      symlinkSync("../outside", path.join(nodeModules, "linked-dir"));
       symlinkSync("../pkg-0/lib/mod0.js", path.join(nodeModules, ".bin", "linked-bin"));
       symlinkSync("./does-not-exist", path.join(nodeModules, "dangling"));
     }
@@ -34,7 +36,7 @@ describe.concurrent("bunshell rm", () => {
       stderr: stderr.toString(),
       exitCode,
       nodeModulesExists: existsSync(nodeModules),
-      // rm -rf must delete the symlink itself, not what it points at.
+      // rm -rf must delete the link itself, not what it points at.
       keptFileOutsideTree: existsSync(path.join(String(dir), "outside", "keep.txt")),
     }).toEqual({
       stdout: "",

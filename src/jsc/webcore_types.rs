@@ -415,20 +415,15 @@ impl Blob {
         }
     }
 
-    /// `Blob.isBunFile()` — backed by a filesystem `Store::File`.
-    #[inline]
-    pub fn is_bun_file(&self) -> bool {
-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
-    }
-
     /// `Blob.isS3()` — backed by an S3 `Store::S3`.
     #[inline]
     pub fn is_s3(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
     }
 
-    /// `Blob.needsToReadFile()` — true when bytes must be fetched off-disk
-    /// before any in-memory consumer can see them (i.e. `Store::File`).
+    /// `Blob.needsToReadFile()` — backed by a filesystem `Store::File` (a
+    /// `Bun.file()`), so the bytes must be fetched off-disk before any
+    /// in-memory consumer can see them.
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))

@@ -606,7 +606,7 @@ mod _jsc_host_fns {
         match body {
             BodyValue::Used | BodyValue::Empty | BodyValue::Null => JSValue::UNDEFINED,
             BodyValue::Blob(blob) => {
-                if blob.is_bun_file() {
+                if blob.needs_to_read_file() {
                     return JSValue::UNDEFINED;
                 }
                 let result =

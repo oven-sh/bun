@@ -200,19 +200,21 @@ macro_rules! lol_content_ops {
 
 // ───────────────────────────── LOLHTMLContext ─────────────────────────────
 
+/// One `on(selector, handlers)` registration.
+pub(crate) struct ElementHandlerEntry {
+    pub(crate) selector: lol_html::Selector,
+    // The `Box` is load-bearing (here and in `document_handlers`): the lol-html
+    // handler closures produced by `build_settings` capture raw pointers into
+    // the box interiors; unboxing would dangle them on `Vec` realloc.
+    pub(crate) handler: Box<ElementHandler>,
+}
+
 /// Selector + handler registry shared between an [`HTMLRewriter`] and every
 /// rewriter it spawns — `transform()` can run more than once, so
 /// [`build_settings`] re-derives fresh handler closures from it each time.
 #[derive(Default)]
 pub struct LOLHTMLContext {
-    /// Paired with `element_handlers` by index: each `on()` pushes one entry
-    /// into both.
-    pub(crate) selectors: Vec<lol_html::Selector>,
-    // The `Box` is load-bearing: the lol-html handler closures produced by
-    // `build_settings` capture raw pointers into the box interiors; unboxing
-    // would dangle them on `Vec` realloc.
-    #[expect(clippy::vec_box)]
-    pub(crate) element_handlers: Vec<Box<ElementHandler>>,
+    pub(crate) element_handlers: Vec<ElementHandlerEntry>,
     #[expect(clippy::vec_box)]
     pub(crate) document_handlers: Vec<Box<DocumentHandler>>,
 }
@@ -255,7 +257,7 @@ fn build_settings(
     Vec<lol_html::DocumentContentHandlers<'static>>,
 ) {
     let mut element_content_handlers = Vec::with_capacity(ctx.element_handlers.len());
-    for (selector, handler) in ctx.selectors.iter().zip(ctx.element_handlers.iter_mut()) {
+    for ElementHandlerEntry { selector, handler } in &mut ctx.element_handlers {
         let has_element = handler.on_element_callback.is_some();
         let has_comment = handler.on_comment_callback.is_some();
         let has_text = handler.on_text_callback.is_some();
@@ -372,12 +374,10 @@ impl HTMLRewriter {
         };
 
         let handler = Box::new(ElementHandler::init(global, listener)?);
-
-        // Invariant: `selectors[i]` pairs with `element_handlers[i]`; the two
-        // parallel vecs are zipped into lol-html `Settings` at transform time.
-        let mut ctx = self.context.borrow_mut();
-        ctx.selectors.push(selector);
-        ctx.element_handlers.push(handler);
+        self.context
+            .borrow_mut()
+            .element_handlers
+            .push(ElementHandlerEntry { selector, handler });
         Ok(call_frame.this())
     }
 

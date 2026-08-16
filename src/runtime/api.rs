@@ -218,19 +218,45 @@ fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
     path: &'static [u8],
-    accept_blob_or_buffer: bool,
-    reject_nullish: bool,
+    blob_or_buffer_input: BlobOrBufferInput,
+    nullish_input: NullishInput,
     f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
     with_text_format_source_encoded(
         global,
         frame,
         path,
-        accept_blob_or_buffer,
-        reject_nullish,
-        false,
+        blob_or_buffer_input,
+        nullish_input,
+        StringInput::Utf8,
         |arena, log, source, _| f(arena, log, source),
     )
+}
+
+/// What `parse` does with a `Blob`, `ArrayBuffer`, typed array or `DataView`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlobOrBufferInput {
+    /// Parses its bytes.
+    Bytes,
+    /// Stringifies it like any other argument, as `JSON.parse` would.
+    ToString,
+}
+
+/// What `parse` does with an `undefined` or `null` argument.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NullishInput {
+    Throw,
+    /// Parses the text `"undefined"` / `"null"`.
+    ToString,
+}
+
+/// What `parse` hands the closure for a string argument.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StringInput {
+    /// The string re-encoded as UTF-8 ([`SourceEncoding::Utf8Text`]).
+    Utf8,
+    /// The string's own storage, Latin-1 or UTF-16, as is.
+    AsIs,
 }
 
 /// How the bytes handed to the closure of
@@ -241,10 +267,10 @@ enum SourceEncoding {
     Bytes,
     /// A JS string, re-encoded as UTF-8.
     Utf8Text,
-    /// A Latin-1 JS string, borrowed as is (only when `string_passthrough`).
+    /// A Latin-1 JS string, borrowed as is (only under [`StringInput::AsIs`]).
     Latin1Text,
     /// A UTF-16 JS string, borrowed as is: the bytes are its code units
-    /// (only when `string_passthrough`).
+    /// (only under [`StringInput::AsIs`]).
     Utf16Text,
 }
 
@@ -252,9 +278,9 @@ fn with_text_format_source_encoded<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
     path: &'static [u8],
-    accept_blob_or_buffer: bool,
-    reject_nullish: bool,
-    string_passthrough: bool,
+    blob_or_buffer_input: BlobOrBufferInput,
+    nullish_input: NullishInput,
+    string_input: StringInput,
     f: impl FnOnce(
         &bun_alloc::Arena,
         &mut bun_ast::Log,
@@ -286,7 +312,7 @@ fn with_text_format_source_encoded<R>(
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);
-    if reject_nullish && input_value.is_empty_or_undefined_or_null() {
+    if nullish_input == NullishInput::Throw && input_value.is_empty_or_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
@@ -299,7 +325,7 @@ fn with_text_format_source_encoded<R>(
     let _latin1_hold: bun_core::OwnedString;
     let mut encoding = SourceEncoding::Utf8Text;
     let bytes: &[u8] = 'bytes: {
-        if accept_blob_or_buffer && !input_value.is_string() {
+        if blob_or_buffer_input == BlobOrBufferInput::Bytes && !input_value.is_string() {
             if let Some(v) = BlobOrStringOrBuffer::from_js(global, input_value)? {
                 _blob_hold = v;
                 encoding = SourceEncoding::Bytes;
@@ -307,7 +333,7 @@ fn with_text_format_source_encoded<R>(
             }
         }
         let mut s = input_value.to_bun_string(global)?;
-        if string_passthrough {
+        if string_input == StringInput::AsIs {
             _latin1_hold = bun_core::OwnedString::new(s);
             if _latin1_hold.is_8bit() {
                 encoding = SourceEncoding::Latin1Text;

@@ -811,7 +811,6 @@ impl AnyRoute {
 
                 let style: FrameworkRouter::Style =
                     FrameworkRouter::Style::from_js(style_js.unwrap(), global)?;
-                // Style impls Drop; `?` drops it on the error path.
 
                 // trim the /*
                 // NOTE: `FileSystemRouterType` fields are `Cow<'static,[u8]>`.

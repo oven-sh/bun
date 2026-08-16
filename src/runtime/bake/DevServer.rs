@@ -970,7 +970,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                     .iter()
                     .map(|e| Box::<[u8]>::from(e.as_ref()))
                     .collect(),
-                style: fsr.style.clone(),
+                style: fsr.style,
                 allow_layouts: fsr.allow_layouts,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {

@@ -942,9 +942,6 @@ impl Framework {
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
-            // On the error path, dropping the `Vec` drops each `Style`, which
-            // releases the `Strong` held by its `JavascriptDefined` arm (the
-            // only owning variant; the named styles are unit-like).
             while let Some(fsr_opts) = it.next()? {
                 let root = match get_optional_string(fsr_opts, global, b"root", refs)? {
                     Some(r) => r,
@@ -985,7 +982,6 @@ impl Framework {
                     },
                     global,
                 )?;
-                // errdefer style.deinit() — handled by Style's Drop
 
                 let extensions: &'static [&'static [u8]] = if let Some(exts_js) =
                     fsr_opts.get(global, "extensions")?
@@ -1083,8 +1079,6 @@ impl Framework {
 
             break 'brk file_system_router_types;
         };
-        // errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
-        // — Vec<FileSystemRouterType> drops contents on early return.
 
         let framework = Framework {
             is_built_in_react: false,

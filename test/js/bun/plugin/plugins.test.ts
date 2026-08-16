@@ -302,6 +302,57 @@ describe("module", () => {
       expect(there).toBeUndefined();
     }
   });
+
+  // A virtual module may be registered under a "node:" name that is not a builtin. The resolver
+  // returns that name unchanged, so require() must not treat it as a builtin.
+  it("a module registered under a node: name works with require()", async () => {
+    Bun.plugin({
+      setup(builder) {
+        builder.module("node:plugins-test-virtual", () => ({
+          exports: { default: "virtual", hello: "world" },
+          loader: "object",
+        }));
+        builder.module("node:plugins-test-virtual-__esModule", () => ({
+          exports: { __esModule: true, default: { unwrapped: true } },
+          loader: "object",
+        }));
+        builder.module("node:plugins-test-virtual-code", () => ({
+          contents: `export const hello = "world"; export default "code";`,
+          loader: "js",
+        }));
+      },
+    });
+
+    const required = require("node:plugins-test-virtual");
+    expect({ ...required }).toEqual({ default: "virtual", hello: "world" });
+    expect(require("node:plugins-test-virtual")).toBe(required);
+    // @ts-expect-error
+    expect(await import("node:plugins-test-virtual")).toBe(required);
+    expect(require.resolve("node:plugins-test-virtual")).toBe("node:plugins-test-virtual");
+
+    expect(require("node:plugins-test-virtual-__esModule")).toEqual({ unwrapped: true });
+
+    const requiredCode = require("node:plugins-test-virtual-code");
+    expect({ ...requiredCode }).toEqual({ default: "code", hello: "world" });
+    // @ts-expect-error
+    expect(await import("node:plugins-test-virtual-code")).toBe(requiredCode);
+  });
+
+  it("a module registered under a node: name works with require() after import()", async () => {
+    Bun.plugin({
+      setup(builder) {
+        builder.module("node:plugins-test-virtual-imported-first", () => ({
+          exports: { hello: "world" },
+          loader: "object",
+        }));
+      },
+    });
+
+    // @ts-expect-error
+    const imported = await import("node:plugins-test-virtual-imported-first");
+    expect(imported.hello).toBe("world");
+    expect(require("node:plugins-test-virtual-imported-first")).toBe(imported);
+  });
 });
 
 describe("dynamic import", () => {
@@ -1063,4 +1114,77 @@ it("object loader: an error thrown by a getter on the exports object rejects the
     },
   });
   expect(() => require("object-loader-throwing-esmodule")).toThrow(boom);
+});
+
+// Outside of `bun test`, builtins take priority over virtual modules, so a "node:" name only
+// reaches the virtual module when no builtin has that name.
+it.concurrent("require() of a module registered under a node: name works outside of bun test", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        Bun.plugin({
+          name: "node-prefixed virtual modules",
+          setup(build) {
+            build.module("node:virt-object", () => ({
+              exports: { default: "object", hello: "world" },
+              loader: "object",
+            }));
+            build.module("node:virt-__esModule", () => ({
+              exports: { __esModule: true, default: { unwrapped: true } },
+              loader: "object",
+            }));
+            build.module("node:virt-code", () => ({
+              contents: 'export const hello = "world"; export default "code";',
+              loader: "js",
+            }));
+            build.module("node:virt-imported-first", () => ({
+              exports: { hello: "world" },
+              loader: "object",
+            }));
+          },
+        });
+
+        function attempt(fn) {
+          try {
+            return fn();
+          } catch (error) {
+            return "threw: " + (error.code ?? error.message);
+          }
+        }
+
+        const importedFirst = await import("node:virt-imported-first");
+        const results = {
+          object: attempt(() => ({ ...require("node:virt-object") })),
+          objectIsCached: attempt(() => require("node:virt-object") === require("node:virt-object")),
+          objectIsWhatImportReturns: attempt(() => require("node:virt-object")) === (await import("node:virt-object")),
+          esModule: attempt(() => require("node:virt-__esModule")),
+          code: attempt(() => ({ ...require("node:virt-code") })),
+          codeIsWhatImportReturns: attempt(() => require("node:virt-code")) === (await import("node:virt-code")),
+          importedFirst: attempt(() => require("node:virt-imported-first")) === importedFirst,
+          unregistered: attempt(() => require("node:virt-unregistered")),
+          builtin: attempt(() => typeof require("node:path").join),
+        };
+        console.log(JSON.stringify(results));
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The script reports its own failures, so empty stdout means it crashed.
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    object: { default: "object", hello: "world" },
+    objectIsCached: true,
+    objectIsWhatImportReturns: true,
+    esModule: { unwrapped: true },
+    code: { default: "code", hello: "world" },
+    codeIsWhatImportReturns: true,
+    importedFirst: true,
+    unregistered: "threw: ERR_UNKNOWN_BUILTIN_MODULE",
+    builtin: "function",
+  });
+  expect(exitCode).toBe(0);
 });

@@ -68,12 +68,19 @@ for (const crate of crates) {
   if (run("cargo", ["test", "--locked", ...args, "-p", crate]).status !== 0) failed.push(crate);
 }
 
+// The only failure a pending crate is allowed is the linker's (lld, or
+// link.exe's spelling); a compile error or a cargo failure stays loud.
+const LINK_FAILURE = /undefined symbol|unresolved external|error: linking with/;
 for (const crate of NATIVE_LINK_PENDING) {
   console.log(`\x1b[36m[test]\x1b[0m cargo test --locked --no-run -p ${crate} (pending: expected not to link)`);
-  if (run("cargo", ["test", "--locked", "--no-run", "-p", crate], { stdio: "pipe" }).status === 0) {
+  const result = run("cargo", ["test", "--locked", "--no-run", "-p", crate], { stdio: "pipe" });
+  if (result.status === 0) {
     console.error(
       `\x1b[31m[test]\x1b[0m ${crate} links natively now; remove it from NATIVE_LINK_PENDING in scripts/rust-test.ts`,
     );
+    failed.push(crate);
+  } else if (!LINK_FAILURE.test(String(result.stderr ?? ""))) {
+    console.error(`\x1b[31m[test]\x1b[0m ${crate} failed for a reason other than linking:\n${result.stderr}`);
     failed.push(crate);
   }
 }

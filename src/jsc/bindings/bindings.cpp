@@ -737,9 +737,8 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
-// `.cause` is a non-enumerable own property on Error and DOMException instances,
-// so the enumerable-property walks never see it and it has to be compared
-// explicitly. In strict mode a missing cause differs from `cause: undefined`.
+// `.cause` is non-enumerable, so the property walks skip it. Strict mode also
+// distinguishes a missing cause from `cause: undefined`.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 static bool errorCausesEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* left, JSC::JSObject* right)
 {
@@ -1268,14 +1267,10 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
-// A DOMException keeps its name and message in the wrapped WebCore::DOMException
-// and exposes them through prototype getters (`code` is derived from the name),
-// so as far as the own-property walk is concerned every DOMException is an empty
-// object. Compare that state and the own non-enumerable `cause` the way the
-// ErrorInstanceType case does for errors. Returns false on a mismatch, or when
-// only `o1` is a DOMException (the caller's swapped second call covers a
-// DOMException on the right); otherwise std::nullopt so the own-property walk
-// still compares properties added to the instances.
+// A DOMException's name and message live in the wrapped object (`code` is derived
+// from the name), so the own-property walk alone sees two empty objects. Returns
+// std::nullopt once the wrapped state and `cause` match so that walk still runs;
+// the caller's swapped second call handles a DOMException on the right only.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 static std::optional<bool> domExceptionsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
 {
@@ -1286,8 +1281,7 @@ static std::optional<bool> domExceptionsDequal(JSC::JSGlobalObject* globalObject
     if (!right)
         return false;
 
-    // Both getters hand a null and an empty string to JS as "", so the comparison
-    // has to treat them alike too.
+    // The getters expose a null and an empty string identically.
     const auto& leftException = left->wrapped();
     const auto& rightException = right->wrapped();
     if (!equalIgnoringNullity(leftException.name(), rightException.name()) || !equalIgnoringNullity(leftException.message(), rightException.message()))
@@ -1937,10 +1931,10 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
     }
 
-    // DOMExceptions, Temporal objects, and Symbol and BigInt wrapper objects are plain
-    // ObjectType in JSC, so they are not reachable from the switch above, and each keeps
-    // the state that tells two instances apart outside of its own properties. Everything
-    // else -- object literals, arrays -- has its own JSType and skips this.
+    // Symbol and BigInt wrapper objects are plain ObjectType in JSC, so they are not
+    // reachable from the switch above. Like Number and Boolean wrappers, they must be
+    // the same kind of wrapper and hold the same internal value. Everything else --
+    // object literals, arrays -- has its own JSType and skips this.
     if (c1Type == ObjectType) {
         JSObject* obj1 = c1->getObject();
         JSObject* obj2 = c2->getObject();
@@ -1954,8 +1948,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             if (temporalEqual.has_value())
                 return temporalEqual;
 
-            // Like Number and Boolean wrappers, Symbol and BigInt wrappers must be the
-            // same kind of wrapper and hold the same internal value.
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
             if (isSymbol1 || isBigInt1) {

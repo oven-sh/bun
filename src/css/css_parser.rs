@@ -5773,8 +5773,12 @@ pub mod color {
 
     /// <https://drafts.csswg.org/css-color/#hsl-color> except with h
     /// pre-multiplied by 3, to avoid some rounding errors.
+    ///
+    /// `m2`/`m1` are the largest and smallest channel, `lightness ± saturation * min(l, 1 - l)`
+    /// as in the spec, so a saturation above 1 or a lightness outside 0..1 (an hsl value of a
+    /// color outside the sRGB gamut) gives the out-of-gamut channels back.
     pub(crate) fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> (f32, f32, f32) {
-        debug_assert!(saturation >= 0.0 && saturation <= 1.0);
+        debug_assert!(saturation >= 0.0);
         fn hue_to_rgb(m1: f32, m2: f32, mut h3: f32) -> f32 {
             if h3 < 0.0 {
                 h3 += 3.0;

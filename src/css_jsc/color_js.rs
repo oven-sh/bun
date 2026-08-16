@@ -214,7 +214,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     use bun_core::ZigStringSlice;
     use bun_css as css;
     use bun_css::CssColor;
-    use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
+    use bun_css::values::color::{Colorspace as _, HSL, LAB, RGBA, SRGB};
     use bun_jsc::StringJsc as _;
 
     let args = frame.arguments_as_array::<2>();
@@ -560,7 +560,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                     other => other.into_hsl(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                CssColor::Lab(lab) => lab.into_hsl(),
+                                // Gamut mapped like `into_rgba()` above, so a lab() outside sRGB
+                                // prints the hsl() of the color the rgb formats print.
+                                CssColor::Lab(lab) => HSL::from(lab.into_srgb().resolve()),
                                 _ => break 'formatted,
                             };
 

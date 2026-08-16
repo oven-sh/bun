@@ -1069,6 +1069,8 @@ pub trait Colorspace: Copy + Sized + FromAnyColorspace {
 
 /// Gamut behavior — in-gamut check and clipping per color space.
 pub trait ColorGamut: Sized + Copy {
+    /// Whether the space can only hold colors inside its gamut (the lab family and XYZ hold any).
+    const BOUNDED: bool;
     fn in_gamut(&self) -> bool;
     fn clip(&self) -> Self;
 }
@@ -1489,10 +1491,6 @@ pub(crate) fn parse_number_or_percentage(
 }
 
 impl LABColor {
-    pub fn into_hsl(&self) -> HSL {
-        HSL::from_lab_color(self)
-    }
-
     pub fn into_lab(&self) -> LAB {
         LAB::from_lab_color(self)
     }
@@ -1574,12 +1572,14 @@ macro_rules! define_colorspace {
     // Gamut variants
     (@gamut unbounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = false;
             fn in_gamut(&self) -> bool { true }
             fn clip(&self) -> Self { *self }
         }
     };
     (@gamut bounded $name:ident { $a:ident, $b:ident, $c:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0
                     && self.$b >= 0.0 && self.$b <= 1.0
@@ -1597,6 +1597,7 @@ macro_rules! define_colorspace {
     };
     (@gamut hsl_hwb $name:ident { $h:ident, $a:ident, $b:ident }) => {
         impl ColorGamut for $name {
+            const BOUNDED: bool = true;
             fn in_gamut(&self) -> bool {
                 self.$a >= 0.0 && self.$a <= 1.0 && self.$b >= 0.0 && self.$b <= 1.0
             }
@@ -1753,10 +1754,20 @@ impl SRGB {
         let rgb = self.resolve();
         RGBA::from_floats(rgb.r, rgb.g, rgb.b, rgb.alpha)
     }
+
+    /// `in_gamut()` with room for the ~1e-6 of noise a boundary color picks up converting from another space.
+    fn is_nearly_in_gamut(&self) -> bool {
+        // 0.03 of an 8-bit step.
+        const TOLERANCE: f32 = 1e-4;
+        let nearly = |v: f32| (-TOLERANCE..=1.0 + TOLERANCE).contains(&v);
+        nearly(self.r) && nearly(self.g) && nearly(self.b)
+    }
 }
 
 define_colorspace! {
     /// A color in the [`hsl`](https://www.w3.org/TR/css-color-4/#the-hsl-notation) color space.
+    /// `s` and `l` are fractions (100% is 1.0); a color outside the sRGB gamut has `s` above 1
+    /// or `l` outside 0..1 (see `From<SRGB>`).
     HSL { h, s, l }
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
@@ -1767,6 +1778,8 @@ define_colorspace! {
 
 define_colorspace! {
     /// A color in the [`hwb`](https://www.w3.org/TR/css-color-4/#the-hwb-notation) color space.
+    /// `w` and `b` are fractions (100% is 1.0); a color outside the sRGB gamut has a negative
+    /// `w` or `b` (see `From<SRGB>`).
     HWB { h, w, b }
     types = (CT_ANG, CT_PCT, CT_PCT);
     gamut = hsl_hwb;
@@ -1933,6 +1946,15 @@ impl ComponentParser {
             input.reset(&state);
             let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
             return Ok(C::light_dark_owned(light, dark));
+        }
+
+        // Browsers keep these unclamped and clip when painting (w3c/csswg-drafts#8444); `resolve()` would not match.
+        if T::BOUNDED
+            // In sRGB for all three targets: hsl and hwb have the sRGB gamut, so one tolerance serves.
+            && !SRGB::try_from_css_color(&from)
+                .is_some_and(|srgb| srgb.resolve_missing().is_nearly_in_gamut())
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
         let new_from = match T::try_from_css_color(&from) {
@@ -2839,36 +2861,48 @@ impl From<SRGB> for SRGBLinear {
         }
     }
 }
+
+/// Hue in degrees, `[0, 360)`, or NaN when achromatic; `d` is max - min. Channels outside 0..1
+/// are fine, only the proportions between them matter.
+fn srgb_hue(rgb: &SRGB, max: f32, d: f32) -> f32 {
+    if d == 0.0 {
+        return f32::NAN;
+    }
+    let h = if max == rgb.r {
+        (rgb.g - rgb.b) / d + (if rgb.g < rgb.b { 6.0 } else { 0.0 })
+    } else if max == rgb.g {
+        (rgb.b - rgb.r) / d + 2.0
+    } else {
+        (rgb.r - rgb.g) / d + 4.0
+    };
+    // `(g - b) / d + 6` rounds up to exactly 6 when g is a hair below b.
+    (h * 60.0).rem_euclid(360.0)
+}
+
+// Neither conversion gamut maps (`resolve()`): a color outside the sRGB gamut converts to an
+// hsl/hwb value outside 0..1 that converts back to the same sRGB channels, which is what
+// `color-mix()` needs (css-color-4 interpolates out-of-gamut operands as they are). A caller
+// that needs a value hsl() can express gamut maps the sRGB color before converting it.
 impl From<SRGB> for HSL {
     fn from(rgb_: SRGB) -> HSL {
         // https://drafts.csswg.org/css-color/#rgb-to-hsl
-        let rgb = rgb_.resolve();
-        let r = rgb.r;
-        let g = rgb.g;
-        let b = rgb.b;
-        let max = r.max(g).max(b);
-        let min = r.min(g).min(b);
-        let mut h = f32::NAN;
-        let mut s: f32 = 0.0;
+        let rgb = rgb_.resolve_missing();
+        let max = rgb.r.max(rgb.g).max(rgb.b);
+        let min = rgb.r.min(rgb.g).min(rgb.b);
         let l = (min + max) / 2.0;
         let d = max - min;
+        let mut h = srgb_hue(&rgb, max, d);
+        let mut s: f32 = 0.0;
 
-        if d != 0.0 {
-            s = if l == 0.0 || l == 1.0 {
-                0.0
-            } else {
-                (max - l) / l.min(1.0 - l)
-            };
+        if d != 0.0 && l != 0.0 && l != 1.0 {
+            s = (max - l) / l.min(1.0 - l);
+        }
 
-            if max == r {
-                h = (g - b) / d + (if g < b { 6.0 } else { 0.0 });
-            } else if max == g {
-                h = (b - r) / d + 2.0;
-            } else if max == b {
-                h = (r - g) / d + 4.0;
-            }
-
-            h *= 60.0;
+        // Negative when the lightness is outside 0..1 (a color outside the gamut). The same
+        // color is the opposite hue with a positive saturation (w3c/csswg-drafts#9222).
+        if s < 0.0 {
+            h = (h + 180.0).rem_euclid(360.0);
+            s = -s;
         }
 
         HSL {
@@ -2881,17 +2915,16 @@ impl From<SRGB> for HSL {
 }
 impl From<SRGB> for HWB {
     fn from(rgb_: SRGB) -> HWB {
-        let rgb = rgb_.resolve();
-        let hsl: HSL = rgb.into();
-        let r = rgb.r;
-        let g = rgb.g;
-        let b_ = rgb.b;
-        let w = r.min(g).min(b_);
-        let b = 1.0 - r.max(g).max(b_);
+        // https://drafts.csswg.org/css-color/#rgb-to-hwb
+        let rgb = rgb_.resolve_missing();
+        let max = rgb.r.max(rgb.g).max(rgb.b);
+        let min = rgb.r.min(rgb.g).min(rgb.b);
         HWB {
-            h: hsl.h,
-            w,
-            b,
+            // Not the hsl hue: `From<HWB> for SRGB` scales the pure hue by max - min, which is
+            // positive for every color, so the unflipped hue is the one that converts back.
+            h: srgb_hue(&rgb, max, max - min),
+            w: min,
+            b: 1.0 - max,
             alpha: rgb.alpha,
         }
     }

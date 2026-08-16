@@ -7773,6 +7773,110 @@ describe("css tests", () => {
     });
   });
 
+  // color-mix(in hsl, ...) and color-mix(in hwb, ...) convert their operands into hsl or hwb first.
+  // That conversion used to gamut map an operand outside the sRGB gamut, so the mix was computed
+  // from a different color than the one written (display-p3 green went in as #00f942, the bright
+  // lab()/oklch() magentas as plain white). css-color-4 converts the operand as it is, to an hsl
+  // value with a saturation above 100% or a lightness outside 0%..100%, or an hwb value with a
+  // negative whiteness or blackness, which converts back to the same out-of-gamut sRGB channels;
+  // the result of the mix is then clipped like the ones above. WPT
+  // css/css-color/parsing/color-mix-out-of-gamut.html mixes the operands of the first list 100% / 0%
+  // with black in both spaces and expects the operand's own unclipped sRGB value back, so each folds
+  // to the same color as the `in srgb` mixes above. The other expected values are the css-color-4
+  // sample code's results clipped to 8 bits; test/js/bun/css/color.test.ts has the same cases with
+  // the hsl/hwb values involved and the colors they used to fold to.
+  describe("color-mix() in hsl and hwb mixes out-of-gamut operands as written", () => {
+    const operands: [operand: string, expected: string][] = [
+      ["color(display-p3 0 1 0)", "#0f0"],
+      ["lab(100% 104.3 -50.9)", "#ff96ff"],
+      ["lab(0% 104.3 -50.9)", "#5a004c"],
+      ["lch(100% 116 334)", "#ff96ff"],
+      ["lch(0% 116 334)", "#5a004c"],
+      ["oklab(100% 0.365 -0.16)", "#ff5cff"],
+      ["oklab(0% 0.365 -0.16)", "#130018"],
+      ["oklch(100% 0.399 336.3)", "#ff5bff"],
+      ["oklch(0% 0.399 336.3)", "#140018"],
+    ];
+    for (const space of ["hsl", "hwb"]) {
+      for (const [operand, expected] of operands) {
+        minify_test(
+          `.foo { color: color-mix(in ${space}, ${operand} 100%, rgb(0 0 0) 0%) }`,
+          `.foo{color:${expected}}`,
+        );
+      }
+    }
+
+    minify_test(".foo { color: color-mix(in hsl, color(display-p3 0 1 0), white) }", ".foo{color:#10ff36}");
+    minify_test(".foo { color: color-mix(in hwb, color(display-p3 0 1 0), white) }", ".foo{color:#3eff58}");
+    minify_test(".foo { color: color-mix(in hsl, color(display-p3 0 1 0), black) }", ".foo{color:#005100}");
+    minify_test(".foo { color: color-mix(in hwb, color(display-p3 0 1 0), black) }", ".foo{color:#008200}");
+    minify_test(".foo { color: color-mix(in hsl, color(display-p3 0 1 0), blue) }", ".foo{color:#0ff}");
+    minify_test(".foo { color: color-mix(in hwb, color(display-p3 0 1 0), blue) }", ".foo{color:#00ecff}");
+    minify_test(".foo { color: color-mix(in hsl longer hue, color(display-p3 0 1 0), blue) }", ".foo{color:red}");
+    minify_test(".foo { color: color-mix(in hsl, color(display-p3 0 1 0 / 0.5), black) }", ".foo{color:#002b06bf}");
+    minify_test(".foo { color: color-mix(in hwb, color(display-p3 0 1 0 / 0.5), black) }", ".foo{color:#005700bf}");
+    // lab(100% 104.3 -50.9) has a lightness of 109%. In hsl that is the opposite hue with a positive
+    // saturation (w3c/csswg-drafts#9222), which mixes with red towards yellow; hwb keeps the hue of
+    // the channels themselves and mixes towards magenta.
+    minify_test(".foo { color: color-mix(in hsl, lab(100% 104.3 -50.9), red) }", ".foo{color:#ffff20}");
+    minify_test(".foo { color: color-mix(in hwb, lab(100% 104.3 -50.9), red) }", ".foo{color:#ff4bb3}");
+    minify_test(".foo { color: color-mix(in hsl, lab(100% 104.3 -50.9), black) }", ".foo{color:#0f0}");
+    minify_test(".foo { color: color-mix(in hwb, lab(100% 104.3 -50.9), black) }", ".foo{color:#cb4bb3}");
+    minify_test(".foo { color: color-mix(in hsl, lab(0% 104.3 -50.9), white) }", ".foo{color:#f0f}");
+    minify_test(".foo { color: color-mix(in hwb, lab(0% 104.3 -50.9), white) }", ".foo{color:#ac64a6}");
+    minify_test(".foo { color: color-mix(in hsl, oklch(100% 0.399 336.3) 50%, white) }", ".foo{color:#ffd5ff}");
+    minify_test(".foo { color: color-mix(in hwb, oklch(100% 0.399 336.3) 50%, white) }", ".foo{color:#ffadff}");
+    minify_test(".foo { color: color-mix(in hsl, oklch(70% 0.4 145), black) }", ".foo{color:#003e00}");
+    minify_test(".foo { color: color-mix(in hwb, oklch(70% 0.4 145), black) }", ".foo{color:#006900}");
+    minify_test(
+      ".foo { color: color-mix(in hsl, color(srgb-linear 0 1.5 0), color(srgb-linear 0 1.5 0)) }",
+      ".foo{color:#0f0}",
+    );
+    // Greys outside the gamut have no hue. The white the gamut mapping produced for them came with
+    // a noise hue and saturation, which used to make the first of these teal (#609f9f).
+    minify_test(".foo { color: color-mix(in hsl, color(srgb 1.2 1.2 1.2), black) }", ".foo{color:#999}");
+    minify_test(".foo { color: color-mix(in hwb, color(srgb 1.2 1.2 1.2), black) }", ".foo{color:#999}");
+    minify_test(".foo { color: color-mix(in hsl, color(srgb -0.2 -0.2 -0.2), white) }", ".foo{color:#666}");
+    minify_test(
+      ".foo { color: color-mix(in hwb, light-dark(color(display-p3 0 1 0), red), light-dark(color(display-p3 0 1 0), blue)) }",
+      ".foo{color:light-dark(#0f0,#f0f)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(color-mix(in hsl, color(display-p3 0 1 0), white), color-mix(in hwb, lab(100% 104.3 -50.9), red)) }",
+      ".foo{background:linear-gradient(#10ff36,#ff4bb3)}",
+    );
+    // Still one 8-bit declaration whatever the targets are.
+    prefix_test(
+      ".foo { color: color-mix(in hsl, color(display-p3 0 1 0), white) }",
+      `.foo {
+        color: #10ff36;
+      }
+      `,
+      { chrome: Some(90 << 16) },
+    );
+
+    describe("operands inside the gamut fold to the same color as before", () => {
+      minify_test(".foo { color: color-mix(in hsl, red, white) }", ".foo{color:#df9f9f}");
+      minify_test(".foo { color: color-mix(in hsl, red 25%, blue) }", ".foo{color:#8000ff}");
+      minify_test(".foo { color: color-mix(in hwb, red 25%, blue) }", ".foo{color:#8000ff}");
+      minify_test(".foo { color: color-mix(in hsl, #808080, red) }", ".foo{color:#bf4040}");
+      minify_test(".foo { color: color-mix(in hwb, #808080, red) }", ".foo{color:#c04040}");
+      // A boundary color written as lab() converts back a few 1e-7 outside the gamut.
+      minify_test(
+        ".foo { color: color-mix(in hsl, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891)) }",
+        ".foo{color:red}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hwb, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891)) }",
+        ".foo{color:red}",
+      );
+      minify_test(
+        ".foo { color: color-mix(in hsl, color(display-p3 0 0 1), color(display-p3 0 0 1)) }",
+        ".foo{color:#00f}",
+      );
+    });
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",
@@ -7804,6 +7908,63 @@ describe("css tests", () => {
     minify_test('.foo{grid-template-areas:"a . b" ". c ."}', '.foo{grid-template-areas:"a . b" ". c ."}');
     minify_test('.foo{grid-template-areas:"a ... b"}', '.foo{grid-template-areas:"a ... b"}');
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
+  });
+
+  // rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers keep the
+  // out-of-gamut channels and clip them when painting (w3c/csswg-drafts#8444), so resolving
+  // these by gamut mapping the origin, as before (#fff and #00f942 below), painted a
+  // different color than the unbundled stylesheet. They are left for the browser.
+  describe("relative colors with an origin outside the sRGB gamut", () => {
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b)}",
+    );
+    minify_test(
+      ".foo { color: hsl(from color(display-p3 0 1 0) h s l) }",
+      ".foo{color:hsl(from color(display-p3 0 1 0) h s l)}",
+    );
+    minify_test(
+      ".foo { color: hwb(from oklch(100% 0.399 336.3) h w b) }",
+      ".foo{color:hwb(from oklch(100% .399 336.3) h w b)}",
+    );
+    minify_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b / var(--a)) }",
+      ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b/var(--a))}",
+    );
+    // Under targets without lab(), the origin literal gets the fallback tiers any unresolved
+    // value containing it gets; the relative color itself is still left alone in each tier.
+    prefix_test(
+      ".foo { color: rgb(from lab(100% 104.3 -50.9) r g b) }",
+      indoc`
+        .foo {
+          color: rgb(from #fff r g b);
+        }
+
+        @supports (color: lab(0% 0 0)) {
+          .foo {
+            color: rgb(from lab(100% 104.3 -50.9) r g b);
+          }
+        }
+      `,
+      {
+        chrome: 95 << 16,
+      },
+    );
+
+    // In-gamut origins resolve as before, and the unbounded functions resolve any origin.
+    minify_test(".foo { color: rgb(from lab(50% 40 -50) r g b) }", ".foo{color:#965dcd}");
+    minify_test(".foo { color: hsl(from color(display-p3 0.4 0.4 0.4) h s l) }", ".foo{color:#666}");
+    minify_test(
+      ".foo { color: color(from lab(100% 104.3 -50.9) srgb r g b) }",
+      ".foo{color:color(srgb 1.5935 .587758 1.40555)}",
+    );
+    // A boundary color converts back a few 1e-7 outside the gamut; that still resolves.
+    minify_test(".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b) }", ".foo{color:red}");
+    minify_test(".foo { color: hsl(from lab(54.2905% 80.8049 69.891) h s l) }", ".foo{color:red}");
+    minify_test(
+      ".foo { color: rgb(from lab(54.2905% 80.8049 69.891) r g b / var(--a)) }",
+      ".foo{color:rgb(255 0 0/var(--a))}",
+    );
   });
 
   describe("edge cases", () => {

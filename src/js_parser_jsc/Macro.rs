@@ -834,6 +834,10 @@ impl<'a> Run<'a> {
                 }
 
                 let promise = value.as_any_promise().expect("Unexpected promise type");
+                // A rejection is reported below. Without this the rejection
+                // tracker reports it as well: while waiting, or from a later
+                // event loop tick when the promise is already rejected.
+                promise.set_handled(self.global.vm());
 
                 let _ = self.macro_.vm();
                 let vm = VirtualMachine::get();

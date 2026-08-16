@@ -335,6 +335,7 @@ typedef struct {
     uint8_t cell_type;
     bool shared;
     bool resizable;
+    bool pinned;
 } Bun__ArrayBuffer;
 
 #include "SyntheticModuleType.h"

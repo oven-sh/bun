@@ -1203,6 +1203,7 @@ pub struct Features {
     pub dependencies: bool,
     pub dev_dependencies: bool,
     pub is_main: bool,
+    pub is_workspace: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,
     pub trusted_dependencies: bool,
@@ -1216,6 +1217,7 @@ impl Default for Features {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1237,6 +1239,7 @@ impl Features {
             dependencies: true,
             dev_dependencies: false,
             is_main: false,
+            is_workspace: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1265,6 +1268,7 @@ impl Features {
 
     pub const WORKSPACE: Self = Self {
         dev_dependencies: true,
+        is_workspace: true,
         optional_dependencies: true,
         trusted_dependencies: true,
         ..Self::base()

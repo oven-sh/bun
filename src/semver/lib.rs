@@ -9,6 +9,7 @@ pub use crate::semver_query::Query;
 pub use crate::semver_range::Range;
 pub use crate::sliced_string::SlicedString;
 
+mod intersects;
 #[path = "SemverQuery.rs"]
 pub mod semver_query;
 #[path = "SemverRange.rs"]

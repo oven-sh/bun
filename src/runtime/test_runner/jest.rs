@@ -127,7 +127,7 @@ pub struct TestRunner<'a> {
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
-    pub(crate) snapshots: Snapshots<'a>,
+    pub(crate) snapshots: Snapshots,
 
     pub(crate) default_timeout_ms: u32,
 
@@ -144,6 +144,9 @@ pub struct TestRunner<'a> {
 
     pub(crate) unhandled_errors_between_tests: u32,
     pub(crate) summary: Summary,
+
+    /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
+    pub(crate) node_test_used: bool,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
@@ -513,17 +516,21 @@ pub mod Jest {
 }
 
 /// Reached only from `node:test`, through `$newRustFunction` rather than the
-/// public `bun:test` module object. Returns 0 outside `bun test`.
+/// public `bun:test` module object, whenever a node:test API registers something. Returns 0 outside `bun test`.
 pub(crate) fn js_file_generation(
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     _callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     // `runner_ptr()` rather than `runner()`: node:test calls this on every test
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
     // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    let generation =
-        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    let generation = Jest::runner_ptr().map_or(0, |p| unsafe {
+        if global.bun_vm().worker_ref().is_none() {
+            (*p.as_ptr()).node_test_used = true;
+        }
+        (*p.as_ptr()).bun_test_root.file_generation
+    });
     Ok(JSValue::from(generation))
 }
 
@@ -617,10 +624,22 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            // `report_unhandled` reports the uncaught exception, with a guard
-            // for `Terminated` (which carries no pending exception to take).
-            use bun_jsc::JsResultExt as _;
-            bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
+            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
+                // As `RunTestsTask::call`: what advancing the runner threw is
+                // recorded against wherever the runner now is; a termination is
+                // left where it is.
+                if !global_object.has_pending_termination_exception() {
+                    // SAFETY: as above; `run` has returned, this is the only handle.
+                    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+                    let phase = buntest.get_current_state_data();
+                    buntest.on_uncaught_exception(
+                        global_object,
+                        Some(global_object.take_exception(e)),
+                        false,
+                        &phase,
+                    );
+                }
+            }
             return;
         }
 

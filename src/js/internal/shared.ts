@@ -147,6 +147,11 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
+// process.send() options marking cluster-internal traffic; the flag is a private name so user code cannot set it.
+const kInternalSendOptions: any = Object.create(null);
+$putByIdDirectPrivate(kInternalSendOptions, "internal", true);
+ObjectFreeze(kInternalSendOptions);
+
 // Node invokes fs/dns callbacks via InternalMakeCallback, so a throw becomes uncaughtException
 // (not unhandledRejection); Bun runs them from a promise reaction so we reroute the throw.
 // https://github.com/nodejs/node/blob/main/src/api/callback.cc
@@ -422,8 +427,10 @@ export default {
   PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
+  kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,
+  kInternalSendOptions,
 };

@@ -311,6 +311,23 @@ pub enum ParamPattern {
     Spread(SpreadPattern),
 }
 
+impl ParamPattern {
+    /// The parameter's binding, whether or not it is a rest parameter.
+    pub fn place(&self) -> &Place {
+        match self {
+            ParamPattern::Place(p) => p,
+            ParamPattern::Spread(s) => &s.place,
+        }
+    }
+
+    pub fn place_mut(&mut self) -> &mut Place {
+        match self {
+            ParamPattern::Place(p) => p,
+            ParamPattern::Spread(s) => &mut s.place,
+        }
+    }
+}
+
 /// The HIR control-flow graph
 #[derive(Debug, Clone)]
 pub struct HIR {
@@ -660,6 +677,18 @@ pub enum InstructionKind {
     HoistedLet,
     HoistedFunction,
     Function,
+}
+
+impl InstructionKind {
+    /// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
+    pub fn unhoisted(self) -> Option<InstructionKind> {
+        match self {
+            InstructionKind::HoistedLet => Some(InstructionKind::Let),
+            InstructionKind::HoistedConst => Some(InstructionKind::Const),
+            InstructionKind::HoistedFunction => Some(InstructionKind::Function),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1163,6 +1192,19 @@ impl IdentifierName {
             IdentifierName::Named(v) | IdentifierName::Promoted(v) => v.slice(),
         }
     }
+
+    /// `#<kind><n>`, e.g. `#t12` for a promoted temporary.
+    pub fn promoted(kind: u8, n: u32) -> IdentifierName {
+        let mut itoa = bun_core::fmt::ItoaBuf::new();
+        let digits = itoa.format(n).as_bytes();
+        let mut buf = [0u8; 16];
+        buf[0] = b'#';
+        buf[1] = kind;
+        buf[2..2 + digits.len()].copy_from_slice(digits);
+        IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
+            &buf[..2 + digits.len()],
+        )))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1292,6 +1334,23 @@ impl std::fmt::Display for PropertyLiteral {
 pub enum PlaceOrSpread {
     Place(Place),
     Spread(SpreadPattern),
+}
+
+impl PlaceOrSpread {
+    /// The argument's place, whether or not it is spread.
+    pub fn place(&self) -> &Place {
+        match self {
+            PlaceOrSpread::Place(p) => p,
+            PlaceOrSpread::Spread(s) => &s.place,
+        }
+    }
+
+    pub fn place_mut(&mut self) -> &mut Place {
+        match self {
+            PlaceOrSpread::Place(p) => p,
+            PlaceOrSpread::Spread(s) => &mut s.place,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1728,6 +1787,15 @@ pub fn is_use_state_type(ty: &Type) -> bool {
 /// Returns true if the type is a setState function (BuiltInSetState).
 pub fn is_set_state_type(ty: &Type) -> bool {
     matches!(ty, Type::Function { shape_id: Some(id), .. } if *id == object_shape::BUILT_IN_SET_STATE_ID)
+}
+
+pub fn is_set_state_identifier(
+    identifier_id: IdentifierId,
+    identifiers: &[Identifier],
+    types: &[Type],
+) -> bool {
+    let ident = &identifiers[identifier_id.0 as usize];
+    is_set_state_type(&types[ident.type_.0 as usize])
 }
 
 /// Returns true if the type is a useEffect hook.

@@ -76,43 +76,38 @@ pub mod js_fns {
         }
     }
 
-    pub(crate) struct GetActiveCfg<'a> {
-        pub(crate) signature: Signature<'a>,
-        pub(crate) allow_in_preload: bool,
-    }
-
-    fn get_active_test_root<'a>(
+    /// Only requires the runner: hooks are legal in preload scripts (they attach
+    /// to the root), so the preload check lives in `clone_active_strong`.
+    fn get_test_root(
         global_this: &JSGlobalObject,
-        cfg: &GetActiveCfg<'a>,
+        signature: Signature<'_>,
     ) -> JsResult<&'static mut BunTestRoot> {
         // `Jest.runner` is a process-global that outlives every caller, so the
         // unbounded `&'static mut` is the honest model here.
         let Some(runner) = Jest::runner() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of the test runner. Run \"bun test\" to run tests.",
-                cfg.signature
+                signature
             )));
         };
-        let bun_test_root = &mut runner.bun_test_root;
-        let vm = global_this.bun_vm();
-        if vm.is_in_preload && !cfg.allow_in_preload {
-            return Err(global_this.throw(format_args!(
-                "Cannot use {} during preload.",
-                cfg.signature
-            )));
-        }
-        Ok(bun_test_root)
+        Ok(&mut runner.bun_test_root)
     }
 
     pub(crate) fn clone_active_strong(
         global_this: &JSGlobalObject,
-        cfg: &GetActiveCfg<'_>,
+        signature: Signature<'_>,
     ) -> JsResult<BunTestPtr> {
-        let bun_test_root = get_active_test_root(global_this, cfg)?;
+        let bun_test_root = get_test_root(global_this, signature)?;
+        if global_this.bun_vm().is_in_preload {
+            return Err(global_this.throw(format_args!(
+                "Cannot use {} during preload.",
+                signature
+            )));
+        }
         let Some(bun_test) = bun_test_root.clone_active_file() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of a test file.",
-                cfg.signature
+                signature
             )));
         };
         Ok(bun_test)
@@ -186,10 +181,7 @@ pub mod js_fns {
                 false
             };
 
-            let bun_test_root = get_active_test_root(
-                global_this,
-                &GetActiveCfg { signature: Signature::Str(sig_bytes), allow_in_preload: true },
-            )?;
+            let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
             let cfg = ExecutionEntryCfg {
                 has_done_parameter,
@@ -487,7 +479,7 @@ impl BunTestRoot {
         // `bun_test_then_or_catch` when the promise settles — which it now
         // never will (the VM is going away). Release each orphan ourselves;
         // any reaction that is still queued is dropped wholesale by
-        // `destructOnExit`.
+        // `Zig__GlobalObject__destructOnExit`.
         for ptr in self.pending_then_refs.borrow_mut().drain(..) {
             // SAFETY: `ptr` was produced by `IntrusiveRc::into_raw` in
             // `BunTest::run_test_callback`; it is live because the promise
@@ -754,7 +746,7 @@ impl BunTest {
 
         let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
         // SAFETY: `raw_ref` was produced by `IntrusiveRc::into_raw` in `run_test_callback`
-        // and round-tripped via `asPromisePtr`; we adopt the +1 it carried.
+        // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
         let refdata: RefDataPtr = unsafe { bun_ptr::IntrusiveRc::from_raw(raw_ref) };
         // Remove the pending_then_refs entry before `deref()` so a freed `RefData` never lingers.
         if let Some(runner) = Jest::runner() {
@@ -914,7 +906,7 @@ impl BunTest {
         fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
             // `this` was `heap::into_raw`'d above (always non-null) and is
             // invoked exactly once by `ManagedTask`.
-            RunTestsTask::call(NonNull::new(this).unwrap()).map_err(Into::into)
+            RunTestsTask::call(NonNull::new(this).unwrap())
         }
         // `new_owned`: if the task never runs (VM teardown), the queue drainer frees `done_callback_test`.
         let task = jsc::ManagedTask::ManagedTask::new_owned::<RunTestsTask>(done_callback_test, call_erased);
@@ -1513,7 +1505,7 @@ pub struct RefData {
     pub(crate) phase: RefDataValue,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
-// `*RefData` crosses FFI (asPromisePtr), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
+// `*RefData` crosses FFI (`as_promise_ptr`), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
 pub type RefDataPtr = bun_ptr::IntrusiveRc<RefData>;
 impl RefData {
     /// `RefCounted` destructor — last ref dropped.
@@ -1557,6 +1549,10 @@ impl RunTestsTask {
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
         if let Err(e) = BunTest::run(&strong, &this.global_this) {
+            // A termination is the tick's to fold, not a test failure.
+            if this.global_this.has_pending_termination_exception() {
+                return Err(e);
+            }
             // SAFETY: `&mut` derived via `UnsafeCell` after `run` returned; sole
             // borrow at this point.
             let bt = strong.get();

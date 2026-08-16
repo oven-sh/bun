@@ -4165,6 +4165,9 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
+            if crate::ffi::errno() == libc::ENOENT {
+                return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
+            }
             return Err(crate::CrateError::Unexpected);
         }
         Ok(libc::strlen(p))
@@ -4602,6 +4605,8 @@ pub mod spawn_ffi {
         pub gid: u32,
         pub set_uid: bool,
         pub set_gid: bool,
+        /// Linux: directory fd of the cgroup the child starts in. -1 = unset.
+        pub cgroup_fd: c_int,
     }
 
     impl Default for BunSpawnRequest {
@@ -4617,6 +4622,7 @@ pub mod spawn_ffi {
                 gid: 0,
                 set_uid: false,
                 set_gid: false,
+                cgroup_fd: -1,
             }
         }
     }

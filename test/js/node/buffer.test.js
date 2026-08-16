@@ -2,6 +2,7 @@ import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
@@ -4168,6 +4169,56 @@ describe("*Write methods with NaN/invalid offset and length", () => {
       expect(written).toBeLessThanOrEqual(buf.length);
     });
   }
+});
+
+describe("utf8 write of a string ending in a lone high surrogate", () => {
+  function hasAVX2() {
+    if (process.arch !== "x64" || process.platform !== "linux") return false;
+    try {
+      return readFileSync("/proc/cpuinfo", "utf8").includes(" avx2");
+    } catch {
+      return false;
+    }
+  }
+
+  it("leaves bytes past the target range untouched for every SIMD block alignment", async () => {
+    const src = `
+      const lines = [];
+      for (let k = 0; k < 16; k++) {
+        const s = Buffer.alloc(k, "a").toString() + "\\u4e00" + Buffer.alloc(26 - k, "a").toString() + "\\ud800";
+        const viaLength = Buffer.alloc(48, "b");
+        const n = viaLength.write(s, 0, 29, "utf8");
+        const viaSubarray = Buffer.alloc(48, "b");
+        const m = viaSubarray.subarray(0, 29).write(s, "utf8");
+        const viaUtf8Write = Buffer.alloc(48, "b");
+        const w = viaUtf8Write.utf8Write(s, 0, 29);
+        const viaFill = Buffer.alloc(48, "b");
+        viaFill.fill(s, 0, 29, "utf8");
+        lines.push([k, n, m, w, viaLength.toString("hex"), viaSubarray.toString("hex"), viaUtf8Write.toString("hex"), viaFill.toString("hex")].join(" "));
+      }
+      console.log(lines.join("\\n"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: hasAVX2() ? { ...bunEnv, SIMDUTF_FORCE_IMPLEMENTATION: "haswell" } : bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const expected = [];
+    for (let k = 0; k < 16; k++) {
+      const hex = Buffer.concat([
+        Buffer.alloc(k, "a"),
+        Buffer.from([0xe4, 0xb8, 0x80]),
+        Buffer.alloc(26 - k, "a"),
+        Buffer.alloc(19, "b"),
+      ]).toString("hex");
+      expected.push([k, 29, 29, 29, hex, hex, hex, hex].join(" "));
+    }
+    expect(stdout.trim()).toBe(expected.join("\n"));
+    expect(exitCode).toBe(0);
+  });
 });
 
 // These raw prototype methods come straight from Node's C++ bindings, not from the

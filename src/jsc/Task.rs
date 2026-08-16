@@ -10,9 +10,9 @@
 //! 1. Add a tag constant to `bun_event_loop::task_tag` (the canonical list).
 //! 2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`
 //!    in the crate that owns `YourType`.
-//! 3. Add a match arm in `bun_runtime::dispatch::run_tasks`.
+//! 3. Add a match arm in `bun_runtime::dispatch::run_task` (and `__bun_release_task_unrun`).
 
-use crate::event_loop::JsTerminated;
+use crate::event_loop::Stopped;
 use crate::{JSGlobalObject, JsError};
 
 // ─── Task / TaskTag / Taskable ───────────────────────────────────────────────
@@ -36,32 +36,24 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // `pub fn run_tasks` wrapper here had no callers and aliased the same body —
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
-/// Shared helper for the high-tier match arms that bubble `JsError` out of a
-/// task body: report the uncaught exception, or convert termination into the
-/// `JsTerminated` sentinel that unwinds the tick loop.
+/// The fold: what a dispatcher does with the exception a callback it invoked left pending — report it
+/// as uncaught, or, if what came back is the VM's termination, stand the loop down
+/// (WebCore: `isTerminationException(returned)`). When this runs as the outermost frame (a foreign
+/// trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
+/// checkpoint over the pending exception, so it runs here once the exception is taken; beneath
+/// another dispatch or a host function that checkpoint is still the outer frame's.
 #[cold]
-pub fn report_error_or_terminate(
-    global: &JSGlobalObject,
-    proof: JsError,
-) -> Result<(), JsTerminated> {
-    if proof == JsError::Terminated {
-        return Err(JsTerminated::JSTerminated);
-    }
+pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
-        return Err(JsTerminated::JSTerminated);
+        return Err(Stopped);
     }
-    let vm = std::ptr::from_ref::<crate::VM>(global.vm()).cast_mut();
-    let exc = ex
-        .as_exception(vm)
-        .expect("exception value must be an Exception cell");
-    // `as_exception` returned a non-null cell pointer rooted on the VM;
-    // `Exception` is an opaque ZST handle — safe deref (panics on null).
-    let _ = crate::js_global_object::report_uncaught_exception(
-        global,
-        crate::Exception::opaque_ref(exc),
-    );
-    Ok(())
+    let vm = global.bun_vm();
+    let _ = vm.as_mut().uncaught_exception(global, ex, false);
+    if vm.is_shutting_down() {
+        return Ok(());
+    }
+    vm.event_loop_mut().maybe_drain_microtasks()
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

@@ -30,6 +30,10 @@ bun remove <package>
   Add to <code>trustedDependencies</code> in the project's <code>package.json</code> and install the package(s)
 </ParamField>
 
+<ParamField path="--filter" type="string">
+  Remove the package(s) from the matching workspaces instead of the current package. Alias: <code>-F</code>
+</ParamField>
+
 ### Lockfile Behavior
 
 <ParamField path="--yarn" type="boolean">
@@ -75,7 +79,7 @@ bun remove <package>
 ### Execution Control & Validation
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Perform a dry run without making changes
 </ParamField>
 
 <ParamField path="--force" type="boolean">
@@ -117,7 +121,7 @@ bun remove <package>
 ### Script Execution
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (dependency scripts are never run)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">
@@ -136,9 +140,9 @@ bun remove <package>
 
 ### Advanced & Performance
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 <ParamField path="--network-concurrency" type="number" default="48">

@@ -45,7 +45,7 @@ It's fast. The following numbers are from esbuild's [three.js benchmark](https:/
 Bundlers solve several problems:
 
 - **Reducing HTTP requests.** A single package in `node_modules` may consist of hundreds of files, and large applications may have dozens of such dependencies. Loading each of these files with a separate HTTP request becomes untenable, so bundlers convert your application source code into a smaller number of self-contained "bundles" that can be loaded with a single request.
-- **Code transforms.** Modern apps are commonly built with languages or tools like TypeScript, JSX, and CSS modules, all of which must be converted into plain JavaScript and CSS before they can be consumed by a browser. The bundler is the natural place to configure these transformations.
+- **Code transforms.** Modern apps are commonly built with languages or tools like TypeScript, JSX, and CSS modules. All of these must be converted into plain JavaScript and CSS before a browser can consume them. The bundler is the natural place to configure these transformations.
 - **Framework features.** Frameworks rely on bundler plugins & code transformations to implement common patterns like file-system routing, client-server code co-location (think `getServerSideProps` or Remix loaders), and server components.
 - **Full-stack Applications.** Bun's bundler can handle both server and client code in a single command, enabling optimized production builds and single-file executables. With build-time HTML imports, you can bundle your entire application — frontend assets and backend server — into a single deployable unit.
 
@@ -114,7 +114,7 @@ The contents of `out/index.js` look something like this:
 // Component.tsx
 function Component(props) {
   return $jsxDEV(
-    "p",
+    "h1",
     {
       children: props.message,
     },
@@ -164,11 +164,11 @@ Like the Bun runtime, the bundler supports a range of file types by default. The
 | `.txt`                                                | The contents of the text file are read and inlined into the bundle as a string.<br/><br/>`js<br/>import contents from "./file.txt";<br/>console.log(contents); // => "Hello, world!"<br/>`                                                                                                                                  |
 | `.html`                                               | HTML files are processed and any referenced assets (scripts, stylesheets, images) are bundled.                                                                                                                                                                                                                              |
 | `.css`                                                | CSS files are bundled together into a single `.css` file in the output directory.                                                                                                                                                                                                                                           |
-| `.node` `.wasm`                                       | These files are supported by the Bun runtime, but during bundling they are treated as assets.                                                                                                                                                                                                                               |
+| `.node` `.wasm`                                       | The Bun runtime supports these files, but the bundler treats them as assets.                                                                                                                                                                                                                                                |
 
 ### Assets
 
-If the bundler encounters an import with an unrecognized extension, it treats the imported file as an external file. The referenced file is copied as-is into `outdir`, and the import is resolved as a path to the file.
+If the bundler encounters an import with an unrecognized extension, it treats the imported file as an external file. The bundler copies the referenced file as-is into `outdir` and resolves the import as a path to the file.
 
 <CodeGroup>
 
@@ -222,7 +222,7 @@ An array of paths corresponding to the entrypoints of your application. Bun gene
 
 A map of file paths to their contents for in-memory bundling: bundle virtual files that don't exist on disk, or override the contents of files that do. This option is only available in the JavaScript API.
 
-File contents can be provided as a `string`, `Blob`, `TypedArray`, or `ArrayBuffer`.
+You can provide file contents as a `string`, `Blob`, `TypedArray`, or `ArrayBuffer`.
 
 #### Bundle entirely from memory
 
@@ -248,7 +248,7 @@ const output = await result.outputs[0].text();
 console.log(output);
 ```
 
-When all entrypoints are in the `files` map, the current working directory is used as the root.
+When all entrypoints are in the `files` map, Bun uses the current working directory as the root.
 
 #### Override files on disk
 
@@ -311,7 +311,7 @@ The directory where output files are written.
   </Tab>
 </Tabs>
 
-If `outdir` is not passed to the JavaScript API, bundled code is not written to disk. Bundled files are returned in an array of `BuildArtifact` objects. These objects are Blobs with extra properties; see [Outputs](#outputs).
+If you don't pass `outdir` to the JavaScript API, Bun does not write bundled code to disk. It returns the bundled files in an array of `BuildArtifact` objects. These objects are Blobs with extra properties; see [Outputs](#outputs).
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 const result = await Bun.build({
@@ -368,7 +368,7 @@ All bundles generated with `target: "bun"` are marked with a `// @bun` pragma, w
 
 If any entrypoint contains a Bun shebang (`#!/usr/bin/env bun`), the bundler defaults to `target: "bun"` instead of `"browser"`.
 
-When using `target: "bun"` and `format: "cjs"` together, the `// @bun @bun-cjs` pragma is added and the CommonJS wrapper function is not compatible with Node.js.
+When you use `target: "bun"` and `format: "cjs"` together, the bundler adds the `// @bun @bun-cjs` pragma, and the CommonJS wrapper function is not compatible with Node.js.
 
 </Card>
 
@@ -408,7 +408,7 @@ To use ES Module syntax in browsers, set `format` to `"esm"` and load the bundle
 
 #### format: "cjs" - CommonJS
 
-To build a CommonJS module, set `format` to `"cjs"`. When choosing `"cjs"`, the default target changes from `"browser"` (esm) to `"node"` (cjs). CommonJS modules transpiled with `format: "cjs"`, `target: "node"` run in both Bun and Node.js (assuming the APIs in use are supported by both).
+To build a CommonJS module, set `format` to `"cjs"`. When you choose `"cjs"`, the default target changes from `"browser"` (esm) to `"node"` (cjs). CommonJS modules transpiled with `format: "cjs"`, `target: "node"` run in both Bun and Node.js (assuming both support the APIs in use).
 
 <Tabs>
   <Tab title="JavaScript">
@@ -429,7 +429,7 @@ To build a CommonJS module, set `format` to `"cjs"`. When choosing `"cjs"`, the 
 
 #### format: "iife" - IIFE
 
-TODO: document IIFE once we support globalNames.
+To build an IIFE bundle, set `format` to `"iife"`. Bun wraps the bundle in an immediately invoked function expression and does not support exposing its exports under a global name.
 
 ### `jsx`
 
@@ -542,9 +542,9 @@ Running this build results in the following files:
 
 ```text title="file system" icon="folder-tree"
 .
-├── entry-a.tsx
-├── entry-b.tsx
-├── shared.tsx
+├── entry-a.ts
+├── entry-b.ts
+├── shared.ts
 └── out
     ├── entry-a.js
     ├── entry-b.js
@@ -567,11 +567,11 @@ await Bun.build({
 });
 ```
 
-Bun's plugin system is shared by the runtime and the bundler. See [plugins](/bundler/plugins).
+The runtime and the bundler share Bun's plugin system. See [plugins](/bundler/plugins).
 
 ### env
 
-Controls how environment variables are handled during bundling. Internally, this uses `define` to inject environment variables into the bundle; `env` is a shorthand for specifying which ones.
+Controls how environment variables are handled during bundling. Internally, this option uses `define` to inject environment variables into the bundle; `env` is a shorthand for specifying which ones.
 
 #### env: "inline"
 
@@ -675,7 +675,7 @@ Specifies the type of sourcemap to generate.
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build ./index.tsx --outdir ./out --sourcemap linked
+    bun build ./index.tsx --outdir ./out --sourcemap=linked
     ```
   </Tab>
 </Tabs>
@@ -683,7 +683,7 @@ Specifies the type of sourcemap to generate.
 | Value        | Description                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `"none"`     | Default. No sourcemap is generated.                                                                                                                                                                                                                                                                                                                                                             |
-| `"linked"`   | A separate `*.js.map` file is created alongside each `*.js` bundle using a `//# sourceMappingURL` comment to link the two. Requires `--outdir` to be set. The base URL of this can be customized with `--public-path`.<br/><br/>`js<br/>// <bundled code here><br/><br/>//# sourceMappingURL=bundle.js.map<br/>`                                                                                |
+| `"linked"`   | A separate `*.js.map` file is created alongside each `*.js` bundle using a `//# sourceMappingURL` comment to link the two. Requires `--outdir` to be set. You can customize the base URL in this comment with `--public-path`.<br/><br/>`js<br/>// <bundled code here><br/><br/>//# sourceMappingURL=bundle.js.map<br/>`                                                                        |
 | `"external"` | A separate `*.js.map` file is created alongside each `*.js` bundle without inserting a `//# sourceMappingURL` comment.<br/><br/>Generated bundles contain a debug id that can be used to associate a bundle with its corresponding sourcemap. This `debugId` is added as a comment at the bottom of the file.<br/><br/>`js<br/>// <generated bundle code><br/><br/>//# debugId=<DEBUG ID><br/>` |
 | `"inline"`   | A sourcemap is generated and appended to the end of the generated bundle as a base64 payload.<br/><br/>`js<br/>// <bundled code here><br/><br/>//# sourceMappingURL=data:application/json;base64,<encoded sourcemap here><br/>`                                                                                                                                                                 |
 
@@ -756,7 +756,7 @@ A list of import paths to consider external. Defaults to `[]`.
   </Tab>
 </Tabs>
 
-An external import is not included in the final bundle. Instead, the import statement is left as-is, to be resolved at runtime.
+An external import is not included in the final bundle. Instead, the bundler leaves the import statement as-is, to be resolved at runtime.
 
 For instance, consider the following entrypoint file:
 
@@ -841,7 +841,7 @@ Controls whether package dependencies are included in the bundle. Possible value
 
 ### naming
 
-Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
+Customizes the generated file names. Defaults to `[dir]/[name].[ext]`.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -882,7 +882,7 @@ With multiple entrypoints, the generated file hierarchy reflects the directory s
         └── index.js
 ```
 
-The `naming` field customizes the names and locations of the generated files. It accepts a template string, used for all bundles corresponding to entrypoints, in which the following tokens are replaced with their values:
+The `naming` field customizes the names and locations of the generated files. It accepts a template string. Bun uses the template for all bundles that correspond to entrypoints and replaces the following tokens with their values:
 
 - `[name]` - The name of the entrypoint file, without the extension.
 - `[ext]` - The extension of the generated bundle.
@@ -925,7 +925,7 @@ This build would result in the following file structure:
         └── index-a1b2c3d4.js
 ```
 
-When a string is provided for the `naming` field, it is used only for bundles that correspond to entrypoints. The names of chunks and copied assets are not affected. In the JavaScript API, you can specify a separate template string for each type of generated file.
+When you provide a string for the `naming` field, Bun uses it only for bundles that correspond to entrypoints. The names of chunks and copied assets are not affected. In the JavaScript API, you can specify a separate template string for each type of generated file.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -973,7 +973,7 @@ The root directory of the project.
   </Tab>
 </Tabs>
 
-If unspecified, it is computed to be the first common ancestor of all entrypoint files. Consider the following file structure:
+If unspecified, Bun uses the first common ancestor of all entrypoint files as the root. Consider the following file structure:
 
 ```text title="file system" icon="folder-tree"
 .
@@ -1012,7 +1012,7 @@ This would result in a file structure like this:
   └── settings.js
 ```
 
-Since the `pages` directory is the first common ancestor of the entrypoint files, it is considered the project root, so the generated bundles live at the top level of the `out` directory; there is no `out/pages` directory.
+The `pages` directory is the first common ancestor of the entrypoint files, so Bun treats it as the project root. As a result, the generated bundles live at the top level of the `out` directory; there is no `out/pages` directory.
 
 Override this by specifying the `root` option:
 
@@ -1053,7 +1053,7 @@ A prefix added to any import paths in bundled code.
 In many cases, generated bundles contain no import statements; the goal of bundling is to combine all of the code into a single file. In a few cases, though, the generated bundles contain import statements:
 
 - **Asset imports** — When importing an unrecognized file type like `*.svg`, the bundler defers to the file loader, which copies the file into `outdir` as is. The import is converted into a variable.
-- **External modules** — Files and modules marked as external are not included in the bundle. Instead, the import statement is left in the final bundle.
+- **External modules** — Files and modules marked as external are not included in the bundle. Instead, the bundler leaves the import statement in the final bundle.
 - **Chunking.** When `splitting` is enabled, the bundler may generate separate "chunk" files that represent code that is shared among multiple entrypoints.
 
 In any of these cases, the final bundles may contain paths to other files. By default these imports are relative. Here is an example of an asset import:
@@ -1099,7 +1099,7 @@ var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 
 ### define
 
-A map of global identifiers to be replaced at build time. Keys of this object are identifier names, and values are JSON strings that are inlined.
+A map of global identifiers to be replaced at build time. Keys of this object are identifier names, and values are JSON strings, identifiers, or property paths that are inlined.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1189,7 +1189,7 @@ A footer added to the final bundle. This can be a comment block for a license or
 
 ### drop
 
-Removes function calls from a bundle. For example, `--drop=console` removes all calls to `console.log`. Arguments to dropped calls are also removed, even if they have side effects. Dropping `debugger` removes all `debugger` statements.
+Removes function calls from a bundle. For example, `--drop=console` removes all calls to `console.log`. Bun also removes the arguments to dropped calls, even if they have side effects. Dropping `debugger` removes all `debugger` statements.
 
 <Tabs>
   <Tab title="JavaScript">
@@ -1243,7 +1243,7 @@ if (feature("DEBUG")) {
   </Tab>
 </Tabs>
 
-The `feature()` function is replaced with `true` or `false` at bundle time. Combined with minification, unreachable code is eliminated:
+Bun replaces the `feature()` function with `true` or `false` at bundle time. When minification is also enabled, Bun eliminates the unreachable code:
 
 ```ts title="Input" icon="/icons/typescript.svg"
 import { feature } from "bun:bundle";
@@ -1261,9 +1261,9 @@ var mode = "free";
 **Key behaviors:**
 
 - `feature()` requires a string literal argument — dynamic values are not supported
-- The `bun:bundle` import is completely removed from the output
+- Bun completely removes the `bun:bundle` import from the output
 - Works with `bun build`, `bun run`, and `bun test`
-- Multiple flags can be enabled: `--feature FLAG_A --feature FLAG_B`
+- You can enable multiple flags: `--feature FLAG_A --feature FLAG_B`
 - For type safety, augment the `Registry` interface to restrict `feature()` to known flags
 
 **Use cases:**
@@ -1288,7 +1288,7 @@ Ensure the file is included in your `tsconfig.json` (for example, `"include": ["
 
 ### optimizeImports
 
-Skip parsing unused submodules of barrel files (re-export index files). When you import only a few named exports from a large library, normally the bundler parses every file the barrel re-exports. With `optimizeImports`, only the submodules you use are parsed.
+Skip parsing unused submodules of barrel files (re-export index files). When you import only a few named exports from a large library, normally the bundler parses every file the barrel re-exports. With `optimizeImports`, the bundler parses only the submodules you use.
 
 ```ts title="build.ts" icon="/icons/typescript.svg"
 await Bun.build({
@@ -1298,11 +1298,11 @@ await Bun.build({
 });
 ```
 
-For example, `import { Button } from 'antd'` normally parses all ~3000 modules that `antd/index.js` re-exports. With `optimizeImports: ['antd']`, only the `Button` submodule is parsed.
+For example, `import { Button } from 'antd'` normally parses all ~3000 modules that `antd/index.js` re-exports. With `optimizeImports: ['antd']`, the bundler parses only the `Button` submodule.
 
-This works for **pure barrel files** — files where every named export is a re-export (`export { X } from './x'`). If a barrel file has any local exports (`export const foo = ...`), or if any importer uses `import *`, all submodules are loaded.
+This works for **pure barrel files** — files where every named export is a re-export (`export { X } from './x'`). If a barrel file has any local exports (`export const foo = ...`), or if any importer uses `import *`, the bundler loads all submodules.
 
-`export *` re-exports are always loaded (never deferred) to avoid circular resolution issues. Only named re-exports (`export { X } from './x'`) that aren't used by any importer are deferred.
+The bundler always loads `export *` re-exports (it never defers them) to avoid circular resolution issues. It defers only named re-exports (`export { X } from './x'`) that no importer uses.
 
 **Automatic mode:** Packages with `"sideEffects": false` in their `package.json` get barrel optimization automatically — no `optimizeImports` config needed. Use `optimizeImports` for packages that don't have this field.
 
@@ -1345,7 +1345,7 @@ Generate metadata about the build in a structured format. The metafile describes
   </Tab>
   <Tab title="CLI">
     ```bash terminal icon="terminal"
-    bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json
+    bun build ./src/index.ts --outdir ./dist --metafile=./dist/meta.json
     ```
   </Tab>
 </Tabs>
@@ -1355,13 +1355,13 @@ Generate metadata about the build in a structured format. The metafile describes
 Use `--metafile-md` to generate a markdown metafile, which is LLM-friendly and readable in the terminal:
 
 ```bash terminal icon="terminal"
-bun build ./src/index.ts --outdir ./dist --metafile-md ./dist/meta.md
+bun build ./src/index.ts --outdir ./dist --metafile-md=./dist/meta.md
 ```
 
-Both `--metafile` and `--metafile-md` can be used together:
+You can use both `--metafile` and `--metafile-md` together:
 
 ```bash terminal icon="terminal"
-bun build ./src/index.ts --outdir ./dist --metafile ./dist/meta.json --metafile-md ./dist/meta.md
+bun build ./src/index.ts --outdir ./dist --metafile=./dist/meta.json --metafile-md=./dist/meta.md
 ```
 
 #### `metafile` option formats
@@ -1483,7 +1483,7 @@ const artifact = build.outputs[0];
 return new Response(artifact);
 ```
 
-The Bun runtime pretty-prints `BuildArtifact` objects to make debugging easier.
+The Bun runtime pretty-prints `BuildArtifact` objects to help with debugging.
 
 <CodeGroup>
 
@@ -1528,7 +1528,7 @@ BuildArtifact (entry-point) {
 The `bytecode: boolean` option generates bytecode for any JavaScript/TypeScript entrypoints, which can greatly improve startup times for large applications. Requires `"target": "bun"` and a matching version of Bun.
 
 - **CommonJS**: Works with or without `compile: true`. Generates a `.jsc` file alongside each entrypoint.
-- **ESM**: Requires `compile: true`. Bytecode and module metadata are embedded in the standalone executable.
+- **ESM**: Requires `compile: true`. Bun embeds the bytecode and module metadata in the standalone executable.
 
 Without an explicit `format`, bytecode defaults to CommonJS.
 

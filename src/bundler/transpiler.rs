@@ -766,16 +766,23 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
-                let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
-                    return Ok(());
+                // Copy the listing's basenames out under `entries_mutex`,
+                // refreshing it at our generation in the same critical
+                // section: concurrent resolvers rewrite the `DirEntry` map in
+                // place under that lock, and `dot_env::Loader::load` does
+                // file I/O between probes.
+                let dir = {
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    match dir_info.get_entries_ref_locked(self.resolver.generation) {
+                        Some(entries) => dot_env::DirEntryKeys(
+                            entries.data.iter().map(|(k, _)| Box::from(&**k)).collect(),
+                        ),
+                        None => return Ok(()),
+                    }
                 };
-                // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
-                // (BSSMap-owned). `dot_env::Loader::load` takes
-                // `impl DirEntryProbe` (bun_dotenv sits below `bun_resolver`
-                // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
-                // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
-                // sole `&mut` for the call.
-                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -789,7 +796,7 @@ impl<'a> Transpiler<'a> {
                 } else {
                     dot_env::DotEnvFileSuffix::Development
                 };
-                env.load(dir, &env_files, suffix, skip_default_env)?;
+                env.load(&dir, &env_files, suffix, skip_default_env)?;
             }
             DotEnvBehavior::disable => {
                 env.load_process()?;
@@ -1560,6 +1567,7 @@ impl<'a> Transpiler<'a> {
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
+                    lower_toml_datetimes: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -2700,48 +2708,16 @@ impl<'a> Transpiler<'a> {
 
         // Only the main-thread transpiler reaches here; worker option clones
         // carry `output_dir_handle: None` and would route output to stdout.
-        if self.options.output_dir_handle.is_none() {
-            let outstream = TransformOutstream::Stdout;
-            match self.options.import_path_format {
-                options::ImportPathFormat::Relative => {
-                    self.process_resolve_queue(options::ImportPathFormat::Relative, outstream)?;
-                }
-                options::ImportPathFormat::AbsoluteUrl => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsoluteUrl, outstream)?;
-                }
-                options::ImportPathFormat::AbsolutePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsolutePath, outstream)?;
-                }
-                options::ImportPathFormat::PackagePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::PackagePath, outstream)?;
-                }
-            }
-        } else {
-            let Some(output_dir) = self
-                .options
-                .output_dir_handle
-                .as_ref()
-                .map(bun_sys::Dir::fd)
-            else {
-                bun_core::Output::print_error("Invalid or missing output directory.");
-                bun_core::Global::crash();
-            };
-            let outstream = TransformOutstream::Dir(output_dir);
-            match self.options.import_path_format {
-                options::ImportPathFormat::Relative => {
-                    self.process_resolve_queue(options::ImportPathFormat::Relative, outstream)?;
-                }
-                options::ImportPathFormat::AbsoluteUrl => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsoluteUrl, outstream)?;
-                }
-                options::ImportPathFormat::AbsolutePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsolutePath, outstream)?;
-                }
-                options::ImportPathFormat::PackagePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::PackagePath, outstream)?;
-                }
-            }
-        }
+        let outstream = match self
+            .options
+            .output_dir_handle
+            .as_ref()
+            .map(bun_sys::Dir::fd)
+        {
+            None => TransformOutstream::Stdout,
+            Some(output_dir) => TransformOutstream::Dir(output_dir),
+        };
+        self.process_resolve_queue(self.options.import_path_format, outstream)?;
 
         if bun_core::FeatureFlags::TRACING
             && self.options.log().level.at_least(bun_ast::Level::Info)

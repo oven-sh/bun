@@ -704,6 +704,7 @@ private:
     {
     }
 };
+template<> struct DOMStructureSlotOf<URLSearchParamsIterator> { static constexpr DOMStructureSlot value = DOMStructureSlot::URLSearchParamsIterator; };
 
 using URLSearchParamsIteratorPrototype = JSDOMIteratorPrototype<JSURLSearchParams, URLSearchParamsIteratorTraits>;
 JSC_ANNOTATE_HOST_FUNCTION(URLSearchParamsIteratorPrototypeNext, URLSearchParamsIteratorPrototype::next);

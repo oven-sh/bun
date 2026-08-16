@@ -560,6 +560,7 @@ private:
     {
     }
 };
+template<> struct DOMStructureSlotOf<DOMFormDataIterator> { static constexpr DOMStructureSlot value = DOMStructureSlot::DOMFormDataIterator; };
 
 using DOMFormDataIteratorPrototype = JSDOMIteratorPrototype<JSDOMFormData, DOMFormDataIteratorTraits>;
 JSC_ANNOTATE_HOST_FUNCTION(DOMFormDataIteratorPrototypeNext, DOMFormDataIteratorPrototype::next);

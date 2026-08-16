@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "DOMStructureSlot.h"
 #include "DOMWrapperWorld.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapper.h"
@@ -36,8 +37,6 @@
 
 namespace WebCore {
 
-WEBCORE_EXPORT JSC::Structure* getCachedDOMStructure(const JSDOMGlobalObject&, const JSC::ClassInfo*);
-WEBCORE_EXPORT JSC::Structure* cacheDOMStructure(JSDOMGlobalObject&, JSC::Structure*, const JSC::ClassInfo*);
 
 template<typename WrapperClass> JSC::Structure* getDOMStructure(JSC::VM&, JSDOMGlobalObject&);
 template<typename WrapperClass> JSC::JSObject* getDOMPrototype(JSC::VM&, JSDOMGlobalObject&);
@@ -76,9 +75,10 @@ inline JSDOMGlobalObject* deprecatedGlobalObjectForPrototype(JSC::JSGlobalObject
 
 template<typename WrapperClass> inline JSC::Structure* getDOMStructure(JSC::VM& vm, JSDOMGlobalObject& globalObject)
 {
-    if (JSC::Structure* structure = getCachedDOMStructure(globalObject, WrapperClass::info()))
+    constexpr auto slot = DOMStructureSlotOf<WrapperClass>::value;
+    if (JSC::Structure* structure = globalObject.domStructure(slot))
         return structure;
-    return cacheDOMStructure(globalObject, WrapperClass::createStructure(vm, &globalObject, WrapperClass::createPrototype(vm, globalObject)), WrapperClass::info());
+    return globalObject.setDOMStructure(slot, WrapperClass::createStructure(vm, &globalObject, WrapperClass::createPrototype(vm, globalObject)));
 }
 
 template<typename WrapperClass> inline JSC::JSObject* getDOMPrototype(JSC::VM& vm, JSDOMGlobalObject& globalObject)

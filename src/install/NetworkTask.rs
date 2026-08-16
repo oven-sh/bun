@@ -408,6 +408,40 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
     header_builder.count("npm-auth-type", "legacy");
 }
 
+/// Splits `http://user:pass@host/pkg.tgz` into `user:pass` and
+/// `http://host/pkg.tgz`. `None` when the authority has no `@`; the `@` of a
+/// scoped package in the path (`/@scope/pkg/-/pkg.tgz`) is not one.
+fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
+    let authority_start = strings::index_of(url, b"://")? + b"://".len();
+    let rest = &url[authority_start..];
+    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+    let at = strings::last_index_of_char(authority, b'@')?;
+
+    let mut without_userinfo = Vec::with_capacity(url.len() - (at + 1));
+    without_userinfo.extend_from_slice(&url[..authority_start]);
+    without_userinfo.extend_from_slice(&rest[at + 1..]);
+    Some((&rest[..at], without_userinfo.into_boxed_slice()))
+}
+
+/// `Basic base64(userinfo)`, the header npm sends for credentials embedded in a
+/// tarball URL: minipass-fetch (`getNodeRequestOptions` in `lib/request.js`)
+/// hands the URL's `username:password` to node's `auth` option as is, so
+/// nothing is percent-decoded here either, and a userinfo without a `:` is a
+/// username with an empty password.
+fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
+    const SCHEME: &[u8] = b"Basic ";
+    let mut user_pass = Vec::with_capacity(userinfo.len() + 1);
+    user_pass.extend_from_slice(userinfo);
+    if !strings::contains_char(userinfo, b':') {
+        user_pass.push(b':');
+    }
+    let mut value = vec![0u8; SCHEME.len() + bun_core::base64::encode_len(&user_pass)];
+    value[..SCHEME.len()].copy_from_slice(SCHEME);
+    let encoded_len = bun_core::base64::encode(&mut value[SCHEME.len()..], &user_pass);
+    value.truncate(SCHEME.len() + encoded_len);
+    value
+}
+
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ForManifestError {
     #[error("OutOfMemory")]
@@ -784,6 +818,21 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
+        // `"dep": "https://user:pass@host/dep.tgz"`: the credentials become a
+        // header, as npm sends them, and the URL is requested without them.
+        // They cannot stay in the URL: `bun_url` keeps the userinfo in `origin`,
+        // and the HTTP client compares origins to decide whether `Authorization`
+        // follows a redirect, so a redirect to the same host would lose it.
+        let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
+            Some((userinfo, url_without_userinfo)) => {
+                let value =
+                    (!userinfo.is_empty()).then(|| basic_authorization_from_userinfo(userinfo));
+                self.url_buf = url_without_userinfo;
+                value
+            }
+            None => None,
+        };
+
         // Only attach the registry `Authorization` header when the tarball URL
         // origin matches the configured registry scope origin. The npm manifest
         // is registry-controlled, so a malicious registry could otherwise point
@@ -815,9 +864,23 @@ impl NetworkTask {
             count_auth(&mut header_builder, scope);
         }
 
+        // Same precedence as npm, where node derives `Authorization` from the
+        // URL only when the request does not carry one already: credentials
+        // configured for the registry win over the ones embedded in the URL.
+        let url_authorization = match url_authorization {
+            Some(value) if header_builder.header_count == 0 => {
+                header_builder.count("Authorization", &value);
+                Some(value)
+            }
+            _ => None,
+        };
+
         let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
-            append_auth(&mut header_builder, scope);
+            match &url_authorization {
+                Some(value) => header_builder.append("Authorization", value),
+                None => append_auth(&mut header_builder, scope),
+            }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();
             // SAFETY: `self.header_buf` outlives the request; it is freed when the slot returns to the pool.

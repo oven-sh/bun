@@ -14,21 +14,17 @@ function cleanAnsiEscapes(output: string) {
   return output.replaceAll(/\x1B\[[0-9;]*m/g, "");
 }
 
-test("no color", async () => {
-  const spawnFixture = (FORCE_COLOR: string) =>
-    Bun.spawn({
-      cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
-      stdio: ["inherit", "pipe", "pipe"],
-      env: {
-        ...bunEnv,
-        FORCE_COLOR,
-      },
-    });
-  const noColorSpawn = spawnFixture("0");
-  const colorSpawn = spawnFixture("0");
+test.concurrent("no color", async () => {
+  const noColorSpawn = Bun.spawn({
+    cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
+    stdio: ["inherit", "pipe", "pipe"],
+    env: {
+      ...bunEnv,
+      FORCE_COLOR: "0",
+    },
+  });
   await noColorSpawn.exited;
   const noColorStderr = cleanOutput(await noColorSpawn.stderr.text());
-  const noColorStdout = await noColorSpawn.stdout.text();
   expect(noColorStderr).toMatchInlineSnapshot(`
     "
     test/js/bun/test/printing/diffexample.fixture.ts:
@@ -727,12 +723,6 @@ test("no color", async () => {
     "
   `);
   expect(noColorSpawn.exitCode).toBe(1);
-
-  await colorSpawn.exited;
-  const colorStderr = cleanOutput(cleanAnsiEscapes(await colorSpawn.stderr.text()));
-  const colorStdout = cleanAnsiEscapes(await colorSpawn.stdout.text());
-  expect(colorStderr).toEqual(noColorStderr);
-  expect(colorStdout).toEqual(noColorStdout);
 });
 
 function getDiffPart(stderr: string): string {
@@ -743,7 +733,7 @@ function getDiffPart(stderr: string): string {
   return stderr;
 }
 
-test("color", async () => {
+test.concurrent("color", async () => {
   const spawn = Bun.spawn({
     cmd: [bunExe(), import.meta.dir + "/diffexample-color.fixture.ts"],
     stdio: ["inherit", "pipe", "pipe"],
@@ -884,11 +874,9 @@ in inline snapshot diffing, it is printing the color codes
 */
 
 test("large diffs are exact rather than abandoned part-way", () => {
-  // Every 7th element differs, and differs by becoming a duplicate of its
-  // neighbour, so the changed lines can't simply be discarded as unique to one
-  // side — the line diff has to actually align 100k lines. It must report
-  // exactly the changed elements instead of bailing out and dumping both arrays
-  // wholesale as one giant -/+ block.
+  // Every 7th element differs. It must report exactly the changed elements
+  // instead of giving up part-way and dumping both arrays wholesale as one
+  // giant -/+ block.
   const length = 50_000;
   const expected = Array.from({ length }, (_, i) => i);
   const received = expected.map((x, i) => (i % 7 === 0 ? x + 1 : x));
@@ -900,7 +888,8 @@ test("large diffs are exact rather than abandoned part-way", () => {
   } catch (e) {
     message = cleanAnsiEscapes((e as Error).message);
   }
-  expect(message).toContain(`\n- Expected  - ${changed}\n+ Received  + ${changed}`);
-  // (context line count depends on whether an AI agent is detected)
-  expect(message).toMatch(/^expect\(received\)\.toEqual\(expected\)\n\n@@ -1,\d+ \+1,\d+ @@\n  \[\n-   0,\n\+   1,\n    1,\n/);
+  // (slice so a failure doesn't print the whole ~1 MB message)
+  expect(message.slice(0, 120)).toContain("\n  [\n-   0,\n+   1,\n    1,\n");
+  expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
+  expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
 });

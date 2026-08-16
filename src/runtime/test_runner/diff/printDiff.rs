@@ -50,8 +50,13 @@ pub(crate) fn print_diff_main(
     }
 
     let mut p = Printer {
-        out: Vec::with_capacity((received_slice.len() + expected_slice.len()).min(1 << 20)),
+        out: Vec::with_capacity(
+            ((received_slice.len() + expected_slice.len()) * 2 + 256).min(FLUSH_AT * 2),
+        ),
+        writer,
+        result: Ok(()),
         colors: config.enable_ansi_colors,
+        limit: config.truncate_threshold.max(config.truncate_context * 2),
         config,
         chars: diff::CharDiff::default(),
     };
@@ -64,8 +69,13 @@ pub(crate) fn print_diff_main(
         let hunks = diff::diff_lines(expected_slice, received_slice);
         p.diff(expected_slice, received_slice, &hunks);
     }
-    write!(writer, "{}", BStr::new(&p.out))
+    p.flush();
+    p.result
 }
+
+/// Rendered output is handed to the writer in chunks of about this size, cut
+/// at row boundaries.
+const FLUSH_AT: usize = 64 << 10;
 
 #[derive(Clone, Copy)]
 struct Style {
@@ -114,9 +124,13 @@ mod styles {
     };
 }
 
-struct Printer<'c> {
+struct Printer<'c, W: Write> {
     out: Vec<u8>,
+    writer: &'c mut W,
+    result: std::fmt::Result,
     colors: bool,
+    /// Lines longer than this have their middle elided.
+    limit: usize,
     config: &'c DiffConfig,
     chars: diff::CharDiff,
 }
@@ -149,12 +163,30 @@ enum Segment<'a> {
     },
 }
 
-fn remove_trailing_newline(text: &[u8]) -> &[u8] {
-    text.strip_suffix(b"\n").unwrap_or(text)
+fn write_usize(out: &mut Vec<u8>, n: usize) {
+    out.extend_from_slice(bun_core::fmt::itoa(&mut bun_core::fmt::ItoaBuf::new(), n));
 }
 
 fn line_count(text: &[u8]) -> usize {
     strings::count_char(text, b'\n') + 1
+}
+
+fn single_line_pair(a: &[u8], b: &[u8]) -> bool {
+    strings::index_of_char(a, b'\n').is_none() && strings::index_of_char(b, b'\n').is_none()
+}
+
+fn max_line_len(text: &[u8]) -> usize {
+    let mut max = 0;
+    let mut start = 0;
+    loop {
+        let end =
+            strings::index_of_char_usize(&text[start..], b'\n').map_or(text.len(), |i| start + i);
+        max = max.max(end - start);
+        if end == text.len() {
+            return max;
+        }
+        start = end + 1;
+    }
 }
 
 /// Byte offset just past the `n`th newline, or `None` if there are fewer.
@@ -176,7 +208,7 @@ fn start_of_last_n_lines(text: &[u8], n: usize) -> Option<usize> {
     Some(at + 1)
 }
 
-impl<'c> Printer<'c> {
+impl<'c, W: Write> Printer<'c, W> {
     #[inline]
     fn s(&mut self, s: &str) {
         self.out.extend_from_slice(s.as_bytes());
@@ -192,88 +224,70 @@ impl<'c> Printer<'c> {
         }
     }
     fn num(&mut self, n: usize) {
-        let mut buf = [0u8; 20];
-        let mut i = buf.len();
-        let mut n = n;
-        loop {
-            i -= 1;
-            buf[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-            if n == 0 {
-                break;
-            }
+        write_usize(&mut self.out, n);
+    }
+    /// Hands the buffer to the writer. Only called between rows, so a chunk
+    /// never ends inside a UTF-8 sequence that the input didn't already break.
+    fn flush(&mut self) {
+        if self.result.is_ok() && !self.out.is_empty() {
+            self.result = match core::str::from_utf8(&self.out) {
+                Ok(s) => self.writer.write_str(s),
+                Err(_) => write!(self.writer, "{}", BStr::new(&self.out)),
+            };
         }
-        self.b(&buf[i..]);
+        self.out.clear();
+    }
+    fn end_row(&mut self) {
+        self.s("\n");
+        if self.out.len() >= FLUSH_AT {
+            self.flush();
+        }
     }
 
     fn diff(&mut self, expected: &[u8], received: &[u8], hunks: &[Hunk]) {
+        // Every segment but the last ends in a newline that belongs to the row
+        // structure rather than the content; `seg` strips it for display and
+        // counts rows.
+        let end = expected.len();
+        fn seg(text: &[u8], last: bool) -> (&[u8], usize) {
+            let shown = if last {
+                text
+            } else {
+                text.strip_suffix(b"\n").unwrap_or(text)
+            };
+            (shown, line_count(shown))
+        }
         let mut segments: Vec<Segment> = Vec::with_capacity(hunks.len() * 3 + 2);
         let mut prev_a = 0;
-        for h in hunks {
+        for (i, h) in hunks.iter().enumerate() {
             if h.a_lo > prev_a {
-                segments.push(Segment::Equal {
-                    text: &expected[prev_a..h.a_lo],
-                    lines: 0,
-                });
+                let (text, lines) = seg(&expected[prev_a..h.a_lo], false);
+                segments.push(Segment::Equal { text, lines });
             }
-            let (removed, inserted) = (&expected[h.a_lo..h.a_hi], &received[h.b_lo..h.b_hi]);
-            segments.push(match (removed.is_empty(), inserted.is_empty()) {
-                (false, false) => Segment::Modified {
-                    removed,
-                    inserted,
-                    removed_lines: 0,
-                    inserted_lines: 0,
-                },
-                (false, true) => Segment::Removed {
-                    text: removed,
-                    lines: 0,
-                },
-                (true, _) => Segment::Inserted {
-                    text: inserted,
-                    lines: 0,
-                },
-            });
-            prev_a = h.a_hi;
-        }
-        if prev_a < expected.len() {
-            segments.push(Segment::Equal {
-                text: &expected[prev_a..],
-                lines: 0,
-            });
-        }
-
-        // Every segment but the last ends in a newline that belongs to the row
-        // structure rather than the content.
-        let last = segments.len().saturating_sub(1);
-        for (i, seg) in segments.iter_mut().enumerate() {
-            fn id(t: &[u8]) -> &[u8] {
-                t
-            }
-            let trim = if i < last {
-                remove_trailing_newline
-            } else {
-                id
-            };
-            match seg {
-                Segment::Equal { text, lines }
-                | Segment::Removed { text, lines }
-                | Segment::Inserted { text, lines } => {
-                    *text = trim(text);
-                    *lines = line_count(text);
-                }
-                Segment::Modified {
+            let last = i + 1 == hunks.len() && h.a_hi == end;
+            let (removed, removed_lines) = seg(&expected[h.a_lo..h.a_hi], last);
+            let (inserted, inserted_lines) = seg(&received[h.b_lo..h.b_hi], last);
+            segments.push(match (h.deleted() > 0, h.inserted() > 0) {
+                (true, true) => Segment::Modified {
                     removed,
                     inserted,
                     removed_lines,
                     inserted_lines,
-                } => {
-                    *removed = trim(removed);
-                    *inserted = trim(inserted);
-                    *removed_lines = line_count(removed);
-                    *inserted_lines = line_count(inserted);
-                }
-                Segment::Skipped { .. } => {}
-            }
+                },
+                (true, false) => Segment::Removed {
+                    text: removed,
+                    lines: removed_lines,
+                },
+                (false, _) => Segment::Inserted {
+                    text: inserted,
+                    lines: inserted_lines,
+                },
+            });
+            prev_a = h.a_hi;
+        }
+        if prev_a < end {
+            let (text, lines) = seg(&expected[prev_a..], true);
+            segments.push(Segment::Equal { text, lines });
         }
 
         let chunked = expected.len() > self.config.min_bytes_before_chunking
@@ -390,7 +404,7 @@ impl<'c> Printer<'c> {
                 Segment::Skipped { .. } => unreachable!(),
             }
         }
-        self.s("\n");
+        self.end_row();
 
         // Footer.
         self.color(styles::REMOVED.prefix_color);
@@ -422,7 +436,7 @@ impl<'c> Printer<'c> {
         self.num(changed_count);
         self.s(" @@");
         self.color(colors::RESET);
-        self.s("\n");
+        self.end_row();
     }
 
     fn prefix(&mut self, style: Style) {
@@ -435,47 +449,59 @@ impl<'c> Printer<'c> {
     fn rows(&mut self, text: &[u8], style: Style) {
         self.prefix(style);
         self.segment(text, style);
-        self.s("\n");
+        self.end_row();
     }
 
     /// `text` continuing the current row; embedded newlines start new rows
     /// with `style`'s prefix.
     fn segment(&mut self, text: &[u8], style: Style) {
-        let mut rest = text;
+        self.color(style.text_color);
+        let mut start = 0;
         loop {
-            let (line, next) = match strings::index_of_char_usize(rest, b'\n') {
-                Some(i) => (&rest[..i], Some(&rest[i + 1..])),
-                None => (rest, None),
-            };
-            self.truncated_line(line, style);
-            let Some(next) = next else { break };
+            let end = strings::index_of_char_usize(&text[start..], b'\n')
+                .map_or(text.len(), |i| start + i);
+            let line = &text[start..end];
+            if line.len() <= self.limit {
+                self.b(line);
+            } else {
+                self.truncated_line(line, style);
+            }
+            if end == text.len() {
+                break;
+            }
+            self.color(colors::RESET);
             self.s("\n");
             self.prefix(style);
-            rest = next;
+            self.color(style.text_color);
+            start = end + 1;
         }
+        self.color(colors::RESET);
     }
 
+    /// An over-long `line` with its middle elided. Assumes the style's text
+    /// colour is active and leaves it active.
     fn truncated_line(&mut self, line: &[u8], style: Style) {
-        let ctx = self.config.truncate_context;
-        if line.len() <= self.config.truncate_threshold || line.len() <= ctx * 2 {
-            self.color(style.text_color);
-            self.b(line);
-            self.color(colors::RESET);
-            return;
+        let (mut head, mut tail) = (
+            self.config.truncate_context,
+            line.len() - self.config.truncate_context,
+        );
+        while head > 0 && diff::is_utf8_cont(line, head) {
+            head -= 1;
         }
-        self.color(style.text_color);
-        self.b(&line[..ctx]);
+        while diff::is_utf8_cont(line, tail) {
+            tail += 1;
+        }
+        self.b(&line[..head]);
         self.color(colors::RESET);
 
         self.color(colors::BRIGHT_WHITE);
         self.s("... (");
-        self.num(line.len() - 2 * ctx);
+        self.num(tail - head);
         self.s(" bytes truncated) ...");
         self.color(colors::RESET);
 
         self.color(style.text_color);
-        self.b(&line[line.len() - ctx..]);
-        self.color(colors::RESET);
+        self.b(&line[tail..]);
     }
 
     fn modified_without_highlight(
@@ -492,7 +518,7 @@ impl<'c> Printer<'c> {
         self.prefix(is);
         self.segment(inserted, styles::INSERTED);
         if !single_line {
-            self.s("\n");
+            self.end_row();
         }
     }
 
@@ -511,6 +537,16 @@ impl<'c> Printer<'c> {
             return self.modified_without_highlight(removed, inserted, rs, is, single_line);
         }
 
+        // Without colours the character diff is only visible through its effect
+        // on long-line truncation (pieces are truncated individually), so skip
+        // it when no line is long enough to be truncated.
+        if !self.colors
+            && max_line_len(removed) <= self.limit
+            && max_line_len(inserted) <= self.limit
+        {
+            return self.modified_without_highlight(removed, inserted, rs, is, single_line);
+        }
+
         let mut chars = core::mem::take(&mut self.chars);
         let hunks = chars.diff(removed, inserted);
         'highlight: {
@@ -518,15 +554,20 @@ impl<'c> Printer<'c> {
             let inserted_highlighted: usize = hunks.iter().map(Hunk::inserted).sum();
             if (deleted_highlighted > 10 && deleted_highlighted > removed.len() / 3 * 2)
                 || (inserted_highlighted > 10 && inserted_highlighted > inserted.len() / 3 * 2)
+                || (single_line_pair(removed, inserted)
+                    && hunks.len() > 32
+                    && hunks.len() * 16 > removed.len().min(inserted.len()))
             {
-                // The diff is too significant (more than 2/3 of one side is
-                // modified), so highlighting would just be noise.
+                // More than 2/3 of one side modified, or one long line
+                // shredded into an edit every few characters: highlighting
+                // would just be noise (and would defeat truncation).
                 self.modified_without_highlight(removed, inserted, rs, is, single_line);
                 break 'highlight;
             }
 
+            // Only possible if the inputs themselves are malformed UTF-8.
             let splits_utf8 = |h: &Hunk| {
-                let cont = |s: &[u8], i: usize| s.get(i).is_some_and(|&c| (c & 0xC0) == 0x80);
+                let cont = diff::is_utf8_cont;
                 cont(removed, h.a_lo)
                     || cont(removed, h.a_hi)
                     || cont(inserted, h.b_lo)
@@ -564,7 +605,7 @@ impl<'c> Printer<'c> {
             }
             self.nonempty_segment(&inserted[prev..], styles::INSERTED);
             if !single_line {
-                self.s("\n");
+                self.end_row();
             }
         }
         self.chars = chars;

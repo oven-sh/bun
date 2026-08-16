@@ -1939,10 +1939,20 @@ struct Style {
 impl Style {
     fn detect(flags: DiffFlags) -> Style {
         let pretty = !flags.json && Output::enable_ansi_colors_stdout();
-        let width = bun_core::output::File::from(bun_core::Fd::stdout())
-            .winsize()
-            .map_or(80, |w| w.col as usize)
-            .clamp(40, 120);
+        // `| less -R` / `| head` still render on the terminal stderr is attached to; `COLUMNS` has the last word.
+        let winsize = |fd: bun_core::Fd| {
+            bun_core::output::File::from(fd)
+                .winsize()
+                .map(|w| w.col as usize)
+                .filter(|&c| c > 0)
+        };
+        let width = bun_core::env_var::COLUMNS
+            .get()
+            .map(|c| c as usize)
+            .or_else(|| winsize(bun_core::Fd::stdout()))
+            .or_else(|| winsize(bun_core::Fd::stderr()))
+            .unwrap_or(80)
+            .clamp(40, 160);
         Style { pretty, width }
     }
 
@@ -2160,14 +2170,23 @@ impl Style {
         }
         if let Semantic::Projected { hidden } = c.semantic {
             if hidden > 0 {
-                badge = format!("\x1b[2m{hidden} equivalent hidden\x1b[0m {badge}");
+                badge = format!("\x1b[2m{hidden} folded\x1b[0m {badge}");
             }
         }
         if let Some(why) = c.not_normalized {
             badge = format!("\x1b[2m{why}\x1b[0m {badge}");
         }
         let badge_width = strip_ansi_len(badge.as_bytes());
-        let shown_path = defang(c.path);
+        let mut shown_path = defang(c.path);
+        // A path too long for the line keeps its tail: the file name is the part that matters.
+        let room = self.width.saturating_sub(badge_width + 8);
+        if strip_ansi_len(&shown_path) > room && room > 8 {
+            let mut cut = shown_path.len() - shown_path.len().min(room - 1);
+            while cut < shown_path.len() && (shown_path[cut] & 0xC0) == 0x80 {
+                cut += 1;
+            }
+            shown_path = [&"…".as_bytes()[..], &shown_path[cut..]].concat().into();
+        }
         let rule = self
             .width
             .saturating_sub(strip_ansi_len(&shown_path) + badge_width + 4)

@@ -747,7 +747,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(text).toContain(
       '│  export const flags = {on: true, s: "ab"};\n    8 │- if (false) {\n    8 │+ if (true) {\n',
     );
-    expect(text).toMatch(/\nm\.js ─+ 2 equivalent hidden \+3 -3\n/);
+    expect(text).toMatch(/\nm\.js ─+ 2 folded \+3 -3\n/);
     expect(exitCode).toBe(0);
   });
 

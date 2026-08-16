@@ -1100,15 +1100,17 @@ impl Arguments {
         if let Some(options_or_callable) = arguments.next_eat() {
             // options
             if options_or_callable.is_object() {
-                // default true
+                // Node spreads the caller's own options over `{ persistent: true }`
+                // and never validates these two: `persistent` is tested for
+                // truthiness (so an own `persistent: undefined` unrefs the watcher)
+                // and `bigint` only counts when it is exactly `true`.
                 persistent = options_or_callable
-                    .get_boolean_strict(global, "persistent")?
-                    .unwrap_or(true);
+                    .get_own(global, &bun_core::String::static_("persistent"))?
+                    .is_none_or(JSValue::to_boolean);
 
-                // default false
                 bigint = options_or_callable
-                    .get_boolean_strict(global, "bigint")?
-                    .unwrap_or(false);
+                    .get_own(global, &bun_core::String::static_("bigint"))?
+                    == Some(JSValue::TRUE);
 
                 if let Some(interval_) = options_or_callable.get(global, "interval")? {
                     if !interval_.is_number() && !interval_.is_any_int() {

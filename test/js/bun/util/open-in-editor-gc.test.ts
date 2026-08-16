@@ -179,7 +179,7 @@ test.skipIf(!isLinux)("Bun.openInEditor bursts do not drop previously installed 
       // only comes back once the last thread unregisters. Keep delivering
       // until it does (or the table was corrupted and it never does).
       await Bun.sleep(50);
-      const deadline = Date.now() + 5000;
+      const deadline = Date.now() + 3000;
       while (!fired && Date.now() < deadline) {
         process.kill(process.pid, "SIGUSR2");
         await Bun.sleep(20);

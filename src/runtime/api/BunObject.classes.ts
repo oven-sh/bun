@@ -52,8 +52,6 @@ export default [
     memoryCost: true,
     klass: {},
     JSType: "0b11101110",
-    // Every member here needs a declaration in `interface Subprocess` in packages/bun-types/bun.d.ts;
-    // test/internal/source-lints/subprocess-types.test.ts checks the two match.
     proto: {
       pid: {
         getter: "getPid",

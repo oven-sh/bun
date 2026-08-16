@@ -71,12 +71,6 @@ async function peakRssMb(dir: string, n: number): Promise<number> {
   running = false;
   await poll;
 
-  // One last read in case it exited between polls (VmHWM persists until exit).
-  try {
-    const m = fs.readFileSync(statusPath, "utf8").match(/VmHWM:\s*(\d+)\s*kB/);
-    if (m) peakKb = Math.max(peakKb, parseInt(m[1], 10));
-  } catch {}
-
   // Combined assertion so a failed/killed child surfaces its stderr tail,
   // exit code, and signal together in one diff.
   const summaryOk = stderr.includes(`${n} pass`) && stderr.includes("0 fail");

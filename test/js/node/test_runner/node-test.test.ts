@@ -395,6 +395,17 @@ describe("node:test", () => {
     30_000,
   );
 
+  test("should end a test whose subtest chain is stuck behind a hanging hook with the test's own timeout", async () => {
+    const { exitCode, stderr } = await runTests(["31-timeout-bounds-hanging-hook.js"]);
+    expect(stderr).toContain("test timed out after 100ms");
+    expect(stderr).not.toContain("timed out after 5000ms");
+    expect(stderr).toContain("0 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("2 fail"),
+    });
+  });
+
   test("should resolve the promise of a test that a name pattern filters out", async () => {
     const { exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, ["-t", "should resolve"]);
     expect(stderr).not.toContain("timed out");

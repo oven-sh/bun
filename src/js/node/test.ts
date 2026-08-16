@@ -619,8 +619,7 @@ function rebuildError(serialized: any, depth = 0): Error {
   return error;
 }
 
-// Like node, the run() parent tells a cancelled test from a failed one by the
-// failure type it was reported with (runner.js kCanceledTests).
+// node's runner.js kCanceledTests.
 function isCancellationFailureType(failureType: unknown) {
   return failureType === "cancelledByParent" || failureType === "testAborted" || failureType === "testTimeoutFailure";
 }
@@ -726,9 +725,8 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
   });
 }
 
-// Called for every test or inline suite node once `passed`/`error` are final, so
-// subtests report with the same shape as top-level tests. No-op outside a run()
-// child.
+// Called for every test and inline suite once `passed`/`error` are final, so
+// subtests report with the same shape as top-level tests. No-op outside a run() child.
 function reportNodeToRunParent(node: TestNode, startedAt: number) {
   if (!runChildReporterEnabled) return;
   const { skipped, todoFlag, expectFailure, isSuite } = node;
@@ -751,8 +749,7 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
   });
 }
 
-// Node's postRun() on a subtest that never got to start: it is failed with
-// cancelledByParent and reported; none of its hooks or body ever run.
+// A subtest cancelled before its turn came: reported, nothing of it runs (Node's postRun()).
 function finishCancelled(node: TestNode) {
   const failure = cancelledByParentFailure();
   node.passed = false;
@@ -1569,16 +1566,13 @@ class TestNode {
   // Inline subtests are serialized through this chain. `concurrency` is
   // validated for Node-compat error codes but subtests always run serially.
   subtestChain: Promise<void> = Promise.resolve();
-  // Node's unfinishedSubtests/subtestsPromise: `subtestsSettled` is created with
-  // the first subtest and resolved the first time none is left unfinished. It is
-  // never re-armed, so after its body settles a test only waits for that first
-  // batch; whatever is still in the set once the test itself is done gets
-  // cancelled (settleSubtests), which is how a forgotten `await t.test()` fails.
+  // Node's unfinishedSubtests and subtestsPromise: `subtestsSettled` is created
+  // with the first subtest and resolved the first time the set empties, never
+  // re-armed; a subtest still in the set once the test is done is cancelled.
   unfinishedSubtests: Set<TestNode> = new Set();
   subtestsSettled: PromiseWithResolvers<void> | undefined = undefined;
   cancelled = false;
-  // Set while the body runs so a cancelling parent can reject the race the body
-  // is in (Node aborts the subtest's signal, which rejects its stopPromise).
+  // Live while the body is raced; cancelUnfinishedSubtests() rejects it.
   stop: StopController | undefined = undefined;
   failedSubtests = 0;
   firstSubtestError: unknown = undefined;
@@ -2171,10 +2165,8 @@ function invokeTestFn(fn: Function, arg: unknown) {
 
 type StopController = { promise: Promise<never>; reject: (failure: Error) => void; dispose: () => void };
 
-// One per test run, raced against the body, the wait for its subtests and
-// plan.check(), matching Node's stopTest()/stopPromise. `promise` never
-// resolves; it rejects when the test's own timeout fires or when the parent
-// cancels the test (cancelUnfinishedSubtests). Callers must dispose().
+// Node's stopTest()/stopPromise: `promise` never resolves, it rejects when the
+// timeout fires or reject() is called (a cancelling parent). Callers must dispose().
 function createStopController(timeout: number | undefined): StopController {
   const { promise, reject } = Promise.withResolvers<never>();
   // Swallow the rejection when nothing is racing it anymore.
@@ -2324,19 +2316,17 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     failure = err;
   }
 
-  // Cancelled while the hooks above were running: Node's stopPromise would be
-  // born rejected, so the body does not get to run here either.
+  // Cancelled during the hooks above: the body does not run (Node's stopPromise is born rejected).
   if (failure === undefined && !node.cancelled) {
-    // Node arms one stopPromise (timeout + signal) and races the body, the wait
-    // for subtests AND the plan wait against it. Arm timeout once here so
-    // plan({wait:true}) is bounded by the same test timeout, not left unbounded.
+    // Node arms one stopPromise (timeout + signal) and races both the body
+    // AND the plan wait against it. Arm timeout once here so plan({wait:true})
+    // is bounded by the same test timeout, not left unbounded.
     const stop = (node.stop = createStopController(node.options.timeout));
     try {
       const runBody = async () => {
         await runWithNode(node, () => invokeTestFn(fn, ctx));
-        // Node's subtestsPromise: wait for the subtests running now, including
-        // ones they schedule in turn, but not for a subtest started after an
-        // earlier batch had already settled: settleSubtests() cancels that one.
+        // Node's subtestsPromise (see TestNode): a subtest started after the
+        // first batch settled is not waited for here, settleSubtests() cancels it.
         await node.subtestsSettled?.promise;
       };
 
@@ -2360,10 +2350,8 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
             // reject `pending` afterward with no one listening.
             pending.catch(() => {});
             await Promise.race([stop.promise, pending]);
-            // A t.test() that fulfilled the plan from an async callback may be
-            // this test's first subtest, scheduled during the wait: give it the
-            // same wait as the body's subtests so its own failure (rather than
-            // a cancellation) reaches failedSubtests below.
+            // A t.test() that fulfilled the plan may be the first subtest, created
+            // during the wait: wait for it like the body's so it reports its own failure.
             const { subtestsSettled } = node;
             if (subtestsSettled !== undefined) await Promise.race([stop.promise, subtestsSettled.promise]);
           }
@@ -2378,9 +2366,8 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
-  // Node's #cancel() is a fail(): it loses to a failure the body already has.
-  // No await separates this from `finished` below, and cancelUnfinishedSubtests
-  // skips finished nodes, so a cancellation is either seen here or not at all.
+  // Node's #cancel() is a fail(), so an earlier failure wins. Nothing may await
+  // between here and `finished` below: cancelUnfinishedSubtests() skips finished nodes.
   if (node.cancelled) failure ??= cancelledByParentFailure();
 
   const bodyFailure = failure;
@@ -2389,8 +2376,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   // Node sets passed/error before running afterEach/after so hooks can
   // introspect the outcome (nodejs/node lib/internal/test_runner/test.js
-  // pass()/fail() precede afterEach). Like there, this is the body's own
-  // outcome: subtest failures are rolled up afterwards, in the postRun step.
+  // pass()/fail() precede afterEach).
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   // Mark finished before hooks so a late t.test() from an after/afterEach
@@ -2416,12 +2402,13 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     }
   }
 
-  // Node's postRun(): cancel the subtests still unfinished now that the test's
-  // own hooks have run, roll the failed ones up, then reset the mocks.
-  await settleSubtests(node);
+  // Node's postRun(): subtests are cancelled and rolled up after the hooks.
+  try {
+    await settleSubtests(node);
+  } catch (err) {
+    if (!acceptedXfail) failure ??= err;
+  }
   if (!acceptedXfail) {
-    // A before hook created while the test was running failed after the body
-    // had settled (Node fails the test with the hook's error).
     failure ??= node.hookFailure;
     if (failure === undefined && node.failedSubtests > 0) failure = subtestsFailedFailure(node);
   }
@@ -2438,13 +2425,9 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   return failure;
 }
 
-// Appends an inline subtest (test, suite or skip directive) to the parent's
-// chain and tracks it in unfinishedSubtests until its link has run; see the
-// field's comment for what the parent does with that.
+// Appends an inline subtest (test, suite or skip directive) to the parent's chain.
 function chainSubtest(parent: TestNode, child: TestNode, run: () => unknown): Promise<undefined> {
-  // A t.test() reaching a parent that is already cancelled (from its still
-  // running body, or an async describe() callback settling late) is cancelled
-  // with it instead of running inside a result that has already been reported.
+  // Added by a cancelled parent's still-running body or describe() callback.
   if (parent.cancelled) child.cancelled = true;
   parent.unfinishedSubtests.add(child);
   const settled = (parent.subtestsSettled ??= Promise.withResolvers<void>());
@@ -2456,32 +2439,31 @@ function chainSubtest(parent: TestNode, child: TestNode, run: () => unknown): Pr
   return link.then(() => undefined);
 }
 
-// The subtest half of Node's postRun(): whatever is still unfinished once the
-// test's own hooks have run is cancelled rather than waited for, and the chain
-// is then drained only so that those cancellations (and a before hook still in
-// flight) are recorded before the test reports; the cancelled bodies themselves
-// are no longer raced. Node starts a subtest's body inside the t.test() call,
-// so one that forgot its await but finishes on microtasks alone (a sync body)
-// is complete by the time Node's postRun() runs; the chain here starts it a
-// tick later, so give such stragglers until the next macrotask before deciding.
-// Anything waiting on a timer or I/O is still pending then, as it is in Node.
+// The subtest part of Node's postRun(): cancels what is still unfinished, then
+// drains the chain so the cancellations are recorded before this test reports.
 async function settleSubtests(node: TestNode) {
   if (node.unfinishedSubtests.size > 0) {
+    // Node starts a subtest's body inside t.test() itself, so a forgotten await
+    // on a subtest that needs no timer or I/O is harmless there; the chain here
+    // starts it a tick later, so it gets until the next macrotask to finish.
     await new Promise<void>(resolve => realSetImmediate(resolve));
     cancelUnfinishedSubtests(node);
   }
-  await drainSubtestChain(node);
+  // Cancellation cannot interrupt a hook or describe() callback that never
+  // settles, so this wait is bounded by the test's timeout like the body was.
+  const stop = createStopController(node.options.timeout);
+  try {
+    await Promise.race([stop.promise, drainSubtestChain(node)]);
+  } finally {
+    stop.dispose();
+  }
 }
 
-// Fails every unfinished subtest with cancelledByParent, recursively. One that
-// has not reached its turn on the chain reports that instead of running
-// (finishCancelled); one whose body is running has its stop promise rejected
-// so that body is no longer waited for; a suite gets the same done to its own
-// pending children, which is what lets its drain finish.
+// A child still queued reports the cancellation when its turn comes (finishCancelled),
+// a running one stops being waited for; recursing is what lets a cancelled suite drain.
 function cancelUnfinishedSubtests(node: TestNode) {
   for (const child of node.unfinishedSubtests) {
-    // `finished` with the link still pending: the result is already decided and
-    // only the after hooks are left, which the parent's drain waits for.
+    // finished: the result is in, only its hooks are left; the drain waits for those.
     if (child.cancelled || child.finished) continue;
     child.cancelled = true;
     child.stop?.reject(cancelledByParentFailure());
@@ -2522,9 +2504,8 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
   });
 }
 
-// A skip-only subtest never runs, but Node still tracks it as a subtest: it
-// takes part in the parent's first settle and is cancelled like any other (and
-// then, unlike a runtime t.skip(), counts against the parent).
+// Node tracks a skip-only subtest like any other: it counts toward the parent's
+// first settle, and if cancelled it counts against the parent (unlike a runtime t.skip()).
 function scheduleSkippedSubtest(parent: TestNode, child: TestNode, ownTodo: boolean): Promise<undefined> {
   child.skipped = true;
   return chainSubtest(parent, child, () => {
@@ -2573,10 +2554,8 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         recordSuiteFailure(suite, err);
       }
     }
-    // Node's Suite.run() checks for cancellation once the build has settled: a
-    // suite cancelled by then runs no hooks at all, one cancelled while its
-    // children run still gets its after hooks. Either way the children are
-    // drained first: the cancelled ones report themselves as they come up.
+    // Node's Suite.run(): cancelled by the time the build settled means no hooks
+    // at all; cancelled while the children run still gets the after hooks.
     const runHooks = !suite.cancelled;
     if (runHooks) {
       try {
@@ -2598,8 +2577,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
       }
     }
     suite.finished = true;
-    // A cancelled suite reports the cancellation itself (Node), not the
-    // failures of the children cancelled along with it.
+    // A cancelled suite reports the cancellation, not its cancelled children (Node).
     let failure: unknown;
     if (suite.cancelled) failure = cancelledByParentFailure();
     else if (suite.failedSubtests > 0) failure = subtestsFailedFailure(suite);

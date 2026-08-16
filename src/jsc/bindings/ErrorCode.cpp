@@ -200,10 +200,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
     const auto& data = errors[static_cast<size_t>(code)];
     auto* prototype = createErrorPrototype(vm, globalObject, data.type, data.name, data.code);
 
-    // Node's ERR_* errors are plain Error/TypeError/RangeError instances carrying a `code`, so those
-    // prototypes keep inheriting `constructor` from the base error. AbortError is a real
-    // `class AbortError extends Error` in Node, and util.inspect() / determineSpecificType() print
-    // the name of `err.constructor`, so its shared prototype gets the shape that class would have.
+    // Node's AbortError is a class of its own; its ERR_* errors keep the base error's `constructor`.
     if (code == ErrorCode::ABORT_ERR) {
         auto* constructor = JSC::JSFunction::create(vm, globalObject, 0, "AbortError"_s, jsFunctionMakeAbortError, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic, jsFunctionMakeAbortError);
         constructor->setPrototypeDirect(vm, globalObject->errorConstructor());

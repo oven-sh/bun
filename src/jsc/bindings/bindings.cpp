@@ -737,8 +737,7 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
-// `.cause` is non-enumerable, so the property walks skip it. Strict mode also
-// distinguishes a missing cause from `cause: undefined`.
+// `.cause` is non-enumerable, so the enumerable-property walks never see it.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 static bool errorCausesEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* left, JSC::JSObject* right)
 {
@@ -1267,21 +1266,18 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
-// A DOMException's name and message live in the wrapped object (`code` is derived
-// from the name), so the own-property walk alone sees two empty objects. Returns
-// std::nullopt once the wrapped state and `cause` match so that walk still runs;
-// the caller's swapped second call handles a DOMException on the right only.
+// name and message live in the wrapped DOMException (code derives from name), not in own properties.
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 static std::optional<bool> domExceptionsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
 {
     auto* left = dynamicDowncast<WebCore::JSDOMException>(o1);
-    if (!left)
-        return std::nullopt;
     auto* right = dynamicDowncast<WebCore::JSDOMException>(o2);
-    if (!right)
+    if (!left && !right)
+        return std::nullopt;
+    if (!left || !right)
         return false;
 
-    // The getters expose a null and an empty string identically.
+    // JS reads a null and an empty WTF::String from the getters as the same "".
     const auto& leftException = left->wrapped();
     const auto& rightException = right->wrapped();
     if (!equalIgnoringNullity(leftException.name(), rightException.name()) || !equalIgnoringNullity(leftException.message(), rightException.message()))
@@ -1291,6 +1287,7 @@ static std::optional<bool> domExceptionsDequal(JSC::JSGlobalObject* globalObject
     RETURN_IF_EXCEPTION(scope, {});
     if (!causesEqual)
         return false;
+    // nullopt so the caller still walks any properties assigned onto the instances.
     return std::nullopt;
 }
 

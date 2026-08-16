@@ -937,13 +937,13 @@ extern "C" int ffi_fileno(FILE* file)
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <signal.h>
 #include <pthread.h>
-#include <mutex>
+#include <wtf/Lock.h>
 
 // Bun.openInEditor runs spawnSync on detached threads, so register/unregister can overlap.
 extern "C" int64_t Bun__currentSyncPID = 0;
 static int Bun__pendingSignalToSend = 0;
 static struct sigaction previous_actions[NSIG];
-static std::mutex signalForwardingLock;
+static WTF::Lock signalForwardingLock;
 static int signalForwardingDepth = 0;
 
 // npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
@@ -1007,7 +1007,7 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
 
 extern "C" void Bun__registerSignalsForForwarding()
 {
-    std::lock_guard<std::mutex> lock(signalForwardingLock);
+    WTF::Locker<WTF::Lock> locker(signalForwardingLock);
     if (signalForwardingDepth++ != 0)
         return;
 
@@ -1035,14 +1035,13 @@ extern "C" void Bun__registerSignalsForForwarding()
 #undef REGISTER_SIGNAL
 }
 
-// Returns true when this was the outermost caller and the previous dispositions were restored.
-extern "C" bool Bun__unregisterSignalsForForwarding()
+extern "C" void Bun__unregisterSignalsForForwarding()
 {
     Bun__currentSyncPID = 0;
 
-    std::lock_guard<std::mutex> lock(signalForwardingLock);
+    WTF::Locker<WTF::Lock> locker(signalForwardingLock);
     if (--signalForwardingDepth != 0)
-        return false;
+        return;
 
 #define UNREGISTER_SIGNAL(SIG)                                \
     if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
@@ -1051,7 +1050,6 @@ extern "C" bool Bun__unregisterSignalsForForwarding()
     FOR_EACH_SIGNAL(UNREGISTER_SIGNAL)
     memset(previous_actions, 0, sizeof(previous_actions));
 #undef UNREGISTER_SIGNAL
-    return true;
 }
 
 #endif

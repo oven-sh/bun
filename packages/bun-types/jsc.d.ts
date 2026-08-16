@@ -757,7 +757,8 @@ declare module "bun:jsc" {
    * value, use {@link profile} instead.
    *
    * @param optionalDirectory A directory to write a text report of the hottest
-   * functions and bytecodes into when the process exits. Created if it does not exist.
+   * functions and bytecodes into when the process (or the worker that called
+   * this) exits. Created if it does not exist.
    * @param sampleInterval How often to sample the stack, in microseconds. Defaults to 1000 (once a millisecond).
    */
   function startSamplingProfiler(optionalDirectory?: string, sampleInterval?: number): void;

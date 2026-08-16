@@ -68,7 +68,6 @@
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
-#include "BunSamplingProfilerReporter.h"
 #include "BunSecureContextCache.h"
 #include "NodeV8.h"
 #include "ProcessIdentifier.h"
@@ -4336,9 +4335,6 @@ extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* glo
 
 static void destroyVM(JSC::VM& vm)
 {
-    // Flush the sampling profiler report and drop its registry entry before
-    // the deref loop below releases the registry's Ref<VM>.
-    Bun::reportSamplingProfilerBeforeVMTeardown(vm);
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,
     // the worker thread's manual API lock) holds a RefPtr<VM> that will never destruct because

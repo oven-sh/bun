@@ -207,6 +207,11 @@ pub struct VirtualMachine {
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
+    /// UTF-8 directory given to `bun:jsc`'s `startSamplingProfiler()`.
+    /// JSC's own report-at-exit reads `Options::samplingProfilerPath()`, which
+    /// is frozen read-only before user JS can run, so the path lives here and
+    /// [`Self::on_exit`] writes the report.
+    pub sampling_profiler_directory: Option<Box<[u8]>>,
     pub counters: Counters,
 
     /// `--hot` / `--watch` mode this VM runs under.
@@ -1677,6 +1682,20 @@ impl VirtualMachine {
                 crate::bun_heap_profiler::generate_and_write_profile(self.jsc_vm_mut(), &config)
             {
                 bun_core::Output::err(e, "Failed to write heap profile", ());
+            }
+        }
+        // Write the JSC sampling profiler report if bun:jsc's
+        // startSamplingProfiler() was given a directory.
+        if let Some(directory) = self.sampling_profiler_directory.take() {
+            if let Err(e) = crate::bun_cpu_profiler::write_sampling_profiler_report(
+                self.jsc_vm_mut(),
+                &directory,
+            ) {
+                bun_core::Output::err(
+                    <&'static str>::from(e),
+                    "Failed to write sampling profiler report",
+                    (),
+                );
             }
         }
 

@@ -136,9 +136,8 @@ impl JSSocketHandlers {
         Bun__SocketHandlers__setCallbacks(global, self.0, callbacks.as_ptr());
     }
 
-    /// Reads all callback fields out of the cell. `undefined` entries come back
-    /// as `JSValue::ZERO` (the inverse of [`set_callbacks`]).
-    pub fn callbacks(self) -> [JSValue; CALLBACK_COUNT] {
+    /// Inverse of [`set_callbacks`](Self::set_callbacks): unset fields read as `JSValue::ZERO`.
+    pub(crate) fn callbacks(self) -> [JSValue; CALLBACK_COUNT] {
         core::array::from_fn(|i| {
             let v = Bun__SocketHandlers__getField(self.0, i as u32);
             if v.is_undefined() { JSValue::ZERO } else { v }

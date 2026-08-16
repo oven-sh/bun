@@ -1216,10 +1216,8 @@ impl UpdateInteractiveCommand {
         // see `crate::cli::prompt_signal`.
         let _signal_guard = crate::cli::prompt_signal::install();
 
-        // Set raw mode; the RAII guard restores the original mode on Drop.
-        // `ENABLE_PROCESSED_INPUT` stays unset so keyboard Ctrl+C arrives as
-        // byte 3 and takes the graceful-cancel arm instead of killing the
-        // process past the cursor-restore defer (#30890).
+        // Set raw mode. `ENABLE_PROCESSED_INPUT` stays unset (#30890, see
+        // `crate::cli::prompt_signal`).
         #[cfg(windows)]
         let _restore =
             bun_sys::windows::StdinModeGuard::set(bun_sys::windows::UpdateStdioModeFlagsOpts {

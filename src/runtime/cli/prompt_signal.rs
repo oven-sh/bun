@@ -177,8 +177,6 @@ pub(crate) fn install() -> Guard {
     }
     #[cfg(windows)]
     {
-        // Keyboard Ctrl+C arrives as byte 3 (see the module doc); this
-        // catches Ctrl+Break, console-close, and externally sent signals.
         let _ = bun_sys::c::SetConsoleCtrlHandler(Some(handler), bun_sys::windows::TRUE);
     }
     Guard(())

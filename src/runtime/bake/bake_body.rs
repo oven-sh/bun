@@ -501,21 +501,23 @@ impl Default for Framework {
     }
 }
 
-/// Resolves a router root; `None` once it is `MAX_PATH_BYTES` long, the length from which `Resolver::read_dir_info` rejects it too.
-pub(crate) fn join_router_root(root: &[u8]) -> Option<Box<[u8]>> {
+/// Resolves a directory from the app options; `None` once it is `MAX_PATH_BYTES` long, the length from which `Resolver::read_dir_info` rejects it too.
+pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Box<[u8]>> {
     let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
     let mut buf = paths::path_buffer_pool::get();
-    paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+    let resolved = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
         top_level_dir,
         &mut buf[..paths::MAX_PATH_BYTES - 1],
-        &[root],
-    )
-    .map(Box::from)
+        &[dir],
+    )?;
+    Some(Box::from(
+        paths::string_paths::without_trailing_slash_windows_path(resolved),
+    ))
 }
 
-/// `join_router_root` for `fileSystemRouterTypes[index]`; a too-long root is reported like an unresolvable entry point.
+/// `resolve_dir_option` for `fileSystemRouterTypes[index].root`; a too-long root is reported like an unresolvable entry point.
 pub(crate) fn resolve_router_root(index: usize, root: &[u8]) -> Option<Box<[u8]>> {
-    let resolved = join_router_root(root);
+    let resolved = resolve_dir_option(root);
     if resolved.is_none() {
         Output::err(
             "ENAMETOOLONG",

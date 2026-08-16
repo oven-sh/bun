@@ -1,6 +1,7 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkdirSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -134,18 +135,15 @@ test("discovers from filesystem paths", () => {
   });
 });
 
-// MAX_PATH_BYTES in src/bun_core/util.rs: a resolved router root must be shorter than this.
-const maxPathBytes = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
-
 describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path buffer", () => {
-  // Longer than maxPathBytes on every platform.
+  // Longer than MAX_PATH_BYTES on every platform.
   const tooLongRoot = `Buffer.alloc(100_000, "a").toString()`;
   // An absolute root resolves to itself, so this resolves to exactly `length` bytes
   // ("/aaa..." on POSIX, "C:\\aaa..." on Windows). Evaluated inside the fixture.
   const absoluteRootOfLength = (length: number) =>
     `(prefix => prefix + Buffer.alloc(${length} - prefix.length, "a").toString())(path.parse(process.cwd()).root)`;
   const rootError = (index: number) =>
-    `ENAMETOOLONG: Failed to resolve 'fileSystemRouterTypes[${index}].root' for framework: the resolved path must be shorter than ${maxPathBytes} bytes`;
+    `ENAMETOOLONG: Failed to resolve 'fileSystemRouterTypes[${index}].root' for framework: the resolved path must be shorter than ${MAX_PATH_BYTES} bytes`;
   const rejected = "threw: Framework is missing required files!";
 
   const serverEntryPoint = `
@@ -208,10 +206,44 @@ describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path b
 
   test("the internal FrameworkRouter constructor throws instead of crashing", () => {
     const prefix = path.parse(process.cwd()).root;
-    const root = prefix + Buffer.alloc(maxPathBytes - prefix.length, "a").toString();
+    const root = prefix + Buffer.alloc(MAX_PATH_BYTES - prefix.length, "a").toString();
     expect(() => new FrameworkRouter({ root, style: "nextjs-pages" })).toThrow(
-      `options.root must resolve to a path shorter than ${maxPathBytes} bytes`,
+      `options.root must resolve to a path shorter than ${MAX_PATH_BYTES} bytes`,
     );
+  });
+
+  // Windows' own path limit is below MAX_PATH_BYTES, so such a tree cannot be created there.
+  test.skipIf(isWindows)("scanning a root skips the entries whose paths do not fit instead of crashing", () => {
+    using dir = tempDir("fsr-scan-long-entries", {});
+    // 200 bytes below the limit: the root's own short files fit, entries with a maximum-length name do not.
+    let root = String(dir);
+    while (root.length < MAX_PATH_BYTES - 200) {
+      const part = Math.min(200, MAX_PATH_BYTES - 200 - root.length - 1);
+      root = path.join(root, Buffer.alloc(part, "d").toString());
+    }
+    mkdirSync(root, { recursive: true });
+    writeFileSync(path.join(root, "index.ts"), "");
+    // The OS rejects their absolute paths too, so these can only be created relative to the root.
+    const longName = Buffer.alloc(252, "x").toString();
+    const create = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { mkdirSync, writeFileSync } from "fs";
+          writeFileSync(${JSON.stringify(`${longName}.ts`)}, "");
+          mkdirSync(${JSON.stringify(`${longName}dir`)});
+          writeFileSync(${JSON.stringify(`${longName}dir/index.ts`)}, "");
+        `,
+      ],
+      cwd: root,
+      env: bunEnv,
+    });
+    expect(create.stderr.toString()).toBe("");
+    expect(create.exitCode).toBe(0);
+
+    const router = new FrameworkRouter({ root, style: "nextjs-pages" });
+    expect(router.toJSON()).toEqual({ part: "/", page: path.join(root, "index.ts"), layout: null, children: [] });
   });
 
   test("Bun.serve({ app }) reports every root that does not fit instead of crashing", async () => {
@@ -241,8 +273,8 @@ describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path b
       "server.ts": serverEntryPoint,
       "start.ts": serveFixture(
         // The directory does not exist, so the accepted root is skipped like any other missing root.
-        appWithRoots(absoluteRootOfLength(maxPathBytes - 1)),
-        appWithRoots(absoluteRootOfLength(maxPathBytes)),
+        appWithRoots(absoluteRootOfLength(MAX_PATH_BYTES - 1)),
+        appWithRoots(absoluteRootOfLength(MAX_PATH_BYTES)),
       ),
     });
     const { stdout, stderr, exitCode } = await run(String(dir), ["start.ts"]);
@@ -253,14 +285,14 @@ describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path b
   });
 
   test("bun build --app fails on a root at the limit instead of crashing", async () => {
-    using dir = tempDir("fsr-root-at-limit-build", buildFixture(absoluteRootOfLength(maxPathBytes)));
+    using dir = tempDir("fsr-root-at-limit-build", buildFixture(absoluteRootOfLength(MAX_PATH_BYTES)));
     const { stderr, exitCode } = await build(String(dir));
     expect(stderr).toContain(rootError(0));
     expect(exitCode).toBe(1);
   });
 
   test("bun build --app looks up a root one byte below the limit like any other missing directory", async () => {
-    using dir = tempDir("fsr-root-below-limit-build", buildFixture(absoluteRootOfLength(maxPathBytes - 1)));
+    using dir = tempDir("fsr-root-below-limit-build", buildFixture(absoluteRootOfLength(MAX_PATH_BYTES - 1)));
     const { stdout, stderr, exitCode } = await build(String(dir));
     expect(stderr).not.toContain("ENAMETOOLONG");
     expect(stderr).toContain("Bundling routes");

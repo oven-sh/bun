@@ -152,7 +152,11 @@ function typeTest(name: string, config: TypeTestConfig) {
 async function packageBin(fixtureDir: string, pkg: string, name: string): Promise<string> {
   const pkgDir = join(fixtureDir, "node_modules", pkg);
   const { bin } = await Bun.file(join(pkgDir, "package.json")).json();
-  return join(pkgDir, typeof bin === "string" ? bin : bin[name]);
+  const entry = typeof bin === "string" ? bin : bin?.[name];
+  if (typeof entry !== "string") {
+    throw new Error(`${pkg} no longer declares a "${name}" bin, its bin field is ${JSON.stringify(bin)}`);
+  }
+  return join(pkgDir, entry);
 }
 
 /** Runs a tsc-compatible CLI on the fixture's tsconfig (written by beforeAll) and expects a clean check. */

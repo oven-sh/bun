@@ -351,20 +351,11 @@ describe("node:test", () => {
   test.concurrent(
     "should report cancelled subtests and suites as cancelled through run()",
     async () => {
-      const fixture = (name: string) => join(import.meta.dirname, "fixtures", name);
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), fixture("run-events.js"), fixture("30-cancelled-subtests.js")],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      const { events, counts, success } = JSON.parse(stdout.trim());
-      const cancelled = events.filter((e: { failureType?: string }) => e.failureType === "cancelledByParent");
+      const { events, counts, success } = await runEvents("30-cancelled-subtests.js");
+      const cancelled = events.filter(e => e.failureType === "cancelledByParent");
       // The same cancellations, in the same order, that node v26.3.0 reports
       // for this fixture.
-      expect(cancelled.map(({ type, name, kind, todo }: any) => ({ type, name, kind, todo }))).toEqual([
+      expect(cancelled.map(({ type, name, kind, todo }) => ({ type, name, kind, todo }))).toEqual([
         { type: "test:fail", name: "slow", kind: "test", todo: undefined },
         { type: "test:fail", name: "slow", kind: "test", todo: undefined },
         { type: "test:fail", name: "queued test", kind: "test", todo: undefined },
@@ -390,21 +381,53 @@ describe("node:test", () => {
         },
         success: false,
       });
-      expect(exitCode).toBe(0);
     },
     30_000,
   );
 
-  test("should end a test whose subtest chain is stuck behind a hanging hook with the test's own timeout", async () => {
-    const { exitCode, stderr } = await runTests(["31-timeout-bounds-hanging-hook.js"]);
-    expect(stderr).toContain("test timed out after 100ms");
-    expect(stderr).not.toContain("timed out after 5000ms");
-    expect(stderr).toContain("0 pass");
-    expect({ exitCode, stderr }).toMatchObject({
-      exitCode: 1,
-      stderr: expect.stringContaining("2 fail"),
-    });
-  });
+  // Every test in this fixture ends on its own 100ms timeout; the children of
+  // the first and third can never report.
+  test.concurrent(
+    "should end a test whose subtest chain is stuck behind a hanging hook with the test's own timeout",
+    async () => {
+      const { exitCode, stderr } = await runTests(["31-timeout-bounds-hanging-hook.js"]);
+      expect(stderr).toContain("test timed out after 100ms");
+      expect(stderr).not.toContain("timed out after 5000ms");
+      expect(stderr).toContain("0 pass");
+      expect({ exitCode, stderr }).toMatchObject({
+        exitCode: 1,
+        stderr: expect.stringContaining("3 fail"),
+      });
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should count timed out tests as cancelled through run(), like node",
+    async () => {
+      const { events, counts, success } = await runEvents("31-timeout-bounds-hanging-hook.js");
+      expect(events.map(({ type, name, failureType }) => ({ type, name, failureType }))).toEqual([
+        { type: "test:fail", name: "a subtest stuck behind a hanging before hook", failureType: "testTimeoutFailure" },
+        { type: "test:fail", name: "a hanging before hook and nothing else", failureType: "testTimeoutFailure" },
+        { type: "test:pass", name: "first", failureType: undefined },
+        { type: "test:fail", name: "a later subtest stuck in its own after hook", failureType: "testTimeoutFailure" },
+      ]);
+      expect({ counts, success }).toEqual({
+        counts: {
+          tests: 4,
+          suites: 0,
+          passed: 1,
+          failed: 0,
+          cancelled: 3,
+          skipped: 0,
+          todo: 0,
+          topLevel: expect.any(Number),
+        },
+        success: false,
+      });
+    },
+    30_000,
+  );
 
   test("should resolve the promise of a test that a name pattern filters out", async () => {
     const { exitCode, stderr } = await runTests(["23-filtered-test-promise.js"], {}, ["-t", "should resolve"]);
@@ -434,6 +457,24 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+type RunEvent = { type: string; name: string; kind: string; failureType?: string; skip?: unknown; todo?: unknown };
+
+// Runs one fixture through node:test's run() (fixtures/run-events.js) and
+// returns its pass/fail events and the run-level summary.
+async function runEvents(filename: string) {
+  const fixture = (name: string) => join(import.meta.dirname, "fixtures", name);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), fixture("run-events.js"), fixture(filename)],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout.trim()) as { events: RunEvent[]; counts: Record<string, number>; success: boolean };
 }
 
 describe("node:test mock", () => {

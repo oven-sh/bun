@@ -81,10 +81,9 @@ beforeAll(async () => {
       }),
     });
 
-    // Makes the fixture (and every copy of it) a project a compiler CLI can be pointed at with
-    // `-p .` (expectCliToAcceptFixture). skipLibCheck is off for the same reason as in
-    // diagnose(): the .d.ts files are what is under test. The typeTest cases build their
-    // options from sourceTsconfig in-process and never read this file.
+    // Makes the fixture a project `tsc -p .` can be pointed at (the tsc case below). skipLibCheck
+    // is off for the same reason as in diagnose(): the .d.ts files are what is under test. The
+    // typeTest cases build their options from sourceTsconfig in-process and never read this file.
     const tsconfig = structuredClone(sourceTsconfig);
     tsconfig.compilerOptions.skipLibCheck = false;
     tsconfig.include = ["*.ts", "*.tsx"];
@@ -146,34 +145,6 @@ function typeTest(name: string, config: TypeTestConfig) {
       expect(diagnostics).toEqual(config.diagnostics);
     }
   });
-}
-
-/** Entry point of `name` in the `bin` field of a package installed into the fixture. */
-async function packageBin(fixtureDir: string, pkg: string, name: string): Promise<string> {
-  const pkgDir = join(fixtureDir, "node_modules", pkg);
-  const { bin } = await Bun.file(join(pkgDir, "package.json")).json();
-  const entry = typeof bin === "string" ? bin : bin?.[name];
-  if (typeof entry !== "string") {
-    throw new Error(`${pkg} no longer declares a "${name}" bin, its bin field is ${JSON.stringify(bin)}`);
-  }
-  return join(pkgDir, entry);
-}
-
-/** Runs a tsc-compatible CLI on the fixture's tsconfig (written by beforeAll) and expects a clean check. */
-async function expectCliToAcceptFixture(fixtureDir: string, cli: string) {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), cli, "-p", "."],
-    env: bunEnv,
-    cwd: fixtureDir,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr.trim()).toBe("");
-  expect(stdout.trim()).toBe("");
-  expect(exitCode).toBe(0);
 }
 
 async function diagnose(
@@ -367,27 +338,29 @@ describe("@types/bun integration test", () => {
     });
   });
 
-  // TypeScript 7's native (Go-based) compiler does not ship the JS compiler API that typeTest
-  // drives (this file gets that from the typescript in test/node_modules), so these two cases
-  // spawn a CLI on the fixture project instead. Spawning the native compiler is cheap under a
-  // debug build too, so the tsc case is not skipped there: it is the case `bun bd test` runs
-  // against an assertion added to fixture/*.ts, which is where the assertions for a .d.ts
-  // change belong, rather than in one-off tsc runs in this file.
-  // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
+  // The same fixture checked by the typescript the fixture installs (`latest`, the native
+  // compiler since 7.0; it ships no JS compiler API, so unlike typeTest this has to spawn the
+  // CLI, and typeTest keeps using the typescript in test/node_modules). The check itself runs
+  // in the native binary, so this is as cheap under a debug build as under a release one and
+  // is not skipped there. Assertions for a .d.ts change go in fixture/*.ts, where this case
+  // and the typeTest cases check them; this is deliberately the only spawned compiler in the
+  // file (test/internal/source-lints/bun-types-test-spawn-sites.test.ts).
   describe("tsc (the fixture's typescript dependency)", () => {
     test("checks without lib.dom.d.ts", async () => {
-      // noEmit is set in the tsconfig, so this leaves the shared fixture untouched.
-      await expectCliToAcceptFixture(BASE_FIXTURE_DIR, await packageBin(BASE_FIXTURE_DIR, "typescript", "tsc"));
-    });
-  });
+      // The tsconfig sets noEmit, so this leaves the shared fixture untouched.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: BASE_FIXTURE_DIR,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-  describe("tsgo (TypeScript 7 native preview)", () => {
-    // Release builds only: this one needs a fixture copy and a registry install per run, and
-    // the tsc case above already covers debug builds. The entry point is read from the bin
-    // field because the nightly has renamed it before (bin/tsgo.js -> bin/tsgo).
-    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
-      const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
-      await expectCliToAcceptFixture(fixtureDir, await packageBin(fixtureDir, "@typescript/native-preview", "tsgo"));
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
     });
   });
 

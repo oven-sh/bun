@@ -399,7 +399,7 @@ Default per-test timeout in milliseconds. Tests that take longer than this fail 
 timeout = 10000
 ```
 
-Equivalent CLI flag: `--timeout`. CLI flags override the `bunfig.toml` value entirely.
+Equivalent CLI flag: `--timeout`. When both values are valid, the CLI value takes precedence. Invalid `test.timeout` values still fail validation.
 
 ## Package manager
 

@@ -590,9 +590,13 @@ impl<'a> Parser<'a> {
                         || value.fract() != 0.0
                         || value > u32::MAX as f64
                     {
-                        self.add_error(
+                        self.add_error_format(
                             expr.loc,
-                            b"\"timeout\" must be a non-negative integer (milliseconds)",
+                            format_args!(
+                                "\"timeout\" must be a finite integer in the range 0..={} milliseconds; received {}",
+                                u32::MAX,
+                                value
+                            ),
                         )?;
                         return Ok(());
                     }

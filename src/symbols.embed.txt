@@ -1,0 +1,5 @@
+# Symbols libbun exports on top of src/symbols.txt: the embed API
+# (packages/bun-embed/bun_embed.h, src/bun_bin/embed.rs).
+_bun_embed_run
+_bun_embed_request_exit
+_bun_embed_version

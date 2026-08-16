@@ -117,6 +117,7 @@
 #include "FetchHeaders.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
+#include "JSDOMException.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -736,6 +737,31 @@ static bool nonIndexOwnPropertiesEqual(JSC::JSGlobalObject* globalObject, Marked
     return true;
 }
 
+// `.cause` is a non-enumerable own property on Error and DOMException instances,
+// so the enumerable-property walks never see it and it has to be compared
+// explicitly. In strict mode a missing cause differs from `cause: undefined`.
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+static bool errorCausesEqual(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* left, JSC::JSObject* right)
+{
+    const PropertyName cause(globalObject->vm().propertyNames->cause);
+    if constexpr (isStrict) {
+        bool leftHasCause = left->hasProperty(globalObject, cause);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool rightHasCause = right->hasProperty(globalObject, cause);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (leftHasCause != rightHasCause) {
+            return false;
+        }
+    }
+    JSValue leftCause = left->get(globalObject, cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue rightCause = right->get(globalObject, cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool causesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+    RETURN_IF_EXCEPTION(scope, false);
+    return causesEqual;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
@@ -1242,6 +1268,38 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
+// A DOMException keeps its name and message in the wrapped WebCore::DOMException
+// and exposes them through prototype getters (`code` is derived from the name),
+// so as far as the own-property walk is concerned every DOMException is an empty
+// object. Compare that state and the own non-enumerable `cause` the way the
+// ErrorInstanceType case does for errors. Returns false on a mismatch, or when
+// only `o1` is a DOMException (the caller's swapped second call covers a
+// DOMException on the right); otherwise std::nullopt so the own-property walk
+// still compares properties added to the instances.
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
+static std::optional<bool> domExceptionsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSC::JSObject* o1, JSC::JSObject* o2)
+{
+    auto* left = dynamicDowncast<WebCore::JSDOMException>(o1);
+    if (!left)
+        return std::nullopt;
+    auto* right = dynamicDowncast<WebCore::JSDOMException>(o2);
+    if (!right)
+        return false;
+
+    // Both getters hand a null and an empty string to JS as "", so the comparison
+    // has to treat them alike too.
+    const auto& leftException = left->wrapped();
+    const auto& rightException = right->wrapped();
+    if (!equalIgnoringNullity(leftException.name(), rightException.name()) || !equalIgnoringNullity(leftException.message(), rightException.message()))
+        return false;
+
+    bool causesEqual = errorCausesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!causesEqual)
+        return false;
+    return std::nullopt;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
@@ -1514,30 +1572,13 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 }
             }
 
-            VM& vm = JSC::getVM(globalObject);
-
-            // `.cause` is non-enumerable, so it must be checked explicitly.
-            // note that an undefined cause is different than a missing cause in
-            // strict mode.
-            const PropertyName cause(vm.propertyNames->cause);
-            if constexpr (isStrict) {
-                bool leftHasCause = left->hasProperty(globalObject, cause);
-                RETURN_IF_EXCEPTION(scope, {});
-                bool rightHasCause = right->hasProperty(globalObject, cause);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (leftHasCause != rightHasCause) {
-                    return false;
-                }
-            }
-            auto leftCause = left->get(globalObject, cause);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto rightCause = right->get(globalObject, cause);
-            RETURN_IF_EXCEPTION(scope, {});
-            bool causesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true);
+            bool causesEqual = errorCausesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, left, right);
             RETURN_IF_EXCEPTION(scope, {});
             if (!causesEqual) {
                 return false;
             }
+
+            VM& vm = JSC::getVM(globalObject);
 
             // check arbitrary enumerable properties. `.stack` is not checked.
             left->materializeErrorInfoIfNeeded(vm);
@@ -1896,18 +1937,25 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         }
     }
 
-    // Symbol and BigInt wrapper objects are plain ObjectType in JSC, so they are not
-    // reachable from the switch above. Like Number and Boolean wrappers, they must be
-    // the same kind of wrapper and hold the same internal value. Everything else --
-    // object literals, arrays -- has its own JSType and skips this.
+    // DOMExceptions, Temporal objects, and Symbol and BigInt wrapper objects are plain
+    // ObjectType in JSC, so they are not reachable from the switch above, and each keeps
+    // the state that tells two instances apart outside of its own properties. Everything
+    // else -- object literals, arrays -- has its own JSType and skips this.
     if (c1Type == ObjectType) {
         JSObject* obj1 = c1->getObject();
         JSObject* obj2 = c2->getObject();
         if (obj1 && obj2) {
+            std::optional<bool> domExceptionEqual = domExceptionsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, obj1, obj2);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (domExceptionEqual.has_value())
+                return domExceptionEqual;
+
             std::optional<bool> temporalEqual = temporalObjectsDequal(obj1, obj2);
             if (temporalEqual.has_value())
                 return temporalEqual;
 
+            // Like Number and Boolean wrappers, Symbol and BigInt wrappers must be the
+            // same kind of wrapper and hold the same internal value.
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
             if (isSymbol1 || isBigInt1) {

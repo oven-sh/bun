@@ -1129,18 +1129,34 @@ pub(crate) fn parse_color_function(
     let mut parser = ComponentParser::new(true);
 
     crate::match_ignore_ascii_case! { function, {
-        b"lab" => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
-            LABColor::Lab(LAB { l, a, b, alpha })
-        }),
-        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
-            LABColor::Oklab(OKLAB { l, a, b, alpha })
-        }),
-        b"lch" => parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
-            LABColor::Lch(LCH { l, c, h, alpha })
-        }),
-        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
-            LABColor::Oklch(OKLCH { l, c, h, alpha })
-        }),
+        b"lab" => parse_lab::<LAB>(
+            input,
+            &mut parser,
+            LAB_L_BASIS,
+            LAB_AB_BASIS,
+            |l, a, b, alpha| LABColor::Lab(LAB { l, a, b, alpha }),
+        ),
+        b"oklab" => parse_lab::<OKLAB>(
+            input,
+            &mut parser,
+            OKLAB_L_BASIS,
+            OKLAB_AB_BASIS,
+            |l, a, b, alpha| LABColor::Oklab(OKLAB { l, a, b, alpha }),
+        ),
+        b"lch" => parse_lch::<LCH>(
+            input,
+            &mut parser,
+            LAB_L_BASIS,
+            LCH_C_BASIS,
+            |l, c, h, alpha| LABColor::Lch(LCH { l, c, h, alpha }),
+        ),
+        b"oklch" => parse_lch::<OKLCH>(
+            input,
+            &mut parser,
+            OKLAB_L_BASIS,
+            OKLCH_C_BASIS,
+            |l, c, h, alpha| LABColor::Oklch(OKLCH { l, c, h, alpha }),
+        ),
         b"color" => parse_predefined(input, &mut parser),
         b"hsl" | b"hsla" => parse_hsl_hwb::<HSL>(input, &mut parser, true, |h, s, l, a| {
             let hsl = HSL { h, s, l, alpha: a };
@@ -1325,9 +1341,19 @@ fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
     (delta_l.powi(2) + delta_a.powi(2) + delta_b.powi(2)).sqrt()
 }
 
+// What `100%` stands for in each channel of the lab family: https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+const LAB_L_BASIS: f32 = 100.0;
+const LAB_AB_BASIS: f32 = 125.0;
+const LCH_C_BASIS: f32 = 150.0;
+const OKLAB_L_BASIS: f32 = 1.0;
+const OKLAB_AB_BASIS: f32 = 0.4;
+const OKLCH_C_BASIS: f32 = 0.4;
+
 pub(crate) fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
+    ab_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor>
 where
@@ -1337,9 +1363,9 @@ where
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
-            let a = p.parse_number(i)?;
-            let b = p.parse_number(i)?;
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, f32::MAX);
+            let a = p.parse_number_channel(i, ab_basis)?;
+            let b = p.parse_number_channel(i, ab_basis)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, a, b, alpha);
             Ok(CssColor::Lab(Box::new(lab)))
@@ -1350,8 +1376,11 @@ where
 pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
+    c_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor> {
+    // https://www.w3.org/TR/css-color-4/#funcdef-lch
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
             if let Some(from) = &mut p.from {
@@ -1363,8 +1392,8 @@ pub(crate) fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> +
                 }
             }
 
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
-            let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
+            let l = p.parse_unit_channel(i, l_basis)?.clamp(0.0, f32::MAX);
+            let c = p.parse_number_channel(i, c_basis)?.clamp(0.0, f32::MAX);
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, c, h, alpha);
@@ -2016,6 +2045,16 @@ impl ComponentParser {
         }
     }
 
+    /// A channel written as `<percentage> | <number> | none` and stored as a unit value,
+    /// `percent_basis` being the `<number>` that stands for `100%`.
+    fn parse_unit_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
+        if let Ok(number) = input.try_parse(CSSNumberFns::parse) {
+            return Ok(number / percent_basis);
+        }
+
+        self.parse_percentage(input)
+    }
+
     fn parse_percentage(&self, input: &mut css::Parser) -> CssResult<f32> {
         if let Some(from) = &self.from {
             if let Ok(res) = input.try_parse(|i| RelativeComponentParser::parse_percentage(i, from))
@@ -2049,6 +2088,15 @@ impl ComponentParser {
         } else {
             Err(input.new_custom_error(css::ParserError::invalid_value))
         }
+    }
+
+    /// `<number> | <percentage> | none` stored as the number (lab a/b, lch chroma); `100%` is `percent_basis`.
+    fn parse_number_channel(&self, input: &mut css::Parser, percent_basis: f32) -> CssResult<f32> {
+        if let Ok(number) = input.try_parse(|i| self.parse_number(i)) {
+            return Ok(number);
+        }
+
+        Ok(Percentage::parse(input)?.v * percent_basis)
     }
 }
 

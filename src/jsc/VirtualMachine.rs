@@ -2730,13 +2730,17 @@ impl VirtualMachine {
 
     /// Milliseconds since this thread's loop began polling; `None` before that.
     pub fn loop_elapsed_ms(&self) -> Option<f64> {
-        Self::loop_elapsed_ms_since(self.loop_start_ns.load(core::sync::atomic::Ordering::Acquire))
+        Self::loop_elapsed_ms_since(
+            self.loop_start_ns
+                .load(core::sync::atomic::Ordering::Acquire),
+        )
     }
 
     /// `raw_idle_ns` (this thread's `us_loop_idle_ns`) minus the idle accumulated before the loop began.
     pub fn loop_idle_ms(&self, raw_idle_ns: u64) -> f64 {
         Self::loop_idle_ms_above(
-            self.loop_idle_base_ns.load(core::sync::atomic::Ordering::Acquire),
+            self.loop_idle_base_ns
+                .load(core::sync::atomic::Ordering::Acquire),
             raw_idle_ns,
         )
     }

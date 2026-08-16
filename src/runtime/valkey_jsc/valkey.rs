@@ -655,11 +655,12 @@ impl ValkeyClient {
 
     /// Handle connection closed event
     ///
-    /// Always ends in `on_valkey_close()` or `on_valkey_reconnect()`: they release the ref
-    /// the socket held on the client and arm the retry, so they run even when rejecting the
-    /// pending commands returns `Err` (a promise cannot be settled once the VM's termination
-    /// is pending, e.g. a worker stopped while commands were in flight). That `Err` is still
-    /// the one returned, as in `fail_with_js_value`.
+    /// Always ends in `on_valkey_close()` or `on_valkey_reconnect()`: that is where the close
+    /// completes (connect() settled and `onclose` run, or the retry armed) and where the ref
+    /// the socket held on the client is released, so they run even when rejecting the pending
+    /// commands returns `Err` (a promise cannot be settled once the VM's termination is
+    /// pending, e.g. a worker stopped while commands were in flight). That `Err` is still the
+    /// one returned, as in `fail_with_js_value`.
     pub fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();

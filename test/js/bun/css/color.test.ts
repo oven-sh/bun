@@ -681,109 +681,82 @@ describe("rgb() channel order and legacy syntax", () => {
   });
 });
 
-// color-mix(in srgb, ...) prints its result as an 8-bit color when it fits in the sRGB
-// gamut. A result outside of it (css-color-4 interpolates out-of-gamut channels as they
-// are) is printed as the color(srgb ...) value browsers compute for it, the same value
-// color(from <operand> srgb r g b) prints; it used to be gamut mapped into a different
-// 8-bit color (a mix of two display-p3 greens came out as #00f942, browsers paint it as
-// #00ff00 on an sRGB screen and as the display-p3 green on a wider one).
-describe("color-mix() results outside the sRGB gamut", () => {
-  const srgbChannels = (css: string | null) => {
-    expect(css).toStartWith("color(srgb ");
-    return css!
-      .slice("color(srgb ".length, -1)
-      .split(/ \/ | /)
-      .map(Number);
-  };
-  const expectSrgb = (input: string, expected: number[]) => {
-    const actual = srgbChannels(color(input, "css"));
-    expect(actual).toHaveLength(expected.length);
-    for (let i = 0; i < expected.length; i++) {
-      expect(actual[i]).toBeCloseTo(expected[i], 3);
-    }
-  };
-
-  // References are the css-color-4 conversions in double precision. These go through
-  // pow(), so they are compared numerically.
-  const p3Green = [-0.5116, 1.01827, -0.31067];
-  test("a display-p3 operand mixed with itself", () => {
-    expectSrgb("color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))", p3Green);
-    expectSrgb("color-mix(in srgb, color(display-p3 0 1 0) 100%, red)", p3Green);
-    expectSrgb("color-mix(in srgb, color(display-p3 0 1 0 / 0.5), color(display-p3 0 1 0 / 0.5))", [...p3Green, 0.5]);
-  });
-
-  test("the mix is the same value the relative color form prints", () => {
-    expect(color("color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))", "css")).toBe(
-      color("color(from color(display-p3 0 1 0) srgb r g b)", "css")!,
-    );
-  });
-
-  // lab(100% 104.3 -50.9) is color(srgb 1.5935 0.58776 1.40555); browsers paint the mix as
-  // rgb(255, 75, 179). It used to fold to #ff9fbc.
-  test("a lab() operand pushes the mix out of gamut", () => {
-    expectSrgb("color-mix(in srgb, lab(100% 104.3 -50.9), red)", [1.29675, 0.29388, 0.70277]);
-  });
-
-  // 12.92 * channel is the linear segment of the sRGB transfer function, so these
-  // srgb-linear operands convert to srgb exactly: -0.003 is -0.03876, -0.001 is -0.01292.
+// color-mix(in srgb, ...) folds to an 8-bit color. css-color-4 interpolates out-of-gamut
+// channels as they are, so wide-gamut operands can leave the result outside the sRGB
+// gamut; browsers paint such a result by clipping each channel, and the fold clips too.
+// It used to gamut map the result (the chroma reduction used for the #rrggbb fallback of
+// a wide-gamut color), which is a different color: #00f942 for display-p3 green, or
+// plain white for the bright magentas below. The display-p3 green, lab() and oklch()
+// operands are the ones of WPT css/css-color/parsing/color-mix-out-of-gamut.html; the
+// expected colors are the computed values it lists (color(srgb 1.59343 0.58802 1.40564)
+// for lab(100% 104.3 -50.9)) clipped to 8 bits. The other unclipped results are noted inline.
+describe("color-mix() results outside the sRGB gamut are clipped", () => {
   test.each([
-    ["color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.003 1 0))", "color(srgb -.03876 1 0)"],
-    ["color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.001 1 0))", "color(srgb -.02584 1 0)"],
-    ["color-mix(in srgb, color(srgb-linear -0.003 1 0) 25%, lime)", "color(srgb -.00969 1 0)"],
-    ["color-mix(in srgb, color(srgb-linear 0 0 -0.003), color(srgb-linear 0 0 0.001))", "color(srgb 0 0 -.01292)"],
+    // color(display-p3 0 1 0) is color(srgb -0.5116 1.0183 -0.3107); used to be #00f942.
+    ["color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))", "#0f0"],
+    ["color-mix(in srgb, color(display-p3 0 1 0) 100%, red)", "#0f0"],
+    ["color-mix(in srgb, color(display-p3 0 1 0 / 0.5), color(display-p3 0 1 0 / 0.5))", "#00ff0080"],
+    // color(srgb 1 1 -0.346) and color(srgb 1.093 -0.227 -0.150); used to be #fdfe00 and #ff0f0e.
+    ["color-mix(in srgb, color(display-p3 1 1 0), color(display-p3 1 1 0))", "#ff0"],
+    ["color-mix(in srgb, color(display-p3 1 0 0), color(display-p3 1 0 0))", "red"],
+    // color(srgb 1.593 0.359 1.386) and color(srgb 1.593 0.588 1.406): the oklch lightness of
+    // these is above 1, which the gamut mapping turned into plain white.
+    ["color-mix(in srgb, oklch(100% 0.399 336.3), oklch(100% 0.399 336.3))", "#ff5bff"],
+    ["color-mix(in srgb, oklch(100% 0.399 336.3) 80%, white)", "#ff7cff"],
+    ["color-mix(in srgb, oklch(100% 0.399 336.3) 50%, white)", "#ffadff"],
+    ["color-mix(in srgb, lab(100% 104.3 -50.9), lab(100% 104.3 -50.9))", "#ff96ff"],
+    ["color-mix(in srgb, lab(100% 104.3 -50.9), red)", "#ff4bb3"],
+    // color(srgb 0.351 -0.214 0.300); used to be #2a0022.
+    ["color-mix(in srgb, lab(0% 104.3 -50.9), lab(0% 104.3 -50.9))", "#5a004c"],
+    // color(srgb -1.207 1.316 -0.489); used to be #a7ffc3 and #d5ffd4.
+    ["color-mix(in srgb, color(xyz 0 1 0) 75%, lime)", "#0f0"],
+    ["color-mix(in srgb, color(xyz 0 1 0) 50%, white)", "#00ff41"],
+    // color(srgb 0 1.194 0) and color(srgb 1.353 1.353 0); used to be #edffea and white.
+    ["color-mix(in srgb, color(srgb-linear 0 1.5 0), color(srgb-linear 0 1.5 0))", "#0f0"],
+    ["color-mix(in srgb, color(srgb-linear 0 1.5 0 / 0.5), color(srgb-linear 0 1.5 0 / 0.5))", "#00ff0080"],
+    ["color-mix(in srgb, color(srgb-linear 2 2 0), color(srgb-linear 2 2 0))", "#ff0"],
     [
-      "color-mix(in srgb, color(srgb-linear -0.003 1 0 / 0.5), color(srgb-linear -0.003 1 0 / 0.5))",
-      "color(srgb -.03876 1 0 / .5)",
+      "color-mix(in srgb, light-dark(color(display-p3 0 1 0), red), light-dark(color(display-p3 0 1 0), blue))",
+      "light-dark(#0f0, purple)",
     ],
-    [
-      "color-mix(in srgb, light-dark(color(srgb-linear -0.003 1 0), red), light-dark(color(srgb-linear -0.003 1 0), blue))",
-      "light-dark(color(srgb -.03876 1 0), purple)",
-    ],
+    // The inner mix is folded to 8 bits before the outer one uses it, as an in-gamut inner mix
+    // is too; browsers mix the unclipped inner result and get rgb(0, 130, 0) here.
+    ["color-mix(in srgb, color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0)), black)", "green"],
   ])("%s is %s", (input, expected) => {
     expect(color(input, "css")).toBe(expected);
   });
 
-  test("the output is a color Bun.color parses back unchanged", () => {
-    for (const input of [
-      "color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.001 1 0))",
-      "color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))",
-      "color-mix(in srgb, color(display-p3 0 0 1), color(display-p3 0 0 1))",
-    ]) {
-      const css = color(input, "css") as string;
-      expect(color(css, "css")).toBe(css);
-    }
-  });
-
-  describe("channels within conversion noise of the gamut are snapped onto it", () => {
-    // Converting this lab() red back to srgb leaves g and b around -1e-6.
-    test("a boundary color converted from lab() still folds to the 8-bit color", () => {
-      expect(color("color-mix(in srgb, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891))", "css")).toBe(
-        "red",
-      );
-    });
-
-    // display-p3 blue is color(srgb 0 -2e-7 1.04202): the blue channel is kept and the
-    // noise in the green channel is dropped rather than printed.
-    test("only the channels that are out of gamut keep their value", () => {
-      expect(color("color-mix(in srgb, color(display-p3 0 0 1), color(display-p3 0 0 1))", "css")).toMatch(
-        /^color\(srgb 0 0 1\.042\d*\)$/,
-      );
-      expect(color("color-mix(in srgb, color(display-p3 1 1 0), color(display-p3 1 1 0))", "css")).toMatch(
-        /^color\(srgb 1 1 -\.346\d*\)$/,
-      );
-    });
-
-    test("the tolerance is 1e-4", () => {
-      // 12.92 * -0.00001 = -0.0001292 is out of gamut.
-      expect(color("color-mix(in srgb, color(srgb-linear -0.00001 1 0), color(srgb-linear -0.00001 1 0))", "css")).toBe(
-        "color(srgb -.0001292 1 0)",
-      );
-      // 12.92 * -0.000005 / 2 = -0.0000323 is noise.
-      expect(color("color-mix(in srgb, color(srgb-linear -0.000005 1 0), lime)", "css")).toBe("#0f0");
+  test("every output format gets the clipped color", () => {
+    const mix = "color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))";
+    expect({
+      rgb: color(mix, "{rgb}"),
+      rgba: color(mix, "[rgba]"),
+      hex: color(mix, "hex"),
+      number: color(mix, "number"),
+      ansi: color(mix, "ansi-16m"),
+      hsl: color(mix, "hsl"),
+    }).toEqual({
+      rgb: { r: 0, g: 255, b: 0 },
+      rgba: [0, 255, 0, 255],
+      hex: "#00ff00",
+      number: 0x00ff00,
+      ansi: "\u001b[38;2;0;255;0m",
+      hsl: "hsl(120, 100%, 50%)",
     });
   });
 
+  // The gamut mapping already clipped a result whose clipped color is within its
+  // just-noticeable difference, so results that are only slightly out of gamut fold to the
+  // same color as before. The oklch() operands are Tailwind v4 palette entries in the shape
+  // of its color-mix() fallback declarations.
   test.each([
+    ["color-mix(in srgb, oklch(57.7% 0.245 27.325) 50%, transparent)", "#e7000b80"],
+    ["color-mix(in srgb, oklch(69.6% 0.17 162.48) 30%, transparent)", "#00bc7d4d"],
+    ["color-mix(in srgb, color(display-p3 0 1 0) 75%, white)", "#00ff04"],
+    ["color-mix(in srgb, color(display-p3 0 1 0) 25%, white)", "#9fffab"],
+    ["color-mix(in srgb, color(display-p3 0 0 1), color(display-p3 0 0 1))", "#00f"],
+    // Converting this lab() red back to srgb leaves g and b around -1e-6.
+    ["color-mix(in srgb, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891))", "red"],
     ["color-mix(in srgb, red, blue)", "purple"],
     ["color-mix(in srgb, red 25%, blue)", "#4000bf"],
     ["color-mix(in srgb, rgb(255 0 0 / 0.5), blue)", "#5500aac0"],
@@ -794,7 +767,9 @@ describe("color-mix() results outside the sRGB gamut", () => {
     ["color-mix(in hsl, hsl(none 100% 50%), hsl(none 100% 50%))", "red"],
     ["color-mix(in hwb, red, blue)", "#f0f"],
     ["color-mix(in hwb, hwb(120 0% 0% / 0.5), hwb(240 0% 0%))", "#00ffffc0"],
-  ])("%s still folds to %s", (input, expected) => {
+    ["rgb(none 0 0)", "#000"],
+    ["hsl(none 100% 50%)", "red"],
+  ])("%s is still %s", (input, expected) => {
     expect(color(input, "css")).toBe(expected);
   });
 });

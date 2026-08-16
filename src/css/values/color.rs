@@ -1742,17 +1742,13 @@ define_colorspace! {
     premultiply = rectangular;
     powerless = none;
     into_css = |srgb: &SRGB| {
-        // An 8-bit color when the color fits in the sRGB gamut (matching upstream
-        // lightningcss), otherwise the `color(srgb ...)` value browsers compute for it, as
-        // `parse_predefined_relative` produces for `color(from ... srgb r g b)`. Gamut
-        // mapping it into an 8-bit color (`into_rgba`) would emit a different color:
-        // browsers keep out-of-gamut channels and clip them when painting.
-        let srgb = srgb.resolve_missing().snap_to_gamut();
-        if srgb.in_gamut() {
-            CssColor::Rgba(RGBA::from_floats(srgb.r, srgb.g, srgb.b, srgb.alpha))
-        } else {
-            CssColor::Predefined(Box::new(PredefinedColor::Srgb(srgb)))
-        }
+        // Serializes through 8-bit RGBA like upstream lightningcss, except that a color
+        // outside the sRGB gamut (a `color-mix()` of wide-gamut operands) is clipped,
+        // which is what browsers paint for it, rather than gamut mapped (`into_rgba`),
+        // which is a different color: gamut mapping is for a fallback that precedes the
+        // real value in the output, whereas this replaces the value.
+        let srgb = srgb.resolve_missing().clip();
+        CssColor::Rgba(RGBA::from_floats(srgb.r, srgb.g, srgb.b, srgb.alpha))
     };
 }
 
@@ -1760,27 +1756,6 @@ impl SRGB {
     pub fn into_rgba(&self) -> RGBA {
         let rgb = self.resolve();
         RGBA::from_floats(rgb.r, rgb.g, rgb.b, rgb.alpha)
-    }
-
-    /// Moves the channels that are within conversion noise of the gamut boundary onto it,
-    /// leaving the others alone: a boundary color written in another space converts back
-    /// a few 1e-6 outside of [0, 1] (`lab(54.2905% 80.8049 69.891)`, which is `#ff0000`,
-    /// comes back with g = -8e-7). The tolerance is 0.03 of an 8-bit step.
-    fn snap_to_gamut(&self) -> SRGB {
-        const TOLERANCE: f32 = 1e-4;
-        let snap = |v: f32| {
-            if (-TOLERANCE..=1.0 + TOLERANCE).contains(&v) {
-                v.clamp(0.0, 1.0)
-            } else {
-                v
-            }
-        };
-        SRGB {
-            r: snap(self.r),
-            g: snap(self.g),
-            b: snap(self.b),
-            alpha: self.alpha,
-        }
     }
 }
 

@@ -1035,13 +1035,14 @@ extern "C" void Bun__registerSignalsForForwarding()
 #undef REGISTER_SIGNAL
 }
 
-extern "C" void Bun__unregisterSignalsForForwarding()
+// Returns true when this was the outermost caller and the previous dispositions were restored.
+extern "C" bool Bun__unregisterSignalsForForwarding()
 {
     Bun__currentSyncPID = 0;
 
     std::lock_guard<std::mutex> lock(signalForwardingLock);
     if (--signalForwardingDepth != 0)
-        return;
+        return false;
 
 #define UNREGISTER_SIGNAL(SIG)                                \
     if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
@@ -1050,6 +1051,7 @@ extern "C" void Bun__unregisterSignalsForForwarding()
     FOR_EACH_SIGNAL(UNREGISTER_SIGNAL)
     memset(previous_actions, 0, sizeof(previous_actions));
 #undef UNREGISTER_SIGNAL
+    return true;
 }
 
 #endif

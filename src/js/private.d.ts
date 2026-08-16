@@ -212,7 +212,7 @@ interface JSCommonJSModule {
  *
  * @returns whatever the binding function returns.
  */
-declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
+declare function $cpp(filename: NativeFilenameCPP, symbol: string): any;
 /**
  * Call a native Rust binding function, getting whatever it returns.
  *
@@ -230,17 +230,13 @@ declare function $cpp<T = any>(filename: NativeFilenameCPP, symbol: string): T;
  *
  * @returns whatever the binding function returns.
  */
-declare function $rust<T = any>(filename: NativeFilenameRust, symbol: string): T;
-declare function $newCppFunction<T = (...args: any) => any>(
-  filename: NativeFilenameCPP,
-  symbol: string,
-  argCount: number,
-): T;
-declare function $newRustFunction<T = (...args: any) => any>(
+declare function $rust(filename: NativeFilenameRust, symbol: string): any;
+declare function $newCppFunction(filename: NativeFilenameCPP, symbol: string, argCount: number): (...args: any) => any;
+declare function $newRustFunction(
   filename: NativeFilenameRust,
   symbol: string,
   argCount: number,
-): T;
+): (...args: any) => any;
 /**
  * Retrieves a handle to a function defined in native code, defined in a
  * `.bind.ts` file. For more information on how to define bindgen functions, see
@@ -248,7 +244,7 @@ declare function $newRustFunction<T = (...args: any) => any>(
  * @param filename - The basename of the `.bind.ts` file.
  * @param symbol - The name of the function to call.
  */
-declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
+declare function $bindgenFn(filename: string, symbol: string): (...args: any) => any;
 // NOTE: $debug, $assert, and $isPromiseFulfilled omitted
 
 declare module "node:net" {

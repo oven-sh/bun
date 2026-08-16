@@ -170,11 +170,13 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
       expect(deepEquals(makeB(), makeA())).toBe(false);
     });
 
+    // new DOMException("boom") has the default name "Error", so the plain object
+    // and the Error below match it on name and message; only the kind of object
+    // differs.
     it.each([
       ["an empty object", () => ({})],
-      ["an object with the same name and message as own properties", () => ({ name: "Error", message: "boom" })],
-      ["an Error with the same message", () => new Error("boom")],
-      ["an Error with the same name and message", () => Object.assign(new Error("boom"), { name: "AbortError" })],
+      ["a plain object with name and message properties", () => ({ name: "Error", message: "boom" })],
+      ["an Error", () => new Error("boom")],
     ])("a DOMException is never equal to %s", (_label, makeOther) => {
       expect(deepEquals(new DOMException("boom"), makeOther())).toBe(false);
       expect(deepEquals(makeOther(), new DOMException("boom"))).toBe(false);

@@ -614,11 +614,15 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
       "job.ts": `export default { scheduled() {} };`,
     });
 
+    // A foreign line shares the schedule that gets replaced.
+    writeCrontab("0 * * * * /usr/bin/some-other-job\n");
     await Bun.cron(`${dir}/job.ts`, "0 * * * *", "test-replace");
     await Bun.cron(`${dir}/job.ts`, "30 2 * * 1", "test-replace");
 
+    const crontab = readCrontab();
+    expect(crontab).toContain("0 * * * * /usr/bin/some-other-job\n");
     // One marker and one command line: the first entry's pair is gone.
-    expect(entryLines(readCrontab(), "test-replace")).toEqual([
+    expect(entryLines(crontab, "test-replace")).toEqual([
       "# bun-cron: test-replace",
       expect.stringMatching(/^30 2 \* \* 1 /),
     ]);
@@ -753,8 +757,11 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
     using _restore = saveCrontabState();
     writeCrontab(
       [
+        // Two runs died in different tests, leaving adjacent blocks.
         "# bun-cron: test-stale",
         "30 2 * * 1 '/old/bun' run --cron-title=test-stale --cron-period='30 2 * * 1' '/gone/job.ts'",
+        "# bun-cron: test-rm-keep",
+        "0 * * * * '/old/bun' run --cron-title=test-rm-keep --cron-period='0 * * * *' '/gone/a.ts'",
         "30 2 * * 1 /usr/bin/some-other-job",
         "# bun-cron: not-a-test-job",
         "* * * * * /usr/bin/not-a-test-job",

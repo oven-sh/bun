@@ -306,7 +306,11 @@ mod _impl {
                     let imp = unsafe { &*wtf };
                     // `--` and option names are ASCII, so a 16-bit entry is neither:
                     // it is an ordinary token that terminates nothing and awaits nothing.
-                    let bytes: &[u8] = if imp.is_8bit() { imp.latin1_slice() } else { b"" };
+                    let bytes: &[u8] = if imp.is_8bit() {
+                        imp.latin1_slice()
+                    } else {
+                        b""
+                    };
                     if bytes == b"--" {
                         end = i;
                         break;

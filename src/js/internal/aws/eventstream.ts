@@ -197,8 +197,9 @@ function toBytes(chunk: unknown): Uint8Array {
 /** A non-2xx response carries a plain (JSON) error document, not frames. */
 async function responseError(response: Response): Promise<Error> {
   let body = "";
-  if (response.body && !response.bodyUsed && !response.body.locked) {
-    const reader = response.body.getReader();
+  const stream = response.bodyUsed ? null : response.body;
+  if (stream && !stream.locked) {
+    const reader = stream.getReader();
     const parts: Uint8Array[] = [];
     let size = 0;
     try {

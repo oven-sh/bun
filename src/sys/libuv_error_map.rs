@@ -4,6 +4,9 @@ use crate::SystemErrno;
 
 /// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.
 //
+// The rows are `UV_ERRNO_MAP` from `src/jsc/bindings/libuv/uv.h`, in its order;
+// `test/internal/source-lints/libuv-error-map.test.ts` checks the two stay in sync.
+//
 // `SystemErrno`'s variant set differs per target OS, so the per-OS filter is
 // expressed as `#[cfg]` guards on the few entries whose variants are not
 // present on every target. The `EAI_*` and `UNKNOWN` rows from uv.h are
@@ -70,11 +73,9 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::ENOTDIR as usize] = "not a directory";
     arr[SystemErrno::ENOTEMPTY as usize] = "directory not empty";
     arr[SystemErrno::ENOTSOCK as usize] = "socket operation on non-socket";
-    // FreeBSD has no real `ENOTSUP` variant (it aliases `EOPNOTSUPP` via an associated const).
-    #[cfg(not(target_os = "freebsd"))]
-    {
-        arr[SystemErrno::ENOTSUP as usize] = "operation not supported on socket";
-    }
+    // On FreeBSD `SystemErrno::ENOTSUP` is the `EOPNOTSUPP` alias, which is also what libuv's
+    // `UV_ENOTSUP` is there (`<sys/errno.h>` defines `ENOTSUP` as `EOPNOTSUPP`).
+    arr[SystemErrno::ENOTSUP as usize] = "operation not supported on socket";
     arr[SystemErrno::EOVERFLOW as usize] = "value too large for defined data type";
     arr[SystemErrno::EPERM as usize] = "operation not permitted";
     arr[SystemErrno::EPIPE as usize] = "broken pipe";
@@ -115,6 +116,7 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     {
         arr[SystemErrno::EUNATCH as usize] = "protocol driver not attached";
     }
+    arr[SystemErrno::ENOEXEC as usize] = "exec format error";
 
     EnumMap::from_array(arr)
 }

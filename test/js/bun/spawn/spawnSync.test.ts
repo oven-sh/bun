@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMusl, isPosix, isWindows, tempDir } from "harness";
+import { chmodSync } from "node:fs";
 import { join } from "path";
 describe("spawnSync", () => {
   it("should throw a RangeError if timeout is less than 0", () => {
@@ -96,6 +97,30 @@ describe("spawnSync", () => {
       // The grandchild holds the pipe open and writes nothing; timeout must fire.
       expect({ stdout: stdout.toString(), exitedDueToTimeout }).toEqual({ stdout: "A", exitedDueToTimeout: true });
     });
+  });
+
+  // exec() of a file in no format the kernel knows (here: a script without a
+  // shebang line) fails with ENOEXEC, and the message must carry libuv's text
+  // for it like every other spawn failure's does. Windows never reports ENOEXEC
+  // (its libuv maps an unloadable image to EFTYPE or UNKNOWN), so POSIX-only.
+  it.if(isPosix)("reports ENOEXEC with libuv's text for a file that is not an executable", () => {
+    using dir = tempDir("spawn-enoexec", { "no-shebang.sh": "echo hello\n" });
+    const file = join(String(dir), "no-shebang.sh");
+    chmodSync(file, 0o755);
+
+    const thrownBy = (spawnIt: () => unknown) => {
+      try {
+        spawnIt();
+      } catch (error: any) {
+        return { code: error.code, message: error.message };
+      }
+      return "did not throw";
+    };
+    const expected = { code: "ENOEXEC", message: `ENOEXEC: exec format error, posix_spawn '${file}'` };
+    expect({
+      spawnSync: thrownBy(() => Bun.spawnSync({ cmd: [file] })),
+      spawn: thrownBy(() => Bun.spawn({ cmd: [file] })),
+    }).toEqual({ spawnSync: expected, spawn: expected });
   });
 });
 

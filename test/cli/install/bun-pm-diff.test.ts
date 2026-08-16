@@ -301,6 +301,81 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  test("--json: one document with labels, per-file status/counts/patch, plain-text notes and totals", async () => {
+    const { stdout, exitCode } = await diff(["diffme@1.0.0", "2.0.0", "--json"]);
+    const j = JSON.parse(stdout);
+    expect(j.from).toBe("diffme@1.0.0");
+    expect(j.to).toBe("diffme@2.0.0");
+    expect(j.files.map((f: any) => [f.path, f.status, f.linesAdded, f.linesRemoved])).toEqual([
+      ["README.md", "modified", 1, 1],
+      ["gone.txt", "deleted", 0, 1],
+      ["index.js", "modified", 1, 1],
+      ["logo.bin", "added", 0, 0],
+      ["package.json", "modified", 7, 3],
+      ["setup.js", "added", 1, 0],
+    ]);
+    expect(j.files.find((f: any) => f.path === "index.js").patch).toBe(
+      "@@ -1,3 +1,3 @@\n module.exports = function () {\n-  return 1;\n+  return 2;\n };\n",
+    );
+    expect(j.files.find((f: any) => f.path === "logo.bin")).toMatchObject({ binary: true, bytesAfter: 6 });
+    expect(j.notes).toEqual([
+      "postinstall script added: node setup.js",
+      "dependencies added: left-pad@^1.3.0",
+      "main changed: index.js → dist/index.js",
+      "new binary file logo.bin (6 bytes)",
+    ]);
+    expect(j.totals).toEqual({ files: 6, added: 2, deleted: 1, linesAdded: 10, linesRemoved: 6, formattingOnly: 0 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the registry token is sent to the registry, never to a foreign dist.tarball host", async () => {
+    // Registry A demands a bearer token and points 2.0.0's tarball at host B; B must not see the token.
+    const seen = { a: [] as (string | null)[], b: [] as (string | null)[] };
+    using foreign = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.b.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tarballs["2.0.0"]));
+      },
+    });
+    using authed = Bun.serve({
+      port: 0,
+      fetch(req) {
+        seen.a.push(req.headers.get("authorization"));
+        if (req.headers.get("authorization") !== "Bearer sekrit") return new Response("no", { status: 401 });
+        const url = new URL(req.url);
+        if (url.pathname === "/diffme") {
+          return Response.json({
+            name: "diffme",
+            "dist-tags": { latest: "2.0.0" },
+            versions: {
+              "1.0.0": { name: "diffme", version: "1.0.0", dist: { tarball: `${authed.url.origin}/diffme/-/diffme-1.0.0.tgz` } },
+              "2.0.0": { name: "diffme", version: "2.0.0", dist: { tarball: `${foreign.url.origin}/stolen/diffme-2.0.0.tgz` } },
+            },
+          });
+        }
+        return new Response(Bun.file(tarballs["1.0.0"]));
+      },
+    });
+    using dir = tempDir("pm-diff-auth", {
+      "bunfig.toml": `[install]\nregistry = { url = "${authed.url.origin}/", token = "sekrit" }\n`,
+    });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "diffme@1.0.0", "2.0.0", "--name-only"],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
+    expect(seen.a.every(h => h === "Bearer sekrit")).toBe(true);
+    expect(seen.a.length).toBeGreaterThanOrEqual(2);
+    expect(seen.b).toEqual([null]);
+    expect(exitCode).toBe(0);
+  });
+
   test("errors: unknown package, no matching version, too many specs", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);

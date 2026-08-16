@@ -31,6 +31,8 @@ use bun_core::fmt::buf_print_infallible as buf_print;
 pub(crate) struct DiffFlags {
     /// Compare bytes, not the canonical re-print of JS/CSS/JSON.
     pub raw: bool,
+    /// One JSON document instead of text.
+    pub json: bool,
     /// Lockstep-rename short locals in every JS file, not only ones that look minified.
     pub unminify: bool,
     /// Fold equivalent syntax as well as layout.
@@ -662,6 +664,8 @@ struct FileChange<'a> {
     path: &'a [u8],
     highlight: bool,
     semantic: Semantic,
+    /// Both sides re-print identically (known in every mode; only the terminal view acts on it).
+    formatting_only: bool,
     /// New `import`/`require` specifiers and risky-API counts vs the old side, filled when both sides parsed.
     new_imports: Vec<Vec<u8>>,
     signal_deltas: Vec<(&'static str, usize)>,
@@ -723,7 +727,7 @@ fn count_lines(bytes: &[u8]) -> usize {
 }
 
 fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
-    let style = Style::detect();
+    let style = Style::detect(flags);
     let mut changes: Vec<FileChange> = Vec::new();
 
     let mut paths: Vec<&[u8]> = left
@@ -806,6 +810,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                 }
             }
         }
+        change.formatting_only =
+            matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
         match (old, new, &norm_old, &norm_new) {
             // Patch output must apply to the real files, so only the terminal view uses the re-print.
             (Some(_), Some(_), Some(no), Some(nn)) if style.pretty && no.text == nn.text => {
@@ -903,6 +909,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         changes.push(change);
     }
 
+    if flags.json {
+        print_json(left, right, &changes, flags);
+        return;
+    }
     if style.pretty {
         prettyln!("");
     }
@@ -1115,19 +1125,44 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
         );
     }
 
+    let notes = collect_notes(left, right, changes, style.pretty);
+    let mark = pretty_fmt_owned(
+        if style.pretty {
+            "  <yellow>▲<r> "
+        } else {
+            "  ! "
+        },
+        style.pretty,
+    );
+    for n in &notes {
+        Output::print(format_args!("{mark}{n}\n"));
+    }
+}
+
+/// The changes worth a second look, as colour-tagged strings (user text already escaped).
+fn collect_notes(
+    left: &Tree,
+    right: &Tree,
+    changes: &[FileChange<'_>],
+    colors: bool,
+) -> Vec<String> {
     let mut notes: Vec<String> = Vec::new();
     package_json_notes(
         left.files.get(b"package.json".as_slice()),
         right.files.get(b"package.json".as_slice()),
         &mut notes,
+        colors,
     );
-    ast_notes(changes, &mut notes);
+    ast_notes(changes, &mut notes, colors);
     for c in changes {
         if c.binary && c.old.is_none() {
-            notes.push(format!(
+            notes.push(note(
+                colors,
                 "new binary file <b>{}<r> ({} bytes)",
-                Esc(c.path),
-                c.new.map_or(0, <[u8]>::len)
+                &[
+                    (BStr::new(c.path)).to_string(),
+                    (c.new.map_or(0, <[u8]>::len)).to_string(),
+                ],
             ));
         }
         if c.old.is_none()
@@ -1136,21 +1171,96 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
                 || strings::ends_with(c.path, b".exe"))
             && !c.binary
         {
-            notes.push(format!("new executable-looking file <b>{}<r>", Esc(c.path)));
+            notes.push(note(
+                colors,
+                "new executable-looking file <b>{}<r>",
+                &[(BStr::new(c.path)).to_string()],
+            ));
         }
     }
-    if !notes.is_empty() {
-        let mark = if style.pretty { "▲" } else { "!" };
-        for n in &notes {
-            #[allow(clippy::disallowed_methods)]
-            Output::pretty(format_args!("  <yellow>{}<r> {}\n", mark, n));
-        }
+    notes
+}
+
+/// `--json`: one document with both labels, per-file status/counts/patch text, the notes as plain strings, and totals.
+fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: DiffFlags) {
+    fn js(s: &[u8]) -> bun_core::fmt::JSONFormatterUTF8<'_> {
+        bun_core::fmt::format_json_string_utf8(s, Default::default())
     }
+    let mut out: Vec<u8> = Vec::with_capacity(4096);
+    let _ = write!(
+        out,
+        "{{\n  \"from\": {},\n  \"to\": {},\n  \"files\": [",
+        js(&left.label),
+        js(&right.label)
+    );
+    let (mut lines_added, mut lines_removed, mut added, mut deleted) =
+        (0usize, 0usize, 0usize, 0usize);
+    for (i, c) in changes.iter().enumerate() {
+        let status = match (c.old, c.new) {
+            (None, Some(_)) => {
+                added += 1;
+                "added"
+            }
+            (Some(_), None) => {
+                deleted += 1;
+                "deleted"
+            }
+            _ => "modified",
+        };
+        lines_added += c.added;
+        lines_removed += c.removed;
+        let _ = write!(
+            out,
+            "{}\n    {{ \"path\": {}, \"status\": \"{}\", \"binary\": {}, \"sourceMap\": {}, \"formattingOnly\": {}, \"linesAdded\": {}, \"linesRemoved\": {}, \"bytesBefore\": {}, \"bytesAfter\": {}",
+            if i == 0 { "" } else { "," },
+            js(c.path),
+            status,
+            c.binary,
+            c.sourcemap,
+            c.formatting_only,
+            c.added,
+            c.removed,
+            c.old.map_or(0, <[u8]>::len),
+            c.new.map_or(0, <[u8]>::len),
+        );
+        if !flags.name_only && !flags.stat && !c.binary && !c.sourcemap {
+            let _ = write!(out, ", \"patch\": {}", js(&c.hunks));
+        }
+        out.extend_from_slice(b" }");
+    }
+    let _ = write!(
+        out,
+        "{}],\n  \"notes\": [",
+        if changes.is_empty() { "" } else { "\n  " }
+    );
+    for (i, n) in collect_notes(left, right, changes, false)
+        .iter()
+        .enumerate()
+    {
+        let _ = write!(
+            out,
+            "{}{}",
+            if i == 0 { "" } else { ", " },
+            js(n.as_bytes())
+        );
+    }
+    let formatting_only = changes.iter().filter(|c| c.formatting_only).count();
+    let _ = write!(
+        out,
+        "],\n  \"totals\": {{ \"files\": {}, \"added\": {}, \"deleted\": {}, \"linesAdded\": {}, \"linesRemoved\": {}, \"formattingOnly\": {} }}\n}}\n",
+        changes.len(),
+        added,
+        deleted,
+        lines_added,
+        lines_removed,
+        formatting_only
+    );
+    Output::print(format_args!("{}", BStr::new(&out)));
 }
 
 /// What the parser saw that a reviewer would want to know: new imports of consequential builtins, other new
 /// module specifiers, and growth in risky API use — aggregated across files so a 40-file package stays readable.
-fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>) {
+fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) {
     let mut builtins: Vec<(Vec<u8>, &[u8])> = Vec::new();
     let mut packages: Vec<Vec<u8>> = Vec::new();
     for c in changes {
@@ -1165,24 +1275,28 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>) {
         }
     }
     for (b, path) in &builtins {
-        notes.push(format!(
+        notes.push(note(
+            colors,
             "now imports <b><magenta>{}<r> <d>({})<r>",
-            Esc(b),
-            Esc(path)
+            &[(BStr::new(b)).to_string(), (BStr::new(path)).to_string()],
         ));
     }
     if !packages.is_empty() {
         let shown: Vec<String> = packages
             .iter()
             .take(6)
-            .map(|p| format!("<b>{}<r>", Esc(p)))
+            .map(|p| note(colors, "<b>{}<r>", &[BStr::new(p).to_string()]))
             .collect();
         let more = if packages.len() > 6 {
-            format!(" <d>… and {} more<r>", packages.len() - 6)
+            note(
+                colors,
+                " <d>… and {} more<r>",
+                &[(packages.len() - 6).to_string()],
+            )
         } else {
             String::new()
         };
-        notes.push(format!("new module imports: {}{}", shown.join(", "), more));
+        notes.push([String::from("new module imports: "), shown.join(", "), more].concat());
     }
     let mut totals: Vec<(&'static str, usize, &[u8])> = Vec::new();
     for c in changes {
@@ -1198,31 +1312,43 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>) {
         if label.ends_with("URL") && n < 3 {
             continue;
         }
-        notes.push(format!(
-            "<b>+{n}<r> {label} <d>({}{})<r>",
-            Esc(first_path),
-            if n > 1 { ", …" } else { "" }
+        notes.push(note(
+            colors,
+            "<b>+{}<r> {} <d>({}{})<r>",
+            &[
+                (n).to_string(),
+                (label).to_string(),
+                (BStr::new(first_path)).to_string(),
+                (if n > 1 { ", …" } else { "" }).to_string(),
+            ],
         ));
     }
 }
 
-/// User-controlled text headed for `Output::pretty`: `<`/`>` would otherwise be read as colour tags.
-struct Esc<T: AsRef<[u8]>>(T);
-impl<T: AsRef<[u8]>> core::fmt::Display for Esc<T> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for chunk in self.0.as_ref().utf8_chunks() {
-            for ch in chunk.valid().chars() {
-                if ch == '<' || ch == '>' {
-                    f.write_str("\\")?;
-                }
-                core::fmt::Write::write_char(f, ch)?;
-            }
-            if !chunk.invalid().is_empty() {
-                f.write_str("\u{FFFD}")?;
-            }
+/// Renders our colour-tag `template` first and only then drops the (untrusted) `args` into its `{}` slots, so
+/// package.json text can never be read as markup.
+fn note(colors: bool, template: &str, args: &[String]) -> String {
+    let rendered = pretty_fmt_owned(template, colors);
+    let mut out = String::with_capacity(rendered.len() + 32);
+    let mut args = args.iter();
+    let mut rest = rendered.as_str();
+    while let Some(at) = rest.find("{}") {
+        out.push_str(&rest[..at]);
+        if let Some(a) = args.next() {
+            out.push_str(a);
         }
-        Ok(())
+        rest = &rest[at + 2..];
     }
+    out.push_str(rest);
+    out
+}
+
+fn pretty_fmt_owned(template: &str, colors: bool) -> String {
+    String::from_utf8_lossy(&bun_core::output::pretty_fmt_runtime(
+        template.as_bytes(),
+        colors,
+    ))
+    .into_owned()
 }
 
 /// `name@version` → (name, version), minding a leading scope `@`.
@@ -1231,7 +1357,12 @@ fn split_label(label: &[u8]) -> Option<(&[u8], &[u8])> {
     (at > 0).then(|| (&label[..at], &label[at + 1..]))
 }
 
-fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut Vec<String>) {
+fn package_json_notes(
+    old: Option<&Vec<u8>>,
+    new: Option<&Vec<u8>>,
+    notes: &mut Vec<String>,
+    colors: bool,
+) {
     let (Some(old), Some(new)) = (old, new) else {
         return;
     };
@@ -1264,15 +1395,15 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
         let o = old_scripts.and_then(|s| s.get_string_cloned(&bump, key).ok().flatten());
         let n = new_scripts.and_then(|s| s.get_string_cloned(&bump, key).ok().flatten());
         match (o, n) {
-            (None, Some(n)) => notes.push(format!(
+            (None, Some(n)) => notes.push(note(
+                colors,
                 "<b>{}<r> script added: <cyan>{}<r>",
-                Esc(key),
-                Esc(n)
+                &[(BStr::new(key)).to_string(), (BStr::new(n)).to_string()],
             )),
-            (Some(o), Some(n)) if o != n => notes.push(format!(
+            (Some(o), Some(n)) if o != n => notes.push(note(
+                colors,
                 "<b>{}<r> script changed: <cyan>{}<r>",
-                Esc(key),
-                Esc(n)
+                &[(BStr::new(key)).to_string(), (BStr::new(n)).to_string()],
             )),
             _ => {}
         }
@@ -1304,18 +1435,24 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
         let mut bumps: Vec<String> = Vec::new();
         for (name, ver) in &n {
             match o.iter().find(|(on, _)| on == name) {
-                None => notes.push(format!(
+                None => notes.push(note(
+                    colors,
                     "{} added: <b>{}<r>@{}",
-                    Esc(field),
-                    Esc(name),
-                    Esc(ver)
+                    &[
+                        (BStr::new(field)).to_string(),
+                        (BStr::new(name)).to_string(),
+                        (BStr::new(ver)).to_string(),
+                    ],
                 )),
-                Some((_, ov)) if ov != ver => bumps.push(format!(
+                Some((_, ov)) if ov != ver => bumps.push(note(
+                    colors,
                     "{} <b>{}<r>: {} → {}",
-                    Esc(field),
-                    Esc(name),
-                    Esc(ov),
-                    Esc(ver)
+                    &[
+                        (BStr::new(field)).to_string(),
+                        (BStr::new(name)).to_string(),
+                        (BStr::new(ov)).to_string(),
+                        (BStr::new(ver)).to_string(),
+                    ],
                 )),
                 _ => {}
             }
@@ -1324,16 +1461,23 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
         if bumps.len() > 4 {
             let rest = bumps.len() - 3;
             bumps.truncate(3);
-            bumps.push(format!(
+            bumps.push(note(
+                colors,
                 "<d>… and {} more {} version changes<r>",
-                rest,
-                Esc(field)
+                &[(rest).to_string(), (BStr::new(field)).to_string()],
             ));
         }
         notes.append(&mut bumps);
         for (name, _) in &o {
             if !n.iter().any(|(nn, _)| nn == name) {
-                notes.push(format!("{} removed: <b>{}<r>", Esc(field), Esc(name)));
+                notes.push(note(
+                    colors,
+                    "{} removed: <b>{}<r>",
+                    &[
+                        (BStr::new(field)).to_string(),
+                        (BStr::new(name)).to_string(),
+                    ],
+                ));
             }
         }
     }
@@ -1350,14 +1494,25 @@ fn package_json_notes(old: Option<&Vec<u8>>, new: Option<&Vec<u8>>, notes: &mut 
         let n = new.get(field).map(|e| expr_text(&e, &bump));
         if o != n {
             match (o, n) {
-                (Some(o), Some(n)) => notes.push(format!(
+                (Some(o), Some(n)) => notes.push(note(
+                    colors,
                     "<b>{}<r> changed: {} → {}",
-                    Esc(field),
-                    Esc(&o),
-                    Esc(&n)
+                    &[
+                        (BStr::new(field)).to_string(),
+                        (BStr::new(&o)).to_string(),
+                        (BStr::new(&n)).to_string(),
+                    ],
                 )),
-                (None, Some(n)) => notes.push(format!("<b>{}<r> added: {}", Esc(field), Esc(&n))),
-                (Some(_), None) => notes.push(format!("<b>{}<r> removed", Esc(field))),
+                (None, Some(n)) => notes.push(note(
+                    colors,
+                    "<b>{}<r> added: {}",
+                    &[(BStr::new(field)).to_string(), (BStr::new(&n)).to_string()],
+                )),
+                (Some(_), None) => notes.push(note(
+                    colors,
+                    "<b>{}<r> removed",
+                    &[(BStr::new(field)).to_string()],
+                )),
                 (None, None) => {}
             }
         }
@@ -1437,8 +1592,8 @@ struct Style {
 }
 
 impl Style {
-    fn detect() -> Style {
-        let pretty = Output::enable_ansi_colors_stdout();
+    fn detect(flags: DiffFlags) -> Style {
+        let pretty = !flags.json && Output::enable_ansi_colors_stdout();
         let width = bun_core::output::File::from(bun_core::Fd::stdout())
             .winsize()
             .map_or(80, |w| w.col as usize)

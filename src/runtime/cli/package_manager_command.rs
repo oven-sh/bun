@@ -249,6 +249,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         };
         let diff_flags = PmDiffCommand::DiffFlags {
             raw: cli.diff_raw,
+            json: cli.json_output,
             unminify: cli.diff_unminify,
             minify: cli.diff_minify,
             ignore_space: cli.diff_ignore_space,

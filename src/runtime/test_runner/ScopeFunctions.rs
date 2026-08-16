@@ -152,10 +152,8 @@ impl ScopeFunctions {
     ) -> JsResult<TestCallbacks> {
         let pair = bun_jsc::cpp::Bun__TestFixtures__wrapCallback(global, self.fixtures, callback)?;
         rooted.append(pair);
-        let run = pair.get_index(global, 0)?.with_async_context_if_needed(global);
-        rooted.append(run);
-        let teardown = pair.get_index(global, 1)?.with_async_context_if_needed(global);
-        rooted.append(teardown);
+        let run = pair.get_index(global, 0)?;
+        let teardown = pair.get_index(global, 1)?;
         Ok(TestCallbacks { callback: Some(run), fixture_teardown: Some(teardown) })
     }
 }
@@ -349,7 +347,8 @@ impl ScopeFunctions {
         line_no: u32,
     ) -> JsResult<()> {
         let _g = group_log::begin();
-        let TestCallbacks { callback, fixture_teardown } = callbacks;
+        let callback = callbacks.callback.map(|cb| cb.with_async_context_if_needed(global));
+        let fixture_teardown = callbacks.fixture_teardown.map(|cb| cb.with_async_context_if_needed(global));
 
         // only allow in collection phase
         match bun_test.phase {
@@ -680,7 +679,8 @@ pub(crate) fn parse_arguments(
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
+        // An AsyncContextFrame is not callable, so callers measure, bind and wrap the callback before attaching the context.
+        Some(callback)
     } else {
         let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));

@@ -426,7 +426,7 @@ const test = base.extend<{ db: Database }>({
 
 #### Lifecycle
 
-For each test, fixtures are set up after the `beforeEach` hooks and torn down after the `afterEach` hooks, in reverse setup order. Teardown always runs, including when the test fails, times out, or a hook throws, and an error thrown during teardown fails the test.
+For each test, fixtures are set up after the `beforeEach` hooks and torn down after the `afterEach` hooks, in reverse setup order; `onTestFinished` callbacks run last, after the fixtures are torn down. Teardown always runs, including when the test fails, times out, or a hook throws, and an error thrown during teardown fails the test.
 
 The fixtures a test uses are detected from the destructuring pattern of its context parameter, so the parameter must be written as an object destructuring pattern (`({ db }) => ...`, or `({}, use) => ...` for a fixture that depends on nothing); rest elements (`...rest`) are not supported. Fixtures are **lazy**: a fixture is only set up when the test, or another fixture it uses, destructures it. To set a fixture up for every test regardless, pass `{ auto: true }`:
 

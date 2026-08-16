@@ -180,6 +180,7 @@ pub mod js_fns {
             } else {
                 false
             };
+            let callback = args.callback.map(|cb| cb.with_async_context_if_needed(global_this));
 
             let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
@@ -200,7 +201,7 @@ pub mod js_fns {
 
                 let _ = bun_test_root.hook_scope.append_hook(
                     tag.as_hook_tag().unwrap(),
-                    args.callback,
+                    callback,
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
@@ -218,7 +219,7 @@ pub mod js_fns {
                     }
                     let _ = bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
-                        args.callback,
+                        callback,
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
@@ -291,7 +292,7 @@ pub mod js_fns {
 
                     let new_item = ExecutionEntry::create(
                         None,
-                        args.callback,
+                        callback,
                         cfg,
                         None,
                         BaseScopeCfg::default(),

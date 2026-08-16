@@ -308,6 +308,58 @@ test.concurrent("hooks may be registered during preload, test/describe may not",
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("tests and hooks registered inside an AsyncLocalStorage context run in it", async () => {
+  using dir = tempDir("bun-test-als-registration", {
+    "a.test.ts": `
+      import { test, describe, beforeEach, afterEach, onTestFinished } from "bun:test";
+      import { AsyncLocalStorage } from "node:async_hooks";
+      const als = new AsyncLocalStorage<string>();
+      const log = (what: string) => console.log(what + ": " + als.getStore());
+      als.run("store", () => {
+        describe("registered in als.run", () => {
+          beforeEach(() => log("beforeEach"), 1000);
+          afterEach(() => log("afterEach"), 1000);
+          test("without parameters", () => {
+            onTestFinished(() => log("onTestFinished"));
+            log("test");
+          }, 1000);
+          test("with a done callback", done => {
+            log("done test");
+            done();
+          }, 1000);
+          test.each([1, 2])("each %d", n => log("each " + n), 1000);
+        });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./a.test.ts"],
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "bun test <version> (<revision>)
+    beforeEach: store
+    test: store
+    afterEach: store
+    onTestFinished: store
+    beforeEach: store
+    done test: store
+    afterEach: store
+    beforeEach: store
+    each 1: store
+    afterEach: store
+    beforeEach: store
+    each 2: store
+    afterEach: store"
+  `);
+  expect(stderr).toContain("4 pass");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("test/describe and hooks throw outside of the test runner", async () => {
   await using proc = Bun.spawn({
     cmd: [

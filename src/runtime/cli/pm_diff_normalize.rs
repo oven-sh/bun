@@ -23,9 +23,10 @@ pub(crate) enum Kind {
 
 bun_core::comptime_string_map! {
     static KINDS: Kind = {
-        b"js" => Kind::Js(bun_ast::Loader::Js),
-        b"mjs" => Kind::Js(bun_ast::Loader::Js),
-        b"cjs" => Kind::Js(bun_ast::Loader::Js),
+        // Plenty of packages ship JSX in `.js`; the JSX loader is a superset.
+        b"js" => Kind::Js(bun_ast::Loader::Jsx),
+        b"mjs" => Kind::Js(bun_ast::Loader::Jsx),
+        b"cjs" => Kind::Js(bun_ast::Loader::Jsx),
         b"jsx" => Kind::Js(bun_ast::Loader::Jsx),
         b"ts" => Kind::Js(bun_ast::Loader::Ts),
         b"mts" => Kind::Js(bun_ast::Loader::Ts),
@@ -34,6 +35,82 @@ bun_core::comptime_string_map! {
         b"css" => Kind::Css,
         b"json" => Kind::Json,
     };
+}
+
+pub(crate) fn is_typescript(path: &[u8]) -> bool {
+    matches!(
+        kind_for(path),
+        Some(Kind::Js(bun_ast::Loader::Ts | bun_ast::Loader::Tsx))
+    )
+}
+
+/// The comments of a JS/TS/CSS file, whitespace-trimmed, in order — what the re-print cannot vouch for. A small
+/// scanner (strings, templates and regex-looking slashes are skipped); when in doubt it reports a comment, which
+/// only ever costs a "formatting only" label, never hides a change.
+pub(crate) fn comments_of<'a>(path: &[u8], text: &'a [u8]) -> Vec<&'a [u8]> {
+    let mut out = Vec::new();
+    if !matches!(kind_for(path), Some(Kind::Js(_) | Kind::Css)) {
+        return out;
+    }
+    let (mut i, n) = (0usize, text.len());
+    let mut last_significant = b'\n';
+    while i < n {
+        let b = text[i];
+        match b {
+            b'/' if text.get(i + 1) == Some(&b'/') => {
+                let end = bun_core::strings::index_of_char(&text[i..], b'\n')
+                    .map_or(n, |e| i + e as usize);
+                out.push(text[i..end].trim_ascii());
+                i = end;
+            }
+            b'/' if text.get(i + 1) == Some(&b'*') => {
+                let end =
+                    bun_core::strings::index_of(&text[i + 2..], b"*/").map_or(n, |e| i + 2 + e + 2);
+                out.push(text[i..end.min(n)].trim_ascii());
+                i = end.min(n);
+            }
+            // A `/` after an operand divides; anywhere else it starts a regex literal — skip to its end.
+            b'/' if !(last_significant.is_ascii_alphanumeric()
+                || matches!(last_significant, b')' | b']' | b'}' | b'_' | b'$')) =>
+            {
+                i += 1;
+                let mut in_class = false;
+                while i < n && text[i] != b'\n' {
+                    match text[i] {
+                        b'\\' => i += 1,
+                        b'[' => in_class = true,
+                        b']' => in_class = false,
+                        b'/' if !in_class => break,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                last_significant = b'/';
+                i += 1;
+            }
+            b'"' | b'\'' | b'`' => {
+                let quote = b;
+                i += 1;
+                while i < n && text[i] != quote {
+                    if text[i] == b'\\' {
+                        i += 1;
+                    } else if quote != b'`' && text[i] == b'\n' {
+                        break;
+                    }
+                    i += 1;
+                }
+                last_significant = quote;
+                i += 1;
+            }
+            _ => {
+                if !b.is_ascii_whitespace() {
+                    last_significant = b;
+                }
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 pub(crate) fn kind_for(path: &[u8]) -> Option<Kind> {
@@ -45,7 +122,7 @@ pub(crate) fn kind_for(path: &[u8]) -> Option<Kind> {
     KINDS.get(ext).copied()
 }
 
-const MAX_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_BYTES: usize = 8 * 1024 * 1024;
 
 /// How hard to normalise before comparing.
 #[derive(Clone, Copy, Default)]

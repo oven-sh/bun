@@ -254,6 +254,9 @@ On a terminal, `.js`/`.mjs`/`.cjs`/`.jsx`/`.ts`/`.tsx`/`.css`/`.json` files are 
 - Minified bundles are un-minified, and the short names two builds' minifiers handed out differently are renamed in lockstep, so `dist/*.min.js` diffs down to the lines that actually changed instead of one enormous `-`/`+` pair.
 - The summary calls out what a reviewer looks for first: new `install`/`postinstall` scripts, dependency and entry-point changes, a file that newly imports `child_process`/`fs`/`net`/`http`/`vm`/…, new package imports, and growth in `eval()` / `new Function()` / `process.env` / `fetch()` use. `*.map` files are summarised as regenerated rather than shown.
 
+- The re-print carries code, not comments or TypeScript types, so those are checked separately: a file whose code is identical but whose comments changed shows as `comments only` with the real lines, and a `.ts` file in that situation shows as `types/formatting`. Files over 8 MB are diffed as text (`too large to normalize`).
+- Nothing in a package can drive your terminal: control characters, escape sequences and bidirectional-text overrides in file contents are drawn as `␛`, `^M`, `‹U+202E›`, and their appearance in a release is called out. Permission changes show as `mode 644 → 755` / `new file mode 100755` and newly executable files are called out.
+
 Piped or with `NO_COLOR`, the output is a plain unified patch of the real file contents (so `bun pm diff a b > changes.patch` applies), and `--raw` turns the re-print off on a terminal too.
 
 | Flag                     | Description                                                                                          |

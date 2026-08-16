@@ -55,6 +55,8 @@ enum Spec {
 struct Tree {
     label: Vec<u8>,
     files: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// Permission bits per path (0o755…), when the source records them.
+    modes: BTreeMap<Vec<u8>, u32>,
 }
 
 /// `original_cwd` is the folder the user ran the command from; inside a workspace the manager has since `chdir`ed
@@ -91,11 +93,25 @@ pub(crate) fn exec(
         Global::exit(1);
     }
 
-    let (mut left_spec, right_spec) = resolve_sides(pm, &args, original_cwd);
+    let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
+    // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
+    if let (Spec::Dir(_) | Spec::Tarball(_), Spec::Registry { name, .. }) =
+        (&left_spec, &mut right_spec)
+    {
+        if name.is_empty() {
+            let local = materialize(pm, &left_spec)?;
+            *name = package_name_in(&local).unwrap_or_else(|| {
+                Output::err_generic(
+                    "{} has no package.json \"name\" to look up in the registry",
+                    (BStr::new(&local.label),),
+                );
+                Global::exit(1);
+            });
+        }
+    }
     let mut right = materialize(pm, &right_spec)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
-            // `bun pm diff ./pkg`: the registry side is named by the folder/tarball's own package.json.
             *name = package_name_in(&right).unwrap_or_else(|| {
                 Output::err_generic(
                     "{} has no package.json \"name\" to look up in the registry",
@@ -200,19 +216,25 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
         },
         [a, b] => {
             let left = classify(a);
+            let is_bare_version = |s: &Spec| matches!(s, Spec::Registry { name, version } if version.is_empty() && Semver::Version::parse(Semver::SlicedString::init(name, name)).valid);
             let right = match (classify(b), &left) {
                 // `name@1 2` — a bare second version reuses the first name.
-                (
-                    Spec::Registry {
-                        name: bare,
-                        version,
-                    },
-                    Spec::Registry { name, .. },
-                ) if version.is_empty()
-                    && Semver::Version::parse(Semver::SlicedString::init(&bare, &bare)).valid =>
-                {
+                (r, Spec::Registry { name, .. }) if is_bare_version(&r) => {
+                    let Spec::Registry { name: bare, .. } = r else {
+                        unreachable!()
+                    };
                     Spec::Registry {
                         name: name.clone(),
+                        version: bare,
+                    }
+                }
+                // `./pkg 2` — after a folder/tarball, that package's own name (filled in once unpacked).
+                (r, Spec::Dir(_) | Spec::Tarball(_)) if is_bare_version(&r) => {
+                    let Spec::Registry { name: bare, .. } = r else {
+                        unreachable!()
+                    };
+                    Spec::Registry {
+                        name: Vec::new(),
                         version: bare,
                     }
                 }
@@ -314,6 +336,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
             let mut tree = Tree {
                 label: path.clone(),
                 files: BTreeMap::new(),
+                modes: BTreeMap::new(),
             };
             read_tarball_into(&bytes, &mut tree)?;
             Ok(tree)
@@ -342,6 +365,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         if next.kind != bun_sys::FileKind::File {
             continue;
         }
+        let perm = next.entry().perm() & 0o777;
         let path = next.entry().pathname().as_bytes();
         // npm tarballs root everything under one folder (usually `package/`).
         let rel = match strings::index_of_char(path, b'/') {
@@ -361,6 +385,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
                 Global::exit(1);
             }
         };
+        tree.modes.insert(rel.to_vec(), perm);
         tree.files.insert(rel.to_vec(), data.into_vec());
     }
     let _ = iter.close();
@@ -371,6 +396,7 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     let mut tree = Tree {
         label: root.to_vec(),
         files: BTreeMap::new(),
+        modes: BTreeMap::new(),
     };
     let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
         Ok(fd) => fd,
@@ -426,6 +452,10 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 },
                 bun_sys::FileKind::File => match bun_sys::File::read_from(dir, name) {
                     Ok(bytes) => {
+                        #[cfg(not(windows))]
+                        if let Ok(st) = bun_sys::fstatat(dir, entry.name.as_zstr()) {
+                            tree.modes.insert(rel.clone(), st.st_mode as u32 & 0o777);
+                        }
                         tree.files.insert(rel, bytes);
                     }
                     Err(err) => fail(err, &rel),
@@ -472,7 +502,8 @@ fn fetch_registry_tree(
         pm,
         scope,
         URL::parse(manifest_url),
-        b"application/json",
+        // The abbreviated packument has versions + dist, all this needs; full ones run to tens of MB.
+        b"application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
         Some((name, version)),
     )?;
 
@@ -560,6 +591,7 @@ fn fetch_registry_tree(
     let mut tree = Tree {
         label,
         files: BTreeMap::new(),
+        modes: BTreeMap::new(),
     };
     read_tarball_into(tarball.list.as_slice(), &mut tree)?;
     Ok(tree)
@@ -657,6 +689,12 @@ enum Semantic {
     WhitespaceOnly,
     /// CRLF ↔ LF and nothing else.
     LineEndingsOnly,
+    /// Same bytes, different permission bits.
+    ModeOnly,
+    /// The code re-prints identically but the comments do not; raw hunks are shown.
+    CommentsOnly,
+    /// A `.ts` file whose re-print (types stripped) is identical: a type or layout change; raw hunks are shown.
+    TypesOrFormatting,
 }
 
 #[derive(Default)]
@@ -666,6 +704,10 @@ struct FileChange<'a> {
     semantic: Semantic,
     /// Both sides re-print identically (known in every mode; only the terminal view acts on it).
     formatting_only: bool,
+    /// (old, new) permission bits when both are known and differ, or a new file arrives executable.
+    mode_change: Option<(u32, u32)>,
+    /// A parseable kind that was skipped (size cap or parse failure), for the header.
+    not_normalized: Option<&'static str>,
     /// New `import`/`require` specifiers and risky-API counts vs the old side, filled when both sides parsed.
     new_imports: Vec<Vec<u8>>,
     signal_deltas: Vec<(&'static str, usize)>,
@@ -684,6 +726,65 @@ fn is_js_like(path: &[u8]) -> bool {
         normalize::kind_for(path),
         Some(normalize::Kind::Js(_) | normalize::Kind::Json)
     ) || path.ends_with(b".jsonc")
+}
+
+fn has_terminal_escapes(bytes: &[u8]) -> bool {
+    strings::contains_char(bytes, 0x1b) || strings::contains(bytes, b"\xc2\x9b")
+}
+
+/// U+202A–U+202E, U+2066–U+2069 (embedding/override/isolate) — the Trojan Source set.
+fn has_bidi_controls(bytes: &[u8]) -> bool {
+    let bidi_at = |i: usize| {
+        i + 2 < bytes.len()
+            && ((bytes[i + 1] == 0x80 && (0xaa..=0xae).contains(&bytes[i + 2]))
+                || (bytes[i + 1] == 0x81 && (0xa6..=0xa9).contains(&bytes[i + 2])))
+    };
+    let mut from = 0;
+    while let Some(i) = strings::index_of_char(&bytes[from..], 0xe2) {
+        let i = from + i as usize;
+        if bidi_at(i) {
+            return true;
+        }
+        from = i + 1;
+    }
+    false
+}
+
+/// The terminal view never lets package bytes drive the terminal: C0/C1 controls (bar tab) and bidi overrides are
+/// drawn as visible stand-ins.
+fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    let suspicious = |b: &u8| (*b < 0x20 && *b != b'\t') || *b == 0x7f || *b == 0xc2 || *b == 0xe2;
+    if !text.iter().any(suspicious) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = Vec::with_capacity(text.len() + 16);
+    let mut i = 0;
+    while i < text.len() {
+        let b = text[i];
+        if b == 0x1b {
+            out.extend_from_slice("␛".as_bytes());
+        } else if (b < 0x20 && b != b'\t') || b == 0x7f {
+            out.push(b'^');
+            out.push(if b == 0x7f { b'?' } else { b + 0x40 });
+        } else if b == 0xc2 && text.get(i + 1).is_some_and(|c| (0x80..=0x9f).contains(c)) {
+            let _ = write!(out, "‹U+{:04X}›", u32::from(text[i + 1]));
+            i += 2;
+            continue;
+        } else if b == 0xe2
+            && i + 2 < text.len()
+            && ((text[i + 1] == 0x80 && (0xaa..=0xae).contains(&text[i + 2]))
+                || (text[i + 1] == 0x81 && (0xa6..=0xa9).contains(&text[i + 2])))
+        {
+            let cp = 0x2000 + (u32::from(text[i + 1] & 0x3f) << 6) + u32::from(text[i + 2] & 0x3f);
+            let _ = write!(out, "‹U+{cp:04X}›");
+            i += 3;
+            continue;
+        } else {
+            out.push(b);
+        }
+        i += 1;
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 fn strip_cr(bytes: &[u8]) -> Vec<u8> {
@@ -741,7 +842,16 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
     for path in paths {
         let old = left.files.get(path).map(Vec::as_slice);
         let new = right.files.get(path).map(Vec::as_slice);
-        if old == new {
+        let (old_mode, new_mode) = (
+            left.modes.get(path).copied(),
+            right.modes.get(path).copied(),
+        );
+        let mode_change = match (old_mode, new_mode) {
+            (Some(o), Some(n)) if (o ^ n) & 0o111 != 0 => Some((o, n)),
+            (None, Some(n)) if old.is_none() && n & 0o111 != 0 => Some((0, n)),
+            _ => None,
+        };
+        if old == new && mode_change.is_none() {
             continue;
         }
         let mut change = FileChange {
@@ -749,8 +859,14 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             highlight: style.pretty && is_js_like(path),
             old,
             new,
+            mode_change,
             ..Default::default()
         };
+        if old == new {
+            change.semantic = Semantic::ModeOnly;
+            changes.push(change);
+            continue;
+        }
         change.binary = old.is_some_and(is_binary) || new.is_some_and(is_binary);
         change.sourcemap = strings::ends_with(path, b".map")
             && new.or(old).is_some_and(|b| b.starts_with(b"{\"version\""));
@@ -791,6 +907,15 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                 new.and_then(|b| normalize::normalize(path, b, nopts)),
             )
         };
+        if !flags.raw && normalize::kind_for(path).is_some() {
+            let too_big = |b: Option<&[u8]>| b.is_some_and(|b| b.len() > normalize::MAX_BYTES);
+            if too_big(old) || too_big(new) {
+                change.not_normalized = Some("too large to normalize");
+            } else if (old.is_some() && norm_old.is_none()) || (new.is_some() && norm_new.is_none())
+            {
+                change.not_normalized = Some("not parsed");
+            }
+        }
         if let Some(n) = &norm_new {
             let old_imports: &[Vec<u8>] = norm_old.as_ref().map_or(&[], |o| o.imports.as_slice());
             for imp in &n.imports {
@@ -810,12 +935,32 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                 }
             }
         }
-        change.formatting_only =
+        // Equal re-prints prove the code is the same; comments and TypeScript types are not in the re-print, so
+        // those are checked separately before anything is called "formatting only".
+        let reprint_equal =
             matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
+        let same_comments = || match (old, new) {
+            (Some(o), Some(n)) => {
+                normalize::comments_of(path, o) == normalize::comments_of(path, n)
+            }
+            _ => true,
+        };
+        let is_ts = normalize::is_typescript(path);
+        change.formatting_only = reprint_equal && !is_ts && same_comments();
         match (old, new, &norm_old, &norm_new) {
             // Patch output must apply to the real files, so only the terminal view uses the re-print.
-            (Some(_), Some(_), Some(no), Some(nn)) if style.pretty && no.text == nn.text => {
-                change.semantic = Semantic::FormattingOnly;
+            (Some(o), Some(n), Some(no), Some(nn)) if style.pretty && no.text == nn.text => {
+                change.semantic = if change.formatting_only {
+                    Semantic::FormattingOnly
+                } else {
+                    // Something the re-print cannot see changed: show the real lines.
+                    unified_hunks(o, n, flags.context, style, (None, None), &mut change);
+                    if is_ts {
+                        Semantic::TypesOrFormatting
+                    } else {
+                        Semantic::CommentsOnly
+                    }
+                };
             }
             (Some(o), Some(n), Some(no), Some(nn)) if style.pretty => {
                 let unminified = no.was_minified || nn.was_minified || flags.unminify;
@@ -960,13 +1105,18 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             let (bar_add, bar_del) = ("+".repeat(scale(c.added)), "-".repeat(scale(c.removed)));
             let padded = format!("{:<width$}", BStr::new(c.path), width = path_width);
             let sep = if style.pretty { "│" } else { "|" };
-            if let Semantic::FormattingOnly | Semantic::WhitespaceOnly | Semantic::LineEndingsOnly =
-                c.semantic
+            if let Semantic::FormattingOnly
+            | Semantic::WhitespaceOnly
+            | Semantic::LineEndingsOnly
+            | Semantic::ModeOnly = c.semantic
             {
                 let what = match c.semantic {
-                    Semantic::FormattingOnly => "formatting only",
-                    Semantic::WhitespaceOnly => "whitespace only",
-                    _ => "line endings only",
+                    Semantic::FormattingOnly => "formatting only".to_string(),
+                    Semantic::WhitespaceOnly => "whitespace only".to_string(),
+                    Semantic::LineEndingsOnly => "line endings only".to_string(),
+                    _ => c
+                        .mode_change
+                        .map_or(String::new(), |(o, n)| format!("mode {o:o} → {n:o}")),
                 };
                 pretty!(" {} <d>{}<r> <d>{}<r>\n", padded, sep, what);
                 continue;
@@ -1002,10 +1152,19 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             BStr::new(c.path),
             BStr::new(c.path)
         ));
-        match (c.old, c.new) {
-            (None, Some(_)) => Output::print(format_args!("new file\n")),
-            (Some(_), None) => Output::print(format_args!("deleted file\n")),
+        match (c.old, c.new, c.mode_change) {
+            (None, Some(_), Some((_, n))) => {
+                Output::print(format_args!("new file mode 100{n:o}\n"))
+            }
+            (None, Some(_), None) => Output::print(format_args!("new file\n")),
+            (Some(_), None, _) => Output::print(format_args!("deleted file\n")),
+            (_, _, Some((o, n))) => {
+                Output::print(format_args!("old mode 100{o:o}\nnew mode 100{n:o}\n"))
+            }
             _ => {}
+        }
+        if c.semantic == Semantic::ModeOnly {
+            continue;
         }
         if c.binary || c.sourcemap {
             Output::print(format_args!(
@@ -1152,6 +1311,36 @@ fn collect_notes(
     );
     ast_notes(changes, &mut notes, colors);
     for c in changes {
+        match c.mode_change {
+            Some((0, n)) => notes.push(note!(
+                colors,
+                "new executable file <b>{}<r> <d>({})<r>",
+                &[BStr::new(c.path).to_string(), format!("{n:o}")]
+            )),
+            Some((o, n)) if n & 0o111 != 0 => notes.push(note!(
+                colors,
+                "now executable: <b>{}<r> <d>({} → {})<r>",
+                &[
+                    BStr::new(c.path).to_string(),
+                    format!("{o:o}"),
+                    format!("{n:o}")
+                ]
+            )),
+            _ => {}
+        }
+        if let Some(n) = c.new {
+            let gained = |needle: fn(&[u8]) -> bool| needle(n) && !c.old.is_some_and(needle);
+            if !c.binary && gained(has_terminal_escapes) {
+                notes.push(note!(
+                    colors,
+                    "terminal escape sequences in <b>{}<r> <d>(shown as ␛)<r>",
+                    &[BStr::new(c.path).to_string()]
+                ));
+            }
+            if !c.binary && gained(has_bidi_controls) {
+                notes.push(note!(colors, "bidirectional text controls in <b>{}<r> <d>(Trojan Source; shown as ‹U+202E›)<r>", &[BStr::new(c.path).to_string()]));
+            }
+        }
         if c.binary && c.old.is_none() {
             notes.push(note!(
                 colors,
@@ -1208,7 +1397,7 @@ fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: Diff
         lines_removed += c.removed;
         let _ = write!(
             out,
-            "{}\n    {{ \"path\": {}, \"status\": \"{}\", \"binary\": {}, \"sourceMap\": {}, \"formattingOnly\": {}, \"linesAdded\": {}, \"linesRemoved\": {}, \"bytesBefore\": {}, \"bytesAfter\": {}",
+            "{}\n    {{ \"path\": {}, \"status\": \"{}\", \"binary\": {}, \"sourceMap\": {}, \"formattingOnly\": {}, \"linesAdded\": {}, \"linesRemoved\": {}, \"bytesBefore\": {}, \"bytesAfter\": {}{}",
             if i == 0 { "" } else { "," },
             js(c.path),
             status,
@@ -1219,6 +1408,9 @@ fn print_json(left: &Tree, right: &Tree, changes: &[FileChange<'_>], flags: Diff
             c.removed,
             c.old.map_or(0, <[u8]>::len),
             c.new.map_or(0, <[u8]>::len),
+            c.mode_change.map_or(String::new(), |(o, n)| format!(
+                ", \"modeBefore\": \"{o:o}\", \"modeAfter\": \"{n:o}\""
+            )),
         );
         if !flags.name_only && !flags.stat && !c.binary && !c.sourcemap {
             let _ = write!(out, ", \"patch\": {}", js(&c.hunks));
@@ -1338,7 +1530,10 @@ fn fill_note(rendered: &str, args: &[String]) -> String {
     while let Some(at) = strings::index_of(rest.as_bytes(), b"{}") {
         out.push_str(&rest[..at]);
         if let Some(a) = args.next() {
-            out.push_str(a);
+            let _ = core::fmt::Write::write_fmt(
+                &mut out,
+                format_args!("{}", BStr::new(&defang(a.as_bytes()))),
+            );
         }
         rest = &rest[at + 2..];
     }
@@ -1635,8 +1830,10 @@ impl Style {
             out.push(b'\n');
             return;
         }
-        // A CRLF file's `\r` would send the cursor home and let erase-to-EOL wipe the line just drawn.
+        // Nothing from the package may drive the terminal: CR, ESC and friends become visible marks.
         let text = text.strip_suffix(b"\r").unwrap_or(text);
+        let emph = emph.map(|(lo, hi)| (defang(&text[..lo]).len(), defang(&text[..hi]).len()));
+        let text: &[u8] = &defang(text);
         // Changed lines get a tinted background so the foreground is free for syntax colours.
         let (num, accent, bg, strong) = match op {
             Operation::Equal => (new_no, "\x1b[2m", "", ""),
@@ -1738,10 +1935,13 @@ impl Style {
             Semantic::FormattingOnly => "\x1b[2mformatting only\x1b[0m",
             Semantic::WhitespaceOnly => "\x1b[2mwhitespace only\x1b[0m",
             Semantic::LineEndingsOnly => "\x1b[2mline endings only\x1b[0m",
+            Semantic::ModeOnly => "",
+            Semantic::CommentsOnly => "\x1b[2mcomments only\x1b[0m ",
+            Semantic::TypesOrFormatting => "\x1b[2mtypes/formatting\x1b[0m ",
             Semantic::Normalized { unminified: true } => "\x1b[35munminified\x1b[0m ",
             Semantic::Normalized { unminified: false } => "\x1b[2mnormalized\x1b[0m ",
         };
-        let badge = match (c.old, c.new, c.binary) {
+        let mut badge = match (c.old, c.new, c.binary) {
             _ if matches!(
                 c.semantic,
                 Semantic::FormattingOnly | Semantic::WhitespaceOnly | Semantic::LineEndingsOnly
@@ -1775,6 +1975,21 @@ impl Style {
                 s
             }
         };
+        if let Some((o, n)) = c.mode_change {
+            let mode = if o == 0 {
+                format!("\x1b[33mexecutable\x1b[0m {n:o}")
+            } else {
+                format!("\x1b[33mmode\x1b[0m {o:o} → {n:o}")
+            };
+            badge = if c.semantic == Semantic::ModeOnly {
+                mode
+            } else {
+                format!("{mode} {badge}")
+            };
+        }
+        if let Some(why) = c.not_normalized {
+            badge = format!("\x1b[2m{why}\x1b[0m {badge}");
+        }
         let badge_width = strip_ansi_len(badge.as_bytes());
         let rule = self
             .width
@@ -1782,7 +1997,7 @@ impl Style {
             .max(2);
         Output::print(format_args!(
             "\n\x1b[1m{}\x1b[0m \x1b[2m{}\x1b[0m {}\n",
-            BStr::new(c.path),
+            BStr::new(&defang(c.path)),
             "─".repeat(rule),
             badge
         ));

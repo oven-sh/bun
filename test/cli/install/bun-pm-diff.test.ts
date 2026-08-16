@@ -64,7 +64,7 @@ beforeAll(async () => {
         for (const v of ["1.0.0", "2.0.0"]) {
           versions[v] = { name: "diffme", version: v, dist: { tarball: `${registry}/diffme/-/diffme-${v}.tgz` } };
         }
-        return Response.json({ name: "diffme", "dist-tags": { latest: "2.0.0" }, versions });
+        return Response.json({ name: "diffme", "dist-tags": { latest: "2.0.0", next: "2.0.0", legacy: "1.0.0" }, versions });
       }
       const m = url.pathname.match(/^\/diffme\/-\/diffme-(.+)\.tgz$/);
       if (m && tarballs[m[1]]) return new Response(Bun.file(tarballs[m[1]]));
@@ -384,6 +384,58 @@ diffme@1.0.0 → diffme@2.0.0
     expect(exitCode).toBe(0);
   });
 
+  test("dist-tags, ranges and open-ended a.. spellings resolve like install would", async () => {
+    // (a bare second word is only reused as a version when it is one; `next` alone would be the package "next")
+    const tag = await diff(["diffme@legacy", "diffme@next", "--name-only"]);
+    expect(tag.stderr).toBe("");
+    expect(tag.stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
+    const range = await diff(["diffme@^1", "diffme@>=2 <3", "--name-only"]);
+    expect(range.stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
+    const openEnded = await diff(["diffme@1.0.0..", "--name-only"]);
+    expect(openEnded.stdout.split("\n")[0]).toBe("diffme@1.0.0 → diffme@2.0.0");
+    for (const r of [tag, range, openEnded]) expect(r.exitCode).toBe(0);
+  });
+
+  test("scoped packages use their scope's registry and token", async () => {
+    // The default registry knows nothing about @priv/*; only the scope registry (with its own token) does.
+    const hits: string[] = [];
+    using scoped = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        hits.push(`${req.headers.get("authorization")} ${decodeURIComponent(url.pathname)}`);
+        if (req.headers.get("authorization") !== "Bearer scopetok") return new Response("no", { status: 401 });
+        if (decodeURIComponent(url.pathname) === "/@priv/diffme") {
+          const versions: any = {};
+          for (const v of ["1.0.0", "2.0.0"]) {
+            versions[v] = { name: "@priv/diffme", version: v, dist: { tarball: `${scoped.url.origin}/@priv/diffme/-/diffme-${v}.tgz` } };
+          }
+          return Response.json({ name: "@priv/diffme", "dist-tags": { latest: "2.0.0" }, versions });
+        }
+        const m = url.pathname.match(/diffme-(.+)\.tgz$/);
+        return m ? new Response(Bun.file(tarballs[m[1]])) : new Response("Not Found", { status: 404 });
+      },
+    });
+    using dir = tempDir("pm-diff-scope", {
+      "bunfig.toml": `[install.scopes]\n"@priv" = { url = "${scoped.url.origin}/", token = "scopetok" }\n`,
+    });
+    for (const args of [["@priv/diffme@1.0.0", "2.0.0"], ["@priv/diffme@1.0.0..2.0.0"], ["@priv/diffme@1.0.0", "@priv/diffme@2.0.0"]]) {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", ...args, "--name-only"],
+        cwd: String(dir),
+        env: { ...bunEnv, NO_COLOR: "1", NPM_CONFIG_REGISTRY: registry, BUN_CONFIG_REGISTRY: registry },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.split("\n")[0]).toBe("@priv/diffme@1.0.0 → @priv/diffme@2.0.0");
+      expect(exitCode).toBe(0);
+    }
+    expect(hits.every(h => h.startsWith("Bearer scopetok "))).toBe(true);
+    expect(hits.some(h => h.endsWith(" /@priv/diffme"))).toBe(true);
+  });
+
   test("errors: unknown package, no matching version, too many specs", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);
@@ -539,5 +591,208 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(text).toContain("▲ +1 eval() (index.js)\n");
     expect(text).toMatch(/\nindex\.js\.map ─+ source map 31 → 36 bytes\n/);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
+  async function pretty(files: Record<string, any>, args: string[] = [], env: Record<string, string> = {}) {
+    using dir = tempDir("pm-diff-hx", files);
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [raw, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    return { raw, text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode, dir: String(dir) };
+  }
+  const ESC = "\x1b";
+  const CSI_C1 = "\u009b";
+  const RLO = "\u202e";
+  const LRI = "\u2066";
+  const PDI = "\u2069";
+
+  test("package bytes never drive the terminal: ESC/CR/C1 and bidi controls are drawn, and called out", async () => {
+    const evil = `exports.ok = true;\nexports.motd = "${ESC}[2K${ESC}[1A hidden \r";\nconst s = "${CSI_C1}31m"; // C1 CSI\n`;
+    const trojan = `const isAdmin = false; /*${RLO} } ${LRI}if (isAdmin)${PDI} ${LRI} begin admins only */\n`;
+    const { raw, text, exitCode } = await pretty({
+      "a/index.js": "exports.ok = true;\n",
+      "b/index.js": evil,
+      "a/auth.js": "const isAdmin = false;\n",
+      "b/auth.js": trojan,
+    });
+    // The only ESC bytes in the output are our own colour / erase-to-EOL codes.
+    expect(raw.replace(/\x1b\[[0-9;]*[mK]/g, "")).not.toContain(ESC);
+    expect(raw).not.toContain(CSI_C1);
+    expect(raw).not.toContain(RLO);
+    expect(text).toContain('exports.motd = "␛[2K␛[1A hidden ^M";');
+    expect(text).toContain("‹U+009B›31m");
+    expect(text).toContain("‹U+202E›");
+    expect(text).toContain("▲ terminal escape sequences in index.js (shown as ␛)\n");
+    expect(text).toContain("▲ bidirectional text controls in auth.js (Trojan Source; shown as ‹U+202E›)\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a comment-only change is not 'formatting only', and neither is a TypeScript type change", async () => {
+    const { text, exitCode } = await pretty({
+      // Ordinary comments are not in the re-print, so a change to one must not pass as formatting.
+      "a/lib.js": "// lib v1 (MIT)\nmodule.exports = 1; // one\n",
+      "b/lib.js": "// lib v2 (MIT)\nmodule.exports = 1; // uno\n",
+      // Legal comments are kept by the printer, so they diff like code.
+      "a/legal.js": "/*! lib v1 | MIT */\nmodule.exports = 1;\n",
+      "b/legal.js": "/*! lib v2 | MIT */\nmodule.exports = 1;\n",
+      "a/quotes.js": "module.exports = 'x'; // same\n",
+      "b/quotes.js": 'module.exports = "x"; // same\n',
+      "a/api.ts": "export function f(x: number): number { return x; }\n",
+      "b/api.ts": "export function f(x: string): string { return x; }\n",
+    });
+    expect(text).toMatch(/\nlib\.js ─+ comments only \+2 -2\n/);
+    expect(text).toContain("│- // lib v1 (MIT)");
+    expect(text).toMatch(/\nlegal\.js ─+ normalized \+1 -1\n/);
+    expect(text).toContain("│- /*! lib v1 | MIT */");
+    expect(text).toMatch(/\nquotes\.js ─+ formatting only\n/);
+    expect(text).toMatch(/\napi\.ts ─+ types\/formatting \+1 -1\n/);
+    expect(text).toContain("│+ export function f(x: string): string { return x; }");
+    expect(exitCode).toBe(0);
+  });
+
+  test("JSX inside .js still normalizes", async () => {
+    const { text, exitCode } = await pretty({
+      "a/App.js": "export const App = () => <div className='a'>hi</div>;\n",
+      "b/App.js": 'export const App = () => (\n  <div className="a">hi</div>\n);\n',
+    });
+    expect(text).toMatch(/\nApp\.js ─+ formatting only\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "mode changes: newly executable files are shown and called out",
+    async () => {
+      using dir = tempDir("pm-diff-mode", {
+        "a/run.sh": "#!/bin/sh\necho hi\n",
+        "b/run.sh": "#!/bin/sh\necho hi\n",
+        "b/install.js": "console.log(1)\n",
+      });
+      const { chmodSync } = require("node:fs");
+      chmodSync(join(String(dir), "a/run.sh"), 0o644);
+      chmodSync(join(String(dir), "b/run.sh"), 0o755);
+      chmodSync(join(String(dir), "b/install.js"), 0o755);
+      const run = async (env: Record<string, string | undefined>) => {
+        await using p = Bun.spawn({
+          cmd: [bunExe(), "pm", "diff", "./a", "./b"],
+          cwd: String(dir),
+          env: { ...bunEnv, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, , exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+        return { stdout, exitCode };
+      };
+      const tty = await run({ NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" });
+      const text = tty.stdout.replace(/\x1b\[[0-9;]*[mK]/g, "");
+      expect(text).toMatch(/\nrun\.sh ─+ mode 644 → 755\n/);
+      expect(text).toMatch(/\ninstall\.js ─+ executable 755 new \+1\n/);
+      expect(text).toContain("▲ now executable: run.sh (644 → 755)\n");
+      expect(text).toContain("▲ new executable file install.js (755)\n");
+      expect(tty.exitCode).toBe(0);
+      // Patch mode spells it the way git does.
+      const plain = await run({ NO_COLOR: "1" });
+      expect(plain.stdout).toContain("diff --bun a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n");
+      expect(plain.stdout).toContain("diff --bun a/install.js b/install.js\nnew file mode 100755\n");
+      expect(plain.exitCode).toBe(0);
+    },
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "folders: symlinked files are read through, symlinked folders skipped, unreadable files are an error",
+    async () => {
+      using dir = tempDir("pm-diff-links", {
+        "a/index.js": "module.exports = 1;\n",
+        "b/real/index.js": "module.exports = 2;\n",
+        "c/index.js": "module.exports = 3;\n",
+        "c/secret.js": "nope\n",
+      });
+      const { symlinkSync, chmodSync } = require("node:fs");
+      symlinkSync("real/index.js", join(String(dir), "b/index.js"));
+      symlinkSync("..", join(String(dir), "b/loop"));
+      const run = async (args: string[]) => {
+        await using p = Bun.spawn({
+          cmd: [bunExe(), "pm", "diff", ...args, "--name-only"],
+          cwd: String(dir),
+          env: { ...bunEnv, NO_COLOR: "1" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      const linked = await run(["./a", "./b"]);
+      expect(linked.stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js", "A real/index.js"]);
+      expect(linked.exitCode).toBe(0);
+      chmodSync(join(String(dir), "c/secret.js"), 0o000);
+      try {
+        const denied = await run(["./a", "./c"]);
+        // root reads anything; everyone else must get a loud failure, not a diff with a hole in it.
+        if (process.getuid?.() !== 0) {
+          expect(denied.stderr).toContain("secret.js");
+          expect(denied.exitCode).toBe(1);
+        }
+      } finally {
+        chmodSync(join(String(dir), "c/secret.js"), 0o644);
+      }
+    },
+  );
+
+  test("tarball shapes: .tar, a root folder not called package/, ~/ paths, and `./x.tar 1.0.1`", async () => {
+    using dir = tempDir("pm-diff-tars", {});
+    // Build the archives with Bun itself so the test needs no system tar.
+    await using mk = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const v1 = { "weird-root-name/package.json": JSON.stringify({ name: "diffme", version: "1.0.0" }), "weird-root-name/index.js": "module.exports = 1;\\n" };
+        await Bun.write("one.tar", await new Bun.Archive(v1).bytes());
+        const v2 = { "package/package.json": JSON.stringify({ name: "diffme", version: "1.0.1" }), "package/index.js": "module.exports = 2;\\n" };
+        await Bun.write("two.tgz", await new Bun.Archive(v2).bytes("gzip"));
+        `,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, mkErr, mkExit] = await Promise.all([mk.stdout.text(), mk.stderr.text(), mk.exited]);
+    expect(mkErr).toBe("");
+    expect(mkExit).toBe(0);
+    const run = async (args: string[]) => {
+      await using p = Bun.spawn({
+        cmd: [bunExe(), "pm", "diff", ...args, "--name-only"],
+        cwd: String(dir),
+        env: {
+          ...bunEnv,
+          NO_COLOR: "1",
+          HOME: String(dir),
+          USERPROFILE: String(dir),
+          NPM_CONFIG_REGISTRY: registry,
+          BUN_CONFIG_REGISTRY: registry,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const tars = await run(["~/one.tar", "./two.tgz"]);
+    expect(tars.stderr).toBe("");
+    expect(tars.stdout.split("\n")[0]).toBe("~/one.tar → ./two.tgz");
+    expect(tars.stdout.split("\n").filter(l => /^[AMD] /.test(l))).toEqual(["M index.js", "M package.json"]);
+    expect(tars.exitCode).toBe(0);
+    // A tarball plus a bare version means "this package, at that version, from the registry".
+    const mixed = await run(["./one.tar", "2.0.0"]);
+    expect(mixed.stderr).toBe("");
+    expect(mixed.stdout.split("\n")[0]).toBe("./one.tar → diffme@2.0.0");
+    expect(mixed.exitCode).toBe(0);
   });
 });

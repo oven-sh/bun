@@ -311,6 +311,9 @@ impl Routes {
             if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
                 return Some(&raw const **route);
             }
+            // A rejected candidate may have recorded the segments it did match
+            // (https://github.com/oven-sh/bun/issues/12206); the next one starts clean.
+            params.clear();
         }
 
         None

@@ -383,6 +383,78 @@ it("lists routes in match order", () => {
   ]);
 });
 
+// With static segments winning, a deeper route is often tried (and rejected) before
+// the shallower route that wins. The rejected candidate has already recorded the
+// params of the segments it did match; if they survived, the winner would report
+// them too (`team: ["acme", "acme"]`), or crash in `.params` when the leaked name is
+// not one of its own (https://github.com/oven-sh/bun/issues/12206). The crash takes
+// the process down, so the routers run in a subprocess.
+it("a candidate rejected before the winner leaves no params behind", async () => {
+  const trees = {
+    "catch-all stops on an empty remainder, winner shares the param name": {
+      files: ["[team]/docs/[...topic].tsx", "[team]/[page].tsx"],
+      pathname: "/acme/docs",
+      expected: { name: "/[team]/[page]", params: { team: "acme", page: "docs" } },
+    },
+    "catch-all stops on an empty remainder, winner has other param names": {
+      files: ["[a]/docs/[...topic].tsx", "[z]/[...rest].tsx"],
+      pathname: "/bob/docs",
+      expected: { name: "/[z]/[...rest]", params: { z: "bob", rest: "docs" } },
+    },
+    "pattern ends with URL left over, winner shares the param name": {
+      files: ["[team]/settings.tsx", "[team]/[section]/[item].tsx"],
+      pathname: "/acme/settings/profile",
+      expected: { name: "/[team]/[section]/[item]", params: { team: "acme", section: "settings", item: "profile" } },
+    },
+    "pattern ends with URL left over, winner has other param names": {
+      files: ["[a]/settings.tsx", "[z]/[b]/[c].tsx"],
+      pathname: "/bob/settings/profile",
+      expected: { name: "/[z]/[b]/[c]", params: { z: "bob", b: "settings", c: "profile" } },
+    },
+  };
+
+  const fixture: Record<string, string> = {};
+  const cases: Record<string, { tree: string; pathname: string }> = {};
+  Object.entries(trees).forEach(([label, { files, pathname }], i) => {
+    for (const file of files) fixture[`tree-${i}/${file}`] = "export default 1;";
+    cases[label] = { tree: `tree-${i}`, pathname };
+  });
+  using dir = tempDir("fsr-rejected-candidate", fixture);
+
+  const code = /* ts */ `
+    import path from "path";
+    const out = {};
+    for (const [label, { tree, pathname }] of Object.entries(${JSON.stringify(cases)})) {
+      const router = new Bun.FileSystemRouter({
+        dir: path.join(${JSON.stringify(String(dir))}, tree),
+        style: "nextjs",
+      });
+      const match = router.match(pathname);
+      // .query is built from the same param list as .params, so it must agree with it.
+      out[label] = match && { name: match.name, params: match.params, query: match.query };
+    }
+    console.log(JSON.stringify(out));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(
+    Object.fromEntries(
+      Object.entries(trees).map(([label, { expected }]) => [
+        label,
+        { name: expected.name, params: expected.params, query: expected.params },
+      ]),
+    ),
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("should support index routes", () => {
   // set up the test
   const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx", "posts/hey.tsx"]);

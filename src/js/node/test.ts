@@ -2161,25 +2161,34 @@ function invokeTestFn(fn: Function, arg: unknown) {
   return fn(arg);
 }
 
-type StopController = { promise: Promise<never>; reject: (failure: Error) => void; dispose: () => void };
+type StopController = {
+  promise: Promise<never>;
+  reject: (failure: Error) => void;
+  // Milliseconds of `budget` left; undefined when unbounded.
+  remaining: () => number | undefined;
+  dispose: () => void;
+};
 
 // Node's stopPromise: never resolves, rejects on timeout or reject() (a cancelling parent). Dispose it.
-function createStopController(timeout: number | undefined): StopController {
+function createStopController(timeout: number | undefined, budget: number | undefined = timeout): StopController {
   const { promise, reject } = Promise.withResolvers<never>();
   // Swallow the rejection when nothing is racing it anymore.
   promise.catch(() => {});
   let timer: ReturnType<typeof setTimeout> | undefined;
-  if (typeof timeout === "number" && Number.isFinite(timeout)) {
+  let deadline = Infinity;
+  if (typeof budget === "number" && Number.isFinite(budget)) {
+    deadline = performance.now() + budget;
     // Not unref'd: dispose() always clears it, and on Windows an unref'd timer
     // alone under bun:test leaves the uws loop inactive so auto_tick busy-spins.
     timer = realSetTimeout(
       () => reject(makeTestFailure(`test timed out after ${timeout}ms`, "testTimeoutFailure")),
-      timeout,
+      budget,
     );
   }
   return {
     promise,
     reject,
+    remaining: () => (timer === undefined ? undefined : Math.max(0, deadline - performance.now())),
     dispose() {
       if (timer !== undefined) realClearTimeout(timer);
     },
@@ -2316,6 +2325,9 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     failure = err;
   }
 
+  // What settleSubtests() below may still wait: the whole timeout unless the body phase used some of it.
+  let settleBudget = node.options.timeout;
+
   // Cancelled during the hooks above: the body does not run (Node's stopPromise is born rejected).
   if (failure === undefined && !node.cancelled) {
     // Node arms one stopPromise (timeout + signal) and races both the body
@@ -2359,6 +2371,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       }
     } finally {
       node.stop = undefined;
+      settleBudget = stop.remaining();
       stop.dispose();
       node.plan?.cancel();
     }
@@ -2401,7 +2414,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   // Node's postRun(): subtests are cancelled and rolled up after the hooks.
   try {
-    await settleSubtests(node);
+    await settleSubtests(node, settleBudget);
   } catch (err) {
     if (!acceptedXfail) failure ??= err;
   }
@@ -2436,15 +2449,15 @@ function chainSubtest(parent: TestNode, child: TestNode, run: () => unknown): Pr
   return link.then(() => undefined);
 }
 
-// The subtest part of Node's postRun().
-async function settleSubtests(node: TestNode) {
+// The subtest part of Node's postRun(). `budget` is what the body phase left of the test's timeout.
+async function settleSubtests(node: TestNode, budget: number | undefined) {
   if (node.unfinishedSubtests.size > 0) {
     // Node starts bodies inside t.test(); the chain starts them a tick later, so allow one macrotask.
     await new Promise<void>(resolve => realSetImmediate(resolve));
     cancelUnfinishedSubtests(node);
   }
-  // A hook or describe() callback that never settles cannot be cancelled; bound this like the body.
-  const stop = createStopController(node.options.timeout);
+  // A hook or describe() callback that never settles cannot be cancelled; the timeout still bounds it.
+  const stop = createStopController(node.options.timeout, budget);
   try {
     await Promise.race([stop.promise, drainSubtestChain(node)]);
   } finally {

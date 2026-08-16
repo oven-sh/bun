@@ -348,8 +348,7 @@ class ReusePortHandle {
     this.#pending = [];
     const server = (this.handle = netForProbe.createServer(conn => conn.destroy()));
     server.once("error", err => {
-      this.errno =
-        typeof err?.errno === "number" && err.errno !== 0 ? uvTranslateSysError(err.errno) : UV_EINVAL;
+      this.errno = typeof err?.errno === "number" && err.errno !== 0 ? uvTranslateSysError(err.errno) : UV_EINVAL;
       this.#settle();
     });
     server.listen({ port, host: address || undefined }, () => server.close(() => this.#settle()));

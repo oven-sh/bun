@@ -59,7 +59,7 @@ it("should link and unlink workspace package", async () => {
   );
   let { out, err } = await runBunInstall(env, link_dir);
   expect(err.split(/\r?\n/).slice(-2)).toEqual(["Saved lockfile", ""]);
-  expect(out.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
     "Done! Checked 3 packages (no changes)",
@@ -90,7 +90,7 @@ it("should link and unlink workspace package", async () => {
 
   err = await stderr.text();
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect((await stdout.text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect((await stdout.text()).replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed moo@link:moo`,
@@ -143,7 +143,7 @@ it("should link and unlink workspace package", async () => {
 
   err = await stderr.text();
   expect(err.split(/\r?\n/)).toEqual([""]);
-  expect((await stdout.text()).replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect((await stdout.text()).replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed foo@link:foo`,
@@ -221,7 +221,7 @@ it("should link package", async () => {
   const err2 = await new Response(stderr2).text();
   expect(err2.split(/\r?\n/)).toEqual([""]);
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed ${link_name}@link:${link_name}`,
@@ -314,7 +314,7 @@ it("should link scoped package", async () => {
   const err2 = await new Response(stderr2).text();
   expect(err2.split(/\r?\n/)).toEqual([""]);
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun link v1."),
     "",
     `installed ${link_name}@link:${link_name}`,
@@ -404,7 +404,7 @@ it("should link dependency without crashing", async () => {
   const err2 = await new Response(stderr2).text();
   expect(err2.split(/\r?\n/).slice(-2)).toEqual(["Saved lockfile", ""]);
   const out2 = await new Response(stdout2).text();
-  expect(out2.replace(/\s*\[[0-9\.]+ms\]\s*$/, "").split(/\r?\n/)).toEqual([
+  expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
     "",
     `+ ${link_name}@link:${link_name}`,

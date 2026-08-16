@@ -81,6 +81,10 @@ const ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY =
   "sha512-S25U8/QXGIKfn/AWtsce1aVMnDjDL+ykFtAufpsuKGad32NlsCpi9TDuXvzoTQ+MdaZpGV3c4xghUZUsNeMp4A==";
 const STRICT_PEER_DEP_1_0_0_INTEGRITY =
   "sha512-bz2RC/Fp4Nvc9aIiHB6Szko9m6sxNy/clIHnTAGeD9VSpQJTvlPAJqJ09lWo7N3q4JNLEqDTf3Mn+zNUsYOKWQ==";
+const NO_DEPS_1_1_0_INTEGRITY =
+  "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==";
+const NORMAL_DEP_AND_DEV_DEP_1_0_1_INTEGRITY =
+  "sha512-MzZS9lLNBdqXf/lI+TKlXGeWrcDkOjzdSPJtvkRUN1FUjXg2DcGVldEqx9D8kNwF87Hxf2cRLvLv4a8GqZ6zPg==";
 const LOCAL_TARBALL_INTEGRITY =
   "sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==";
 
@@ -1550,6 +1554,104 @@ snapshots:
         "node_modules/no-deps/no-deps@1.0.1
         node_modules/one-dep/one-dep@1.0.0
         node_modules/strict-peer-dep/node_modules/no-deps/no-deps@1.0.0
+        node_modules/strict-peer-dep/strict-peer-dep@1.0.0"
+      `);
+    });
+
+    test("a peer nothing in the lockfile satisfies and pnpm left unmet is not given a copy of the highest version", async () => {
+      // pnpm recorded no resolution for strict-peer-dep's no-deps@^2.0.0 (no snapshot suffix),
+      // so in pnpm's layout the package sees whatever no-deps sits at the root: 1.0.1, hoisted
+      // there from one-dep. Binding the peer to the highest version present instead (1.1.0,
+      // nested under normal-dep-and-dev-dep) would add a strict-peer-dep/no-deps copy to the
+      // migrated tree that pnpm's tree does not have. Left unbound, the peer is bound to the
+      // root copy when the migrated bun.lock is loaded, like any other peer the file prints
+      // nothing for.
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "unmet-peer",
+            // one-dep is a devDependency so that its no-deps@1.0.1 takes the root slot.
+            dependencies: { "normal-dep-and-dev-dep": "1.0.1", "strict-peer-dep": "1.0.0" },
+            devDependencies: { "one-dep": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      normal-dep-and-dev-dep:
+        specifier: 1.0.1
+        version: 1.0.1
+      strict-peer-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+    devDependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  no-deps@1.1.0:
+    resolution: {integrity: ${NO_DEPS_1_1_0_INTEGRITY}}
+
+  normal-dep-and-dev-dep@1.0.1:
+    resolution: {integrity: ${NORMAL_DEP_AND_DEV_DEP_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+  strict-peer-dep@1.0.0:
+    resolution: {integrity: ${STRICT_PEER_DEP_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^2.0.0
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  no-deps@1.1.0: {}
+
+  normal-dep-and-dev-dep@1.0.1:
+    dependencies:
+      no-deps: 1.1.0
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  strict-peer-dep@1.0.0: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
+      expect(bunLock).toContain(`"normal-dep-and-dev-dep/no-deps": ["no-deps@1.1.0"`);
+      expect(bunLock).not.toContain(`"strict-peer-dep/no-deps"`);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
+        "node_modules/no-deps/no-deps@1.0.1
+        node_modules/normal-dep-and-dev-dep/node_modules/no-deps/no-deps@1.1.0
+        node_modules/normal-dep-and-dev-dep/normal-dep-and-dev-dep@1.0.1
+        node_modules/one-dep/one-dep@1.0.0
         node_modules/strict-peer-dep/strict-peer-dep@1.0.0"
       `);
     });

@@ -811,8 +811,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Binds the recorded targets on first use, which is during the visit pass (hoisting is done)
-    /// and only in files where a `require()` of an unwrapped package initializes a `let`/`var`.
+    /// Binds the recorded targets on first use, after hoisting; most files never ask.
     pub(crate) fn binding_is_rebound(&mut self, binding: Ref) -> bool {
         for (scope, name_ref) in core::mem::take(&mut self.unresolved_rebound_targets) {
             let name = self.load_name_from_ref(name_ref);

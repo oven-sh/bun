@@ -57,7 +57,7 @@ test("base64 module containing a '.' keeps its named exports", async () => {
   expect(mod.f.m).toBe(1);
 });
 
-test.each(["text/javascript", "text/javascript;charset=utf-8", "application/javascript", ""])(
+test.each(["text/javascript", "text/javascript;charset=utf-8", "application/javascript", "TEXT/JAVASCRIPT", ""])(
   "percent-encoded module with a '.' executes for MIME %j",
   async mime => {
     const code = `export const x = Number.parseFloat("1.5");`;
@@ -74,13 +74,13 @@ test("URL text ending in a known file extension is not sniffed as a loader", asy
   expect(mod.x).toBe(1);
 });
 
-test("application/json data URL imports as JSON", async () => {
-  const mod = await import("data:application/json," + encodeURIComponent(`{"a": 1.5}`));
+test.each(["application/json", "Application/JSON"])("%s data URL imports as JSON", async mime => {
+  const mod = await import(`data:${mime},` + encodeURIComponent(`{"a": 1.5}`));
   expect(mod.default).toEqual({ a: 1.5 });
 });
 
 // https://github.com/oven-sh/bun/issues/29159
-test.each(["text/javascript", "application/javascript"])(
+test.each(["text/javascript", "application/javascript", "Text/JavaScript"])(
   "TypeScript syntax in a %s data URL is a syntax error",
   async mime => {
     const code = `export const a = "a.b";\nexport enum A { A }\n`;

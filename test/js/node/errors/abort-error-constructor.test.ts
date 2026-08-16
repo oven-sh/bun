@@ -107,11 +107,37 @@ describe("node-style AbortError", () => {
       cause: undefined,
     });
 
-    const invalid = thrown(() => new AbortError("message", "not an object"));
-    expect({ name: invalid.name, code: invalid.code, message: invalid.message }).toEqual({
+    const withNull = new AbortError("message", null);
+    expect(withNull).toBeInstanceOf(AbortError);
+    expect({ name: withNull.name, code: withNull.code, message: withNull.message, cause: withNull.cause }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      message: "message",
+      cause: undefined,
+    });
+  });
+
+  test("err.constructor rejects options that are not typeof object", async () => {
+    const { "timers/promises": err } = await abortErrors();
+    const AbortError = err.constructor;
+    const rejected = Object.fromEntries(
+      Object.entries({ number: 42, boolean: true, string: "not an object", function: function named() {} }).map(
+        ([label, options]) => {
+          const invalid = thrown(() => new AbortError("message", options));
+          return [label, { name: invalid.name, code: invalid.code, message: invalid.message }];
+        },
+      ),
+    );
+    const typeError = (received: string) => ({
       name: "TypeError",
       code: "ERR_INVALID_ARG_TYPE",
-      message: `The "options" argument must be of type object. Received type string ('not an object')`,
+      message: `The "options" argument must be of type object. Received ${received}`,
+    });
+    expect(rejected).toEqual({
+      number: typeError("type number (42)"),
+      boolean: typeError("type boolean (true)"),
+      string: typeError("type string ('not an object')"),
+      function: typeError("function named"),
     });
   });
 

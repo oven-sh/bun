@@ -1782,7 +1782,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeAbortError, (JSC::JSGlobalObject * l
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto message = callFrame->argument(0);
     auto options = callFrame->argument(1);
-    if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
+    // Node: `if (options !== undefined && typeof options !== 'object')`
+    if (!options.isUndefined() && !JSC::jsTypeofIsObject(lexicalGlobalObject, options)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
 
     if (message.isUndefined() && options.isUndefined()) {
         return JSValue::encode(Bun::createError(vm, lexicalGlobalObject, Bun::ErrorCode::ABORT_ERR, JSValue(globalObject->commonStrings().OperationWasAbortedString(globalObject))));

@@ -218,6 +218,21 @@ describe("scheduler", () => {
     }
   });
 
+  // Node reads this[kScheduler] unguarded, so a nullish receiver (including an unbound call)
+  // surfaces as the engine's own TypeError with no code rather than ERR_INVALID_THIS.
+  it("yield() and wait() throw a plain TypeError for a null or undefined receiver, as in node", () => {
+    const { yield: yieldFn, wait } = scheduler;
+    for (const receiver of [null, undefined]) {
+      const [yieldError, waitError] = [thrownBy(() => yieldFn.call(receiver)), thrownBy(() => wait.call(receiver, 1))];
+      expect([yieldError.name, yieldError.code, waitError.name, waitError.code]).toEqual([
+        "TypeError",
+        undefined,
+        "TypeError",
+        undefined,
+      ]);
+    }
+  });
+
   it("yield() and wait() resolve for the scheduler itself and for objects inheriting from it", async () => {
     const inheriting = Object.create(scheduler);
     expect(

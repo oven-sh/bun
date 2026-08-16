@@ -349,8 +349,16 @@ diffme@1.0.0 → diffme@2.0.0
             name: "diffme",
             "dist-tags": { latest: "2.0.0" },
             versions: {
-              "1.0.0": { name: "diffme", version: "1.0.0", dist: { tarball: `${authed.url.origin}/diffme/-/diffme-1.0.0.tgz` } },
-              "2.0.0": { name: "diffme", version: "2.0.0", dist: { tarball: `${foreign.url.origin}/stolen/diffme-2.0.0.tgz` } },
+              "1.0.0": {
+                name: "diffme",
+                version: "1.0.0",
+                dist: { tarball: `${authed.url.origin}/diffme/-/diffme-1.0.0.tgz` },
+              },
+              "2.0.0": {
+                name: "diffme",
+                version: "2.0.0",
+                dist: { tarball: `${foreign.url.origin}/stolen/diffme-2.0.0.tgz` },
+              },
             },
           });
         }

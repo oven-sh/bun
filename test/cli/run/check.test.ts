@@ -263,4 +263,44 @@ describe.concurrent("bun --check", () => {
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
+
+  test("works as `node --check <file>` (argv0 emulation) without executing", async () => {
+    using dir = tempDir("check-as-node", {
+      "script.js": `require("fs").writeFileSync("ran.txt", "1");\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", "script.js"],
+      argv0: "node",
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(await Bun.file(`${dir}/ran.txt`).exists()).toBe(false);
+    expect(exitCode).toBe(0);
+  });
+
+  test("`node --check run` checks a file literally named `run`", async () => {
+    // Under node emulation positionals[0] is the script, so the `run`
+    // subcommand strip must not apply.
+    using dir = tempDir("check-as-node-run", {
+      run: `const x = ;\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", "run"],
+      argv0: "node",
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error");
+    expect(stderr).toContain("run");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
 });

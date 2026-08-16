@@ -183,16 +183,19 @@ describe("stream stdio entries without an fd (post-spawn pump)", () => {
       bunExe(),
       [
         "-e",
-        `process.stdout.on("error", () => process.exit(0));
+        // Destroying the destination tears the pump down and closes the read end, so the
+        // child's next write fails: exit 21 on that path, 7 if it only ever hit the fallback.
+        `process.stdout.on("error", () => process.exit(21));
          process.stdout.write("x");
          setInterval(() => process.stdout.write("y".repeat(4096)), 10);
-         setTimeout(() => process.exit(0), 1000);`,
+         setTimeout(() => process.exit(7), 3000);`,
       ],
       { env: bunEnv, stdio: ["ignore", dest, "ignore"] },
     );
     await firstChunk;
     dest.destroy(new Error("boom"));
-    await once(child, "close");
+    const [code, signal] = await once(child, "close");
+    expect({ code, signal }).toEqual({ code: 21, signal: null });
   });
 
   it("EOFs the child's stdin when the wrapped source dies without ending", async () => {

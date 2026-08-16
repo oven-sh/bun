@@ -1435,6 +1435,5 @@ if (cluster.isPrimary) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout.trim()).toBe("OK");
-  expect(exitCode).toBe(0);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: expect.any(String), exitCode: 0 });
 });

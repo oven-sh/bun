@@ -395,15 +395,16 @@ function shareListenFd(worker, message) {
     send(worker, { errno: UV_EINVAL, ack: message.seq });
     return;
   }
-  if (typeof fd !== "number" || fd < 0) {
+  if (!Number.isInteger(fd) || fd < 0) {
     send(worker, { errno: UV_EBADF, ack: message.seq });
     return;
   }
   try {
     const sent = send(worker, { errno: 0, ack: message.seq }, { fd });
     if (sent === null) send(worker, { errno: UV_EINVAL, ack: message.seq });
-  } catch {
-    send(worker, { errno: UV_EINVAL, ack: message.seq });
+  } catch (err) {
+    const errno = typeof err?.errno === "number" && err.errno !== 0 ? uvTranslateSysError(err.errno) : UV_EINVAL;
+    send(worker, { errno, ack: message.seq });
   }
 }
 

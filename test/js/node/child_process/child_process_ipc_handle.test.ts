@@ -710,13 +710,19 @@ server.listen(0, '127.0.0.1', async () => {
   const port = server.address().port;
   const child = Bun.spawn({
     cmd: [process.execPath, 'child.js'],
-    stdio: [server._handle.fd, 'inherit', 'inherit'],
+    stdio: [server._handle.fd, 'pipe', 'inherit'],
     env: { ...process.env },
     cwd: import.meta.dir,
   });
   // The child owns a dup; drop the parent's acceptor so requests reach it.
   server.close();
-  await new Promise(r => setTimeout(r, 500));
+  // Wait for the child to report that listen({ fd: 0 }) completed.
+  const decoder = new TextDecoder();
+  let childOut = '';
+  for await (const chunk of child.stdout) {
+    childOut += decoder.decode(chunk, { stream: true });
+    if (childOut.includes('ready')) break;
+  }
   // The adopted listen alone must keep the child alive.
   console.log('child alive:', child.exitCode === null);
   const res = await fetch('http://127.0.0.1:' + port + '/', { signal: AbortSignal.timeout(5000) });
@@ -730,7 +736,7 @@ const http = require('node:http');
 const s = http.createServer((req, res) => res.end('hello-fd0'));
 s.on('error', e => { console.error('listen error:', e.code); process.exit(3); });
 // fd 0: get_truthy would drop it and silently bind the default port instead.
-s.listen({ fd: 0 });
+s.listen({ fd: 0 }, () => console.log('ready'));
 `,
     });
     await using proc = Bun.spawn({

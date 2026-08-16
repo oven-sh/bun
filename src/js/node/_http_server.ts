@@ -104,7 +104,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
-const { UV_EBADF } = process.binding("uv");
+const { UV_EBADF, UV_EINVAL } = process.binding("uv");
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -643,8 +643,7 @@ Server.prototype.listen = function () {
       if (typeof fd === "number" && fd >= 0 && process.connected) {
         if (process.platform === "win32") {
           server.removeListener("listening", notifyListening);
-          const UV_EINVAL_WIN = -4071;
-          process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(UV_EINVAL_WIN, "listen", null, 0));
+          process.nextTick(emitListenErrorNT, server, new ExceptionWithHostPort(UV_EINVAL, "listen", null, 0));
           return this;
         }
         cluster._sendInternal(

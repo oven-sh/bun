@@ -921,7 +921,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] int64_t NodeHTTP__getServerSocketFd(JSC::Enco
 {
     JSC::JSValue decoded = JSC::JSValue::decode(value);
     auto* socket = dynamicDowncast<Bun::JSNodeHTTPServerSocket>(decoded);
-    if (!socket || !socket->socket || us_socket_is_closed(socket->socket))
+    if (!socket || socket->isClosed())
         return -1;
     return (int64_t)us_socket_get_fd(socket->socket);
 }
@@ -930,7 +930,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void NodeHTTP__pauseServerSocket(JSC::Encoded
 {
     JSC::JSValue decoded = JSC::JSValue::decode(value);
     auto* socket = dynamicDowncast<Bun::JSNodeHTTPServerSocket>(decoded);
-    if (!socket || !socket->socket || us_socket_is_closed(socket->socket))
+    if (!socket || socket->isClosed())
         return;
     us_socket_pause(socket->socket);
 }

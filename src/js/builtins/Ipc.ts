@@ -132,7 +132,7 @@ export function parseHandle(target, serialized, fd) {
         try {
           require("node:fs").closeSync(fd);
         } catch {}
-        throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`);
+        throw new Error(`failed to adopt received dgram handle: ${err.code || err.message}`, { cause: err });
       }
       socket.once("error", throwOnAdoptionFailure);
       socket.bind({ fd, exclusive: true }, () => {

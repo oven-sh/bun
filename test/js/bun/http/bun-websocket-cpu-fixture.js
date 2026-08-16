@@ -30,12 +30,16 @@ for (let i = 0; i < 1000; i++) {
   ws.send("hello");
 }
 let bytesReceived = 0;
-const { promise: drained, resolve: onDrained } = Promise.withResolvers();
+const { promise: drained, resolve: onDrained, reject: onDrainFailed } = Promise.withResolvers();
 ws.onmessage = event => {
   bytesReceived += event.data.length;
   if (bytesReceived >= 5000) onDrained();
 };
+ws.onerror = () => onDrainFailed(new Error(`websocket errored after ${bytesReceived} bytes, before the drain completed`));
+ws.onclose = () => onDrainFailed(new Error(`websocket closed after ${bytesReceived} bytes, before the drain completed`));
 await drained;
+ws.onerror = null;
+ws.onclose = null;
 // Let the loop settle before the first sample window opens.
 await Bun.sleep(500);
 

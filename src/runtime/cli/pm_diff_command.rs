@@ -1126,14 +1126,11 @@ fn print_summary(left: &Tree, right: &Tree, changes: &[FileChange<'_>], style: S
     }
 
     let notes = collect_notes(left, right, changes, style.pretty);
-    let mark = pretty_fmt_owned(
-        if style.pretty {
-            "  <yellow>▲<r> "
-        } else {
-            "  ! "
-        },
-        style.pretty,
-    );
+    let mark = if style.pretty {
+        bun_core::pretty_fmt!("  <yellow>▲<r> ", true)
+    } else {
+        "  ! "
+    };
     for n in &notes {
         Output::print(format_args!("{mark}{n}\n"));
     }
@@ -1156,7 +1153,7 @@ fn collect_notes(
     ast_notes(changes, &mut notes, colors);
     for c in changes {
         if c.binary && c.old.is_none() {
-            notes.push(note(
+            notes.push(note!(
                 colors,
                 "new binary file <b>{}<r> ({} bytes)",
                 &[
@@ -1171,7 +1168,7 @@ fn collect_notes(
                 || strings::ends_with(c.path, b".exe"))
             && !c.binary
         {
-            notes.push(note(
+            notes.push(note!(
                 colors,
                 "new executable-looking file <b>{}<r>",
                 &[(BStr::new(c.path)).to_string()],
@@ -1275,7 +1272,7 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) 
         }
     }
     for (b, path) in &builtins {
-        notes.push(note(
+        notes.push(note!(
             colors,
             "now imports <b><magenta>{}<r> <d>({})<r>",
             &[(BStr::new(b)).to_string(), (BStr::new(path)).to_string()],
@@ -1285,10 +1282,10 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) 
         let shown: Vec<String> = packages
             .iter()
             .take(6)
-            .map(|p| note(colors, "<b>{}<r>", &[BStr::new(p).to_string()]))
+            .map(|p| note!(colors, "<b>{}<r>", &[BStr::new(p).to_string()]))
             .collect();
         let more = if packages.len() > 6 {
-            note(
+            note!(
                 colors,
                 " <d>… and {} more<r>",
                 &[(packages.len() - 6).to_string()],
@@ -1312,7 +1309,7 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) 
         if label.ends_with("URL") && n < 3 {
             continue;
         }
-        notes.push(note(
+        notes.push(note!(
             colors,
             "<b>+{}<r> {} <d>({}{})<r>",
             &[
@@ -1325,14 +1322,20 @@ fn ast_notes(changes: &[FileChange<'_>], notes: &mut Vec<String>, colors: bool) 
     }
 }
 
-/// Renders our colour-tag `template` first and only then drops the (untrusted) `args` into its `{}` slots, so
-/// package.json text can never be read as markup.
-fn note(colors: bool, template: &str, args: &[String]) -> String {
-    let rendered = pretty_fmt_owned(template, colors);
+/// Renders our colour-tag template at compile time and only then drops the (untrusted) args into its `{}` slots,
+/// so package.json text can never be read as markup.
+macro_rules! note {
+    ($colors:expr, $tpl:literal, &[$($arg:expr),* $(,)?] $(,)?) => {
+        fill_note(if $colors { bun_core::pretty_fmt!($tpl, true) } else { bun_core::pretty_fmt!($tpl, false) }, &[$($arg),*])
+    };
+}
+use note;
+
+fn fill_note(rendered: &str, args: &[String]) -> String {
     let mut out = String::with_capacity(rendered.len() + 32);
     let mut args = args.iter();
-    let mut rest = rendered.as_str();
-    while let Some(at) = rest.find("{}") {
+    let mut rest = rendered;
+    while let Some(at) = strings::index_of(rest.as_bytes(), b"{}") {
         out.push_str(&rest[..at]);
         if let Some(a) = args.next() {
             out.push_str(a);
@@ -1341,14 +1344,6 @@ fn note(colors: bool, template: &str, args: &[String]) -> String {
     }
     out.push_str(rest);
     out
-}
-
-fn pretty_fmt_owned(template: &str, colors: bool) -> String {
-    String::from_utf8_lossy(&bun_core::output::pretty_fmt_runtime(
-        template.as_bytes(),
-        colors,
-    ))
-    .into_owned()
 }
 
 /// `name@version` → (name, version), minding a leading scope `@`.
@@ -1395,12 +1390,12 @@ fn package_json_notes(
         let o = old_scripts.and_then(|s| s.get_string_cloned(&bump, key).ok().flatten());
         let n = new_scripts.and_then(|s| s.get_string_cloned(&bump, key).ok().flatten());
         match (o, n) {
-            (None, Some(n)) => notes.push(note(
+            (None, Some(n)) => notes.push(note!(
                 colors,
                 "<b>{}<r> script added: <cyan>{}<r>",
                 &[(BStr::new(key)).to_string(), (BStr::new(n)).to_string()],
             )),
-            (Some(o), Some(n)) if o != n => notes.push(note(
+            (Some(o), Some(n)) if o != n => notes.push(note!(
                 colors,
                 "<b>{}<r> script changed: <cyan>{}<r>",
                 &[(BStr::new(key)).to_string(), (BStr::new(n)).to_string()],
@@ -1435,7 +1430,7 @@ fn package_json_notes(
         let mut bumps: Vec<String> = Vec::new();
         for (name, ver) in &n {
             match o.iter().find(|(on, _)| on == name) {
-                None => notes.push(note(
+                None => notes.push(note!(
                     colors,
                     "{} added: <b>{}<r>@{}",
                     &[
@@ -1444,7 +1439,7 @@ fn package_json_notes(
                         (BStr::new(ver)).to_string(),
                     ],
                 )),
-                Some((_, ov)) if ov != ver => bumps.push(note(
+                Some((_, ov)) if ov != ver => bumps.push(note!(
                     colors,
                     "{} <b>{}<r>: {} → {}",
                     &[
@@ -1461,7 +1456,7 @@ fn package_json_notes(
         if bumps.len() > 4 {
             let rest = bumps.len() - 3;
             bumps.truncate(3);
-            bumps.push(note(
+            bumps.push(note!(
                 colors,
                 "<d>… and {} more {} version changes<r>",
                 &[(rest).to_string(), (BStr::new(field)).to_string()],
@@ -1470,7 +1465,7 @@ fn package_json_notes(
         notes.append(&mut bumps);
         for (name, _) in &o {
             if !n.iter().any(|(nn, _)| nn == name) {
-                notes.push(note(
+                notes.push(note!(
                     colors,
                     "{} removed: <b>{}<r>",
                     &[
@@ -1494,7 +1489,7 @@ fn package_json_notes(
         let n = new.get(field).map(|e| expr_text(&e, &bump));
         if o != n {
             match (o, n) {
-                (Some(o), Some(n)) => notes.push(note(
+                (Some(o), Some(n)) => notes.push(note!(
                     colors,
                     "<b>{}<r> changed: {} → {}",
                     &[
@@ -1503,12 +1498,12 @@ fn package_json_notes(
                         (BStr::new(&n)).to_string(),
                     ],
                 )),
-                (None, Some(n)) => notes.push(note(
+                (None, Some(n)) => notes.push(note!(
                     colors,
                     "<b>{}<r> added: {}",
                     &[(BStr::new(field)).to_string(), (BStr::new(&n)).to_string()],
                 )),
-                (Some(_), None) => notes.push(note(
+                (Some(_), None) => notes.push(note!(
                     colors,
                     "<b>{}<r> removed",
                     &[(BStr::new(field)).to_string()],

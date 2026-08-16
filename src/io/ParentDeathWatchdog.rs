@@ -365,9 +365,7 @@ extern "C" fn on_process_exit() {
     kill_sync_pgroups_and_descendants();
 }
 
-/// Walk the process tree rooted at `getpid()` and SIGKILL every descendant.
-/// Thin wrapper over [`signal_process_tree`] with `root = getpid()` (root
-/// excluded from the signal set) and `signal = SIGKILL`.
+/// SIGKILL every descendant of `getpid()` (we ourselves are not signalled).
 fn kill_descendants() {
     #[cfg(unix)]
     {
@@ -375,10 +373,7 @@ fn kill_descendants() {
     }
 }
 
-/// Walk the process tree rooted at `root` (a direct child of ours) and send
-/// `signal` to `root` and every descendant. Public entry point for
-/// `Subprocess.killTree()`. `root`'s ppid is verified against `getpid()`
-/// before anything is signalled, so a recycled pid is left alone.
+/// `Subprocess.killTree()`: send `signal` to our direct child `root` and every descendant.
 pub fn kill_process_tree(root: libc::pid_t, signal: c_int) {
     #[cfg(unix)]
     {
@@ -390,10 +385,6 @@ pub fn kill_process_tree(root: libc::pid_t, signal: c_int) {
     }
 }
 
-/// Freeze-walk the process tree rooted at `root` and send `signal` to every
-/// verified descendant (and to `root` itself when `expected_ppid_of_root` is
-/// `Some`).
-///
 /// Pid-reuse safety: enumeration is a point-in-time snapshot, so a pid we
 /// collect could exit and be recycled by an unrelated process before we
 /// signal it. To avoid killing an innocent process we use a
@@ -403,20 +394,10 @@ pub fn kill_process_tree(root: libc::pid_t, signal: c_int) {
 ///      longer `parent`, the pid was recycled in the (microsecond) window
 ///      between enumerate and STOP — undo with SIGCONT and skip. Otherwise
 ///      `c` is now frozen and confirmed ours; recurse into it.
-///   3. Once the whole tree is frozen, send `signal` to each pid
-///      (leaves-first). SIGKILL terminates stopped processes directly; any
-///      other signal is queued while stopped, so a follow-up SIGCONT is sent
-///      to let it deliver.
+///   3. Once the whole tree is frozen, signal each pid leaves-first.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient.
-///
-/// `expected_ppid_of_root`:
-///   - `Some(ppid)` — `root` is frozen, its ppid verified against `ppid`, and
-///     it is included in the signal set. Used when `root` is a child process
-///     we want to signal along with its descendants.
-///   - `None` — `root` is left untouched (neither frozen nor signalled). Used
-///     when `root == getpid()` and we only want to reach our descendants.
+/// verify step sufficient. `expected_ppid_of_root` opts `root` itself into the same treatment.
 #[cfg(unix)]
 fn signal_process_tree(
     root: libc::pid_t,
@@ -428,19 +409,13 @@ fn signal_process_tree(
     let mut to_visit: Vec<libc::pid_t> = Vec::new();
     let mut to_kill: Vec<libc::pid_t> = Vec::new();
 
-    // Whether to send SIGCONT after `signal`. SIGKILL terminates a stopped
-    // process directly. For the stop-class signals, generating SIGCONT
-    // *discards* all pending stop signals (POSIX XSH 2.4.1 / Linux
-    // `prepare_signal()` flushes SIG_KERNEL_STOP_MASK), so waking would
-    // undo the caller's intent — leave the tree stopped, which is the
-    // requested end state.
+    // SIGKILL needs no wake-up, and SIGCONT discards pending stop signals (POSIX XSH 2.4.1).
     let needs_cont = !matches!(
         signal,
         libc::SIGKILL | libc::SIGSTOP | libc::SIGTSTP | libc::SIGTTIN | libc::SIGTTOU
     );
 
-    // Deliver `signal` to a STOPped+verified pid we couldn't record (OOM).
-    // Runs immediately so we don't leave it frozen.
+    // On OOM, signal a frozen pid immediately rather than leave it stopped and unrecorded.
     let signal_now = |pid: libc::pid_t| {
         let _ = kill(pid, signal);
         if needs_cont {
@@ -485,8 +460,6 @@ fn signal_process_tree(
                 continue;
             }
             if to_kill.try_reserve(1).is_err() {
-                // OOM after we've already STOPped+verified this child — signal it
-                // now rather than leaving it frozen and absent from to_kill.
                 signal_now(child);
                 break;
             }
@@ -498,14 +471,13 @@ fn signal_process_tree(
         }
     }
 
-    // Reverse: leaves first. SIGKILL terminates stopped processes directly.
+    // Leaves first.
     let mut i = to_kill.len();
     while i > 0 {
         i -= 1;
         let _ = kill(to_kill[i], signal);
     }
-    // Catchable signals are queued while stopped — wake each so it delivers.
-    // SIGKILL and stop-class signals are excluded (see `needs_cont` above).
+    // A signal queued against a stopped process only delivers once it is continued.
     if needs_cont {
         for &pid in &to_kill {
             let _ = kill(pid, libc::SIGCONT);

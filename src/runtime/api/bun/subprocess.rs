@@ -798,11 +798,7 @@ impl Subprocess<'_> {
         if self.has_exited() {
             return bun_sys::Result::Ok(());
         }
-        // Signal 0 is a liveness probe (`kill(pid, 0)` → ESRCH/EPERM check).
-        // The tree walk SIGSTOPs every descendant before signalling, which
-        // for signal 0 would observably pause/resume the whole tree and undo
-        // any deliberate SIGSTOP the user had issued. Route it to plain
-        // kill() so `killTree(0)` behaves like `kill(0)`.
+        // Signal 0 is a liveness probe; walking (and so stopping) the tree for it would be observable.
         if sig.0 == 0 {
             return self.process_mut().kill(0);
         }

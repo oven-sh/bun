@@ -152,8 +152,7 @@ pub struct TestRunner<'a> {
 }
 
 impl<'a> TestRunner<'a> {
-    /// For tests and hooks without a timeout of their own (0 = unlimited): the file's
-    /// `setDefaultTimeout()`, else the preloads', else `--timeout`.
+    /// The file's `setDefaultTimeout()`, else the preload's, else `--timeout` (0 = unlimited).
     pub(crate) fn default_timeout(&self) -> u32 {
         if self.default_timeout_override != u32::MAX {
             return self.default_timeout_override;

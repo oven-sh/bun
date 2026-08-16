@@ -284,12 +284,9 @@ impl CreateCommand {
 
         env_loader.load_process()?;
 
-        // `bun create` armed `SKIP_SECURITY_SCANNER` in its own process before
-        // getting here; seed the env loader so children we spawn below see it
-        // via the explicit envp we hand `spawn_sync`. On Windows, `load_process`
-        // reads the startup-frozen `environ` snapshot, so the `setenv`/
-        // `SetEnvironmentVariableW` in `set_skip_security_scanner_env` doesn't
-        // reach it — we have to write the var in ourselves. See #31149.
+        // Seed the skip-scanner var into the env loader; on Windows
+        // `load_process` reads a startup-frozen env snapshot that never sees
+        // the setenv from `set_skip_security_scanner_env` (#31149).
         if bun_install::SKIP_SECURITY_SCANNER.load(::core::sync::atomic::Ordering::Relaxed) {
             env_loader
                 .map
@@ -760,8 +757,7 @@ impl CreateCommand {
         let mut preinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut postinstall_tasks: Vec<&[u8]> = Vec::new();
         let mut has_dependencies: bool = false;
-        // Own `PATH` so the shared borrow on `env_loader.map` doesn't prevent
-        // the later `create_null_delimited_env_map(&mut ...)` call for #31149.
+        // Owned: a borrow here would block the later `&mut env_loader.map`.
         let path_env_owned: Box<[u8]> = env_loader
             .map
             .get(b"PATH")
@@ -1159,12 +1155,8 @@ impl CreateCommand {
                 Output::flush();
             }
 
-            // If we armed the skip-scanner flag above we put it into
-            // `env_loader.map`, so build an explicit envp from that map instead
-            // of letting the spawn fall back to `bun_sys::environ_ptr()` (which
-            // on Windows is a startup-frozen snapshot that never sees our
-            // additions). See #31149. `install_envp_storage` keeps the
-            // backing buffers alive for the duration of the spawn.
+            // Explicit envp from the seeded map; the `envp: None` fallback is
+            // a startup-frozen snapshot on Windows (#31149).
             let install_envp_storage = if bun_install::SKIP_SECURITY_SCANNER
                 .load(::core::sync::atomic::Ordering::Relaxed)
             {

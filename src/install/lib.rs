@@ -402,13 +402,9 @@ pub struct RunCommand;
 pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// Set by `bun create` on itself before anything it spawns. When armed,
-/// `install_with_manager::run_security_scanner` short-circuits so a scanner
-/// configured in a global `~/.bunfig.toml` does not block scaffolding. The
-/// in-process flag is the authoritative check; `BUN_INTERNAL_SKIP_SECURITY_SCANNER`
-/// is a companion env var exported for grandchildren that bun didn't launch
-/// directly (e.g. `create-next-app` → `bun install`). Lives here so
-/// `bun_install` can read it without depending on `bun_runtime`. See #31149.
+/// Armed by `bun create` so `run_security_scanner` skips a globally-configured
+/// scanner during scaffolding (#31149). Lives here, like `PRETEND_TO_BE_NODE`
+/// above, so `bun_install` can read it without depending on `bun_runtime`.
 pub static SKIP_SECURITY_SCANNER: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 

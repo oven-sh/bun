@@ -1770,19 +1770,11 @@ pub mod command {
         Ok(())
     }
 
-    /// Arm the in-process `bun_install::SKIP_SECURITY_SCANNER` flag and export
-    /// the companion `BUN_INTERNAL_SKIP_SECURITY_SCANNER=true` env var.
-    /// Used by `bun create` to prevent a globally-configured
-    /// `install.security.scanner` from blocking scaffolding. See #31149.
-    ///
-    /// On Windows, `bun_sys::environ()` is a WTF-8 snapshot frozen at startup,
-    /// so a `SetEnvironmentVariableW` call alone isn't enough: `env_loader`
-    /// reads the snapshot and `spawn_sync` with `envp: None` passes the
-    /// snapshot pointer to the child. The static flag is what in-process
-    /// readers (and `bunx_command` when it builds an explicit `envp`) check;
-    /// setenv/SetEnvironmentVariableW is the belt-and-suspenders for Unix
-    /// fork-inherit (e.g. a grandchild `bun install` that `create-next-app`
-    /// spawned directly via `child_process.spawn("bun", …)`).
+    /// Arm `bun_install::SKIP_SECURITY_SCANNER` and export the companion env
+    /// var so installs spawned during scaffolding skip a globally-configured
+    /// scanner (#31149). Both are needed: on Windows `bun_sys::environ()` is a
+    /// startup-frozen snapshot, so the spawn sites build explicit envps off
+    /// the static; the setenv covers Unix fork-inherit grandchildren.
     fn set_skip_security_scanner_env() {
         bun_install::SKIP_SECURITY_SCANNER.store(true, core::sync::atomic::Ordering::Relaxed);
         #[cfg(unix)]
@@ -1835,12 +1827,6 @@ pub mod command {
             };
         }
 
-        // A security scanner configured in the global `~/.bunfig.toml` has no
-        // way to be listed as a dependency of a project that does not yet
-        // exist — `bun create` (and the create-* packages it drives) would
-        // fail at the first `bun install` with `SecurityScannerNotInDependencies`.
-        // Export a flag for every child bun process inherited from this one.
-        // See oven-sh/bun#31149.
         set_skip_security_scanner_env();
 
         // Create command wraps bunx

@@ -321,6 +321,24 @@ for (let [gcTick, label] of [
         expect(await readableStreamToText(stdout!)).toBe("hello there!");
       });
 
+      it("Bun.file(Buffer) wrapped in a Response works as stdin", async () => {
+        // The Response body's file blob is moved out during option parsing, so
+        // spawn is the last holder of that store: the stdio option must own the
+        // path bytes rather than borrow them from the store's pinned Buffer.
+        const stdinPath = join(tmpdirSync(), "stdin.txt");
+        writeFileSync(stdinPath, "hello there!");
+        const body = new Response(Bun.file(Buffer.from(stdinPath)));
+        gcTick();
+        Bun.gc(true);
+        const { stdout } = spawn({
+          cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+          stdout: "pipe",
+          stdin: body,
+        });
+        gcTick();
+        expect(await readableStreamToText(stdout!)).toBe("hello there!");
+      });
+
       it("Bun.file() works as stdin and stdout", async () => {
         const stdinPath = join(tmpdirSync(), "stdout.txt");
         writeFileSync(stdinPath, "hello!");

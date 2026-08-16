@@ -158,7 +158,10 @@ test("object URLs for Bun.file(Buffer) blobs can be resolved and revoked from a 
       Bun.gc(true);
       const w = new Worker(dir + "/worker.js", { argv: [dir] });
       w.postMessage(urls);
-      const { ok, mine } = await new Promise(r => (w.onmessage = e => r(e.data)));
+      const { ok, mine } = await new Promise((resolve, reject) => {
+        w.onmessage = e => resolve(e.data);
+        w.onerror = e => reject(e.error ?? new Error(e.message));
+      });
       const fromWorker = [];
       for (const u of mine) fromWorker.push(await (await fetch(u)).text());
       await w.terminate();

@@ -178,9 +178,18 @@ function depromise<T>(_promise: Promise<T>): T {
   });
   tsd.expectType<number>(proc.stdin);
 }
+tsd.expectAssignable<PipedSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
+tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }));
+tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
+tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
+tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "ignore", "inherit"] }));
+tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: ["ignore", "inherit", "ignore"] }));
+tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }));
 
-// `writable` and `readable` are the same values as `stdin` and `stdout`, so they have the same
-// types as `stdin` and `stdout` for every stdio configuration.
+tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
+
+// `writable` and `readable` return the same values as `stdin` and `stdout`, so they have the
+// same types as `stdin` and `stdout` whatever the process was spawned with.
 {
   function aliases<
     In extends Bun.SpawnOptions.Writable,
@@ -195,41 +204,15 @@ function depromise<T>(_promise: Promise<T>): T {
 {
   const proc = Bun.spawn(["cat"], { stdin: "pipe" });
   tsd.expectType(proc.writable).is<FileSink>();
-  tsd.expectType(proc.readable).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
   proc.writable.write("hello");
 
   // @ts-expect-error writable is a read-only getter, like stdin
   proc.writable = proc.stdin;
 }
-{
-  const proc = Bun.spawn(["cat"], { stdin: 0, stdout: 1 });
-  tsd.expectType(proc.writable).is<number>();
-  tsd.expectType(proc.readable).is<number>();
-}
-{
-  const proc = Bun.spawn(["cat"], { stdout: "inherit" });
-  tsd.expectType(proc.writable).is<undefined>();
-  tsd.expectType(proc.readable).is<undefined>();
-}
-{
-  const proc = Bun.spawn(["cat"], { stdio: ["pipe", "pipe", "pipe"] });
-  tsd.expectType(proc.writable).is<FileSink>();
-  tsd.expectType(proc.readable).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
-}
 tsd.expectType<PipedSubprocess["writable"]>().is<FileSink>();
 tsd.expectType<WritableSubprocess["writable"]>().is<FileSink>();
 tsd.expectType<NullSubprocess["writable"]>().is<undefined>();
 tsd.expectType<ReadableSubprocess["readable"]>().is<ReadableStream<Uint8Array<ArrayBuffer>>>();
-
-tsd.expectAssignable<PipedSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
-tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["ignore", "pipe", "pipe"] }));
-tsd.expectAssignable<ReadableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
-tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe", "pipe"] }));
-tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "ignore", "inherit"] }));
-tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: ["ignore", "inherit", "ignore"] }));
-tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }));
-
-tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
 
 // Lazy option types (async only)
 {

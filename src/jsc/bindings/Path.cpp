@@ -141,15 +141,13 @@ JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto binding = constructEmptyArray(globalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
-    binding->putDirectIndex(
-        globalObject,
-        (unsigned)0,
-        Zig::createPath(globalObject, false));
+    auto* posix = Zig::createPath(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});
-    binding->putDirectIndex(
-        globalObject,
-        (unsigned)1,
-        Zig::createPath(globalObject, true));
+    binding->putDirectIndex(globalObject, (unsigned)0, posix);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto* win32 = Zig::createPath(globalObject, true);
+    RETURN_IF_EXCEPTION(scope, {});
+    binding->putDirectIndex(globalObject, (unsigned)1, win32);
     RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }

@@ -1012,6 +1012,49 @@ describe("codeGeneration options", () => {
   });
 });
 
+describe("the options argument", () => {
+  // Node checks `options` with validateObject() (lib/vm.js), which rejects
+  // arrays and functions as well as null and primitives.
+  const script = new Script("1 + 1;");
+  const entryPoints: Record<string, (options: unknown) => unknown> = {
+    "createContext()": options => createContext({}, options as any),
+    "new Script()": options => new Script("1 + 1;", options as any),
+    "compileFunction()": options => compileFunction("return 1 + 1;", [], options as any),
+    "vm.runInThisContext()": options => runInThisContext("1 + 1;", options as any),
+    "Script#runInThisContext()": options => script.runInThisContext(options as any),
+    "Script#runInContext()": options => script.runInContext(createContext({}), options as any),
+    "Script#runInNewContext()": options => script.runInNewContext({}, options as any),
+  };
+  const invalidOptions: [description: string, options: unknown, received: string][] = [
+    ["an array", [], "an instance of Array"],
+    ["a Proxy around an array", new Proxy([], {}), "an instance of Array"],
+    ["a function", function foo() {}, "function foo"],
+    ["null", null, "null"],
+    ["a number", 1, "type number (1)"],
+  ];
+
+  describe.each(Object.entries(entryPoints))("%s", (_, run) => {
+    test.each(invalidOptions)("rejects %s", (_, options, received) => {
+      expect(() => run(options)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: `The "options" argument must be of type object. Received ${received}`,
+        }),
+      );
+    });
+  });
+
+  test("vm.runInContext() and vm.runInNewContext() copy options into a fresh object like Node", () => {
+    // lib/vm.js spreads `options` before handing it to Script, so any
+    // non-string value behaves like passing no options to these two.
+    for (const [, options] of invalidOptions) {
+      expect(runInContext("1 + 1;", createContext({}), options as any)).toBe(2);
+      expect(runInNewContext("1 + 1;", {}, options as any)).toBe(2);
+    }
+  });
+});
+
 describe("context options with throwing getters", () => {
   // Without the fix, reading these options with a pending exception aborted
   // the process, so run the matrix in a subprocess.

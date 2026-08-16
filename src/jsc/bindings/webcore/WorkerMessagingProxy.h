@@ -95,7 +95,6 @@ public:
     // workerGlobalScopeDestroyedInternal() would have released. Parent thread.
     void parentContextWillDestroy();
 
-    bool askedToTerminate() const { return m_askedToTerminate; }
     bool hasPendingActivity() const { return m_state.load() != State::Closed; }
     // node's kIsOnline: from 'online' until the thread goes.
     bool isOnline() const
@@ -124,8 +123,6 @@ public:
     // -- Either thread ---------------------------------------------------------------------------
     WorkerOptions& options() { return m_options; }
     ScriptExecutionContextIdentifier workerContextIdentifier() const { return m_workerContextIdentifier; }
-    ScriptExecutionContextIdentifier loaderContextIdentifier() const { return m_loaderContextIdentifier; }
-    void* workerThread() const { return m_workerThread; }
 
     struct MessageInbox {
         Lock lock;

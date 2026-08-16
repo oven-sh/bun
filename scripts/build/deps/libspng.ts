@@ -16,7 +16,6 @@ const LIBSPNG_COMMIT = "fb768002d4288590083a476af628e51c3f1d47cd"; // v0.7.4
 
 export const libspng: Dependency = {
   name: "libspng",
-  versionMacro: "LIBSPNG",
 
   source: () => ({
     kind: "github-archive",

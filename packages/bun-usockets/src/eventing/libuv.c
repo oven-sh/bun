@@ -44,11 +44,7 @@ int us_internal_libuv_peer_reset_probe(LIBUS_SOCKET_DESCRIPTOR fd) {
 }
 
 static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
-  struct us_socket_t *s = (struct us_socket_t *)wp;
-  if (s->flags.adopted && s->prev) {
-    s = s->prev;
-  }
-  return s;
+  return us_internal_socket_follow_adopted((struct us_socket_t *)wp);
 }
 
 static int us_internal_poll_cb_socket_is_probeable(struct us_poll_t *wp) {
@@ -288,15 +284,19 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
   us_poll_start_rc(p, loop, events);
 }
 
-void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
-  if(!p->uv_p) return;
+int us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
+  if(!p->uv_p) return 0;
   if (us_poll_events(p) != events) {
     p->poll_type =
         us_internal_poll_type(p) |
         ((events & LIBUS_SOCKET_READABLE) ? POLL_TYPE_POLLING_IN : 0) |
         ((events & LIBUS_SOCKET_WRITABLE) ? POLL_TYPE_POLLING_OUT : 0);
+    /* The poll stays initialized across changes here (the dispatcher never
+     * parks a libuv poll), so this cannot hit the registration failure the
+     * epoll re-add can; uv_poll_start on a live poll only rejects bad args. */
     uv_poll_start(p->uv_p, events | UV_DISCONNECT, poll_cb);
   }
+  return 0;
 }
 
 void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {

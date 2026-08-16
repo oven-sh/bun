@@ -8,7 +8,6 @@ use crate::node::types::FdJsc as _;
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::webcore::ReadableStream;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use bun_io::max_buf::MaxBuf;
 use bun_ptr::IntrusiveRc;
 use bun_ptr::cow_slice::CowSlice;
@@ -176,12 +175,6 @@ impl Readable {
             Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
     }
-
-    pub fn on_close(&mut self, _: Option<bun_sys::Error>) {
-        *self = Readable::Closed;
-    }
-
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
     pub fn close(&mut self) {
         match self {

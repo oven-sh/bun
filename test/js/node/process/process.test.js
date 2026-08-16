@@ -560,10 +560,10 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",
-  "linux-x64": "72.1",
-  "linux-arm64": "72.1",
-  "win32-x64": "72.1",
-  "win32-arm64": "72.1",
+  "linux-x64": "78.3",
+  "linux-arm64": "78.3",
+  "win32-x64": "78.3",
+  "win32-arm64": "78.3",
 };
 
 it("ICU version does not regress", () => {
@@ -659,7 +659,7 @@ it("process.versions", () => {
   const expectedVersions = {
     boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "1803341d6241d8fa4b3f65fa68cb13a32ad92f04",
+    mimalloc: "6e891cbe4790982ca9f3f9a60319a72e61b5d725",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
@@ -1952,6 +1952,67 @@ describe("process.exitCode", () => {
 
 it("process._exiting", () => {
   expect(process._exiting).toBe(false);
+});
+
+// node's process.exit() (lib/internal/process/per_thread.js): _exiting is set before
+// 'exit' is emitted whether or not anyone listens, and reallyExit — looked up after
+// the dispatch — receives process.exitCode as the listeners left it. Overriding
+// reallyExit observes both without adding an 'exit' listener of its own.
+describe.concurrent("process.exit()", () => {
+  const probe = `const { writeSync } = require("node:fs");
+    const reallyExit = process.reallyExit;
+    process.reallyExit = function (code) {
+      writeSync(1, "_exiting=" + process._exiting + " code=" + code + "\\n");
+      return reallyExit.call(process, code);
+    };`;
+
+  it("sets _exiting with no 'exit' listeners (main thread)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", probe + "process.exit(0);"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "_exiting=true code=0\n", stderr: "", exitCode: 0 });
+  });
+
+  it("sets _exiting with no user 'exit' listeners (worker thread)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         new Worker(${JSON.stringify(probe + "process.exit(0);")}, { eval: true }).on("exit", c => console.log("exit " + c));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "_exiting=true code=0\nexit 0\n", stderr: "", exitCode: 0 });
+  });
+
+  it("exits with the exitCode an 'exit' listener assigns", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        probe +
+          `process.on("exit", code => { writeSync(1, "listener code=" + code + "\\n"); process.exitCode = 42; });
+           process.exit(7);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "listener code=7\n_exiting=true code=42\n",
+      stderr: "",
+      exitCode: 42,
+    });
+  });
 });
 
 it("process.memoryUsage.arrayBuffers", () => {

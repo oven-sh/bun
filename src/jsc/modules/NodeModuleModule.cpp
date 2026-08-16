@@ -31,14 +31,12 @@ using namespace JSC;
 BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
 
 BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionDebugNoop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveFileName);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionResolveLookupPaths);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionSyncBuiltinExports);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
@@ -131,13 +129,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
 template<std::size_t N, class T> consteval std::size_t countof(T (&)[N])
 {
     return N;
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionDebugNoop,
-    (JSC::JSGlobalObject * globalObject,
-        JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleCall,
@@ -288,13 +279,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(
         scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(vm, globalObject, val)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinExports,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
@@ -1219,48 +1203,22 @@ JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*)
 } // namespace Bun
 
 namespace Zig {
-void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
+JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
-    auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-    // Don't bulk-reifyAllStaticProperties here. JSObject::reifyAllStaticProperties
-    // walks every PropertyCallbackAttribute back-to-back without an exception
-    // check between them, and several of our callbacks (getBuiltinModulesObject,
-    // getGlobalPathsObject, …) call constructArray/constructEmptyArray which
-    // open a ThrowScope at the same recursion depth as the next callback's
-    // ThrowScope — that trips the exception-check verifier on the synthetic
-    // ESM path (BUN_JSC_validateExceptionChecks=1). The loop below already
-    // does constructor->get(property) per-export, which lazy-reifies one entry
-    // at a time inside JSObject::get's own ThrowScope and is checked
-    // immediately after.
 
-    exportNames.reserveCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
-    exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
+    // The exports are the static table's entries, not the constructor's own properties (`length`, `name`,
+    // whatever user code assigned onto Module).
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    for (const auto& entry : Bun::nodeModuleObjectTableValues)
+        properties.add(Identifier::fromString(vm, entry.m_key));
 
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(constructor);
-
-    for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues); ++i) {
-        const auto& entry = Bun::nodeModuleObjectTableValues[i];
-        const auto& property = Identifier::fromString(vm, entry.m_key);
-        JSValue value = constructor->get(globalObject, property);
-
-        if (topExceptionScope.exception()) [[unlikely]] {
-            // A termination (worker terminate() mid-import) cannot be cleared:
-            // stop the walk and leave it pending for the loader.
-            if (!topExceptionScope.tryClearException())
-                return;
-            value = jsUndefined();
-        }
-
-        exportNames.append(property);
-        exportValues.append(value);
-    }
+    return exportObjectProperties(vm, constructor, properties, exportNames, exportValues);
 }
 
 } // namespace Zig

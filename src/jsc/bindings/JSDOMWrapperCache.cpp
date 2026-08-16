@@ -24,24 +24,4 @@
 #include "JSDOMWrapperCache.h"
 
 namespace WebCore {
-using namespace JSC;
-
-Structure* getCachedDOMStructure(const JSDOMGlobalObject& globalObject, const ClassInfo* classInfo)
-{
-    return globalObject.structures().get(classInfo).get();
-}
-
-Structure* cacheDOMStructure(JSDOMGlobalObject& globalObject, Structure* structure, const ClassInfo* classInfo)
-{
-    auto addToStructures = [](JSDOMStructureMap& structures, JSDOMGlobalObject& globalObject, Structure* structure, const ClassInfo* classInfo) {
-        ASSERT(!structures.contains(classInfo));
-        return structures.set(classInfo, JSC::WriteBarrier<Structure>(globalObject.vm(), &globalObject, structure)).iterator->value.get();
-    };
-    if (globalObject.vm().heap.mutatorShouldBeFenced()) {
-        Locker locker { globalObject.gcLock() };
-        return addToStructures(globalObject.structures(), globalObject, structure, classInfo);
-    }
-    return addToStructures(globalObject.structures(NoLockingNecessary), globalObject, structure, classInfo);
-}
-
 } // namespace WebCore

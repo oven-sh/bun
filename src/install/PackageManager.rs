@@ -1932,12 +1932,13 @@ pub fn init(
         let registry_auth = if global_len > 0 {
             ini::load_npmrc_config(
                 &mut install,
+                &bunfig_install,
                 env,
                 true,
                 &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
             )
         } else {
-            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
+            ini::load_npmrc_config(&mut install, &bunfig_install, env, true, &[&*npmrc_local])
         };
 
         ini::apply_registry_auth(&mut bunfig_install, &registry_auth);

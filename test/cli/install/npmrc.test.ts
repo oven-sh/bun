@@ -1023,11 +1023,12 @@ describe("the config key's authority is normalized like a WHATWG URL", () => {
 // Dropping the credential silently is how #30311 went unnoticed, so say something —
 // without echoing the secret into the log.
 describe("a config key that differs from the registry only by host case", () => {
-  async function stderrOf(npmrc: string) {
+  async function stderrOf(npmrc: string, bunfig?: object) {
     using dir = tempDir("npmrc-case-warning", {
       ".npmrc": npmrc,
       "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
       "home/.gitkeep": "",
+      ...(bunfig ? { "bunfig.toml": Bun.TOML.stringify(bunfig) } : {}),
     });
     const home = join(String(dir), "home");
     await using proc = Bun.spawn({
@@ -1178,6 +1179,56 @@ describe("a config key that differs from the registry only by host case", () => 
     );
     expect(stderr).toContain('the .npmrc key "//Example.COM/" matches no registry');
     expect(stderr).toContain('npm writes this key as "//example.com/"');
+  });
+
+  // Registries declared in bunfig.toml are resolved against the same lines (in a
+  // later pass), so a key that misses one of them is just as dead.
+  describe("registries declared in bunfig.toml", () => {
+    it("warns about a key that would match a bunfig.toml scope", async () => {
+      const stderr = await stderrOf(`//Example.COM/:_authToken=SECRETTOKEN\n`, {
+        install: { scopes: { myorg: { url: "https://example.com/api/" } } },
+      });
+      expect(stderr).toContain('the .npmrc key "//Example.COM/" matches no registry');
+      expect(stderr).toContain('npm writes this key as "//example.com/"');
+      expect(stderr).not.toContain("SECRETTOKEN");
+    });
+
+    it("warns about a key that would match the bunfig.toml default registry", async () => {
+      const stderr = await stderrOf(`//example.com:443/:_authToken=SECRETTOKEN\n`, {
+        install: { registry: "https://example.com/api/" },
+      });
+      expect(stderr).toContain('the .npmrc key "//example.com:443/" matches no registry');
+      expect(stderr).toContain('npm writes this key as "//example.com/"');
+    });
+
+    // No .npmrc line can apply to a registry bunfig.toml gave credentials, so there is
+    // nothing a respelling would change.
+    it("says nothing when bunfig.toml gave that registry credentials", async () => {
+      const stderr = await stderrOf(`//Example.COM/:_authToken=SECRETTOKEN\n`, {
+        install: { scopes: { myorg: { url: "https://example.com/api/", token: "BUNFIGTOKEN" } } },
+      });
+      expect(stderr).not.toContain("matches no registry");
+    });
+
+    it("an empty _auth naming a bunfig.toml scope is an error", async () => {
+      const stderr = await stderrOf(`//example.com/api/:_auth=\n`, {
+        install: { scopes: { myorg: { url: "https://example.com/api/" } } },
+      });
+      expect(stderr).toContain("empty _auth value");
+    });
+  });
+
+  describe("bracketed IPv6 authorities", () => {
+    it("respells a spelled-out default port after the bracket", async () => {
+      const stderr = await stderrOf(`registry=http://[::1]/\n//[::1]:80/:_authToken=SECRETTOKEN\n`);
+      expect(stderr).toContain('the .npmrc key "//[::1]:80/" matches no registry');
+      expect(stderr).toContain('npm writes this key as "//[::1]/"');
+    });
+
+    it("says nothing about an address whose last group spells the default port", async () => {
+      const stderr = await stderrOf(`registry=http://[::80]/\n//[::80]/:_authToken=SECRETTOKEN\n`);
+      expect(stderr).not.toContain("matches no registry");
+    });
   });
 });
 

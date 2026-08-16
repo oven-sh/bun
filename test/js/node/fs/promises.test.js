@@ -599,11 +599,30 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
 });
 
 // node validates options.signal in getOptions() before touching the file, for
-// any kind of data, and names it "options.signal".
-describe.concurrent("FileHandle#appendFile and FileHandle#writeFile validate options.signal", () => {
+// any kind of data. String and Buffer data get that from the native binding;
+// iterable data is written by writeFileAsyncIterator, which every entry point
+// below funnels into.
+describe.concurrent("options.signal is validated before anything is written", () => {
+  const settle = promise =>
+    promise.then(
+      () => "resolved",
+      e => e,
+    );
+
+  // String data: the wrapper used to drop the signal, so the binding never saw
+  // it. Only the code is pinned here; the wording belongs to the binding.
+  test("FileHandle#appendFile forwards the signal to the binding", async () => {
+    await using dir = tempDir("fs-filehandle-appendfile-bad-signal", { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    const err = await settle(fh.appendFile("data", { signal: 1 }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
+  });
+
   // The middle of the message ("of type" / "an instance of") comes from the
   // shared ERR_INVALID_ARG_TYPE renderer, not from fs; don't pin it here.
-  function expectInvalidSignal(err, received) {
+  function expectInvalidOptionsSignal(err, received) {
     expect(err).toBeInstanceOf(TypeError);
     expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
     expect(err.message).toStartWith('The "options.signal" property must be ');
@@ -617,35 +636,35 @@ describe.concurrent("FileHandle#appendFile and FileHandle#writeFile validate opt
     [{}, "an instance of Object"],
   ];
 
-  for (const method of ["appendFile", "writeFile"]) {
-    test.each(invalidSignals)(`FileHandle#${method}(string, { signal: %p }) rejects`, async (signal, received) => {
-      await using dir = tempDir(`fs-filehandle-${method}-bad-signal`, { "f.txt": "seed" });
-      await using fh = await fsPromises.open(join(dir, "f.txt"), "r+");
-      const err = await fh[method]("data", { signal }).then(
-        () => "resolved",
-        e => e,
-      );
-      expectInvalidSignal(err, received);
-      expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
-    });
-
-    test(`FileHandle#${method}(asyncIterable, { signal: 1 }) rejects without pulling the iterable`, async () => {
-      await using dir = tempDir(`fs-filehandle-${method}-iter-bad-signal`, { "f.txt": "seed" });
-      await using fh = await fsPromises.open(join(dir, "f.txt"), "r+");
-      let pulled = false;
-      const err = await fh[method](
-        (async function* () {
+  describe.each([
+    [
+      "fsPromises.writeFile(path, iterable)",
+      (fh, path, iterable, options) => fsPromises.writeFile(path, iterable, options),
+    ],
+    [
+      "fsPromises.writeFile(fileHandle, iterable)",
+      (fh, path, iterable, options) => fsPromises.writeFile(fh, iterable, options),
+    ],
+    ["FileHandle#writeFile(iterable)", (fh, path, iterable, options) => fh.writeFile(iterable, options)],
+    ["FileHandle#appendFile(iterable)", (fh, path, iterable, options) => fh.appendFile(iterable, options)],
+  ])("%s", (_, write) => {
+    test.each(invalidSignals)(
+      "{ signal: %p } rejects without opening or pulling anything",
+      async (signal, received) => {
+        await using dir = tempDir("fs-iterable-bad-signal", { "f.txt": "seed" });
+        const path = join(dir, "f.txt");
+        await using fh = await fsPromises.open(path, "r+");
+        let pulled = false;
+        const iterable = (async function* () {
           pulled = true;
           yield "data";
-        })(),
-        { signal: 1 },
-      ).then(
-        () => "resolved",
-        e => e,
-      );
-      expectInvalidSignal(err, "type number (1)");
-      expect(pulled).toBe(false);
-      expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
-    });
-  }
+        })();
+        const err = await settle(write(fh, path, iterable, { signal }));
+        expectInvalidOptionsSignal(err, received);
+        expect(pulled).toBe(false);
+        // In particular the path form must not have opened (and truncated) the file.
+        expect(await fsPromises.readFile(path, "utf8")).toBe("seed");
+      },
+    );
+  });
 });

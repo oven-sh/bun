@@ -12,8 +12,6 @@
         "@types/bun": "latest",
         "@types/react": "^19",
         "@types/react-dom": "^19",
-      },
-      "peerDependencies": {
         "typescript": "^6",
       },
     },

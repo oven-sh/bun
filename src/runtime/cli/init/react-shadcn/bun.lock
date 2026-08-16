@@ -22,8 +22,6 @@
         "@types/react": "^19",
         "@types/react-dom": "^19",
         "tailwindcss": "^4.1.11",
-      },
-      "peerDependencies": {
         "typescript": "^6",
       },
     },

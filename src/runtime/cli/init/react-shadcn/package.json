@@ -25,9 +25,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/bun": "latest",
-    "tailwindcss": "^4.1.11"
-  },
-  "peerDependencies": {
+    "tailwindcss": "^4.1.11",
     "typescript": "^6"
   }
 }

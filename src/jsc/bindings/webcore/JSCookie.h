@@ -48,10 +48,6 @@ protected:
     void finishCreation(JSC::VM&);
 };
 
-inline void* wrapperKey(Cookie* wrappableObject)
-{
-    return wrappableObject;
-}
 JSC::JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSCookie* castedThis);
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Cookie&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Cookie* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }

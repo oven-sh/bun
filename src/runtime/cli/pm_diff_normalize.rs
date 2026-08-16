@@ -176,8 +176,7 @@ pub(crate) fn normalize_key_pair(
 
 /// Most of the file's bytes sit on very long lines (a banner comment or a trailing source-map line aside).
 pub(crate) fn looks_minified(bytes: &[u8]) -> bool {
-    let long: usize = bytes
-        .split(|&b| b == b'\n')
+    let long: usize = bun_core::strings::split(bytes, b"\n")
         .map(<[u8]>::len)
         .filter(|&l| l > 256)
         .sum();
@@ -806,7 +805,8 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
 /// Things a reviewer wants called out when they newly appear in a release. Counted on canonical text so formatting cannot hide them.
 pub(crate) const SIGNALS: &[(&[u8], &str)] = &[
     (b"eval(", "eval()"),
-    (b"new Function(", "new Function()"),
+    (b"eval)(", "eval()"),
+    (b"Function(", "Function()"),
     (b"process.env", "process.env"),
     (b"fetch(", "fetch()"),
     (b"XMLHttpRequest", "XMLHttpRequest"),
@@ -818,10 +818,16 @@ pub(crate) const SIGNALS: &[(&[u8], &str)] = &[
 pub(crate) fn count_signals(text: &[u8]) -> [usize; SIGNALS.len()] {
     let mut out = [0usize; SIGNALS.len()];
     for (i, (needle, _)) in SIGNALS.iter().enumerate() {
-        let mut rest = text;
-        while let Some(pos) = bun_core::strings::index_of(rest, needle) {
-            out[i] += 1;
-            rest = &rest[pos + needle.len()..];
+        let mut at = 0usize;
+        while let Some(pos) = bun_core::strings::index_of(&text[at..], needle) {
+            let start = at + pos;
+            // `refetch(`/`_eval(` are someone's own function, not the global.
+            let own = start > 0
+                && matches!(text[start - 1], b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$' | b'.');
+            if !own {
+                out[i] += 1;
+            }
+            at = start + needle.len();
         }
     }
     out

@@ -205,7 +205,9 @@ fn looks_like_path(spec: &[u8]) -> bool {
     spec.starts_with(b".")
         || spec.starts_with(b"/")
         || spec.starts_with(b"~/")
-        || (cfg!(windows) && (spec.starts_with(b"\\") || (spec.len() > 2 && spec[1] == b':')))
+        || (cfg!(windows)
+            && (spec.starts_with(b"\\")
+                || (spec.len() > 2 && spec[1] == b':' && matches!(spec[2], b'\\' | b'/'))))
 }
 
 fn classify(spec: &[u8]) -> Spec {
@@ -552,11 +554,14 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 },
                 // Windows always reports d_type; a symlink is read through (a linked folder just fails the read).
                 #[cfg(windows)]
-                bun_sys::FileKind::SymLink => {
-                    if let Ok(bytes) = bun_sys::File::read_from(dir, name) {
+                bun_sys::FileKind::SymLink => match bun_sys::File::read_from(dir, name) {
+                    Ok(bytes) => {
                         tree.files.insert(rel, bytes);
                     }
-                }
+                    Err(err)
+                        if matches!(err.get_errno(), bun_sys::E::EISDIR | bun_sys::E::ENOENT) => {}
+                    Err(err) => fail(err, &rel),
+                },
                 _ => {}
             }
         }
@@ -637,7 +642,7 @@ fn fetch_registry_tree(
         }
         let sliced = Semver::SlicedString::init(version, version);
         if let Ok(query) = Semver::query::parse(version, sliced) {
-            if let Some(r) = manifest.find_best_version(&query, &manifest.string_buf) {
+            if let Some(r) = manifest.find_best_version(&query, version) {
                 break 'found r;
             }
         }
@@ -1325,11 +1330,9 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             Output::print(format_args!("{}", BStr::new(&c.hunks)));
             continue;
         }
-        Output::print(format_args!(
-            "diff --bun a/{} b/{}\n",
-            BStr::new(c.path),
-            BStr::new(c.path)
-        ));
+        for part in [&b"diff --bun a/"[..], c.path, b" b/", c.path, b"\n"] {
+            Output::print_bytes(part);
+        }
         match (c.old, c.new, c.mode_change) {
             (None, Some(_), Some((_, n))) => {
                 Output::print(format_args!("new file mode 100{n:o}\n"))
@@ -1353,29 +1356,26 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             ));
             continue;
         }
-        Output::print(format_args!(
-            "--- {}\n+++ {}\n",
-            if c.old.is_some() {
-                PathLabel(b"a/", c.path)
+        // Bytes, not Display: a Latin-1 context line must round-trip for the patch to apply.
+        let side = |present: bool, prefix: &'static [u8]| -> Vec<u8> {
+            if present {
+                [prefix, c.path].concat()
             } else {
-                PathLabel(b"", b"/dev/null")
-            },
-            if c.new.is_some() {
-                PathLabel(b"b/", c.path)
-            } else {
-                PathLabel(b"", b"/dev/null")
+                b"/dev/null".to_vec()
             }
-        ));
-        Output::print(format_args!("{}", BStr::new(&c.hunks)));
+        };
+        for part in [
+            &b"--- "[..],
+            &side(c.old.is_some(), b"a/"),
+            b"\n+++ ",
+            &side(c.new.is_some(), b"b/"),
+            b"\n",
+            &c.hunks,
+        ] {
+            Output::print_bytes(part);
+        }
     }
     print_summary(left, right, &changes, style);
-}
-
-struct PathLabel<'a>(&'a [u8], &'a [u8]);
-impl core::fmt::Display for PathLabel<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}{}", BStr::new(self.0), BStr::new(self.1))
-    }
 }
 
 /// The header everyone reads first: which versions, how much changed, and the changes worth a second look

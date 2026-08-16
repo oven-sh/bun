@@ -77,14 +77,21 @@ fn stmt_list(arena: C, list: &mut StoreSlice<Stmt>) {
     *list = StoreSlice::new_mut(arena.arena.alloc_slice_copy(&out));
 }
 
+/// `a, b, c, …` parses as a left-leaning spine; walk it with a stack, not the call stack.
 fn comma_leaves(e: &Expr, out: &mut Vec<Expr>) {
-    match &e.data {
-        E::EBinary(b) if b.op == bun_ast::OpCode::BinComma => {
-            comma_leaves(&b.left, out);
-            comma_leaves(&b.right, out);
+    let mut rights = Vec::new();
+    let mut cur = *e;
+    loop {
+        match &cur.data {
+            E::EBinary(b) if b.op == bun_ast::OpCode::BinComma => {
+                rights.push(b.right);
+                cur = b.left;
+            }
+            _ => break,
         }
-        _ => out.push(*e),
     }
+    out.push(cur);
+    out.extend(rights.into_iter().rev());
 }
 
 fn body(arena: C, s: &mut Stmt) {
@@ -159,14 +166,19 @@ fn stmt(arena: C, s: &mut Stmt) {
         },
         S::SExpr(x) => expr(arena, &mut x.value),
         S::SForIn(x) => {
+            stmt(arena, &mut x.init);
             expr(arena, &mut x.value);
             body(arena, &mut x.body);
         }
         S::SForOf(x) => {
+            stmt(arena, &mut x.init);
             expr(arena, &mut x.value);
             body(arena, &mut x.body);
         }
         S::SFor(x) => {
+            if let Some(i) = &mut x.init {
+                stmt(arena, i);
+            }
             opt_expr(arena, &mut x.test);
             opt_expr(arena, &mut x.update);
             body(arena, &mut x.body);
@@ -229,8 +241,17 @@ fn expr(arena: C, e: &mut Expr) {
         }
         E::EUnary(x) => expr(arena, &mut x.value),
         E::EBinary(x) => {
-            expr(arena, &mut x.left);
-            expr(arena, &mut x.right);
+            // Left-associative chains (`a+b+c+…`, `a,b,c,…`) are a deep left spine in minified code: iterate it.
+            let mut rights = vec![x.right];
+            let mut left = x.left;
+            while let E::EBinary(inner) = &left.data {
+                rights.push(inner.right);
+                left = inner.left;
+            }
+            expr(arena, &mut left);
+            for mut r in rights {
+                expr(arena, &mut r);
+            }
         }
         E::EClass(c) => class(arena, c),
         E::ENew(x) => {
@@ -264,6 +285,17 @@ fn expr(arena: C, e: &mut Expr) {
                 opt_expr(arena, &mut p.key);
                 opt_expr(arena, &mut p.value);
                 opt_expr(arena, &mut p.initializer);
+            }
+        }
+        E::EJsxElement(x) => {
+            opt_expr(arena, &mut x.tag);
+            for p in x.properties.iter_mut() {
+                opt_expr(arena, &mut p.key);
+                opt_expr(arena, &mut p.value);
+                opt_expr(arena, &mut p.initializer);
+            }
+            for c in x.children.iter_mut() {
+                expr(arena, c);
             }
         }
         E::ESpread(x) => expr(arena, &mut x.value),

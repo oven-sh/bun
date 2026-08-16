@@ -186,10 +186,20 @@ impl Walker {
                 self.expr(&x.value);
             }
             E::EBinary(x) => {
-                self.note(&x.left, b'l', &[x.op as u8], 0);
-                self.note(&x.right, b'r', &[x.op as u8], 0);
-                self.expr(&x.left);
-                self.expr(&x.right);
+                // Left-associative chains are a deep left spine in minified code: iterate it.
+                let mut cur = x;
+                loop {
+                    self.note(&cur.left, b'l', &[cur.op as u8], 0);
+                    self.note(&cur.right, b'r', &[cur.op as u8], 0);
+                    self.expr(&cur.right);
+                    match &cur.left.data {
+                        E::EBinary(inner) => cur = inner,
+                        _ => {
+                            self.expr(&cur.left);
+                            break;
+                        }
+                    }
+                }
             }
             E::EClass(c) => self.class(c),
             E::ENew(x) => {

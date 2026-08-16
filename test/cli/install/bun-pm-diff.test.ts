@@ -98,6 +98,8 @@ describe("bun pm diff", () => {
   test("two registry versions: summary, notable package.json changes, unified hunks", async () => {
     const { stdout, stderr, exitCode } = await diff(["diffme@1.0.0", "diffme@2.0.0"]);
     expect(stderr).toBe("");
+    // (normalizeBunSnapshot flips backslashes to `/`, so the snapshot below shows the marker as `/ No newline…`.)
+    expect(stdout).toContain("\\ No newline at end of file\n");
     expect(normalizeBunSnapshot(stdout, root)).toMatchInlineSnapshot(`
 "diffme@1.0.0 → diffme@2.0.0
 
@@ -466,7 +468,7 @@ diffme@1.0.0 → diffme@2.0.0
     expect(hits.some(h => h.endsWith(" /@priv/diffme"))).toBe(true);
   });
 
-  test("errors: unknown package, no matching version, too many specs", async () => {
+  test("errors: unknown package, no matching version; a third argument is a file filter", async () => {
     const unknown = await diff(["nope-nope@1.0.0", "2.0.0"]);
     expect(unknown.exitCode).toBe(1);
     expect(unknown.stderr).toContain("404");
@@ -474,6 +476,7 @@ diffme@1.0.0 → diffme@2.0.0
     expect(nover.exitCode).toBe(1);
     expect(nover.stderr).toContain("no version of diffme matches 9.9.9");
     const many = await diff(["diffme@1", "diffme@2", "diffme@3"]);
+    expect(many.stderr).toContain("no file in either side matches diffme@3");
     expect(many.exitCode).toBe(1);
   });
 });

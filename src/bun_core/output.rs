@@ -1375,6 +1375,14 @@ pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
 }
 
+/// Bytes to stdout exactly as given (no UTF-8 replacement), through the same writer `print` uses.
+pub fn print_bytes(bytes: &[u8]) {
+    with_dest_writer(Destination::Stdout, |w| {
+        // SAFETY: `w` is valid per `with_dest_writer`.
+        let _ = unsafe { &mut *w }.write_all(bytes);
+    });
+}
+
 /// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.
 #[inline]
 pub fn println(args: fmt::Arguments<'_>) {

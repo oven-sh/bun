@@ -278,9 +278,8 @@ pub(crate) fn project<'a>(
                     // Out to token edges, so a renamed identifier is judged by its own mapping (`utils` → `utils$1`).
                     let (dlo, dhi) = widen(d.text, span(d.text, n.text));
                     let (nlo, nhi) = widen(n.text, span(n.text, d.text));
-                    let ws = |t: &[u8], lo: usize, hi: usize| {
-                        t[lo..hi].iter().all(u8::is_ascii_whitespace)
-                    };
+                    // A differing span of only whitespace / grouping punctuation is layout, whichever side it is on.
+                    let ws = |t: &[u8], lo: usize, hi: usize| trivial(&t[lo..hi]);
                     hide = (ws(d.text, dlo, dhi) || so.mapped_within(dl, dlo, dhi))
                         && (ws(n.text, nlo, nhi) || sn.mapped_within(nl, nlo, nhi));
                 }
@@ -298,15 +297,42 @@ pub(crate) fn project<'a>(
             }
             flush(&mut ops, &mut keep_d, &mut keep_n);
         } else {
+            // Uneven run: beyond being key-vouched, an image-bearing line only folds against some image-bearing line
+            // on the other side that differs from it purely in code the key saw — the paired case's guard, so a
+            // type annotation or inline comment edit riding along with an added sibling is not swallowed.
+            // A differing span of only whitespace / grouping punctuation is layout, whichever side it is on.
+            let ws = |t: &[u8], lo: usize, hi: usize| trivial(&t[lo..hi]);
+            let code_only = |a: &Op, aside: &Side, al: usize, b: &Op, bside: &Side, bl: usize| {
+                let (alo, ahi) = widen(a.text, span(a.text, b.text));
+                let (blo, bhi) = widen(b.text, span(b.text, a.text));
+                (ws(a.text, alo, ahi) || aside.mapped_within(al, alo, ahi))
+                    && (ws(b.text, blo, bhi) || bside.mapped_within(bl, blo, bhi))
+            };
             for d in &dels {
-                if ok(&so, d.old_no - 1, d.text, &unseen_new) {
+                let dl = d.old_no - 1;
+                let fold = ok(&so, dl, d.text, &unseen_new)
+                    && (so.no_image(dl)
+                        || ins.is_empty()
+                        || ins.iter().any(|n| {
+                            !sn.no_image(n.new_no - 1)
+                                && code_only(d, &so, dl, n, &sn, n.new_no - 1)
+                        }));
+                if fold {
                     hidden += usize::from(!trivial(d.text));
                 } else {
                     ops.push(*d);
                 }
             }
             for n in &ins {
-                if ok(&sn, n.new_no - 1, n.text, &unseen_old) {
+                let nl = n.new_no - 1;
+                let fold = ok(&sn, nl, n.text, &unseen_old)
+                    && (sn.no_image(nl)
+                        || dels.is_empty()
+                        || dels.iter().any(|d| {
+                            !so.no_image(d.old_no - 1)
+                                && code_only(n, &sn, nl, d, &so, d.old_no - 1)
+                        }));
+                if fold {
                     ops.push(Op {
                         kind: Operation::Equal,
                         ..*n

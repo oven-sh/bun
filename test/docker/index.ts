@@ -130,13 +130,18 @@ function serviceFromEnv(service: ServiceName): ServiceInfo | null {
  * accepts connections on its socket, so this is the daemon readiness signal.
  * (`docker compose version` is not: compose is a CLI plugin and succeeds with
  * no daemon at all, which is why scripts/runner.node.mjs can use it to decide
- * whether to start the coordinator before the daemon is up.)
+ * whether to start the coordinator before the daemon is up.) A daemon that
+ * accepts the connection but never answers would otherwise hang the CLI, and
+ * with it every wait built on this probe, so the CLI is killed after
+ * `timeoutMs` and counted as unreachable; a healthy round trip takes well
+ * under a second.
  */
-async function isDockerDaemonReachable(): Promise<boolean> {
+export async function isDockerDaemonReachable(timeoutMs = 10_000): Promise<boolean> {
   const proc = spawn({
     cmd: ["docker", "version"],
     stdout: "ignore",
     stderr: "ignore",
+    timeout: timeoutMs,
   });
   return (await proc.exited) === 0;
 }
@@ -160,16 +165,20 @@ export interface DockerDaemonWaitOptions {
  * caller that retries later gets the daemon as soon as it is up, and callers
  * arriving after the window has closed fail immediately.
  *
- * Linux CI agents can pick up a job before dockerd has finished starting. On
- * the openrc (alpine) images the buildkite-agent service is not ordered after
- * docker, so a shard routinely starts with no /var/run/docker.sock yet; the
- * daemon usually appears within ~10s, but in builds 97891, 98647, 98707 and
- * 98746 it was still down 3-4.5 minutes into the job and up by 5-7 minutes,
- * and the coordinator's one-shot probe failed every container-backed test
- * file in those shards (all in-shard retries included, since they run within
- * seconds of each other). When a probe succeeds on the first try, which is the
- * case on every systemd image, nothing is logged and `waitFor` costs nothing
- * beyond that probe.
+ * Linux CI agents can pick up a job before dockerd has finished starting. The
+ * openrc (alpine) images published before scripts/agent.mjs ordered the agent
+ * service after docker routinely start a shard with no /var/run/docker.sock
+ * yet; the daemon usually appears within ~10s, but in builds 97891, 98647,
+ * 98707 and 98746 it was still down 3-4.5 minutes into the job and up by 5-7
+ * minutes, and the coordinator's one-shot probe failed every container-backed
+ * test file in those shards (all in-shard retries included, since they run
+ * within seconds of each other). The boot-ordering fix in agent.mjs is the
+ * primary fix once images are republished; this keeps shards green on the
+ * current images and covers whatever dockerd start-up time is left after it
+ * (the runner's `--- Docker` job section records how often that still
+ * happens). When a probe succeeds on the first try, which is the case on every
+ * systemd image, nothing is logged and `waitFor` costs nothing beyond that
+ * probe.
  */
 export function waitForDockerDaemon({
   windowMs,

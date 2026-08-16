@@ -56,9 +56,11 @@ delete process.env.BUN_DOCKER_COORDINATOR;
 // the job); once it closes, requests fail immediately, so a host whose daemon
 // never comes up costs the shard one window rather than a full wait per file
 // attempt. The per-request cap is the budget scripts/runner.node.mjs gives the
-// hook that is typically awaiting the request (--timeout = testTimeout / 2), so
-// a request either gets the daemon or a clear error within the time its caller
-// has anyway, and the 3-minute file budget keeps room for `compose up` and the
+// hook that is typically awaiting the request (--timeout = testTimeout / 2 on
+// the release lanes; the ASAN lanes get three times that but run on systemd
+// images, where the daemon has always been up at job start), so a request
+// either gets the daemon or a clear error within the time its caller has
+// anyway, and the 3-minute file budget keeps room for `compose up` and the
 // tests after it. A file whose request hits the cap is retried by the runner,
 // and the retry's request gets a fresh cap against the same shared wait, so a
 // file's four attempts together cover ~6 minutes of daemon lateness from the

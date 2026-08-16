@@ -10,10 +10,12 @@
  * minutes into the job and came up a few minutes after that).
  *
  * The wait is driven here with a scripted probe and millisecond timings. The
- * two tests at the end use a fake `docker` on PATH whose daemon is still
- * starting: one for isDockerEnabled() in test/harness.ts, which used to probe
- * the daemon at import time of ~25 test files and so failed them the same way,
- * and one running the real coordinator end to end.
+ * tests after that put a fake `docker` on PATH: one whose CLI hangs, to pin
+ * the probe's own bound (everything above assumes a probe returns), and one
+ * whose daemon is still starting, used both for isDockerEnabled() in
+ * test/harness.ts (which used to probe the daemon at import time of ~25 test
+ * files and so failed them the same way) and to run the real coordinator end
+ * to end.
  */
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
@@ -160,42 +162,78 @@ esac
 exit 0
 `;
 
-function fakeDockerDir() {
+// A `docker` CLI stuck talking to a daemon that accepted the connection but
+// never answers.
+const hangingDocker = `#!/bin/sh
+if [ "$1" = version ]; then exec sleep 15; fi
+exit 0
+`;
+
+function fakeDockerDir(script = fakeDocker) {
   // Short name: the coordinator socket created inside it has to fit in
   // sun_path (104 bytes on macOS).
-  const dir = tempDir("coord", { "bin/docker": fakeDocker });
+  const dir = tempDir("coord", { "bin/docker": script });
   chmodSync(join(String(dir), "bin", "docker"), 0o755);
   return dir;
 }
 
 const calls = (dir: string) => (existsSync(join(dir, "calls.log")) ? readFileSync(join(dir, "calls.log"), "utf8") : "");
 
-// isDockerEnabled() looks the CLI up in the environment the process started
+// The docker helpers look the CLI up in the environment their process started
 // with (Bun.which and Bun.spawn both read that, not later edits to
-// process.env), so the fake CLI has to be on PATH of a fresh process.
-async function isDockerEnabledWith(dir: string, coordinator: string | undefined): Promise<unknown> {
-  const env = { ...bunEnv, PATH: `${join(dir, "bin")}:${bunEnv.PATH}` };
-  delete env.BUN_DOCKER_COORDINATOR;
-  if (coordinator !== undefined) env.BUN_DOCKER_COORDINATOR = coordinator;
-  const harness = JSON.stringify(join(import.meta.dir, "..", "harness.ts"));
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `import { isDockerEnabled } from ${harness};
-       let result;
-       try { result = isDockerEnabled(); } catch (error) { result = "threw: " + error.message; }
-       console.log(JSON.stringify(result));`,
-    ],
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+// process.env), so the fake CLI has to be first on PATH of a fresh process.
+// ensure() also answers from BUN_TEST_SERVICE_<name> without touching docker,
+// and BUN_DOCKER_* / COMPOSE_* change what it runs, so none of those may leak
+// in from the machine running this file.
+function envWithFakeDocker(dir: string): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(bunEnv)) {
+    if (value !== undefined && !/^(BUN_TEST_SERVICE_|BUN_DOCKER_|COMPOSE_)/.test(key)) env[key] = value;
+  }
+  env.PATH = `${join(dir, "bin")}:${env.PATH}`;
+  return env;
+}
+
+/** Runs `script` (which must print one JSON value) in a fresh bun with the fake docker on PATH. */
+async function evalWithFakeDocker(env: Record<string, string>, script: string): Promise<unknown> {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return JSON.parse(stdout);
 }
+
+const harnessPath = JSON.stringify(join(import.meta.dir, "..", "harness.ts"));
+const dockerIndexPath = JSON.stringify(join(import.meta.dir, "..", "docker", "index.ts"));
+
+function isDockerEnabledWith(dir: string, coordinator: string | undefined): Promise<unknown> {
+  const env = envWithFakeDocker(dir);
+  if (coordinator !== undefined) env.BUN_DOCKER_COORDINATOR = coordinator;
+  return evalWithFakeDocker(
+    env,
+    `import { isDockerEnabled } from ${harnessPath};
+     let result;
+     try { result = isDockerEnabled(); } catch (error) { result = "threw: " + error.message; }
+     console.log(JSON.stringify(result));`,
+  );
+}
+
+test.concurrent.skipIf(isWindows)(
+  "a probe whose docker CLI hangs counts as unreachable instead of hanging the wait",
+  async () => {
+    using dir = fakeDockerDir(hangingDocker);
+    const result = await evalWithFakeDocker(
+      envWithFakeDocker(String(dir)),
+      `import { isDockerDaemonReachable } from ${dockerIndexPath};
+     const startedAt = Date.now();
+     const reachable = await isDockerDaemonReachable(250);
+     console.log(JSON.stringify({ reachable, tookMs: Date.now() - startedAt }));`,
+    );
+    // Without the bound the probe returns only when the fake CLI's 15s sleep ends.
+    expect(result).toEqual({ reachable: false, tookMs: expect.any(Number) });
+    expect((result as { tookMs: number }).tookMs).toBeLessThan(15_000);
+  },
+);
 
 // On Linux arm64 isDockerEnabled() is false before it looks at anything else.
 test.concurrent.skipIf(isWindows || (isLinux && process.arch === "arm64"))(
@@ -224,13 +262,7 @@ test.concurrent.skipIf(isWindows)(
     using dir = fakeDockerDir();
     const socketPath = join(String(dir), "coordinator.sock");
 
-    // ensure() answers from BUN_TEST_SERVICE_<name> without touching docker, and
-    // BUN_DOCKER_* / COMPOSE_* change what it runs; this run has to reach the fake CLI.
-    const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries(bunEnv)) {
-      if (value !== undefined && !/^(BUN_TEST_SERVICE_|BUN_DOCKER_|COMPOSE_)/.test(key)) env[key] = value;
-    }
-    env.PATH = `${join(String(dir), "bin")}:${env.PATH}`;
+    const env = envWithFakeDocker(String(dir));
     env.BUN_DOCKER_COORDINATOR_SOCKET = socketPath;
 
     await using coordinator = Bun.spawn({

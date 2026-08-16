@@ -503,9 +503,7 @@ impl FileResponseStream {
         self.finish();
     }
 
-    /// Clear all uWS callbacks pointing at us. Must run while `resp` is still
-    /// live, i.e. before `resp.end()` / `end_send_file()` / `force_close()` give
-    /// the socket back to uWS; the stream does not touch `resp` after that.
+    /// Clears the uWS callbacks pointing at us; runs before `resp.end()` / `end_send_file()` / `force_close()` hand the socket back to uWS, after which nothing here touches `resp`.
     fn detach_resp(&self) {
         if self.state.get().contains(State::RESP_DETACHED) {
             return;
@@ -572,9 +570,7 @@ impl FileResponseStream {
 // BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
 // cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
-// the duration of the handler since it can end in `finish()`; `ref_`/`deref`
-// keep the stream alive for the reader's whole dispatch, which uses the reader
-// embedded here after `on_reader_done` has released the owning ref.
+// the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
@@ -592,6 +588,7 @@ bun_io::impl_buffered_reader_parent! {
     };
     loop_           = |this| (*this).r#loop();
     event_loop      = |this| (*this).event_loop_handle.get().as_event_loop_ctx();
+    // The reader still uses itself (embedded here) after dispatching the `on_reader_done` that releases the owning ref.
     ref_            = |this| (*this).ref_();
     deref           = |this| Self::deref(this);
 }

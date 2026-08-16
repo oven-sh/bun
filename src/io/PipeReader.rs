@@ -148,8 +148,7 @@ impl Drop for ParentKeepAlive {
     }
 }
 
-/// Bytes the reader may still take out of its source (a blob slice window); `None` reads to EOF.
-/// Every read is cut to it before the syscall, and using it up (or starting used up) is reported as EOF.
+/// Bytes the reader may still take out of its source (a blob slice window; `None` reads to EOF): reads are cut to it and using it up is reported as EOF.
 #[derive(Clone, Copy)]
 struct ReadLimit(Option<usize>);
 

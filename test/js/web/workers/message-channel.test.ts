@@ -514,6 +514,10 @@ describe("keeps the event loop alive while a message listener is attached", () =
       stdout: "pipe",
       stderr: "pipe",
     });
+    // Drain both pipes in the background so output can't fill the OS pipe
+    // buffer and block the child before it reaches exit.
+    const stdoutDrained = proc.stdout.text();
+    const stderrDrained = proc.stderr.text();
     // Generous upper bound: a process that exits resolves this fast; the full
     // window only elapses if it wrongly hangs (the failure we are guarding).
     const outcome = await Promise.race([
@@ -525,7 +529,7 @@ describe("keeps the event loop alive while a message listener is attached", () =
       })),
     ]);
     if (outcome.kind === "alive") proc.kill();
-    await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await Promise.all([stdoutDrained, stderrDrained, proc.exited]);
     return outcome;
   }
 
@@ -614,10 +618,12 @@ describe("keeps the event loop alive while a message listener is attached", () =
     ).toEqual({ gotMarker: true, outcome: "alive" });
   });
 
-  test.concurrent("a listener added after a worker-side port was collected is still released", async () => {
-    // Cross-context late attach: the worker-side port was collected and the
-    // worker is gone, so attaching on main must observe the dead peer and exit.
-    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+  test.concurrent(
+    "a listener added after a worker-side port was collected is still released",
+    async () => {
+      // Cross-context late attach: the worker-side port was collected and the
+      // worker is gone, so attaching on main must observe the dead peer and exit.
+      const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
       const { Worker, MessageChannel } = require("node:worker_threads");
       const channel = new MessageChannel();
       const worker = new Worker(\`
@@ -629,17 +635,21 @@ describe("keeps the event loop alive while a message listener is attached", () =
         channel.port1.on("message", () => {});     // attach only after the worker is gone
       });
     `);
-    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
-    // Worker spawn + full teardown takes seconds under debug/ASAN; the timeout
-    // must outlast expectExitsOnItsOwn's hang window so a real hang fails the
-    // assertion instead of the test timer.
-  }, 15_000);
+      expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+      // Worker spawn + full teardown takes seconds under debug/ASAN; the timeout
+      // must outlast expectExitsOnItsOwn's hang window so a real hang fails the
+      // assertion instead of the test timer.
+    },
+    15_000,
+  );
 
-  test.concurrent("a worker-side port collected before worker exit still releases the main listener", async () => {
-    // Cross-context: once the worker-side port is collected, the worker's
-    // teardown has nothing left to close, so collection itself must release
-    // the listening peer (node delivers this close at worker exit).
-    const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
+  test.concurrent(
+    "a worker-side port collected before worker exit still releases the main listener",
+    async () => {
+      // Cross-context: once the worker-side port is collected, the worker's
+      // teardown has nothing left to close, so collection itself must release
+      // the listening peer (node delivers this close at worker exit).
+      const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`
       const { Worker, MessageChannel } = require("node:worker_threads");
       const channel = new MessageChannel();
       new Worker(\`
@@ -650,8 +660,10 @@ describe("keeps the event loop alive while a message listener is attached", () =
       \`, { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] });
       channel.port1.on("message", () => {});
     `);
-    expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
-  }, 15_000); // see the sibling worker test above
+      expect({ kind, exitCode, signalCode }).toEqual({ kind: "exited", exitCode: 0, signalCode: null });
+    },
+    15_000,
+  ); // see the sibling worker test above
 
   test.concurrent("onmessageerror alone does not keep the process alive", async () => {
     const { kind, exitCode, signalCode } = await expectExitsOnItsOwn(`

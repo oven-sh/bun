@@ -445,7 +445,11 @@ bool MessagePort::virtualHasPendingActivity() const
     // it loads our state *afterwards*. Reading our inbox first races: a 0-queued
     // load taken before the send, combined with a Closed load taken after the
     // close, collects the wrapper while a message is in flight.
-    if (m_pipe->isOtherSideOpen(m_side))
+    // A merely-collected peer (Closed without ClosedByRequest) counts as open:
+    // a collection does not tear down the channel (see CloseKind), so the
+    // listening wrapper stays pinned and keeps owning its event-loop ref until
+    // a real close or context teardown releases both together.
+    if (!m_pipe->isOtherSideClosedByRequest(m_side))
         return true;
     return MessagePortPipe::queuedCount(m_pipe->state(m_side)) > 0;
 }

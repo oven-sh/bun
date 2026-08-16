@@ -305,14 +305,10 @@ const exports = {
   read: asyncWrap(fs.read, "read"),
   write: asyncWrap(fs.write, "write"),
   readdir: async function readdir(path, options) {
-    // Unlike fs.readdir, node's promise form only tests `options.recursive` for
-    // truthiness, while the shared native parser implements fs.readdir's check.
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1601
+    // The promise form skips fs.readdir's recursive check, which the native parser applies: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L1601
     if (typeof options === "object" && options !== null) {
       const { recursive } = options;
       if (recursive != null && typeof recursive !== "boolean") {
-        // The native parser reads the other options through the prototype chain,
-        // so it sees exactly what it would have seen on the caller's object.
         options = { __proto__: options, recursive: !!recursive };
       }
     }

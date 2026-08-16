@@ -1361,13 +1361,7 @@ impl FetchTasklet {
         // sendfile body path surfacing the raw errno (`SendFile::write`,
         // which is `url.is_http()`-only). Only emit the TLS-specific message
         // when some hop of this request actually performs a TLS handshake.
-        let used_tls = self.http.as_ref().is_some_and(|http_| {
-            http_.url.is_https()
-                || http_
-                    .http_proxy
-                    .as_ref()
-                    .is_some_and(|proxy| proxy.is_https())
-        });
+        let used_tls = self.http.as_ref().is_some_and(|http_| http_.used_tls());
 
         let message = match fail {
             http::Error::ConnectionClosed => BunString::static_(

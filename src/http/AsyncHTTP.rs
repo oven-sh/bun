@@ -273,6 +273,15 @@ impl<'a> AsyncHTTP<'a> {
             .cast::<AsyncHTTP<'static>>()
     }
 
+    /// Whether any hop of this request performs a TLS handshake: the target
+    /// URL directly, or the proxy connection when one is configured.
+    ///
+    /// **Not thread safe while request is in-flight** (same caveat as
+    /// [`HTTPClient::is_https`]).
+    pub fn used_tls(&self) -> bool {
+        self.url.is_https() || self.client.is_https()
+    }
+
     /// Accessor for the global concurrent-request cap. Returned as a static
     /// so callers can `.load()` / `.store()` directly.
     #[inline]

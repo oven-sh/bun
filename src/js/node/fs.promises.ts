@@ -1627,8 +1627,6 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
     throw new TypeError(`Unknown encoding: ${encoding}`);
   }
 
-  // The native binding validates this for string and Buffer data; iterables
-  // never reach it, so it has to happen here.
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
     throw $makeAbortError(undefined, { cause: signal.reason });

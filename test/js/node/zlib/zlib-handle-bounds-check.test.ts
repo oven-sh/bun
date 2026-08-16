@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import zlib from "node:zlib";
 
 // Tests for bounds checking on native zlib handle write/writeSync methods.
 // These verify that user-controlled offset/length parameters are validated
@@ -90,8 +91,6 @@ describe("zlib native handle bounds checking", () => {
 });
 
 describe("zlib native handle constructor/init/write argument errors", () => {
-  const zlib = require("zlib");
-
   function constructorOf(stream: any) {
     const ctor = stream._handle.constructor;
     stream.close();

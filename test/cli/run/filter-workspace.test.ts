@@ -1,6 +1,8 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { existsSync, symlinkSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { join } from "path";
 
 const cwd_root = tempDirWithFiles("testworkspace", {
@@ -70,6 +72,49 @@ const cwd_root = tempDirWithFiles("testworkspace", {
       present: "echo rootscript",
     },
     workspaces: ["packages/*"],
+  }),
+});
+
+// Edges: web -> api -> shared -> pkg-a; pkg-b and the root are isolated.
+const graph_root = tempDirWithFiles("filter-selectors", {
+  packages: {
+    web: {
+      "package.json": JSON.stringify({
+        name: "web",
+        dependencies: { api: "workspace:*" },
+        scripts: { present: "echo out-web" },
+      }),
+    },
+    api: {
+      "package.json": JSON.stringify({
+        name: "api",
+        devDependencies: { shared: "workspace:*" },
+        scripts: { present: "echo out-api" },
+      }),
+    },
+    shared: {
+      "package.json": JSON.stringify({
+        name: "shared",
+        dependencies: { "pkg-a": "*" },
+      }),
+    },
+    "pkg-a": {
+      "package.json": JSON.stringify({
+        name: "pkg-a",
+        scripts: { present: "echo out-pkg-a" },
+      }),
+    },
+    "pkg-b": {
+      "package.json": JSON.stringify({
+        name: "pkg-b",
+        scripts: { present: "echo out-pkg-b" },
+      }),
+    },
+  },
+  "package.json": JSON.stringify({
+    name: "ws",
+    workspaces: ["packages/*"],
+    scripts: { present: "echo out-root" },
   }),
 });
 
@@ -248,7 +293,7 @@ describe("bun", () => {
   });
 
   test("run pre and post scripts, in order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js": "console.log(await Bun.file('out.txt').text()); await Bun.write('post.txt', 'great success')",
@@ -273,9 +318,12 @@ describe("bun", () => {
   });
 
   test("respect dependency order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
-        "index.js": "Bun.write('out.txt', 'success')",
+        "index.js": [
+          "await new Promise((resolve) => setTimeout(resolve, 100))",
+          "Bun.write('out.txt', 'success')",
+        ].join(";"),
         "package.json": JSON.stringify({
           name: "dep0",
           scripts: {
@@ -305,8 +353,46 @@ describe("bun", () => {
     });
   });
 
+  test("respect dependency order when dependency name is larger than 8 characters", () => {
+    const largeNamePkgName = "larger-than-8-char";
+    const fileContent = `${largeNamePkgName} - ${new Date().getTime()}`;
+    const largeNamePkg = {
+      "index.js": [
+        "await new Promise((resolve) => setTimeout(resolve, 100))",
+        `Bun.write('out.txt', '${fileContent}')`,
+      ].join(";"),
+      "package.json": JSON.stringify({
+        name: largeNamePkgName,
+        scripts: {
+          script: `${bunExe()} run index.js`,
+        },
+      }),
+    };
+    using dir = tempDir("testworkspace", {
+      main: {
+        "index.js": `console.log(await Bun.file("../${largeNamePkgName}/out.txt").text())`,
+        "package.json": JSON.stringify({
+          name: "main",
+          dependencies: {
+            [largeNamePkgName]: "*",
+          },
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      [largeNamePkgName]: largeNamePkg,
+    });
+    runInCwdSuccess({
+      cwd: dir,
+      pattern: "*",
+      target_pattern: [new RegExp(fileContent)],
+      command: ["script"],
+    });
+  });
+
   test("ignore dependency order on cycle, preserving pre and post script order", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "write.js": "await Bun.write('out.txt', 'success')",
         "readwrite.js":
@@ -347,7 +433,7 @@ describe("bun", () => {
   });
 
   test("detect cycle of length > 2", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -392,13 +478,25 @@ describe("bun", () => {
   });
 
   test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /No packages matched/);
+    runInCwdFailure(cwd_root, "*", "notpresent", /error: No workspace packages matched the filter "\*"/);
+  });
+  test("warns about a filter that matched nothing while running the others", () => {
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: cwd_root,
+      cmd: [bunExe(), "run", "--filter", "pkga", "--filter", "typo", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(stdout.toString()).toMatch(/pkga/);
+    expect(stderr.toString()).toContain('warn: No workspace packages matched the filter "typo"');
+    expect(exitCode).toBe(0);
   });
   test("should warn about malformed package.json", () => {
-    runInCwdFailure(cwd_root, "*", "x", /Failed to read package.json/);
+    runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);
   });
   test("nonzero exit code on failure", () => {
-    const dir = tempDirWithFiles("testworkspace", {
+    using dir = tempDir("testworkspace", {
       dep0: {
         "package.json": JSON.stringify({
           name: "dep0",
@@ -433,12 +531,10 @@ describe("bun", () => {
     elideLines,
     target_pattern,
     antipattern,
-    win32ExpectedError,
   }: {
     elideLines: number;
     target_pattern: RegExp[];
     antipattern?: RegExp[];
-    win32ExpectedError: RegExp;
   }) {
     const dir = tempDirWithFiles("testworkspace", {
       packages: {
@@ -459,15 +555,32 @@ describe("bun", () => {
     });
 
     if (process.platform === "win32") {
-      const { exitCode, stderr } = spawnSync({
+      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
+      // `state.pretty_output` is false, and `redraw()` short-circuits before
+      // ever emitting elision output. `target_pattern` is intentionally NOT
+      // iterated here: every caller bundles TTY-only regexes such as
+      // `/\[N lines elided\]/` that would never appear in piped Windows output
+      // and would fail the test for the wrong reason. The hardcoded log_line
+      // match covers the non-TTY subset of every caller's target_pattern.
+      // `antipattern` is iterated because absence-checks remain valid on either
+      // code path.
+      const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
         cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
         env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
-      expect(stderr.toString()).toMatch(win32ExpectedError);
-      expect(exitCode).not.toBe(0);
+
+      const stdoutval = stdout.toString();
+      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
+      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+      if (antipattern) {
+        for (const r of antipattern) {
+          expect(stdoutval).not.toMatch(r);
+        }
+      }
+      expect(exitCode).toBe(0);
       return;
     }
 
@@ -486,7 +599,6 @@ describe("bun", () => {
     runElideLinesTest({
       elideLines: 10,
       target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
@@ -494,7 +606,6 @@ describe("bun", () => {
     runElideLinesTest({
       elideLines: 15,
       target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
   });
 
@@ -503,7 +614,599 @@ describe("bun", () => {
       elideLines: 0,
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
-      win32ExpectedError: /--elide-lines is only supported in terminal environments/,
     });
+  });
+
+  test("--elide-lines is a no-op (not an error) when stdout is not a terminal", () => {
+    using dir = tempDir("testworkspace", {
+      packages: {
+        dep0: {
+          "index.js": Array(20).fill("console.log('log_line');").join("\n"),
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: `${bunExe()} run index.js` } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    // Use a non-zero value so the test would fail if elision ever leaked into
+    // the non-TTY code path. With `--elide-lines 5`, a broken implementation
+    // would only surface 5 log_line entries and the 20-match regex would fail.
+    const { exitCode, stderr, stdout } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", "5", "script"],
+      env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const stdoutval = stdout.toString();
+    expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
+    // Elision text is written to stdout via std.fs.File.stdout().writeAll() in
+    // filter_run.zig's flushDrawBuf; guard the correct stream.
+    expect(stdoutval).not.toMatch(/lines elided/);
+    expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
+    expect(exitCode).toBe(0);
+  });
+
+  // The terminal renderer is TTY-only on Windows (see runElideLinesTest).
+  test.skipIf(isWindows)("terminal output reports how long a successful script took", () => {
+    using dir = tempDir("filter-done-in", {
+      packages: {
+        dep0: {
+          "package.json": JSON.stringify({ name: "dep0", scripts: { script: "exit 0" } }),
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    const { exitCode, stdout } = spawnSync({
+      cwd: String(dir),
+      cmd: [bunExe(), "run", "--filter", "dep0", "script"],
+      env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(stdout.toString()).toMatch(/Done in (?:\d+ ms|\d+\.\d{2} s)/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("self-referential directory symlink in a workspace does not loop", () => {
+    using dir = tempDir("filter-symlink-loop", {
+      packages: {
+        pkga: {
+          "package.json": JSON.stringify({ name: "pkga", scripts: { present: "echo scripta" } }),
+        },
+        cyc: {
+          "package.json": JSON.stringify({ name: "cyc", scripts: { present: "echo scriptcyc" } }),
+        },
+      },
+      // `packages/**` makes workspace discovery recurse into every package.
+      "package.json": JSON.stringify({
+        name: "ws",
+        scripts: { present: "echo rootscript" },
+        workspaces: ["packages/**"],
+      }),
+    });
+    // "junction" so the link is creatable on unprivileged Windows; the type is
+    // ignored on POSIX.
+    symlinkSync(join(dir, "packages", "cyc"), join(dir, "packages", "cyc", "loop"), "junction");
+
+    const { exitCode, stdout, stderr } = spawnSync({
+      cwd: dir,
+      cmd: [bunExe(), "run", "--filter", "*", "present"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdoutval = stdout.toString();
+    const count = (needle: string) => stdoutval.split(needle).length - 1;
+    // `pkga` is matched once. `cyc` is matched at `packages/cyc` and once more
+    // through its own `loop` alias, where the cycle is detected and descent
+    // stops instead of recursing until the path length limit.
+    expect({ scripta: count("scripta"), scriptcyc: count("scriptcyc"), exitCode }).toEqual({
+      scripta: 1,
+      scriptcyc: 2,
+      exitCode: 0,
+    });
+  });
+
+  test("warning names which package.json failed to parse", async () => {
+    await using dir = tempDir("filter-bad-pkgjson", {
+      packages: {
+        good: {
+          "package.json": JSON.stringify({ name: "good", scripts: { go: "echo ok" } }),
+        },
+        broken: {
+          "package.json": "this is { not valid json",
+        },
+      },
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "go"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The good package still runs; the broken one is skipped with a warning
+    // that names its path.
+    expect(stdout).toContain("ok");
+    const sep = process.platform === "win32" ? "\\" : "/";
+    expect(stderr).toContain(`broken${sep}package.json`);
+    expect(stderr).toContain("skipping this workspace package");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("selectors", () => {
+  test("'foo...' runs foo and the workspaces it depends on", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api...",
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'foo^...' runs only the dependencies", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api^...",
+      target_pattern: [/out-pkg-a/],
+      antipattern: [/out-api/, /out-web/],
+    });
+  });
+
+  test("'...foo' runs foo and its dependents", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...api",
+      target_pattern: [/out-api/, /out-web/],
+      antipattern: [/out-pkg-a/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'...^foo' runs only the dependents", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...^api",
+      target_pattern: [/out-web/],
+      antipattern: [/out-api/, /out-pkg-a/],
+    });
+  });
+
+  test("a relation on a directory selector", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "...{./packages/pkg-a}",
+      target_pattern: [/out-pkg-a/, /out-api/, /out-web/],
+      antipattern: [/out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("'{dir}' runs everything under the directory but not the root", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "{packages}",
+      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-root/],
+    });
+  });
+
+  test("'{.}' is resolved from the current directory", () => {
+    runInCwdSuccess({
+      cwd: join(graph_root, "packages"),
+      pattern: "{.}",
+      target_pattern: [/out-api/, /out-web/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-root/],
+    });
+  });
+
+  // `bun run --filter` only runs workspace members; the root's own scripts are never selected.
+  test("a '!' pattern subtracts from '*'", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!web"],
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("a negation-only filter set starts from every workspace", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "!web",
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["!web", "!pkg-b"],
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+    });
+  });
+
+  test("a negation-only filter set still skips a package.json without a name", () => {
+    runInCwdSuccess({
+      cwd: cwd_root,
+      pattern: "!pkga",
+      target_pattern: [/scriptb/, /scriptc/, /scriptd/],
+      antipattern: [/scripta/, /malformed1/, /rootscript/],
+    });
+  });
+
+  test("a negated path pattern subtracts from '*'", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!./packages/web"],
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("a negated '{dir}' pattern on its own subtracts from every workspace", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "!{./packages/web}",
+      target_pattern: [/out-api/, /out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-web/, /out-root/],
+    });
+  });
+
+  test("'foo...' follows optionalDependencies but not peerDependencies", () => {
+    using dir = tempDir("filter-optional-peer", {
+      packages: {
+        app: {
+          "package.json": JSON.stringify({
+            name: "app",
+            optionalDependencies: { optlib: "workspace:*" },
+            peerDependencies: { peerlib: "workspace:*" },
+            scripts: { present: "echo out-app" },
+          }),
+        },
+        optlib: {
+          "package.json": JSON.stringify({ name: "optlib", scripts: { present: "echo out-optlib" } }),
+        },
+        peerlib: {
+          "package.json": JSON.stringify({ name: "peerlib", scripts: { present: "echo out-peerlib" } }),
+        },
+      },
+      "package.json": JSON.stringify({
+        name: "ws",
+        workspaces: ["packages/*"],
+        scripts: { present: "echo out-root" },
+      }),
+    });
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "app...",
+      target_pattern: [/out-app/, /out-optlib/],
+      antipattern: [/out-peerlib/, /out-root/],
+    });
+  });
+
+  test("a negated relation subtracts the whole group", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: ["*", "!...api"],
+      target_pattern: [/out-pkg-a/, /out-pkg-b/],
+      antipattern: [/out-api/, /out-web/, /out-root/],
+    });
+  });
+
+  test("selectors work in the 'bun --filter <script>' form", () => {
+    runInCwdSuccess({
+      cwd: graph_root,
+      pattern: "api...",
+      target_pattern: [/out-api/, /out-pkg-a/],
+      antipattern: [/out-web/, /out-pkg-b/, /out-root/],
+      auto: true,
+    });
+  });
+
+  test("selectors work with --parallel", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", "--filter", "api...", "present"],
+      cwd: graph_root,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("out-api");
+    expect(stdout).toContain("out-pkg-a");
+    expect(stdout).not.toContain("out-web");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a bare '...' is rejected", () => {
+    runInCwdFailure(graph_root, "...", "present", /is missing a workspace name or path/);
+  });
+
+  test("dependency order is kept inside a relation selection", () => {
+    using dir = tempDir("filter-selectors-order", {
+      dep0: {
+        "index.js": [
+          "await new Promise((resolve) => setTimeout(resolve, 100))",
+          "Bun.write('out.txt', 'success')",
+        ].join(";"),
+        "package.json": JSON.stringify({
+          name: "dep0",
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep1: {
+        "index.js": 'console.log(await Bun.file("../dep0/out.txt").text())',
+        "package.json": JSON.stringify({
+          name: "dep1",
+          dependencies: {
+            dep0: "*",
+          },
+          scripts: {
+            script: `${bunExe()} run index.js`,
+          },
+        }),
+      },
+      dep2: {
+        "package.json": JSON.stringify({
+          name: "dep2",
+          scripts: {
+            script: "echo unrelated",
+          },
+        }),
+      },
+    });
+    runInCwdSuccess({
+      cwd: String(dir),
+      pattern: "dep1...",
+      target_pattern: [/success/],
+      antipattern: [/not found/, /unrelated/],
+      command: ["script"],
+    });
+  });
+
+  test("'*' still skips a package.json without a name", () => {
+    runInCwdSuccess({
+      cwd: cwd_root,
+      pattern: "*",
+      target_pattern: [/scripta/],
+      antipattern: [/malformed1/],
+    });
+  });
+});
+
+// #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script
+// as `bun exec "<script>"` with CREATE_NO_WINDOW, so the user's Ctrl+C never
+// reaches the scripts and cleanup is entirely on the parent. libuv's global
+// spawn Job is KILL_ON_CLOSE | SILENT_BREAKAWAY_OK, so membership only
+// propagates one hop: as soon as the tree contains a non-libuv spawner
+// (cmd.exe, a `.cmd` bin shim, node.exe), everything below it escapes and keeps
+// its port bound after the parent exits.
+//
+// Tree under test:
+//   test → bun parent → `bun exec` → cmd.exe → leaf bun (long-running).
+// The leaf writes its pid to a file; the test kills the parent and polls the
+// leaf. Without a recursive kill-on-close Job on the parent, the leaf survives.
+describe.skipIf(!isWindows).each([
+  { via: "--filter", argv: ["--filter", "*", "dev"] },
+  { via: "run --parallel", argv: ["run", "--parallel", "dev"] },
+])("windows: $via reaps the whole descendant tree when the parent exits (#20319)", ({ argv }) => {
+  test.concurrent(
+    "leaf dies",
+    async () => {
+      function isAlive(pid: number): boolean {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      async function waitUntilDead(pid: number, timeoutMs: number): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (!isAlive(pid)) return true;
+          await sleep(25);
+        }
+        return !isAlive(pid);
+      }
+
+      using dir = tempDir("filter-win-cleanup", {
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+        // .bat avoids cmd /c's quote-stripping around a quoted exe path + arg.
+        "packages/app/run.bat": `@"${bunExe()}" "%~dp0server.js"\r\n`,
+        "packages/app/server.js": `
+          require("fs").writeFileSync(process.env.PIDFILE, String(process.pid));
+          setInterval(() => {}, 1000);
+        `,
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          scripts: { dev: "cmd /d /c run.bat" },
+        }),
+      });
+
+      const pidfile = join(String(dir), "leaf.pid");
+      // Unset NO_ORPHANS so the test exercises the unconditional Job rather
+      // than the opt-in env-var path CI may set globally.
+      const env: Record<string, string | undefined> = {
+        ...bunEnv,
+        PIDFILE: pidfile,
+        BUN_FEATURE_FLAG_NO_ORPHANS: undefined,
+        NO_COLOR: "1",
+      };
+
+      const parent = Bun.spawn({
+        cmd: [bunExe(), ...argv],
+        env,
+        cwd: join(String(dir), "packages", "app"),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+
+      let leafPid = 0;
+      try {
+        const deadline = Date.now() + 15000;
+        while (leafPid === 0 && Date.now() < deadline) {
+          try {
+            const t = await Bun.file(pidfile).text();
+            if (t.length > 0) leafPid = Number(t.trim());
+          } catch {}
+          if (leafPid === 0) await sleep(25);
+        }
+        if (leafPid === 0) {
+          parent.kill("SIGKILL");
+          await parent.exited;
+          const stderr = await parent.stderr.text();
+          throw new Error(`leaf never wrote pidfile; stderr:\n${stderr}`);
+        }
+        expect(isAlive(leafPid)).toBe(true);
+
+        // TerminateProcess on the parent — same effect as the second Ctrl+C
+        // (default handler) or the first Ctrl+C's abort() path once the direct
+        // children have exited and the parent calls Global::exit().
+        parent.kill("SIGKILL");
+        await parent.exited;
+
+        const died = await waitUntilDead(leafPid, 10000);
+        expect(died).toBe(true);
+      } finally {
+        parent.kill("SIGKILL");
+        await parent.exited;
+        if (leafPid > 0 && isAlive(leafPid)) {
+          try {
+            process.kill(leafPid, "SIGKILL");
+          } catch {}
+          await waitUntilDead(leafPid, 2000);
+        }
+      }
+    },
+    30000,
+  );
+});
+
+describe("output timing", () => {
+  // A script is finished when its process exits: output it already wrote is
+  // drained at that point, but a detached child still holding the pipe write
+  // ends must not keep the run alive waiting for an EOF that may never come.
+  test("a detached child holding the pipes does not delay the script's finish", async () => {
+    using dir = tempDir("filter-late-output", {
+      "package.json": JSON.stringify({
+        name: "ws-late",
+        workspaces: ["packages/*"],
+      }),
+      "packages/late/package.json": JSON.stringify({
+        name: "pkg-late",
+        scripts: {
+          go: `${bunExe()} late.js`,
+        },
+      }),
+      "packages/late/late.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000); console.log('late-line')"],
+          stdio: ["ignore", "inherit", "inherit"],
+          // Windows: keep the child out of this process's kill-on-close job.
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("pid.txt", String(child.pid));
+        console.log("early-line");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-late", "go"],
+      // CI ASAN lanes set BUN_FEATURE_FLAG_NO_ORPHANS, which makes the script's
+      // bun SIGKILL the detached child on exit; unset it so the child really
+      // keeps the pipes open.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Reap the pipe-holding child so nothing outlives the test. Guard the pid:
+    // kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(join(String(dir), "packages", "late", "pid.txt")).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    expect(stdout).toContain("early-line");
+    expect(stdout).toContain("Exited with code 0");
+    // The run ends when the script exits; the child's much later write goes to
+    // a closed pipe instead of delaying the run by 30s.
+    expect(stdout).not.toContain("late-line");
+    expect(exitCode).toBe(0);
+  });
+
+  // On abort (here: SIGINT), exit alone finishes a script; waiting for pipe
+  // EOF would hang on the detached child that still holds go's stdout.
+  test.skipIf(isWindows)("SIGINT does not wait for a child holding the script's pipes", async () => {
+    using dir = tempDir("filter-abort-late", {
+      "package.json": JSON.stringify({
+        name: "ws-abort",
+        workspaces: ["packages/*"],
+      }),
+      "packages/bg/package.json": JSON.stringify({
+        name: "pkg-bg",
+        scripts: {
+          go: `${bunExe()} go.js`,
+        },
+      }),
+      "packages/bg/go.js": `
+        const child = Bun.spawn({
+          cmd: [process.execPath, "-e", "await Bun.sleep(30_000)"],
+          stdio: ["ignore", "inherit", "inherit"],
+          detached: true,
+        });
+        child.unref();
+        await Bun.write("ready.txt", String(child.pid));
+        await Bun.sleep(15_000);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "pkg-bg", "go"],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // New session, so the group signal below cannot reach the test runner.
+      detached: true,
+    });
+    const ready = join(String(dir), "packages", "bg", "ready.txt");
+    const deadline = Date.now() + 15_000;
+    while (!existsSync(ready)) {
+      if (Date.now() > deadline || proc.exitCode !== null) {
+        proc.kill();
+        const [o, e] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+        throw new Error(`go never wrote ready.txt; stdout: ${o}stderr: ${e}`);
+      }
+      await Bun.sleep(10);
+    }
+    // Ctrl-C semantics: the terminal signals the foreground process group
+    // (bun run and the script), but not the detached grandchild.
+    const start = Date.now();
+    process.kill(-proc.pid, "SIGINT");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Reap the pipe-holding grandchild so nothing outlives the test. Guard the
+    // pid: kill(0) would signal this whole process group.
+    try {
+      const pid = Number(await Bun.file(ready).text());
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
+    // 128 + SIGINT: go is killed by the signal and is the only script. stderr
+    // rides along so a regression surfaces it in the failure output.
+    expect({ exitCode, stdout, stderr }).toEqual({
+      exitCode: 130,
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+    });
+    // Waiting out the grandchild's 30s sleep means the abort bypass regressed.
+    expect(Date.now() - start).toBeLessThan(15000);
   });
 });

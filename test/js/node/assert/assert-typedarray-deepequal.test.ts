@@ -105,3 +105,37 @@ describe("TypedArray deepEqual", () => {
     }
   });
 });
+
+test("assert.deepStrictEqual diff message stays bounded for large arrays with many differing elements", () => {
+  // Two 20,000-element arrays that differ at every 40th index. Their inspected
+  // forms are ~20,002 lines each and the shortest edit script between them is
+  // ~1,000 insert/delete operations, which is well past the point where the
+  // native myers diff must stop retaining a per-level trace frame (each frame
+  // is ~320 KB here). The AssertionError message must stay a small truncated
+  // preview instead of growing with the size and difference count of the
+  // operands.
+  const length = 20_000;
+  const actual = Array.from({ length }, (_, i) => i);
+  const expected = actual.slice();
+  for (let i = 0; i < length; i += 40) {
+    expected[i] = -1;
+  }
+
+  let error: Error | undefined;
+  try {
+    assert.deepStrictEqual(actual, expected);
+  } catch (e) {
+    error = e as Error;
+  }
+
+  expect(error).toBeInstanceOf(assert.AssertionError);
+  expect(error!.message).toContain("Expected values to be strictly deep-equal");
+  // The message is a truncated preview of the first lines of the inspected
+  // value, not a line-by-line diff of all 20,000 elements: it stays small and
+  // does not include entries from the tail of the arrays.
+  expect(error!.message.split("\n").length).toBeLessThan(100);
+  expect(error!.message).not.toContain("19960");
+
+  // Identical large arrays still compare equal without throwing.
+  expect(() => assert.deepStrictEqual(actual, actual.slice())).not.toThrow();
+}, 30_000);

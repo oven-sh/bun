@@ -1,4 +1,4 @@
-import { tempDirWithFiles } from "harness";
+import { tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
 const os = require("os");
@@ -120,11 +120,11 @@ describe("access", () => {
 
 describe("open", () => {
   it("should work", async () => {
-    await open(__filename);
+    await using _ = await open(__filename);
   });
 
   it("should return an object", async () => {
-    const fh = await open(__filename);
+    await using fh = await open(__filename);
     assert.strictEqual(typeof fh, "object");
     assert.strictEqual(typeof fh.fd, "number");
   });
@@ -201,4 +201,354 @@ test("writing to file in append mode works", async () => {
   await f.close();
 
   expect((await readFile(tempFile)).toString()).toEqual("test\ntest\ntest\n");
+});
+
+test("appendFile with flag 'ax' rejects with EEXIST on an existing file", async () => {
+  const dir = tempDirWithFiles("appendfile-exclusive-flag", { "existing.txt": "keep" });
+  const existing = join(dir, "existing.txt");
+  await expectReject(() => fsPromises.appendFile(existing, "more", { flag: "ax" }), {
+    code: "EEXIST",
+    syscall: "open",
+  });
+  expect(await readFile(existing, "utf8")).toEqual("keep");
+
+  const fresh = join(dir, "fresh.txt");
+  await fsPromises.appendFile(fresh, "first", { flag: "ax" });
+  await fsPromises.appendFile(fresh, "second", { flag: "a" });
+  expect(await readFile(fresh, "utf8")).toEqual("firstsecond");
+});
+
+test("errors from fs.promises include async stack frames", async () => {
+  async function level3() {
+    await readFile("/nonexistent-path/does-not-exist.txt");
+  }
+  async function level2() {
+    await level3();
+  }
+  async function level1() {
+    await level2();
+  }
+
+  let caught;
+  try {
+    await level1();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  expect(caught.stack).toContain("at async level3");
+  expect(caught.stack).toContain("at async level2");
+  expect(caught.stack).toContain("at async level1");
+});
+
+test("fs.promises async stack through Promise subclass", async () => {
+  class MyPromise extends Promise {}
+
+  async function caller() {
+    await MyPromise.resolve().then(() => readFile("/nonexistent-path/x.txt"));
+  }
+
+  let caught;
+  try {
+    await caller();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  // Subclass .then() may not preserve the reaction chain — must not crash.
+  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+});
+
+test("fs.promises async stack through custom thenable", async () => {
+  async function caller() {
+    const thenable = {
+      then(onFulfilled, onRejected) {
+        return readFile("/nonexistent-path/x.txt").then(onFulfilled, onRejected);
+      },
+    };
+    await thenable;
+  }
+
+  let caught;
+  try {
+    await caller();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  // Custom thenables break the direct reaction chain — must not crash.
+  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+});
+
+test("fs.promises async stack with Promise.all", async () => {
+  async function caller() {
+    await Promise.all([readFile("/nonexistent-path/a.txt"), readFile("/nonexistent-path/b.txt")]);
+  }
+
+  let caught;
+  try {
+    await caller();
+  } catch (e) {
+    caught = e;
+  }
+
+  expect(caught).toBeDefined();
+  expect(caught.code).toBe("ENOENT");
+  // Promise.all uses combinator context — must not crash.
+  expect(typeof caught.stack === "string" || caught.stack === undefined).toBe(true);
+});
+
+it("an unused FileHandle.writer() does not prevent close()", async () => {
+  await using dir = tempDir("unused-writer", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+  fh.writer(); // never written to, never ended
+  // must not hang: the writer only refs the handle once a write happens
+  await fh.close();
+  expect(fh.fd).toBe(-1);
+});
+
+it("sources created before close() refuse to use the stale fd", async () => {
+  await using dir = tempDir("stale-fd", { "x.txt": "hello" });
+  const file = join(dir, "x.txt");
+
+  // writer
+  {
+    const fh = await fsPromises.open(file, "r+");
+    const w = fh.writer();
+    await fh.close();
+    await expect(w.write(Buffer.from("a"))).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+    expect(() => w.writeSync(Buffer.from("a"))).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  }
+  // pull
+  {
+    const fh = await fsPromises.open(file, "r");
+    const src = fh.pull();
+    await fh.close();
+    await expect(
+      (async () => {
+        for await (const _ of src);
+      })(),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_STATE" });
+  }
+  // pullSync
+  {
+    const fh = await fsPromises.open(file, "r");
+    const src = fh.pullSync();
+    await fh.close();
+    expect(() => {
+      for (const _ of src);
+    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  }
+});
+
+it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async () => {
+  await using dir = tempDir("rm-eisdir", { "sub/a.txt": "x" });
+  const target = join(dir, "sub");
+  await expect(fsPromises.rm(target)).rejects.toMatchObject({ code: "ERR_FS_EISDIR" });
+  const { promise, resolve } = Promise.withResolvers();
+  fs.rm(target, err => resolve(err));
+  expect((await promise)?.code).toBe("ERR_FS_EISDIR");
+  // directory is still removable the supported way
+  await fsPromises.rm(target, { recursive: true });
+  expect(fs.existsSync(target)).toBe(false);
+});
+
+it("close() while an operation is in flight actually closes the fd", async () => {
+  await using dir = tempDir("deferred-close", { "x.txt": "hello" });
+  const fh = await fsPromises.open(join(dir, "x.txt"), "r");
+  const fd = fh.fd;
+  // take an extra ref so close() defers, then release it
+  const read = fh.read(Buffer.alloc(5), 0, 5, 0);
+  const closed = fh.close();
+  await read;
+  await closed;
+  expect(fh.fd).toBe(-1);
+  // the deferred path must have issued the real close; nothing else runs in
+  // this process between the close and this check, so EBADF is deterministic
+  expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
+});
+
+it("fail()/end() with autoClose defer the close past an in-flight write", async () => {
+  await using dir = tempDir("writer-teardown", { "a.bin": "", "b.bin": "" });
+  // fail() while a large write is on the threadpool must not close the fd
+  // under it; the write completes, then the handle closes.
+  {
+    const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+    const w = fh.writer({ autoClose: true });
+    const big = Buffer.alloc(8 << 20, 65);
+    const pending = w.write(big);
+    w.fail(new Error("stop"));
+    await pending; // must not reject with EBADF
+    expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength);
+    expect(fh.fd).toBe(-1); // deferred teardown closed the handle
+  }
+  // end() while a write is pending waits for it and reports all bytes
+  {
+    const fh = await fsPromises.open(join(dir, "b.bin"), "w");
+    const w = fh.writer({ autoClose: true });
+    const big = Buffer.alloc(8 << 20, 66);
+    const pending = w.write(big);
+    const total = await w.end();
+    await pending;
+    expect(total).toBe(big.byteLength);
+    expect(fs.statSync(join(dir, "b.bin")).size).toBe(big.byteLength);
+    expect(fh.fd).toBe(-1);
+  }
+});
+
+it("teardown waits for every concurrent in-flight write", async () => {
+  await using dir = tempDir("writer-concurrent", { "a.bin": "" });
+  const fh = await fsPromises.open(join(dir, "a.bin"), "w");
+  const w = fh.writer({ autoClose: true, start: 0 });
+  const big = Buffer.alloc(4 << 20, 65);
+  // two unawaited writes in flight; the first one finishing must not run the
+  // deferred teardown while the second is still on the threadpool
+  const p1 = w.write(big);
+  const p2 = w.write(big);
+  w.fail(new Error("stop"));
+  await p1;
+  await p2; // must not reject with EBADF
+  expect(fs.statSync(join(dir, "a.bin")).size).toBe(big.byteLength * 2);
+  expect(fh.fd).toBe(-1);
+});
+
+// node rejects abortable fs APIs with an AbortError (an Error whose code is the
+// string "ABORT_ERR", whose message has no trailing period, and whose cause is
+// signal.reason), never with the raw DOMException held in signal.reason (whose
+// .code is the number 20 and whose message ends in a period).
+describe("AbortSignal rejections use node's AbortError shape", () => {
+  function expectNodeAbortError(err, reason) {
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(DOMException);
+    expect({ name: err.name, code: err.code, message: err.message }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      message: "The operation was aborted",
+    });
+    expect(err.cause).toBe(reason);
+  }
+
+  test("readFile with a pre-aborted signal", async () => {
+    await using dir = tempDir("fs-abort-readfile", { "f.txt": "hello" });
+    const signal = AbortSignal.abort();
+    expect.assertions(4);
+    try {
+      await fsPromises.readFile(join(dir, "f.txt"), { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+  });
+
+  test("readFile with a custom abort reason", async () => {
+    await using dir = tempDir("fs-abort-readfile-reason", { "f.txt": "hello" });
+    const reason = new Error("my reason");
+    expect.assertions(4);
+    try {
+      await fsPromises.readFile(join(dir, "f.txt"), { signal: AbortSignal.abort(reason) });
+    } catch (err) {
+      expectNodeAbortError(err, reason);
+    }
+  });
+
+  test("readFile aborted while in flight", async () => {
+    await using dir = tempDir("fs-abort-readfile-inflight", { "f.txt": "hello" });
+    const ac = new AbortController();
+    const reason = new Error("stop");
+    const promise = fsPromises.readFile(join(dir, "f.txt"), { signal: ac.signal });
+    ac.abort(reason);
+    expect.assertions(4);
+    try {
+      await promise;
+    } catch (err) {
+      expectNodeAbortError(err, reason);
+    }
+  });
+
+  // abort() with no reason stores the signal's lazily-created DOMException in a
+  // common-reason slot; the cause must still be that exact object, not a copy.
+  test("readFile aborted while in flight with the default abort reason", async () => {
+    await using dir = tempDir("fs-abort-readfile-inflight-default", { "f.txt": "hello" });
+    const ac = new AbortController();
+    const promise = fsPromises.readFile(join(dir, "f.txt"), { signal: ac.signal });
+    ac.abort();
+    expect.assertions(4);
+    try {
+      await promise;
+    } catch (err) {
+      expectNodeAbortError(err, ac.signal.reason);
+    }
+  });
+
+  test("appendFile with a pre-aborted signal", async () => {
+    await using dir = tempDir("fs-abort-appendfile", {});
+    const signal = AbortSignal.abort();
+    expect.assertions(4);
+    try {
+      await fsPromises.appendFile(join(dir, "f.txt"), "data", { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+  });
+
+  test("writeFile with a pre-aborted signal", async () => {
+    await using dir = tempDir("fs-abort-writefile", {});
+    const signal = AbortSignal.abort();
+    expect.assertions(4);
+    try {
+      await fsPromises.writeFile(join(dir, "f.txt"), "data", { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+  });
+
+  test("writeFile of an async iterable with a pre-aborted signal", async () => {
+    await using dir = tempDir("fs-abort-writefile-iter", {});
+    const signal = AbortSignal.abort();
+    expect.assertions(4);
+    try {
+      await fsPromises.writeFile(
+        join(dir, "f.txt"),
+        (async function* () {
+          yield "a";
+        })(),
+        { signal },
+      );
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+  });
+
+  test("writeFile of an async iterable aborted between chunks", async () => {
+    await using dir = tempDir("fs-abort-writefile-iter-inflight", {});
+    const ac = new AbortController();
+    expect.assertions(4);
+    try {
+      await fsPromises.writeFile(
+        join(dir, "f.txt"),
+        (async function* () {
+          yield "a";
+          ac.abort();
+          yield "b";
+        })(),
+        { signal: ac.signal },
+      );
+    } catch (err) {
+      expectNodeAbortError(err, ac.signal.reason);
+    }
+  });
+
+  test("callback readFile and writeFile with a pre-aborted signal", async () => {
+    await using dir = tempDir("fs-abort-callback", { "f.txt": "hello" });
+    const signal = AbortSignal.abort();
+    const readErr = await new Promise(resolve => fs.readFile(join(dir, "f.txt"), { signal }, resolve));
+    expectNodeAbortError(readErr, signal.reason);
+    const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal }, resolve));
+    expectNodeAbortError(writeErr, signal.reason);
+  });
 });

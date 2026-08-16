@@ -234,19 +234,27 @@ struct InflationStream {
     std::optional<std::string_view> inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
 
 #ifdef UWS_USE_LIBDEFLATE
-        /* Try fast path first */
-        size_t written = 0;
+        /* The libdeflate fast path is stateless: it cannot resolve back-references into a
+         * previous message's sliding window, and whatever it inflates never reaches the zlib
+         * stream's window. Both are only correct without context takeover, i.e. when reset is set. */
+        if (reset) {
+            /* Try fast path first */
+            size_t written = 0;
 
-        /* We have to pad 9 bytes and restore those bytes when done since 9 is more than 6 of next WebSocket message */
-        char tmp[9];
-        memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
-        memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-        libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, buf, 4096, &written);
-        memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
+            /* We have to pad 9 bytes and restore those bytes when done since 9 is more than 6 of next WebSocket message */
+            char tmp[9];
+            memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
+            memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
+            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, buf, 4096, &written);
+            memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
 
-        if (res == 0) {
-            /* Fast path wins */
-            return std::string_view(buf, written);
+            if (res == 0) {
+                /* Fast path wins */
+                if (written > maxPayloadLength) {
+                    return std::nullopt;
+                }
+                return std::string_view(buf, written);
+            }
         }
 #endif
 

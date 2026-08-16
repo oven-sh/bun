@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { isPosix, tempDirWithFiles } from "harness";
+import { isPosix, tempDir, tempDirWithFiles } from "harness";
 import { createTestBuilder } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
 
@@ -17,7 +17,7 @@ const BUN = process.argv0;
 const DEV_NULL = process.platform === "win32" ? "NUL" : "/dev/null";
 
 let node_modules_tempdir: string;
-let allNodeModuleFiles: string[] = [];
+let nodeModulesSetup: Promise<string[]>;
 
 let tempdir: string;
 let allFiles: string[] = [];
@@ -41,30 +41,36 @@ const sortedLsOutput = (s: string) =>
     )
     .sort();
 
-describe("bunshell ls", () => {
+describe.concurrent("bunshell ls", () => {
   beforeAll(async () => {
     node_modules_tempdir = tempDirWithFiles("ls-node_modules", {});
     tempdir = tempDirWithFiles("ls", {});
-    await $`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}`
+    // Kick off the expensive `bun install` without awaiting so the other 26 tests
+    // (which don't depend on it) can run concurrently while it completes.
+    nodeModulesSetup = $`echo ${packagejson()} > package.json; ${BUN} install &> ${DEV_NULL}`
       .quiet()
       .throws(true)
-      .cwd(node_modules_tempdir);
+      .cwd(node_modules_tempdir)
+      .then(() =>
+        isPosix
+          ? Bun.$`ls -RA .`
+              .quiet()
+              .throws(true)
+              .cwd(node_modules_tempdir)
+              .text()
+              .then(s => sortedLsOutput(s))
+          : [],
+      );
+    // Avoid an unhandled rejection if install fails before the node_modules test awaits it.
+    nodeModulesSetup.catch(() => {});
     await $`touch a b c; mkdir foo; touch foo/a foo/b foo/c`.quiet().throws(true).cwd(tempdir);
-
-    allNodeModuleFiles = isPosix
-      ? await Bun.$`ls -RA .`
-          .quiet()
-          .throws(true)
-          .cwd(node_modules_tempdir)
-          .text()
-          .then(s => sortedLsOutput(s))
-      : [];
 
     allFiles = ["./foo:", "a", "a", "b", "b", "c", "c", "foo"];
   });
 
   describe("recursive", () => {
     test.if(isPosix)("node_modules", async () => {
+      const allNodeModuleFiles = await nodeModulesSetup;
       const s = await Bun.$`ls -RA .`.quiet().throws(true).cwd(node_modules_tempdir).text();
       const lines = sortedLsOutput(s);
       expect(lines).toEqual(allNodeModuleFiles);
@@ -86,7 +92,7 @@ describe("bunshell ls", () => {
     });
 
     test("-a flag shows all files including . and ..", async () => {
-      const tempdir = tempDirWithFiles("ls-show-all", {});
+      await using tempdir = tempDir("ls-show-all", {});
       await $`touch .hidden regular; mkdir .hidden-dir`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -a`
         .setTempdir(tempdir)
@@ -100,7 +106,7 @@ describe("bunshell ls", () => {
     });
 
     test("-A flag shows almost all (excludes . and ..)", async () => {
-      const tempdir = tempDirWithFiles("ls-almost-all", {});
+      await using tempdir = tempDir("ls-almost-all", {});
       await $`touch .hidden regular`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -A`
         .setTempdir(tempdir)
@@ -132,7 +138,7 @@ describe("bunshell ls", () => {
     });
 
     test("multiple directories", async () => {
-      const tempdir = tempDirWithFiles("ls-multi-dirs", {});
+      await using tempdir = tempDir("ls-multi-dirs", {});
       await $`mkdir dir1 dir2; touch dir1/file1 dir2/file2`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls dir1 dir2`
         .setTempdir(tempdir)
@@ -150,13 +156,13 @@ describe("bunshell ls", () => {
 
   describe("edge cases", () => {
     test("empty directory", async () => {
-      const tempdir = tempDirWithFiles("ls-empty", {});
+      await using tempdir = tempDir("ls-empty", {});
       await $`mkdir empty`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls empty`.setTempdir(tempdir).stdout("").run();
     });
 
     test("directory with only hidden files using -a", async () => {
-      const tempdir = tempDirWithFiles("ls-hidden-only-a", {});
+      await using tempdir = tempDir("ls-hidden-only-a", {});
       await $`mkdir hidden-only; touch hidden-only/.hidden1 hidden-only/.hidden2`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -a hidden-only`
         .setTempdir(tempdir)
@@ -165,7 +171,7 @@ describe("bunshell ls", () => {
     });
 
     test("very long filename", async () => {
-      const tempdir = tempDirWithFiles("ls-long-name", {});
+      await using tempdir = tempDir("ls-long-name", {});
       const longName = "a".repeat(100);
       await $`touch ${longName}`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`
@@ -175,7 +181,7 @@ describe("bunshell ls", () => {
     });
 
     test("filename with spaces", async () => {
-      const tempdir = tempDirWithFiles("ls-spaces", {});
+      await using tempdir = tempDir("ls-spaces", {});
       await $`touch "file with spaces"`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`
         .setTempdir(tempdir)
@@ -184,7 +190,7 @@ describe("bunshell ls", () => {
     });
 
     test.if(isPosix)("filename with special characters", async () => {
-      const tempdir = tempDirWithFiles("ls-special", {});
+      await using tempdir = tempDir("ls-special", {});
       await $`touch "file-with-!@#$%^&*()"`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`
         .setTempdir(tempdir)
@@ -195,7 +201,7 @@ describe("bunshell ls", () => {
 
   describe("flag combinations", () => {
     test("-Ra flag (recursive + show all)", async () => {
-      const tempdir = tempDirWithFiles("ls-ra", {});
+      await using tempdir = tempDir("ls-ra", {});
       await $`mkdir sub; touch .hidden sub/.hidden-sub`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -Ra`
         .setTempdir(tempdir)
@@ -205,7 +211,7 @@ describe("bunshell ls", () => {
     });
 
     test("-RA flag (recursive + almost all)", async () => {
-      const tempdir = tempDirWithFiles("ls-ra-caps", {});
+      await using tempdir = tempDir("ls-ra-caps", {});
       await $`mkdir sub; touch .hidden sub/.hidden-sub`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -RA`
         .setTempdir(tempdir)
@@ -215,8 +221,38 @@ describe("bunshell ls", () => {
         .run();
     });
 
+    test("-a and -A: last one wins (separate args)", async () => {
+      using tempdir = tempDir("ls-aA-order", {
+        ".hidden": "",
+        "visible": "",
+      });
+      await TestBuilder.command`ls -a -A`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".hidden", "visible"]))
+        .run();
+      await TestBuilder.command`ls -A -a`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "visible"]))
+        .run();
+    });
+
+    test("-a and -A: last one wins (combined arg)", async () => {
+      using tempdir = tempDir("ls-aA-combined", {
+        ".hidden": "",
+        "visible": "",
+      });
+      await TestBuilder.command`ls -aA`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".hidden", "visible"]))
+        .run();
+      await TestBuilder.command`ls -Aa`
+        .setTempdir(String(tempdir))
+        .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden", "visible"]))
+        .run();
+    });
+
     test("-d with multiple directories", async () => {
-      const tempdir = tempDirWithFiles("ls-d-multi", {});
+      await using tempdir = tempDir("ls-d-multi", {});
       await $`mkdir dir1 dir2`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -d dir1 dir2`
         .setTempdir(tempdir)
@@ -266,7 +302,7 @@ describe("bunshell ls", () => {
     });
 
     test.if(isPosix)("permission denied directory", async () => {
-      const tempdir = tempDirWithFiles("ls-permission", {});
+      await using tempdir = tempDir("ls-permission", {});
       await $`mkdir restricted; chmod 000 restricted`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls restricted`
         .setTempdir(tempdir)
@@ -277,7 +313,7 @@ describe("bunshell ls", () => {
     });
 
     test.if(isPosix)("permission denied directory recursive", async () => {
-      const tempdir = tempDirWithFiles("ls-permission-recursive", {});
+      await using tempdir = tempDir("ls-permission-recursive", {});
       // Create 3-level deep directory structure with 3+ items per level
       await $`mkdir -p level1/level2/level3; 
                touch level1/file1 level1/file2 level1/file3;
@@ -301,7 +337,7 @@ describe("bunshell ls", () => {
     });
 
     test.if(isPosix)("broken symlink file", async () => {
-      const tempdir = tempDirWithFiles("ls-broken-symlink", {});
+      await using tempdir = tempDir("ls-broken-symlink", {});
       await $`touch will-remove; ln -s will-remove broken-link; rm will-remove`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls broken-link`
         .exitCode(1)
@@ -311,7 +347,7 @@ describe("bunshell ls", () => {
     });
 
     test.if(isPosix)("broken symlink directory", async () => {
-      const tempdir = tempDirWithFiles("ls-broken-symlink", {});
+      await using tempdir = tempDir("ls-broken-symlink", {});
       await $`mkdir will-remove; ln -s will-remove broken-link; rm -rf will-remove`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls broken-link`
         .exitCode(1)
@@ -321,7 +357,7 @@ describe("bunshell ls", () => {
     });
 
     test.if(isPosix)("broken symlink directory recursive", async () => {
-      const tempdir = tempDirWithFiles("ls-broken-symlink", {});
+      await using tempdir = tempDir("ls-broken-symlink", {});
       console.log("TEMPDIR", tempdir);
       await $`mkdir foo; cd foo; touch a b c; mkdir will-remove; ln -s will-remove broken-link; rm -rf will-remove`
         .quiet()

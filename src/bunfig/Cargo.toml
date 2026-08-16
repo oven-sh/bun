@@ -1,0 +1,43 @@
+[package]
+name = "bun_bunfig"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+# MOVE_DOWN(b0): bunfig parser + `Arguments::loadConfig` lifted out of
+# `bun_runtime::cli` so mid-tier crates (notably `bun_install`) can load
+# bunfig.toml without depending on tier-6. All deps below are already
+# transitive deps of `bun_install`; no new cycles introduced.
+[dependencies]
+bun_io.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+bun_alloc.workspace = true
+bun_api.workspace = true
+bun_bundler.workspace = true
+bun_clap.workspace = true
+bun_collections.workspace = true
+bun_core.workspace = true
+bun_analytics.workspace = true
+bun_install_types.workspace = true
+bun_parsers.workspace = true
+bun_js_parser.workspace = true
+bun_resolver.workspace = true
+bun_url.workspace = true
+bun_ast.workspace = true
+bun_options_types.workspace = true
+bun_paths.workspace = true
+bun_standalone_graph.workspace = true
+bun_sys.workspace = true

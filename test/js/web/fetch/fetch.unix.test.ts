@@ -1,6 +1,6 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, expect, it } from "bun:test";
-import { rmSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 import { isWindows, tmpdirSync } from "harness";
 import { request } from "http";
 import { join } from "path";
@@ -92,6 +92,37 @@ if (process.platform === "linux") {
     server.stop(true);
     try {
       rmSync(unix, {});
+    } catch (e) {}
+  });
+}
+
+if (process.platform === "linux" || process.platform === "darwin") {
+  it("can workaround socket path length limit when only the directory is long", async () => {
+    const base = tmpdirSync();
+    let dir = base;
+    while (dir.length + "/fetch-unix.sock".length < 130) {
+      dir = join(dir, Buffer.alloc(40, "a").toString());
+    }
+    mkdirSync(dir, { recursive: true });
+    const unix = join(dir, "fetch-unix.sock");
+    expect(unix.length).toBeGreaterThanOrEqual(108);
+
+    using server = Bun.serve({
+      unix,
+      fetch(req) {
+        return new Response(req.body);
+      },
+    });
+
+    for (let i = 0; i < 5; i++) {
+      const response = await fetch("http://localhost/hello", { method: "POST", body: String(i), unix });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe(String(i));
+    }
+
+    server.stop(true);
+    try {
+      rmSync(base, { recursive: true, force: true });
     } catch (e) {}
   });
 }
@@ -212,4 +243,33 @@ it("handle redirect to non-unix", async () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("world");
   }
+});
+
+// Following a redirect hands a reusable connection to the keep-alive pool,
+// keyed by the request URL's host and port. A unix-socket connection is not
+// reusable that way: the request URL below names the TCP server, so pooling
+// the unix connection would serve the TCP hop (and any later fetch of that
+// host:port) from the unix server.
+it("does not pool the unix-socket connection whose redirect is being followed", async () => {
+  startServer({
+    fetch(req) {
+      return new Response(`tcp ${new URL(req.url).pathname}`);
+    },
+  });
+  const path = startServerUnix({
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/hello") {
+        return new Response(null, { status: 302, headers: { Location: "/world" } });
+      }
+      return new Response(`unix ${pathname}`);
+    },
+  });
+
+  const results: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const response = await fetch(`http://127.0.0.1:${server.port}/hello`, { unix: path });
+    results.push(`${response.status} ${response.redirected} ${await response.text()}`);
+  }
+  expect(results).toEqual(Array(5).fill("200 true tcp /world"));
 });

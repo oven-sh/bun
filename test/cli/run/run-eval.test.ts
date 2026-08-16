@@ -74,6 +74,20 @@ for (const flag of ["-e", "--print"]) {
       expect(stdout.toString("utf8")).toEqual(code + "\n");
     });
 
+    // The eval source is UTF-8; reading it back as Latin-1 turns every
+    // multi-byte character into mojibake. The expected text is compared here
+    // in the parent -- comparing inside the child would pass either way, since
+    // a Latin-1-decoded source corrupts the literal and process._eval alike.
+    test("process._eval round-trips multi-byte UTF-8", async () => {
+      const marker = "/* 한글-🎉-café */";
+      const code = (flag === "--print" ? "process._eval" : "console.log(process._eval)") + ` ${marker}`;
+      const { stdout } = Bun.spawnSync({
+        cmd: [bunExe(), flag, code],
+        env: bunEnv,
+      });
+      expect(stdout.toString("utf8")).toEqual(code + "\n");
+    });
+
     test("does not crash in non-latin1 directory", async () => {
       const dir = join(tmpdirSync(), "eval-test-开始学习");
       await Bun.write(join(dir, "index.js"), "console.log('hello world')");
@@ -108,6 +122,24 @@ describe("--print for cjs/esm", () => {
     expect(stdout.toString("utf8")).toEqual("123\n");
     expect(exitCode).toBe(0);
     rmSync(cwd, { recursive: true, force: true });
+  });
+  // https://github.com/oven-sh/bun/issues/30207
+  describe.each([
+    { expr: "(await 1) + 1", expected: "2" },
+    { expr: 'await Promise.resolve("hello") + " world"', expected: "hello world" },
+    { expr: "(await 1) + (await 2)", expected: "3" },
+    // no top-level await — still returns the expression value.
+    { expr: "1 + 1", expected: "2" },
+  ])("bun -p $expr", ({ expr, expected }) => {
+    test(`→ ${expected}`, async () => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "-p", expr],
+        env: bunEnv,
+      });
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toBe(`${expected}\n`);
+      expect(exitCode).toBe(0);
+    });
   });
   test("forced cjs", async () => {
     let { stdout, stderr, exitCode } = Bun.spawnSync({
@@ -257,4 +289,34 @@ test("process._eval (undefined for normal run)", async () => {
   expect(stdout.toString("utf8")).toEqual("undefined\n");
 
   rmSync(cwd, { recursive: true, force: true });
+});
+
+test("uncaught error from a CommonJS-sniffed eval entry reports and exits 1", async () => {
+  // The presence of require() makes the eval source evaluate as CommonJS,
+  // which used to swallow a top-level throw entirely: no stderr output and
+  // exit code 0.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `require("assert"); throw new Error("eval-cjs-uncaught");`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("eval-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
+});
+
+test("uncaught error from a CommonJS-sniffed stdin entry reports and exits 1", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-"],
+    env: bunEnv,
+    stdin: Buffer.from(`require("assert"); throw new Error("stdin-cjs-uncaught");`),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("stdin-cjs-uncaught");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

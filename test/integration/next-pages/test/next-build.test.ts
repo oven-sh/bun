@@ -30,14 +30,18 @@ async function tempDirToBuildIn() {
   cpSync(join(root, "src/Counter1.txt"), join(dir, "src/Counter.tsx"));
   cpSync(join(root, "tsconfig_for_build.json"), join(dir, "tsconfig.json"));
 
-  const install = Bun.spawnSync([bunExe(), "i"], {
+  // This file never launches a browser (only dev-server*.test.ts do), so skip
+  // puppeteer's chromium download entirely. This also keeps the two concurrent
+  // installs independent: they'd otherwise race extracting into a shared cache.
+  const install = Bun.spawn([bunExe(), "i"], {
     cwd: dir,
-    env: bunEnv,
+    env: { ...bunEnv, PUPPETEER_SKIP_DOWNLOAD: "1" },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
   });
-  if (!install.success) {
+  await install.exited;
+  if (install.exitCode !== 0) {
     const reason = install.signalCode || `code ${install.exitCode}`;
     throw new Error(`Failed to install dependencies: ${reason}`);
   }
@@ -88,13 +92,15 @@ async function hashAllFiles(dir: string) {
 function normalizeOutput(stdout: string) {
   return (
     stdout
-      // remove timestamps from output
+      // remove timestamps from output (e.g., "(30.7ms)" or "(30.7 ms)")
       .replace(/\(\d+(?:\.\d+)? m?s\)/gi, data => " ".repeat(data.length))
+      // normalize "Compiled successfully in Xms/Xs" timestamps
+      .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
+      // remove "in Xms" timing at end of lines (e.g., "in 36.8ms")
+      .replace(/\bin \d+(?:\.\d+)?m?s\b/gi, data => " ".repeat(data.length))
       // displayed file sizes are in post-gzip compression, however
       // the gzip / node:zlib implementation is different in bun and node
       .replace(/\d+(\.\d+)? [km]?b/gi, data => " ".repeat(data.length))
-      // normalize "Compiled successfully in Xms" timestamps
-      .replace(/Compiled successfully in (\d|\.)+(ms|s)/gi, "Compiled successfully in 1000ms")
       // normalize counter logging that may appear in different spots
       .replaceAll("\ncounter a", "")
       .split("\n")
@@ -110,12 +116,13 @@ test(
     rmSync(join(root, ".next"), { recursive: true, force: true });
     copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
-    const bunDir = await tempDirToBuildIn();
+    // The two installs are independent (separate temp dirs, no shared
+    // puppeteer cache), so run them concurrently.
+    const [bunDir, nodeDir] = await Promise.all([tempDirToBuildIn(), tempDirToBuildIn()]);
     let lockfile = parseLockfile(bunDir);
     expect(lockfile).toMatchNodeModulesAt(bunDir);
     expect(parseLockfile(bunDir)).toMatchSnapshot("bun");
 
-    const nodeDir = await tempDirToBuildIn();
     lockfile = parseLockfile(nodeDir);
     expect(lockfile).toMatchNodeModulesAt(nodeDir);
     expect(lockfile).toMatchSnapshot("node");
@@ -181,8 +188,10 @@ test(
     const toRemove = [
       // these have timestamps and absolute paths in them
       "trace",
+      "trace-build",
       "cache",
       "required-server-files.json",
+      "required-server-files.js",
       // these have "signing keys", not sure what they are tbh
       "prerender-manifest.json",
       // these are similar but i feel like there might be something we can fix to make them the same
@@ -190,14 +199,41 @@ test(
       "next-server.js.nft.json",
       // this file is not deterministically sorted
       "server/pages-manifest.json",
+      // non-deterministic between bun and node builds
+      "server/server-reference-manifest.json",
+      "server/server-reference-manifest.js",
+      "build-manifest.json",
+      "server/build-manifest.json",
+      "client-build-manifest.json",
+      // lock file created during build
+      "lock",
     ];
     for (const key of toRemove) {
-      rmSync(join(bunBuildDir, key), { recursive: true });
-      rmSync(join(nodeBuildDir, key), { recursive: true });
+      rmSync(join(bunBuildDir, key), { recursive: true, force: true });
+      rmSync(join(nodeBuildDir, key), { recursive: true, force: true });
     }
 
     console.log("Hashing files...");
     const [bunBuildHash, nodeBuildHash] = await Promise.all([hashAllFiles(bunBuildDir), hashAllFiles(nodeBuildDir)]);
+
+    // Remove non-deterministic file basenames from hash comparison.
+    // hashAllFiles uses file.name (basename) as key, so files at different
+    // paths with the same name collide. These turbopack outputs differ
+    // between bun and node runtimes.
+    const nonDeterministicNames = [
+      "build-manifest.json",
+      "client-build-manifest.json",
+      "pages-manifest.json",
+      "server-reference-manifest.json",
+      "server-reference-manifest.js",
+      "next-font-manifest.json",
+      "next-font-manifest.js",
+      "[turbopack]_runtime.js",
+    ];
+    for (const name of nonDeterministicNames) {
+      delete bunBuildHash[name];
+      delete nodeBuildHash[name];
+    }
 
     try {
       expect(bunBuildHash).toEqual(nodeBuildHash);

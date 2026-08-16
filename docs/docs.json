@@ -1,5 +1,4 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
   "theme": "aspen",
   "name": "Bun",
   "seo": {
@@ -19,13 +18,6 @@
   "icons": {
     "library": "lucide"
   },
-  "fonts": {
-    "heading": {
-      "family": "Inter Display Bold",
-      "source": "https://mintlify-assets.b-cdn.net/fonts/InterDisplay-Bold.woff2",
-      "format": "woff2"
-    }
-  },
   "appearance": {
     "default": "system"
   },
@@ -44,7 +36,7 @@
     ]
   },
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "perplexity", "mcp", "cursor", "vscode"]
+    "options": ["copy", "view", "claude", "mcp", "vscode"]
   },
   "styling": {
     "codeblocks": {
@@ -68,6 +60,7 @@
               "/installation",
               "/quickstart",
               "/typescript",
+              "/typescript-6",
               "/runtime/templating/init",
               "/runtime/templating/create"
             ]
@@ -75,7 +68,7 @@
           {
             "group": "Core Runtime",
             "icon": "cog",
-            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/bunfig"]
+            "pages": ["/runtime/index", "/runtime/watch-mode", "/runtime/debugger", "/runtime/repl", "/runtime/bunfig"]
           },
           {
             "group": "File & Module System",
@@ -121,6 +114,7 @@
               "/runtime/file-io",
               "/runtime/streams",
               "/runtime/binary-data",
+              "/runtime/archive",
               "/runtime/sql",
               "/runtime/sqlite",
               "/runtime/s3",
@@ -135,7 +129,13 @@
           {
             "group": "Process & System",
             "icon": "computer",
-            "pages": ["/runtime/environment-variables", "/runtime/shell", "/runtime/child-process"]
+            "pages": [
+              "/runtime/environment-variables",
+              "/runtime/shell",
+              "/runtime/child-process",
+              "/runtime/webview",
+              "/runtime/cron"
+            ]
           },
           {
             "group": "Interop & Tooling",
@@ -146,10 +146,17 @@
             "group": "Utilities",
             "icon": "wrench",
             "pages": [
+              "/runtime/csrf",
               "/runtime/secrets",
               "/runtime/console",
+              "/runtime/toml",
               "/runtime/yaml",
+              "/runtime/markdown",
+              "/runtime/json5",
+              "/runtime/xml",
+              "/runtime/jsonl",
               "/runtime/html-rewriter",
+              "/runtime/image",
               "/runtime/hashing",
               "/runtime/glob",
               "/runtime/semver",
@@ -183,7 +190,15 @@
           {
             "group": "Core Commands",
             "icon": "terminal",
-            "pages": ["/pm/cli/install", "/pm/cli/add", "/pm/cli/remove", "/pm/cli/update", "/pm/bunx"]
+            "pages": [
+              "/pm/cli/install",
+              "/pm/cli/add",
+              "/pm/cli/remove",
+              "/pm/cli/update",
+              "/pm/cli/dedupe",
+              "/pm/cli/prune",
+              "/pm/bunx"
+            ]
           },
           {
             "group": "Publishing & Analysis",
@@ -202,6 +217,7 @@
               "/pm/cli/patch",
               "/pm/filter",
               "/pm/global-cache",
+              "/pm/global-store",
               "/pm/isolated-installs",
               "/pm/lockfile",
               "/pm/lifecycle",
@@ -230,7 +246,7 @@
           {
             "group": "Asset Processing",
             "icon": "image",
-            "pages": ["/bundler/html-static", "/bundler/css", "/bundler/loaders"]
+            "pages": ["/bundler/html-static", "/bundler/standalone-html", "/bundler/css", "/bundler/loaders"]
           },
           {
             "group": "Single File Executable",
@@ -266,7 +282,7 @@
           {
             "group": "Test Execution",
             "icon": "zap",
-            "pages": ["/test/runtime-behavior", "/test/discovery"]
+            "pages": ["/test/runtime-behavior", "/test/discovery", "/test/parallel"]
           },
           {
             "group": "Test Features",
@@ -374,7 +390,6 @@
               "/guides/ecosystem/sentry",
               "/guides/ecosystem/solidstart",
               "/guides/ecosystem/ssr-react",
-              "/guides/ecosystem/stric",
               "/guides/ecosystem/sveltekit",
               "/guides/ecosystem/systemd",
               "/guides/ecosystem/vite",
@@ -396,6 +411,7 @@
               "/guides/http/file-uploads",
               "/guides/http/fetch-unix",
               "/guides/http/stream-iterator",
+              "/guides/http/sse",
               "/guides/http/stream-node-streams-in-bun"
             ]
           },
@@ -496,6 +512,8 @@
               "/guides/runtime/import-json",
               "/guides/runtime/import-toml",
               "/guides/runtime/import-yaml",
+              "/guides/runtime/import-json5",
+              "/guides/runtime/import-xml",
               "/guides/runtime/import-html",
               "/guides/util/import-meta-dir",
               "/guides/util/import-meta-file",

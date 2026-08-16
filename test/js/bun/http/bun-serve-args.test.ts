@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "../../../harness";
+import { isWindows, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -243,6 +243,24 @@ describe("Bun.serve development options", () => {
     expect(server.id).toBe("test-server");
     server.stop();
   });
+
+  // The `inspector` option was removed from Bun.serve(). It used to register a
+  // `/bun:inspect` WebSocket route and throw when combined with
+  // `development: false`. It is now ignored like any other unknown option.
+  test("inspector option is ignored", () => {
+    using server = serve({
+      port: 0,
+      development: false,
+      // @ts-expect-error removed option
+      inspector: true,
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    expect(server.port).toBeGreaterThan(0);
+    expect(server.development).toBe(false);
+    server.stop();
+  });
 });
 
 describe("Bun.serve static routes", () => {
@@ -380,10 +398,72 @@ describe("Bun.serve hostname and port validation", () => {
       });
     }
   });
+
+  describe("invalid port values throw RangeError", () => {
+    const invalidPorts: { port: unknown; received: string }[] = [
+      { port: 65536, received: "65536" },
+      { port: 70000, received: "70000" },
+      { port: 2 ** 32 + 8080, received: "4294975376" },
+      { port: -1, received: "-1" },
+      { port: 1.5, received: "1.5" },
+      { port: "abc", received: "NaN" },
+      { port: NaN, received: "NaN" },
+      { port: Infinity, received: "Infinity" },
+      { port: -Infinity, received: "-Infinity" },
+      { port: "65536", received: "65536" },
+      { port: Number.MAX_SAFE_INTEGER, received: String(Number.MAX_SAFE_INTEGER) },
+    ];
+
+    for (const { port, received } of invalidPorts) {
+      test(`port: ${typeof port === "string" ? JSON.stringify(port) : port}`, () => {
+        let thrown: unknown;
+        try {
+          const server = serve({
+            // @ts-expect-error - Testing invalid port values
+            port,
+            fetch() {
+              return new Response("ok");
+            },
+          });
+          server.stop(true);
+        } catch (e) {
+          thrown = e;
+        }
+        expect(thrown).toBeInstanceOf(RangeError);
+        expect((thrown as RangeError).message).toContain("options.port");
+        expect((thrown as RangeError).message).toContain(received);
+      });
+    }
+
+    test("server.reload() rejects an out-of-range port", () => {
+      using server = serve({
+        port: 0,
+        fetch() {
+          return new Response("ok");
+        },
+      });
+      let thrown: unknown;
+      try {
+        server.reload({
+          // @ts-expect-error - Testing invalid port values
+          port: 65536,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBeInstanceOf(RangeError);
+      expect((thrown as RangeError).message).toContain("options.port");
+      expect((thrown as RangeError).message).toContain("65536");
+    });
+  });
 });
 
 describe("Bun.serve hostname coercion", () => {
-  test.todo("number hostnames coerce to string", () => {
+  // Windows can't bind to hostname "0" (POSIX resolves it to 0.0.0.0).
+  test.skipIf(isWindows)("number hostnames coerce to string", () => {
     using server = serve({
       // @ts-expect-error - Testing runtime coercion
       hostname: 0, // Should coerce to "0"
@@ -416,44 +496,62 @@ describe("Bun.serve hostname coercion", () => {
   });
 
   test("invalid toString() results should throw", () => {
-    const invalidHostnames = [
+    // The `null`/`undefined` toString() results coerce to the legal hostname strings
+    // "null"/"undefined". Pair those with `unix` so serve() still coerces the hostname but
+    // throws from the hostname+unix validation instead of a blocking DNS lookup of that name.
+    const invalidHostnames: Array<{ hostname: unknown; unix?: string }> = [
       {
-        toString() {
-          return {};
+        hostname: {
+          toString() {
+            return {};
+          },
         },
       },
       {
-        toString() {
-          return [];
+        hostname: {
+          toString() {
+            return [];
+          },
         },
       },
       {
-        toString() {
-          return null;
+        hostname: {
+          toString() {
+            return null;
+          },
+        },
+        unix: "bun-serve-args-invalid-hostname.sock",
+      },
+      {
+        hostname: {
+          toString() {
+            return undefined;
+          },
+        },
+        unix: "bun-serve-args-invalid-hostname.sock",
+      },
+      {
+        hostname: {
+          toString() {
+            throw new Error("invalid toString");
+          },
         },
       },
       {
-        toString() {
-          return undefined;
-        },
-      },
-      {
-        toString() {
-          throw new Error("invalid toString");
-        },
-      },
-      {
-        toString() {
-          return Symbol("test");
+        hostname: {
+          toString() {
+            return Symbol("test");
+          },
         },
       },
     ];
 
-    for (const hostname of invalidHostnames) {
+    for (const { hostname, unix } of invalidHostnames) {
       expect(() =>
         serve({
           // @ts-expect-error - Testing runtime coercion
           hostname,
+          ...(unix ? { unix } : {}),
           port: 0,
           fetch() {
             return new Response("ok");

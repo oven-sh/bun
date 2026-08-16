@@ -1,0 +1,37 @@
+[package]
+name = "bun_bin"
+version.workspace = true
+edition.workspace = true
+
+# Built as a staticlib so the native build (`bun bd` → ninja) can feed the
+# whole Rust crate graph into its own link step alongside the C/C++ object
+# set, exactly where `bun-zig.o` used to go. The C entry point (`main`) is
+# `#[no_mangle] extern "C"` in lib.rs; the clang++ driver provides crt1.o
+# (`_start` → `main`).
+[lib]
+name = "bun_rust"
+path = "lib.rs"
+crate-type = ["staticlib"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bstr.workspace = true
+bun_io.workspace = true
+libc.workspace = true
+
+# Core crates that currently compile green and contain extern-"C" surface
+# the C/C++ side links against (Bun__StackCheck__*, Output sink, mimalloc
+# global allocator, crash handler hooks).
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+bun_crash_handler.workspace = true
+bun_mimalloc_sys.workspace = true
+bun_platform.workspace = true
+
+# Phase-C: bun_runtime now compiles green; pulled in for `Cli::start()`.
+# bun_jsc remains gated until the JSC bridge links.
+bun_runtime.workspace = true
+# bun_jsc.workspace = true

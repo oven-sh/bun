@@ -1,0 +1,15 @@
+[package]
+name = "bun_sys_jsc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_core.workspace = true
+bun_jsc.workspace = true
+bun_sys.workspace = true

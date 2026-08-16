@@ -1,13 +1,16 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, canBuildNodeAddons, tempDirWithFiles } from "harness";
 import { join } from "path";
 
-// This test verifies that Bun can load the same native module multiple times
-// Previously, the second load would fail with "symbol 'napi_register_module_v1' not found"
-// because static constructors only run once, so the module registration wasn't replayed
+// These tests share one node-gyp-built V8 addon (the compile dominates the wall
+// time), covering two previously-broken paths:
+// - duplicate loads: the second dlopen of the same module used to fail with
+//   "symbol 'napi_register_module_v1' not found" because static constructors
+//   only run once, so the module registration wasn't replayed
+// - non-object exports: null/undefined/primitive exports used to segfault
 
-describe("process.dlopen duplicate loads", () => {
+describe.skipIf(!canBuildNodeAddons())("process.dlopen native addon", () => {
   let addonPath: string;
 
   beforeAll(() => {
@@ -60,7 +63,13 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
         version: "1.0.0",
         gypfile: true,
         scripts: {
-          install: "node-gyp rebuild",
+          // Run node-gyp under the bun being tested: the system Node on Windows
+          // is built with clang-cl and its process.config leaks thin-LTO flags
+          // into addon builds (link.exe fails on /opt:lldltojobs), and the
+          // system Node's ABI may not match ours at all (e.g. older macOS CI
+          // machines). gyp -D defines can't override target_defaults, so use
+          // bun's clean process.config instead.
+          install: `${JSON.stringify(bunExe())} --bun node-gyp rebuild`,
         },
         devDependencies: {
           "node-gyp": "^11.2.0",
@@ -82,10 +91,13 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     }
 
     addonPath = join(dir, "build", "Release", "addon.node");
-  });
+  }, 180_000);
 
-  test("should load the same module twice successfully", async () => {
-    const testScript = `
+  // Each test spawns an isolated child (dlopen state is process-global), so
+  // they are safe to run in parallel once the addon has been built.
+  describe.concurrent("process.dlopen duplicate loads", () => {
+    test("should load the same module twice successfully", async () => {
+      const testScript = `
       // First load
       const m1 = { exports: {} };
       process.dlopen(m1, "${addonPath.replace(/\\/g, "\\\\")}");
@@ -101,24 +113,25 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
       console.log("Second module result:", m2.exports.hello());
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", testScript],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("First load: hello exists? true");
+      expect(stdout).toContain("Second load: hello exists? true");
+      expect(stdout).toContain("First module result: world");
+      expect(stdout).toContain("Second module result: world");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    expect(stdout).toContain("First load: hello exists? true");
-    expect(stdout).toContain("Second load: hello exists? true");
-    expect(stdout).toContain("First module result: world");
-    expect(stdout).toContain("Second module result: world");
-    expect(exitCode).toBe(0);
-  });
-
-  test("should load module with different exports objects", async () => {
-    const testScript = `
+    test("should load module with different exports objects", async () => {
+      const testScript = `
       // First load with empty object
       const m1 = { exports: {} };
       process.dlopen(m1, "${addonPath.replace(/\\/g, "\\\\")}");
@@ -131,18 +144,99 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
       console.log("m2.exports.hello:", m2.exports.hello());
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", testScript],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("m1.exports.hello: world");
+      expect(stdout).toContain("m2.exports.initial: true");
+      expect(stdout).toContain("m2.exports.hello: world");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe.concurrent("process.dlopen with non-object exports", () => {
+    test("should throw error when exports is null", async () => {
+      const testScript = `
+      const m = { exports: null };
+      try {
+        process.dlopen(m, "${addonPath.replace(/\\/g, "\\\\")}");
+        console.log("FAIL: Should have thrown");
+      } catch (e) {
+        console.log("SUCCESS:", e.message);
+      }
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("SUCCESS:");
+      expect(stdout).toContain("null is not an object");
+      expect(exitCode).toBe(0);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    test("should throw error when exports is undefined", async () => {
+      const testScript = `
+      const m = { exports: undefined };
+      try {
+        process.dlopen(m, "${addonPath.replace(/\\/g, "\\\\")}");
+        console.log("FAIL: Should have thrown");
+      } catch (e) {
+        console.log("SUCCESS:", e.message);
+      }
+    `;
 
-    expect(stdout).toContain("m1.exports.hello: world");
-    expect(stdout).toContain("m2.exports.initial: true");
-    expect(stdout).toContain("m2.exports.hello: world");
-    expect(exitCode).toBe(0);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toContain("SUCCESS:");
+      expect(stdout).toContain("undefined is not an object");
+      expect(exitCode).toBe(0);
+    });
+
+    test("should handle primitive exports gracefully", async () => {
+      // Primitives get converted to wrapper objects
+      const testScript = `
+      const m = { exports: "primitive" };
+      process.dlopen(m, "${addonPath.replace(/\\/g, "\\\\")}");
+      console.log("Type:", typeof m.exports);
+      console.log("Value:", m.exports);
+    `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", testScript],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Should not crash - primitives get converted to wrapper objects
+      expect(stderr).toBe("");
+      expect(stdout).toContain("Type: string");
+      expect(stdout).toContain("Value: primitive");
+      expect(exitCode).toBe(0);
+    });
   });
 });

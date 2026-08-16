@@ -1,0 +1,48 @@
+[package]
+name = "bun_http"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_errno.workspace = true
+thiserror.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bytemuck = "1"
+bun_analytics.workspace = true
+bun_base64.workspace = true
+bun_boringssl.workspace = true
+bun_boringssl_sys.workspace = true
+bun_brotli.workspace = true
+bun_alloc.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_dispatch.workspace = true
+bun_dns.workspace = true
+bun_dotenv.workspace = true
+bun_event_loop.workspace = true
+bun_http_types.workspace = true
+bun_io.workspace = true
+bun_libdeflate_sys.workspace = true
+bun_ast.workspace = true
+bun_picohttp.workspace = true
+bun_ptr.workspace = true
+bun_sys.workspace = true
+bun_threading.workspace = true
+bun_url.workspace = true
+bun_uws.workspace = true
+bun_wyhash.workspace = true
+bun_zlib.workspace = true
+bun_zstd.workspace = true

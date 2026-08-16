@@ -32,116 +32,123 @@ namespace uWS {
     constexpr uint64_t STATE_HAS_SIZE = 1ull << (sizeof(uint64_t) * 8 - 1);//0x8000000000000000;
     constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x4000000000000000;
     constexpr uint64_t STATE_IS_CHUNKED_EXTENSION = 1ull << (sizeof(uint64_t) * 8 - 3);//0x2000000000000000;
-    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION);//0x1FFFFFFFFFFFFFFF;
+    constexpr uint64_t STATE_WAITING_FOR_LF = 1ull << (sizeof(uint64_t) * 8 - 4);//0x1000000000000000;
+    /* RFC 7230 4.1: chunk-size = 1*HEXDIG. Tracks that at least one hex digit has
+     * been consumed for the current chunk-size line, across packet boundaries.
+     * Without this a bare "\r\n" or ";ext\r\n" would parse as size 0. */
+    constexpr uint64_t STATE_HAS_HEXDIG = 1ull << (sizeof(uint64_t) * 8 - 5);//0x0800000000000000;
+    constexpr uint64_t STATE_SIZE_MASK = ~(STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_IS_CHUNKED_EXTENSION | STATE_WAITING_FOR_LF | STATE_HAS_HEXDIG);//0x07FFFFFFFFFFFFFF;
     constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFFFFFFFFFF;
-    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F00000000000000;
+    /* Overflow guard: if any of bits 54-58 are set before the next *16, one more
+     * hex digit (plus the +2 for the trailing CRLF of chunk-data) would carry into
+     * STATE_HAS_HEXDIG at bit 59. Limits chunk size to 14 hex digits (~72 PB). */
+    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x1Full << (sizeof(uint64_t) * 8 - 10);//0x07C0000000000000;
 
-    inline unsigned int chunkSize(uint64_t state) {
+    inline uint64_t chunkSize(uint64_t state) {
         return state & STATE_SIZE_MASK;
     }
 
-    inline bool isParsingChunkedExtension(uint64_t state) {
-        return (state & STATE_IS_CHUNKED_EXTENSION) != 0;
-    }
+    /* Parses the chunk-size line: HEXDIG+ [;ext...] CRLF
+     *
+     * Returns the new state. On return, exactly one of:
+     *   - state has STATE_HAS_SIZE set (success, data advanced past LF)
+     *   - state == STATE_IS_ERROR     (malformed input)
+     *   - data is empty                (short read; flags persist for resume)
+     *
+     * Resume flags:
+     *   STATE_WAITING_FOR_LF       -> saw '\r' on previous call, need '\n'
+     *   STATE_IS_CHUNKED_EXTENSION -> mid-extension, skip hex parsing on resume
+     *
+     * Structure follows upstream uWS (scan-for-LF) with strict CRLF validation
+     * added. Every byte is consumed in a forward scan so TCP segment boundaries
+     * splitting the line at any point are handled by construction.
+     *
+     * RFC 7230 4.1.1:
+     *   chunk          = chunk-size [ chunk-ext ] CRLF chunk-data CRLF
+     *   chunk-size     = 1*HEXDIG
+     *   chunk-ext      = *( ";" chunk-ext-name [ "=" chunk-ext-val ] )
+     *   chunk-ext-name = token
+     *   chunk-ext-val  = token / quoted-string  (TODO: quoted-string unsupported)
+     */
+    /* chunkExtensionsConsumed (optional): incremented for every chunk-extension
+     * byte consumed on the current chunk-size line; reset to 0 when the line
+     * completes (STATE_HAS_SIZE), matching llhttp/Node's on_chunk_header which
+     * resets chunk_extensions_nread_ per chunk (not per message). */
+    inline uint64_t consumeHexNumber(std::string_view &data, uint64_t state, uint64_t *chunkExtensionsConsumed = nullptr) {
+        /* Resume: '\r' was the last byte of the previous segment. Rare path,
+         * use data directly to avoid the p/len load on the hot path. */
+        if (state & STATE_WAITING_FOR_LF) [[unlikely]] {
+            if (!data.length()) return state;
+            if (data[0] != '\n') return STATE_IS_ERROR;
+            if (!(state & STATE_HAS_HEXDIG)) return STATE_IS_ERROR;
+            data.remove_prefix(1);
+            return ((state & ~(STATE_WAITING_FOR_LF | STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG)) + 2)
+                   | STATE_HAS_SIZE | STATE_IS_CHUNKED;
+        }
 
-    /* Reads hex number until CR or out of data to consume. Updates state. Returns bytes consumed. */
-    inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
+        /* Fresh chunk-size line (not a resume): reset the per-chunk extension
+         * counter, mirroring Node's on_chunk_header. The caller's overflow check
+         * runs after the previous chunk's data is emitted, so it has already seen
+         * that chunk's count by the time this reset fires. */
+        if (chunkExtensionsConsumed && !(state & (STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG))) {
+            *chunkExtensionsConsumed = 0;
+        }
 
-        /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed \r, \n ; depending on context)*/
+        /* Load pointer+length into locals so the loops operate in registers.
+         * Without this, Clang writes back to the string_view on every iteration.
+         * Error paths skip the writeback: HttpParser returns immediately on
+         * STATE_IS_ERROR and never reads data. */
+        const char *p = data.data();
+        size_t len = data.length();
 
-        if(!isParsingChunkedExtension(state)){
-            /* Consume everything higher than 32 and not ; (extension)*/
-            while (data.length() && data[0] > 32 && data[0] != ';') {
-
-                unsigned char digit = (unsigned char)data[0];
-                if (digit >= 'a') {
-                    digit = (unsigned char) (digit - ('a' - ':'));
-                } else if (digit >= 'A') {
-                    digit = (unsigned char) (digit - ('A' - ':'));
-                }
-
-                unsigned int number = ((unsigned int) digit - (unsigned int) '0');
-
-                if (number > 16 || (chunkSize(state) & STATE_SIZE_OVERFLOW)) {
-                    state = STATE_IS_ERROR;
-                    return;
-                }
-
-                // extract state bits
-                uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
-
-                state = (state & STATE_SIZE_MASK) * 16ull + number;
-
-                state |= bits;
-                data.remove_prefix(1);
+        /* Hex digits. Skipped when resuming mid-extension so that extension bytes
+         * like 'a' aren't misparsed as hex. */
+        if (!(state & STATE_IS_CHUNKED_EXTENSION)) {
+            while (len) {
+                unsigned char c = (unsigned char) *p;
+                if (c <= 32 || c == ';') break; /* fall through to drain loop */
+                unsigned int d = c | 0x20; /* fold A-F -> a-f; '0'..'9' unchanged */
+                unsigned int n;
+                if      ((unsigned)(d - '0') < 10) [[likely]] n = d - '0';
+                else if ((unsigned)(d - 'a') < 6)            n = d - 'a' + 10;
+                else return STATE_IS_ERROR;
+                if (chunkSize(state) & STATE_SIZE_OVERFLOW) [[unlikely]] return STATE_IS_ERROR;
+                state = ((state & STATE_SIZE_MASK) * 16ull + n) | STATE_IS_CHUNKED | STATE_HAS_HEXDIG;
+                ++p; --len;
             }
         }
 
-        auto len = data.length();
-        if(len) {
-            // consume extension
-            if(data[0] == ';' || isParsingChunkedExtension(state)) {
-                // mark that we are parsing chunked extension
-                state |= STATE_IS_CHUNKED_EXTENSION;
-                /* we got chunk extension lets remove it*/
-                while(data.length()) {
-                    if(data[0] == '\r') {
-                        // we are done parsing extension
-                        state &= ~STATE_IS_CHUNKED_EXTENSION;
-                        break;
-                    }
-                    /* RFC 9110: Token format (TLDR; anything bellow 32 is not allowed)
-                    * TODO: add support for quoted-strings values (RFC 9110: 3.2.6. Quoted-String)
-                    * Example of chunked encoding with extensions:
-                    *
-                    * 4;key=value\r\n
-                    * Wiki\r\n
-                    * 5;foo=bar;baz=quux\r\n
-                    * pedia\r\n
-                    * 0\r\n
-                    * \r\n
-                    *
-                    * The chunk size is in hex (4, 5, 0), followed by optional
-                    * semicolon-separated extensions. Extensions consist of a key
-                    * (token) and optional value. The value may be a token or a
-                    * quoted string. The chunk data follows the CRLF after the
-                    * extensions and must be exactly the size specified.
-                    *
-                    * RFC 7230 Section 4.1.1 defines chunk extensions as:
-                    * chunk-ext = *( ";" chunk-ext-name [ "=" chunk-ext-val ] )
-                    * chunk-ext-name = token
-                    * chunk-ext-val = token / quoted-string
-                    */
-                    if(data[0] <= 32) {
-                        state = STATE_IS_ERROR;
-                        return;
-                    }
-
-                    data.remove_prefix(1);
+        /* Drain [;ext...] \r \n. Upstream-style forward scan for LF, with strict
+         * validation: only >32 bytes (extension) and exactly one '\r' immediately
+         * before '\n' are allowed. */
+        while (len) {
+            unsigned char c = (unsigned char) *p;
+            if (c == '\n') return STATE_IS_ERROR; /* bare LF */
+            ++p; --len;
+            if (c == '\r') {
+                if (!len) {
+                    data = std::string_view(p, len);
+                    return state | STATE_WAITING_FOR_LF;
                 }
+                if (*p != '\n') return STATE_IS_ERROR;
+                if (!(state & STATE_HAS_HEXDIG)) return STATE_IS_ERROR;
+                ++p; --len;
+                data = std::string_view(p, len);
+                return ((state & ~(STATE_IS_CHUNKED_EXTENSION | STATE_HAS_HEXDIG)) + 2)
+                       | STATE_HAS_SIZE | STATE_IS_CHUNKED;
             }
-            if(data.length() >= 2) {
-                /* Consume \r\n */
-                if((data[0] != '\r' || data[1] != '\n')) {
-                    state = STATE_IS_ERROR;
-                    return;
-                }
-                state += 2; // include the two last /r/n
-                state |= STATE_HAS_SIZE | STATE_IS_CHUNKED;
-
-                data.remove_prefix(2);
+            if (c <= 32) return STATE_IS_ERROR;
+            state |= STATE_IS_CHUNKED_EXTENSION;
+            if (chunkExtensionsConsumed) {
+                ++*chunkExtensionsConsumed;
             }
         }
-        // short read
+        data = std::string_view(p, len);
+        return state; /* short read */
     }
 
-    inline void decChunkSize(uint64_t &state, unsigned int by) {
-
-        //unsigned int bits = state & STATE_IS_CHUNKED;
-
+    inline void decChunkSize(uint64_t &state, uint64_t by) {
         state = (state & ~STATE_SIZE_MASK) | (chunkSize(state) - by);
-
-        //state |= bits;
     }
 
     inline bool hasChunkSize(uint64_t state) {
@@ -153,29 +160,129 @@ namespace uWS {
         return state & ~STATE_SIZE_MASK;
     }
 
+    /* Distinct error sentinel: the captured trailer section exceeded the
+     * max-header-size limit. isParsingInvalidChunkedEncoding() still matches;
+     * the caller can then map this to HPE_HEADER_OVERFLOW / 431 like Node. */
+    constexpr uint64_t STATE_IS_TRAILER_OVERFLOW = ~STATE_IS_CHUNKED_EXTENSION;
+
+    inline bool isTrailerOverflow(uint64_t state) {
+        return state == STATE_IS_TRAILER_OVERFLOW;
+    }
+
+    /* Distinct error sentinel: the CRLF that must follow a chunk's data was not
+     * there. llhttp reports that as HPE_STRICT "Expected LF after chunk data",
+     * separately from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE), so
+     * the two have to be told apart. isParsingInvalidChunkedEncoding() still
+     * matches, so every existing caller keeps rejecting the message. */
+    constexpr uint64_t STATE_IS_CHUNK_TERMINATOR_ERROR = ~STATE_WAITING_FOR_LF;
+
+    inline bool isChunkTerminatorError(uint64_t state) {
+        return state == STATE_IS_CHUNK_TERMINATOR_ERROR;
+    }
+
     inline bool isParsingInvalidChunkedEncoding(uint64_t state) {
-        return state == STATE_IS_ERROR;
+        return state == STATE_IS_ERROR || state == STATE_IS_TRAILER_OVERFLOW ||
+               state == STATE_IS_CHUNK_TERMINATOR_ERROR;
+    }
+
+    /* node:http compat: parser state for "consuming the trailer section after the
+     * final 0-size chunk" (RFC 9112 7.1.2). The flag combinations cannot occur in
+     * any other state: STATE_WAITING_FOR_LF is only ever set while the chunk-size
+     * line is incomplete, i.e. before STATE_HAS_SIZE is set. _DONE means the
+     * section (and thus the message) completed and the fin chunk was emitted; the
+     * next call resets the state without touching the remaining bytes. The
+     * sub-state must not be derived from the captured section's contents: the fin
+     * delivery can synchronously run JS that consumes (and clears) the capture. */
+    constexpr uint64_t STATE_IS_TRAILERS = STATE_HAS_SIZE | STATE_IS_CHUNKED | STATE_WAITING_FOR_LF;
+    constexpr uint64_t STATE_IS_TRAILERS_DONE = STATE_HAS_SIZE | STATE_WAITING_FOR_LF;
+
+    /* Default cap on the raw size of a captured trailer section. Node counts
+     * trailer bytes against the same max-header-size budget as request headers
+     * in llhttp, so node:http callers thread the per-server maxHeaderSize
+     * through (already normalized to a nonzero default); this constant is the
+     * fallback for callers that do not. */
+    constexpr uint64_t MAX_TRAILER_SECTION_SIZE = 16 * 1024;
+
+    /* The trailer section is complete once the empty line terminating it has been
+     * consumed: either the section is empty ("\r\n") or it ends with "\r\n\r\n". */
+    inline bool isCompleteTrailerSection(const std::string &section) {
+        size_t n = section.size();
+        if (n == 2) {
+            return section[0] == '\r' && section[1] == '\n';
+        }
+        return n >= 4 && memcmp(section.data() + n - 4, "\r\n\r\n", 4) == 0;
     }
 
     /* Returns next chunk (empty or not), or if all data was consumed, nullopt is returned. */
-    static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, bool trailer = false) {
+    static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, bool trailer = false, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) {
+        /* node:http compat: the previous call emitted the fin chunk for a message
+         * whose trailer section completed; this call only resets the state and
+         * leaves the remaining bytes (the next request, or tunnel data) untouched. */
+        if (trailerSection && state == STATE_IS_TRAILERS_DONE) [[unlikely]] {
+            state = 0;
+            return std::nullopt;
+        }
         while (data.length()) {
 
-            // if in "drop trailer mode", just drop up to what we have as size
+            /* node:http compat: consume the trailer section that follows the final
+             * 0-size chunk, capturing its raw bytes so the server can populate
+             * req.trailers. The terminating empty chunk (fin) is only emitted once
+             * the whole section (including its final CRLF) has been consumed, so
+             * trailers are always available by the time the message completes. */
+            if (trailerSection && state == STATE_IS_TRAILERS) [[unlikely]] {
+                while (data.length()) {
+                    char c = data[0];
+                    trailerSection->push_back(c);
+                    data.remove_prefix(1);
+                    if (trailerSection->size() > maxTrailerSectionSize) [[unlikely]] {
+                        state = STATE_IS_TRAILER_OVERFLOW;
+                        return std::nullopt;
+                    }
+                    if (c == '\n') {
+                        /* Bare LF (no preceding CR captured) is a fatal parse error like
+                         * llhttp's HPE_CR_EXPECTED / HPE_INVALID_HEADER_TOKEN — otherwise
+                         * "0\r\n\n" waits for bytes forever. Strict CRLF matches
+                         * consumeHexNumber's own bare-LF rejection above. */
+                        size_t n = trailerSection->size();
+                        if (n < 2 || (*trailerSection)[n - 2] != '\r') {
+                            state = STATE_IS_ERROR;
+                            return std::nullopt;
+                        }
+                        if (isCompleteTrailerSection(*trailerSection)) {
+                            /* Message complete: emit the fin chunk. The next call sees
+                             * STATE_IS_TRAILERS_DONE and resets to 0. */
+                            state = STATE_IS_TRAILERS_DONE;
+                            return std::string_view(nullptr, 0);
+                        }
+                    }
+                }
+                return std::nullopt;
+            }
+
+            // if in "drop trailer mode", consume the terminator bytes after the
+            // zero-chunk. This is 2 bytes (\r\n) with no trailer, or 4 bytes
+            // (\r\n\r\n) with trailer=true. Upstream uWS consumed these bytes
+            // blindly, which let attackers smuggle a second request by placing
+            // arbitrary bytes (e.g. "X:POST /admin HTTP/1.1\r\n") where the
+            // final CRLF belongs. Strict validation closes that desync.
+            //
+            // chunkSize() starts at 2 or 4 and counts down as bytes arrive; its
+            // parity gives the expected byte (even -> \r, odd -> \n). The parity
+            // rule is the same for both initial sizes, so TCP segment
+            // boundaries that split the terminator are handled naturally.
             if (((state & STATE_IS_CHUNKED) == 0) && hasChunkSize(state) && chunkSize(state)) {
-
-                //printf("Parsing trailer now\n");
-
-                while(data.length() && chunkSize(state)) {
+                while (data.length() && chunkSize(state)) {
+                    char expected = (chunkSize(state) & 1) ? '\n' : '\r';
+                    if (data[0] != expected) {
+                        state = STATE_IS_ERROR;
+                        return std::nullopt;
+                    }
                     data.remove_prefix(1);
                     decChunkSize(state, 1);
 
                     if (chunkSize(state) == 0) {
-
-                        /* This is an actual place where we need 0 as state */
+                        /* Terminator fully consumed — parsing is complete. */
                         state = 0;
-
-                        /* The parser MUST stop consuming here */
                         return std::nullopt;
                     }
                 }
@@ -183,13 +290,21 @@ namespace uWS {
             }
 
             if (!hasChunkSize(state)) {
-                consumeHexNumber(data, state);
-                if (isParsingInvalidChunkedEncoding(state)) {
+                state = consumeHexNumber(data, state, chunkExtensionsConsumed);
+                if (isParsingInvalidChunkedEncoding(state)) [[unlikely]] {
                     return std::nullopt;
                 }
                 if (hasChunkSize(state) && chunkSize(state) == 2) {
 
                     //printf("Setting state to trailer-parsing and emitting empty chunk\n");
+
+                    /* node:http compat: the message is not complete until the trailer
+                     * section has been consumed; capture it and emit the fin chunk
+                     * from the trailer-section branch above instead of here. */
+                    if (trailerSection) {
+                        state = STATE_IS_TRAILERS;
+                        continue;
+                    }
 
                     // set trailer state and increase size to 4
                     if (trailer) {
@@ -200,30 +315,46 @@ namespace uWS {
 
                     return std::string_view(nullptr, 0);
                 }
+                if (!hasChunkSize(state)) [[unlikely]] {
+                    /* Incomplete chunk-size line — need more data from the network. */
+                    return std::nullopt;
+                }
                 continue;
             }
 
             // do we have data to emit all?
-            if (data.length() >= chunkSize(state)) {
+            uint64_t remaining = chunkSize(state);
+            if (data.length() >= remaining) {
                 // emit all but 2 bytes then reset state to 0 and goto beginning
                 // not fin
                 std::string_view emitSoon;
                 bool shouldEmit = false;
-                if (chunkSize(state) > 2) {
-                    emitSoon = std::string_view(data.data(), chunkSize(state) - 2);
-                    shouldEmit = true;
+                // Validate the chunk terminator (\r\n) accounting for partial reads
+                switch (remaining) {
+                    default:
+                        // remaining > 2: emit data and validate full terminator
+                        emitSoon = std::string_view(data.data(), remaining - 2);
+                        shouldEmit = true;
+                        [[fallthrough]];
+                    case 2:
+                        // remaining >= 2: validate both \r and \n
+                        if (data[remaining - 2] != '\r' || data[remaining - 1] != '\n') {
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
+                            return std::nullopt;
+                        }
+                        break;
+                    case 1:
+                        // remaining == 1: only \n left to validate
+                        if (data[0] != '\n') {
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
+                            return std::nullopt;
+                        }
+                        break;
+                    case 0:
+                        // remaining == 0: terminator already consumed
+                        break;
                 }
-                // Validate that the chunk terminator is \r\n to prevent request smuggling
-                // The last 2 bytes of the chunk must be exactly \r\n
-                // Note: chunkSize always includes +2 for the terminator (added in consumeHexNumber),
-                // and chunks with size 0 (chunkSize == 2) are handled earlier at line 190.
-                // Therefore chunkSize >= 3 here, so no underflow is possible.
-                size_t terminatorOffset = chunkSize(state) - 2;
-                if (data[terminatorOffset] != '\r' || data[terminatorOffset + 1] != '\n') {
-                    state = STATE_IS_ERROR;
-                    return std::nullopt;
-                }
-                data.remove_prefix(chunkSize(state));
+                data.remove_prefix(remaining);
                 state = STATE_IS_CHUNKED;
                 if (shouldEmit) {
                     return emitSoon;
@@ -232,19 +363,45 @@ namespace uWS {
             } else {
                 /* We will consume all our input data */
                 std::string_view emitSoon;
-                if (chunkSize(state) > 2) {
-                    uint64_t maximalAppEmit = chunkSize(state) - 2;
-                    if (data.length() > maximalAppEmit) {
+                uint64_t size = chunkSize(state);
+                size_t len = data.length();
+                if (size > 2) {
+                    uint64_t maximalAppEmit = size - 2;
+                    if (len > maximalAppEmit) {
                         emitSoon = data.substr(0, maximalAppEmit);
+                        // Validate terminator bytes being consumed
+                        size_t terminatorBytesConsumed = len - maximalAppEmit;
+                        if (terminatorBytesConsumed >= 1 && data[maximalAppEmit] != '\r') {
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
+                            return std::nullopt;
+                        }
+                        if (terminatorBytesConsumed >= 2 && data[maximalAppEmit + 1] != '\n') {
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
+                            return std::nullopt;
+                        }
                     } else {
-                        //cb(data);
                         emitSoon = data;
                     }
+                } else if (size == 2) {
+                    // Only terminator bytes remain, validate what we have
+                    if (len >= 1 && data[0] != '\r') {
+                        state = STATE_IS_CHUNK_TERMINATOR_ERROR;
+                        return std::nullopt;
+                    }
+                    if (len >= 2 && data[1] != '\n') {
+                        state = STATE_IS_CHUNK_TERMINATOR_ERROR;
+                        return std::nullopt;
+                    }
+                } else if (size == 1) {
+                    // Only \n remains
+                    if (data[0] != '\n') {
+                        state = STATE_IS_CHUNK_TERMINATOR_ERROR;
+                        return std::nullopt;
+                    }
                 }
-                decChunkSize(state, (unsigned int) data.length());
+                decChunkSize(state, (uint64_t) len);
                 state |= STATE_IS_CHUNKED;
-                // new: decrease data by its size (bug)
-                data.remove_prefix(data.length()); // ny bug fix för getNextChunk
+                data.remove_prefix(len);
                 if (emitSoon.length()) {
                     return emitSoon;
                 } else {
@@ -263,12 +420,15 @@ namespace uWS {
         std::optional<std::string_view> chunk;
         uint64_t *state;
         bool trailer;
+        uint64_t *chunkExtensionsConsumed;
+        std::string *trailerSection;
+        uint64_t maxTrailerSectionSize;
 
-        ChunkIterator(std::string_view *data, uint64_t *state, bool trailer = false) : data(data), state(state), trailer(trailer) {
-            chunk = uWS::getNextChunk(*data, *state, trailer);
+        ChunkIterator(std::string_view *data, uint64_t *state, bool trailer = false, uint64_t *chunkExtensionsConsumed = nullptr, std::string *trailerSection = nullptr, uint64_t maxTrailerSectionSize = MAX_TRAILER_SECTION_SIZE) : data(data), state(state), trailer(trailer), chunkExtensionsConsumed(chunkExtensionsConsumed), trailerSection(trailerSection), maxTrailerSectionSize(maxTrailerSectionSize) {
+            chunk = uWS::getNextChunk(*data, *state, trailer, chunkExtensionsConsumed, trailerSection, maxTrailerSectionSize);
         }
 
-        ChunkIterator() {
+        ChunkIterator() : data(nullptr), state(nullptr), trailer(false), chunkExtensionsConsumed(nullptr), trailerSection(nullptr), maxTrailerSectionSize(MAX_TRAILER_SECTION_SIZE) {
 
         }
 
@@ -292,7 +452,7 @@ namespace uWS {
         }
 
         ChunkIterator &operator++() {
-            chunk = uWS::getNextChunk(*data, *state, trailer);
+            chunk = uWS::getNextChunk(*data, *state, trailer, chunkExtensionsConsumed, trailerSection, maxTrailerSectionSize);
             return *this;
         }
 

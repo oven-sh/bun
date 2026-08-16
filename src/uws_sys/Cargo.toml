@@ -1,0 +1,33 @@
+[package]
+name = "bun_uws_sys"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_alloc.workspace = true
+bun_opaque.workspace = true
+thiserror.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_boringssl_sys.workspace = true
+bun_core.workspace = true
+bun_errno.workspace = true
+bun_http_types.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+bun_windows_sys.workspace = true
+bun_libuv_sys.workspace = true
+bun_paths.workspace = true
+# no cycle: bun_paths -> {bun_core, bun_alloc}; neither depends on bun_uws_sys

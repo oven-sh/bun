@@ -48,7 +48,7 @@ _read_scripts_in_package_json() {
         scripts="${scripts//@(\"|\')/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
-            package_json_compreply+=( "${completion%:*}" );
+            [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
         done
         COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
     }
@@ -59,9 +59,16 @@ _read_scripts_in_package_json() {
         ( "${COMPREPLY[*]}" =~ ${re_prev_script} && -n "${COMP_WORDS[2]}" ) || \
             ( "${COMPREPLY[*]}" =~ ${re_comp_word_script} )
     ]] && {
-        local re_script=$(echo ${package_json_compreply[@]} | sed 's/[^ ]*/(&)/g');
-        local new_reply=$(echo "${COMPREPLY[@]}" | sed -E "s/$re_script//");
-        COMPREPLY=( $(compgen -W "${new_reply}" -- "${cur_word}") );
+        local filtered_reply=();
+        local reply_word script_name keep;
+        for reply_word in "${COMPREPLY[@]}"; do
+            keep=1;
+            for script_name in "${package_json_compreply[@]}"; do
+                [[ "${reply_word}" == "${script_name}" ]] && { keep=""; break; };
+            done
+            [[ -n "${keep}" ]] && filtered_reply+=( "${reply_word}" );
+        done
+        COMPREPLY=( "${filtered_reply[@]}" );
         replaced_script="${prev}";
     }
 }
@@ -82,20 +89,28 @@ _bun_completions() {
     declare -A PACKAGE_OPTIONS;
     declare -A PM_OPTIONS;
 
-    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
+    local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update audit dedupe prune outdated link unlink build";
 
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port --dump-environment-variables --dump-limits --disable-bun-js";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer";
-    PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d";
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="";
-    PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="";
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --catalog --filter";
+    PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
+    PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
+    PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";
+    PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]="--latest --interactive --recursive --filter --dev --development --prod --no-optional --exact";
+    PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]="-L -i -r -F -d -D -P -E";
 
     PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --global --cwd --backend --link-native-bins --help";
     PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]="-c -y -p -f -g";
 
-    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --help"
+    PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]="--check";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]="--production --prod --omit --filter --dry-run --os --cpu --linker --silent --cwd --help";
+    PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]="-p -P -F -h";
+    PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]="--json --audit-level --ignore --prod --production --omit --dry-run --latest --cwd --help";
+    PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]="-L";
+
+    PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --link-native-bins --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
@@ -108,11 +123,22 @@ _bun_completions() {
         --server-bunfile) _file_arguments "!*.server.bun" && return;;
         --backend)
             case "${COMP_WORDS[1]}" in
-                a|add|remove|rm|install|i)
+                a|add|remove|rm|install|i|dedupe|update|up)
                     COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
                     ;;
             esac
             return ;;
+        --omit)
+            COMPREPLY=( $(compgen -W "dev optional peer" -- "${cur_word}") );
+            return;;
+        -F|--filter)
+            case "${COMP_WORDS[1]}" in
+                a|add|remove|rm|i|install|prune|update|up) return;;
+            esac
+            ;;
+        --linker)
+            COMPREPLY=( $(compgen -W "isolated hoisted" -- "${cur_word}") );
+            return;;
         --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
@@ -137,16 +163,42 @@ _bun_completions() {
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_LONG]} ${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}"
             return;;
-        remove|rm|i|install|link|unlink)
+        remove|rm|i|install)
             _long_short_completion \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
                 "${PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        update|up)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[UPDATE_OPTIONS_SHORT]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        link|unlink)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        dedupe)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[DEDUPE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_LONG]} ${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[SHARED_OPTIONS_SHORT]}";
+            return;;
+        prune)
+            _long_short_completion \
+                "${PACKAGE_OPTIONS[PRUNE_OPTIONS_LONG]} ${PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]}" \
+                "${PACKAGE_OPTIONS[PRUNE_OPTIONS_SHORT]}";
+            return;;
+        audit)
+            COMPREPLY=( $(compgen -W "fix ${PACKAGE_OPTIONS[AUDIT_OPTIONS_LONG]} ${PACKAGE_OPTIONS[AUDIT_OPTIONS_SHORT]}" -- "${cur_word}") );
             return;;
         create|c)
             COMPREPLY=( $(compgen -W "--force --no-install --help --no-git --verbose --no-package-json --open next react" -- "${cur_word}") );
             return;;
         upgrade)
             COMPREPLY=( $(compgen -W "--version --cwd --help -v -h") );
+            return;;
+        repl)
+            COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
@@ -156,7 +208,7 @@ _bun_completions() {
         pm)
             _long_short_completion \
                 "${PM_OPTIONS[LONG_OPTIONS]} ${PM_OPTIONS[SHORT_OPTIONS]}";
-            COMPREPLY+=( $(compgen -W "bin ls cache hash hash-print hash-string" -- "${cur_word}") );
+            COMPREPLY+=( $(compgen -W "bin ls licenses cache hash hash-print hash-string" -- "${cur_word}") );
             return;;
         *)
             local replaced_script;
@@ -172,8 +224,12 @@ _bun_completions() {
             # the previous word is not part of the allowed completion
             # the previous word is not an argument to the last two option
             [[ -z "${cur_word}" ]] && {
-                declare -A comp_reply_associative="( $(echo ${COMPREPLY[@]} | sed 's/[^ ]*/[&]=&/g') )";
-                [[ -z "${comp_reply_associative[${prev}]}" ]] && {
+                local prev_in_reply="";
+                local reply_word;
+                for reply_word in "${COMPREPLY[@]}"; do
+                    [[ "${reply_word}" == "${prev}" ]] && { prev_in_reply=1; break; };
+                done
+                [[ -z "${prev_in_reply}" ]] && {
                     local re_prev_prev="(^| )${COMP_WORDS[(( COMP_CWORD - 2 ))]}($| )";
                     local global_option_with_extra_args="--bunfile --server-bunfile --config --port --cwd --public-dir --jsx-runtime --platform --loader";
                     [[

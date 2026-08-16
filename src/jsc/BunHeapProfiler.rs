@@ -1,0 +1,133 @@
+use crate::CrateError as Error;
+use bun_core::Output;
+use bun_core::{OwnedString, String as BunString};
+use bun_paths::{AutoAbsPathChecked, PathBuffer, resolve_path};
+use bun_sys::{self as sys, E, Fd, FdDirExt};
+
+use crate::VM;
+
+pub struct HeapProfilerConfig {
+    // The config originates from CLI args and lives until process exit, so
+    // `&'static [u8]` matches the ownership exactly.
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
+    pub text_format: bool,
+}
+
+// C++ function declarations
+unsafe extern "C" {
+    // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is ABI-identical
+    // to a non-null `*mut VM` and C++ mutation is interior to the opaque cell.
+    safe fn Bun__generateHeapProfile(vm: &mut VM) -> BunString;
+    safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> BunString;
+}
+
+pub(crate) fn generate_and_write_profile(
+    vm: &mut VM,
+    config: &HeapProfilerConfig,
+) -> Result<(), Error> {
+    // `defer profile_string.deref()` — `bun_core::String` is `Copy` (no Drop);
+    // wrap the +1 ref from C++ in `OwnedString` so it's released on every exit path.
+    let profile_string = OwnedString::new(if config.text_format {
+        Bun__generateHeapProfile(vm)
+    } else {
+        Bun__generateHeapSnapshotV8(vm)
+    });
+
+    if profile_string.is_empty() {
+        // No profile data generated
+        return Ok(());
+    }
+
+    // Freed by Drop on ZigStringSlice.
+    let profile_slice = profile_string.to_utf8();
+
+    // dir/name are unbounded CLI input, so use the length-checked variant.
+    let mut path_buf = AutoAbsPathChecked::init_top_level_dir();
+    // `defer path_buf.deinit()` — handled by Drop.
+
+    build_output_path(&mut path_buf, config)?;
+
+    // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
+    #[cfg(windows)]
+    let mut path_buf_os = bun_paths::OSPathBuffer::uninit();
+    #[cfg(windows)]
+    let output_path_os: &bun_core::WStr = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(
+        &mut path_buf_os,
+        path_buf.slice_z().as_bytes(),
+    );
+
+    // Write the profile to disk using bun.sys.File.writeFile
+    // `slice_z()` borrows `path_buf` mutably, so we re-derive it at each call
+    // site instead of holding a single binding.
+    #[cfg(windows)]
+    let result = sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+    #[cfg(not(windows))]
+    let result = sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
+    if let Err(err) = result {
+        // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
+        let errno = err.get_errno();
+        if errno == E::ENOENT || errno == E::EPERM || errno == E::EACCES {
+            // Derive directory from the absolute output path
+            let dir_path = resolve_path::dirname::<bun_paths::platform::Auto>(path_buf.slice());
+            if !dir_path.is_empty() {
+                let _ = Fd::cwd().make_path(dir_path);
+                // Retry write
+                #[cfg(windows)]
+                let retry_result =
+                    sys::File::write_file_os_path(Fd::cwd(), output_path_os, profile_slice.slice());
+                #[cfg(not(windows))]
+                let retry_result =
+                    sys::File::write_file(Fd::cwd(), path_buf.slice_z(), profile_slice.slice());
+                if retry_result.is_err() {
+                    return Err(crate::CrateError::WriteFailed);
+                }
+            } else {
+                return Err(crate::CrateError::WriteFailed);
+            }
+        } else {
+            return Err(crate::CrateError::WriteFailed);
+        }
+    }
+
+    // Print where the markdown profile was written; node parity for the
+    // .heapprofile format is silence on success.
+    if config.text_format {
+        bun_core::pretty_errorln!(
+            "Heap profile written to: {}",
+            bstr::BStr::new(path_buf.slice())
+        );
+        Output::flush();
+    }
+    Ok(())
+}
+
+fn build_output_path(
+    path: &mut AutoAbsPathChecked,
+    config: &HeapProfilerConfig,
+) -> Result<(), Error> {
+    // Generate filename
+    let mut filename_buf = PathBuffer::uninit();
+    let filename: &[u8] = if !config.name.is_empty() {
+        config.name
+    } else {
+        generate_default_filename(&mut filename_buf, config.text_format)?
+    };
+
+    // Join directory and filename; `join` resolves absolute segments where
+    // `append` asserts on them (node accepts absolute --heap-prof-dir/-name).
+    if !config.dir.is_empty() {
+        path.join(&[config.dir])?;
+    }
+    path.join(&[filename])?;
+    Ok(())
+}
+
+fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<&[u8], Error> {
+    let extension: &str = if text_format { ".md" } else { ".heapprofile" };
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    crate::bun_cpu_profiler::write_diagnostic_filename(&mut cursor, "Heap", extension)
+        .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
+    let written = usize::try_from(cursor.position()).expect("int cast");
+    Ok(&buf.as_slice()[..written])
+}

@@ -1,0 +1,185 @@
+#include "V8Value.h"
+#include "V8Isolate.h"
+#include "V8String.h"
+#include "V8Integer.h"
+#include "V8HandleScope.h"
+#include "v8_compatibility_assertions.h"
+#include <JavaScriptCore/JSMap.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSBigInt.h>
+#include <JavaScriptCore/JSTypedArrays.h>
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Value)
+
+namespace v8 {
+
+bool Value::IsBoolean() const
+{
+    return localToJSValue().isBoolean();
+}
+
+bool Value::IsObject() const
+{
+    return localToJSValue().isObject();
+}
+
+bool Value::IsNumber() const
+{
+    return localToJSValue().isNumber();
+}
+
+bool Value::IsUint32() const
+{
+    return localToJSValue().isUInt32AsAnyInt();
+}
+
+bool Value::IsUndefined() const
+{
+    return localToJSValue().isUndefined();
+}
+
+// The QuickIs* functions are V8_INLINE with out-of-class bodies in
+// v8-value.h. MSVC debug builds (/Ob0) import such members of a dllimport
+// class instead of emitting them, so addons compiled --debug on Windows
+// need them as real exports. Semantically they are the corresponding Is*
+// checks (the "quick" part only matters for real V8's object layout).
+bool Value::QuickIsUndefined() const
+{
+    return localToJSValue().isUndefined();
+}
+
+bool Value::QuickIsNull() const
+{
+    return localToJSValue().isNull();
+}
+
+bool Value::QuickIsNullOrUndefined() const
+{
+    return localToJSValue().isUndefinedOrNull();
+}
+
+bool Value::QuickIsString() const
+{
+    return localToJSValue().isString();
+}
+
+bool Value::IsNull() const
+{
+    return localToJSValue().isNull();
+}
+
+bool Value::IsNullOrUndefined() const
+{
+    return localToJSValue().isUndefinedOrNull();
+}
+
+bool Value::IsTrue() const
+{
+    return FullIsTrue();
+}
+
+bool Value::IsFalse() const
+{
+    return FullIsFalse();
+}
+
+bool Value::IsString() const
+{
+    return localToJSValue().isString();
+}
+
+bool Value::IsFunction() const
+{
+    return JSC::jsTypeofIsFunction(defaultGlobalObject(), localToJSValue());
+}
+
+bool Value::IsMap() const
+{
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<JSC::JSMap>();
+}
+
+bool Value::IsArray() const
+{
+    // V8's IsArray is a JS_ARRAY_TYPE instance check that never unwraps proxies
+    // and cannot throw, so use a JSArray type check (ArrayType/DerivedArrayType)
+    // rather than JSC::isArray (spec IsArray: proxy-transparent, may throw).
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<JSC::JSArray>();
+}
+
+bool Value::IsInt32() const
+{
+    return localToJSValue().isInt32AsAnyInt();
+}
+
+bool Value::IsBigInt() const
+{
+    return localToJSValue().isBigInt();
+}
+
+bool Value::IsUint8Array() const
+{
+    JSC::JSValue value = localToJSValue();
+    return value.isCell() && value.inherits<JSC::JSUint8Array>();
+}
+
+MaybeLocal<String> Value::ToString(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSString* jsString = localToJSValue().toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<String>());
+
+    return MaybeLocal<String>(context->currentHandleScope()->createLocal<String>(vm, jsString));
+}
+
+MaybeLocal<Integer> Value::ToInteger(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    double d = localToJSValue().toIntegerOrInfinity(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Integer>());
+
+    return MaybeLocal<Integer>(context->currentHandleScope()->createLocal<Integer>(vm, JSC::jsNumber(d)));
+}
+
+Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
+{
+    auto js_value = localToJSValue();
+    uint32_t value;
+    if (js_value.getUInt32(value)) {
+        return Just(value);
+    }
+    return Nothing<uint32_t>();
+}
+
+bool Value::StrictEquals(Local<Value> that) const
+{
+    JSC::JSValue thisValue = localToJSValue();
+    JSC::JSValue thatValue = that->localToJSValue();
+    auto* globalObject = v8::Isolate::GetCurrent()->globalObject();
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    bool result = JSC::JSValue::strictEqual(globalObject, thisValue, thatValue);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    return result;
+}
+
+bool Value::FullIsTrue() const
+{
+    return localToJSValue().isTrue();
+}
+
+bool Value::FullIsFalse() const
+{
+    return localToJSValue().isFalse();
+}
+
+} // namespace v8

@@ -23,7 +23,6 @@
 
 #include "LoopData.h"
 #include <libusockets.h>
-#include <iostream>
 #include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();
@@ -54,9 +53,12 @@ private:
             p.second((Loop *) loop);
         }
 
-        void *corkedSocket = loopData->getCorkedSocket();
-        if (corkedSocket) {
-            if (loopData->isCorkedSSL()) {
+        /* Drain any leftover corks. Two slots max. */
+        for (int i = 0; i < 2; i++) {
+            bool ssl;
+            void *corkedSocket = loopData->getAnyCorkedSocket(&ssl);
+            if (!corkedSocket) break;
+            if (ssl) {
                 ((uWS::AsyncSocket<true> *) corkedSocket)->uncork();
             } else {
                 ((uWS::AsyncSocket<false> *) corkedSocket)->uncork();
@@ -124,8 +126,11 @@ public:
         return getLazyLoop().loop;
     }
 
-    static void clearLoopAtThreadExit() {
-        if (getLazyLoop().cleanMe) {
+    /* A thread that ran a loop is exiting: free this thread's loop whether uSockets created the
+     * native loop (cleanMe) or was handed one (Windows: the thread's libuv loop, which the caller
+     * closes afterwards; us_loop_free leaves a borrowed native loop alone). */
+    static void freeLoopAtThreadExit() {
+        if (getLazyLoop().loop) {
             getLazyLoop().loop->free();
         }
     }

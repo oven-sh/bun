@@ -56,13 +56,7 @@ struct bsd_addr_t {
     int port;
 };
 
-#ifdef _WIN32
-// on windows we can only receive one packet at a time
-#define LIBUS_UDP_RECV_COUNT 1
-#else
-// on unix we can receive at most as many packets as fit into the receive buffer
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
-#endif
 
 #ifdef __APPLE__
 /*
@@ -141,8 +135,8 @@ struct udp_recvbuf {
 #if defined(_WIN32)
     char *buf;
     size_t buflen;
-    size_t recvlen;
-    struct sockaddr_storage addr;
+    size_t recvlen[LIBUS_UDP_RECV_COUNT];
+    struct sockaddr_storage addr[LIBUS_UDP_RECV_COUNT];
 #else
     struct mmsghdr msgvec[LIBUS_UDP_RECV_COUNT];
     struct iovec iov[LIBUS_UDP_RECV_COUNT];
@@ -166,18 +160,20 @@ struct udp_sendbuf {
 };
 
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags);
-int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags);
+int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags, int max_packets);
 void bsd_udp_setup_recvbuf(struct udp_recvbuf *recvbuf, void *databuf, size_t databuflen);
 int bsd_udp_setup_sendbuf(struct udp_sendbuf *buf, size_t bufsize, void** payloads, size_t* lengths, void** addresses, int num);
 int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index);
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
 int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *ip);
+int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index);
 // int bsd_udp_packet_buffer_ecn(struct udp_recvbuf *msgvec, int index);
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
+int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd);
 int bsd_socket_broadcast(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
 int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
 int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl);
@@ -186,6 +182,18 @@ int bsd_socket_multicast_interface(LIBUS_SOCKET_DESCRIPTOR fd, const struct sock
 int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop);
 int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *source, const struct sockaddr_storage *group, const struct sockaddr_storage *iface, int drop);
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay);
+/* IP type-of-service (IPv4 IP_TOS / IPv6 IPV6_TCLASS). set returns 0 or a
+ * negative platform errno; get returns the value (>= 0) or a negative errno. */
+int bsd_socket_set_tos(LIBUS_SOCKET_DESCRIPTOR fd, int tos);
+int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
+/* SO_RCVBUF (is_recv) / SO_SNDBUF. size == 0 reads the current value, non-zero
+ * sets it (without re-reading, like libuv). On success returns 0 and writes the
+ * resulting value to *out; on failure returns the setsockopt/getsockopt result
+ * with the error left in errno (WSAGetLastError on Windows). */
+int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out);
+int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
+int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR fd);
+int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 
@@ -214,8 +222,11 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length);
 #if !defined(_WIN32)
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags);
 #endif
+struct us_iovec_t;
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count);
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length);
 int bsd_would_block();
+int bsd_send_is_transient_error();
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
@@ -228,9 +239,16 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int port);
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options);
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, size_t pathlen, int options);
+
+int bsd_socket_export_size(void);
+int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);
+LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
+int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);
+
+LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
 
 #ifndef MSG_DONTWAIT
 #define MSG_DONTWAIT 0

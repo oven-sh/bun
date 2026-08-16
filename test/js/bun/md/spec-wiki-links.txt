@@ -1,0 +1,278 @@
+
+# Wiki Links
+
+With the flag `MD_FLAG_WIKILINKS`, MD4C recognizes wiki links.
+
+The simple wiki-link is a wiki-link destination enclosed in `[[` followed with
+`]]`.
+
+```````````````````````````````` example
+[[foo]]
+.
+<p><x-wikilink data-target="foo">foo</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+However wiki-link may contain an explicit label, delimited from the destination
+with `|`.
+
+```````````````````````````````` example
+[[foo|bar]]
+.
+<p><x-wikilink data-target="foo">bar</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+A wiki-link destination cannot be empty.
+
+```````````````````````````````` example
+[[]]
+.
+<p>[[]]</p>
+.
+--fwiki-links
+````````````````````````````````
+
+```````````````````````````````` example
+[[|foo]]
+.
+<p>[[|foo]]</p>
+.
+--fwiki-links
+````````````````````````````````
+
+
+The wiki-link destination cannot contain a new line.
+
+```````````````````````````````` example
+[[foo
+bar]]
+.
+<p>[[foo
+bar]]</p>
+.
+--fwiki-links
+````````````````````````````````
+
+```````````````````````````````` example
+[[foo
+bar|baz]]
+.
+<p>[[foo
+bar|baz]]</p>
+.
+--fwiki-links
+````````````````````````````````
+
+The wiki-link destination is rendered verbatim; inline markup in it is not
+recognized.
+
+```````````````````````````````` example
+[[*foo*]]
+.
+<p><x-wikilink data-target="*foo*">*foo*</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+```````````````````````````````` example
+[[foo|![bar](bar.jpg)]]
+.
+<p><x-wikilink data-target="foo"><img src="bar.jpg" alt="bar"></x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+With multiple `|` delimiters, only the first one is recognized and the other
+ones are part of the label.
+
+```````````````````````````````` example
+[[foo|bar|baz]]
+.
+<p><x-wikilink data-target="foo">bar|baz</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+However the delimiter `|` can be escaped with `/`.
+
+```````````````````````````````` example
+[[foo\|bar|baz]]
+.
+<p><x-wikilink data-target="foo|bar">baz</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+The label can contain inline elements.
+
+```````````````````````````````` example
+[[foo|*bar*]]
+.
+<p><x-wikilink data-target="foo"><em>bar</em></x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+Empty explicit label is the same as using the implicit label; i.e. the verbatim
+destination string is used as the label.
+
+```````````````````````````````` example
+[[foo|]]
+.
+<p><x-wikilink data-target="foo">foo</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+The label can span multiple lines.
+
+```````````````````````````````` example
+[[foo|foo
+bar
+baz]]
+.
+<p><x-wikilink data-target="foo">foo
+bar
+baz</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+Wiki-links have higher priority than links.
+
+```````````````````````````````` example
+[[foo]](foo.jpg)
+.
+<p><x-wikilink data-target="foo">foo</x-wikilink>(foo.jpg)</p>
+.
+--fwiki-links
+````````````````````````````````
+
+```````````````````````````````` example
+[foo]: /url
+
+[[foo]]
+.
+<p><x-wikilink data-target="foo">foo</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+Wiki links can be inlined in tables.
+
+```````````````````````````````` example
+| A                | B   |
+|------------------|-----|
+| [[foo|*bar*]]    | baz |
+.
+<table>
+<thead>
+<tr>
+<th>A</th>
+<th>B</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><x-wikilink data-target="foo"><em>bar</em></x-wikilink></td>
+<td>baz</td>
+</tr>
+</tbody>
+</table>
+.
+--fwiki-links --ftables
+````````````````````````````````
+
+Wiki-links are not prioritized over images.
+
+```````````````````````````````` example
+![[foo]](foo.jpg)
+.
+<p><img src="foo.jpg" alt="[foo]"></p>
+.
+--fwiki-links
+````````````````````````````````
+
+Something that may look like a wiki-link at first, but turns out not to be,
+is recognized as a normal link.
+
+```````````````````````````````` example
+[[foo]
+
+[foo]: /url
+.
+<p>[<a href="/url">foo</a></p>
+.
+--fwiki-links
+````````````````````````````````
+
+Escaping the opening `[` escapes only that one character, not the whole `[[`
+opener:
+
+```````````````````````````````` example
+\[[foo]]
+
+[foo]: /url
+.
+<p>[<a href="/url">foo</a>]</p>
+.
+--fwiki-links
+````````````````````````````````
+
+Like with other inline links, the innermost wiki-link is preferred.
+
+```````````````````````````````` example
+[[foo[[bar]]]]
+.
+<p>[[foo<x-wikilink data-target="bar">bar</x-wikilink>]]</p>
+.
+--fwiki-links
+````````````````````````````````
+
+There is limit of 100 characters for the wiki-link destination.
+
+```````````````````````````````` example
+[[12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901]]
+[[12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901|foo]]
+.
+<p>[[12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901]]
+[[12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901|foo]]</p>
+.
+--fwiki-links
+````````````````````````````````
+
+100 characters inside a wiki link target works.
+
+```````````````````````````````` example
+[[1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890]]
+[[1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890|foo]]
+.
+<p><x-wikilink data-target="1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890">1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890</x-wikilink>
+<x-wikilink data-target="1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890">foo</x-wikilink></p>
+.
+--fwiki-links
+````````````````````````````````
+
+The limit on link content does not include any characters belonging to a block
+quote, if the label spans multiple lines contained in a block quote.
+
+```````````````````````````````` example
+> [[12345678901234567890123456789012345678901234567890|1234567890
+> 1234567890
+> 1234567890
+> 1234567890
+> 123456789]]
+.
+<blockquote>
+<p><x-wikilink data-target="12345678901234567890123456789012345678901234567890">1234567890
+1234567890
+1234567890
+1234567890
+123456789</x-wikilink></p>
+</blockquote>
+.
+--fwiki-links
+````````````````````````````````

@@ -1,0 +1,41 @@
+{
+  "name": "strict-peer-dep",
+  "versions": {
+    "1.0.0": {
+      "name": "strict-peer-dep",
+      "version": "1.0.0",
+      "peerDependencies": {
+        "no-deps": "^2.0.0"
+      },
+      "_id": "strict-peer-dep@1.0.0",
+      "_nodeVersion": "22.2.0",
+      "_npmVersion": "10.8.1",
+      "dist": {
+        "integrity": "sha512-bz2RC/Fp4Nvc9aIiHB6Szko9m6sxNy/clIHnTAGeD9VSpQJTvlPAJqJ09lWo7N3q4JNLEqDTf3Mn+zNUsYOKWQ==",
+        "shasum": "1548927b5ca502c008c3ab091fb707f96181ecaf",
+        "tarball": "http://localhost:4873/strict-peer-dep/-/strict-peer-dep-1.0.0.tgz"
+      },
+      "contributors": []
+    }
+  },
+  "time": {
+    "modified": "2026-02-28T00:00:00.000Z",
+    "created": "2026-02-28T00:00:00.000Z",
+    "1.0.0": "2026-02-28T00:00:00.000Z"
+  },
+  "users": {},
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "_uplinks": {},
+  "_distfiles": {},
+  "_attachments": {
+    "strict-peer-dep-1.0.0.tgz": {
+      "shasum": "1548927b5ca502c008c3ab091fb707f96181ecaf",
+      "version": "1.0.0"
+    }
+  },
+  "_rev": "",
+  "_id": "strict-peer-dep",
+  "readme": "ERROR: No README data found!"
+}

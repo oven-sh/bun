@@ -2,7 +2,7 @@
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: basic-dependencies 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -33,7 +33,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: canary-versions 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -58,7 +58,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: monorepo-workspaces 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -112,7 +112,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: patches-overrides 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -137,7 +137,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: file-link-deps 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -159,7 +159,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: custom-registries 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -181,7 +181,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: peer-dependencies 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -194,15 +194,15 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
     },
   },
   "packages": {
-    "@emotion/react": ["@emotion/react@11.11.3", "", { "peerDependencies": { "react": "18.2.0" } }, ""],
+    "@emotion/react": ["@emotion/react@11.11.3", "", { "peerDependencies": { "react": ">=16.8.0" } }, ""],
 
-    "@emotion/styled": ["@emotion/styled@11.11.0", "", { "peerDependencies": { "@emotion/react": "11.11.3", "react": "18.2.0" } }, ""],
+    "@emotion/styled": ["@emotion/styled@11.11.0", "", { "peerDependencies": { "@emotion/react": "^11.0.0", "react": ">=16.8.0" } }, ""],
 
-    "@mui/material": ["@mui/material@5.15.0", "", { "optionalDependencies": { "@emotion/react": "11.11.3", "@emotion/styled": "11.11.0" }, "peerDependencies": { "react": "18.2.0", "react-dom": "18.2.0" } }, ""],
+    "@mui/material": ["@mui/material@5.15.0", "", { "peerDependencies": { "@emotion/react": "^11.5.0", "@emotion/styled": "^11.3.0", "react": "^17.0.0 || ^18.0.0", "react-dom": "^17.0.0 || ^18.0.0" }, "optionalPeers": ["@emotion/react", "@emotion/styled"] }, ""],
 
     "react": ["react@18.2.0", "", {}, ""],
 
-    "react-dom": ["react-dom@18.2.0", "", { "peerDependencies": { "react": "18.2.0" } }, "sha512-reactdomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
+    "react-dom": ["react-dom@18.2.0", "", { "peerDependencies": { "react": "^18.2.0" } }, "sha512-reactdomAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="],
   }
 }
 "
@@ -210,7 +210,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: duplicate-packages 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -242,7 +242,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: catalogs 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -276,7 +276,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: integrity-hashes 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -298,7 +298,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: version-zero 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -317,7 +317,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: mixed-dependency-types 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -331,6 +331,9 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
       },
       "optionalDependencies": {
         "fsevents": "^2.3.3",
+      },
+      "peerDependencies": {
+        "react": ">=16.0.0",
       },
     },
   },
@@ -349,7 +352,7 @@ exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with al
 
 exports[`PNPM Migration Complete Test Suite comprehensive PNPM migration with all edge cases: circular-workspaces 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

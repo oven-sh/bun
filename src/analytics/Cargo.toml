@@ -1,0 +1,16 @@
+[package]
+name = "bun_analytics"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+libc.workspace = true
+bitflags.workspace = true
+bun_core.workspace = true
+bun_semver.workspace = true

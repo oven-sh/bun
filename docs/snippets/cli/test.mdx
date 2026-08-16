@@ -11,7 +11,11 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--rerun-each" type="number">
-  Re-run each test file <code>NUMBER</code> times, helps catch certain bugs
+  Re-run each test file <code>NUMBER</code> times to help catch certain bugs
+</ParamField>
+
+<ParamField path="--retry" type="number">
+  Retry failed tests up to <code>NUMBER</code> times. Per-test <code>{`{ retry: N }`}</code> overrides this flag
 </ParamField>
 
 <ParamField path="--concurrent" type="boolean">
@@ -26,7 +30,7 @@ bun test <patterns>
   Set the random seed for test randomization
 </ParamField>
 
-<ParamField path="--bail" type="number" default="1">
+<ParamField path="--bail" type="number">
   Exit the test suite after <code>NUMBER</code> failures. If you do not specify a number, it defaults to 1.
 </ParamField>
 
@@ -52,7 +56,7 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--reporter-outfile" type="string">
-  Output file path for the reporter format (required with --reporter)
+  Output file path for the reporter format (required with --reporter=junit)
 </ParamField>
 
 <ParamField path="--dots" type="boolean">
@@ -93,7 +97,7 @@ Run all test files with "foo" or "bar" in the file name:
 bun test foo bar
 ```
 
-Run all test files, only including tests whose names includes "baz":
+Run all test files, only including tests whose name includes "baz":
 
 ```bash terminal icon="terminal"
 bun test --test-name-pattern baz

@@ -60,16 +60,18 @@ async function getDevServerURL() {
   async function readStream() {
     const string_decoder = new StringDecoder("utf-8");
     const stdout = dev_server!.stdout!;
+    let accumulated = "";
     for await (const chunk of stdout) {
       const str = string_decoder.write(chunk);
       console.error(str);
 
       if (!hasLoaded) {
-        let match = str.match(/http:\/\/localhost:\d+/);
+        accumulated += str;
+        let match = accumulated.match(/http:\/\/localhost:\d+/);
         if (match) {
           baseUrl = match[0];
         }
-        if (str.toLowerCase().includes("ready")) {
+        if (accumulated.toLowerCase().includes("ready") && baseUrl) {
           hasLoaded = true;
           loaded();
         }
@@ -89,9 +91,12 @@ async function getDevServerURL() {
 async function startDevServer() {
   copyFileSync(join(root, "src/Counter1.txt"), join(root, "src/Counter.tsx"));
 
+  // This test never launches a browser (only dev-server.test.ts does), so skip
+  // puppeteer's ~255 MB Chrome download in the postinstall. It hits live CfT
+  // hosts and has flaked on macOS CI, failing the install for nothing.
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, "bunstall"), PUPPETEER_SKIP_DOWNLOAD: "1" },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",

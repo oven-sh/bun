@@ -103,6 +103,16 @@ describe("escapeHTML", () => {
     }
   });
 
+  it("escapes metacharacters adjacent to lone surrogates", () => {
+    expect(escapeHTML("\uD800<x")).toBe("\uD800&lt;x");
+    expect(escapeHTML("\uD800>x")).toBe("\uD800&gt;x");
+    expect(escapeHTML("\uD800<img src=x onerror=alert(1)\uD800>")).toBe(
+      "\uD800&lt;img src=x onerror=alert(1)\uD800&gt;",
+    );
+    expect(escapeHTML(("\uD800<" + "a".repeat(14)).repeat(8))).toBe(("\uD800&lt;" + "a".repeat(14)).repeat(8));
+    expect(escapeHTML("\uD800a😊<b")).toBe("\uD800a😊&lt;b");
+  });
+
   it("fuzz latin1", () => {
     for (let i = 0; i < 256; i++) {
       const initial = Buffer.alloc(i + 1, "a");
@@ -125,5 +135,60 @@ describe("escapeHTML", () => {
         Bun.escapeHTML(clone.toString("utf16le"));
       }
     }
+  });
+
+  it("escapes every metacharacter", () => {
+    expect(escapeHTML(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#x27;");
+    // attribute-value metacharacters, as used by SSR
+    expect(escapeHTML(`<a href="/x?a=1&b=2" title='it\\'s'>`)).toBe(
+      "&lt;a href=&quot;/x?a=1&amp;b=2&quot; title=&#x27;it\\&#x27;s&#x27;&gt;",
+    );
+  });
+
+  it("coerces non-string arguments", () => {
+    expect(escapeHTML(123)).toBe("123");
+    expect(escapeHTML(true)).toBe("true");
+    expect(escapeHTML(false)).toBe("false");
+    expect(escapeHTML(null)).toBe("null");
+    expect(escapeHTML(undefined)).toBe("undefined");
+    expect(escapeHTML({ toString: () => "<b>hi</b>" })).toBe("&lt;b&gt;hi&lt;/b&gt;");
+    expect(escapeHTML([1, 2, 3])).toBe("1,2,3");
+    // a symbol cannot be coerced to a string — the thrown exception must propagate
+    expect(() => escapeHTML(Symbol.iterator)).toThrow("Cannot convert a symbol to a string");
+  });
+
+  it("returns the same string when nothing is escaped", () => {
+    const latin1 = Buffer.alloc(64, "a").toString();
+    expect(escapeHTML(latin1)).toBe(latin1);
+    // utf16-backed, no metacharacters
+    const utf16 = "café ☕ ".repeat(16);
+    expect(escapeHTML(utf16)).toBe(utf16);
+  });
+
+  it("handles escapes at SIMD lane boundaries", () => {
+    // the SIMD scan steps in lanes of 16 (latin1) and 8/16 (utf16); put a
+    // metacharacter at each offset around those boundaries, as a prefix,
+    // in the middle, and as a suffix.
+    for (const width of [7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65]) {
+      for (let pos = 0; pos < width; pos++) {
+        const latin1 = Buffer.alloc(width, "a");
+        latin1[pos] = "<".charCodeAt(0);
+        const expectedLatin1 = "a".repeat(pos) + "&lt;" + "a".repeat(width - pos - 1);
+        expect(escapeHTML(latin1.toString("latin1"))).toBe(expectedLatin1);
+
+        const u16 = new Uint16Array(width).fill("a".charCodeAt(0));
+        u16[pos] = "<".charCodeAt(0);
+        // force a utf16 backing store with a non-latin1 codepoint at the end
+        const utf16Input = Buffer.from(u16.buffer).toString("utf16le") + "☕";
+        const expectedUtf16 = "a".repeat(pos) + "&lt;" + "a".repeat(width - pos - 1) + "☕";
+        expect(escapeHTML(utf16Input)).toBe(expectedUtf16);
+      }
+    }
+  });
+
+  it("handles densely packed escapes", () => {
+    expect(escapeHTML("<".repeat(100))).toBe("&lt;".repeat(100));
+    expect(escapeHTML("<>".repeat(100))).toBe("&lt;&gt;".repeat(100));
+    expect(escapeHTML(`&<>"'`.repeat(50))).toBe("&amp;&lt;&gt;&quot;&#x27;".repeat(50));
   });
 });

@@ -1,0 +1,33 @@
+#include "root.h"
+#include "headers-handwritten.h"
+
+#include "JavaScriptCore/JSCInlines.h"
+#include "BunClientData.h"
+#include <JavaScriptCore/JSInternalFieldObjectImpl.h>
+
+namespace Bun {
+using namespace JSC;
+
+class JSNextTickQueue : public JSC::JSInternalFieldObjectImpl<3> {
+public:
+    using Base = JSC::JSInternalFieldObjectImpl<3>;
+
+    template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+
+    JS_EXPORT_PRIVATE static JSNextTickQueue* create(VM&, Structure*);
+    static JSNextTickQueue* create(JSC::JSGlobalObject* globalObject);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
+
+    DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    JSNextTickQueue(JSC::VM&, JSC::Structure*);
+    void finishCreation(JSC::VM&);
+
+    bool isEmpty();
+    void drain(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    // Teardown: whatever was queued no longer runs (field 0 = scheduled flag, field 2 = the JS
+    // drain function). The queued callbacks go with the heap.
+    void discard(JSC::VM& vm);
+};
+}

@@ -20,12 +20,12 @@ function createBunServer(fetch: Parameters<typeof Bun.serve>[0]["fetch"]) {
   return server;
 }
 
-describe("S3 - List Objects", () => {
+describe.concurrent("S3 - List Objects", () => {
   it("Should set encoded continuation-token in the request url before list-type", async () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -49,7 +49,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -73,7 +73,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -97,7 +97,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -121,7 +121,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -145,7 +145,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -169,7 +169,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -193,7 +193,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -217,7 +217,7 @@ describe("S3 - List Objects", () => {
     let reqUrl: string;
     using server = createBunServer(async req => {
       reqUrl = req.url;
-      return new Response(`<>`, {
+      return new Response(`<ListBucketResult/>`, {
         headers: {
           "Content-Type": "application/xml",
         },
@@ -442,7 +442,7 @@ describe("S3 - List Objects", () => {
     using server = createBunServer(async => {
       return new Response(
         `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
-        <Delimiter>good@&/de$</limiter</Delimiter>
+        <Delimiter>good@&amp;/de$&lt;/limiter</Delimiter>
         </ListBucketResult>`,
         {
           headers: {
@@ -775,7 +775,7 @@ describe("S3 - List Objects", () => {
     <Prefix>/</Prefix>
     <KeyCount>0</KeyCount>
     <MaxKeys>10000</MaxKeys>
-    <Delimiter>awsome.<files>dummy thing</files></Delimiter>
+    <Delimiter>awsome.&lt;files&gt;dummy thing&lt;/files&gt;</Delimiter>
     <ContinuationToken>current pagination token</ContinuationToken>
     <EncodingType>url</EncodingType>
     <NextContinuationToken>some next token</NextContinuationToken>
@@ -928,7 +928,7 @@ describe("S3 - List Objects", () => {
     });
   });
 
-  it("Should not crash with bad xml", async () => {
+  it("Should reject bad xml", async () => {
     using server = createBunServer(async => {
       return new Response(
         `<ListBucketResult> </Contents>
@@ -947,8 +947,131 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.list();
-    expect(res).toEqual({});
+    // Not well-formed: rejected rather than half-listed.
+    const error = await client.list().then(
+      () => undefined,
+      e => e,
+    );
+    expect(error?.code).toBe("InvalidResponse");
+  });
+
+  it("Should decode XML-escaped text the way S3 sends it (keys, prefixes, error messages)", async () => {
+    // S3 escapes markup characters in every text node; a `&amp;` in a key is a `&`.
+    let status = 200;
+    using server = createBunServer(async () => {
+      if (status !== 200) {
+        return new Response(
+          `<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuch&amp;Key</Code><Message>The key &quot;a&amp;b&lt;c&gt;.txt&quot; does not exist</Message><Key>a&amp;b&lt;c&gt;.txt</Key></Error>`,
+          { headers: { "Content-Type": "application/xml" }, status },
+        );
+      }
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?>
+        <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+          <Name>my_bucket</Name>
+          <Prefix>Tom &amp; Jerry/</Prefix>
+          <KeyCount>3</KeyCount>
+          <IsTruncated>false</IsTruncated>
+          <Contents>
+            <Key>Tom &amp; Jerry/&lt;pilot&gt; &#x1F431;.mp4</Key>
+            <ETag>&quot;etag-1&quot;</ETag>
+            <Size>10</Size>
+            <RestoreStatus><IsRestoreInProgress>true</IsRestoreInProgress></RestoreStatus>
+            <Owner><DisplayName>R&amp;D</DisplayName><ID>id-1</ID></Owner>
+          </Contents>
+          <Contents>
+            <Key><![CDATA[Tom & Jerry/raw <cdata>.txt]]></Key>
+            <ETag>"etag-2"</ETag>
+            <Size>0</Size>
+          </Contents>
+          <Contents><Key> leading and trailing spaces are part of the key </Key><Size> 7 </Size></Contents>
+          <CommonPrefixes><Prefix>Tom &amp; Jerry/S01/</Prefix></CommonPrefixes>
+          <CommonPrefixes><Prefix>Tom &amp; Jerry/S02/</Prefix></CommonPrefixes>
+        </ListBucketResult>`,
+        { headers: { "Content-Type": "application/xml" }, status: 200 },
+      );
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    expect(await client.list()).toEqual({
+      name: "my_bucket",
+      prefix: "Tom & Jerry/",
+      keyCount: 3,
+      isTruncated: false,
+      contents: [
+        {
+          key: "Tom & Jerry/<pilot> \u{1F431}.mp4",
+          eTag: '"etag-1"',
+          size: 10,
+          owner: { displayName: "R&D", id: "id-1" },
+        },
+        { key: "Tom & Jerry/raw <cdata>.txt", eTag: '"etag-2"', size: 0 },
+        { key: " leading and trailing spaces are part of the key ", size: 7 },
+      ],
+      commonPrefixes: [{ prefix: "Tom & Jerry/S01/" }, { prefix: "Tom & Jerry/S02/" }],
+    });
+
+    status = 404;
+    const error = await client.list().then(
+      () => undefined,
+      e => e,
+    );
+    expect(error?.code).toBe("NoSuch&Key");
+    expect(error?.message).toBe('The key "a&b<c>.txt" does not exist');
+  });
+
+  it("Should read an <Error> that follows keep-alive whitespace (CompleteMultipartUpload style)", async () => {
+    using server = createBunServer(
+      async () =>
+        new Response(
+          `   \n\n<?xml version="1.0" encoding="UTF-8"?>\n<Error><Code>InternalError</Code><Message>try again</Message></Error>`,
+          {
+            status: 500,
+          },
+        ),
+    );
+    const client = new S3Client({ ...options, endpoint: server.url.href });
+    const error = await client.list().then(
+      () => undefined,
+      e => e,
+    );
+    expect(error?.code).toBe("InternalError");
+    expect(error?.message).toBe("try again");
+  });
+
+  it("Should reject a listing whose <Contents> has no <Key>", async () => {
+    using server = createBunServer(
+      async () =>
+        new Response(
+          `<ListBucketResult><Name>b</Name><Contents><Key>a</Key></Contents><Contents><Size>1</Size></Contents></ListBucketResult>`,
+        ),
+    );
+    const client = new S3Client({ ...options, endpoint: server.url.href });
+    const error = await client.list().then(
+      () => undefined,
+      e => e,
+    );
+    expect(error?.code).toBe("InvalidResponse");
+  });
+
+  it("Should fall back to NoSuchKey for a 404 whose <Error> has no usable <Code>", async () => {
+    for (const body of [
+      `<Error><Code></Code><Message/></Error>`,
+      `<Error><Message>gone</Message></Error>`,
+      `not xml`,
+    ]) {
+      using server = createBunServer(async () => new Response(body, { status: 404 }));
+      const client = new S3Client({ ...options, endpoint: server.url.href });
+      const error = await client.list().then(
+        () => undefined,
+        e => e,
+      );
+      expect(error?.code).toBe("NoSuchKey");
+    }
   });
 
   it("Should throw Error if request failed", async () => {
@@ -1085,15 +1208,17 @@ const optionsFromEnv: S3Options = {
 describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
   const bucket = new S3Client(optionsFromEnv);
 
+  // Separate prefixes so the two tests below are fully isolated and can run concurrently.
   const keyPrefix = `${randomUUIDv7()}/`;
+  const keyPrefix2 = `${randomUUIDv7()}/`;
 
   const file_1 = `${keyPrefix}file_1.txt`;
   const file_2 = `${keyPrefix}file_2.txt`;
   const file_3 = `${keyPrefix}file_3.txt`;
 
-  const file_4 = `${keyPrefix}file_a>b.txt`;
-  const file_5 = `${keyPrefix}file_a>c.txt`;
-  const file_6 = `${keyPrefix}file_a>d.txt`;
+  const file_4 = `${keyPrefix2}file_a>b.txt`;
+  const file_5 = `${keyPrefix2}file_a>c.txt`;
+  const file_6 = `${keyPrefix2}file_a>d.txt`;
 
   afterAll(async () => {
     try {
@@ -1104,10 +1229,12 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     }
   });
 
-  it("should list objects with prefix, maxKeys and nextContinuationToken", async () => {
-    await bucket.write(file_1, "content 1");
-    await bucket.write(file_2, "content 2");
-    await bucket.write(file_3, "content 3");
+  it.concurrent("should list objects with prefix, maxKeys and nextContinuationToken", async () => {
+    await Promise.all([
+      bucket.write(file_1, "content 1"),
+      bucket.write(file_2, "content 2"),
+      bucket.write(file_3, "content 3"),
+    ]);
 
     const first_response = await bucket.list({ prefix: keyPrefix, maxKeys: 1 });
 
@@ -1142,13 +1269,15 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     expect(storedFile.size).toBe(9);
   });
 
-  it("should list objects with startAfter, encodingType and fetchOwner", async () => {
-    await bucket.write(file_4, "content 4");
-    await bucket.write(file_5, "content 5");
-    await bucket.write(file_6, "content 6");
+  it.concurrent("should list objects with startAfter, encodingType and fetchOwner", async () => {
+    await Promise.all([
+      bucket.write(file_4, "content 4"),
+      bucket.write(file_5, "content 5"),
+      bucket.write(file_6, "content 6"),
+    ]);
 
     const res = await bucket.list({
-      prefix: keyPrefix, // isolates the test when Bucket is not empty
+      prefix: keyPrefix2, // isolates the test when Bucket is not empty
       startAfter: file_4,
       fetchOwner: true,
       encodingType: "url",
@@ -1167,3 +1296,37 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     expect(storedFile.owner!.id).toBeString();
   });
 });
+
+it("rejects a large malformed list response (repeated unclosed Key tags) quickly", async () => {
+  // ListObjectsV2 body with a valid <Name> followed by ~5MB of opening <Key> tags
+  // that never have a matching closing tag.
+  const malformed = `<ListBucketResult><Name>my_bucket</Name><Contents>${Buffer.alloc(5_000_000, "<Key>").toString()}`;
+
+  using server = createBunServer(async () => {
+    return new Response(malformed, {
+      headers: {
+        "Content-Type": "application/xml",
+      },
+      status: 200,
+    });
+  });
+
+  const client = new S3Client({
+    ...options,
+    endpoint: server.url.href,
+  });
+
+  const start = performance.now();
+  const error = await client.list().then(
+    () => undefined,
+    e => e,
+  );
+  const elapsed = performance.now() - start;
+
+  // Not a well-formed document: rejected rather than half-listed.
+  expect(error?.code).toBe("InvalidResponse");
+
+  // Parsing must scale linearly with the response size. Even on slow debug/ASAN builds
+  // a single 5MB response should be handled in well under 10 seconds.
+  expect(elapsed).toBeLessThan(10_000);
+}, 600_000);

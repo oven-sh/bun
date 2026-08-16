@@ -2,7 +2,7 @@
 // CI, running tests, and code generation.
 
 import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -21,10 +21,12 @@ import { normalize as normalizeWindows } from "node:path/win32";
 
 export const isWindows = process.platform === "win32";
 export const isMacOS = process.platform === "darwin";
-export const isLinux = process.platform === "linux";
-export const isPosix = isMacOS || isLinux;
+// Node built for Termux/bionic reports "android"; CI models that as linux + abi=android.
+export const isAndroid = process.platform === "android";
+export const isLinux = process.platform === "linux" || isAndroid;
+export const isFreeBSD = process.platform === "freebsd";
+export const isPosix = isMacOS || isLinux || isFreeBSD;
 
-export const isArm64 = process.arch === "arm64";
 export const isX64 = process.arch === "x64";
 
 /**
@@ -559,32 +561,6 @@ export function getRepository(cwd) {
 }
 
 /**
- * @returns {string | undefined}
- */
-export function getPullRequestRepository() {
-  if (isBuildkite) {
-    const repository = getEnv("BUILDKITE_PULL_REQUEST_REPO", false);
-    if (repository) {
-      return parseGitRepository(repository);
-    }
-  }
-}
-
-/**
- * @param {string} [cwd]
- * @returns {string | undefined}
- */
-export function getRepositoryOwner(cwd) {
-  const repository = getRepository(cwd);
-  if (repository) {
-    const [owner] = repository.split("/");
-    if (owner) {
-      return owner;
-    }
-  }
-}
-
-/**
  * @param {string} [cwd]
  * @returns {string | undefined}
  */
@@ -1070,51 +1046,6 @@ export function which(command, options = {}) {
 }
 
 /**
- * @typedef {object} GitRef
- * @property {string} [repository]
- * @property {string} [commit]
- */
-
-/**
- * @param {string} [cwd]
- * @param {string | GitRef} [base]
- * @param {string | GitRef} [head]
- * @returns {Promise<string[] | undefined>}
- */
-export async function getChangedFiles(cwd, base, head) {
-  const repository = getRepository(cwd);
-  head ||= getCommit(cwd);
-  base ||= `${head}^1`;
-
-  const url = new URL(`repos/${repository}/compare/${base}...${head}`, getGithubApiUrl());
-  const { error, body } = await curl(url, { json: true });
-
-  if (error) {
-    console.warn("Failed to list changed files:", error);
-    return;
-  }
-
-  const { files } = body;
-  return files.filter(({ status }) => !/removed|unchanged/i.test(status)).map(({ filename }) => filename);
-}
-
-/**
- * @param {string} filename
- * @returns {boolean}
- */
-export function isDocumentation(filename) {
-  if (/^(docs|bench|examples|misctools|\.vscode)/.test(filename)) {
-    return true;
-  }
-
-  if (!/^(src|test|vendor)/.test(filename) && /\.(md|txt)$/.test(filename)) {
-    return true;
-  }
-
-  return false;
-}
-
-/**
  * @returns {string | undefined}
  */
 export function getBuildId() {
@@ -1206,91 +1137,6 @@ export function getBootstrapVersion(os) {
     return parseInt(version);
   }
   return 0;
-}
-
-/**
- * @typedef {object} BuildArtifact
- * @property {string} [job]
- * @property {string} filename
- * @property {string} url
- */
-
-/**
- * @returns {Promise<BuildArtifact[] | undefined>}
- */
-export async function getBuildArtifacts() {
-  const buildId = await getBuildkiteBuildNumber();
-  if (buildId) {
-    return getBuildkiteArtifacts(buildId);
-  }
-}
-
-/**
- * @returns {Promise<number | undefined>}
- */
-export async function getBuildkiteBuildNumber() {
-  if (isBuildkite) {
-    const number = parseInt(getEnv("BUILDKITE_BUILD_NUMBER", false));
-    if (!isNaN(number)) {
-      return number;
-    }
-  }
-
-  const repository = getRepository();
-  const commit = getCommit();
-  if (!repository || !commit) {
-    return;
-  }
-
-  const url = new URL(`repos/${repository}/commits/${commit}/statuses`, getGithubApiUrl());
-  const { status, error, body } = await curl(url, { json: true });
-  if (status === 404) {
-    return;
-  }
-  if (error) {
-    throw error;
-  }
-
-  for (const { target_url: url } of body) {
-    const { hostname, pathname } = new URL(url);
-    if (hostname === "buildkite.com") {
-      const buildId = parseInt(pathname.split("/").pop());
-      if (!isNaN(buildId)) {
-        return buildId;
-      }
-    }
-  }
-}
-
-/**
- * @param {string} buildId
- * @returns {Promise<BuildArtifact[]>}
- */
-export async function getBuildkiteArtifacts(buildId) {
-  const orgId = getEnv("BUILDKITE_ORGANIZATION_SLUG", false) || "bun";
-  const pipelineId = getEnv("BUILDKITE_PIPELINE_SLUG", false) || "bun";
-  const { jobs } = await curlSafe(`https://buildkite.com/${orgId}/${pipelineId}/builds/${buildId}.json`, {
-    json: true,
-  });
-
-  const artifacts = await Promise.all(
-    jobs.map(async ({ id: jobId, step_key: jobKey }) => {
-      const artifacts = await curlSafe(
-        `https://buildkite.com/organizations/${orgId}/pipelines/${pipelineId}/builds/${buildId}/jobs/${jobId}/artifacts`,
-        { json: true },
-      );
-
-      return artifacts.map(({ path, url }) => {
-        return {
-          job: jobKey,
-          filename: path,
-          url: new URL(url, "https://buildkite.com/").toString(),
-        };
-      });
-    }),
-  );
-
-  return artifacts.flat();
 }
 
 /**
@@ -1389,25 +1235,6 @@ export async function uploadArtifact(filename) {
  */
 export function stripAnsi(string) {
   return string.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-export function escapeYaml(string) {
-  if (/[:"{}[\],&*#?|\-<>=!%@`]/.test(string)) {
-    return `"${string.replace(/"/g, '\\"')}"`;
-  }
-  return string;
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-export function escapeGitHubAction(string) {
-  return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
 /**
@@ -1526,17 +1353,6 @@ export function parseBoolean(value) {
 }
 
 /**
- * @param {string} value
- * @returns {number | undefined}
- */
-export function parseNumber(value) {
-  const number = Number(value);
-  if (!isNaN(number)) {
-    return number;
-  }
-}
-
-/**
  * @param {string} string
  * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
@@ -1544,20 +1360,20 @@ export function parseOs(string) {
   if (/darwin|apple|mac/i.test(string)) {
     return "darwin";
   }
-  if (/linux/i.test(string)) {
+  if (/linux|android/i.test(string)) {
     return "linux";
-  }
-  if (/win/i.test(string)) {
-    return "windows";
   }
   if (/freebsd/i.test(string)) {
     return "freebsd";
+  }
+  if (/win/i.test(string)) {
+    return "windows";
   }
   throw new Error(`Unsupported operating system: ${string}`);
 }
 
 /**
- * @returns {"darwin" | "linux" | "windows"}
+ * @returns {"darwin" | "linux" | "windows" | "freebsd"}
  */
 export function getOs() {
   return parseOs(process.platform);
@@ -1607,11 +1423,15 @@ export function getKernel() {
 }
 
 /**
- * @returns {"musl" | "gnu" | undefined}
+ * @returns {"musl" | "gnu" | "android" | undefined}
  */
 export function getAbi() {
   if (!isLinux) {
     return;
+  }
+
+  if (isAndroid || existsSync("/system/bin/linker64")) {
+    return "android";
   }
 
   if (existsSync("/etc/alpine-release")) {
@@ -1662,174 +1482,6 @@ export function getAbiVersion() {
 }
 
 /**
- * @typedef {object} Target
- * @property {"darwin" | "linux" | "windows"} os
- * @property {"x64" | "aarch64"} arch
- * @property {"musl"} [abi]
- * @property {boolean} [baseline]
- * @property {boolean} profile
- * @property {string} label
- */
-
-/**
- * @param {string} string
- * @returns {Target}
- */
-export function parseTarget(string) {
-  const os = parseOs(string);
-  const arch = parseArch(string);
-  const abi = os === "linux" && string.includes("-musl") ? "musl" : undefined;
-  const baseline = arch === "x64" ? string.includes("-baseline") : undefined;
-  const profile = string.includes("-profile");
-
-  let label = `${os}-${arch}`;
-  if (abi) {
-    label += `-${abi}`;
-  }
-  if (baseline) {
-    label += "-baseline";
-  }
-  if (profile) {
-    label += "-profile";
-  }
-
-  return { label, os, arch, abi, baseline, profile };
-}
-
-/**
- * @param {string} target
- * @param {string} [release]
- * @returns {Promise<URL>}
- */
-export async function getTargetDownloadUrl(target, release) {
-  const { label, os, arch, abi, baseline } = parseTarget(target);
-  const baseUrl = "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/";
-  const filename = `bun-${label}.zip`;
-
-  const exists = async url => {
-    const { status } = await curl(url, { method: "HEAD" });
-    return status !== 404;
-  };
-
-  if (!release || /^(stable|latest|canary)$/i.test(release)) {
-    const tag = release === "canary" ? "canary" : "latest";
-    const url = new URL(`${tag}/${filename}`, baseUrl);
-    if (await exists(url)) {
-      return url;
-    }
-  }
-
-  if (/^(bun-v|v)?(\d+\.\d+\.\d+)$/i.test(release)) {
-    const [, major, minor, patch] = /(\d+)\.(\d+)\.(\d+)/i.exec(release);
-    const url = new URL(`bun-v${major}.${minor}.${patch}/${filename}`, baseUrl);
-    if (await exists(url)) {
-      return url;
-    }
-  }
-
-  if (/^https?:\/\//i.test(release) && (await exists(release))) {
-    return new URL(release);
-  }
-
-  if (release.length === 40 && /^[0-9a-f]{40}$/i.test(release)) {
-    const releaseUrl = new URL(`${release}/${filename}`, baseUrl);
-    if (await exists(releaseUrl)) {
-      return releaseUrl;
-    }
-
-    const canaryUrl = new URL(`${release}-canary/${filename}`, baseUrl);
-    if (await exists(canaryUrl)) {
-      return canaryUrl;
-    }
-
-    const statusUrl = new URL(`repos/oven-sh/bun/commits/${release}/status`, getGithubApiUrl());
-    const { error, body } = await curl(statusUrl, { json: true });
-    if (error) {
-      throw new Error(`Failed to fetch commit status: ${release}`, { cause: error });
-    }
-
-    const { statuses } = body;
-    const buildUrls = new Set();
-    for (const { target_url: url } of statuses) {
-      const { hostname, origin, pathname } = new URL(url);
-      if (hostname === "buildkite.com") {
-        buildUrls.add(`${origin}${pathname}.json`);
-      }
-    }
-
-    const buildkiteUrl = new URL("https://buildkite.com/");
-    for (const url of buildUrls) {
-      const { status, error, body } = await curl(url, { json: true });
-      if (status === 404) {
-        continue;
-      }
-      if (error) {
-        throw new Error(`Failed to fetch build: ${url}`, { cause: error });
-      }
-
-      const { jobs } = body;
-      const job = jobs.find(
-        ({ step_key: key }) =>
-          key &&
-          key.includes("build-bun") &&
-          key.includes(os) &&
-          key.includes(arch) &&
-          (!baseline || key.includes("baseline")) &&
-          (!abi || key.includes(abi)),
-      );
-      if (!job) {
-        continue;
-      }
-
-      const { base_path: jobPath } = job;
-      const artifactsUrl = new URL(`${jobPath}/artifacts`, buildkiteUrl);
-      {
-        const { error, body } = await curl(artifactsUrl, { json: true });
-        if (error) {
-          continue;
-        }
-
-        for (const { url, file_name: name } of body) {
-          if (name === filename) {
-            return new URL(url, artifactsUrl);
-          }
-        }
-      }
-    }
-  }
-
-  throw new Error(`Failed to find release: ${release}`);
-}
-
-/**
- * @param {string} target
- * @param {string} [release]
- * @returns {Promise<string>}
- */
-export async function downloadTarget(target, release) {
-  const url = await getTargetDownloadUrl(target, release);
-  const { error, body } = await curl(url, { arrayBuffer: true });
-  if (error) {
-    throw new Error(`Failed to download target: ${target} at ${release}`, { cause: error });
-  }
-
-  const tmpPath = mkdtempSync(join(tmpdir(), "bun-download-"));
-  const zipPath = join(tmpPath, "bun.zip");
-
-  writeFileSync(zipPath, new Uint8Array(body));
-  const unzipPath = await unzip(zipPath, tmpPath);
-
-  for (const entry of readdirSync(unzipPath, { recursive: true, encoding: "utf-8" })) {
-    const exePath = join(unzipPath, entry);
-    if (/bun(?:\.exe)?$/i.test(entry)) {
-      return exePath;
-    }
-  }
-
-  throw new Error(`Failed to find bun executable: ${unzipPath}`);
-}
-
-/**
  * @returns {string}
  */
 export function getTailscale() {
@@ -1837,6 +1489,13 @@ export function getTailscale() {
     const tailscaleApp = "/Applications/Tailscale.app/Contents/MacOS/tailscale";
     if (existsSync(tailscaleApp)) {
       return tailscaleApp;
+    }
+  }
+
+  if (isWindows) {
+    const tailscaleExe = "C:\\Program Files\\Tailscale\\tailscale.exe";
+    if (existsSync(tailscaleExe)) {
+      return tailscaleExe;
     }
   }
 
@@ -1915,35 +1574,7 @@ export function getUsernameForDistro(distro) {
   if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
     return "ec2-user";
   }
-  if (/freebsd/i.test(distro)) {
-    return "root";
-  }
-
   throw new Error(`Unsupported distro: ${distro}`);
-}
-
-/**
- * @typedef {object} User
- * @property {string} username
- * @property {number} uid
- * @property {number} gid
- */
-
-/**
- * @param {string} username
- * @returns {Promise<User>}
- */
-export async function getUser(username) {
-  if (isWindows) {
-    throw new Error("TODO: Windows");
-  }
-
-  const [uid, gid] = await Promise.all([
-    spawnSafe(["id", "-u", username]).then(({ stdout }) => parseInt(stdout.trim())),
-    spawnSafe(["id", "-g", username]).then(({ stdout }) => parseInt(stdout.trim())),
-  ]);
-
-  return { username, uid, gid };
 }
 
 /**
@@ -2050,7 +1681,7 @@ export function getShell() {
 }
 
 /**
- * @typedef {"aws" | "google"} Cloud
+ * @typedef {"aws" | "google" | "azure"} Cloud
  */
 
 /** @type {Cloud | undefined} */
@@ -2144,6 +1775,37 @@ export async function isGoogleCloud() {
 }
 
 /**
+ * @returns {Promise<boolean | undefined>}
+ */
+export async function isAzure() {
+  if (typeof detectedCloud === "string") {
+    return detectedCloud === "azure";
+  }
+
+  async function detectAzure() {
+    // Azure IMDS (Instance Metadata Service) — the official way to detect Azure VMs.
+    // https://learn.microsoft.com/en-us/azure/virtual-machines/instance-metadata-service
+    const { error, body } = await curl("http://169.254.169.254/metadata/instance?api-version=2021-02-01", {
+      headers: { "Metadata": "true" },
+      retries: 1,
+    });
+    if (!error && body) {
+      try {
+        const metadata = JSON.parse(body);
+        if (metadata?.compute?.azEnvironment) {
+          return true;
+        }
+      } catch {}
+    }
+  }
+
+  if (await detectAzure()) {
+    detectedCloud = "azure";
+    return true;
+  }
+}
+
+/**
  * @returns {Promise<Cloud | undefined>}
  */
 export async function getCloud() {
@@ -2157,6 +1819,10 @@ export async function getCloud() {
 
   if (await isGoogleCloud()) {
     return "google";
+  }
+
+  if (await isAzure()) {
+    return "azure";
   }
 }
 
@@ -2182,6 +1848,10 @@ export async function getCloudMetadata(name, cloud) {
   } else if (cloud === "google") {
     url = new URL(name, "http://metadata.google.internal/computeMetadata/v1/instance/");
     headers = { "Metadata-Flavor": "Google" };
+  } else if (cloud === "azure") {
+    // Azure IMDS uses a single JSON endpoint; individual fields are extracted by the caller.
+    url = new URL("http://169.254.169.254/metadata/instance?api-version=2021-02-01");
+    headers = { "Metadata": "true" };
   } else {
     throw new Error(`Unsupported cloud: ${inspect(cloud)}`);
   }
@@ -2200,13 +1870,190 @@ export async function getCloudMetadata(name, cloud) {
  * @param {Cloud} [cloud]
  * @returns {Promise<string | undefined>}
  */
-export function getCloudMetadataTag(tag, cloud) {
+export async function getCloudMetadataTag(tag, cloud) {
+  cloud ??= await getCloud();
+
+  if (cloud === "azure") {
+    // Azure IMDS returns all tags in a single JSON response.
+    // Tags are in compute.tagsList as [{name, value}, ...].
+    const body = await getCloudMetadata("", cloud);
+    if (!body) return;
+    try {
+      const metadata = JSON.parse(body);
+      const tags = metadata?.compute?.tagsList;
+      if (Array.isArray(tags)) {
+        const entry = tags.find(t => t.name === tag);
+        return entry?.value;
+      }
+    } catch {}
+    return;
+  }
+
   const metadata = {
     "aws": `tags/instance/${tag}`,
     "google": `labels/${tag.replace(":", "-")}`,
   };
 
   return getCloudMetadata(metadata, cloud);
+}
+
+/**
+ * @typedef {Object} AwsCredentials
+ * @property {string} AccessKeyId
+ * @property {string} SecretAccessKey
+ * @property {string} [Token]
+ */
+
+/**
+ * Instance-role credentials from IMDS.
+ * @returns {Promise<AwsCredentials | undefined>}
+ */
+async function getAwsInstanceCredentials() {
+  const role = await getCloudMetadata("iam/security-credentials/", "aws");
+  if (!role) {
+    return;
+  }
+  const body = await getCloudMetadata(`iam/security-credentials/${role.trim()}`, "aws");
+  if (!body) {
+    return;
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return;
+  }
+}
+
+/**
+ * Signs an AWS API request (SigV4). agent.mjs ships to the AMI as a single
+ * bundled file, so this avoids pulling in the SDK.
+ * @param {Object} request
+ * @param {string} request.method
+ * @param {string} request.host
+ * @param {string} request.path
+ * @param {string} request.body
+ * @param {string} request.service
+ * @param {string} request.region
+ * @param {Record<string, string>} request.headers
+ * @param {AwsCredentials} request.credentials
+ * @param {Date} [request.date]
+ * @returns {Record<string, string>} headers, including Authorization
+ */
+export function signAwsRequest({ method, host, path, body, service, region, headers, credentials, date }) {
+  const { AccessKeyId, SecretAccessKey, Token } = credentials;
+  const amzDate = (date ?? new Date()).toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const day = amzDate.slice(0, 8);
+  const bodyHash = sha256(body);
+
+  const signed = {
+    ...headers,
+    "host": host,
+    "x-amz-date": amzDate,
+    "x-amz-content-sha256": bodyHash,
+  };
+  if (Token) {
+    signed["x-amz-security-token"] = Token;
+  }
+
+  const canonical = Object.entries(signed)
+    .map(([key, value]) => [key.toLowerCase(), `${value}`.trim()])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const canonicalHeaders = canonical.map(([key, value]) => `${key}:${value}\n`).join("");
+  const signedHeaders = canonical.map(([key]) => key).join(";");
+  const canonicalRequest = [method, path, "", canonicalHeaders, signedHeaders, bodyHash].join("\n");
+
+  const scope = `${day}/${region}/${service}/aws4_request`;
+  const stringToSign = ["AWS4-HMAC-SHA256", amzDate, scope, sha256(canonicalRequest)].join("\n");
+
+  const hmac = (key, data) => createHmac("sha256", key).update(data).digest();
+  const signingKey = hmac(hmac(hmac(hmac(`AWS4${SecretAccessKey}`, day), region), service), "aws4_request");
+  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+
+  return {
+    ...signed,
+    "Authorization": `AWS4-HMAC-SHA256 Credential=${AccessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+  };
+}
+
+/**
+ * Reads a secret from AWS Secrets Manager using the instance role.
+ * @param {string} secretId
+ * @param {Object} [options]
+ * @param {string} [options.region] defaults to the instance's region
+ * @param {AwsCredentials} [options.credentials] defaults to IMDS credentials
+ * @returns {Promise<string | undefined>}
+ */
+export async function getAwsSecret(secretId, options = {}) {
+  const region = options["region"] || (await getCloudMetadata("placement/region", "aws")) || "us-east-1";
+  const credentials = options["credentials"] || (await getAwsInstanceCredentials());
+  if (!credentials) {
+    console.warn("Failed to get AWS secret: no instance credentials");
+    return;
+  }
+
+  const host = `secretsmanager.${region}.amazonaws.com`;
+  const body = JSON.stringify({ SecretId: secretId });
+  const headers = signAwsRequest({
+    method: "POST",
+    host,
+    path: "/",
+    body,
+    service: "secretsmanager",
+    region,
+    credentials,
+    headers: {
+      "Content-Type": "application/x-amz-json-1.1",
+      "X-Amz-Target": "secretsmanager.GetSecretValue",
+    },
+  });
+
+  const { error, body: response } = await curl(`https://${host}/`, {
+    method: "POST",
+    headers,
+    body,
+    json: true,
+    retries: 5,
+  });
+  if (error) {
+    console.warn("Failed to get AWS secret:", error);
+    return;
+  }
+
+  return response?.["SecretString"];
+}
+
+/**
+ * Reads a secret from Azure Key Vault using the VM's managed identity.
+ * @param {string} vaultName
+ * @param {string} secretName
+ * @returns {Promise<string | undefined>}
+ */
+export async function getAzureSecret(vaultName, secretName) {
+  const identityUrl =
+    "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fvault.azure.net";
+  const { error: identityError, body: identity } = await curl(identityUrl, {
+    headers: { "Metadata": "true" },
+    json: true,
+    retries: 10,
+  });
+  const accessToken = identity?.["access_token"];
+  if (identityError || !accessToken) {
+    console.warn("Failed to get Azure managed identity token:", identityError);
+    return;
+  }
+
+  const secretUrl = `https://${vaultName}.vault.azure.net/secrets/${secretName}?api-version=7.4`;
+  const { error, body } = await curl(secretUrl, {
+    headers: { "Authorization": `Bearer ${accessToken}` },
+    json: true,
+    retries: 5,
+  });
+  if (error) {
+    console.warn("Failed to get Azure secret:", error);
+    return;
+  }
+
+  return body?.["value"];
 }
 
 /**
@@ -2221,6 +2068,20 @@ export async function getBuildMetadata(name) {
       if (value) {
         return value;
       }
+    }
+  }
+}
+
+/**
+ * @param {string} name
+ * @param {string} value
+ * @returns {Promise<void>}
+ */
+export async function setBuildMetadata(name, value) {
+  if (isBuildkite) {
+    const { error } = await spawn(["buildkite-agent", "meta-data", "set", name, value]);
+    if (error) {
+      console.error(`Failed to set build meta-data '${name}':`, error);
     }
   }
 }
@@ -2360,7 +2221,7 @@ function parseLevel(level) {
  */
 
 /**
- * @param {Record<keyof Annotation, unknown>} options
+ * @param {Partial<Record<keyof Annotation, unknown>>} options
  * @param {AnnotationContext} [context]
  * @returns {Annotation}
  */
@@ -2373,11 +2234,14 @@ export function parseAnnotation(options, context) {
   const line = parseInt(options["line"]) || undefined;
   const column = parseInt(options["column"]) || undefined;
   const content = options["content"];
-  const lines = Array.isArray(content) ? content : content?.split(/(\r?\n)/) || [];
+  const lines = Array.isArray(content) ? content : content?.split(/\r?\n/) || [];
   const metadata = Object.fromEntries(
     Object.entries(options["metadata"] || {}).filter(([, value]) => value !== undefined),
   );
 
+  // Drop leading blank lines, collapse runs of blank lines, and drop the
+  // trailing blank line(s) a readUntil() in parseAnnotations() may have
+  // consumed as a block terminator.
   const relevantLines = [];
   let lastLine;
   for (const line of lines) {
@@ -2386,6 +2250,9 @@ export function parseAnnotation(options, context) {
     }
     lastLine = line.trim();
     relevantLines.push(line);
+  }
+  while (relevantLines.length > 0 && !relevantLines[relevantLines.length - 1].trim()) {
+    relevantLines.pop();
   }
 
   let filename;
@@ -2498,7 +2365,7 @@ export function parseAnnotations(content) {
   /** @type {Annotation[]} */
   const annotations = [];
 
-  const originalLines = content.split(/(\r?\n)/);
+  const originalLines = content.split(/\r?\n/);
   const lines = [];
 
   for (let i = 0; i < originalLines.length; i++) {
@@ -2507,25 +2374,29 @@ export function parseAnnotations(content) {
     const bufferedLines = [originalLine];
 
     /**
+     * Consume the lines after the current one into `bufferedLines`, through
+     * the first line matching `pattern` (inclusive) or `maxLines` lines if
+     * none matches. Leaves `i` on the last consumed line, so the outer loop
+     * resumes after it; can be called again to consume further.
+     *
      * @param {RegExp} pattern
-     * @param {number} [maxLength]
-     * @returns {{lines: string[], match: string[] | undefined}}
+     * @param {number} [maxLines]
+     * @returns {{lines: string[], match: RegExpExecArray | undefined}}
      */
-    const readUntil = (pattern, maxLength = 100) => {
-      let length = 0;
+    const readUntil = (pattern, maxLines = 100) => {
+      const start = i + 1;
       let match;
 
-      while (i + length < originalLines.length && length < maxLength) {
-        const originalLine = originalLines[i + length++];
-        const line = stripAnsi(originalLine).trim();
-        const patternMatch = pattern.exec(line);
+      while (i + 1 < originalLines.length && i + 1 - start < maxLines) {
+        i++;
+        const patternMatch = pattern.exec(stripAnsi(originalLines[i]).trim());
         if (patternMatch) {
           match = patternMatch;
           break;
         }
       }
 
-      const lines = originalLines.slice(i + 1, (i += length));
+      const lines = originalLines.slice(start, i + 1);
       bufferedLines.push(...lines);
       return { lines, match };
     };
@@ -2581,26 +2452,31 @@ export function parseAnnotations(content) {
       annotations.push(annotation);
     }
 
-    // Zig compiler error
-    // e.g. /path/to/build.zig:8:19: error: ...
-    const zigMessage = line.match(/^(.+\.zig):(\d+):(\d+): (error|warning): (.+)$/);
-    if (zigMessage) {
-      const [, filename, line, column, level] = zigMessage;
-
-      const { match: callStackMatch } = readUntil(/referenced by:/i);
-      if (callStackMatch) {
-        readUntil(/(.+\.zig):(\d+):(\d+)/i, 5);
-      }
-
+    // rustc / cargo error
+    // e.g. error[E0308]: mismatched types
+    //        --> src/http/lib.rs:553:5
+    // The header line carries the level + (optional) code; the location
+    // arrives on the following `-->` line (absent for diagnostics without a
+    // span, e.g. "error: linking with `cc` failed"). The body runs until the
+    // blank line rustc emits after every diagnostic, so the annotation
+    // contains the rendered span + help/note lines; the cap is only a guard
+    // against output that never has one.
+    const rustHeader = line.match(/^(error|warning)(\[[A-Z0-9]+\])?: (.+)$/);
+    if (rustHeader && !/\b(generated|emitted)\b/.test(line) /* "warning: 3 warnings emitted" */) {
+      const [, level, code, title] = rustHeader;
+      const { lines: body } = readUntil(/^$/, 30);
+      const locMatch = stripAnsi(body[0] ?? "").match(/-->\s+(.+?):(\d+):(\d+)/);
       const annotation = parseAnnotation({
-        source: "zig",
+        source: "rustc",
         level,
-        filename,
-        line,
-        column,
+        filename: locMatch?.[1],
+        line: locMatch?.[2],
+        column: locMatch?.[3],
+        title: code ? `${code} ${title}` : title,
         content: bufferedLines,
       });
       annotations.push(annotation);
+      continue;
     }
 
     const nodeJsError = line.match(/^file:\/\/(.+\.(?:c|m)js):(\d+)/i);
@@ -2681,37 +2557,57 @@ export function reportAnnotationToBuildKite({ context, label, content, style = "
   if (!isBuildkite) {
     return;
   }
+  // BuildKite rejects annotation contexts > 100 chars (`400 Bad Request: This
+  // context is too long`). rustc diagnostic titles routinely exceed that and
+  // were silently dropped, leaving only short warnings visible in the UI.
+  const ctx = `${context || label}`.slice(0, 100);
   const { error, status, signal, stderr } = nodeSpawnSync(
     "buildkite-agent",
-    ["annotate", "--append", "--style", `${style}`, "--context", `${context || label}`, "--priority", `${priority}`],
+    ["annotate", "--append", "--style", `${style}`, "--context", ctx, "--priority", `${priority}`],
     {
       input: content,
       stdio: ["pipe", "ignore", "pipe"],
       encoding: "utf-8",
-      timeout: 5_000,
+      timeout: 30_000,
     },
   );
   if (status === 0) {
     return;
   }
-  if (attempt > 0) {
-    const cause = error ?? signal ?? `code ${status}`;
-    throw new Error(`Failed to create annotation: ${label}`, { cause });
+  const cause = error?.message || signal || (status == null ? "timed out" : `exit code ${status}`);
+  if (attempt === 0) {
+    console.error(`buildkite-agent annotate failed for '${label}' (${cause}), retrying...`);
+    return reportAnnotationToBuildKite({ context, label, content, style, priority, attempt: attempt + 1 });
   }
-  const errorContent = formatAnnotationToHtml({
-    title: "annotation error",
-    content: stderr || "",
-    source: "buildkite",
-    level: "error",
+  // Annotations are best-effort: log and move on rather than throwing, which
+  // would abort the test runner mid-suite over a cosmetic failure.
+  console.error(`buildkite-agent annotate failed for '${label}' after retry (${cause}), giving up`);
+  if (stderr) console.error(stderr);
+}
+
+/**
+ * Mark this Buildkite job as having handled its own failure reporting.
+ *
+ * The repository `.buildkite/hooks/pre-exit` hook posts a generic fallback
+ * annotation for any step that exits non-zero without this marker set, so
+ * infra failures that happen before (or crash) the runner/build scripts are
+ * still surfaced in the build's annotation list instead of being visible only
+ * in the raw job log. Call this from every controlled exit path that has
+ * already posted (or had nothing to post) so the fallback stays quiet. The
+ * marker is build meta-data, which is server-side and so remains visible to
+ * the host pre-exit hook even when the reporter ran inside an ephemeral VM.
+ */
+export function markBuildkiteStepReported() {
+  if (!isBuildkite) return;
+  const jobId = getEnv("BUILDKITE_JOB_ID", false);
+  if (!jobId) return;
+  const { status } = nodeSpawnSync("buildkite-agent", ["meta-data", "set", `reported-${jobId}`, "1"], {
+    stdio: "ignore",
+    timeout: 30_000,
   });
-  reportAnnotationToBuildKite({
-    context,
-    label: `${label}-error`,
-    content: errorContent,
-    style,
-    priority,
-    attempt: attempt + 1,
-  });
+  if (status !== 0) {
+    console.error(`buildkite-agent meta-data set reported-${jobId} failed (non-fatal)`);
+  }
 }
 
 /**
@@ -2754,10 +2650,24 @@ export function toYaml(obj, indent = 0) {
         value.includes("#") ||
         value.includes("'") ||
         value.includes('"') ||
+        value.includes("\\") ||
         value.includes("\n") ||
-        value.includes("*"))
+        value.includes("*") ||
+        value.includes("&") ||
+        value.includes("!") ||
+        value.includes("|") ||
+        value.includes(">") ||
+        value.includes("%") ||
+        value.includes("@") ||
+        value.includes("`") ||
+        value.includes("{") ||
+        value.includes("}") ||
+        value.includes("[") ||
+        value.includes("]") ||
+        value.includes(",") ||
+        value.includes(";"))
     ) {
-      result += `${spaces}${key}: "${value.replace(/"/g, '\\"')}"\n`;
+      result += `${spaces}${key}: "${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"\n`;
       continue;
     }
     result += `${spaces}${key}: ${value}\n`;
@@ -2940,15 +2850,18 @@ export function getLoggedInUserCountOrDetails() {
     const users = stdout
       .split("\n")
       .filter(line => /tty|pts/i.test(line))
+      // Only count REMOTE logins (have an `(ip)` suffix from sshd). A local
+      // console/auto-login (e.g. cirruslabs CI VM images log the admin user in
+      // on ttys000 at boot) has no source host and isn't a human debugging the
+      // job — waiting for it would hang the runner forever.
+      .filter(line => /\([^)]+\)\s*$/.test(line))
       .map(line => {
-        // who output format: username terminal date/time (ip)
-        const [username, terminal, datetime, ip] = line.split(/\s+/);
-        return {
-          username,
-          terminal,
-          datetime,
-          ip: (ip || "").replace(/[()]/g, ""), // Remove parentheses from IP
-        };
+        // `who` output: `username terminal date time (host)`. The date/time
+        // field has spaces, so a plain split() can't slice it cleanly — take
+        // the first two tokens and pull the host from the trailing `(...)`.
+        const [username, terminal] = line.split(/\s+/);
+        const ip = line.match(/\(([^)]+)\)\s*$/)?.[1] || "";
+        return { username, terminal, ip };
       });
 
     if (users.length === 0) {
@@ -2958,7 +2871,7 @@ export function getLoggedInUserCountOrDetails() {
     let message = `${users.length} currently logged in users:`;
 
     for (const user of users) {
-      message += `\n- ${user.username} on ${user.terminal} since ${user.datetime}${user.ip ? ` from ${user.ip}` : ""}`;
+      message += `\n- ${user.username} on ${user.terminal}${user.ip ? ` from ${user.ip}` : ""}`;
     }
 
     return message;
@@ -2985,10 +2898,11 @@ const emojiMap = {
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],
+  package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
-  freebsd: ["😈", "freebsd"],
   openbsd: ["🐡", "openbsd"],
   netbsd: ["🚩", "netbsd"],
+  freebsd: ["😈", "freebsd"],
 };
 
 /**

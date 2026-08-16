@@ -63,7 +63,7 @@ export default {
 
 Keep in mind that **these are not ES modules**. `export default` is only syntax sugar to assign to the variable `$exports`, which is actually how the module exports its contents.
 
-To actually wire up one of these modules to the resolver, that is done separately in `module_resolver.zig`. Maybe in the future we can do codegen for it.
+To actually wire up one of these modules to the resolver, that is done separately in `src/resolve_builtins/`. Maybe in the future we can do codegen for it.
 
 ## Builtin Functions
 
@@ -76,9 +76,9 @@ object->putDirectBuiltinFunction(
   vm,
   globalObject,
   identifier,
-  // ReadableStream.ts, `function readableStreamToJSON()`
+  // Fifo.ts, `function createFIFO()`
   // This returns a FunctionExecutable* (extends JSCell*, but not JSFunction*).
-  readableStreamReadableStreamToJSONCodeGenerator(vm),
+  fifoCreateFIFOCodeGenerator(vm),
   JSC::PropertyAttribute::DontDelete | 0
 );
 ```

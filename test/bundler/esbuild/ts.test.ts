@@ -843,6 +843,7 @@ describe("bundler", () => {
 
         new Foo().bar()
       `,
+      "/tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
     },
     run: {
       stdout: `
@@ -1029,6 +1030,7 @@ describe("bundler", () => {
         }
         console.log(Foo, Bar)
       `,
+      "/tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
     },
     bundling: false,
     onAfterBundle(api) {

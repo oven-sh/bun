@@ -21,8 +21,6 @@
 // (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-const todoOnWindows = process.platform === "win32" ? test.todo : test;
-
 if (typeof Bun !== "undefined") {
   const aggressiveGC = Bun.unsafe.gcAggressionLevel();
   beforeAll(() => {
@@ -450,20 +448,27 @@ describe("v8 date parser", () => {
   });
 
   // https://github.com/v8/v8/blob/c45b7804109ece574f71fd45417b4ad498a99e6f/test/intl/regress-1451943.js#L5
-  // TODO: fix this on windows, see https://github.com/v8/v8/commit/8cf4ef33389eb4f47b37ffede388dbdcce16e1ee#diff-9adde1d14b1ec0068b077d06b5dadf0aae9717f63c809263604f9853d27d11db
-  todoOnWindows("test/intl/regress-1451943.js", () => {
+  test("test/intl/regress-1451943.js", () => {
     let beforeOct1582GregorianTransition = new Date("1582-01-01T00:00Z");
     let afterOct1582GregorianTransition = new Date("1583-01-01T00:00Z");
 
-    expect(beforeOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "gregory" })).toBe(
-      "1/1/1582",
-    );
-    expect(beforeOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "iso8601" })).toBe(
-      "1/1/1582",
-    );
-    expect(afterOct1582GregorianTransition.toLocaleDateString("en-US", { timeZone: "UTC", calendar: "iso8601" })).toBe(
-      "1/1/1583",
-    );
+    // The regression: with calendar "iso8601" (which is proleptic Gregorian),
+    // dates before the Oct 1582 Julian→Gregorian transition were getting a
+    // 10-day Julian offset applied. The original V8 test asserted the en-US
+    // formatted string, but on macOS Bun links the system libicucore, whose
+    // CLDR data varies by OS release — older ICU formats the iso8601 calendar
+    // as "1/1/1582", newer (macOS 26+, and current upstream V8) as
+    // "1582-01-01". Assert the year/month/day values instead so the calendar
+    // behaviour is checked without depending on the locale's date pattern.
+    const ymd = (date, calendar) => {
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", calendar }).formatToParts(date);
+      const get = type => +parts.find(p => p.type === type).value;
+      return { year: get("year"), month: get("month"), day: get("day") };
+    };
+
+    expect(ymd(beforeOct1582GregorianTransition, "gregory")).toEqual({ year: 1582, month: 1, day: 1 });
+    expect(ymd(beforeOct1582GregorianTransition, "iso8601")).toEqual({ year: 1582, month: 1, day: 1 });
+    expect(ymd(afterOct1582GregorianTransition, "iso8601")).toEqual({ year: 1583, month: 1, day: 1 });
   });
 
   test("random invalid dates in JSC", () => {

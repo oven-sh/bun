@@ -105,6 +105,20 @@ import { readableStreamFromArray } from "harness";
     });
   }
 
+  test("encoding attribute is stable after close/abort/cancel", async () => {
+    for (const terminate of [
+      (s: TextDecoderStream) => s.writable.getWriter().close(),
+      (s: TextDecoderStream) => s.writable.getWriter().abort(),
+      (s: TextDecoderStream) => s.readable.getReader().cancel(),
+    ]) {
+      const s = new TextDecoderStream("utf-16le");
+      expect(s.encoding).toBe("utf-16le");
+      await terminate(s);
+      expect(s.encoding).toBe("utf-16le");
+      expect(s.fatal).toBe(false);
+    }
+  });
+
   for (const falseValue of [false, 0, "", undefined, null]) {
     test(`setting fatal to '${falseValue}' should set the attribute to false`, () => {
       const stream = new TextDecoderStream("utf-8", { fatal: falseValue });
@@ -133,6 +147,21 @@ import { readableStreamFromArray } from "harness";
     expect(() => {
       new TextDecoderStream("");
     }).toThrow(RangeError);
+  });
+
+  // https://encoding.spec.whatwg.org/#dom-textdecoderstream: same label rules
+  // as TextDecoder, including the `replacement` rejection.
+  test("constructing with a replacement-encoding label should throw", () => {
+    expect(() => {
+      new TextDecoderStream("replacement");
+    }).toThrow(RangeError);
+  });
+
+  test("legacy single-byte encodings decode through the stream", async () => {
+    // "Привет" in ISO-8859-5, split mid-word.
+    const input = readableStreamFromArray([new Uint8Array([0xbf, 0xe0, 0xd8]), new Uint8Array([0xd2, 0xd5, 0xe2])]);
+    const output = input.pipeThrough(new TextDecoderStream("iso-8859-5"));
+    expect((await Bun.readableStreamToArray(output)).join("")).toBe("Привет");
   });
 
   test("constructing with a non-stringifiable encoding should throw", () => {
@@ -165,3 +194,94 @@ import { readableStreamFromArray } from "harness";
     }).toThrow(Error);
   });
 }
+
+// Web IDL: `new TextDecoderStream(label, options)` treats undefined/null options as {}.
+test("TextDecoderStream accepts undefined and null options", () => {
+  for (const options of [undefined, null]) {
+    const stream = new TextDecoderStream("utf-8", options);
+    expect(stream.fatal).toBe(false);
+    expect(stream.ignoreBOM).toBe(false);
+  }
+  expect(new TextDecoderStream("utf-8", { fatal: true }).fatal).toBe(true);
+});
+
+// utf-8 non-fatal fast path (shared with Body.textStream()): a leading BOM is
+// stripped by default, preserved with ignoreBOM, and maximal-subpart
+// replacement matches TextDecoder.
+test("utf-8 fast path: BOM stripping matches ignoreBOM", async () => {
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, 0x41]);
+  for (const [ignoreBOM, expected] of [
+    [false, "A"],
+    [true, "\uFEFFA"],
+  ] as const) {
+    const out = await Bun.readableStreamToArray(
+      readableStreamFromArray([bom]).pipeThrough(new TextDecoderStream("utf-8", { ignoreBOM })),
+    );
+    expect(out.join("")).toBe(expected);
+  }
+});
+
+test("utf-8 fast path: malformed-sequence replacement matches TextDecoder", async () => {
+  // Overlong / surrogate-range sequences: each byte is its own maximal subpart.
+  const cases: Array<[number[], string]> = [
+    [[0xf0, 0x8f, 0x92], "\uFFFD\uFFFD\uFFFD"],
+    [[0xe0, 0x80], "\uFFFD\uFFFD"],
+    [[0xf0, 0x9f, 0x41], "\uFFFDA"],
+  ];
+  for (const [bytes, expected] of cases) {
+    const td = new TextDecoder("utf-8");
+    expect(td.decode(new Uint8Array(bytes))).toBe(expected);
+    const out = await Bun.readableStreamToArray(
+      readableStreamFromArray([new Uint8Array(bytes)]).pipeThrough(new TextDecoderStream()),
+    );
+    expect(out.join("")).toBe(expected);
+  }
+});
+
+test("utf-8 fast path: a split BOM across chunks is stripped", async () => {
+  const out = await Bun.readableStreamToArray(
+    readableStreamFromArray([new Uint8Array([0xef]), new Uint8Array([0xbb, 0xbf, 0x42])]).pipeThrough(
+      new TextDecoderStream(),
+    ),
+  );
+  expect(out.join("")).toBe("B");
+});
+
+// fatal:true takes the Rust TextDecoder path (not the fast path).
+test("utf-8 fatal: split valid sequence across chunks decodes", async () => {
+  const out = await Bun.readableStreamToArray(
+    readableStreamFromArray([new Uint8Array([0xf0, 0x9f]), new Uint8Array([0x92, 0x99])]).pipeThrough(
+      new TextDecoderStream("utf-8", { fatal: true }),
+    ),
+  );
+  expect(out.join("")).toBe("\u{1F499}");
+});
+
+test("utf-8 fatal: truncated sequence rejects at flush", async () => {
+  const out = readableStreamFromArray([new Uint8Array([0xf0, 0x9f, 0x92])]).pipeThrough(
+    new TextDecoderStream("utf-8", { fatal: true }),
+  );
+  await expect(Bun.readableStreamToArray(out)).rejects.toBeInstanceOf(TypeError);
+});
+
+// The transform/flush arm runs the native decoder directly, so monkeypatching
+// TextDecoder.prototype.decode no longer reaches it.
+test("TextDecoderStream does not call a patched TextDecoder.prototype.decode", async () => {
+  const original = TextDecoder.prototype.decode;
+  let called = false;
+  try {
+    TextDecoder.prototype.decode = function (...args) {
+      called = true;
+      return original.apply(this, args);
+    };
+    const stream = new TextDecoderStream();
+    const reader = stream.readable.getReader();
+    const writer = stream.writable.getWriter();
+    reader.read();
+    await writer.write(new Uint8Array([120]));
+    await writer.close();
+    expect(called).toBe(false);
+  } finally {
+    TextDecoder.prototype.decode = original;
+  }
+});

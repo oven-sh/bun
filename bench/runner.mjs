@@ -14,3 +14,4 @@ export function run(opts = {}) {
 
 export const bench = Mitata.bench;
 export const group = Mitata.group;
+export const summary = Mitata.summary;

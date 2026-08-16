@@ -1,0 +1,42 @@
+[package]
+name = "bun_sql_jsc"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bun_alloc.workspace = true
+bun_opaque.workspace = true
+bun_io.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+bun_analytics.workspace = true
+bun_base64.workspace = true
+bun_boringssl.workspace = true
+bun_boringssl_sys.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_event_loop.workspace = true
+bun_jsc.workspace = true
+bun_ptr.workspace = true
+bun_sha_hmac.workspace = true
+# TODO(b2-blocked): bun_runtime fails to compile (concurrent B-2 work —
+# `strings::to_lower_ascii_stack` missing in EVP.rs). The only consumer here
+# is `postgres::sasl::SASL::compute_salted_password` (PBKDF2), whose body is
+# gated until bun_runtime is green again.
+# bun_runtime.workspace = true
+bun_sql.workspace = true
+bun_uws.workspace = true
+bun_uws_sys.workspace = true

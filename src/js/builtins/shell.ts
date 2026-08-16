@@ -149,7 +149,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     cwd(newCwd?: string): this {
       this.#throwIfRunning();
       if (typeof newCwd === "undefined" || newCwd === "." || newCwd === "" || newCwd === "./") {
-        newCwd = defaultCwd;
+        newCwd = defaultCwd ?? process.cwd();
       }
       this.#args!.setCwd(newCwd);
       return this;
@@ -277,7 +277,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     cwd(newCwd: string | undefined) {
       if (typeof newCwd === "undefined" || typeof newCwd === "string") {
         if (newCwd === "." || newCwd === "" || newCwd === "./") {
-          newCwd = defaultCwd;
+          newCwd = defaultCwd ?? process.cwd();
         }
 
         this[cwdSymbol] = newCwd;
@@ -336,6 +336,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     Object.setPrototypeOf(Shell, ShellPrototype.prototype);
     Object.defineProperty(Shell, "name", { value: "Shell", configurable: true, enumerable: true });
+
+    Shell[cwdSymbol] = defaultCwd;
+    Shell[envSymbol] = defaultEnv;
+    Shell[throwsSymbol] = true;
 
     return Shell;
   }

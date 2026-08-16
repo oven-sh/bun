@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("use strict causes CommonJS", () => {
   const { stdout, exitCode } = Bun.spawnSync({
@@ -208,4 +208,47 @@ test("math.pow", () => {
   expect(10 ** (-1 / 20) + "").toEqual("0.8912509381337456");
   expect(foo2(20.4) + "").toEqual("0.22140372138502384");
   expect(20.4 ** -0.5 + "").toEqual("0.22140372138502384");
+});
+
+describe("unterminated string literals in large files", () => {
+  test("reports an unterminated string literal at the end of a large JavaScript file", async () => {
+    using dir = tempDir("transpiler-long-unterminated-js", {
+      "index.js": `var s = "${Buffer.alloc(1 << 20, "a").toString()}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Unterminated string literal");
+    expect(exitCode).toBe(1);
+  });
+
+  test("reports an unterminated string literal at the end of a large JSON file", async () => {
+    using dir = tempDir("transpiler-long-unterminated-json", {
+      "tsconfig.big.json": `{"name": "${Buffer.alloc(1 << 20, "a").toString()}`,
+      "index.js": `require("./tsconfig.big.json");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Unterminated string literal");
+    expect(exitCode).toBe(1);
+  });
 });

@@ -51,16 +51,20 @@ RUN chmod +x /docker-entrypoint-initdb.d/init-users-db.sh
 
 # Create pg_hba.conf with SSL requirements
 RUN mkdir -p /etc/postgresql && touch /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all postgres 127.0.0.1/32 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test 127.0.0.1/32 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_md5 127.0.0.1/32 md5" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_scram 127.0.0.1/32 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all postgres ::1/128 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test ::1/128 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_md5 ::1/128 md5" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl all bun_sql_test_scram ::1/128 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl replication all 127.0.0.1/32 trust" >> /etc/postgresql/pg_hba.conf && \
-    echo "hostssl replication all ::1/128 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "# Allow local socket connections for init scripts" >> /etc/postgresql/pg_hba.conf && \
+    echo "local all postgres trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "local all all trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "# Remote TLS connections" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all postgres 0.0.0.0/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test 0.0.0.0/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_md5 0.0.0.0/0 md5" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_scram 0.0.0.0/0 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all postgres ::/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test ::/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_md5 ::/0 md5" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl all bun_sql_test_scram ::/0 scram-sha-256" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl replication all 0.0.0.0/0 trust" >> /etc/postgresql/pg_hba.conf && \
+    echo "hostssl replication all ::/0 trust" >> /etc/postgresql/pg_hba.conf && \
     echo "host all all all reject" >> /etc/postgresql/pg_hba.conf
 
 # Configure PostgreSQL for SSL
@@ -71,8 +75,24 @@ RUN mkdir -p /docker-entrypoint-initdb.d && \
     echo "ALTER SYSTEM SET ssl_key_file = '/etc/postgresql/ssl/server.key';" >> /docker-entrypoint-initdb.d/configure-postgres.sql
 
 # Set environment variables
-ENV POSTGRES_HOST_AUTH_METHOD=trust
-ENV POSTGRES_USER=postgres
+ENV POSTGRES_HOST_AUTH_METHOD=trust \
+    POSTGRES_USER=postgres \
+    PGDATA=/var/lib/postgresql/pgdata-init
+
+# Bake a fully initialized data directory into the image so cold container
+# start is just `exec postgres` (~1-2s). See test/docker/Dockerfile.postgres-plain
+# for the rationale. Runs with the default (trust) hba so the init scripts can
+# connect on the local socket; the compose `command:` points postgres at the
+# hostssl-only /etc/postgresql/pg_hba.conf at runtime.
+RUN set -e; \
+    docker-entrypoint.sh postgres & pid=$!; \
+    for i in $(seq 180); do \
+        pg_isready -h 127.0.0.1 -U postgres >/dev/null 2>&1 && break; \
+        sleep 1; \
+    done; \
+    pg_isready -h 127.0.0.1 -U postgres; \
+    gosu postgres pg_ctl -D "$PGDATA" -m fast -w stop; \
+    wait "$pid"
 
 # Expose PostgreSQL port
 EXPOSE 5432

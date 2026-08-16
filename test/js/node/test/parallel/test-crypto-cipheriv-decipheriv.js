@@ -31,11 +31,11 @@ function testCipher1(key, iv) {
   // quite small, so there's no harm.
   const cStream = crypto.createCipheriv('des-ede3-cbc', key, iv);
   cStream.end(plaintext);
-  ciph = cStream.read();
+  ciph = cStream.read(cStream.readableLength);
 
   const dStream = crypto.createDecipheriv('des-ede3-cbc', key, iv);
   dStream.end(ciph);
-  txt = dStream.read().toString('utf8');
+  txt = dStream.read(dStream.readableLength).toString('utf8');
 
   assert.strictEqual(txt, plaintext,
                      `streaming cipher with key ${key} and iv ${iv}`);
@@ -63,7 +63,7 @@ function testCipher2(key, iv) {
 
 function testCipher3(key, iv) {
   if (!crypto.getCiphers().includes('id-aes128-wrap')) {
-    common.printSkipMessage('unsupported id-aes128-wrap test');
+    common.printSkipMessage(`unsupported id-aes128-wrap test`);
     return;
   }
   // Test encryption and decryption with explicit key and iv.
@@ -175,6 +175,14 @@ for (let n = 1; n < 256; n += 1) {
     errMessage);
 }
 
+// And so should undefined be (regardless of mode).
+assert.throws(
+  () => crypto.createCipheriv('aes-128-ecb', Buffer.alloc(16)),
+  { code: 'ERR_INVALID_ARG_TYPE' });
+assert.throws(
+  () => crypto.createCipheriv('aes-128-ecb', Buffer.alloc(16), undefined),
+  { code: 'ERR_INVALID_ARG_TYPE' });
+
 // Correctly sized IV should be accepted in CBC mode.
 crypto.createCipheriv('aes-128-cbc', Buffer.alloc(16), Buffer.alloc(16));
 
@@ -200,7 +208,9 @@ assert.throws(
 
 // But all other IV lengths should be accepted.
 const minIvLength = hasOpenSSL3 ? 8 : 1;
-const maxIvLength = hasOpenSSL3 ? 64 : 256;
+// Bun: BoringSSL has no upper bound, but Bun enforces the OpenSSL 3 cap of
+// 128 bytes (1024 bits) for Node.js compatibility.
+const maxIvLength = hasOpenSSL3 ? 64 : 129;
 for (let n = minIvLength; n < maxIvLength; n += 1) {
   if (isFipsEnabled && n < 12) continue;
   crypto.createCipheriv('aes-128-gcm', Buffer.alloc(16), Buffer.alloc(n));
@@ -213,7 +223,7 @@ for (let n = minIvLength; n < maxIvLength; n += 1) {
     {
       name: 'Error',
       code: 'ERR_CRYPTO_UNKNOWN_CIPHER',
-      message: /Unknown cipher(: aes-127)?/
+      message: 'Unknown cipher'
     });
 
   // Passing a key with an invalid length should throw.

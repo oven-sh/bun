@@ -1,8 +1,11 @@
 import { spawn } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { cp, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tempDir } from "harness";
+import { bunExe, bunEnv as env, isArm64, isWindows, tempDir } from "harness";
 import { join } from "path";
+
+// esbuild@0.19.8 does not support win32-arm64 at runtime
+const isWindowsArm64 = isWindows && isArm64;
 
 beforeAll(() => {
   setDefaultTimeout(1000 * 60 * 5);
@@ -49,7 +52,7 @@ describe.concurrent("esbuild integration test", () => {
     expect(await exited).toBe(0);
   });
 
-  test("install and use estrella", async () => {
+  test.skipIf(isWindowsArm64)("install and use estrella", async () => {
     using dir = tempDir("esbuild-estrella-test", {
       "package.json": JSON.stringify({
         name: "bun-esbuild-estrella-test",

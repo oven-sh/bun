@@ -1,5 +1,8 @@
 name: Update vendor
 
+permissions:
+  contents: read
+
 on:
   schedule:
     - cron: "0 4 * * 0"
@@ -7,6 +10,7 @@ on:
 
 jobs:
   check-update:
+    if: github.repository == 'oven-sh/bun'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -18,8 +22,10 @@ jobs:
           - elysia
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-bun
 
       - name: Check version
         id: check-version
@@ -54,13 +60,16 @@ jobs:
 
       - name: Update version if needed
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
+        env:
+          PACKAGE: ${{ matrix.package }}
+          LATEST_TAG: ${{ steps.check-version.outputs.latest }}
         run: |
           set -euo pipefail
-          bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1])v.tag=process.argv[2];return v;}), null, 2) + "\n")' ${{ matrix.package }} ${{ steps.check-version.outputs.latest }}
+          bun -e 'await Bun.write("test/vendor.json", JSON.stringify((await Bun.file("test/vendor.json").json()).map(v=>{if(v.package===process.argv[1])v.tag=process.argv[2];return v;}), null, 2) + "\n")' "$PACKAGE" "$LATEST_TAG"
 
       - name: Create Pull Request
         if: success() && steps.check-version.outputs.current != steps.check-version.outputs.latest
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           add-paths: |
@@ -68,7 +77,7 @@ jobs:
           commit-message: "deps: update ${{ matrix.package }} to ${{ steps.check-version.outputs.latest }} (${{ steps.check-version.outputs.latest }})"
           title: "deps: update ${{ matrix.package }} to ${{ steps.check-version.outputs.latest }}"
           delete-branch: true
-          branch: deps/update-${{ matrix.package }}-${{ github.run_number }}
+          branch: deps/update-${{ matrix.package }}
           body: |
             ## What does this PR do?
 

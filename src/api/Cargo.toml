@@ -1,0 +1,14 @@
+[package]
+name = "bun_api"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_alloc.workspace = true
+bun_options_types.workspace = true

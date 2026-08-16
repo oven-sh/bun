@@ -1,0 +1,49 @@
+[package]
+name = "bun_sourcemap"
+version.workspace = true
+edition.workspace = true
+
+[dependencies.bun_parsers]
+workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bun_opaque.workspace = true
+strum.workspace = true
+bstr.workspace = true
+scopeguard.workspace = true
+const_format.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+libc.workspace = true
+bitflags.workspace = true
+smallvec = { workspace = true, features = ["const_generics", "union"] }
+typed-arena.workspace = true
+bun_alloc.workspace = true
+bun_base64.workspace = true
+bun_core.workspace = true
+bun_collections.workspace = true
+bun_highway.workspace = true
+# TODO(b2-blocked): bun_parsers — json::parse signature is live; wire in
+# once parse_json un-gates (currently blocked on bun_ast::Source lifetime,
+# not on bun_parsers).
+# bun_parsers.workspace = true
+bun_io.workspace = true
+# bun_js_parser not needed: parse_json uses the T2 value-subset Expr from
+# bun_ast::js_ast (what bun_parsers::json::parse returns).
+# bun_js_printer would create a dep cycle (it depends on bun_sourcemap);
+# quote_for_json moved down to bun_string, so Chunk::print_source_map_contents*
+# is now un-gated without the cycle.
+bun_ast.workspace = true
+bun_paths.workspace = true
+bun_ptr.workspace = true
+bun_semver.workspace = true
+bun_sys.workspace = true
+bun_url.workspace = true
+bun_zstd.workspace = true

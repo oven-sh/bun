@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync, unlinkSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isWindows, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe.if(isWindows)("PE codesigning integrity", () => {
@@ -215,7 +215,7 @@ console.log("Test data:", JSON.stringify(data));
 
     // Validate PE header
     expect(validation.pe.signature).toBe(0x00004550); // "PE\0\0"
-    expect(validation.pe.machine).toBe(0x8664); // x64
+    expect(validation.pe.machine).toBe(isArm64 ? 0xaa64 : 0x8664); // arm64 or x64
     expect(validation.pe.numberOfSections).toBeGreaterThan(0);
 
     // Validate optional header

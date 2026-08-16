@@ -1,18 +1,24 @@
-import { fileURLToPath, $ as Shell } from "bun";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { makeTree } from "harness";
-import { readFileSync } from "node:fs";
+import { $ as Shell, fileURLToPath } from "bun";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, makeTree } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 
 import ts from "typescript";
+
+// beforeAll packs bun-types and installs it from the registry, and each case below copies
+// a fixture and type-checks it for several seconds, so everything here outlives the 5s
+// default that a plain `bun test <this file>` (CLAUDE.md, .github/workflows/bun-types.yml)
+// runs with; only the CI runner passes a larger --timeout. This call has to precede the
+// registrations: each hook/test captures the default when it is declared.
+setDefaultTimeout(1000 * 60 * 2);
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
 const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
 const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
-const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
 const BUN_VERSION = (process.env.BUN_VERSION ?? Bun.version ?? process.versions.bun).replace(/^.*v/, "");
 const BUN_TYPES_TARBALL_NAME = `bun-types-${BUN_VERSION}.tgz`;
 
@@ -26,41 +32,40 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
 
 const $ = Shell.cwd(BUN_REPO_ROOT);
 
+// What `bun run build` generates. beforeAll builds into a copy of the package under
+// TEMP_DIR, so none of this may change in the checkout (it used to be built in place,
+// with package.json restored afterwards, which left the tree dirty whenever beforeAll
+// was interrupted).
+function snapshotBunTypesCheckout() {
+  return {
+    "package.json": readFileSync(join(BUN_TYPES_PACKAGE_ROOT, "package.json"), "utf8"),
+    "CLAUDE.md": existsSync(join(BUN_TYPES_PACKAGE_ROOT, "CLAUDE.md")),
+    "docs": existsSync(join(BUN_TYPES_PACKAGE_ROOT, "docs")),
+  };
+}
+
+const bunTypesCheckoutBeforeSetup = snapshotBunTypesCheckout();
+
 let TEMP_DIR: string;
-let TEMP_FIXTURE_DIR: string;
+let BASE_FIXTURE_DIR: string;
 
 beforeAll(async () => {
   TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
-  TEMP_FIXTURE_DIR = join(TEMP_DIR, "fixture");
+  BASE_FIXTURE_DIR = join(TEMP_DIR, "base-fixture");
+  const bunTypesBuildDir = join(TEMP_DIR, "bun-types");
 
   try {
-    await $`mkdir -p ${TEMP_FIXTURE_DIR}`.quiet();
+    await cp(FIXTURE_SOURCE_DIR, BASE_FIXTURE_DIR, { recursive: true });
+    await cp(BUN_TYPES_PACKAGE_ROOT, bunTypesBuildDir, {
+      recursive: true,
+      filter: source => basename(source) !== "node_modules",
+    });
 
-    await cp(FIXTURE_SOURCE_DIR, TEMP_FIXTURE_DIR, { recursive: true });
+    await $`cd ${BUN_TYPES_PACKAGE_ROOT} && BUN_VERSION=${BUN_VERSION} bun run build ${bunTypesBuildDir}`.quiet();
+    await $`cd ${bunTypesBuildDir} && bun pm pack --destination ${BASE_FIXTURE_DIR}`.quiet();
+    await $`cd ${BASE_FIXTURE_DIR} && bun add bun-types@${BUN_TYPES_TARBALL_NAME} && rm ${BUN_TYPES_TARBALL_NAME}`.quiet();
 
-    await $`
-      cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun install --no-cache
-      cp package.json package.json.backup
-    `.quiet();
-
-    const pkg = await Bun.file(BUN_TYPES_PACKAGE_JSON_PATH).json();
-
-    await Bun.write(BUN_TYPES_PACKAGE_JSON_PATH, JSON.stringify({ ...pkg, version: BUN_VERSION }, null, 2));
-
-    await $`
-      cd ${BUN_TYPES_PACKAGE_ROOT}
-      bun run build
-      bun pm pack --destination ${TEMP_FIXTURE_DIR}
-      rm CLAUDE.md
-      mv package.json.backup package.json
-
-      cd ${TEMP_FIXTURE_DIR}
-      bun add bun-types@${BUN_TYPES_TARBALL_NAME}
-      rm ${BUN_TYPES_TARBALL_NAME}
-    `.quiet();
-
-    const atTypesBunDir = join(TEMP_FIXTURE_DIR, "node_modules", "@types", "bun");
+    const atTypesBunDir = join(BASE_FIXTURE_DIR, "node_modules", "@types", "bun");
 
     await mkdir(atTypesBunDir, { recursive: true });
     await makeTree(atTypesBunDir, {
@@ -83,6 +88,55 @@ beforeAll(async () => {
     throw e;
   }
 });
+
+type Diagnostic = { line: string | null; message: string; code: number };
+
+interface TypeTestConfig {
+  /** Extra tsconfig compiler options */
+  options?: Partial<ts.CompilerOptions>;
+  /** Specify extra files to include in the build */
+  files?: Record<string, string>;
+  /** Extra packages to install before type checking */
+  packages?: string[];
+  /** Expected empty interfaces */
+  emptyInterfaces: Set<string>;
+  /** Expected diagnostics - array for exact match, or function for custom assertions */
+  diagnostics: Diagnostic[] | ((diagnostics: Diagnostic[]) => void);
+}
+
+let fixtureCounter = 0;
+
+async function createIsolatedFixture(packages?: string[]): Promise<string> {
+  const fixtureDir = join(TEMP_DIR, `fixture-${fixtureCounter++}`);
+  await cp(BASE_FIXTURE_DIR, fixtureDir, { recursive: true });
+
+  if (packages?.length) {
+    await $`cd ${fixtureDir} && bun add ${packages}`.quiet();
+  }
+
+  return fixtureDir;
+}
+
+function typeTest(name: string, config: TypeTestConfig) {
+  // This file only tests the bun-types .d.ts, not bun's own code. Driving the
+  // TypeScript LanguageService in-process under a debug build is ~40x slower,
+  // so run the type-checking cases on release builds only.
+  test.skipIf(isDebug)(name, async () => {
+    const fixtureDir = await createIsolatedFixture(config.packages);
+    const { diagnostics, emptyInterfaces } = await diagnose(fixtureDir, {
+      options: config.options,
+      files: config.files,
+    });
+
+    expect(emptyInterfaces).toEqual(config.emptyInterfaces);
+
+    if (typeof config.diagnostics === "function") {
+      config.diagnostics(diagnostics);
+    } else {
+      expect(diagnostics).toEqual(config.diagnostics);
+    }
+  });
+}
 
 async function diagnose(
   fixtureDir: string,
@@ -137,10 +191,10 @@ async function diagnose(
     },
     getCurrentDirectory: () => fixtureDir,
     getCompilationSettings: () => options,
-    getDefaultLibFileName: options => {
-      const defaultLibFileName = ts.getDefaultLibFileName(options);
-      return join(fixtureDir, "node_modules", "typescript", "lib", defaultLibFileName);
-    },
+    // Resolve lib.*.d.ts from the same TypeScript install that provides this compiler API.
+    // typescript@7 (native) no longer ships lib/lib.*.d.ts in its npm package, so the
+    // fixture's `typescript` dep cannot be used as the lib source.
+    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
     fileExists: ts.sys.fileExists,
     readFile: ts.sys.readFile,
     readDirectory: ts.sys.readDirectory,
@@ -193,8 +247,6 @@ async function diagnose(
     emptyInterfaces: checkForEmptyInterfaces(program),
   };
 }
-
-const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
 
 function checkForEmptyInterfaces(program: ts.Program) {
   const empties = new Set<string>();
@@ -252,11 +304,11 @@ function checkForEmptyInterfaces(program: ts.Program) {
 afterAll(async () => {
   if (TEMP_DIR) {
     if (Bun.env.TYPES_INTEGRATION_TEST_KEEP_TEMP_DIR === "true") {
-      console.log(`Keeping temp dir ${TEMP_DIR}/fixture for debugging`);
+      console.log(`Keeping temp dir ${TEMP_DIR} for debugging`);
       // Write tsconfig with skipLibCheck disabled for proper type checking
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.compilerOptions.skipLibCheck = false;
-      await Bun.write(join(TEMP_DIR, "fixture", "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+      await Bun.write(join(TEMP_DIR, "base-fixture", "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
     } else {
       await rm(TEMP_DIR, { recursive: true, force: true });
     }
@@ -264,12 +316,87 @@ afterAll(async () => {
 });
 
 describe("@types/bun integration test", () => {
-  describe("basic type checks", () => {
-    test("checks without lib.dom.d.ts", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR);
+  test("building and packing bun-types leaves packages/bun-types untouched", () => {
+    expect(snapshotBunTypesCheckout()).toEqual(bunTypesCheckoutBeforeSetup);
+  });
 
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      expect(diagnostics).toEqual([]);
+  test("packed bun-types includes CLAUDE.md", async () => {
+    const claude = Bun.file(join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "CLAUDE.md"));
+    expect(await claude.exists()).toBe(true);
+    expect((await claude.text()).length).toBeGreaterThan(0);
+  });
+
+  describe("basic type checks", () => {
+    typeTest("checks without lib.dom.d.ts", {
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
+    });
+  });
+
+  // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,
+  // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
+  // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
+  describe("tsgo (TypeScript 7 native preview)", () => {
+    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
+      const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
+
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.include = ["*.ts", "*.tsx"];
+      await Bun.write(join(fixtureDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+
+      // Resolve the entrypoint from the package's own bin field; the nightly
+      // has renamed it before (bin/tsgo.js -> bin/tsgo).
+      const tsgoPkgDir = join(fixtureDir, "node_modules", "@typescript", "native-preview");
+      const tsgoPkg = await Bun.file(join(tsgoPkgDir, "package.json")).json();
+      const tsgo = join(tsgoPkgDir, typeof tsgoPkg.bin === "string" ? tsgoPkg.bin : tsgoPkg.bin.tsgo);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), tsgo, "-p", "."],
+        env: bunEnv,
+        cwd: fixtureDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Runs on debug builds too: spawning tsc over a single file is cheap,
+  // unlike the in-process LanguageService runs above.
+  describe("Bun.mmap", () => {
+    test("MMapOptions accepts offset and size", async () => {
+      const checkDir = join(TEMP_DIR, "mmap-options-check");
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.include = ["mmap-options.ts"];
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await mkdir(checkDir, { recursive: true });
+      await makeTree(checkDir, {
+        "tsconfig.json": JSON.stringify(tsconfig, null, 2),
+        "mmap-options.ts": `const view = Bun.mmap("./data.bin", { shared: true, sync: false, offset: 4096, size: 1024 });
+           view satisfies Uint8Array<ArrayBuffer>;
+           Bun.mmap("./data.bin", { offset: 4096 }) satisfies Uint8Array<ArrayBuffer>;
+           Bun.mmap("./data.bin", { size: 1024 }) satisfies Uint8Array<ArrayBuffer>;`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -287,250 +414,248 @@ describe("@types/bun integration test", () => {
       const vi_shouldBeDefined: object = vi;
     `;
 
-    test("checks without lib.dom.d.ts and test-globals references", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        files: {
-          "reference-the-globals.ts": `/// <reference types="bun-types/test-globals" />`,
-          "my-test.test.ts": code,
-        },
-      });
-
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      expect(diagnostics).toEqual([]);
+    typeTest("checks without lib.dom.d.ts and test-globals references", {
+      files: {
+        "reference-the-globals.ts": `/// <reference types="bun-types/test-globals" />`,
+        "my-test.test.ts": code,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
     });
 
-    test("test-globals FAILS when the test-globals.d.ts is not referenced", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        files: { "my-test.test.ts": code }, // no reference to bun-types/test-globals
-      });
-
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM); // should still have no empty interfaces
-      expect(diagnostics).toMatchInlineSnapshot(`
-        [
-          {
-            "code": 2582,
-            "line": "my-test.test.ts:2:48",
-            "message": "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-          },
-          {
-            "code": 2582,
-            "line": "my-test.test.ts:3:46",
-            "message": "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-          },
-          {
-            "code": 2582,
-            "line": "my-test.test.ts:4:52",
-            "message": "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\`.",
-          },
-          {
-            "code": 2304,
-            "line": "my-test.test.ts:5:50",
-            "message": "Cannot find name 'expect'.",
-          },
-          {
-            "code": 2304,
-            "line": "my-test.test.ts:6:53",
-            "message": "Cannot find name 'beforeAll'.",
-          },
-          {
-            "code": 2304,
-            "line": "my-test.test.ts:7:54",
-            "message": "Cannot find name 'beforeEach'.",
-          },
-          {
-            "code": 2304,
-            "line": "my-test.test.ts:8:53",
-            "message": "Cannot find name 'afterEach'.",
-          },
-          {
-            "code": 2304,
-            "line": "my-test.test.ts:9:52",
-            "message": "Cannot find name 'afterAll'.",
-          },
-          {
-            "code": 2304,
-            "line": "my-test.test.ts:10:44",
-            "message": "Cannot find name 'jest'.",
-          },
-          {
-            "code": 2304,
-            "line": "my-test.test.ts:11:42",
-            "message": "Cannot find name 'vi'.",
-          },
-        ]
-      `);
+    typeTest("test-globals FAILS when the test-globals.d.ts is not referenced", {
+      files: { "my-test.test.ts": code },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [
+        {
+          "code": 2593,
+          "line": "my-test.test.ts:2:48",
+          "message":
+            "Cannot find name 'test'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
+        },
+        {
+          "code": 2593,
+          "line": "my-test.test.ts:3:46",
+          "message":
+            "Cannot find name 'it'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
+        },
+        {
+          "code": 2593,
+          "line": "my-test.test.ts:4:52",
+          "message":
+            "Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:5:50",
+          "message": "Cannot find name 'expect'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:6:53",
+          "message": "Cannot find name 'beforeAll'.",
+        },
+        {
+          "code": 2593,
+          "line": "my-test.test.ts:7:54",
+          "message":
+            "Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try \`npm i --save-dev @types/jest\` or \`npm i --save-dev @types/mocha\` and then add 'jest' or 'mocha' to the types field in your tsconfig.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:8:53",
+          "message": "Cannot find name 'afterEach'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:9:52",
+          "message": "Cannot find name 'afterAll'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:10:44",
+          "message": "Cannot find name 'jest'.",
+        },
+        {
+          "code": 2304,
+          "line": "my-test.test.ts:11:42",
+          "message": "Cannot find name 'vi'.",
+        },
+      ],
     });
   });
 
   describe("bun:bundle feature()", () => {
-    test("Registry augmentation restricts feature() to known flags", async () => {
-      const testCode = `
-        // Augment the Registry to define known flags
-        declare module "bun:bundle" {
-          interface Registry {
-            features: "DEBUG" | "PREMIUM" | "BETA";
+    typeTest("Registry augmentation restricts feature() to known flags", {
+      files: {
+        "registry-test.ts": `
+          // Augment the Registry to define known flags
+          declare module "bun:bundle" {
+            interface Registry {
+              features: "DEBUG" | "PREMIUM" | "BETA";
+            }
           }
-        }
 
-        import { feature } from "bun:bundle";
+          import { feature } from "bun:bundle";
 
-        // Valid flags work
-        const a: boolean = feature("DEBUG");
-        const b: boolean = feature("PREMIUM");
-        const c: boolean = feature("BETA");
+          // Valid flags work
+          const a: boolean = feature("DEBUG");
+          const b: boolean = feature("PREMIUM");
+          const c: boolean = feature("BETA");
 
-        // Invalid flags are caught at compile time
-        // @ts-expect-error - "INVALID_FLAG" is not assignable to "DEBUG" | "PREMIUM" | "BETA"
-        const invalid: boolean = feature("INVALID_FLAG");
+          // Invalid flags are caught at compile time
+          // @ts-expect-error - "INVALID_FLAG" is not assignable to "DEBUG" | "PREMIUM" | "BETA"
+          const invalid: boolean = feature("INVALID_FLAG");
 
-        // @ts-expect-error - typos are caught
-        const typo: boolean = feature("DEUBG");
-      `;
-
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        files: {
-          "registry-test.ts": testCode,
-        },
-      });
-
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      // Filter to only our test file - no diagnostics because @ts-expect-error suppresses errors
-      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-test.ts"));
-      expect(relevantDiagnostics).toEqual([]);
+          // @ts-expect-error - typos are caught
+          const typo: boolean = feature("DEUBG");
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-test.ts"));
+        expect(relevantDiagnostics).toEqual([]);
+      },
     });
 
-    test("Registry augmentation produces type errors for invalid flags", async () => {
-      // Verify that without @ts-expect-error, invalid flags actually produce errors
-      const invalidTestCode = `
-        declare module "bun:bundle" {
-          interface Registry {
-            features: "ALLOWED_FLAG";
+    typeTest("Registry augmentation produces type errors for invalid flags", {
+      files: {
+        "registry-invalid-test.ts": `
+          declare module "bun:bundle" {
+            interface Registry {
+              features: "ALLOWED_FLAG";
+            }
           }
-        }
 
-        import { feature } from "bun:bundle";
+          import { feature } from "bun:bundle";
 
-        // This should cause a type error - INVALID_FLAG is not in Registry.features
-        const invalid: boolean = feature("INVALID_FLAG");
-      `;
-
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        files: {
-          "registry-invalid-test.ts": invalidTestCode,
-        },
-      });
-
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-invalid-test.ts"));
-      expect(relevantDiagnostics).toMatchInlineSnapshot(`
-        [
+          // This should cause a type error - INVALID_FLAG is not in Registry.features
+          const invalid: boolean = feature("INVALID_FLAG");
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("registry-invalid-test.ts"));
+        expect(relevantDiagnostics).toEqual([
           {
             "code": 2345,
-            "line": "registry-invalid-test.ts:11:42",
+            "line": "registry-invalid-test.ts:11:44",
             "message": "Argument of type '\"INVALID_FLAG\"' is not assignable to parameter of type '\"ALLOWED_FLAG\"'.",
           },
-        ]
-      `);
+        ]);
+      },
     });
 
-    test("without Registry augmentation, feature() accepts any string", async () => {
-      // When Registry is not augmented, feature() falls back to accepting any string
-      const testCode = `
-        import { feature } from "bun:bundle";
+    typeTest("without Registry augmentation, feature() accepts any string", {
+      files: {
+        "no-registry-test.ts": `
+          import { feature } from "bun:bundle";
 
-        // Any string works when Registry.features is not defined
-        const a: boolean = feature("ANY_FLAG");
-        const b: boolean = feature("ANOTHER_FLAG");
-        const c: boolean = feature("whatever");
-      `;
+          // Any string works when Registry.features is not defined
+          const a: boolean = feature("ANY_FLAG");
+          const b: boolean = feature("ANOTHER_FLAG");
+          const c: boolean = feature("whatever");
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: diagnostics => {
+        const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("no-registry-test.ts"));
+        expect(relevantDiagnostics).toEqual([]);
+      },
+    });
+  });
 
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        files: {
-          "no-registry-test.ts": testCode,
-        },
-      });
+  describe("Bunland reaching for JSX", () => {
+    typeTest("Bun.markdown.react() returns type compatible with React.ReactElement", {
+      packages: ["@types/react", "@types/react-dom"],
+      files: {
+        "jsx-test.tsx": `
+          import {expectType, expectAssignable} from './utilities.ts';
+          import type React from "react";
 
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      const relevantDiagnostics = diagnostics.filter(d => d.line?.startsWith("no-registry-test.ts"));
-      expect(relevantDiagnostics).toEqual([]);
+          const markdownResult = Bun.markdown.react("# Hello");
+          expectType(markdownResult).is<React.ReactElement<{}, string | React.JSXElementConstructor<any>>>();
+          expectAssignable<React.JSX.Element>(markdownResult);
+
+          function App() {
+            return <div>{markdownResult}</div>;
+          }
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesThatReactDeclareWhenNoDOM,
+      diagnostics: [],
+    });
+
+    typeTest("Bun.markdown.react() returns unknown if React is not installed", {
+      files: {
+        "jsx-test.tsx": `
+          import {expectType} from './utilities.ts';
+          expectType(Bun.markdown.react("# Hello")).is<unknown>();
+        `,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
     });
   });
 
   describe("lib configuration", () => {
-    test("checks with no lib at all", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        options: {
-          lib: [],
-        },
-      });
-
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      expect(diagnostics).toEqual([]);
+    typeTest("checks with no lib at all", {
+      options: {
+        lib: [],
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
     });
 
-    test("fails with types: [] and no jsx", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        options: {
-          lib: [],
-          types: [],
-          jsx: ts.JsxEmit.None,
-        },
-      });
-
-      expect(emptyInterfaces).toEqual(expectedEmptyInterfacesWhenNoDOM);
-      expect(diagnostics).toEqual([
-        // // This is expected because we, of course, can't check that our tsx file is passing
-        // // when tsx is turned off...
-        // {
-        //   "code": 17004,
-        //   "line": "[slug].tsx:17:10",
-        //   "message": "Cannot use JSX unless the '--jsx' flag is provided.",
-        // },
-      ]);
+    typeTest("fails with types: [] and no jsx", {
+      options: {
+        lib: [],
+        types: [],
+        jsx: ts.JsxEmit.None,
+      },
+      emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
+      diagnostics: [],
     });
 
-    test("checks with lib.dom.d.ts", async () => {
-      const { diagnostics, emptyInterfaces } = await diagnose(TEMP_FIXTURE_DIR, {
-        options: {
-          lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
-        },
-      });
-
-      expect(emptyInterfaces).toEqual(
-        new Set([
-          "ThisType",
-          "RTCAnswerOptions",
-          "RTCOfferAnswerOptions",
-          "RTCSetParameterOptions",
-          "EXT_color_buffer_float",
-          "EXT_float_blend",
-          "EXT_frag_depth",
-          "EXT_shader_texture_lod",
-          "FragmentDirective",
-          "MediaSourceHandle",
-          "OES_element_index_uint",
-          "OES_fbo_render_mipmap",
-          "OES_texture_float",
-          "OES_texture_float_linear",
-          "OES_texture_half_float_linear",
-          "PeriodicWave",
-          "RTCRtpScriptTransform",
-          "WebGLBuffer",
-          "WebGLFramebuffer",
-          "WebGLProgram",
-          "WebGLQuery",
-          "WebGLRenderbuffer",
-          "WebGLSampler",
-          "WebGLShader",
-          "WebGLSync",
-          "WebGLTexture",
-          "WebGLTransformFeedback",
-          "WebGLUniformLocation",
-          "WebGLVertexArrayObject",
-          "WebGLVertexArrayObjectOES",
-        ]),
-      );
-      expect(diagnostics).toEqual([
+    typeTest("checks with lib.dom.d.ts", {
+      options: {
+        lib: ["ESNext", "DOM", "DOM.Iterable", "DOM.AsyncIterable"].map(name => `lib.${name.toLowerCase()}.d.ts`),
+      },
+      emptyInterfaces: new Set([
+        "ThisType",
+        "GPUExternalTextureBindingLayout",
+        "RTCAnswerOptions",
+        "RTCOfferAnswerOptions",
+        "RTCSetParameterOptions",
+        "ReportBody",
+        "EXT_color_buffer_float",
+        "EXT_float_blend",
+        "EXT_frag_depth",
+        "EXT_shader_texture_lod",
+        "FragmentDirective",
+        "MediaSourceHandle",
+        "OES_element_index_uint",
+        "OES_fbo_render_mipmap",
+        "OES_texture_float",
+        "OES_texture_float_linear",
+        "OES_texture_half_float_linear",
+        "PeriodicWave",
+        "RTCRtpScriptTransform",
+        "WebGLBuffer",
+        "WebGLFramebuffer",
+        "WebGLProgram",
+        "WebGLQuery",
+        "WebGLRenderbuffer",
+        "WebGLSampler",
+        "WebGLShader",
+        "WebGLSync",
+        "WebGLTexture",
+        "WebGLTransformFeedback",
+        "WebGLUniformLocation",
+        "WebGLVertexArrayObject",
+        "WebGLVertexArrayObjectOES",
+      ]),
+      diagnostics: [
         {
           code: 2322,
           line: "24154.ts:11:3",
@@ -595,35 +720,35 @@ describe("@types/bun integration test", () => {
           message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBuffer>>'.",
         },
         {
-          "code": 2769,
-          "line": "streams.ts:18:3",
-          "message":
+          code: 2769,
+          line: "streams.ts:18:3",
+          message:
             "No overload matches this call.\nOverload 1 of 3, '(underlyingSource: UnderlyingByteSource, strategy?: { highWaterMark?: number | undefined; } | undefined): ReadableStream<Uint8Array<ArrayBuffer>>', gave the following error.\nType '\"direct\"' is not assignable to type '\"bytes\"'.",
         },
         {
-          "code": 2339,
-          "line": "streams.ts:20:16",
-          "message": "Property 'write' does not exist on type 'ReadableByteStreamController'.",
+          code: 2339,
+          line: "streams.ts:20:16",
+          message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
         },
         {
-          "code": 2339,
-          "line": "streams.ts:46:19",
-          "message": "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+          code: 2339,
+          line: "streams.ts:46:19",
+          message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
-          "code": 2339,
-          "line": "streams.ts:47:19",
-          "message": "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+          code: 2339,
+          line: "streams.ts:47:19",
+          message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
-          "code": 2339,
-          "line": "streams.ts:48:19",
-          "message": "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+          code: 2339,
+          line: "streams.ts:48:19",
+          message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
-          "code": 2339,
-          "line": "streams.ts:49:19",
-          "message": "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
+          code: 2339,
+          line: "streams.ts:49:19",
+          message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
           code: 2345,
@@ -673,11 +798,6 @@ describe("@types/bun integration test", () => {
           line: "websocket.ts:51:5",
           message:
             "Object literal may only specify known properties, and 'protocols' does not exist in type 'string[]'.",
-        },
-        {
-          code: 2554,
-          line: "websocket.ts:185:29",
-          message: "Expected 2 arguments, but got 0.",
         },
         {
           code: 2551,
@@ -749,7 +869,144 @@ describe("@types/bun integration test", () => {
           line: "worker.ts:25:11",
           message: "Property 'threadId' does not exist on type 'Worker'.",
         },
-      ]);
+      ],
     });
   });
 });
+
+const expectedEmptyInterfacesWhenNoDOM = new Set(["ThisType"]);
+
+const expectedEmptyInterfacesThatReactDeclareWhenNoDOM = new Set([
+  ...expectedEmptyInterfacesWhenNoDOM,
+  "Document",
+  "DataTransfer",
+  "StyleMedia",
+  "Element",
+  "DocumentFragment",
+  "HTMLElement",
+  "HTMLAnchorElement",
+  "HTMLAreaElement",
+  "HTMLAudioElement",
+  "HTMLBaseElement",
+  "HTMLBodyElement",
+  "HTMLBRElement",
+  "HTMLButtonElement",
+  "HTMLCanvasElement",
+  "HTMLDataElement",
+  "HTMLDataListElement",
+  "HTMLDetailsElement",
+  "HTMLDialogElement",
+  "HTMLDivElement",
+  "HTMLDListElement",
+  "HTMLEmbedElement",
+  "HTMLFieldSetElement",
+  "HTMLFormElement",
+  "HTMLHeadingElement",
+  "HTMLHeadElement",
+  "HTMLHRElement",
+  "HTMLHtmlElement",
+  "HTMLIFrameElement",
+  "HTMLImageElement",
+  "HTMLInputElement",
+  "HTMLModElement",
+  "HTMLLabelElement",
+  "HTMLLegendElement",
+  "HTMLLIElement",
+  "HTMLLinkElement",
+  "HTMLMapElement",
+  "HTMLMetaElement",
+  "HTMLMeterElement",
+  "HTMLObjectElement",
+  "HTMLOListElement",
+  "HTMLOptGroupElement",
+  "HTMLOptionElement",
+  "HTMLOutputElement",
+  "HTMLParagraphElement",
+  "HTMLParamElement",
+  "HTMLPreElement",
+  "HTMLProgressElement",
+  "HTMLQuoteElement",
+  "HTMLSlotElement",
+  "HTMLScriptElement",
+  "HTMLSelectElement",
+  "HTMLSourceElement",
+  "HTMLSpanElement",
+  "HTMLStyleElement",
+  "HTMLTableElement",
+  "HTMLTableColElement",
+  "HTMLTableDataCellElement",
+  "HTMLTableHeaderCellElement",
+  "HTMLTableRowElement",
+  "HTMLTableSectionElement",
+  "HTMLTemplateElement",
+  "HTMLTextAreaElement",
+  "HTMLTimeElement",
+  "HTMLTitleElement",
+  "HTMLTrackElement",
+  "HTMLUListElement",
+  "HTMLVideoElement",
+  "HTMLWebViewElement",
+  "SVGElement",
+  "SVGSVGElement",
+  "SVGCircleElement",
+  "SVGClipPathElement",
+  "SVGDefsElement",
+  "SVGDescElement",
+  "SVGEllipseElement",
+  "SVGFEBlendElement",
+  "SVGFEColorMatrixElement",
+  "SVGFEComponentTransferElement",
+  "SVGFECompositeElement",
+  "SVGFEConvolveMatrixElement",
+  "SVGFEDiffuseLightingElement",
+  "SVGFEDisplacementMapElement",
+  "SVGFEDistantLightElement",
+  "SVGFEDropShadowElement",
+  "SVGFEFloodElement",
+  "SVGFEFuncAElement",
+  "SVGFEFuncBElement",
+  "SVGFEFuncGElement",
+  "SVGFEFuncRElement",
+  "SVGFEGaussianBlurElement",
+  "SVGFEImageElement",
+  "SVGFEMergeElement",
+  "SVGFEMergeNodeElement",
+  "SVGFEMorphologyElement",
+  "SVGFEOffsetElement",
+  "SVGFEPointLightElement",
+  "SVGFESpecularLightingElement",
+  "SVGFESpotLightElement",
+  "SVGFETileElement",
+  "SVGFETurbulenceElement",
+  "SVGFilterElement",
+  "SVGForeignObjectElement",
+  "SVGGElement",
+  "SVGImageElement",
+  "SVGLineElement",
+  "SVGLinearGradientElement",
+  "SVGMarkerElement",
+  "SVGMaskElement",
+  "SVGMetadataElement",
+  "SVGPathElement",
+  "SVGPatternElement",
+  "SVGPolygonElement",
+  "SVGPolylineElement",
+  "SVGRadialGradientElement",
+  "SVGRectElement",
+  "SVGSetElement",
+  "SVGStopElement",
+  "SVGSwitchElement",
+  "SVGSymbolElement",
+  "SVGTextElement",
+  "SVGTextPathElement",
+  "SVGTSpanElement",
+  "SVGUseElement",
+  "SVGViewElement",
+  "Text",
+  "TouchList",
+  "WebGLRenderingContext",
+  "WebGL2RenderingContext",
+  "TrustedHTML",
+  "MediaStream",
+  "MediaSource",
+]);

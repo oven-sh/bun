@@ -112,12 +112,40 @@ const obj = {
   },
 };
 
-bench("Response.json(obj)", async () => {
+const smallObj = { id: 1, name: "test" };
+
+const arrayObj = {
+  items: Array.from({ length: 100 }, (_, i) => ({ id: i, value: `item-${i}` })),
+};
+
+bench("Response.json(obj)", () => {
   return Response.json(obj);
 });
 
-bench("Response.json(obj).json()", async () => {
-  return await Response.json(obj).json();
+bench("new Response(JSON.stringify(obj))", () => {
+  return new Response(JSON.stringify(obj), {
+    headers: { "Content-Type": "application/json" },
+  });
+});
+
+bench("Response.json(smallObj)", () => {
+  return Response.json(smallObj);
+});
+
+bench("new Response(JSON.stringify(smallObj))", () => {
+  return new Response(JSON.stringify(smallObj), {
+    headers: { "Content-Type": "application/json" },
+  });
+});
+
+bench("Response.json(arrayObj)", () => {
+  return Response.json(arrayObj);
+});
+
+bench("new Response(JSON.stringify(arrayObj))", () => {
+  return new Response(JSON.stringify(arrayObj), {
+    headers: { "Content-Type": "application/json" },
+  });
 });
 
 await run();

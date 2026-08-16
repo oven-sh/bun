@@ -116,6 +116,8 @@ export function asyncIterator(this: Console) {
 }
 
 export function write(this: Console, input) {
+  if (!$isObject(this)) throw $ERR_INVALID_THIS("Console");
+
   var writer = $getByIdDirectPrivate(this, "writer");
   if (!writer) {
     var length = $toLength(input?.length ?? 0);
@@ -140,8 +142,9 @@ export function write(this: Console, input) {
 // to do extra work at startup, since most people do not need `console.Console`.
 // TODO: probably could extract `getStringWidth`; probably make that a native function. note how it is copied from `readline.js`
 export function createConsoleConstructor(console: typeof globalThis.console) {
-  const { inspect, formatWithOptions, stripVTControlCharacters } = require("node:util");
+  const { inspect, formatWithOptions } = require("node:util");
   const { isBuffer } = require("node:buffer");
+  const { isMapIterator, isSetIterator } = require("node:util/types");
 
   const { validateObject, validateInteger, validateArray, validateOneOf } = require("internal/validators");
   const kMaxGroupIndentation = 1000;
@@ -152,30 +155,19 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
   const StringPrototypeRepeat = String.prototype.repeat;
   const StringPrototypeSlice = String.prototype.slice;
   const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-  const StringPrototypePadStart = String.prototype.padStart;
-  const StringPrototypeSplit = String.prototype.split;
-  const NumberPrototypeToFixed = Number.prototype.toFixed;
-  const StringPrototypeNormalize = String.prototype.normalize;
   const ArrayPrototypeMap = Array.prototype.map;
   const ArrayPrototypeJoin = Array.prototype.join;
   const ArrayPrototypePush = Array.prototype.push;
 
   const kCounts = Symbol("counts");
 
-  const kSecond = 1000;
-  const kMinute = 60 * kSecond;
-  const kHour = 60 * kMinute;
-
-  const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
+  const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
   /**
    * Returns the number of columns required to display the given string.
    */
   var getStringWidth = function getStringWidth(str, removeControlChars = true) {
-    if (removeControlChars) str = stripVTControlCharacters(str);
-    str = StringPrototypeNormalize.$call(str, "NFC");
-
-    return internalGetStringWidth(str);
+    return internalGetStringWidth(str, removeControlChars);
   };
 
   const tableChars = {
@@ -305,10 +297,16 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     if (inspectOptions !== undefined) {
       validateObject(inspectOptions, "options.inspectOptions");
 
-      if (inspectOptions.colors !== undefined && options.colorMode !== undefined) {
-        throw $ERR_INCOMPATIBLE_OPTION_PAIR(
-          'Option "options.inspectOptions.color" cannot be used in combination with option "colorMode"',
-        );
+      // inspectOptions may be a Map keyed by stream, giving each stream its own
+      // options; a plain object applies to both.
+      const isPerStream = $isMap(inspectOptions);
+      for (const stream of [stdout, stderr]) {
+        const perStreamOptions = isPerStream ? inspectOptions.$get(stream) : inspectOptions;
+        if (perStreamOptions?.colors !== undefined && options.colorMode !== undefined) {
+          throw $ERR_INCOMPATIBLE_OPTION_PAIR(
+            'Option "options.inspectOptions.color" cannot be used in combination with option "colorMode"',
+          );
+        }
       }
       optionsMap.set(this, inspectOptions);
     }
@@ -482,7 +480,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
           }
         }
 
-        const options = optionsMap.get(this);
+        const inspectOptions = optionsMap.get(this);
+        const options = $isMap(inspectOptions) ? inspectOptions.$get(stream) : inspectOptions;
         if (options) {
           if (options.colors === undefined) {
             options.colors = color;
@@ -664,14 +663,9 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
       };
       const getIndexArray = length => Array.from({ length }, (_, i) => _inspect(i));
 
-      const mapIter = $isMapIterator(tabularData);
+      const mapIter = isMapIterator(tabularData);
       let isKeyValue = false;
       let i = 0;
-      // if (mapIter) {
-      //   const res = previewEntries(tabularData, true);
-      //   tabularData = res[0];
-      //   isKeyValue = res[1];
-      // }
 
       if (isKeyValue || $isMap(tabularData)) {
         const keys = [];
@@ -693,7 +687,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         return final([iterKey, keyKey, valuesKey], [getIndexArray(length), keys, values]);
       }
 
-      const setIter = $isSetIterator(tabularData);
+      const setIter = isSetIterator(tabularData);
       // if (setIter) tabularData = previewEntries(tabularData);
 
       const setlike = setIter || mapIter || $isSet(tabularData);
@@ -761,39 +755,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     return true;
   }
 
-  function pad(value) {
-    return StringPrototypePadStart.$call(`${value}`, 2, "0");
-  }
-
-  function formatTime(ms) {
-    let hours = 0;
-    let minutes = 0;
-    let seconds: string | number = 0;
-
-    if (ms >= kSecond) {
-      if (ms >= kMinute) {
-        if (ms >= kHour) {
-          hours = Math.floor(ms / kHour);
-          ms = ms % kHour;
-        }
-        minutes = Math.floor(ms / kMinute);
-        ms = ms % kMinute;
-      }
-      seconds = ms / kSecond;
-    }
-
-    if (hours !== 0 || minutes !== 0) {
-      ({ 0: seconds, 1: ms } = (StringPrototypeSplit.$call as any)(NumberPrototypeToFixed.$call(seconds, 3), "."));
-      const res = hours !== 0 ? `${hours}:${pad(minutes)}` : minutes;
-      return `${res}:${pad(seconds)}.${ms} (${hours !== 0 ? "h:m" : ""}m:ss.mmm)`;
-    }
-
-    if (seconds !== 0) {
-      return `${NumberPrototypeToFixed.$call(seconds, 3)}s`;
-    }
-
-    return `${Number(NumberPrototypeToFixed.$call(ms, 3))}ms`;
-  }
+  const { formatTime } = require("internal/util/debuglog");
 
   const keyKey = "Key";
   const valuesKey = "Values";

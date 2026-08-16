@@ -1,6 +1,10 @@
 import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
+// Not describe.concurrent: the backend:"cli" cases each spawn a full
+// `bun build --compile` link (hundreds of MB on disk) and running eight of
+// those at once SIGTERMs on the linux lanes. expectBundled already forces
+// backend:"api" cases to it.serial, so only the CLI cases would overlap.
 describe("bundler", () => {
   // Test that .env files are loaded by default in standalone executables
   itBundled("compile/AutoloadDotenvDefault", {
@@ -168,6 +172,40 @@ console.log("PRELOAD");
     },
   });
 
+  // Regression test: standalone workers must not load .env when autoloadDotenv is disabled
+  itBundled("compile/AutoloadDotenvDisabledWorkerCLI", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+
+        rmSync("./worker.ts", { force: true });
+
+        const worker = new Worker("./worker.ts");
+        console.log(await new Promise(resolve => {
+          worker.onmessage = event => resolve(event.data);
+        }));
+        worker.terminate();
+      `,
+      "/worker.ts": /* js */ `
+        postMessage(process.env.TEST_VAR || "not found");
+      `,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    runtimeFiles: {
+      "/.env": `TEST_VAR=from_dotenv`,
+    },
+    run: {
+      stdout: "not found",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+
   // Test CLI backend with autoloadDotenv: true
   itBundled("compile/AutoloadDotenvEnabledCLI", {
     compile: {
@@ -234,6 +272,93 @@ console.log("PRELOAD");
     },
     run: {
       stdout: "PRELOAD\nENTRY",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend with autoloadTsconfig: true using tsconfig paths
+  itBundled("compile/AutoloadTsconfigPathsCLI", {
+    compile: {
+      autoloadTsconfig: true,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* ts */ `
+        const modulePath = "@lib/" + "mymodule";
+        import(modulePath)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          baseUrl: ".",
+          paths: {
+            "@lib/*": ["./lib/*"],
+          },
+        },
+      }),
+      "/lib/mymodule.ts": `export default "mymodule-from-cli-tsconfig";`,
+    },
+    run: {
+      stdout: "mymodule-from-cli-tsconfig",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend with autoloadPackageJson: true using package.json exports
+  itBundled("compile/AutoloadPackageJsonExportsCLI", {
+    compile: {
+      autoloadPackageJson: true,
+    },
+    backend: "cli",
+    files: {
+      "/entry.js": /* js */ `
+        const pkgName = "cli-pkg";
+        const subpath = "feature";
+        import(pkgName + "/" + subpath)
+          .then(m => console.log(m.default))
+          .catch(e => console.log("import-failed: " + e.message));
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/cli-pkg/package.json": JSON.stringify({
+        name: "cli-pkg",
+        exports: {
+          "./feature": "./features/main.js",
+        },
+      }),
+      "/node_modules/cli-pkg/features/main.js": `export default "feature-from-cli-package-exports";`,
+    },
+    run: {
+      stdout: "feature-from-cli-package-exports",
+      setCwd: true,
+    },
+  });
+
+  // Test CLI backend for autoloadBunfig: false with execArgv (regression test for #25640)
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgvCLI", {
+    compile: {
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
+      `,
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
+    },
+    run: {
+      stdout: "ENTRY",
       setCwd: true,
     },
   });
@@ -392,63 +517,54 @@ console.log("PRELOAD");
     },
   });
 
-  // Test CLI backend with autoloadTsconfig: true using tsconfig paths
-  itBundled("compile/AutoloadTsconfigPathsCLI", {
+  // Test that autoloadBunfig: false works with execArgv (regression test for #25640)
+  // When execArgv is present, bunfig should still be disabled if autoloadBunfig: false
+  itBundled("compile/AutoloadBunfigDisabledWithExecArgv", {
     compile: {
-      autoloadTsconfig: true,
+      autoloadBunfig: false,
+      execArgv: ["--smol"],
     },
-    backend: "cli",
     files: {
-      "/entry.ts": /* ts */ `
-        const modulePath = "@lib/" + "mymodule";
-        import(modulePath)
-          .then(m => console.log(m.default))
-          .catch(e => console.log("import-failed: " + e.message));
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
       `,
     },
     runtimeFiles: {
-      "/tsconfig.json": JSON.stringify({
-        compilerOptions: {
-          baseUrl: ".",
-          paths: {
-            "@lib/*": ["./lib/*"],
-          },
-        },
-      }),
-      "/lib/mymodule.ts": `export default "mymodule-from-cli-tsconfig";`,
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
     },
     run: {
-      stdout: "mymodule-from-cli-tsconfig",
+      // When bunfig is disabled, preload should NOT execute even with execArgv
+      stdout: "ENTRY",
       setCwd: true,
     },
   });
 
-  // Test CLI backend with autoloadPackageJson: true using package.json exports
-  itBundled("compile/AutoloadPackageJsonExportsCLI", {
+  // Test that autoloadBunfig: true with execArgv still loads bunfig
+  itBundled("compile/AutoloadBunfigEnabledWithExecArgv", {
     compile: {
-      autoloadPackageJson: true,
+      autoloadBunfig: true,
+      execArgv: ["--smol"],
     },
-    backend: "cli",
     files: {
-      "/entry.js": /* js */ `
-        const pkgName = "cli-pkg";
-        const subpath = "feature";
-        import(pkgName + "/" + subpath)
-          .then(m => console.log(m.default))
-          .catch(e => console.log("import-failed: " + e.message));
+      "/entry.ts": /* js */ `
+        console.log("ENTRY");
       `,
     },
     runtimeFiles: {
-      "/node_modules/cli-pkg/package.json": JSON.stringify({
-        name: "cli-pkg",
-        exports: {
-          "./feature": "./features/main.js",
-        },
-      }),
-      "/node_modules/cli-pkg/features/main.js": `export default "feature-from-cli-package-exports";`,
+      "/bunfig.toml": `
+preload = ["./preload.ts"]
+      `,
+      "/preload.ts": `
+console.log("PRELOAD");
+      `,
     },
     run: {
-      stdout: "feature-from-cli-package-exports",
+      stdout: "PRELOAD\nENTRY",
       setCwd: true,
     },
   });

@@ -1,13 +1,16 @@
 import type * as BunSQLiteModule from "bun:sqlite";
 import type { BaseQueryHandle, Query, SQLQueryResultMode } from "./query";
-import type { ArrayType, DatabaseAdapter, OnConnected, SQLArrayParameter, SQLHelper, SQLResultArray } from "./shared";
+import type {
+  ArrayType,
+  DatabaseAdapter,
+  OnConnected,
+  SQLCommand as SharedSQLCommand,
+  SQLArrayParameter,
+  SQLResultArray,
+} from "./shared";
 
-const { SQLHelper, SQLResultArray } = require("internal/sql/shared");
-const {
-  Query,
-  SQLQueryResultMode,
-  symbols: { _strings, _values },
-} = require("internal/sql/query");
+const { SQLResultArray, normalizeQuery, pushBindParam } = require("internal/sql/shared");
+const { SQLQueryResultMode } = require("internal/sql/query");
 const { SQLiteError } = require("internal/sql/errors");
 
 let lazySQLiteModule: typeof BunSQLiteModule;
@@ -210,10 +213,10 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
   private mode = SQLQueryResultMode.objects;
 
   private readonly sql: string;
-  private readonly values: unknown[];
+  private readonly values: unknown[] | Record<string, unknown>;
   private readonly parsedInfo: SQLParsedInfo;
 
-  public constructor(sql: string, values: unknown[]) {
+  public constructor(sql: string, values: unknown[] | Record<string, unknown>) {
     this.sql = sql;
     this.values = values;
     // Parse the SQL query once when creating the handle
@@ -242,12 +245,17 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         const stmt = db.prepare(sql);
         let result: unknown[] | undefined;
 
-        if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
-        } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
-        } else {
-          result = stmt.all.$apply(stmt, values);
+        try {
+          // bun:sqlite binds from its first argument; spreading would let values[0] pose as the whole binding set.
+          if (mode === SQLQueryResultMode.values) {
+            result = stmt.values.$call(stmt, values);
+          } else if (mode === SQLQueryResultMode.raw) {
+            result = stmt.raw.$call(stmt, values);
+          } else {
+            result = stmt.all.$call(stmt, values);
+          }
+        } finally {
+          stmt.finalize();
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -255,11 +263,10 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = $isArray(result) ? result.length : 1;
 
-        stmt.finalize();
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
-        const changes = db.run.$apply(db, [sql].concat(values));
+        const changes = db.run.$call(db, sql, values);
         const sqlResult = new SQLResultArray();
 
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
@@ -312,11 +319,12 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
         options.readwrite = true;
       }
 
-      if ("safeIntegers" in this.connectionInfo) {
-        options.safeIntegers = this.connectionInfo.safeIntegers;
+      const connectionInfo = this.connectionInfo;
+      if ("safeIntegers" in connectionInfo) {
+        options.safeIntegers = connectionInfo.safeIntegers;
       }
-      if ("strict" in this.connectionInfo) {
-        options.strict = this.connectionInfo.strict;
+      if ("strict" in connectionInfo) {
+        options.strict = connectionInfo.strict;
       }
 
       this.db = new SQLiteModule.Database(filename, options);
@@ -346,10 +354,16 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
   }
 
-  createQueryHandle(sql: string, values: unknown[] | undefined | null = []): SQLiteQueryHandle {
+  createQueryHandle(
+    sql: string,
+    values: unknown[] | Record<string, unknown> | undefined | null = [],
+  ): SQLiteQueryHandle {
     return new SQLiteQueryHandle(sql, values ?? []);
   }
   escapeIdentifier(str: string) {
+    if (str.includes("\0")) {
+      throw $ERR_INVALID_ARG_VALUE("name", str, "must not contain null bytes");
+    }
     return '"' + str.replaceAll('"', '""').replaceAll(".", '"."') + '"';
   }
   connectionClosedError() {
@@ -377,205 +391,38 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     });
   }
   normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
-    if (typeof strings === "string") {
-      // identifier or unsafe query
-      return [strings, values || []];
+    return normalizeQuery(this, strings, values, binding_idx);
+  }
+
+  // SQLite uses ? for placeholders, not $1, $2, etc.
+  placeholder(_index: number): string {
+    return "?";
+  }
+
+  bindParam(value: unknown, binding_values: unknown[], index: number): string {
+    return pushBindParam(this, value, binding_values, index);
+  }
+
+  getHelperCommand(query: string): SharedSQLCommand {
+    // when partial is true we stop on the first command we find
+    const { command } = parseSQLQuery(query, true);
+
+    // only selectIn, insert, update, updateSet are allowed
+    if (command === SQLCommand.none || command === SQLCommand.where) {
+      throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
     }
+    // the local SQLCommand enum is numerically identical to the shared one
+    return command as unknown as SharedSQLCommand;
+  }
 
-    if (!$isArray(strings)) {
-      // we should not hit this path
-      throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
+  isUpsertUpdate(_query: string): boolean {
+    return false;
+  }
+
+  throwIfUpdateEmpty(_query: string, hasValues: boolean): void {
+    if (!hasValues) {
+      throw new SyntaxError("Update needs to have at least one column");
     }
-
-    const str_len = strings.length;
-    if (str_len === 0) {
-      return ["", []];
-    }
-
-    let binding_values: any[] = [];
-    let query = "";
-
-    for (let i = 0; i < str_len; i++) {
-      const string = strings[i];
-
-      if (typeof string === "string") {
-        query += string;
-
-        if (values.length > i) {
-          const value = values[i];
-
-          if (value instanceof Query) {
-            const q = value as Query<any, any>;
-            const [sub_query, sub_values] = this.normalizeQuery(q[_strings], q[_values], binding_idx);
-
-            query += sub_query;
-            for (let j = 0; j < sub_values.length; j++) {
-              binding_values.push(sub_values[j]);
-            }
-            binding_idx += sub_values.length;
-          } else if (value instanceof SQLHelper) {
-            // when partial is true we stop on the first command we find
-            const { command } = parseSQLQuery(query, true);
-
-            // only selectIn, insert, update, updateSet are allowed
-            if (command === SQLCommand.none || command === SQLCommand.where) {
-              throw new SyntaxError("Helpers are only allowed for INSERT, UPDATE and WHERE IN commands");
-            }
-            const { columns, value: items } = value as SQLHelper;
-            const columnCount = columns.length;
-            if (columnCount === 0 && command !== SQLCommand.in) {
-              throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
-            }
-            const lastColumnIndex = columns.length - 1;
-
-            if (command === SQLCommand.insert) {
-              //
-              // insert into users ${sql(users)} or insert into users ${sql(user)}
-              //
-
-              query += "(";
-              for (let j = 0; j < columnCount; j++) {
-                query += this.escapeIdentifier(columns[j]);
-                if (j < lastColumnIndex) {
-                  query += ", ";
-                }
-              }
-              query += ") VALUES";
-              if ($isArray(items)) {
-                const itemsCount = items.length;
-                const lastItemIndex = itemsCount - 1;
-                for (let j = 0; j < itemsCount; j++) {
-                  query += "(";
-                  const item = items[j];
-                  for (let k = 0; k < columnCount; k++) {
-                    const column = columns[k];
-                    const columnValue = item[column];
-                    // SQLite uses ? for placeholders, not $1, $2, etc.
-                    query += `?${k < lastColumnIndex ? ", " : ""}`;
-                    if (typeof columnValue === "undefined") {
-                      binding_values.push(null);
-                    } else {
-                      binding_values.push(columnValue);
-                    }
-                  }
-                  if (j < lastItemIndex) {
-                    query += "),";
-                  } else {
-                    query += ") "; // the user can add RETURNING * or RETURNING id
-                  }
-                }
-              } else {
-                query += "(";
-                const item = items;
-                for (let j = 0; j < columnCount; j++) {
-                  const column = columns[j];
-                  const columnValue = item[column];
-                  // SQLite uses ? for placeholders
-                  query += `?${j < lastColumnIndex ? ", " : ""}`;
-                  if (typeof columnValue === "undefined") {
-                    binding_values.push(null);
-                  } else {
-                    binding_values.push(columnValue);
-                  }
-                }
-                query += ") "; // the user can add RETURNING * or RETURNING id
-              }
-            } else if (command === SQLCommand.in) {
-              // SELECT * FROM users WHERE id IN (${sql([1, 2, 3])})
-              if (!$isArray(items)) {
-                throw new SyntaxError("An array of values is required for WHERE IN helper");
-              }
-              const itemsCount = items.length;
-              const lastItemIndex = itemsCount - 1;
-              query += "(";
-              for (let j = 0; j < itemsCount; j++) {
-                // SQLite uses ? for placeholders
-                query += `?${j < lastItemIndex ? ", " : ""}`;
-                if (columnCount > 0) {
-                  // we must use a key from a object
-                  if (columnCount > 1) {
-                    // we should not pass multiple columns here
-                    throw new SyntaxError("Cannot use WHERE IN helper with multiple columns");
-                  }
-                  // SELECT * FROM users WHERE id IN (${sql(users, "id")})
-                  const value = items[j];
-                  if (typeof value === "undefined") {
-                    binding_values.push(null);
-                  } else {
-                    const value_from_key = value[columns[0]];
-
-                    if (typeof value_from_key === "undefined") {
-                      binding_values.push(null);
-                    } else {
-                      binding_values.push(value_from_key);
-                    }
-                  }
-                } else {
-                  const value = items[j];
-                  if (typeof value === "undefined") {
-                    binding_values.push(null);
-                  } else {
-                    binding_values.push(value);
-                  }
-                }
-              }
-              query += ") "; // more conditions can be added after this
-            } else {
-              // UPDATE users SET ${sql({ name: "John", age: 31 })} WHERE id = 1
-              let item;
-              if ($isArray(items)) {
-                if (items.length > 1) {
-                  throw new SyntaxError("Cannot use array of objects for UPDATE");
-                }
-                item = items[0];
-              } else {
-                item = items;
-              }
-              // no need to include if is updateSet
-              if (command === SQLCommand.update) {
-                query += " SET ";
-              }
-              for (let i = 0; i < columnCount; i++) {
-                const column = columns[i];
-                const columnValue = item[column];
-                if (typeof columnValue === "undefined") {
-                  // skip undefined values, this is the expected behavior in JS
-                  continue;
-                }
-                // SQLite uses ? for placeholders
-                query += `${this.escapeIdentifier(column)} = ?${i < lastColumnIndex ? ", " : ""}`;
-                if (typeof columnValue === "undefined") {
-                  binding_values.push(null);
-                } else {
-                  binding_values.push(columnValue);
-                }
-              }
-              if (query.endsWith(", ")) {
-                // we got an undefined value at the end, lets remove the last comma
-                query = query.substring(0, query.length - 2);
-              }
-              if (query.endsWith("SET ")) {
-                throw new SyntaxError("Update needs to have at least one column");
-              }
-              // the user can add where clause after this
-              query += " ";
-            }
-          } else {
-            // SQLite uses ? for placeholders
-            query += `? `;
-            if (typeof value === "undefined") {
-              binding_values.push(null);
-            } else {
-              binding_values.push(value);
-            }
-          }
-        }
-      } else {
-        throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
-      }
-    }
-
-    return [query, binding_values];
   }
 
   connect(onConnected: OnConnected<BunSQLiteModule.Database>, reserved?: boolean) {
@@ -590,10 +437,12 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
 
     // Since SQLite connection is synchronous, we immediately know the result
-    if (this.storedError) {
-      onConnected(this.storedError, null);
-    } else if (this.db) {
-      onConnected(null, this.db);
+    const storedError = this.storedError;
+    let db;
+    if (storedError) {
+      onConnected(storedError, null);
+    } else if ((db = this.db)) {
+      onConnected(null, db);
     } else {
       onConnected(this.connectionClosedError(), null);
     }
@@ -695,6 +544,15 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       };
     }
 
+    // The string is interpolated into `BEGIN ${options}`, so refuse anything that
+    // could terminate the statement or start a new one.
+    if (!/^[A-Za-z ,]*$/.test(options)) {
+      return {
+        valid: false,
+        error: "Transaction options can only contain letters, spaces, and commas.",
+      };
+    }
+
     // SQLite will handle validation of other options
     return { valid: true };
   }
@@ -717,8 +575,4 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
 
 export default {
   SQLiteAdapter,
-  SQLCommand,
-  commandToString,
-  parseSQLQuery,
-  SQLiteQueryHandle,
 };

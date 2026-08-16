@@ -76,13 +76,17 @@ describe("bundler", () => {
 
       expect(bundled).toMatchInlineSnapshot(`
         "var __defProp = Object.defineProperty;
+        var __returnValue = (v) => v;
+        function __exportSetter(name, newValue) {
+          this[name] = __returnValue.bind(null, newValue);
+        }
         var __export = (target, all) => {
           for (var name in all)
             __defProp(target, name, {
               get: all[name],
               enumerable: true,
               configurable: true,
-              set: (newValue) => all[name] = () => newValue
+              set: __exportSetter.bind(all, name)
             });
         };
         var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
@@ -123,9 +127,9 @@ describe("bundler", () => {
         // BaseElement.ts
         var exports_BaseElement = {};
         __export(exports_BaseElement, {
-          listValue: () => listValue,
+          BaseElement: () => BaseElement,
           formValue: () => formValue,
-          BaseElement: () => BaseElement
+          listValue: () => listValue
         });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
@@ -160,7 +164,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=741426CCC2D50C3364756E2164756E21
+        //# debugId=19FD1E5354FE6B6564756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -337,13 +341,17 @@ describe("bundler", () => {
 
       expect(bundled).toMatchInlineSnapshot(`
         "var __defProp = Object.defineProperty;
+        var __returnValue = (v) => v;
+        function __exportSetter(name, newValue) {
+          this[name] = __returnValue.bind(null, newValue);
+        }
         var __export = (target, all) => {
           for (var name in all)
             __defProp(target, name, {
               get: all[name],
               enumerable: true,
               configurable: true,
-              set: (newValue) => all[name] = () => newValue
+              set: __exportSetter.bind(all, name)
             });
         };
         var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
@@ -369,9 +377,9 @@ describe("bundler", () => {
         // BaseElement.ts
         var exports_BaseElement = {};
         __export(exports_BaseElement, {
-          listValue: () => listValue,
+          BaseElement: () => BaseElement,
           formValue: () => formValue,
-          BaseElement: () => BaseElement
+          listValue: () => listValue
         });
         function BaseElement() {
           console.log("BaseElement called", BaseElementImport());
@@ -402,7 +410,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=27B6A8D5F1ED83DA64756E2164756E21
+        //# debugId=EA1AA30E1BD7B08E64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

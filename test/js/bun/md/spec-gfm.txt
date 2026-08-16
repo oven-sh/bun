@@ -1,0 +1,227 @@
+---
+title: GitHub Flavored Markdown Spec (GFM-specific examples)
+version: '0.29'
+date: '2019-04-06'
+license: '[CC-BY-SA 4.0](http://creativecommons.org/licenses/by-sa/4.0/)'
+...
+
+
+# Inlines
+
+
+## Backslash escapes
+
+```````````````````````````````` example
+<http://example.com?find=\*>
+.
+<p><a href="http://example.com?find=%5C*">http://example.com?find=\*</a></p>
+````````````````````````````````
+
+
+## Entity and numeric character references
+
+```````````````````````````````` example
+&nbsp &x; &#; &#x;
+&#987654321;
+&#abcdef0;
+&ThisIsNotDefined; &hi?;
+.
+<p>&amp;nbsp &amp;x; &amp;#; &amp;#x;
+&amp;#987654321;
+&amp;#abcdef0;
+&amp;ThisIsNotDefined; &amp;hi?;</p>
+````````````````````````````````
+
+
+## Code spans
+
+```````````````````````````````` example
+`<http://foo.bar.`baz>`
+.
+<p><code>&lt;http://foo.bar.</code>baz&gt;`</p>
+````````````````````````````````
+
+```````````````````````````````` example
+<http://foo.bar.`baz>`
+.
+<p><a href="http://foo.bar.%60baz">http://foo.bar.`baz</a>`</p>
+````````````````````````````````
+
+
+## Emphasis and strong emphasis
+
+```````````````````````````````` example
+**a<http://foo.bar/?q=**>
+.
+<p>**a<a href="http://foo.bar/?q=**">http://foo.bar/?q=**</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+__a<http://foo.bar/?q=__>
+.
+<p>__a<a href="http://foo.bar/?q=__">http://foo.bar/?q=__</a></p>
+````````````````````````````````
+
+
+## Links
+
+```````````````````````````````` example
+[link](#fragment)
+
+[link](http://example.com#fragment)
+
+[link](http://example.com?foo=3#frag)
+.
+<p><a href="#fragment">link</a></p>
+<p><a href="http://example.com#fragment">link</a></p>
+<p><a href="http://example.com?foo=3#frag">link</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+[foo<http://example.com/?search=](uri)>
+.
+<p>[foo<a href="http://example.com/?search=%5D(uri)">http://example.com/?search=](uri)</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+[foo *bar][ref]
+
+[ref]: /uri
+.
+<p><a href="/uri">foo *bar</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+[foo<http://example.com/?search=][ref]>
+
+[ref]: /uri
+.
+<p>[foo<a href="http://example.com/?search=%5D%5Bref%5D">http://example.com/?search=][ref]</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+[Толпой][Толпой] is a Russian word.
+
+[ТОЛПОЙ]: /url
+.
+<p><a href="/url">Толпой</a> is a Russian word.</p>
+````````````````````````````````
+
+
+## Autolinks
+
+```````````````````````````````` example
+<http://foo.bar.baz/test?q=hello&id=22&boolean>
+.
+<p><a href="http://foo.bar.baz/test?q=hello&amp;id=22&amp;boolean">http://foo.bar.baz/test?q=hello&amp;id=22&amp;boolean</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+<http://../>
+.
+<p><a href="http://../">http://../</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+<http://foo.bar/baz bim>
+.
+<p>&lt;http://foo.bar/baz bim&gt;</p>
+````````````````````````````````
+
+```````````````````````````````` example
+<http://example.com/\[\>
+.
+<p><a href="http://example.com/%5C%5B%5C">http://example.com/\[\</a></p>
+````````````````````````````````
+
+```````````````````````````````` example
+< http://foo.bar >
+.
+<p>&lt; http://foo.bar &gt;</p>
+````````````````````````````````
+
+```````````````````````````````` example
+http://example.com
+.
+<p>http://example.com</p>
+````````````````````````````````
+
+
+## Disallowed Raw HTML
+
+```````````````````````````````` example
+<strong> <title> <style> <em>
+
+<blockquote>
+  <xmp> is disallowed.  <XMP> is also disallowed.
+</blockquote>
+.
+<p><strong> &lt;title> &lt;style> <em></p>
+<blockquote>
+  &lt;xmp> is disallowed.  &lt;XMP> is also disallowed.
+</blockquote>
+.
+--ftag-filter
+````````````````````````````````
+
+```````````````````````````````` example
+<script>alert('xss')</script>
+.
+&lt;script>alert('xss')&lt;/script>
+.
+--ftag-filter
+````````````````````````````````
+
+```````````````````````````````` example
+<style>
+body { color: red; }
+</style>
+.
+&lt;style>
+body { color: red; }
+&lt;/style>
+.
+--ftag-filter
+````````````````````````````````
+
+```````````````````````````````` example
+<textarea>
+form content
+</textarea>
+.
+&lt;textarea>
+form content
+&lt;/textarea>
+.
+--ftag-filter
+````````````````````````````````
+
+Inline disallowed tags are also filtered:
+
+```````````````````````````````` example
+Inline <iframe src="x"> and <noembed> and <plaintext> tags.
+.
+<p>Inline &lt;iframe src="x"> and &lt;noembed> and &lt;plaintext> tags.</p>
+.
+--ftag-filter
+````````````````````````````````
+
+Allowed tags pass through:
+
+```````````````````````````````` example
+<b>bold</b> and <em>emphasis</em> are fine.
+.
+<p><b>bold</b> and <em>emphasis</em> are fine.</p>
+.
+--ftag-filter
+````````````````````````````````
+
+Without the tag filter, disallowed tags pass through:
+
+```````````````````````````````` example
+<strong> <title> <style> <em>
+.
+<p><strong> <title> <style> <em></p>
+````````````````````````````````
+
+

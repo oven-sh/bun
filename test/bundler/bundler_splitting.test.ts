@@ -1,5 +1,8 @@
-import { describe } from "bun:test";
-import { bunEnv } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { itBundled } from "./expectBundled";
 
 const env = {
@@ -113,7 +116,9 @@ describe("bundler", () => {
     run: {
       file: "/out/entry.js",
       env,
-      stdout: "level1.js executed\nlevel1 loaded\nlevel2.js executed\nlevel2 loaded from level1",
+      // The spec-compliant module loader resolves the inner dynamic import's
+      // load before the outer .then callback runs (matches Node).
+      stdout: "level1.js executed\nlevel2.js executed\nlevel1 loaded\nlevel2 loaded from level1",
     },
   });
 
@@ -322,5 +327,171 @@ describe("bundler", () => {
       env,
       stdout: "a.js executed\na loaded from entry\nb.js executed\nb.js imports a {}\nb loaded from entry, value: B",
     },
+  });
+
+  // N same-named cross-chunk exports must get unique aliases in O(N) total
+  // (ExportRenamer::next_renamed_name). Debug/ASAN builds blow past the 15s
+  // cap with far fewer files than release, hence the scaled N.
+  test("splitting/ManyCrossChunkExportAliasCollisions", async () => {
+    const N = isDebug || isASAN ? 2500 : 20000;
+    const THRESHOLD_MS = 15000;
+
+    const files: Record<string, string> = {};
+    let imports = "";
+    let uses = "";
+    for (let i = 0; i < N; i++) {
+      files[`s${i}.js`] = `export const shared = ${i};\n`;
+      imports += `import { shared as s${i} } from "./s${i}.js";\n`;
+      uses += `t += s${i};\n`;
+    }
+    // Flat statement list keeps every import live without building a deep AST.
+    const entryBody = imports + "let t = 0;\n" + uses + `console.log(t, s0, s${N - 1});\n`;
+    files["e1.js"] = entryBody;
+    files["e2.js"] = entryBody;
+
+    using dir = tempDir("splitting-export-alias-collisions", files);
+    const root = String(dir);
+
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--splitting", "--format=esm", "--outdir", "out", "./e1.js", "./e2.js"],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: THRESHOLD_MS,
+      killSignal: "SIGKILL",
+    });
+    const [buildOut, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    if (build.signalCode !== null) {
+      throw new Error(
+        `bun build did not finish within ${THRESHOLD_MS}ms for ${N} colliding cross-chunk export names ` +
+          `(signal ${build.signalCode})\nstdout:\n${buildOut}\nstderr:\n${buildErr}`,
+      );
+    }
+    if (buildExit !== 0) {
+      throw new Error(`bun build exited ${buildExit}\nstdout:\n${buildOut}\nstderr:\n${buildErr}`);
+    }
+
+    // The shared chunk's export clause must hand out a unique alias for every
+    // `shared` symbol; verify by inspecting the generated chunk and by running
+    // the output.
+    const outDir = join(root, "out");
+    const chunkName = readdirSync(outDir).find(f => f !== "e1.js" && f !== "e2.js" && f.endsWith(".js"));
+    expect(chunkName).toBeDefined();
+    const chunk = readFileSync(join(outDir, chunkName!), "utf8");
+    const clause = chunk.match(/export\s*\{([^}]*)\}/)?.[1] ?? "";
+    const aliases = clause
+      .split(",")
+      .map(part => {
+        const bits = part.trim().split(/\s+as\s+/);
+        return bits[bits.length - 1];
+      })
+      .filter(Boolean);
+    expect(aliases.length).toBe(N);
+    expect(new Set(aliases).size).toBe(N);
+    for (const a of aliases) expect(a).toMatch(/^shared\d*$/);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), join(outDir, "e1.js")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    if (runExit !== 0) {
+      throw new Error(`running e1.js exited ${runExit}\nstdout:\n${runOut}\nstderr:\n${runErr}`);
+    }
+    expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
+  }, 60_000);
+
+  // Chunks are printed with placeholders where they refer to other chunks and
+  // assets; the placeholders are replaced once every output path is known.
+  // These pin the two per-chunk decisions of that step: what the written paths
+  // are relative to, and whether the chunk's source map is corrected for the
+  // replacements (which is also what adds the `//# debugId` comment).
+  describe.concurrent("splitting/ChunkReferencePaths", () => {
+    const adminSource = `import { util } from "../../shared/util.js";\nexport const page = [import("../site/index.js"), util("admin")];\n`;
+    const files = {
+      "pages/admin/index.js": adminSource,
+      "pages/site/index.js": `import { util } from "../../shared/util.js";\nexport const page = util("site");\n`,
+      "shared/util.js": `export function util(x) {\n  return "util:" + x;\n}\n`,
+    };
+
+    async function buildAdminEntry(
+      root: string,
+      options: { sourcemap: "none" | "linked"; publicPath?: string; outdir?: string },
+    ) {
+      const result = await Bun.build({
+        entrypoints: [join(root, "pages/admin/index.js"), join(root, "pages/site/index.js")],
+        root,
+        splitting: true,
+        ...options,
+      });
+      expect(result.logs).toBeEmpty();
+      const admin = result.outputs.find(o => o.path.replaceAll("\\", "/").endsWith("pages/admin/index.js"))!;
+      const map = result.outputs.find(o => o.path === admin.path + ".map");
+      return { code: await admin.text(), map: map && JSON.parse(await map.text()) };
+    }
+
+    // `util("admin")` follows the dynamic import on the same line, so the map
+    // only points at it if the mappings were shifted by the difference between
+    // the placeholder and the path written over it.
+    async function expectUtilCallToBeMapped(code: string, map: object) {
+      const generatedLines = code.split("\n");
+      const line = generatedLines.findIndex(l => l.includes('util("admin")')) + 1;
+      expect(line).toBeGreaterThan(0);
+      const column = generatedLines[line - 1].indexOf('util("admin")');
+      const original = await SourceMapConsumer.with(map, null, consumer =>
+        consumer.originalPositionFor({ line, column }),
+      );
+      expect({
+        source: original.source?.replaceAll("\\", "/").split("/").slice(-3).join("/"),
+        line: original.line,
+        column: original.column,
+      }).toEqual({
+        source: "pages/admin/index.js",
+        line: 2,
+        column: adminSource.split("\n")[1].indexOf('util("admin")'),
+      });
+    }
+
+    test("references are relative to the directory of the importing chunk", async () => {
+      using dir = tempDir("splitting-reference-paths", files);
+      const { code, map } = await buildAdminEntry(String(dir), { sourcemap: "none" });
+      expect(code).toMatch(/from "\.\.\/\.\.\/chunk-[a-z0-9]+\.js"/);
+      expect(code).toContain('import("../site/index.js")');
+      expect(code).not.toContain("//# debugId=");
+      expect(map).toBeUndefined();
+    });
+
+    test("a public path makes references outdir-relative regardless of the importing chunk's directory", async () => {
+      using dir = tempDir("splitting-reference-paths-public", files);
+      const { code, map } = await buildAdminEntry(String(dir), {
+        sourcemap: "linked",
+        publicPath: "https://cdn.example/app/",
+      });
+      expect(code).toMatch(/from "https:\/\/cdn\.example\/app\/chunk-[a-z0-9]+\.js"/);
+      expect(code).toContain('import("https://cdn.example/app/pages/site/index.js")');
+      expect(code).toContain("//# debugId=");
+      await expectUtilCallToBeMapped(code, map);
+    });
+
+    test("the source map accounts for the paths written over the placeholders", async () => {
+      using dir = tempDir("splitting-reference-paths-sourcemap", files);
+      const { code, map } = await buildAdminEntry(String(dir), { sourcemap: "linked" });
+      expect(code).toContain('import("../site/index.js")');
+      expect(code).toContain("//# debugId=");
+      await expectUtilCallToBeMapped(code, map);
+    });
+
+    test("writing to an outdir resolves references the same way as an in-memory build", async () => {
+      using dir = tempDir("splitting-reference-paths-outdir", files);
+      const inMemory = await buildAdminEntry(String(dir), { sourcemap: "linked" });
+      const onDisk = await buildAdminEntry(String(dir), { sourcemap: "linked", outdir: join(String(dir), "out") });
+      expect(onDisk.code).toBe(inMemory.code);
+      expect(onDisk.map.mappings).toBe(inMemory.map.mappings);
+      expect(readFileSync(join(String(dir), "out", "pages", "admin", "index.js"), "utf8")).toBe(inMemory.code);
+      await expectUtilCallToBeMapped(onDisk.code, onDisk.map);
+    });
   });
 });

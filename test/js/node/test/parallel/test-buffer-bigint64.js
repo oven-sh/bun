@@ -45,7 +45,7 @@ const buf = Buffer.allocUnsafe(9);
   }, {
     code: 'ERR_OUT_OF_RANGE',
     message: 'The value of "value" is out of range. It must be ' +
-      '>= 0n and < 2n ** 64n. Received 18446744073709551616n'
+      '>= 0n and < 2n ** 64n. Received 18_446_744_073_709_551_616n'
   });
 
   // Should throw a TypeError upon invalid input

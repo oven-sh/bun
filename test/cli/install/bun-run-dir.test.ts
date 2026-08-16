@@ -1,16 +1,11 @@
 import { file, spawn } from "bun";
-import { beforeEach, expect, it } from "bun:test";
+import { expect, it } from "bun:test";
 import { exists, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, stderrForInstall, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
 import { join } from "path";
 
-let run_dir: string;
-
-beforeEach(() => {
-  run_dir = tmpdirSync();
-});
-
-it("should download dependency to run local file", async () => {
+it.concurrent("should download dependency to run local file", async () => {
+  const run_dir = tmpdirSync();
   await writeFile(
     join(run_dir, "test.js"),
     `
@@ -34,7 +29,7 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = stderrForInstall(await new Response(stderr1).text());
+  const err1 = await new Response(stderr1).text();
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
@@ -59,7 +54,7 @@ console.log(minify("print(6 * 7)").code);
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err2 = stderrForInstall(await new Response(stderr2).text());
+  const err2 = await new Response(stderr2).text();
   expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("uglify-js");
@@ -69,7 +64,8 @@ console.log(minify("print(6 * 7)").code);
   expect(await exited2).toBe(0);
 });
 
-it("should download dependencies to run local file", async () => {
+it.concurrent("should download dependencies to run local file", async () => {
+  const run_dir = tmpdirSync();
   const filePath = join(import.meta.dir, "baz-0.0.3.tgz").replace(/\\/g, "\\\\");
   await writeFile(
     join(run_dir, "test.js"),
@@ -98,7 +94,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
       BUN_INSTALL_CACHE_DIR: join(run_dir, ".cache"),
     },
   });
-  const err1 = stderrForInstall(await new Response(stderr1).text());
+  const err1 = await new Response(stderr1).text();
   expect(err1).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
@@ -132,7 +128,7 @@ for (const entry of await decompress(Buffer.from(buffer))) {
     },
   });
   const err2 = await new Response(stderr2).text();
-  if (err2) throw new Error(err2);
+  expect(err2).toBe("");
   expect(await readdirSorted(run_dir)).toEqual([".cache", "test.js"]);
   expect(await readdirSorted(join(run_dir, ".cache"))).toContain("decompress");
   expect(await readdirSorted(join(run_dir, ".cache", "decompress"))).toEqual(["4.2.1@@@1"]);
@@ -150,7 +146,8 @@ for (const entry of await decompress(Buffer.from(buffer))) {
   expect(await exited2).toBe(0);
 });
 
-it("should not crash when downloading a non-existent module, issue#4240", async () => {
+it.concurrent("should not crash when downloading a non-existent module, issue#4240", async () => {
+  const run_dir = tmpdirSync();
   await writeFile(
     join(run_dir, "test.js"),
     `

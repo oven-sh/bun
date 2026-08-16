@@ -1,19 +1,23 @@
 import { ArrayBufferSink, readableStreamToText, spawn, spawnSync } from "bun";
+import { dlopen } from "bun:ffi";
 import { beforeAll, describe, expect, it } from "bun:test";
 import {
   gcTick as _gcTick,
   bunEnv,
   bunExe,
   getMaxFD,
+  isAndroid,
   isBroken,
-  isMacOS,
+  isDebug,
+  isLinux,
   isPosix,
   isWindows,
   shellExe,
+  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -163,12 +167,16 @@ for (let [gcTick, label] of [
       });
 
       it("check exit code from onExit", async () => {
-        const count = isWindows ? 100 : 1000;
+        const count = isWindows || isDebug ? 100 : 1000;
+        // Bounded concurrency: 25 pairs (50 children) at a time keeps this from
+        // being 1000 strictly-serial spawn pairs without overwhelming CI runners.
+        const batchSize = 25;
 
-        for (let i = 0; i < count; i++) {
-          var exitCode1, exitCode2;
-          await new Promise<void>(resolve => {
-            var counter = 0;
+        const runPair = () =>
+          new Promise<[number | null, number | null]>(resolve => {
+            let exitCode1: number | null = null;
+            let exitCode2: number | null = null;
+            let counter = 0;
             spawn({
               cmd: [bunExe(), "-e", "process.exit(0)"],
               stdin: "ignore",
@@ -178,7 +186,7 @@ for (let [gcTick, label] of [
                 exitCode1 = code;
                 counter++;
                 if (counter === 2) {
-                  resolve();
+                  resolve([exitCode1, exitCode2]);
                 }
               },
             });
@@ -193,14 +201,19 @@ for (let [gcTick, label] of [
                 counter++;
 
                 if (counter === 2) {
-                  resolve();
+                  resolve([exitCode1, exitCode2]);
                 }
               },
             });
           });
 
-          expect(exitCode1).toBe(0);
-          expect(exitCode2).toBe(1);
+        for (let i = 0; i < count; i += batchSize) {
+          const batch = Math.min(batchSize, count - i);
+          const results = await Promise.all(Array.from({ length: batch }, runPair));
+          for (const [exitCode1, exitCode2] of results) {
+            expect(exitCode1).toBe(0);
+            expect(exitCode2).toBe(1);
+          }
         }
       }, 60_000_0);
 
@@ -387,6 +400,20 @@ for (let [gcTick, label] of [
         await prom;
       });
 
+      it("kill() rejects String objects", async () => {
+        const process = spawn({
+          cmd: [shellExe(), "-c", "sleep 1000"],
+          stdout: "pipe",
+        });
+        try {
+          expect(() => process.kill(String.prototype as any)).toThrow(TypeError);
+          expect(() => process.kill(new String("SIGKILL") as any)).toThrow(TypeError);
+        } finally {
+          process.kill();
+          await process.exited;
+        }
+      });
+
       it("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
           cmd: ["node", "-e", "process.stdin.setRawMode?.(true); process.stdin.pipe(process.stdout)"],
@@ -422,6 +449,31 @@ for (let [gcTick, label] of [
         await proc.exited;
       });
 
+      it("stdin.end() rejects with EPIPE when the child exits before consuming the write", async () => {
+        // Child reads a single byte and exits; the parent queues 16MB on stdin
+        // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
+        // named-pipe buffer on Windows) so end() is still draining when the
+        // read end closes. On Windows libuv previously surfaced that as code
+        // "EOF" because uv__process_pipe_write_req used the read-side error
+        // translator.
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", `const b = Buffer.alloc(1); require("fs").readSync(0, b); process.exit(0);`],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+        let caught: any;
+        try {
+          await proc.stdin!.end();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught?.code).toBe("EPIPE");
+        await proc.exited;
+      });
+
       describe("pipe", () => {
         function huge() {
           return spawn({
@@ -429,7 +481,6 @@ for (let [gcTick, label] of [
             stdout: "pipe",
             stdin: new Blob([hugeString + "\n"]),
             stderr: "inherit",
-            lazy: true,
           });
         }
 
@@ -506,6 +557,31 @@ for (let [gcTick, label] of [
           });
         }
 
+        it.skipIf(isWindows)("lazy: true releases an unread pipe after the child exits", async () => {
+          // With lazy the reader is paused until JS pulls. If a slot is never
+          // read, on_process_exit must still drain it so the fd and the
+          // Subprocess wrapper are released.
+          const refs: WeakRef<any>[] = [];
+          for (let i = 0; i < 50; i++) {
+            const p = spawn({
+              cmd: ["sh", "-c", "echo out; echo err >&2"],
+              stdout: "pipe",
+              stderr: "pipe",
+              lazy: true,
+            });
+            expect(await p.stdout.text()).toBe("out\n");
+            await p.exited;
+            refs.push(new WeakRef(p));
+          }
+          Bun.gc(true);
+          await Bun.sleep(0);
+          Bun.gc(true);
+          const alive = refs.filter(r => r.deref() !== undefined).length;
+          // Allow a couple of stragglers for GC timing; the regression kept
+          // all 50 Strong-rooted.
+          expect(alive).toBeLessThan(5);
+        });
+
         it("should allow reading stdout after a few milliseconds", async () => {
           for (let i = 0; i < 50; i++) {
             const proc = Bun.spawn({
@@ -533,8 +609,10 @@ for (let [gcTick, label] of [
   });
 }
 
-// This is a test which should only be used when pidfd and EVTFILT_PROC is NOT available
-it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || !isPosix || isMacOS)(
+// The waiter thread is the Linux fallback for kernels/sandboxes without pidfd;
+// kqueue platforms (macOS, FreeBSD) always have EVFILT_PROC and its non-Linux
+// loop has no wakeup for processes appended after it starts.
+it.skipIf(Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD) || (!isLinux && !isAndroid))(
   "with BUN_FEATURE_FLAG_FORCE_WAITER_THREAD",
   async () => {
     const result = spawnSync({
@@ -582,8 +660,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      // TODO: on Windows
-      if (!isWindows) proc.unref();
+      proc.unref();
       await proc.exited;
     }
 
@@ -599,7 +676,7 @@ describe("spawn unref and kill should not hang", () => {
       });
 
       proc.kill();
-      if (!isWindows) proc.unref();
+      proc.unref();
 
       await proc.exited;
       console.count("Finished");
@@ -615,8 +692,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      // TODO: on Windows
-      if (!isWindows) proc.unref();
+      proc.unref();
       proc.kill();
       await proc.exited;
     }
@@ -624,7 +700,6 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
 
-  // process.unref() on Windows does not work ye :(
   it("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
@@ -637,7 +712,12 @@ describe("spawn unref and kill should not hang", () => {
 
 async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited"]) {
   console.log("running", order.join(","), "x 100");
-  for (let i = 0; i < (isWindows ? 10 : 100); i++) {
+  const total = isWindows ? 10 : 100;
+  // Iterations are independent; run a few at a time instead of strictly
+  // serially. Kept small (5) because all 16 orders run in parallel.
+  const batchSize = 5;
+
+  async function runOne() {
     const proc = spawn({
       cmd: [shellExe(), "-c", `sleep ${sleep}`],
       stdout: "ignore",
@@ -672,6 +752,10 @@ async function runTest(sleep: string, order = ["sleep", "kill", "unref", "exited
       }
     }
   }
+
+  for (let i = 0; i < total; i += batchSize) {
+    await Promise.all(Array.from({ length: Math.min(batchSize, total - i) }, runOne));
+  }
   expect().pass();
 }
 
@@ -682,7 +766,7 @@ describe("should not hang", () => {
       async () => {
         const runs: Promise<void>[] = [];
 
-        let initialMaxFD = -1;
+        const baselineMaxFD = getMaxFD();
         for (const order of [
           ["sleep", "kill", "unref", "exited"],
           ["sleep", "unref", "kill", "exited"],
@@ -702,30 +786,61 @@ describe("should not hang", () => {
           ["exited"],
         ]) {
           runs.push(
-            runTest(sleep, order)
-              .then(a => {
-                if (initialMaxFD === -1) {
-                  initialMaxFD = getMaxFD();
-                }
-
-                return a;
-              })
-              .catch(err => {
-                console.error("For order", JSON.stringify(order, null, 2));
-                throw err;
-              }),
+            runTest(sleep, order).catch(err => {
+              console.error("For order", JSON.stringify(order, null, 2));
+              throw err;
+            }),
           );
         }
 
         return await Promise.all(runs).then(ret => {
-          // assert we didn't leak any file descriptors
-          // add buffer room for flakiness
-          expect(initialMaxFD).toBeLessThanOrEqual(getMaxFD() + 50);
+          // Assert we didn't leak file descriptors: a real leak here compounds
+          // over 1600 iterations. The buffer accounts for the ~80 children that
+          // are transiently alive at once (16 orders x 5 concurrent iterations)
+          // plus any fds released lazily after `exited` resolves.
+          expect(getMaxFD()).toBeLessThanOrEqual(baselineMaxFD + 256);
           return ret;
         });
       },
       128_000,
     );
+  }
+});
+
+describe("unref() + .exited with nothing else ref'd (Windows)", () => {
+  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
+  // body and never dequeue the IOCP exit packet, so these children busy-spun
+  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+  for (const [name, body] of [
+    ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
+    [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
+    [
+      "onExit then unref()",
+      `const { promise, resolve } = Promise.withResolvers();
+       const p = Bun.spawn({ ...opts, onExit: resolve }); p.unref(); await promise;`,
+    ],
+  ] as const) {
+    it(name, async () => {
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };
+           ${body}
+           console.log("resolved");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
+        stdout: "resolved\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   }
 });
 
@@ -814,6 +929,252 @@ describe("close handling", () => {
       }
     }
   }
+
+  it.skipIf(isWindows)("does not close caller-owned fds passed as extra stdio", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await (async function () {
+        const procs = Array.from({ length: 8 }, () =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "ignore", "ignore", fd],
+          }),
+        );
+        // The caller-supplied fd should be exposed on stdio[N] (not null) while
+        // still not being closed by the subprocess.
+        expect(procs[0].stdio).toEqual([null, null, null, fd]);
+        await Promise.all(procs.map(p => p.exited));
+      })();
+
+      Bun.gc(true);
+      await Bun.sleep(0);
+      Bun.gc(true);
+
+      expect(() => fstatSync(fd)).not.toThrow();
+
+      const { exited } = spawn({
+        cmd: [bunExe(), "-e", `require("fs").fstatSync(3)`],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "inherit", fd],
+      });
+      expect(await exited).toBe(0);
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  it.skipIf(isWindows)("stdio[N] for non-fd extra slots is null", async () => {
+    const fd = openSync(import.meta.path, "r");
+    try {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", ""],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "ignore", "ignore", fd],
+      });
+      expect(proc.stdio).toEqual([null, null, null, null, fd]);
+      await proc.exited;
+    } finally {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  });
+
+  for (const [label, makeStdio] of [
+    ["undefined", () => ["ignore", "pipe", "inherit", undefined, undefined]],
+    // eslint-disable-next-line no-sparse-arrays
+    ["a hole", () => ["ignore", "pipe", "inherit", , "ignore"]],
+  ] as const) {
+    it(`stdio[N>=3] = ${label} is treated as ignore`, async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("ok");
+      expect(proc.stdio).toEqual([null, null, null, null, null]);
+      expect(exitCode).toBe(0);
+    });
+
+    it(`spawnSync stdio[N>=3] = ${label} is treated as ignore`, () => {
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: makeStdio() as any,
+      });
+      expect(stdout.toString()).toBe("ok");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  describe("stdio[N>=3] blob-like inputs", () => {
+    const readFd3 = `const fs = require("fs"); const b = Buffer.alloc(64); const n = fs.readSync(3, b); process.stdout.write(b.subarray(0, n));`;
+
+    it.skipIf(isWindows)("Bun.file(path) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile.txt");
+      writeFileSync(file, "from-bun-file");
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", readFd3],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", Bun.file(file)],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file", stderr: "", exitCode: 0 });
+    });
+
+    it.skipIf(isWindows)("Bun.file(fd) at index >= 3 is readable in the child", async () => {
+      const file = join(tmp, "stdio-extra-bunfile-fd.txt");
+      writeFileSync(file, "from-bun-file-fd");
+      const fd = openSync(file, "r");
+      try {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", readFd3],
+          env: bunEnv,
+          stdio: ["ignore", "pipe", "pipe", Bun.file(fd)],
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "from-bun-file-fd", stderr: "", exitCode: 0 });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it.skipIf(isWindows)("empty Blob at index >= 3 is treated as ignore", async () => {
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", "process.stdout.write('ok')"],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe", new Blob([])],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
+
+    const pullStream = () =>
+      new ReadableStream({
+        pull(c) {
+          c.enqueue(new Uint8Array([1]));
+          c.close();
+        },
+      });
+    for (const [label, make, msg] of [
+      ["Blob", () => new Blob(["from-blob"]), "Blob cannot be used for stdio[3] yet"],
+      ["Response", () => new Response("from-response"), "Blob cannot be used for stdio[3] yet"],
+      [
+        "Request",
+        () => new Request("http://x", { method: "POST", body: "from-request" }),
+        "Blob cannot be used for stdio[3] yet",
+      ],
+      ["ReadableStream", () => pullStream(), "ReadableStream cannot be used for stdio[3] yet"],
+      ["Response(ReadableStream)", () => new Response(pullStream()), "ReadableStream cannot be used for stdio[3] yet"],
+      [
+        "Request(ReadableStream)",
+        () => new Request("http://x", { method: "POST", body: pullStream() }),
+        "ReadableStream cannot be used for stdio[3] yet",
+      ],
+    ] as const) {
+      it(`${label} at index >= 3 throws instead of panicking`, () => {
+        expect(() =>
+          spawn({
+            cmd: [bunExe(), "-e", ""],
+            env: bunEnv,
+            stdio: ["ignore", "pipe", "pipe", make()],
+          }),
+        ).toThrow(msg);
+      });
+    }
+
+    it("'socket-fd' at index < 3 throws", () => {
+      expect(() =>
+        spawn({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          // @ts-expect-error — intentionally invalid at index 0
+          stdio: ["socket-fd", "pipe", "pipe"],
+        }),
+      ).toThrow("'socket-fd' is only supported at indices >= 3");
+    });
+
+    it("'socket-fd' with spawnSync throws", () => {
+      // SyncSubprocess has no .stdio, so the caller could never receive
+      // the fd to close; reject rather than leak it.
+      expect(() =>
+        spawnSync({
+          cmd: [bunExe(), "-e", ""],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        }),
+      ).toThrow("'socket-fd' cannot be used with spawnSync");
+    });
+
+    it.skipIf(isWindows)(
+      "'socket-fd' at index >= 3 exposes a caller-owned fd the subprocess does not close",
+      async () => {
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", "require('fs').writeSync(3, 'hello-from-child')"],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "ignore", "socket-fd"],
+        });
+        const fd = proc.stdio[3];
+        expect(typeof fd).toBe("number");
+        try {
+          await proc.exited;
+          // fd is UnownedFd: still open and readable here (process exit does
+          // not touch stdio_pipes), and finalize_streams on later GC will skip
+          // this slot. The caller owns the close.
+          const buf = Buffer.alloc(64);
+          const n = readSync(fd as number, buf);
+          expect(buf.subarray(0, n).toString()).toBe("hello-from-child");
+        } finally {
+          // Caller is responsible for closing it.
+          closeSync(fd as number);
+        }
+        expect(() => fstatSync(fd as number)).toThrow(expect.objectContaining({ code: "EBADF" }));
+      },
+    );
+
+    it.skipIf(isWindows)("'pipe' at index >= 3: reading .stdio transfers fd ownership to the caller", async () => {
+      // Once .stdio exposes the raw fd number, JS owns it; the Subprocess
+      // finalizer must not close that number again at GC time (the kernel may
+      // have recycled it). Run in a child so a debug abort shows as exit != 0.
+      const fixture = /* js */ `
+        const fs = require("node:fs");
+        let hits = 0;
+        for (let i = 0; i < 4; i++) {
+          let p = Bun.spawn({
+            cmd: ["/bin/sh", "-c", "printf hi >&3"],
+            stdio: ["ignore", "ignore", "ignore", "pipe"],
+          });
+          await p.exited;
+          const fd = p.stdio[3];
+          if (typeof fd !== "number") throw new Error("stdio[3] not a number: " + fd);
+          const b = Buffer.alloc(8);
+          if (fs.readSync(fd, b) !== 2 || b.subarray(0, 2).toString() !== "hi")
+            throw new Error("stdio[3] unreadable");
+          fs.closeSync(fd);
+          const victim = fs.openSync(process.execPath, "r");
+          p = null;
+          Bun.gc(true);
+          await Bun.sleep(0);
+          Bun.gc(true);
+          try { fs.fstatSync(victim); } catch { hits++; }
+          try { fs.closeSync(victim); } catch {}
+        }
+        if (hits) throw new Error("finalizer closed " + hits + "/4 recycled fds");
+        console.log("PASS");
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "PASS", stderr: "", exitCode: 0 });
+    });
+  });
 });
 
 it("dispose keyword works", async () => {
@@ -839,6 +1200,217 @@ it("error does not UAF", async () => {
     emsg = (e as Error).message;
   }
   expect(emsg).toInclude(" ");
+});
+
+it("throws when an ArrayBufferView is used for stdout or stderr", async () => {
+  const fixture = `
+    const results = [];
+    for (const key of ["stdout", "stderr"]) {
+      for (const fn of ["spawn", "spawnSync"]) {
+        try {
+          Bun[fn]({ cmd: [process.execPath, "-e", ""], [key]: new Uint8Array(8) });
+          results.push(fn + ":" + key + ":spawned");
+        } catch (err) {
+          results.push(fn + ":" + key + ":" + err.message);
+        }
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const message = "ArrayBufferView cannot be used for stdout/stderr yet";
+  expect(JSON.parse(stdout.trim())).toEqual([
+    `spawn:stdout:${message}`,
+    `spawnSync:stdout:${message}`,
+    `spawn:stderr:${message}`,
+    `spawnSync:stderr:${message}`,
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("leaves a caller-supplied stdout fd open when stdin stream setup fails", async () => {
+  const file = join(tmp, "stdin-setup-failure.txt");
+  const fixture = `
+    const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
+    const fd = openSync(process.env.OUT_FILE, "w");
+    let armed = false;
+    const source = {
+      type: "direct",
+      get pull() {
+        if (armed) throw new Error("pull unavailable");
+        return () => {};
+      },
+    };
+    const stream = new ReadableStream(source);
+    armed = true;
+    let message = "did not throw";
+    try {
+      Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: [stream, fd, "ignore"] });
+    } catch (err) {
+      message = err.message;
+    }
+    fstatSync(fd);
+    writeSync(fd, "still-open");
+    closeSync(fd);
+    Bun.gc(true);
+    console.log(message);
+    process.exit(0);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, OUT_FILE: file },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("pull unavailable");
+  expect(readFileSync(file, "utf8")).toContain("still-open");
+  expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("leaves a Bun.file(fd) stdout open when stdin stream setup fails", async () => {
+  // Bun.file(fd) as stdout is an fd-backed Blob; extract_blob lowers it to
+  // Stdio::Fd before spawn, so the error-path cleanup must recognise it as
+  // caller-owned via the Fd variant and leave it open.
+  const file = join(tmp, "stdin-setup-failure-blob.txt");
+  const fixture = `
+    const { openSync, fstatSync, writeSync, closeSync } = require("node:fs");
+    const fd = openSync(process.env.OUT_FILE, "w");
+    let armed = false;
+    const source = {
+      type: "direct",
+      get pull() {
+        if (armed) throw new Error("pull unavailable");
+        return () => {};
+      },
+    };
+    const stream = new ReadableStream(source);
+    armed = true;
+    let message = "did not throw";
+    try {
+      Bun.spawn({ cmd: [process.execPath, "-e", "0"], stdio: [stream, Bun.file(fd), "ignore"] });
+    } catch (err) {
+      message = err.message;
+    }
+    fstatSync(fd);
+    writeSync(fd, "still-open");
+    closeSync(fd);
+    Bun.gc(true);
+    console.log(message);
+    process.exit(0);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, OUT_FILE: file },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("pull unavailable");
+  expect(readFileSync(file, "utf8")).toContain("still-open");
+  expect(exitCode).toBe(0);
+});
+
+// Bun.file(fd).stream() (like the shell's stdio and cwd handles) works on a
+// dup() of the descriptor. On Windows that duplicate used to be created
+// inheritable, and libuv spawns with bInheritHandles=TRUE, so every child
+// started while one was open got a copy and kept the file open after the
+// parent closed it. POSIX dup() uses F_DUPFD_CLOEXEC; the Windows side must match.
+it.if(isWindows)("handles duplicated for Bun.file(fd).stream() are not inherited by children", async () => {
+  const N = 64;
+  // Bigger than the stream's high-water mark, so each reader parks on its
+  // duplicate instead of reading to EOF and closing it.
+  using dir = tempDir("spawn-dup-inherit", { "data.bin": Buffer.alloc(1024 * 1024) });
+
+  const k32 = dlopen("kernel32.dll", {
+    GetCurrentProcess: { args: [], returns: "ptr" },
+    GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+  });
+  const ownHandleCount = () => {
+    const out = new Uint32Array(1);
+    if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+      throw new Error("GetProcessHandleCount failed");
+    }
+    return out[0];
+  };
+
+  // The child reports how many handles it was started with.
+  const spawnHandleCounter = () =>
+    spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        import { dlopen } from "bun:ffi";
+        const k32 = dlopen("kernel32.dll", {
+          GetCurrentProcess: { args: [], returns: "ptr" },
+          GetProcessHandleCount: { args: ["ptr", "ptr"], returns: "i32" },
+        });
+        const out = new Uint32Array(1);
+        if (k32.symbols.GetProcessHandleCount(k32.symbols.GetCurrentProcess(), out) === 0) {
+          throw new Error("GetProcessHandleCount failed");
+        }
+        console.log(out[0]);
+        `,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  const reportedHandleCount = async (proc: ReturnType<typeof spawnHandleCounter>) => {
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return Number(stdout.trim());
+  };
+
+  const fds = Array.from({ length: N }, () => openSync(join(String(dir), "data.bin"), "r"));
+  const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
+  try {
+    // Plain descriptors are already non-inheritable; this child is the baseline.
+    await using control = spawnHandleCounter();
+
+    const before = ownHandleCount();
+    for (const fd of fds) readers.push(Bun.file(fd).stream().getReader());
+    // getReader() starts the stream, which dup()s the descriptor: the
+    // duplicates exist in this process while the next child is created.
+    expect(ownHandleCount() - before).toBeGreaterThanOrEqual(N);
+    await using withDuplicates = spawnHandleCounter();
+
+    const [controlCount, withDuplicatesCount] = await Promise.all([
+      reportedHandleCount(control),
+      reportedHandleCount(withDuplicates),
+    ]);
+    // An inheritable dup() hands every one of the N duplicates to the child,
+    // so the difference used to be exactly N.
+    expect(withDuplicatesCount - controlCount).toBeLessThan(N / 2);
+  } finally {
+    await Promise.all(readers.map(reader => reader.cancel()));
+    for (const fd of fds) closeSync(fd);
+  }
+});
+
+it.if(isWindows)("throws a spawn error for a cwd longer than the maximum path length", async () => {
+  const fixture = `
+    try {
+      Bun.spawnSync({ cmd: [process.execPath, "-e", ""], cwd: Buffer.alloc(200000, 97).toString() });
+      console.log("spawned");
+    } catch (err) {
+      console.log(err instanceof Error ? "threw" : String(err));
+    }
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("threw");
+  expect(exitCode).toBe(0);
 });
 
 describe("onDisconnect", () => {
@@ -1018,4 +1590,54 @@ describe("option combinations", () => {
     expect(disconnectCalled).toBe(true);
     expect(await proc.exited).toBe(0);
   });
+});
+
+describe("uid/gid", () => {
+  const isRoot = process.getuid?.() === 0;
+
+  it.if(isPosix && isRoot)("applies uid and gid to the child", async () => {
+    await using proc = spawn({ cmd: ["id", "-u"], uid: 65534, gid: 65534, stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("65534");
+    expect(exitCode).toBe(0);
+  });
+
+  it.if(isPosix && isRoot)("omitting uid/gid leaves the child's ids unchanged", async () => {
+    await using proc = spawn({ cmd: ["id", "-u"], stdout: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("0");
+    expect(exitCode).toBe(0);
+  });
+
+  it.if(isPosix && !isRoot)("throws EPERM for a uid the process cannot set", () => {
+    let thrown: any;
+    try {
+      spawn({ cmd: ["id"], uid: 0 });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown?.code).toBe("EPERM");
+  });
+});
+
+// The allocator opts its own mappings out of THP; it must not use
+// prctl(PR_SET_THP_DISABLE), which children inherit across execve. Gate on our
+// parent so an environment (or older bun) that disabled THP itself skips.
+function thpEnabled(status: string) {
+  return status.match(/^THP_enabled:\s*(\d)/m)?.[1];
+}
+function parentThp() {
+  if (!isLinux) return undefined;
+  try {
+    return thpEnabled(readFileSync(`/proc/${process.ppid}/status`, "utf8"));
+  } catch {
+    return undefined; // hidepid mount: cannot tell, skip
+  }
+}
+it.if(parentThp() === "1")("spawned children keep the system THP policy", async () => {
+  await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(thpEnabled(stdout)).toBe("1");
+  expect(thpEnabled(readFileSync("/proc/self/status", "utf8"))).toBe("1");
+  expect(exitCode).toBe(0);
 });

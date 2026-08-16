@@ -71,8 +71,25 @@ async function buildRootModule(dryRun?: boolean) {
       js: "// Source code: https://github.com/oven-sh/bun/blob/main/packages/bun-release/scripts/npm-postinstall.ts",
     },
   });
-  write(join(cwd, "bin", "bun.exe"), "");
-  write(join(cwd, "bin", "bunx.exe"), "");
+  // Create placeholder scripts that print an error message if postinstall hasn't run.
+  // On Unix, these are executed as shell scripts despite the .exe extension.
+  // Do NOT add a shebang (#!/bin/sh) here — npm's cmd-shim reads shebangs to generate
+  // .ps1/.cmd wrappers BEFORE postinstall runs, and bakes the interpreter path in.
+  // A #!/bin/sh shebang breaks Windows because the wrappers reference /bin/sh which
+  // doesn't exist, even after postinstall replaces the placeholder with the real binary.
+  const placeholderScript = `echo "Error: Bun's postinstall script was not run." >&2
+echo "" >&2
+echo "This occurs when using --ignore-scripts during installation, or when using a" >&2
+echo "package manager like pnpm that does not run postinstall scripts by default." >&2
+echo "" >&2
+echo "To fix this, run the postinstall script manually:" >&2
+echo "  cd node_modules/bun && node install.js" >&2
+echo "" >&2
+echo "Or reinstall bun without the --ignore-scripts flag." >&2
+exit 1
+`;
+  write(join(cwd, "bin", "bun.exe"), placeholderScript);
+  write(join(cwd, "bin", "bunx.exe"), placeholderScript);
   write(
     join(cwd, "bin", "README.txt"),
     `The 'bun.exe' file is a placeholder for the binary file, which
@@ -99,10 +116,12 @@ without *requiring* a postinstall script.
       postinstall: "node install.js",
     },
     optionalDependencies: Object.fromEntries(
-      platforms.map(({ bin }) => [
-        `${owner}/${bin}`,
-        dryRun ? `file:./oven-${bin.replaceAll("/", "-") + "-" + version + ".tgz"}` : version,
-      ]),
+      platforms
+        .filter(p => !p.alias)
+        .map(({ bin }) => [
+          `${owner}/${bin}`,
+          dryRun ? `file:./oven-${bin.replaceAll("/", "-") + "-" + version + ".tgz"}` : version,
+        ]),
     ),
     bin: {
       bun: "bin/bun.exe",
@@ -123,7 +142,7 @@ without *requiring* a postinstall script.
 
 async function buildModule(
   release: Awaited<ReturnType<typeof getRelease>>,
-  { bin, exe, os, arch }: Platform,
+  { bin, exe, os, arch, abi }: Platform,
 ): Promise<void> {
   const module = `${owner}/${bin}`;
   log("Building:", `${module}@${version}`);
@@ -148,6 +167,7 @@ async function buildModule(
     preferUnplugged: true,
     os: [os],
     cpu: [arch],
+    ...(os === "linux" ? { libc: [abi === "musl" ? "musl" : "glibc"] } : {}),
   });
   if (exists(".npmrc")) {
     copy(".npmrc", join(cwd, ".npmrc"));

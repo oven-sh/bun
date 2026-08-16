@@ -14,9 +14,11 @@ class Dequeue<T> {
   }
 
   size(): number {
-    if (this._head === this._tail) return 0;
-    if (this._head < this._tail) return this._tail - this._head;
-    else return this._capacityMask + 1 - (this._head - this._tail);
+    const head = this._head;
+    const tail = this._tail;
+    if (head === tail) return 0;
+    if (head < tail) return tail - head;
+    else return this._capacityMask + 1 - (head - tail);
   }
 
   isEmpty(): boolean {
@@ -54,10 +56,12 @@ class Dequeue<T> {
   toArray(fullCopy: boolean): T[] {
     var list = this._list;
     var len = $toLength(list.length);
+    var head = this._head;
+    var tail = this._tail;
 
-    if (fullCopy || this._head > this._tail) {
-      var _head = $toLength(this._head);
-      var _tail = $toLength(this._tail);
+    if (fullCopy || head > tail) {
+      var _head = $toLength(head);
+      var _tail = $toLength(tail);
       var total = $toLength(len - _head + _tail);
       var array = $newArrayWithSize(total);
       var j = 0;
@@ -65,7 +69,7 @@ class Dequeue<T> {
       for (var i = 0; i < _tail; i++) $putByValDirect(array, j++, list[i]);
       return array as T[];
     } else {
-      return slice.$call(list, this._head, this._tail);
+      return slice.$call(list, head, tail);
     }
   }
 

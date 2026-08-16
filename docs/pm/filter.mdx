@@ -3,9 +3,9 @@ title: "bun --filter"
 description: "Select packages by pattern in a monorepo using the --filter flag"
 ---
 
-The `--filter` (or `-F`) flag is used for selecting packages by pattern in a monorepo. Patterns can be used to match package names or package paths, with full glob syntax support.
+The `--filter` (or `-F`) flag selects packages in a monorepo by pattern. A pattern is a package name glob, a `./path` glob, a `{dir}` directory selector, or a `...` dependency relation.
 
-Currently `--filter` is supported by `bun install` and `bun outdated`, and can also be used to run scripts for multiple packages at once.
+The flag works with `bun run`, `bun install`, `bun add`, `bun remove`, `bun update`, `bun outdated`, `bun prune`, and `bun pm licenses`. For package-manager commands, put the flag after the subcommand (`bun install --filter api`), since `bun --filter <pattern> <word>` runs `<word>` as a script.
 
 ---
 
@@ -13,19 +13,44 @@ Currently `--filter` is supported by `bun install` and `bun outdated`, and can a
 
 ### Package Name `--filter <pattern>`
 
-Name patterns select packages based on the package name, as specified in `package.json`. For example, if you have packages `pkg-a`, `pkg-b` and `other`, you can match all packages with `*`, only `pkg-a` and `pkg-b` with `pkg*`, and a specific package by providing the full name of the package.
+Name patterns select packages by the `name` field in `package.json`. For example, if you have packages `pkg-a`, `pkg-b` and `other`, you can match all of them with `*`, only `pkg-a` and `pkg-b` with `pkg*`, and a specific package with its full name.
 
 ### Package Path `--filter ./<glob>`
 
-Path patterns are specified by starting the pattern with `./`, and will select all packages in directories that match the pattern. For example, to match all packages in subdirectories of `packages`, you can use `--filter './packages/**'`. To match a package located in `packages/foo`, use `--filter ./packages/foo`.
+Path patterns start with `./` and select all packages in directories matching the pattern. For example, to match all packages in subdirectories of `packages`, use `--filter './packages/**'`. To match the package in `packages/foo`, use `--filter ./packages/foo`.
+
+Name patterns match the full package name (`core` does not match `@acme/core`; use `@acme/*`), and `*` does not cross `/`. Path patterns must match the workspace directory itself: `./packages` selects nothing, `./packages/*` selects every workspace directly inside it.
+
+### Directory `--filter '{<dir>}'`
+
+A directory in braces selects every workspace in that directory or anywhere below it, resolved from the current directory. `--filter '{packages}'` selects everything under `packages/`; `--filter '{.}'` selects the current directory's workspace and everything below it.
+
+### Dependency relations `--filter 'foo...'`
+
+Adding `...` to a pattern also selects workspaces related through workspace dependencies:
+
+| Pattern   | Selects                                                              |
+| --------- | -------------------------------------------------------------------- |
+| `foo...`  | `foo` and the workspaces it depends on, directly or transitively     |
+| `foo^...` | only the workspaces `foo` depends on, not `foo` itself               |
+| `...foo`  | `foo` and the workspaces that depend on it, directly or transitively |
+| `...^foo` | only the workspaces that depend on `foo`, not `foo` itself           |
+
+`foo` can be a name glob or a directory selector (`...{./packages/api}`). To exclude, `!` goes first: `--filter '!...foo'`.
+
+```bash terminal icon="terminal"
+bun install --filter 'web...'
+bun add zod --filter '...^ui'
+bun outdated --filter '{./packages/apps}'
+```
 
 ---
 
 ## `bun install` and `bun outdated`
 
-Both `bun install` and `bun outdated` support the `--filter` flag.
+By default, `bun install` installs dependencies for every package in the monorepo. To install dependencies for specific packages, use `--filter`.
 
-`bun install` by default will install dependencies for all packages in the monorepo. To install dependencies for specific packages, use `--filter`.
+Multiple `--filter` flags combine: everything matched by a positive pattern, minus everything matched by a `!` pattern. A pattern that matches nothing prints a warning. For `bun add`, `bun remove`, `bun update`, `bun prune`, and `bun pm licenses`, selecting no workspaces at all is an error.
 
 Given a monorepo with workspaces `pkg-a`, `pkg-b`, and `pkg-c` under `./packages`:
 
@@ -40,7 +65,7 @@ bun install --filter './packages/*'
 bun install --filter '!./' --filter './packages/*'
 ```
 
-Similarly, `bun outdated` will display outdated dependencies for all packages in the monorepo, and `--filter` can be used to restrict the command to a subset of the packages:
+Similarly, `bun outdated` displays outdated dependencies for all packages in the monorepo, and `--filter` restricts the command to a subset of them:
 
 ```bash terminal icon="terminal"
 # Display outdated dependencies for workspaces starting with `pkg-`
@@ -50,7 +75,7 @@ bun outdated --filter 'pkg-*'
 bun outdated --filter './'
 ```
 
-For more information on both these commands, see [`bun install`](/pm/cli/install) and [`bun outdated`](/pm/cli/outdated).
+See [`bun install`](/pm/cli/install) and [`bun outdated`](/pm/cli/outdated).
 
 ---
 
@@ -62,7 +87,7 @@ Use the `--filter` flag to execute scripts in multiple packages at once:
 bun --filter <pattern> <script>
 ```
 
-Say you have a monorepo with two packages: `packages/api` and `packages/frontend`, both with a `dev` script that will start a local development server. Normally, you would have to open two separate terminal tabs, cd into each package directory, and run `bun dev`:
+Say you have a monorepo with two packages: `packages/api` and `packages/frontend`, both with a `dev` script that starts a local development server. Normally, you would open two terminal tabs, `cd` into each package directory, and run `bun dev`:
 
 ```bash terminal icon="terminal"
 cd packages/api
@@ -79,14 +104,32 @@ Using `--filter`, you can run the `dev` script in both packages at once:
 bun --filter '*' dev
 ```
 
-Both commands will be run in parallel, and you will see a nice terminal UI showing their respective outputs:
+Both scripts run in parallel, and a terminal UI shows their respective outputs:
 
 <Frame>![Terminal Output](https://github.com/oven-sh/bun/assets/48869301/2a103e42-9921-4c33-948f-a1ad6e6bac71)</Frame>
 
+The other pattern forms work the same way:
+
+```bash terminal icon="terminal"
+# build web and everything it depends on, in dependency order
+bun --filter 'web...' build
+
+# test the packages that depend on ui
+bun --filter '...^ui' test
+
+# run dev in every package under packages/apps
+bun --filter '{./packages/apps}' dev
+
+# lint every package except docs
+bun --filter '*' --filter '!docs' lint
+```
+
+Only a `./path` pattern can select a `package.json` without a `name`. If no selected package has the script, `bun run` exits with an error (pass `--if-present` to exit 0 instead).
+
 ### Running scripts in workspaces
 
-Filters respect your [workspace configuration](/pm/workspaces): If you have a `package.json` file that specifies which packages are part of the workspace,
-`--filter` will be restricted to only these packages. Also, in a workspace you can use `--filter` to run scripts in packages that are located anywhere in the workspace:
+Filters respect your [workspace configuration](/pm/workspaces): if your `package.json` specifies which packages are part of the workspace,
+`--filter` only matches those packages. In a workspace, `--filter` can also run scripts in packages located anywhere in the workspace:
 
 ```bash terminal icon="terminal"
 # Packages
@@ -97,6 +140,31 @@ Filters respect your [workspace configuration](/pm/workspaces): If you have a `p
 bun run --filter foo myscript
 ```
 
+### Parallel and sequential mode
+
+Combine `--filter` or `--workspaces` with `--parallel` or `--sequential` to run scripts across workspace packages with Foreman-style prefixed output:
+
+```bash terminal icon="terminal"
+# Run "build" in all matching packages concurrently
+bun run --parallel --filter '*' build
+
+# Run "build" in all workspace packages sequentially
+bun run --sequential --workspaces build
+
+# Run glob-matched scripts across all packages
+bun run --parallel --filter '*' "build:*"
+
+# Continue running even if one package's script fails
+bun run --parallel --no-exit-on-error --filter '*' test
+
+# Run multiple scripts across all packages
+bun run --parallel --filter '*' build lint
+```
+
+Bun prefixes each line of output with the package and script name (`pkg-a:build | ...`). Without `--filter`/`--workspaces`, the prefix is only the script name (`build | ...`). When a package's `package.json` has no `name` field, Bun uses the relative path from the workspace root instead.
+
+Use `--if-present` with `--workspaces` to skip packages that don't have the requested script instead of erroring.
+
 ### Dependency Order
 
-Bun will respect package dependency order when running scripts. Say you have a package `foo` that depends on another package `bar` in your workspace, and both packages have a `build` script. When you run `bun --filter '*' build`, you will notice that `foo` will only start running once `bar` is done.
+Bun respects package dependency order when running scripts. Say you have a package `foo` that depends on another package `bar` in your workspace, and both have a `build` script. When you run `bun --filter '*' build`, `foo` only starts once `bar` is done.

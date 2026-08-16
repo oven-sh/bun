@@ -1,7 +1,7 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("parse ini", () => {
   test("weird section", () => {
@@ -316,7 +316,7 @@ hello = "\\\\$\{LOL}"
     function envVarTest(args: { name: string; ini: string; env: Record<string, string>; expected: any }) {
       const { name, ini, env, expected } = args;
       test(name, async () => {
-        const tempdir = tempDirWithFiles("hi", { "foo.ini": ini });
+        await using tempdir = tempDir("hi", { "foo.ini": ini });
         const inipath = `${tempdir}/foo.ini`.replaceAll("\\", "/");
         const code = /* ts */ `
 const { iniInternals } = require("bun:internal-for-testing");
@@ -417,6 +417,35 @@ isbar = 'lol'
     });
   });
 
+  describe("empty single-quoted value", () => {
+    test.each([
+      ["a='", { a: "" }],
+      ["a=''", { a: "" }],
+      ["'=x", { "": "x" }],
+      ["''=x", { "": "x" }],
+      ["[']\nx=1", { "": { x: "1" } }],
+      ["['']\nx=1", { "": { x: "1" } }],
+    ])("%s", (ini, expected) => {
+      expect(parse(ini)).toEqual(expected);
+    });
+
+    test("section over empty-quote value does not mutate shared state", () => {
+      expect(parse("a=''\n[a]\nhello=world")).toEqual({ a: "" });
+      expect(parse("x=''")).toEqual({ x: "" });
+    });
+
+    test("fuzz repro ='\\n[]\\n=' does not create a self-referential object", () => {
+      expect(parse("='\n[]\n='")).toEqual({ "": "" });
+    });
+
+    test.each([
+      ["a='\n[a]\nb='", { a: "" }],
+      ["a=''\n[a]\nb=''", { a: "" }],
+    ])("no infinite recursion for %j", (ini, expected) => {
+      expect(parse(ini)).toEqual(expected);
+    });
+  });
+
   describe("duplicate properties", () => {
     test("decode with duplicate properties", () => {
       const ini = /* ini */ `
@@ -487,6 +516,61 @@ brr = 3
         "x.y.z": "xyz",
       },
       "zr": ["deedee"],
+    });
+  });
+
+  describe("truncated/invalid utf-8", () => {
+    test("bare continuation byte (0x80) should not crash", () => {
+      // 0x80 is a continuation byte without a leading byte
+      // utf8ByteSequenceLength returns 0, which must not hit unreachable
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0x80])]).toString("latin1");
+      // Should not crash - just parse gracefully
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 2-byte sequence at end of value", () => {
+      // 0xC0 is a 2-byte lead byte, but there's no continuation byte following
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xc0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 3-byte sequence at end of value", () => {
+      // 0xE0 is a 3-byte lead byte, but only 0 continuation bytes follow
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xe0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 3-byte sequence with 1 continuation byte at end", () => {
+      // 0xE0 is a 3-byte lead byte, but only 1 continuation byte follows
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xe0, 0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 4-byte sequence at end of value", () => {
+      // 0xF0 is a 4-byte lead byte, but only 0 continuation bytes follow
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xf0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 4-byte sequence with 1 continuation byte at end", () => {
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xf0, 0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 4-byte sequence with 2 continuation bytes at end", () => {
+      const ini = Buffer.concat([Buffer.from("key = "), Buffer.from([0xf0, 0x80, 0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("truncated 2-byte sequence in escaped context", () => {
+      // Backslash followed by a 2-byte lead byte at end of value
+      const ini = Buffer.concat([Buffer.from("key = \\"), Buffer.from([0xc0])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
+    });
+
+    test("bare continuation byte in escaped context", () => {
+      const ini = Buffer.concat([Buffer.from("key = \\"), Buffer.from([0x80])]).toString("latin1");
+      expect(() => parse(ini)).not.toThrow();
     });
   });
 });

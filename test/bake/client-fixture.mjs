@@ -6,6 +6,12 @@ import assert from "node:assert/strict";
 import util from "node:util";
 import { exitCodeMap } from "./exit-code-map.mjs";
 
+// Prevent silent crashes from unhandled promise rejections
+process.on("unhandledRejection", reason => {
+  console.error("[E] Unhandled rejection:", reason);
+  process.exit(exitCodeMap.reloadFailed);
+});
+
 const args = process.argv.slice(2);
 let url = args.find(arg => !arg.startsWith("-"));
 if (!url) {
@@ -65,8 +71,27 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  window[globalThis[Symbol.for("bun testing api, may change at any time")]] = internal => {
+  // The HMR runtime reads this symbol-keyed callback off `globalThis` (which is
+  // `window` inside happy-dom's script context) and passes its internal hooks.
+  let hmrEventHookInstalled = false;
+  let pendingHotUpdateAcks = 0;
+  let hmrScriptQueued = false;
+  const sendHmrAck = () => {
+    if (pendingHotUpdateAcks === 0) return;
+    pendingHotUpdateAcks--;
+    process.send({ type: "received-hmr-event", args: [] });
+  };
+  window[Symbol.for("bun testing api, may change at any time")] = internal => {
     window.internal = internal;
+    if (typeof internal.onEvent === "function") {
+      hmrEventHookInstalled = true;
+      // Ack a hot update only once the new module code has actually run. Node's
+      // Blob.arrayBuffer() resolves on a later macrotask than the WS listener's
+      // setImmediate, so acking from the WS listener would race the eval.
+      // Full reloads are not acked here; the new window acks from the
+      // `[Bun] Hot-module-reloading socket connected` handler after loadPage.
+      internal.onEvent("bun:afterUpdate", sendHmrAck);
+    }
   };
 
   const original_window_fetch = window.fetch;
@@ -85,7 +110,17 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "u".charCodeAt(0) || data[0] === "e".charCodeAt(0)) {
+        if (data[0] === "u".charCodeAt(0) && hmrEventHookInstalled) {
+          // JS updates queue a script tag and ack via bun:afterUpdate once it
+          // evals; everything else (CSS, reloads, route reloads) acks here on
+          // the next tick when no script was queued.
+          pendingHotUpdateAcks++;
+          hmrScriptQueued = false;
+          isUpdating = setImmediate(() => {
+            isUpdating = null;
+            if (!hmrScriptQueued) sendHmrAck();
+          });
+        } else if (data[0] === "e".charCodeAt(0) || data[0] === "u".charCodeAt(0)) {
           isUpdating = setImmediate(() => {
             process.send({ type: "received-hmr-event", args: [] });
             isUpdating = null;
@@ -141,11 +176,18 @@ function createWindow(windowUrl) {
     value: function (element) {
       if (element instanceof ScriptTag) {
         assert(element.src.startsWith("blob:"));
+        hmrScriptQueued = true;
         const blob = objectURLRegistry.get(element.src);
         assert(blob);
+        // Capture the window this script was appended to. Rapid HMR reloads
+        // can swap the module-level `window` before `arrayBuffer()` resolves,
+        // which would otherwise eval an HMR chunk against a freshly-created
+        // window whose runtime has not loaded yet.
+        const owningWindow = window;
         blob.arrayBuffer().then(buffer => {
+          if (window !== owningWindow) return;
           const code = new TextDecoder().decode(buffer);
-          (0, window.eval)(code);
+          (0, owningWindow.eval)(code);
         });
         return;
       }
@@ -344,13 +386,29 @@ async function handleReload() {
 
 // Extract page loading logic to a reusable function
 async function loadPage() {
-  const response = await fetch(url);
+  let response;
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      response = await fetch(url);
+      break;
+    } catch (err) {
+      if (attempt < maxRetries - 1) {
+        // Retry after a short delay for transient connection errors (e.g. Windows port not ready)
+        await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        continue;
+      }
+      console.error("Failed to fetch page after retries:", err.message);
+      process.exit(exitCodeMap.reloadFailed);
+    }
+  }
   if (response.status >= 400 && response.status <= 499) {
     console.error("Failed to load page:", response.statusText);
     process.exit(exitCodeMap.reloadFailed);
   }
-  if (!response.headers.get("content-type").match(/^text\/html;?/)) {
-    console.error("Invalid content type:", response.headers.get("content-type"));
+  const contentType = response.headers.get("content-type");
+  if (!contentType || !contentType.match(/^text\/html;?/)) {
+    console.error("Invalid content type:", contentType);
     process.exit(exitCodeMap.reloadFailed);
   }
   const html = await response.text();
@@ -540,4 +598,9 @@ process.on("exit", () => {
 
 // Initial page load
 createWindow(url);
-await loadPage(window);
+try {
+  await loadPage(window);
+} catch (error) {
+  console.error("Failed initial page load:", error);
+  process.exit(exitCodeMap.reloadFailed);
+}

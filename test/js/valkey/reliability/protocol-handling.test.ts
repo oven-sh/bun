@@ -114,7 +114,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
 
       // BLPOP with timeout
       const listKey = testKey("empty-list");
-      const timeoutResult = await ctx.redis.send("BLPOP", [listKey, "1"]);
+      const timeoutResult = await ctx.redis.send("BLPOP", [listKey, "0.1"]);
       expect(timeoutResult).toBeNull();
     });
 
@@ -124,7 +124,7 @@ describe.skipIf(!isEnabled)("Valkey: Protocol Handling", () => {
       );
 
       expect(async () => await ctx.redis.send("SYNTAX-ERROR", [])).toThrowErrorMatchingInlineSnapshot(
-        `"ERR unknown command 'SYNTAX-ERROR', with args beginning with: "`,
+        `"ERR unknown command 'SYNTAX-ERROR'"`,
       );
     });
   });

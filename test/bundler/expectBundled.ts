@@ -13,7 +13,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmdirSync,
   rmSync,
   writeFileSync,
 } from "fs";
@@ -52,6 +51,39 @@ export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
       .map(x => x.slice(smallest_indent))
       .join("\n")
   );
+}
+
+export function decodeSourceMappingsLine(line: string) {
+  const B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  const segs: { gen: number; src: number; ol: number; oc: number }[] = [];
+  let gen = 0;
+  let src = 0;
+  let ol = 0;
+  let oc = 0;
+  for (const raw of line ? line.split(",") : []) {
+    const f: number[] = [];
+    let v = 0;
+    let sh = 0;
+    for (const c of raw) {
+      const d = B64.indexOf(c);
+      v |= (d & 31) << sh;
+      if (d & 32) {
+        sh += 5;
+        continue;
+      }
+      f.push(v & 1 ? -(v >>> 1) : v >>> 1);
+      v = 0;
+      sh = 0;
+    }
+    gen += f[0];
+    if (f.length > 1) {
+      src += f[1];
+      ol += f[2];
+      oc += f[3];
+    }
+    segs.push({ gen, src, ol, oc });
+  }
+  return segs;
 }
 
 let currentFile: string | undefined;
@@ -121,6 +153,24 @@ if (!existsSync(path.dirname(tempDirectoryTemplate)))
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
 const testsRan = new Set();
 
+const originalCwd = process.cwd();
+
+function resolveBackend(opts: BundlerTestInput): "cli" | "api" {
+  if (opts.backend) return opts.backend;
+  const run = opts.run === true ? {} : opts.run;
+  const hasValidate = !Array.isArray(run) && run?.validate;
+  return opts.dotenv ||
+    typeof opts.production !== "undefined" ||
+    opts.bundling === false ||
+    opts.emitDCEAnnotations ||
+    opts.bundleWarnings ||
+    opts.env ||
+    hasValidate ||
+    opts.define
+    ? "cli"
+    : "api";
+}
+
 if (ESBUILD) {
   console.warn("NOTE: using esbuild for bun build tests");
 }
@@ -163,6 +213,8 @@ export interface BundlerTestInput {
   drop?: string[];
   /** Feature flags for dead-code elimination via `import { feature } from "bun:bundle"` */
   features?: string[];
+  /** Package names whose barrel files should be optimized */
+  optimizeImports?: string[];
 
   /** Use for resolve custom conditions */
   conditions?: string[];
@@ -174,6 +226,7 @@ export interface BundlerTestInput {
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
+  allowUnresolved?: string[];
   /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
@@ -212,6 +265,8 @@ export interface BundlerTestInput {
   minifyWhitespace?: boolean;
   splitting?: boolean;
   serverComponents?: boolean;
+  reactCompiler?: boolean;
+  reactCompilerOutputMode?: "client" | "ssr";
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -444,9 +499,11 @@ function expectBundled(
     entryPointsRaw,
     env,
     external,
+    allowUnresolved,
     packages,
     drop = [],
     features = [],
+    optimizeImports,
     files,
     footer,
     format,
@@ -474,6 +531,8 @@ function expectBundled(
     run,
     runtimeFiles,
     serverComponents = false,
+    reactCompiler = false,
+    reactCompilerOutputMode,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -541,9 +600,6 @@ function expectBundled(
     throw new Error("bundling:false only supports a single entry point");
   }
 
-  if (!ESBUILD && metafile) {
-    throw new Error("metafile not implemented in bun build");
-  }
   if (!ESBUILD && legalComments) {
     throw new Error("legalComments not implemented in bun build");
   }
@@ -579,25 +635,15 @@ function expectBundled(
   if (ESBUILD && _throw) {
     throw new Error("throw not implemented in esbuild");
   }
+  if (ESBUILD && allowUnresolved !== undefined) {
+    throw new Error("allowUnresolved not possible in esbuild backend");
+  }
   if (dryRun) {
     return testRef(id, opts);
   }
 
   return (async () => {
-    if (!backend) {
-      backend =
-        dotenv ||
-        typeof production !== "undefined" ||
-        bundling === false ||
-        (run && target === "node") ||
-        emitDCEAnnotations ||
-        bundleWarnings ||
-        env ||
-        run?.validate ||
-        define
-          ? "cli"
-          : "api";
-    }
+    backend ??= resolveBackend(opts);
 
     let root = path.join(
       tempDirectory,
@@ -660,12 +706,14 @@ function expectBundled(
     }
     mkdirSync(root, { recursive: true });
     if (install) {
-      const installProcess = Bun.spawnSync({
+      const installProcess = Bun.spawn({
         cmd: [bunExe(), "install", ...install, "--linker=hoisted"],
         cwd: root,
+        stdio: ["ignore", "inherit", "inherit"],
       });
-      if (!installProcess.success) {
-        const reason = installProcess.signalCode || `code ${installProcess.exitCode}`;
+      const installExitCode = await installProcess.exited;
+      if (installExitCode !== 0) {
+        const reason = installProcess.signalCode || `code ${installExitCode}`;
         throw new Error(`Failed to install dependencies: ${reason}`);
       }
     }
@@ -719,6 +767,12 @@ function expectBundled(
       if (plugins) {
         throw new Error("plugins not possible in backend=CLI");
       }
+      if (optimizeImports) {
+        throw new Error("optimizeImports not possible in backend=CLI (API-only option)");
+      }
+      if (reactCompilerOutputMode) {
+        throw new Error("reactCompilerOutputMode not possible in backend=CLI (API-only option)");
+      }
       const cmd = (
         !ESBUILD
           ? [
@@ -745,6 +799,10 @@ function expectBundled(
               `--target=${target}`,
               `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              allowUnresolved !== undefined &&
+                (allowUnresolved.length === 0
+                  ? "--reject-unresolved"
+                  : allowUnresolved.map(x => ["--allow-unresolved", x === "" ? "<empty>" : x])),
               packages && ["--packages", packages],
               conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
@@ -757,7 +815,7 @@ function expectBundled(
               jsx.factory && ["--jsx-factory", jsx.factory],
               jsx.fragment && ["--jsx-fragment", jsx.fragment],
               jsx.importSource && ["--jsx-import-source", jsx.importSource],
-              jsx.side_effects && ["--jsx-side-effects"],
+              jsx.sideEffects && ["--jsx-side-effects"],
               dotenv && ["--env", dotenv],
               // metafile && `--manifest=${metafile}`,
               sourceMap && `--sourcemap=${sourceMap}`,
@@ -766,6 +824,7 @@ function expectBundled(
               assetNaming && assetNaming !== "[name]-[hash].[ext]" && [`--asset-naming`, assetNaming],
               splitting && `--splitting`,
               serverComponents && "--server-components",
+              reactCompiler && "--react-compiler",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -896,12 +955,29 @@ function expectBundled(
         }
       }
 
-      const { stdout, stderr, success, exitCode } = Bun.spawnSync({
+      await using buildProc = Bun.spawn({
         cmd,
         cwd: root,
         stdio: ["ignore", "pipe", "pipe"],
         env: bundlerEnv,
+        timeout: 60_000,
       });
+      const [stdoutBytes, stderrBytes, exitCode] = await Promise.all([
+        buildProc.stdout.bytes(),
+        buildProc.stderr.bytes(),
+        buildProc.exited,
+      ]);
+      const stdout = Buffer.from(stdoutBytes);
+      const stderr = Buffer.from(stderrBytes);
+      const success = exitCode === 0;
+      if (buildProc.signalCode) {
+        throw new Error(
+          `[${id}] 'bun build' subprocess killed by ${buildProc.signalCode}\n` +
+            `cmd: ${cmd.join(" ")}\n` +
+            `STDOUT: ${stdout.toUnixString().slice(0, 2000)}\n` +
+            `STDERR: ${stderr.toUnixString().slice(0, 2000)}`,
+        );
+      }
 
       // Check for errors
       if (!success) {
@@ -1092,6 +1168,7 @@ function expectBundled(
         const buildConfig: BuildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          allowUnresolved,
           banner,
           format,
           footer,
@@ -1115,15 +1192,19 @@ function expectBundled(
           sourcemap: sourceMap,
           splitting,
           target,
+          reactCompiler,
+          reactCompilerOutputMode,
           bytecode,
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
           drop,
           features,
+          optimizeImports,
           define: define ?? {},
           throw: _throw ?? false,
           compile,
+          metafile: !!metafile,
           jsx: jsx
             ? {
                 runtime: jsx.runtime,
@@ -1167,12 +1248,11 @@ for (const [key, blob] of build.outputs) {
         configRef = buildConfig;
         let build: BuildOutput;
         try {
-          const cwd = process.cwd();
           process.chdir(root);
           try {
             build = await Bun.build(buildConfig);
           } finally {
-            process.chdir(cwd);
+            process.chdir(originalCwd);
           }
         } catch (e) {
           if (e instanceof AggregateError) {
@@ -1199,6 +1279,11 @@ for (const [key, blob] of build.outputs) {
         if (onAfterApiBundle) await onAfterApiBundle(build);
         configRef = null!;
         Bun.gc(true);
+
+        // Write metafile if requested
+        if (metafile && build.success && (build as any).metafile) {
+          writeFileSync(metafile, JSON.stringify((build as any).metafile, null, 2));
+        }
 
         const buildLogs = build.logs.filter(x => x.level === "error");
         if (buildLogs.length) {
@@ -1537,6 +1622,24 @@ for (const [key, blob] of build.outputs) {
         const file = file_input.toString("utf8"); // type bug? `file_input` is `Buffer|string`
         if (file.endsWith(".map")) {
           const parsed = await Bun.file(path.join(outdir, file)).json();
+          // SourceMapConsumer re-sorts segments by generated position, so
+          // decode the raw VLQ first to catch out-of-order segments (a
+          // source-map spec violation).
+          {
+            let ln = 0;
+            for (const line of String(parsed.mappings).split(";")) {
+              ln++;
+              const segs = decodeSourceMappingsLine(line);
+              for (let i = 1; i < segs.length; i++) {
+                if (segs[i].gen < segs[i - 1].gen) {
+                  throw new Error(
+                    `${file}: out-of-order segments on generated line ${ln}: ` +
+                      `column ${segs[i - 1].gen} -> ${segs[i].gen}\n  mappings line: ${line}`,
+                  );
+                }
+              }
+            }
+          }
           const mappedLocations = new Map();
           await SourceMapConsumer.with(parsed, null, async map => {
             map.eachMapping(m => {
@@ -1628,7 +1731,7 @@ for (const [key, blob] of build.outputs) {
           ...(run.args ?? []),
         ] as [string, ...string[]];
 
-        const { success, stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+        await using runProc = Bun.spawn({
           cmd: args,
           env: {
             ...bunEnv,
@@ -1636,12 +1739,28 @@ for (const [key, blob] of build.outputs) {
             FORCE_COLOR: "0",
             IS_TEST_RUNNER: "1",
           },
+          timeout: 60_000,
           stdio: ["ignore", "pipe", "pipe"],
-          cwd: run.setCwd ? root : undefined,
+          cwd: run.setCwd ? root : originalCwd,
         });
+        const [runStdout, runStderr, exitCode] = await Promise.all([
+          runProc.stdout.bytes(),
+          runProc.stderr.bytes(),
+          runProc.exited,
+        ]);
+        const stdout = Buffer.from(runStdout);
+        const stderr = Buffer.from(runStderr);
+        const signalCode = runProc.signalCode ?? undefined;
+        const success = exitCode === 0;
 
-        if (signalCode === "SIGTRAP") {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        if (signalCode) {
+          throw new Error(
+            prefix +
+              `Runtime failed with ${signalCode}\n` +
+              `cmd: ${args.join(" ")}\n` +
+              `STDOUT: ${stdout!.toUnixString().slice(0, 2000)}\n` +
+              `STDERR: ${stderr!.toUnixString().slice(0, 2000)}`,
+          );
         }
 
         if (run.error) {
@@ -1752,7 +1871,7 @@ for (const [key, blob] of build.outputs) {
       }
     }
 
-    rmdirSync(root, { recursive: true });
+    rmSync(root, { recursive: true, force: true });
 
     return testRef(id, opts);
   })();
@@ -1786,20 +1905,19 @@ export function itBundled(
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
   } else {
-    it(
+    // backend=api uses process.chdir and a module-global configRef, so it
+    // cannot run concurrently with other tests. it.serial is a no-op outside
+    // of describe.concurrent / --concurrent.
+    const testFn = resolveBackend(opts) === "api" ? it.serial : it;
+    const baseTimeout = opts.snapshotSourceMap || opts.compile ? 30_000 : 5_000;
+    testFn(
       id,
       () => expectBundled(id, opts as any),
-      // sourcemap code is slow
-      isCI ? undefined : isDebug ? Infinity : (opts.snapshotSourceMap ? 30_000 : 5_000) * (opts.timeoutScale ?? 1),
+      isCI ? undefined : isDebug ? Infinity : baseTimeout * (opts.timeoutScale ?? 1),
     );
   }
   return ref;
 }
-itBundled.concurrent = (id: string, opts: BundlerTestInput) => {
-  const { it } = testForFile(currentFile ?? callerSourceOrigin());
-  it.concurrent(id, () => expectBundled(id, opts as any));
-  return testRef(id, opts);
-};
 
 itBundled.only = (id: string, opts: BundlerTestInput) => {
   const { it } = testForFile(currentFile ?? callerSourceOrigin());

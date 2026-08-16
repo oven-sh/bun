@@ -43,7 +43,7 @@ pub type MacroMap = StringArrayHashMap<MacroImportReplacementMap>;
 // borrow kept alive by `PackageJSON::source_contents` (the owning field).
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
 
-pub type MainFieldMap = StringMap;
+type MainFieldMap = StringMap;
 
 #[derive(Default)]
 pub struct DependencyMap {
@@ -65,7 +65,7 @@ impl Clone for DependencyMap {
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
-pub type DependencyHashMap =
+type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 
 pub struct PackageJSON {
@@ -226,9 +226,9 @@ pub enum SideEffects {
     Mixed(MixedPatterns),
 }
 
-pub type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
+type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
-pub type GlobList = Vec<Box<[u8]>>;
+type GlobList = Vec<Box<[u8]>>;
 
 pub struct MixedPatterns {
     pub(crate) exact: SideEffectsMap,
@@ -286,28 +286,13 @@ impl SideEffects {
 // exposes the inherent forwarder (tsconfig_json.rs).
 // `bun_bundler::cache::JSON_CACHE_VTABLE` wires it to `bun_parsers::json`.
 
-/// Thin extension trait that delegates to
-/// `bun_paths::resolve_path` and returns owned `Box<[u8]>` so no `'static`
-/// lifetime is fabricated from a threadlocal scratch buffer (forbidden per
-/// docs/PORTING.md §Forbidden patterns — "`unsafe { &*(p as *const _) }` to
-/// extend a lifetime"). `crate::fs::FileSystem` already has an inherent
-/// borrowing `abs(&self) -> &[u8]` (lib.rs); that wins method resolution at
-/// call-sites that only need a transient borrow.
-pub trait FileSystemPackageJsonExt {
+/// Thin extension trait that delegates to `bun_paths::resolve_path`.
+trait FileSystemPackageJsonExt {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8];
-    fn normalize(&self, str: &[u8]) -> Box<[u8]>;
 }
 impl FileSystemPackageJsonExt for crate::fs::FileSystem {
     fn join(&self, parts: &[&[u8]]) -> &'static [u8] {
         resolve_path::resolve_path::join::<resolve_path::resolve_path::platform::Loose>(parts)
-    }
-    fn normalize(&self, str: &[u8]) -> Box<[u8]> {
-        // Collapses `.`/`..`/dup-separators only; does NOT join against cwd.
-        let out = resolve_path::resolve_path::normalize_string::<
-            true,
-            resolve_path::resolve_path::platform::Auto,
-        >(str);
-        Box::from(&*out)
     }
 }
 
@@ -624,9 +609,8 @@ impl PackageJSON {
                     // The value is an object
 
                     // Remap all files in the browser field
+                    let mut key_spill: Vec<u8> = Vec::new();
                     for prop in obj.get().properties() {
-                        let _key_str = prop.key.slice();
-
                         // Normalize the path so we can compare against it without getting
                         // confused by "./". There is no distinction between package paths and
                         // relative paths for these values because some tools (i.e. Browserify)
@@ -636,21 +620,24 @@ impl PackageJSON {
                         // import of "foo", but that's actually not a bug. Or arguably it's a
                         // bug in Browserify but we have to replicate this bug because packages
                         // do this in the wild.
-                        let key: Box<[u8]> = FileSystemPackageJsonExt::normalize(r_fs, _key_str);
+                        let key: &[u8] = resolve_path::resolve_path::normalize_string_spill::<
+                            true,
+                            resolve_path::platform::Auto,
+                        >(&mut key_spill, prop.key.slice());
 
                         match &prop.value {
                             js_ast::E::JsonValue::String(str) => {
                                 // If this is a string, it's a replacement package
                                 package_json
                                     .browser_map
-                                    .put(&key, Box::from(str.slice()))
+                                    .put(key, Box::from(str.slice()))
                                     .expect("unreachable");
                             }
                             js_ast::E::JsonValue::Boolean(boolean) => {
                                 if !*boolean {
                                     package_json
                                         .browser_map
-                                        .put(&key, Box::default())
+                                        .put(key, Box::default())
                                         .expect("unreachable");
                                 }
                             }
@@ -878,7 +865,7 @@ impl PackageJSON {
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
-                    if let Some(group_json) = json.get(group.field) {
+                    if let Some(group_json) = json.get(group.prop) {
                         total_dependency_count += group_json.property_count();
                     }
                 }
@@ -898,7 +885,7 @@ impl PackageJSON {
                         .expect("unreachable");
 
                     for group in dependency_groups {
-                        if let Some(group_json) = json.get(group.field) {
+                        if let Some(group_json) = json.get(group.prop) {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
@@ -1321,9 +1308,6 @@ pub enum Status {
     /// The package or module requested does not exist.
     ModuleNotFound,
 
-    /// The user just needs to add the missing extension
-    ModuleNotFoundMissingExtension,
-
     /// The resolved path corresponds to a directory, which is not a supported target for module imports.
     UnsupportedDirectoryImport,
 
@@ -1459,7 +1443,7 @@ impl<'a> Package<'a> {
         };
 
         if strings::starts_with(package.name, b".")
-            || strings::index_any_comptime(package.name, b"\\%").is_some()
+            || strings::index_of_any(package.name, b"\\%").is_some()
         {
             return None;
         }
@@ -2073,18 +2057,11 @@ impl<'a> ESModule<'a> {
                         };
                     }
 
-                    let status: Status = if strings::ends_with_char_or_is_zero_length(result, b'*')
-                        && strings::index_of_char(result, b'*').unwrap() as usize
-                            == result.len() - 1
-                    {
-                        Status::ExactEndsWithStar
-                    } else {
-                        Status::Exact
-                    };
+                    // Wildcard expansion: tag for `probe_wildcard_extensions` (oven-sh/bun#29679, #10001).
                     dedent!();
                     return Resolution {
                         path: Box::<[u8]>::from(result),
-                        status,
+                        status: Status::ExactEndsWithStar,
                     };
                 } else {
                     let parts2 = [package_url, str, subpath];
@@ -2234,14 +2211,14 @@ impl<'a> ESModule<'a> {
 }
 
 fn find_invalid_segment(path_: &[u8]) -> Option<&[u8]> {
-    let Some(slash) = strings::index_any_comptime(path_, b"/\\") else {
+    let Some(slash) = strings::index_of_any(path_, b"/\\") else {
         return Some(b"");
     };
     let mut path = &path_[slash + 1..];
 
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {
@@ -2264,7 +2241,7 @@ fn find_invalid_subpath_segment(path_: &[u8]) -> Option<&[u8]> {
     let mut path = path_;
     while !path.is_empty() {
         let mut segment = path;
-        if let Some(new_slash) = strings::index_any_comptime(path, b"/\\") {
+        if let Some(new_slash) = strings::index_of_any(path, b"/\\") {
             segment = &path[0..new_slash];
             path = &path[new_slash + 1..];
         } else {

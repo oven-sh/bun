@@ -36,6 +36,21 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     ZigString::from_utf8(out.as_bytes()).to_js(global_object)
 }
 
+/// A worker's `argv`/`execArgv` strings live in its parent-thread
+/// `WorkerOptions`; the worker thread gets its own copy (thread-affine
+/// refcounts), and an empty one is spelled as `BunString::empty()`.
+pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::OwnedString {
+    // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
+    let imp = unsafe { &*wtf };
+    bun_core::OwnedString::new(if imp.length() == 0 {
+        bun_core::String::empty()
+    } else if imp.is_8bit() {
+        bun_core::String::clone_latin1(imp.latin1_slice())
+    } else {
+        bun_core::String::clone_utf16(imp.utf16_slice())
+    })
+}
+
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
 pub(crate) extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
@@ -58,6 +73,18 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else {
+        // A watch-reload kill-signal handler may call process.exit; node restarts the child
+        // regardless. `process.exit()` must never return control to JS, so replace the process
+        // here instead of unwinding — the 'exit' event has already been dispatched by the caller.
+        if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
+            let should_clear_terminal =
+                !vm.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
+            bun_jsc::node_compile_cache::persist_now();
+            bun_core::Output::flush();
+            bun_core::reload_process(should_clear_terminal, false);
+        }
         vm.on_exit();
         vm.global_exit();
     }
@@ -68,6 +95,41 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 #[unsafe(no_mangle)]
 extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     env_var::NODE_NO_WARNINGS.get() == Some(b"1")
+}
+
+/// `--redirect-warnings=<path>` value, if set. Returns false when unset.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
+    let Some(path) = crate::cli::Bun__Node__RedirectWarnings.get() else {
+        return false;
+    };
+    // SAFETY: out is a valid out-param provided by the C++ caller.
+    unsafe { *out = bun_core::String::clone_utf8(path) };
+    true
+}
+
+/// `--disable-warning` entries as `[ptr, len]` pairs into caller-provided buffers; returns
+/// the count. `bufs`/`lens` may be null when `cap == 0` to query the count. Entries
+/// borrow the CLI-owned Vec (never mutated after argument parsing).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
+    bufs: *mut *const u8,
+    lens: *mut usize,
+    cap: usize,
+) -> usize {
+    let Some(disabled) = crate::cli::Bun__Node__DisabledWarnings.get() else {
+        return 0;
+    };
+    let n = disabled.len().min(cap);
+    for (i, entry) in disabled.iter().take(n).enumerate() {
+        // SAFETY: caller provides `cap`-sized arrays; entries live for the
+        // process (write-once at CLI parse, never freed).
+        unsafe {
+            *bufs.add(i) = entry.as_ptr();
+            *lens.add(i) = entry.len();
+        }
+    }
+    disabled.len()
 }
 
 #[unsafe(no_mangle)]
@@ -154,7 +216,13 @@ mod _impl {
     #[unsafe(export_name = "Bun__Process__getTitle")]
     extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
-        let str_ = guard.as_deref().unwrap_or(b"bun");
+        // Node's default process.title is argv[0] as invoked
+        // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
+        let argv = bun_core::argv();
+        let str_ = guard
+            .as_deref()
+            .or_else(|| argv.get(0).map(|z| z.as_bytes()))
+            .unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
         unsafe {
             *title = BunString::clone_utf8(str_);
@@ -194,7 +262,7 @@ mod _impl {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
                 return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    BunString::init(wtf).to_js(global_object)
+                    super::worker_option_string(wtf).to_js(global_object)
                 });
             }
         }
@@ -226,10 +294,7 @@ mod _impl {
                 }
 
                 if !compile_exec_argv.is_empty() {
-                    for token in compile_exec_argv
-                        .split(|b| matches!(*b, b' ' | b'\t' | b'\n' | b'\r'))
-                        .filter(|s: &&[u8]| !s.is_empty())
-                    {
+                    for token in strings::tokenize_any(compile_exec_argv, b" \t\n\r") {
                         args.push(BunString::clone_utf8(token));
                     }
                 }
@@ -291,6 +356,13 @@ mod _impl {
                             if let Some(name) = param.names.short {
                                 bun_core::handle_oom(set.insert(&[b'-', name]));
                             }
+                        }
+                    }
+                    // Node's whole-token aliases are not params, so they never
+                    // land above; an alias takes a value iff its target does.
+                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+                        if set.contains(to) {
+                            bun_core::handle_oom(set.insert(from));
                         }
                     }
                     set
@@ -363,10 +435,14 @@ mod _impl {
             }
         }
 
+        let mut worker_args: Vec<bun_core::OwnedString> = Vec::new();
         if let Some(worker) = worker {
-            for &arg in worker.argv() {
-                args_list.push(BunString::init(arg));
-            }
+            worker_args = worker
+                .argv()
+                .iter()
+                .map(|&arg| super::worker_option_string(arg))
+                .collect();
+            args_list.extend(worker_args.iter().map(|s| **s));
         } else {
             for arg in &vm.argv {
                 let str_ = BunString::borrow_utf8(arg);
@@ -375,7 +451,9 @@ mod _impl {
             }
         }
 
-        bun_string_jsc::to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
+        let array = bun_string_jsc::to_js_array(global_object, &args_list);
+        drop(worker_args);
+        bun_jsc::HostReturn::or_pending_exception(array)
     }
 
     // ───────────────────────────── eval ─────────────────────────────
@@ -412,10 +490,34 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        // Real syscall (not the resolver's cached top_level_dir): Node's
+        // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
-        match crate::node::path::get_cwd(&mut buf) {
-            bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
-            bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
+        match bun_sys::getcwd(&mut buf[..]) {
+            bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
+                .with_encoding()
+                .to_js(global_object)),
+            bun_sys::Result::Err(e) => {
+                // Node's UVException from `Cwd` (node_process_methods.cc):
+                // "CODE: process.cwd failed with error <uv_strerror>[, hint], uv_cwd"
+                let (code, label) = e.uv_code_label().unwrap_or(("UNKNOWN", "unknown error"));
+                let hint = if e.get_errno() == bun_sys::E::ENOENT {
+                    ", the current working directory was likely removed \
+                     without changing the working directory"
+                } else {
+                    ""
+                };
+                let message =
+                    format!("{code}: process.cwd failed with error {label}{hint}, uv_cwd");
+                let err = bun_jsc::SystemError {
+                    errno: core::ffi::c_int::from(e.errno).wrapping_neg(),
+                    code: BunString::static_(code).into(),
+                    message: BunString::clone_utf8(message.as_bytes()).into(),
+                    syscall: BunString::static_("uv_cwd").into(),
+                    ..Default::default()
+                };
+                Err(global_object.throw_value(err.to_error_instance(global_object)))
+            }
         }
     }
 

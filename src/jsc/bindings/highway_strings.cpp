@@ -226,6 +226,85 @@ size_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len
     return (pos < haystack_len) ? pos : haystack_len;
 }
 
+// Index of the last `needle` in `haystack`, or haystack_len if absent.
+size_t LastIndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    uint8_t needle)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+    const auto broadcasted = hn::Set(d, needle);
+
+    size_t i = haystack_len;
+    // Two vectors per iteration: one mask→scalar transfer (the expensive part on
+    // NEON) per 2N bytes instead of per N.
+    while (i >= 2 * N) {
+        i -= 2 * N;
+        const auto eq_hi = hn::Eq(broadcasted, hn::LoadU(d, haystack + i + N));
+        const auto eq_lo = hn::Eq(broadcasted, hn::LoadU(d, haystack + i));
+        if (HWY_UNLIKELY(!hn::AllFalse(d, hn::Or(eq_hi, eq_lo)))) {
+            const intptr_t hi = hn::FindLastTrue(d, eq_hi);
+            if (hi >= 0) return i + N + static_cast<size_t>(hi);
+            return i + hn::FindKnownLastTrue(d, eq_lo);
+        }
+    }
+    if (i >= N) {
+        i -= N;
+        const intptr_t pos = hn::FindLastTrue(d, hn::Eq(broadcasted, hn::LoadU(d, haystack + i)));
+        if (pos >= 0) return i + static_cast<size_t>(pos);
+    }
+    // Remaining prefix [0, i); fewer than N bytes.
+    while (i-- > 0) {
+        if (haystack[i] == needle) return i;
+    }
+    return haystack_len;
+}
+
+// Index of the first byte that is NOT `value`, or haystack_len if every byte is `value`.
+size_t IndexOfNotCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    uint8_t value)
+{
+    D8 d;
+    const size_t N = hn::Lanes(d);
+    const auto broadcasted = hn::Set(d, value);
+
+    size_t i = 0;
+    if (haystack_len >= N) {
+        for (; i <= haystack_len - N; i += N) {
+            const intptr_t pos = hn::FindFirstTrue(d, hn::Ne(broadcasted, hn::LoadU(d, haystack + i)));
+            if (pos >= 0) return i + static_cast<size_t>(pos);
+        }
+    }
+    for (; i < haystack_len; ++i) {
+        if (haystack[i] != value) return i;
+    }
+    return haystack_len;
+}
+
+size_t CountCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len, uint8_t needle)
+{
+    D8 d;
+    const hn::Repartition<uint64_t, D8> d64;
+    const size_t N = hn::Lanes(d);
+    const auto broadcasted = hn::Set(d, needle);
+
+    size_t count = 0;
+    size_t i = 0;
+    while (haystack_len - i >= N) {
+        // Per-lane u8 counters: an Eq lane is 0xFF (-1), so subtracting the mask
+        // vector adds 1 per match. Flush every <=255 vectors so no lane overflows.
+        const size_t block_end = i + HWY_MIN((haystack_len - i) / N, size_t { 255 }) * N;
+        auto acc = hn::Zero(d);
+        for (; i < block_end; i += N) {
+            acc = hn::Sub(acc, hn::VecFromMask(d, hn::Eq(broadcasted, hn::LoadU(d, haystack + i))));
+        }
+        count += static_cast<size_t>(hn::ReduceSum(d64, hn::SumsOf8(acc)));
+    }
+    for (; i < haystack_len; ++i) {
+        count += haystack[i] == needle ? 1 : 0;
+    }
+    return count;
+}
+
 // --- Implementation Details ---
 
 size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
@@ -319,6 +398,53 @@ size_t IndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, con
         }
     }
 
+    return text_len;
+}
+
+// Reverse of IndexOfAnyCharImpl: index of the last byte in `text` that is any of
+// `chars[0..chars_len]` (chars_len in 2..=16), or text_len if none are present.
+size_t LastIndexOfAnyCharImpl(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
+{
+    ASSERT(chars_len >= 2 && chars_len <= 16);
+    D8 d;
+    const size_t N = hn::Lanes(d);
+    // Callers split larger sets; clamp so a bad length can never overrun char_vecs.
+    chars_len = std::min(chars_len, size_t { 16 });
+
+    size_t i = text_len;
+#if !HWY_HAVE_SCALABLE && !HWY_TARGET_IS_SVE
+    // Preload the set into registers (same scheme as IndexOfAnyCharImpl).
+    hn::Vec<D8> char_vecs[16];
+    for (size_t c = 0; c < chars_len; ++c) {
+        char_vecs[c] = hn::Set(d, chars[c]);
+    }
+    while (i >= N) {
+        i -= N;
+        const auto text_vec = hn::LoadU(d, text + i);
+        auto found_mask = hn::Or(hn::Eq(text_vec, char_vecs[0]), hn::Eq(text_vec, char_vecs[1]));
+        for (size_t c = 2; c < chars_len; ++c) {
+            found_mask = hn::Or(found_mask, hn::Eq(text_vec, char_vecs[c]));
+        }
+#else
+    // SVE vectors are sizeless and cannot be stored in arrays; broadcast per use.
+    while (i >= N) {
+        i -= N;
+        const auto text_vec = hn::LoadU(d, text + i);
+        auto found_mask = hn::Or(hn::Eq(text_vec, hn::Set(d, chars[0])), hn::Eq(text_vec, hn::Set(d, chars[1])));
+        for (size_t c = 2; c < chars_len; ++c) {
+            found_mask = hn::Or(found_mask, hn::Eq(text_vec, hn::Set(d, chars[c])));
+        }
+#endif
+        const intptr_t pos = hn::FindLastTrue(d, found_mask);
+        if (pos >= 0) return i + static_cast<size_t>(pos);
+    }
+    // Remaining prefix [0, i); fewer than N bytes.
+    while (i-- > 0) {
+        const uint8_t text_char = text[i];
+        for (size_t c = 0; c < chars_len; ++c) {
+            if (text_char == chars[c]) return i;
+        }
+    }
     return text_len;
 }
 
@@ -979,10 +1105,8 @@ size_t MemRMemImpl(const uint8_t* haystack, size_t haystack_len,
     if (HWY_UNLIKELY(needle_len == 0)) return haystack_len;
     if (HWY_UNLIKELY(haystack_len < needle_len)) return kNotFound;
     if (HWY_UNLIKELY(needle_len == 1)) {
-        for (size_t i = haystack_len; i-- > 0;) {
-            if (haystack[i] == needle[0]) return i;
-        }
-        return kNotFound;
+        size_t index = LastIndexOfCharImpl(haystack, haystack_len, needle[0]);
+        return index != haystack_len ? index : kNotFound;
     }
 
     size_t a, b;
@@ -2066,6 +2190,7 @@ namespace bun {
 HWY_EXPORT(ContainsNewlineOrNonASCIIOrQuoteImpl);
 HWY_EXPORT(CopyAsciiPrefixImpl);
 HWY_EXPORT(CopyU16ToU8Impl);
+HWY_EXPORT(CountCharImpl);
 HWY_EXPORT(CountPrintableAscii16Impl);
 HWY_EXPORT(DecodeHex16Impl);
 HWY_EXPORT(DecodeHex8Impl);
@@ -2089,7 +2214,10 @@ HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplBacktick);
 HWY_EXPORT(IndexOfNeedsEscapeForJavaScriptStringImplQuote);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIImpl);
 HWY_EXPORT(IndexOfNewlineOrNonASCIIOrHashOrAtImpl);
+HWY_EXPORT(IndexOfNotCharImpl);
 HWY_EXPORT(IndexOfSpaceOrNewlineOrNonASCIIImpl);
+HWY_EXPORT(LastIndexOfAnyCharImpl);
+HWY_EXPORT(LastIndexOfCharImpl);
 HWY_EXPORT(LowerAscii16Impl);
 HWY_EXPORT(LowerAsciiImpl);
 HWY_EXPORT(MemMemImpl);
@@ -2181,10 +2309,33 @@ size_t highway_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_l
     return HWY_DYNAMIC_DISPATCH(IndexOfAnyCharImpl)(text, text_len, chars, chars_len);
 }
 
+size_t highway_last_index_of_any_char(const uint8_t* HWY_RESTRICT text, size_t text_len, const uint8_t* HWY_RESTRICT chars, size_t chars_len)
+{
+    return HWY_DYNAMIC_DISPATCH(LastIndexOfAnyCharImpl)(text, text_len, chars, chars_len);
+}
+
 size_t highway_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
     return HWY_DYNAMIC_DISPATCH(IndexOfCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_last_index_of_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    uint8_t needle)
+{
+    return HWY_DYNAMIC_DISPATCH(LastIndexOfCharImpl)(haystack, haystack_len, needle);
+}
+
+size_t highway_index_of_not_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    uint8_t value)
+{
+    return HWY_DYNAMIC_DISPATCH(IndexOfNotCharImpl)(haystack, haystack_len, value);
+}
+
+size_t highway_count_char(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
+    uint8_t needle)
+{
+    return HWY_DYNAMIC_DISPATCH(CountCharImpl)(haystack, haystack_len, needle);
 }
 
 size_t highway_index_of_escape_char8(const uint8_t* HWY_RESTRICT input, size_t len)

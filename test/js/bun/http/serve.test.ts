@@ -1060,6 +1060,55 @@ describe("streaming", () => {
   });
 });
 
+// A handler's Response reaches the server four ways: returned from fetch(),
+// returned from fetch() through an already-settled promise, returned from
+// error(), and returned from error() through a promise. A Bun.file() or
+// ReadableStream body is still being sent after the handler has returned, and
+// all four paths have to keep the Response alive for it; each must deliver
+// such a body whole.
+describe("file and stream bodies arrive whole from every handler path", () => {
+  const expected = Buffer.alloc(16 * 1024, "p").toString();
+  const chunk = Buffer.alloc(4 * 1024, "p").toString();
+  const boom = (): never => {
+    throw new Error("boom");
+  };
+  type Handlers = { fetch: () => Response | Promise<Response>; error?: () => Response | Promise<Response> };
+  const paths: [label: string, status: number, handlers: (make: () => Response) => Handlers][] = [
+    ["returned from fetch()", 201, make => ({ fetch: make })],
+    ["returned from fetch() through a settled promise", 201, make => ({ fetch: async () => make() })],
+    ["returned from error()", 597, make => ({ fetch: boom, error: make })],
+    ["returned from error() through a settled promise", 597, make => ({ fetch: boom, error: async () => make() })],
+  ];
+  const bodies: [kind: string, body: (dir: string) => Blob | ReadableStream][] = [
+    ["Bun.file()", dir => file(join(dir, "payload.txt"))],
+    [
+      "ReadableStream",
+      () => {
+        let remaining = 4;
+        return new ReadableStream({
+          pull(controller) {
+            controller.enqueue(chunk);
+            if (--remaining === 0) controller.close();
+          },
+        });
+      },
+    ],
+  ];
+
+  describe.each(bodies)("%s body", (_kind, body) => {
+    it.each(paths)("%s", async (_label, status, handlers) => {
+      using dir = tempDir("serve-deferred-body", { "payload.txt": expected });
+      using server = serve({
+        port: 0,
+        development: false,
+        ...handlers(() => new Response(body(String(dir)), { status })),
+      });
+      const response = await fetch(server.url);
+      expect({ status: response.status, body: await response.text() }).toEqual({ status, body: expected });
+    });
+  });
+});
+
 it("should work for a hello world", async () => {
   await runTest(
     {
@@ -1300,6 +1349,74 @@ it("reload() cannot turn a Bun.serve server into a node:http server", async () =
       }
     },
   );
+});
+
+it("reload() that drops the node:http handler keeps the server's node:http stop() semantics", async () => {
+  // The other direction of the kind invariant: a server created as a node:http
+  // one stays one. node's close() contract is that stop(false) neither sweeps
+  // idle keep-alive connections nor waits for them, and a reload() that routes
+  // requests to fetch instead of the node handler must not switch the server
+  // over to Bun.serve's drain (which closes the idle connection here).
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    // @ts-expect-error internal option used by node:http's Server
+    onNodeHTTPRequest() {
+      throw new Error("replaced by reload() before any request");
+    },
+  });
+  server.reload({ fetch: () => new Response("ok") });
+
+  let received = "";
+  let connectionClosed = false;
+  let waiter = Promise.withResolvers<void>();
+  await using connection = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: server.port,
+    socket: {
+      data(_, data) {
+        received += data.toString("latin1");
+        waiter.resolve();
+      },
+      end() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+      close() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+      error() {
+        connectionClosed = true;
+        waiter.resolve();
+      },
+    },
+  });
+  // Sends a keep-alive request and returns "<status line> <body>", or "closed"
+  // if the server hung up instead of answering.
+  async function request(): Promise<string> {
+    connection.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    connection.flush();
+    while (true) {
+      const headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd !== -1) {
+        const head = received.slice(0, headEnd);
+        const bodyEnd = headEnd + 4 + Number(/^content-length: (\d+)$/im.exec(head)?.[1] ?? 0);
+        if (received.length >= bodyEnd) {
+          const result = `${head.split("\r\n")[0]} ${received.slice(headEnd + 4, bodyEnd)}`;
+          received = received.slice(bodyEnd);
+          return result;
+        }
+      }
+      if (connectionClosed) return "closed";
+      await waiter.promise;
+      waiter = Promise.withResolvers();
+    }
+  }
+
+  expect(await request()).toBe("HTTP/1.1 200 OK ok");
+  await server.stop(false);
+  expect(await request()).toBe("HTTP/1.1 200 OK ok");
 });
 
 describe("status code text", () => {
@@ -1877,6 +1994,109 @@ describe("response framing", () => {
       expect(exitCode).toBe(0);
     });
   });
+});
+
+it.concurrent("dev error page embeds the thrown error, its stack, and build/resolve errors as JSON", async () => {
+  using dir = tempDir("serve-dev-error-page", {
+    "server.ts": `
+      function inner() {
+        throw new TypeError("boom <b>&</b>");
+      }
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: true,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (pathname === "/throw") inner();
+          if (pathname === "/syntax") await import("./broken.ts");
+          if (pathname === "/resolve") await import("./bad-import.ts");
+          return new Response("unreachable");
+        },
+      });
+      const out = {};
+      for (const path of ["/throw", "/syntax", "/resolve"]) {
+        const res = await fetch(server.url + path.slice(1));
+        const html = await res.text();
+        const match = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html);
+        out[path] = {
+          status: res.status,
+          type: res.headers.get("content-type"),
+          payload: match && JSON.parse(match[1]),
+          // the page must carry the bun-error renderer (which registers this symbol) plus the call into it
+          rendererMentions: html.split('Symbol.for("Bun__renderFallbackError")').length - 1,
+          unfilledPlaceholder: /\\{\\[\\w+\\]s?\\}|\\[bun_error_js\\]/.test(html),
+        };
+      }
+      console.log(JSON.stringify(out));
+      server.stop(true);
+      // The thrown errors were reported through the unhandled-rejection path, which sets the exit code.
+      process.exit(0);
+    `,
+    "broken.ts": `export const a = 1;\nexport const oops = ;\n`,
+    "bad-import.ts": `import { nope } from "does-not-exist-pkg";\nexport const b = nope;\n`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").at(-1)!);
+
+  for (const path of ["/throw", "/syntax", "/resolve"]) {
+    expect(out[path]).toMatchObject({
+      status: 500,
+      type: "text/html;charset=utf-8",
+      payload: { cwd: String(dir) },
+      rendererMentions: 2,
+      unfilledPlaceholder: false,
+    });
+  }
+
+  // Thrown exception: name/message, 1-based frame positions and the source lines around the throw.
+  const thrown = out["/throw"].payload.problems;
+  expect(thrown.exceptions).toHaveLength(1);
+  const [exception] = thrown.exceptions;
+  expect({ name: exception.name, message: exception.message }).toEqual({
+    name: "TypeError",
+    message: "boom <b>&</b>",
+  });
+  expect(exception.stack.frames[0]).toEqual({
+    function_name: "inner",
+    file: join(String(dir), "server.ts"),
+    // 1-based, pointing at `TypeError` — the same position `bun` prints to the terminal
+    position: { line: 3, column: 19 },
+    scope: 3, // function
+  });
+  expect(exception.stack.source_lines).toContainEqual({
+    line: 3,
+    text: '        throw new TypeError("boom <b>&</b>");',
+  });
+
+  // Syntax error in an imported module: reported as a build message with its location.
+  const syntax = out["/syntax"].payload.problems;
+  expect(syntax.build.errors).toBe(1);
+  expect(syntax.build.msgs[0]).toMatchObject({
+    level: 1,
+    data: {
+      text: "Unexpected ;",
+      location: { line: 2, line_text: "export const oops = ;" },
+    },
+    on: { build: true, resolve: "" },
+  });
+  expect(syntax.build.msgs[0].data.location.file).toEndWith("broken.ts");
+
+  // Failed resolution: reported as a resolve message carrying the specifier.
+  const resolution = out["/resolve"].payload.problems;
+  expect(resolution.build.errors).toBe(1);
+  expect(resolution.build.msgs[0].on).toEqual({ build: false, resolve: "does-not-exist-pkg" });
+  expect(resolution.build.msgs[0].data.text).toStartWith("Cannot find package 'does-not-exist-pkg'");
+
+  expect(stderr).toContain("boom <b>&</b>");
+  expect(exitCode).toBe(0);
 });
 
 it("should support multiple Set-Cookie headers", async () => {
@@ -3056,6 +3276,40 @@ it("Bun.serve hostname with interior NUL byte does not crash the process", async
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
     stdout: expect.stringMatching(/^(listening:\d+|caught:\w+)$/),
     stderr: expect.any(String),
+    exitCode: 0,
+  });
+});
+
+// A "[...]" hostname has its brackets stripped before it is handed to the socket layer.
+// That copy used to live in a fixed 1024-byte buffer, so a longer bracketed hostname
+// aborted the process instead of failing to listen like any other bogus hostname.
+it("Bun.serve with a bracketed hostname longer than 1024 bytes throws instead of crashing", async () => {
+  const script = `
+    const hostname = "[" + Buffer.alloc(1100, "a").toString() + "]";
+    let server;
+    try {
+      server = Bun.serve({ port: 0, hostname, fetch() { return new Response("ok"); } });
+    } catch (e) {
+      console.log("caught:" + (e instanceof Error));
+    }
+    if (server) {
+      console.log("listening:" + server.port);
+      server.stop(true);
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "caught:true",
+    stderr: "",
     exitCode: 0,
   });
 });

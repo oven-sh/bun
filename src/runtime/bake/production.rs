@@ -118,8 +118,12 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
     // re-borrows on the JSError path).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
-        // SAFETY: p is the unique live VM on this thread.
-        unsafe { (*p).destroy() };
+        // SAFETY: p is the unique live VM on this thread; its loop is alive, so
+        // queued work is released here rather than by a thread teardown.
+        unsafe {
+            (*p).release_queued_work();
+            (*p).destroy()
+        };
     });
 
     // A special global object is used to allow registering virtual modules
@@ -193,7 +197,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     vm.is_main_thread = true;
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
-    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::initBake`;
+    // SAFETY: vm.jsc_vm is the live JSC::VM* set in `VirtualMachine::init_bake`;
     // raw-ptr deref yields an unbounded `&VM` so the `ApiLock<'_>` does not
     // borrow `vm` (the VirtualMachine) and the body below can keep using it.
     //
@@ -342,7 +346,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
     // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr));
+    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm_mut();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
@@ -980,34 +985,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
-        pattern.prepend_part(route.part);
-        match route.part {
-            framework_router::Part::Param(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAll(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAllOptional(_) => {
-                return Err(js_err(global.throw(format_args!(
-                    "catch-all routes are not supported in static site generation",
-                ))));
-            }
-            _ => {}
-        }
         let mut file_count: u32 = 1;
-        if route.file_layout.is_some() {
-            file_count += 1;
-        }
-        let mut next: Option<framework_router::RouteIndex> = route.parent;
-        while let Some(parent_index) = next {
-            let parent = router.route_ptr(parent_index);
-            pattern.prepend_part(parent.part);
-            match parent.part {
-                framework_router::Part::Param(name) => {
-                    params_buf.push(name);
-                }
-                framework_router::Part::CatchAll(name) => {
+        let mut next: Option<framework_router::RouteIndex> = Some(route_index);
+        while let Some(current_index) = next {
+            let current = router.route_ptr(current_index);
+            pattern.prepend_part(current.part);
+            match current.part {
+                framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
                 framework_router::Part::CatchAllOptional(_) => {
@@ -1015,12 +999,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         "catch-all routes are not supported in static site generation",
                     ))));
                 }
-                _ => {}
+                framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
             }
-            if parent.file_layout.is_some() {
+            if current.file_layout.is_some() {
                 file_count += 1;
             }
-            next = parent.parent;
+            next = current.parent;
         }
 
         // Fill styles and file_list
@@ -1196,7 +1180,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // above accessed the same allocation through `vm_ptr`, invalidating the
     // earlier `&mut` under Stacked Borrows.
     let vm = VirtualMachine::get().as_mut();
-    vm.wait_for_promise(AnyPromise::Normal(render_promise));
+    vm.wait_for_promise(AnyPromise::Normal(render_promise))
+        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm_mut();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
@@ -1235,7 +1220,8 @@ fn load_module(
     let vm_ref = VirtualMachine::get();
     vm_ref
         .as_mut()
-        .wait_for_promise(AnyPromise::Internal(promise));
+        .wait_for_promise(AnyPromise::Internal(promise))
+        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
@@ -1412,10 +1398,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
     ) -> Result<(), bun_alloc::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",
-            match ty {
-                framework_router::FileKind::Page => "pages",
-                framework_router::FileKind::Layout => "layout",
-            }
+            ty.collision_noun()
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", BStr::new(rel_path));
         bun_core::pretty_errorln!(
@@ -1447,11 +1430,7 @@ pub struct PerThread {
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // Note: stored as `BackRef` (the VM
-    // is process-lifetime and outlives every `PerThread`); `load_module`
-    // re-derives a mutable VM via the per-thread singleton, so no write
-    // provenance is needed here.
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) vm: bun_ptr::BackRef<VirtualMachine, bun_ptr::Mut>,
     /// Indexed by entry point index (OpaqueFileId)
     pub(crate) loaded_files: AutoBitSet,
     /// JSArray of JSString, indexed by entry point index (OpaqueFileId)
@@ -1496,7 +1475,9 @@ impl PerThread {
             module_keys: Vec::new(),
             module_map: StringArrayHashMap::default(),
             source_maps: StringArrayHashMap::default(),
-            vm: bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null")),
+            // SAFETY: `vm` is the live per-thread VM from `init_bake` (non-null,
+            // write provenance); outlives `PerThread`.
+            vm: unsafe { bun_ptr::BackRef::from_raw_mut(vm) },
             loaded_files: AutoBitSet::init_empty(0).expect("unreachable"),
             all_server_files: None,
             attached: false,
@@ -1516,8 +1497,9 @@ impl PerThread {
         let loaded_files = AutoBitSet::init_empty(n)?;
         // errdefer loaded_files.deinit() — handled by Drop on error path
 
-        // BackRef invariant: vm is the live per-thread VM; outlives PerThread.
-        let vm = bun_ptr::BackRef::from(NonNull::new(vm).expect("vm non-null"));
+        // SAFETY: BackRef invariant — vm is the live per-thread VM from `init_bake`
+        // (non-null, write provenance); outlives PerThread.
+        let vm = unsafe { bun_ptr::BackRef::from_raw_mut(vm) };
         let global = vm.global();
         let all_server_files = Some(bun_jsc::Strong::create(
             JSValue::create_empty_array(global, n).map_err(js_err)?,

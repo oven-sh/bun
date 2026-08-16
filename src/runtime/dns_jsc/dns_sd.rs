@@ -288,11 +288,12 @@ impl Inflight {
         }
     }
 
-    /// SAFETY: the request behind `self` is live (pinned in `inflight`).
-    unsafe fn query(&self) -> &mut QueryState {
+    /// SAFETY: the request behind `self` is live (pinned in `inflight`);
+    /// the `&mut` derives from the stored raw pointer, not from a borrow.
+    unsafe fn query<'a>(self) -> &'a mut QueryState {
         // SAFETY: caller contract; event-loop thread only.
         unsafe {
-            match *self {
+            match self {
                 Inflight::Jsc(r) => &mut (*r).backend.as_dns_sd_mut().query,
                 Inflight::Internal(r) => &mut (*r).dns_sd.query,
             }
@@ -542,7 +543,9 @@ impl SharedConnection {
         // SAFETY: this thread's live RuntimeState; the timer slot is valid until `destroy`.
         unsafe {
             (*state).timer.update(
-                self.early_out_timer.as_ptr(),
+                core::ptr::addr_of!(self.early_out_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
                 &ElTimespec {
                     sec: next.sec,
                     nsec: next.nsec,
@@ -556,22 +559,23 @@ impl SharedConnection {
     pub(crate) unsafe fn on_early_out(this: *mut Self) {
         // Raw receiver like `on_readable`: `finish()` may re-derive `&mut Self`, so no borrow of `*this` outlives it.
         let _exit = event_loop_scope();
-        let ready = {
-            // SAFETY: `this` is the live connection whose timer fired; this borrow ends before `finish()`.
-            let conn = unsafe { &mut *this };
+        // SAFETY: `this` is the live connection whose timer fired; each borrow
+        // below is scoped to its statement and ends before `finish()`.
+        let ready = unsafe {
             // The heap pops without updating state; mark FIRED so a re-arm inserts instead of removing.
-            conn.early_out_timer
+            (*this)
+                .early_out_timer
                 .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-            conn.early_out_armed_for.set(0);
+            (*this).early_out_armed_for.set(0);
             let now = now_ms();
-            let ready = conn.take_ready(|q| {
+            let ready = (*this).take_ready(|q| {
                 let due = q.early_out_deadline_ms().is_some_and(|d| d <= now);
                 if due {
                     q.give_up_on_stragglers();
                 }
                 due
             });
-            conn.arm_early_out();
+            (*this).arm_early_out();
             ready
         };
         for inf in ready {
@@ -655,9 +659,21 @@ impl SharedConnection {
         let Some(conn) = (unsafe { this.as_mut() }) else {
             return;
         };
-        // Subordinates are failed (deallocating them) before the parent.
+        // Subordinates are dealt with (deallocating them) before the parent.
         while let Some(inf) = conn.inflight.pop() {
-            Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION));
+            match inf {
+                // A connect-path lookup lives in the process-wide cache and may
+                // have waiters on other threads (and its outcome is cached): this
+                // thread going away is not an answer. Finish it on the work pool.
+                Inflight::Internal(req) => {
+                    // SAFETY: `inf` is a live heap request just removed from `inflight`;
+                    // FFI releases this thread's subordinate for it.
+                    unsafe { DNSServiceRefDeallocate(inf.query().sd_ref) };
+                    internal::run_on_work_pool(req);
+                }
+                // A dns.lookup() from this thread's script: only this VM waits on it.
+                Inflight::Jsc(_) => Self::finish(inf, Some(ERR_DEFUNCT_CONNECTION)),
+            }
         }
         // SAFETY: `this` is detached and drained.
         unsafe { Self::destroy(this) };
@@ -709,7 +725,6 @@ pub(crate) fn lookup(
         cache,
         get_addr_info_request::Backend::DnsSd(get_addr_info_request::BackendDnsSd::new(protocol)),
         Some(this.as_ctx_ptr()),
-        query,
         global_this,
         PendingCacheField::PendingHostCacheNative,
     );
@@ -726,8 +741,7 @@ pub(crate) fn lookup(
     ) else {
         // SAFETY: request is exclusively owned; dns_sd never accepted it.
         unsafe {
-            if (*request).cache.pending_cache() {
-                let pos = (*request).cache.pos_in_pending();
+            if let Some(pos) = (*request).pending_slot {
                 this.pending_host_cache_native.with_mut(|c| {
                     let slot = c.ptr_at(pos as usize);
                     // SAFETY: `pos` was alloc'd; no other token outstanding.

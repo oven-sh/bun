@@ -32,7 +32,14 @@ bun_simdutf_sys.workspace = true
 
 [dev-dependencies]
 criterion = "0.5"
+quick-xml = "0.38"
+roxmltree = "0.20"
+xml_rs = { package = "xml-rs", version = "0.8" }
 
 [[bench]]
 name = "json_parse"
+harness = false
+
+[[bench]]
+name = "xml_parse"
 harness = false

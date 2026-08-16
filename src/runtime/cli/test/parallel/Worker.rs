@@ -70,6 +70,7 @@ pub struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
+    pub(crate) reap_pending: bool,
 }
 
 impl Worker {
@@ -172,11 +173,11 @@ impl Worker {
             if !extra_pipes.is_empty() {
                 // coord.vm backref valid for worker lifetime; adopt() mutates the
                 // loop's socket context via interior mutability on the C side.
-                if !this.ipc.adopt(coord.vm, extra_pipes[0].fd()) {
+                if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd()) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
             } else {
-                this.ipc.done = true;
+                this.ipc.done.set(true);
             }
         }
         #[cfg(not(unix))]
@@ -272,7 +273,7 @@ impl Worker {
             // to the Channel on success (it does the Box::from_raw internally).
             // On failure the caller still owns it (Channel.rs:294) and the
             // `ipc_pipe_guard` errdefer performs `close_and_destroy`.
-            if !this.ipc.adopt_pipe(coord.vm, ipc_pipe) {
+            if !Channel::adopt_pipe(&raw mut this.ipc, coord.vm, ipc_pipe) {
                 return Err(crate::Error::ChannelAdoptFailed);
             }
             // Channel now owns the Box; disarm the errdefer so end-of-block
@@ -439,7 +440,7 @@ impl Default for WorkerPipe {
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(chunk, state);
+    on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
     // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.

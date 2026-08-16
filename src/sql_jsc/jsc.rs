@@ -29,7 +29,7 @@ use core::ptr::NonNull;
 pub use bun_jsc::{
     ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
     ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
+    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, Strong,
     StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
 };
 
@@ -52,7 +52,6 @@ pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgres
     match e {
         JsError::Thrown => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 #[inline]
@@ -61,7 +60,6 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
     match e {
         JsError::Thrown => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 
@@ -375,9 +373,9 @@ pub use bun_event_loop::EventLoopTimer::{
 // [`SqlRuntimeHooks`] vtable.
 bun_opaque::opaque_ffi! { pub struct TimerHeap; }
 impl TimerHeap {
-    pub(crate) fn insert(&mut self, t: &mut EventLoopTimer) {
+    pub(crate) fn insert(&mut self, t: *mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
-        // intrusive heap node owned by the caller.
+        // intrusive heap node whose provenance covers its container.
         unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
     }
     pub(crate) fn remove(&mut self, t: &mut EventLoopTimer) {
@@ -619,7 +617,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {

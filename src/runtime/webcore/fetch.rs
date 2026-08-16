@@ -36,7 +36,7 @@ pub mod fetch_tasklet;
 
 #[path = "fetch/FetchRequestBodySink.rs"]
 pub mod fetch_request_body_sink;
-pub use self::fetch_request_body_sink::{FetchRequestBodySink, FetchRequestBodySinkJSSink};
+pub use self::fetch_request_body_sink::FetchRequestBodySink;
 
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
@@ -82,8 +82,8 @@ use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
-pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
+pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -349,10 +349,12 @@ fn reject_on_exception(
 ) -> JsResult<JSValue> {
     let err = match result {
         Ok(v) if !v.is_empty() => return Ok(v),
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        // A terminated worker gets no rejected promise: leave its termination pending and keep unwinding.
+        Ok(_) | Err(jsc::JsError::Thrown) if global_this.has_pending_termination_exception() => {
+            return Err(jsc::JsError::Thrown);
+        }
         Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
             Some(exc) => exc.to_error().unwrap_or(exc),
             None => {
                 // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
@@ -643,8 +645,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -673,8 +675,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "compress: boolean | string | { encoding, level? }"
     'extract_compress: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -700,8 +702,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "maxRedirects: number"
     'extract_max_redirects: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -738,8 +740,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "tls: TLSConfig"
     ssl_config = 'extract_ssl_config: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -795,8 +797,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // unix: string | undefined
     unix_socket_path = 'extract_unix_socket_path: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -822,8 +824,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -852,8 +854,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // timeout: false | number | undefined
     disable_timeout = 'extract_disable_timeout: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -903,8 +905,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         // Then check options/init objects which can override the Request's redirect
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -931,8 +933,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // keepalive: boolean | undefined;
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -961,8 +963,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // verbose: boolean | "curl" | undefined;
     verbose = 'extract_verbose: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -994,8 +996,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `defer if (proxy_headers) |*hdrs| hdrs.deinit();` → Headers impls Drop.
     url_proxy_buffer = 'extract_proxy: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -1157,7 +1159,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.signal.get() {
+            if let Some(signal_) = req.abort_signal() {
                 break 'extract_signal NonNull::new(signal_.ref_());
             }
             break 'extract_signal None;
@@ -1746,11 +1748,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     let original_size = body.any_blob().blob().size.get();
                     let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
-                    let blob_size = if bun_sys::S::ISREG(stat.st_mode as u32) {
-                        stat_size
-                    } else {
-                        original_size.min(stat_size)
-                    };
                     let blob_offset = body.any_blob().blob().offset.get();
 
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
@@ -1759,7 +1756,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         fd: opened_fd,
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
-                        content_size: blob_size as usize,
+                        content_size: original_size.min(stat_size) as usize,
                     };
 
                     if bun_sys::S::ISREG(stat.st_mode as u32) {
@@ -1770,6 +1767,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             .max(sf.offset)
                             .min(stat_size_usize)
                             .saturating_sub(sf.offset);
+                        // `remain` is now the exact byte count we will send (the slice
+                        // window clamped to the file); that is the Content-Length.
+                        sf.content_size = sf.remain;
                     }
                     body.detach();
                     body = HTTPRequestBody::Sendfile(sf);
@@ -2084,7 +2084,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),
-        global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
         upgraded_connection,
@@ -2128,7 +2127,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

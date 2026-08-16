@@ -413,110 +413,6 @@ pub mod Runtime {
     pub(crate) use bun_ast::runtime::{
         Imports, ReactCompilerMode, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
     };
-
-    // ───────────────────────────── Runtime / Fallback ─────────────────────
-
-    // ───────────────────────────── Fallback ───────────────────────────────
-    // REFACTOR_BUN_AST: moved here from `bun_ast::runtime` — needs
-    // `bun_options_types::schema`, `bun_io`, `bun_base64`, all of which would
-    // form a cycle inside `bun_ast`.
-
-    use bun_options_types::schema;
-    use bun_options_types::schema::api;
-    use core::fmt;
-
-    pub struct Fallback;
-
-    impl Fallback {
-        pub(crate) const HTML_BACKEND_TEMPLATE: &'static [u8] =
-            include_bytes!("../fallback-backend.html");
-
-        #[inline]
-        pub(crate) fn error_js() -> &'static [u8] {
-            bun_core::runtime_embed_file!(Codegen, "bun-error/index.js").as_bytes()
-        }
-
-        #[inline]
-        pub(crate) fn error_css() -> &'static [u8] {
-            bun_core::runtime_embed_file!(Codegen, "bun-error/bun-error.css").as_bytes()
-        }
-
-        #[inline]
-        pub(crate) fn fallback_decoder_js() -> &'static [u8] {
-            bun_core::runtime_embed_file!(Codegen, "fallback-decoder.js").as_bytes()
-        }
-
-        pub fn render_backend(
-            msg: &api::FallbackMessageContainer,
-            writer: &mut impl bun_io::Write,
-        ) -> bun_io::Result<()> {
-            let blob = Base64FallbackMessage { msg };
-            let bun_error_css = Self::error_css();
-            let bun_error = Self::error_js();
-            let bun_error_page_css: &[u8] = b"";
-            let fallback = Self::fallback_decoder_js();
-            render_named_template(
-                writer,
-                Self::HTML_BACKEND_TEMPLATE,
-                &mut |w, name| match name {
-                    b"blob" => w.write_fmt(format_args!("{}", blob)),
-                    b"bun_error_css" => w.write_all(bun_error_css),
-                    b"bun_error" => w.write_all(bun_error),
-                    b"bun_error_page_css" => w.write_all(bun_error_page_css),
-                    b"fallback" => w.write_all(fallback),
-                    _ => Ok(()),
-                },
-            )
-        }
-    }
-
-    /// Tiny substitutor for `{[name]s}` / `{[name]f}` named placeholders
-    /// (the only specifiers used in fallback.html / fallback-backend.html).
-    fn render_named_template<W: bun_io::Write>(
-        writer: &mut W,
-        template: &'static [u8],
-        subst: &mut dyn FnMut(&mut W, &[u8]) -> bun_io::Result<()>,
-    ) -> bun_io::Result<()> {
-        let mut i = 0usize;
-        let mut last = 0usize;
-        let bytes = template;
-        while i + 1 < bytes.len() {
-            if bytes[i] == b'{' && bytes[i + 1] == b'[' {
-                let mut j = i + 2;
-                while j < bytes.len() && bytes[j] != b']' {
-                    j += 1;
-                }
-                if j + 2 < bytes.len() && bytes[j] == b']' && bytes[j + 2] == b'}' {
-                    writer.write_all(&bytes[last..i])?;
-                    let name = &bytes[i + 2..j];
-                    subst(writer, name)?;
-                    i = j + 3;
-                    last = i;
-                    continue;
-                }
-            }
-            i += 1;
-        }
-        writer.write_all(&bytes[last..])
-    }
-
-    pub(crate) struct Base64FallbackMessage<'a> {
-        pub msg: &'a api::FallbackMessageContainer,
-    }
-
-    impl fmt::Display for Base64FallbackMessage<'_> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let mut bb: Vec<u8> = Vec::new();
-            let mut encoder = schema::Writer::new(&mut bb);
-            self.msg.encode(&mut encoder); // catch {}
-            // Standard alphabet, no '=' padding.
-            let enc = &bun_base64::zig_base64::STANDARD_NO_PAD.encoder;
-            let mut out = vec![0u8; enc.calc_size(bb.len())];
-            let s = enc.encode(&mut out, &bb); // catch {}
-            // SAFETY: STANDARD_ALPHABET_CHARS is pure ASCII; encoder output contains only those bytes.
-            f.write_str(unsafe { core::str::from_utf8_unchecked(s) })
-        }
-    }
 }
 pub type RuntimeFeatures = Runtime::Features;
 pub(crate) type RuntimeImports = Runtime::Imports;
@@ -529,8 +425,8 @@ pub use crate::p::P;
 pub use bun_ast as js_ast;
 use js_ast::G;
 pub use js_ast::{
-    B, Binding, BindingNodeIndex, BindingNodeList, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S,
-    Scope, Stmt, StmtNodeIndex, StmtNodeList, Symbol,
+    B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S, Scope, Stmt,
+    StmtNodeIndex, StmtNodeList, Symbol,
 };
 
 pub use js_ast::Op;
@@ -789,6 +685,13 @@ pub struct VisitArgsOpts<'a> {
 }
 
 #[derive(Clone, Copy)]
+pub struct VisitDeclOpts {
+    pub(crate) was_anonymous_named_expr: bool,
+    pub(crate) could_be_const_value: bool,
+    pub(crate) could_be_macro: bool,
+}
+
+#[derive(Clone, Copy)]
 pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
@@ -861,8 +764,8 @@ impl<'a> JSXTag<'a> {
         // Certain identifiers are strings
         // <div
         // <button
-        // <Hello-:Button
-        if strings::contains_comptime(name, b"-:")
+        // <Hello-Button, <ns:button (any name containing '-' or ':')
+        if strings::contains_any(name, b"-:")
             || (p.lexer().token != T::TDot && name[0] >= b'a' && name[0] <= b'z')
         {
             return Ok(JSXTag {

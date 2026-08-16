@@ -819,24 +819,6 @@ void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSSubtleCryptoOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    auto* jsSubtleCrypto = uncheckedDowncast<JSSubtleCrypto>(handle.slot()->asCell());
-    ScriptExecutionContext* owner = WTF::getPtr(jsSubtleCrypto->wrapped().scriptExecutionContext());
-    if (!owner)
-        return false;
-    if (reason) [[unlikely]]
-        *reason = "Reachable from ScriptExecutionContext"_s;
-    return visitor.containsOpaqueRoot(context);
-}
-
-void JSSubtleCryptoOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsSubtleCrypto = static_cast<JSSubtleCrypto*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsSubtleCrypto->wrapped(), jsSubtleCrypto);
-}
-
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable : 4483)
@@ -875,13 +857,6 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, SubtleCrypto& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
-}
-
-SubtleCrypto* JSSubtleCrypto::toWrapped(JSC::VM&, JSC::JSValue value)
-{
-    if (auto* wrapper = dynamicDowncast<JSSubtleCrypto>(value))
-        return &wrapper->wrapped();
-    return nullptr;
 }
 
 }

@@ -2,6 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 
 // Every case spawns at least one full `bun test --isolate` child; the heavy
 // ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
@@ -411,6 +412,67 @@ describe.concurrent("bun test --isolate", () => {
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
+
+  // Every file spawns a sleeper at module scope (outside any test or hook),
+  // appends its pid to a shared log, and its test asserts that the sleepers
+  // logged by the files that ran before it are gone. The first file's sleeper
+  // is always killed; the third file is what proves the second file's
+  // module-scope sleeper was killed at its isolation swap too. Holds in any
+  // file order, so the same fixture covers a --parallel worker running
+  // several files.
+  const moduleScopeSpawnFile = `
+    import { test, expect } from "bun:test";
+    import fs from "node:fs";
+    const log = process.env.PID_LOG!;
+    const earlier = fs.readFileSync(log, "utf8").split("\\n").filter(Boolean).map(Number);
+    const child = Bun.spawn({ cmd: [process.execPath, "-e", "setInterval(()=>{}, 1e6)"], stdout: "ignore", stderr: "ignore" });
+    fs.appendFileSync(log, child.pid + "\\n");
+    const isAlive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    test("module-scope sleepers of the files before this one were killed", async () => {
+      // The swap sends SIGTERM; the sleeper may still be getting reaped.
+      const deadline = Date.now() + 2_000;
+      while (earlier.some(isAlive) && Date.now() < deadline) await Bun.sleep(10);
+      expect(earlier.filter(isAlive)).toEqual([]);
+    });
+  `;
+
+  test.each([
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes all three files (scale-up gated), so the worker's
+    // per-file swap is what has to kill the second and third sleepers.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])("module-scope subprocesses are killed for every isolated file, not just the first (%s)", async (_, args, env) => {
+    using dir = tempDir("isolate-module-scope-subprocess", {
+      "a.test.ts": moduleScopeSpawnFile,
+      "b.test.ts": moduleScopeSpawnFile,
+      "c.test.ts": moduleScopeSpawnFile,
+      "pids.txt": "",
+    });
+    const log = join(String(dir), "pids.txt");
+    const loggedPids = () => fs.readFileSync(log, "utf8").split("\n").filter(Boolean);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...args, "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+        env: { ...bunEnv, ...env, PID_LOG: log },
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      expect(loggedPids()).toHaveLength(3);
+      expect(exitCode).toBe(0);
+    } finally {
+      // Nothing swaps after the last file of a serial run, so its sleeper is
+      // ours to kill, as is anything an unfixed runner leaked.
+      for (const pid of loggedPids()) {
+        try {
+          process.kill(Number(pid));
+        } catch {}
+      }
+    }
+  });
 });
 
 // The eviction test below proves the SourceProvider cache is active (control:
@@ -777,6 +839,11 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
 // - setTimeout/setInterval: generation-stale timers only self-cancelled when
 //   they FIRED, so a module-scope long timer held a Strong on its wrapper
 //   until the deadline (effectively forever for hour-scale timers).
+// - AbortSignal.timeout with an abort listener: the swap unlinked the native
+//   timer but left the signal believing it still had one, and the GC keeps a
+//   pending timeout signal's wrapper (hence its listener, hence the global)
+//   alive for as long as the signal says so. Same story when the timer sat in
+//   the fake-timer heap of a file that never called useRealTimers().
 //
 // Each fixture runs 8 isolated files that leak one handle apiece, forces a
 // full GC, and counts live GlobalObject cells. Pinned globals accumulate
@@ -847,6 +914,28 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       makeLeakFixture(`
         setTimeout(() => {}, 3_600_000);
         setInterval(() => {}, 3_600_000);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout",
+      makeLeakFixture(`
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  test("AbortSignal.timeout with an abort listener left pending in a fake-timer heap", async () => {
+    using dir = tempDir(
+      "isolate-leak-abort-timeout-fake",
+      makeLeakFixture(`
+        import { vi } from "bun:test";
+        vi.useFakeTimers();
+        AbortSignal.timeout(3_600_000).addEventListener("abort", () => {});
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);

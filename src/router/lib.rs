@@ -311,8 +311,7 @@ impl Routes {
             if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
                 return Some(&raw const **route);
             }
-            // A rejected candidate may have recorded the segments it did match
-            // (https://github.com/oven-sh/bun/issues/12206); the next one starts clean.
+            // Not every rejection inside `match_` drops the params it pushed (#12206).
             params.clear();
         }
 
@@ -499,8 +498,6 @@ impl<'a> RouteLoader<'a> {
             .set_capacity(this.all_routes.len())
             .expect("unreachable");
 
-        // `sorter::compare` puts every static route (the index route included)
-        // ahead of the first dynamic one, so the dynamic routes are one suffix.
         let mut dynamic_start: Option<usize> = None;
 
         for (i, route) in this.all_routes.into_iter().enumerate() {
@@ -970,11 +967,7 @@ pub(crate) mod sorter {
     use super::pattern::Tag;
     use super::*;
 
-    /// Sort key of one `/`-delimited segment of a route name. `Tag`'s numeric
-    /// order is the precedence order; static segments also order by name so
-    /// the list stays grouped by directory, parameter names never matter.
-    /// The prefixes are the ones `Pattern::init` dispatches on, and every name
-    /// reaching the sorter already passed `Pattern::validate`.
+    /// `Tag`'s numeric order is the precedence order; parameter names never matter.
     fn segment_key(segment: &[u8]) -> (u8, &[u8]) {
         if segment.starts_with(b"[[...") {
             (Tag::OptionalCatchAll as u8, b"")
@@ -987,18 +980,10 @@ pub(crate) mod sorter {
         }
     }
 
-    /// List order is match order (`Routes::match_dynamic` returns the first
-    /// route that matches), so this is Next.js's `getSortedRoutes` precedence:
-    /// routes are compared one segment at a time, the first segment whose kind
-    /// differs decides (static beats `[x]` beats `[...x]` beats `[[...x]]`), and
-    /// a route that ends first comes first. `opt/[[...rest]]` beats `[slug]`
-    /// for `/opt` because `opt` beats `[slug]` at depth one; that the former
-    /// ends in an optional catch-all (its `Route::kind`) is irrelevant.
-    ///
-    /// The only use of `kind` is to sort the fully static routes ahead of
-    /// everything else as a group, because `RouteLoader::load_all` splits the
-    /// list there; they are matched through `Routes::static_`, so their
-    /// relative order is cosmetic.
+    /// Match order: `Routes::match_dynamic` takes the first hit. Fully static routes
+    /// lead because `load_all` splits the list there; the rest follow Next.js's
+    /// `getSortedRoutes`: per segment, static before `[x]` before `[...x]` before
+    /// `[[...x]]`, and a route that ends first comes first.
     pub(crate) fn compare(a: &Route, b: &Route) -> Ordering {
         let a_name = a.match_name.as_bytes();
         let b_name = b.match_name.as_bytes();
@@ -1009,8 +994,7 @@ pub(crate) mod sorter {
                     .map(segment_key)
                     .cmp(strings::tokenize(b_name, b"/").map(segment_key))
             })
-            // Only differing parameter names remain (`[a]/x` vs `[b]/x`); keep
-            // the winner deterministic instead of up to directory order.
+            // Only parameter names differ at this point; keep the order deterministic.
             .then_with(|| a_name.cmp(b_name))
     }
 }

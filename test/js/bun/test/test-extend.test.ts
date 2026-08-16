@@ -268,6 +268,37 @@ describe("test.extend", () => {
     },
   );
 
+  // a test callback whose source is unavailable gets every fixture
+  const unreadable: string[] = [];
+  const unreadableTest = test.extend<{ a: number; b: number }>({
+    a: async ({}, use) => {
+      unreadable.push("a");
+      await use(1);
+    },
+    b: async ({}, use) => {
+      unreadable.push("b");
+      await use(2);
+    },
+  });
+  unreadableTest(
+    "a bound test callback receives every fixture",
+    function ({ a, b }: { a: number; b: number }) {
+      expect([a, b]).toEqual([1, 2]);
+      expect(unreadable).toEqual(["a", "b"]);
+    }.bind(null),
+  );
+
+  // only the function's shape marks it unreadable, not the words "[native code]" appearing in its body
+  const nativeText = test.extend<{ base: number; derived: string }>({
+    base: 2,
+    derived: async ({ base }, use) => {
+      await use(`${base} [native code]`);
+    },
+  });
+  nativeText("a fixture body may mention [native code]", ({ derived }) => {
+    expect(derived).toBe("2 [native code]");
+  });
+
   // modifiers are preserved on extended test functions
   const modTest = test.extend<{ n: number }>({ n: 5 });
   modTest.skip("skip on an extended test is still skip", () => {
@@ -705,6 +736,22 @@ describe.concurrent("test.extend lifecycle", () => {
       t("rest", ({ ...rest }) => {});
     `);
     expect(stderr).toContain("Rest parameters are not supported");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a bound fixture function fails the test instead of running without its dependencies", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test } from "bun:test";
+      function makeDb(config: string, { port }: { port: number }, use: (db: string) => Promise<void>) {
+        return use(config + ":" + port);
+      }
+      const t = test.extend<{ port: number; db: string }>({ port: 5432, db: makeDb.bind(null, "pg") });
+      t("bound fixture", ({ db }) => {});
+    `);
+    expect(stderr).toContain(
+      'TypeError: Fixture "db" is a bound or native function, so the fixtures it depends on cannot be read from its source.',
+    );
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });

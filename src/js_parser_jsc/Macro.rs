@@ -452,6 +452,15 @@ impl Macro {
             unsafe { (*vm).transpiler.configure_defines()? };
         }
 
+        // `load_macro_entry_point` takes the API lock only while it loads the
+        // module, but reporting a rejected load below runs JS as well
+        // (unhandledRejection listeners, error printing). On a pool thread
+        // (bundler, transpiler store, `Bun.Transpiler#transform`) nothing else
+        // holds this VM's lock; on the main thread (`bun run`) it is re-entrant.
+        // SAFETY: `jsc_vm` is the live JSC VM set in `VirtualMachine::init`; the
+        // raw deref yields an unbounded `&VM`, so the guard does not borrow `*vm`.
+        let _api_lock = unsafe { (*(*vm).jsc_vm).get_api_lock() };
+
         // SAFETY: `vm` is the per-thread VM; uniquely accessed here.
         let loaded_result = unsafe {
             (*vm).load_macro_entry_point(input_specifier, function_name, specifier, hash)

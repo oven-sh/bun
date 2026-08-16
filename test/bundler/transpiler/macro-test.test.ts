@@ -182,6 +182,96 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
+// A macro module that fails to load is reported by Macro::init on the thread doing the
+// transpiling. `bun run entry.ts` transpiles the entry point on the main thread, which holds
+// its VM's API lock for the whole program. Everything below transpiles on a pool thread with
+// a macro VM of its own, where the report used to run without the lock and debug builds
+// aborted on JSC's currentThreadIsHoldingAPILock assertion instead of printing the error.
+describe.concurrent("a macro module that fails to load is reported", () => {
+  const files = {
+    "bad.js": "function bad( {",
+    "macro.ts": `import "./bad.js";\nexport function m() {\n  return 1;\n}\n`,
+    "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\n`,
+  };
+  // The error of the module the macro imports is printed when the macro module is loaded; the
+  // transpiler then logs the failure at the macro's call site.
+  const badJsError = "error: Expected identifier but found end of file";
+  const loadError = 'error: "MacroLoadError" error in macro';
+  const bothErrors = new RegExp(`${badJsError}.*${loadError}`, "s");
+
+  async function run(extraFiles: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("macro-load-failure", { ...files, ...extraFiles });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test("by bun build", async () => {
+    expect(await run({}, "build", "./entry.ts")).toEqual({
+      stdout: "",
+      stderr: expect.stringMatching(bothErrors),
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  test("by Bun.build()", async () => {
+    const result = await run(
+      {
+        "build.ts": [
+          `const result = await Bun.build({ entrypoints: ["./entry.ts"], throw: false });`,
+          `console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log => log.message) }));`,
+          ``,
+        ].join("\n"),
+      },
+      "run",
+      "./build.ts",
+    );
+    expect(result).toEqual({
+      stdout: JSON.stringify({ success: false, logs: ['"MacroLoadError" error in macro'] }) + "\n",
+      stderr: expect.stringContaining(badJsError),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  test("by bun run, for a module imported by the entry point", async () => {
+    expect(await run({ "main.ts": `import "./entry.ts";\n` }, "run", "./main.ts")).toEqual({
+      stdout: "",
+      stderr: expect.stringMatching(bothErrors),
+      exitCode: 1,
+      signalCode: null,
+    });
+  });
+
+  test("by Bun.Transpiler#transform()", async () => {
+    const result = await run(
+      {
+        "transform.ts": [
+          `const code = await Bun.file("./entry.ts").text();`,
+          `const promise = new Bun.Transpiler({ loader: "ts" }).transform(code);`,
+          `console.log(JSON.stringify(await promise.then(() => "resolved", error => String(error))));`,
+          ``,
+        ].join("\n"),
+      },
+      "run",
+      "./transform.ts",
+    );
+    expect(result).toEqual({
+      stdout: JSON.stringify('BuildMessage: "MacroLoadError" error in macro') + "\n",
+      stderr: expect.stringContaining(badJsError),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+});
+
 describe("--no-macros", () => {
   const files = {
     "macro.ts": `

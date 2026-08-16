@@ -3,7 +3,7 @@
 use std::io::Write as _;
 
 use bun_ast::Log;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
+use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_collections::HashMap;
 use bun_paths::{self, SEP};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
@@ -13,6 +13,7 @@ use bun_paths::{self, SEP};
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_core::strings;
 use bun_paths::fs as PFs;
+use bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 use bun_sys::Fd;
@@ -81,37 +82,6 @@ static RELATIVE_PATHS_LIST: std::sync::LazyLock<ImportPathsListPtr> =
 #[inline]
 fn relative_paths_list_ptr() -> *mut ImportPathsList {
     RELATIVE_PATHS_LIST.0.as_ptr()
-}
-
-// ── HardcodedModule alias lookup ────────────────────────────────────────
-// Thin adapter over `bun_resolve_builtins::Alias::get` so the call site keeps
-// `&'static [u8]` for `import_record.path.text` (the table stores `&'static
-// ZStr`). `BundleTarget` and `bun_resolve_builtins::Target` are the same
-// `bun_ast::Target`; ditto `ImportRecordTag` /
-// `import_record::Tag`, so no bridge is needed.
-mod hardcoded_module {
-    use super::*;
-    #[derive(Default, Clone, Copy)]
-    pub(super) struct AliasOptions {
-        pub rewrite_jest_for_tests: bool,
-    }
-    pub(super) struct Alias {
-        pub path: &'static [u8],
-        pub tag: ImportRecordTag,
-    }
-    pub(super) fn get(name: &[u8], target: BundleTarget, opts: AliasOptions) -> Option<Alias> {
-        bun_resolve_builtins::Alias::get(
-            name,
-            target,
-            bun_resolve_builtins::Cfg {
-                rewrite_jest_for_tests: opts.rewrite_jest_for_tests,
-            },
-        )
-        .map(|a| Alias {
-            path: a.path.as_bytes(),
-            tag: a.tag,
-        })
-    }
 }
 
 /// Intern a byte buffer into the process-lifetime `relative_paths_list`
@@ -427,23 +397,13 @@ impl Linker {
                     }
 
                     if IS_BUN {
-                        if let Some(replacement) = hardcoded_module::get(
-                            import_record.path.text,
+                        if HardcodedAlias::rewrite_import_record(
+                            import_record,
                             target,
-                            hardcoded_module::AliasOptions {
+                            HardcodedAliasCfg {
                                 rewrite_jest_for_tests,
                             },
                         ) {
-                            if replacement.tag == ImportRecordTag::Builtin
-                                && import_record.kind.is_common_js()
-                            {
-                                continue;
-                            }
-                            import_record.path.text = replacement.path;
-                            import_record.tag = replacement.tag;
-                            import_record
-                                .flags
-                                .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                             continue;
                         }
                         if strings::starts_with(import_record.path.text, b"node:") {

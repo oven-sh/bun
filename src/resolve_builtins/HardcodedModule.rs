@@ -1,5 +1,5 @@
-use bun_ast::Target;
 use bun_ast::import_record;
+use bun_ast::{ImportRecord, ImportRecordFlags, Target};
 use bun_core::ZStr;
 use bun_core::zstr;
 
@@ -949,5 +949,32 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// Pre-pass the runtime module loader runs over each import record before
+    /// printing a file. Shared by the JS-thread linker and the concurrent
+    /// transpiler so a file prints the same way on both (they also share the
+    /// on-disk transpiler cache). Returns whether the record names a hardcoded
+    /// module; the runtime resolve hook serves those, so callers are done with
+    /// the record either way.
+    ///
+    /// A `require()` / `require.resolve()` of a node builtin keeps the
+    /// specifier as written instead of the canonical `node:` path: like node,
+    /// the runtime resolves it when the call runs, so `require.resolve("fs")`
+    /// returns `"fs"`, `require("fs")` honors `require.cache["fs"]`, and a
+    /// `Module._resolveFilename` override sees `"fs"`.
+    pub fn rewrite_import_record(record: &mut ImportRecord, target: Target, cfg: Cfg) -> bool {
+        let Some(alias) = Self::get(record.path.text, target, cfg) else {
+            return false;
+        };
+        if alias.node_builtin && record.kind.is_common_js() {
+            return true;
+        }
+        record.path.text = alias.path.as_bytes();
+        record.tag = alias.tag;
+        record
+            .flags
+            .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+        true
     }
 }

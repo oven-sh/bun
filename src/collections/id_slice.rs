@@ -293,3 +293,115 @@ impl<I, T: fmt::Debug> fmt::Debug for IdVec<I, T> {
         fmt::Debug::fmt(&self.raw, f)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    struct Id(u32);
+
+    impl Idx for Id {
+        fn from_index(index: usize) -> Self {
+            Self(index as u32)
+        }
+
+        fn index(self) -> usize {
+            self.0 as usize
+        }
+    }
+
+    #[test]
+    fn slice_view_reads_through_ids() {
+        let raw = [10u8, 20, 30];
+        let view = IdSlice::<Id, u8>::from_raw(&raw);
+        assert_eq!(view.len(), 3);
+        assert_eq!(view[Id(1)], 20);
+        assert_eq!(view.get(Id(2)), Some(&30));
+        assert_eq!(view.get(Id(3)), None);
+        assert!(view.has(Id(2)));
+        assert!(!view.has(Id(3)));
+        assert_eq!(view.ids().collect::<Vec<_>>(), [Id(0), Id(1), Id(2)]);
+        assert_eq!(view.ids().next_back(), Some(Id(2)));
+        assert_eq!(
+            view.iter_enumerated().collect::<Vec<_>>(),
+            [(Id(0), &10), (Id(1), &20), (Id(2), &30)]
+        );
+        assert_eq!(view.iter().copied().sum::<u8>(), 60);
+        assert_eq!(view.raw(), &raw);
+        assert_eq!(format!("{view:?}"), "[10, 20, 30]");
+    }
+
+    #[test]
+    fn slice_view_writes_through_to_the_slice() {
+        let mut raw = [1u32, 2, 3, 4];
+        let view = IdSlice::<Id, u32>::from_raw_mut(&mut raw);
+        view[Id(0)] = 10;
+        for item in view.iter_mut() {
+            *item += 1;
+        }
+        for item in &mut *view {
+            *item *= 2;
+        }
+        view.raw_mut()[2..].reverse();
+        assert_eq!(raw, [22, 6, 10, 8]);
+    }
+
+    #[test]
+    fn empty_slice_view() {
+        let view = IdSlice::<Id, u64>::from_raw(&[]);
+        assert!(view.is_empty());
+        assert_eq!(view.get(Id(0)), None);
+        assert!(!view.has(Id(0)));
+        assert_eq!(view.ids().len(), 0);
+        assert_eq!(view.iter_enumerated().len(), 0);
+
+        let mut empty: [u64; 0] = [];
+        assert!(IdSlice::<Id, u64>::from_raw_mut(&mut empty).is_empty());
+    }
+
+    #[test]
+    fn vec_is_addressed_like_its_slice() {
+        let mut names: IdVec<Id, &str> = IdVec::new();
+        names.push("a");
+        names.push("b");
+        names.append(&mut vec!["c", "d"]);
+        assert_eq!(names.len(), 4);
+        assert_eq!(names[Id(3)], "d");
+        names[Id(0)] = "z";
+        names.as_mut_slice()[Id(1)] = "y";
+        assert_eq!(names.as_slice().raw(), ["z", "y", "c", "d"]);
+        assert_eq!(
+            names.ids().collect::<Vec<_>>(),
+            [Id(0), Id(1), Id(2), Id(3)]
+        );
+        assert_eq!(names.get(Id(4)), None);
+
+        names.truncate(2);
+        assert_eq!(*names.raw(), ["z", "y"]);
+        names.raw_mut().insert(0, "x");
+        assert_eq!(
+            names.iter_enumerated().collect::<Vec<_>>(),
+            [(Id(0), &"x"), (Id(1), &"z"), (Id(2), &"y")]
+        );
+        assert_eq!(format!("{names:?}"), r#"["x", "z", "y"]"#);
+    }
+
+    #[test]
+    fn vec_constructors() {
+        let mut sized: IdVec<Id, u32> = IdVec::with_capacity(8);
+        assert!(sized.capacity() >= 8);
+        sized.resize(3, 7);
+        sized.reserve(1);
+        sized.reserve_exact(1);
+        assert_eq!(sized.as_slice().raw(), [7, 7, 7]);
+
+        let collected: IdVec<Id, u32> = (1..=3).collect();
+        assert_eq!(collected[Id(2)], 3);
+
+        let converted: IdVec<Id, u32> = vec![4, 5].into();
+        assert_eq!(converted.clone().raw(), converted.raw());
+        assert_eq!(IdVec::<Id, u32>::from_raw(Vec::new()).len(), 0);
+        assert!(IdVec::<Id, u32>::default().is_empty());
+    }
+}

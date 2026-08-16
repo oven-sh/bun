@@ -1521,4 +1521,92 @@ mod tests {
         assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4]);
         assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }
+
+    fn three_foos() -> MultiArrayList<Foo> {
+        let mut list = MultiArrayList::<Foo>::default();
+        for i in 0..3u32 {
+            list.push(Foo {
+                a: i,
+                b: i as u8,
+                c: i as u64 * 10,
+            })
+            .unwrap();
+        }
+        list
+    }
+
+    mod declared_columns {
+        use super::*;
+
+        crate::multi_array_columns! {
+            trait FooColumns for Foo {
+                a: u32,
+                c: u64,
+            }
+        }
+
+        #[test]
+        fn plain_slices() {
+            let mut list = three_foos();
+            assert_eq!(list.items_c(), &[0, 10, 20]);
+            list.items_a_mut()[1] = 5;
+            assert_eq!(list.slice().items_a(), &[0, 5, 2]);
+
+            let columns = list.split_mut();
+            for (a, c) in columns.a.iter().zip(columns.c.iter_mut()) {
+                *c += u64::from(*a);
+            }
+            assert_eq!(list.items_c(), &[0, 15, 22]);
+
+            let raw = list.split_raw();
+            assert_eq!(raw.a.len(), 3);
+            assert_eq!(raw.c.len(), 3);
+        }
+    }
+
+    mod declared_columns_indexed_by_id {
+        use super::*;
+
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        struct FooId(u32);
+
+        impl crate::Idx for FooId {
+            fn from_index(index: usize) -> Self {
+                Self(index as u32)
+            }
+
+            fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
+
+        crate::multi_array_columns! {
+            trait FooColumns for Foo, indexed by FooId {
+                a: u32,
+                c: u64,
+            }
+        }
+
+        #[test]
+        fn id_slices() {
+            let mut list = three_foos();
+            let c: &crate::IdSlice<FooId, u64> = list.items_c();
+            assert_eq!(c[FooId(2)], 20);
+            assert_eq!(c.ids().collect::<Vec<_>>(), [FooId(0), FooId(1), FooId(2)]);
+            list.items_a_mut()[FooId(1)] = 5;
+            assert_eq!(list.get(1).a, 5);
+            assert_eq!(list.slice().items_a().raw(), &[0, 5, 2]);
+
+            let columns = list.split_mut();
+            for id in columns.a.ids() {
+                columns.c[id] += u64::from(columns.a[id]);
+            }
+            assert_eq!(list.items_c().raw(), &[0, 15, 22]);
+            assert_eq!(list.items::<"c", u64>(), &[0, 15, 22]);
+
+            let raw = list.split_raw();
+            assert_eq!(raw.a.len(), 3);
+            assert_eq!(raw.c.len(), 3);
+        }
+    }
 }

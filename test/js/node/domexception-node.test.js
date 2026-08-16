@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 describe("DOMException in Node.js environment", () => {
@@ -161,13 +162,17 @@ describe("DOMException own properties", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    const locations = normalizeBunSnapshot(stderr, String(dir))
+    // The location comes from the sourceURL JSC recorded, which spells the
+    // drive letter in lowercase on Windows.
+    const normalizeCase = line => (isWindows ? line.toLowerCase() : line);
+    const locations = stderr
       .split("\n")
       .map(line => line.trim())
-      .filter(line => line.startsWith("at "));
+      .filter(line => line.startsWith("at "))
+      .map(normalizeCase);
     expect({ stdout, locations, exitCode }).toEqual({
       stdout: "",
-      locations: ["at <dir>/reject.js:1"],
+      locations: [normalizeCase(`at ${join(String(dir), "reject.js")}:1`)],
       exitCode: 1,
     });
   });

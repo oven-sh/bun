@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use std::io::Write as _;
 
 use crate::zig_string::ZigString;
@@ -7,22 +6,13 @@ use crate::{
 };
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
-// R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
-// mutated post-construction (`logged`, flipped by `VirtualMachine::print_error_*`)
-// is `Cell<bool>` so re-entrant JS cannot stack two `&mut` to the same `m_ctx`.
+#[derive(Default)]
+// R-2 (`sharedThis`): every JS-facing host-fn takes `&self`, and nothing is
+// mutated after construction, so re-entrant JS cannot stack two `&mut` to the
+// same `m_ctx`.
 pub struct BuildMessage {
     pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,
-    pub(crate) logged: Cell<bool>,
-}
-
-impl Default for BuildMessage {
-    fn default() -> Self {
-        Self {
-            msg: bun_ast::Msg::default(),
-            logged: Cell::new(false),
-        }
-    }
 }
 
 impl BuildMessage {
@@ -89,7 +79,6 @@ impl BuildMessage {
         let build_error = BuildMessage {
             msg,
             // resolve_result: resolve_result.*,
-            logged: Cell::new(false),
         };
 
         Ok(build_error.to_js(global))

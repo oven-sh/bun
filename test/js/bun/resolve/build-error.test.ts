@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("BuildError is modifiable", async () => {
@@ -87,4 +88,199 @@ test("BuildMessage finalize frees with the same allocator it was created with", 
     }
     Bun.gc(true);
   }
+});
+
+// The module loader settles every later load of a module that failed to load
+// with the error object the first load produced, so the same BuildMessage or
+// ResolveMessage is reported once per failure it causes. The error printer
+// used to print such an object only the first time it saw it, so every report
+// after the first (another test file importing the module, another test in
+// the same file, the error being reported again by the program) was empty.
+describe.concurrent("an error from a module that failed to load is printed every time it is reported", () => {
+  async function run(files: Record<string, string>, ...args: string[]) {
+    using dir = tempDir("replayed-load-error", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return {
+      stdout: normalizeBunSnapshot(stdout, String(dir)),
+      stderr: normalizeBunSnapshot(stderr, String(dir)),
+      exitCode,
+    };
+  }
+
+  test("a build error, by each test file that imports the module", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "bad.js": "function bad( {",
+        "a.test.js": `import "./bad.js";`,
+        "b.test.js": `import "./bad.js";`,
+      },
+      "test",
+      "./a.test.js",
+      "./b.test.js",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "a.test.js:
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | function bad( {
+                        ^
+      error: Expected identifier but found end of file
+          at <dir>/bad.js:1:15
+      -------------------------------
+
+
+      b.test.js:
+
+      # Unhandled error between tests
+      -------------------------------
+      1 | function bad( {
+                        ^
+      error: Expected identifier but found end of file
+          at <dir>/bad.js:1:15
+      -------------------------------
+
+
+       0 pass
+       2 fail
+       2 errors
+      Ran 2 tests across 2 files."
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a resolve error, by each test file that imports the module", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "lib.js": `import "./missing.js";`,
+        "a.test.js": `import "./lib.js";`,
+        "b.test.js": `import "./lib.js";`,
+      },
+      "test",
+      "./a.test.js",
+      "./b.test.js",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "a.test.js:
+
+      # Unhandled error between tests
+      -------------------------------
+      error: Cannot find module './missing.js' from '<dir>/lib.js'
+      -------------------------------
+
+
+      b.test.js:
+
+      # Unhandled error between tests
+      -------------------------------
+      error: Cannot find module './missing.js' from '<dir>/lib.js'
+      -------------------------------
+
+
+       0 pass
+       2 fail
+       2 errors
+      Ran 2 tests across 2 files."
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a build error, by each test that imports the module", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "bad.js": "function bad( {",
+        "c.test.js": /* js */ `
+          import { test } from "bun:test";
+          test("first", () => import("./bad.js"));
+          test("second", () => import("./bad.js"));
+        `,
+      },
+      "test",
+      "./c.test.js",
+    );
+    expect(stderr).toMatchInlineSnapshot(`
+      "c.test.js:
+      1 | function bad( {
+                        ^
+      error: Expected identifier but found end of file
+          at <dir>/bad.js:1:15
+      (fail) first
+      1 | function bad( {
+                        ^
+      error: Expected identifier but found end of file
+          at <dir>/bad.js:1:15
+      (fail) second
+
+       0 pass
+       2 fail
+      Ran 2 tests across 1 file."
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("a build error reported twice by the program", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "bad.js": "function bad( {",
+        "entry.js": /* js */ `
+          for (let i = 1; i <= 2; i++) {
+            const error = await import("./bad.js").then(() => null, e => e);
+            console.log("report " + i + ": " + error.constructor.name);
+            reportError(error);
+          }
+        `,
+      },
+      "entry.js",
+    );
+    expect(stdout).toMatchInlineSnapshot(`
+      "report 1: BuildMessage
+      report 2: BuildMessage"
+    `);
+    expect(stderr).toMatchInlineSnapshot(`
+      "1 | function bad( {
+                        ^
+      error: Expected identifier but found end of file
+          at <dir>/bad.js:1:15
+      1 | function bad( {
+                        ^
+      error: Expected identifier but found end of file
+          at <dir>/bad.js:1:15
+
+      Bun v<bun-version>"
+    `);
+    expect(exitCode).toBe(1);
+  });
+
+  // Two or more build errors reject the load with one AggregateError holding a
+  // BuildMessage per error, and printing it prints those members.
+  test("the build errors of an AggregateError printed twice", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "bad.js": "const dup = 1; const dup = 2; const dup = 3;",
+        "entry.js": /* js */ `
+          const error = await import("./bad.js").then(() => null, e => e);
+          console.log(error.constructor.name);
+          console.log(error);
+          console.log(error.constructor.name);
+          console.log(error);
+        `,
+      },
+      "entry.js",
+    );
+    const errorLocations = (report: string) =>
+      Array.from(report.matchAll(/^error: "dup" has already been declared\n\s+at (\S+)$/gm), match => match[1]);
+    const [, firstReport, secondReport] = stdout.split(/^AggregateError$/m);
+    expect([firstReport, secondReport].map(errorLocations)).toEqual([
+      ["<dir>/bad.js:1:22", "<dir>/bad.js:1:37"],
+      ["<dir>/bad.js:1:22", "<dir>/bad.js:1:37"],
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

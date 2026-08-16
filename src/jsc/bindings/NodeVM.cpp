@@ -1672,9 +1672,7 @@ JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalOb
         return result;
     }
 
-    // The `importModuleDynamically` callback API has no notion of an import
-    // phase, so a deferred import resolved through it behaves like a regular
-    // dynamic import.
+    // importModuleDynamically callbacks have no import phase, so `deferred` stops here.
     RELEASE_AND_RETURN(scope, moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, WTF::move(parameters), sourceOrigin));
 }
 

@@ -2703,13 +2703,8 @@ pub(crate) mod __gated_printer {
 
             // Allow it to fail at runtime, if it should
             if module_type != bundle_opts::Format::InternalBakeDev {
+                // The `__toESM` `.then()` below would touch the namespace immediately, defeating the defer.
                 if record.flags.contains(ImportRecordFlags::PHASE_DEFER) && !wrap_with_to_esm {
-                    // `import.defer(...)` — keep the defer phase so the engine
-                    // defers evaluation of the imported module. When the record
-                    // needs the `__toESM` interop wrapper (cross-chunk CommonJS
-                    // target), the `.then((m)=>__toESM(m.default))` below would
-                    // touch the namespace immediately and defeat the defer, so
-                    // degrade to a regular dynamic import instead.
                     self.print(b"import.defer(");
                 } else {
                     self.print(b"import(");

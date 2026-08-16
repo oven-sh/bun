@@ -3659,8 +3659,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     // The C++ module loader now extracts `with.type` into a
     // ScriptFetchParameters before calling this hook, so `parameters` is
-    // already the parsed RefPtr (or null). Just forward it, along with the
-    // defer phase of `import.defer(...)`.
+    // already the parsed RefPtr (or null). Just forward it.
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::Identifier(), WTF::move(parameters), nullptr, deferred, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {

@@ -2411,11 +2411,7 @@ pub struct Import {
     pub expr: ExprNodeIndex,
     pub options: ExprNodeIndex,
     pub import_record_index: u32,
-    /// True for `import.defer(...)` — the dynamic form of the TC39
-    /// "Deferred Module Evaluation" proposal. The module graph is fetched
-    /// and linked, but evaluation is deferred until a property of the
-    /// returned namespace is accessed.
-    /// https://tc39.es/proposal-defer-import-eval/
+    /// `import.defer(...)` (https://tc39.es/proposal-defer-import-eval/)
     pub phase_defer: bool,
     // TODO:
     // Comments inside "import()" expressions have special meaning for Webpack.

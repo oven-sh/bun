@@ -1,6 +1,7 @@
-//! Undoes the layout tricks minifiers use to save bytes — `var a = 1, b = 2, …` chains, `a(), b(), c()` comma
-//! statements, one-line object literals — so the un-minified view of a bundle reads one thing per line. All of it is
-//! meaning-preserving, and this only ever feeds a display print.
+//! Layout the parser remembers from the source (`{a, b}` on one line or three) must not survive into a canonical
+//! print, so every `is_single_line` is re-decided from the node itself. For the un-minified display, `split` also
+//! undoes the tricks minifiers use to save bytes — `var a = 1, b = 2, …` chains and `a(), b(), c()` comma statements
+//! — so a bundle reads one thing per line. All of it is meaning-preserving.
 
 use bun_alloc::Arena;
 use bun_ast::binding::Data as B;
@@ -8,19 +9,32 @@ use bun_ast::expr::Data as E;
 use bun_ast::stmt::Data as S;
 use bun_ast::{Binding, Expr, Stmt, StoreSlice};
 
-pub(crate) fn relayout(arena: &Arena, ast: &mut bun_ast::Ast<'_>) {
+pub(crate) fn relayout(arena: &Arena, ast: &mut bun_ast::Ast<'_>, split: bool) {
+    let cx = Cx { arena, split };
     for part in ast.parts.iter_mut() {
-        stmt_list(arena, &mut part.stmts);
+        stmt_list(&cx, &mut part.stmts);
     }
 }
 
-fn stmt_list(arena: &Arena, list: &mut StoreSlice<Stmt>) {
+struct Cx<'a> {
+    arena: &'a Arena,
+    split: bool,
+}
+type C<'c, 'a> = &'c Cx<'a>;
+
+/// Short literals and clauses on one line, longer ones one entry per line — decided by count, never by source.
+const ONE_LINE_MAX: usize = 3;
+
+fn stmt_list(arena: C, list: &mut StoreSlice<Stmt>) {
     let stmts = list.slice_mut();
-    let needs = stmts.iter().any(|s| match &s.data {
-        S::SLocal(l) => l.decls.len() > 1,
-        S::SExpr(x) => matches!(&x.value.data, E::EBinary(b) if b.op == bun_ast::OpCode::BinComma),
-        _ => false,
-    });
+    let needs = arena.split
+        && stmts.iter().any(|s| match &s.data {
+            S::SLocal(l) => l.decls.len() > 1,
+            S::SExpr(x) => {
+                matches!(&x.value.data, E::EBinary(b) if b.op == bun_ast::OpCode::BinComma)
+            }
+            _ => false,
+        });
     for s in stmts.iter_mut() {
         stmt(arena, s);
     }
@@ -35,7 +49,7 @@ fn stmt_list(arena: &Arena, list: &mut StoreSlice<Stmt>) {
                     let mut decls = bun_alloc::AstAlloc::vec();
                     decls.push(*d);
                     out.push(Stmt::allocate(
-                        arena,
+                        arena.arena,
                         bun_ast::S::Local {
                             kind: l.kind,
                             decls,
@@ -51,7 +65,7 @@ fn stmt_list(arena: &Arena, list: &mut StoreSlice<Stmt>) {
                 comma_leaves(&x.value, &mut leaves);
                 if leaves.len() > 1 {
                     for e in leaves {
-                        out.push(Stmt::allocate_expr(arena, e));
+                        out.push(Stmt::allocate_expr(arena.arena, e));
                     }
                 } else {
                     out.push(*s);
@@ -60,7 +74,7 @@ fn stmt_list(arena: &Arena, list: &mut StoreSlice<Stmt>) {
             _ => out.push(*s),
         }
     }
-    *list = StoreSlice::new_mut(arena.alloc_slice_copy(&out));
+    *list = StoreSlice::new_mut(arena.arena.alloc_slice_copy(&out));
 }
 
 fn comma_leaves(e: &Expr, out: &mut Vec<Expr>) {
@@ -73,7 +87,7 @@ fn comma_leaves(e: &Expr, out: &mut Vec<Expr>) {
     }
 }
 
-fn body(arena: &Arena, s: &mut Stmt) {
+fn body(arena: C, s: &mut Stmt) {
     // A lone statement in a body position may itself need splitting; give it a list to split into.
     if let S::SBlock(b) = &mut s.data {
         stmt_list(arena, &mut b.stmts);
@@ -82,7 +96,7 @@ fn body(arena: &Arena, s: &mut Stmt) {
     }
 }
 
-fn func(arena: &Arena, f: &mut bun_ast::G::Fn) {
+fn func(arena: C, f: &mut bun_ast::G::Fn) {
     for arg in f.args.slice_mut() {
         binding(arena, &mut arg.binding);
         opt_expr(arena, &mut arg.default);
@@ -90,7 +104,7 @@ fn func(arena: &Arena, f: &mut bun_ast::G::Fn) {
     stmt_list(arena, &mut f.body.stmts);
 }
 
-fn class(arena: &Arena, c: &mut bun_ast::G::Class) {
+fn class(arena: C, c: &mut bun_ast::G::Class) {
     opt_expr(arena, &mut c.extends);
     for p in c.properties.slice_mut() {
         opt_expr(arena, &mut p.key);
@@ -104,15 +118,17 @@ fn class(arena: &Arena, c: &mut bun_ast::G::Class) {
     }
 }
 
-fn binding(arena: &Arena, b: &mut Binding) {
+fn binding(arena: C, b: &mut Binding) {
     match &mut b.data {
         B::BArray(a) => {
+            a.is_single_line = a.items.len() <= 8;
             for item in a.items.slice_mut() {
                 binding(arena, &mut item.binding);
                 opt_expr(arena, &mut item.default_value);
             }
         }
         B::BObject(o) => {
+            o.is_single_line = o.properties.len() <= ONE_LINE_MAX;
             for p in o.properties.slice_mut() {
                 expr(arena, &mut p.key);
                 binding(arena, &mut p.value);
@@ -123,13 +139,13 @@ fn binding(arena: &Arena, b: &mut Binding) {
     }
 }
 
-fn opt_expr(arena: &Arena, e: &mut Option<Expr>) {
+fn opt_expr(arena: C, e: &mut Option<Expr>) {
     if let Some(e) = e {
         expr(arena, e);
     }
 }
 
-fn stmt(arena: &Arena, s: &mut Stmt) {
+fn stmt(arena: C, s: &mut Stmt) {
     match &mut s.data {
         S::SBlock(b) => stmt_list(arena, &mut b.stmts),
         S::SClass(c) => class(arena, &mut c.class),
@@ -196,16 +212,17 @@ fn stmt(arena: &Arena, s: &mut Stmt) {
             expr(arena, &mut x.value);
             body(arena, &mut x.body);
         }
+        S::SImport(x) => x.is_single_line = x.items.len() <= ONE_LINE_MAX,
+        S::SExportClause(x) => x.is_single_line = x.items.len() <= ONE_LINE_MAX,
+        S::SExportFrom(x) => x.is_single_line = x.items.len() <= ONE_LINE_MAX,
         _ => {}
     }
 }
 
-fn expr(arena: &Arena, e: &mut Expr) {
+fn expr(arena: C, e: &mut Expr) {
     match &mut e.data {
         E::EArray(x) => {
-            if x.items.len() > 8 {
-                x.is_single_line = false;
-            }
+            x.is_single_line = x.items.len() <= 8;
             for i in x.items.iter_mut() {
                 expr(arena, i);
             }
@@ -242,10 +259,7 @@ fn expr(arena: &Arena, e: &mut Expr) {
             stmt_list(arena, &mut x.body.stmts);
         }
         E::EObject(x) => {
-            // A minifier's one-line `{a:1,b:2,…}` reads (and diffs) better one property per line.
-            if x.properties.len() > 3 {
-                x.is_single_line = false;
-            }
+            x.is_single_line = x.properties.len() <= ONE_LINE_MAX;
             for p in x.properties.iter_mut() {
                 opt_expr(arena, &mut p.key);
                 opt_expr(arena, &mut p.value);

@@ -751,6 +751,21 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("how the source wrapped a literal is not remembered: `{a, b}` on one line vs three is the same", async () => {
+    const one = "module.exports = function m(t, c) {\n  return { $$typeof: 1, type: t, compare: c === void 0 ? null : c };\n};\n";
+    const three =
+      "module.exports = function m(t, c) {\n  return {\n    $$typeof: 1,\n    type: t,\n    compare: c === void 0 ? null : c\n  };\n};\n";
+    // readable: folds in the projected view
+    let r = await pretty({ "a/m.js": one, "b/m.js": three });
+    expect(r.text).toMatch(/\nm\.js ─+ formatting only\n/);
+    // minified: both sides re-print the object the same way in the un-minified view
+    const pad = "/*" + "x".repeat(300) + "*/";
+    const min = "module.exports=function m(t,c){return{$$typeof:1,type:t,compare:c===void 0?null:c}};";
+    r = await pretty({ "a/m.min.js": pad + min, "b/m.min.js": pad + min.replace("return{", "return{\n") });
+    expect(r.text).toMatch(/\nm\.min\.js ─+ formatting only\n/);
+    expect(r.exitCode).toBe(0);
+  });
+
   test("JSX inside .js still normalizes", async () => {
     const { text, exitCode } = await pretty({
       "a/App.js": "export const App = () => <div className='a'>hi</div>;\n",

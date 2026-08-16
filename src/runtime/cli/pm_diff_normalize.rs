@@ -229,9 +229,7 @@ fn print_js<'a>(
     source: &'a bun_ast::Source,
     options: Options,
 ) -> Option<Normalized> {
-    if options.relayout {
-        super::pm_diff_relayout::relayout(arena, &mut ast);
-    }
+    super::pm_diff_relayout::relayout(arena, &mut ast, options.relayout);
     let imports: Vec<Vec<u8>> = ast
         .import_records
         .as_slice()

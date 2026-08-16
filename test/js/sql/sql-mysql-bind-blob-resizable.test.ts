@@ -31,9 +31,15 @@ function expectedHex() {
   return hex;
 }
 
-function assertFixtureOutput(stdout: string, exitCode: number) {
+function assertFixtureOutput(stdout: string, stderr: string, exitCode: number) {
   // Without the fix the borrowed slice reads memory resize(0) decommitted,
-  // which segfaults: no JSON line and a non-zero exit.
+  // which segfaults: no JSON line and a non-zero exit. Asserting stderr is
+  // empty first surfaces the crash text in the failure diff.
+  const filteredStderr = stderr
+    .split(/\r?\n/)
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(filteredStderr).toBe("");
   const jsonLine = stdout
     .trim()
     .split(/\r?\n/)
@@ -68,9 +74,9 @@ if (isDockerEnabled()) {
       async () => {
         await container.ready;
         const url = `mysql://root@${container.host}:${container.port}/bun_sql_test`;
-        const { stdout, exitCode } = await runFixture({ MYSQL_URL: url });
+        const { stdout, stderr, exitCode } = await runFixture({ MYSQL_URL: url });
         expect(stdout).toContain("CONNECTED");
-        assertFixtureOutput(stdout, exitCode);
+        assertFixtureOutput(stdout, stderr, exitCode);
       },
       TEST_TIMEOUT,
     );
@@ -113,7 +119,7 @@ if (isDockerEnabled()) {
           console.warn("sql-mysql-bind-blob-resizable: MySQL not reachable; skipping assertions");
           return;
         }
-        assertFixtureOutput(stdout, exitCode);
+        assertFixtureOutput(stdout, stderr, exitCode);
       },
       TEST_TIMEOUT,
     );

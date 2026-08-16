@@ -4316,10 +4316,8 @@ impl VirtualMachine {
         slice
     }
 
-    /// Builtin alias table configuration for specifiers resolved at runtime.
-    /// A `require()` of a builtin reaches the resolver with the specifier as
-    /// written (`Alias::rewrite_import_record`), so under `bun test` the
-    /// `@jest/globals` / `vitest` entries have to apply here too.
+    /// `require()` of a builtin reaches the resolver with the specifier as
+    /// written (`Alias::rewrite_import_record`), so the jest aliases apply here too.
     fn builtin_alias_cfg(&self) -> ModuleLoader::HardcodedModule::Cfg {
         ModuleLoader::HardcodedModule::Cfg {
             rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,

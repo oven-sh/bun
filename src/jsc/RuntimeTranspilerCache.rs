@@ -51,9 +51,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 25: Every ModuleInfo record carries a trailing FetchParameters slot
 /// so ImportEntry/ExportEntry/StarExportEntry moduleRequestType matches JSC's
 /// after WebKit 90b2ecf79ae3 keyed m_loadedModules on (specifier, type).
-/// Version 26: `require()` / `require.resolve()` of a builtin keeps the written
-/// specifier on the concurrent transpiler too. Entries it wrote (and the
-/// JS-thread path then replayed) carry the rewritten specifier, e.g. `node:fs`.
+/// Version 26: `require()` of a builtin keeps the written specifier on the
+/// concurrent transpiler too; older entries carry the rewritten one (`node:fs`).
 const EXPECTED_VERSION: u32 = 26;
 
 /// Source files smaller than this are not written to / read from the on-disk

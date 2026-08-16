@@ -951,23 +951,15 @@ impl Alias {
         None
     }
 
-    /// Pre-pass the runtime module loader runs over each import record before
-    /// printing a file. Shared by the JS-thread linker and the concurrent
-    /// transpiler so a file prints the same way on both (they also share the
-    /// on-disk transpiler cache). Returns whether the record names a hardcoded
-    /// module; the runtime resolve hook serves those, so callers are done with
-    /// the record either way.
+    /// The module loader's pre-pass over one import record, shared by the
+    /// JS-thread linker and the concurrent transpiler so both print a file the
+    /// same way. Returns whether the record names a hardcoded module.
     ///
-    /// A `require()` / `require.resolve()` of a builtin keeps the specifier as
-    /// written; the runtime resolve hook maps it to the module when the call
-    /// runs. The hook takes the names in this table, not every `path` in it
-    /// (`internal/cluster/round_robin_handle` resolves, its path
-    /// `internal:cluster/RoundRobinHandle` does not), and for node builtins it
-    /// implements node's behavior, which depends on the written form:
-    /// `require.resolve("fs")` returns `"fs"`, `require("fs")` honors
-    /// `require.cache["fs"]`, a `Module._resolveFilename` override sees `"fs"`.
-    /// `"bun"` (`Tag::Bun`) is the exception: the printer turns it into
-    /// `globalThis.Bun`.
+    /// `require()` / `require.resolve()` of a builtin stays as written: the
+    /// runtime resolves table names, not paths (`internal:cluster/RoundRobinHandle`
+    /// does not resolve), and node's `require.resolve("fs") === "fs"` and
+    /// `require.cache["fs"]` semantics need the written name. Only `"bun"`
+    /// (`Tag::Bun`) is rewritten, since the printer inlines it as `globalThis.Bun`.
     pub fn rewrite_import_record(record: &mut ImportRecord, target: Target, cfg: Cfg) -> bool {
         let Some(alias) = Self::get(record.path.text, target, cfg) else {
             return false;

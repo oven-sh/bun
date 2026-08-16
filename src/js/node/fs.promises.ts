@@ -241,6 +241,16 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
+// Node validates `flush` for a FileHandle but only ever syncs a file it opened
+// itself; the native binding would sync any descriptor it is handed.
+function dropFlushForDescriptor(args: any[]) {
+  const options = args[1];
+  const flush = typeof options === "object" && options !== null ? options.flush : undefined;
+  if (flush == null) return;
+  validateBoolean(flush, "options.flush");
+  if (flush) args[1] = { ...options, flush: false };
+}
+
 // Argument validation must run at the first .next(), not at call time: Node's
 // fs/promises glob is an async generator whose body constructs Glob lazily.
 async function* glob(pattern, options) {
@@ -251,6 +261,7 @@ const exports = {
   access: asyncWrap(fs.access, "access"),
   appendFile: async function (fileHandleOrFdOrPath, ...args) {
     fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    if (typeof fileHandleOrFdOrPath === "number") dropFlushForDescriptor(args);
     return _appendFile(fileHandleOrFdOrPath, ...args);
   },
   close: asyncWrap(fs.close, "close"),
@@ -321,6 +332,7 @@ const exports = {
       // @ts-expect-error
       return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
     }
+    if (typeof fileHandleOrFdOrPath === "number") dropFlushForDescriptor(args);
     return _writeFile(fileHandleOrFdOrPath, ...args);
   },
   readlink: asyncWrap(fs.readlink, "readlink"),

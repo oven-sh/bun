@@ -681,8 +681,8 @@ it.concurrent(
       let nulThrew = false;
       try {
         startSamplingProfiler("bad\\0dir");
-      } catch {
-        nulThrew = true;
+      } catch (e) {
+        nulThrew = e instanceof TypeError;
       }
       console.log("nul-throws", nulThrew);
       startSamplingProfiler("profiles");

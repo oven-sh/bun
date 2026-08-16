@@ -472,9 +472,12 @@ extern "C" bool Bun__SamplingProfiler__reportToDirectory(JSC::VM* vm, const char
         samplingProfiler->reportTopBytecodes(report);
     }
 
-    // One report per VM; workers share the pid, so key the name on the thread too.
-    auto filename = makeString("samplingProfile."_s, getCurrentProcessID(), '.', Thread::currentSingleton().uid(), ".txt"_s);
-    auto path = FileSystem::pathByAppendingComponent(String::fromUTF8(std::span { directory, directoryLength }), filename);
+    // One report per VM; workers share the pid, so key the name on the thread
+    // too. Joined with makeString, not FileSystem::pathByAppendingComponent:
+    // the latter goes through libstdc++'s std::filesystem, whose string frees
+    // bypass mimalloc and crash on musl.
+    auto path = makeString(String::fromUTF8(std::span { directory, directoryLength }), '/',
+        "samplingProfile."_s, getCurrentProcessID(), '.', Thread::currentSingleton().uid(), ".txt"_s);
     auto utf8 = report.toCString();
     return FileSystem::overwriteEntireFile(path, byteCast<uint8_t>(utf8.span())).has_value();
 }

@@ -359,10 +359,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
                                     if let Some(unwrapped_id) = req.unwrapped_id.get() {
-                                        let is_rebound = !was_const
-                                            && self
-                                                .rebound_names
-                                                .contains(&self.load_name_from_ref(ref_));
+                                        let is_rebound =
+                                            !was_const && self.binding_is_rebound(ref_);
                                         let deferred = &mut self.imports_to_convert_from_require
                                             [unwrapped_id.get_usize()];
                                         if is_rebound {

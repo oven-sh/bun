@@ -370,6 +370,13 @@ describe("bundler", () => {
         for (m in { key: 1 }) {}
         console.log(m, m.react);
 
+        // The declaration only reaches module scope by being hoisted out of the block.
+        if (a) {
+          var o = require("react");
+        }
+        o = { react: "o" };
+        console.log(o.react);
+
         // react-dom stays a CommonJS wrapper, so this one worked before as well.
         let n = require("react-dom");
         console.log(n.dom);
@@ -406,6 +413,7 @@ describe("bundler", () => {
         "1 k",
         "l",
         "key undefined",
+        "o",
         "dom",
         "n",
       ].join("\n"),
@@ -434,9 +442,11 @@ describe("bundler", () => {
       stdout: "react\na\nreact\nb",
     },
   });
-  // Variables that are never rebound still become the import itself, including a
-  // let inside a function and a const whose name is assigned in an unrelated scope, so
-  // the package is still tree-shaken: `unused` must not survive for any of them.
+  // Variables that are never rebound still become the import itself, so the package is
+  // still tree-shaken: `unused` must not survive. Minified code reuses the same short
+  // names in every function, so only assignments and redeclarations that resolve to the
+  // variable itself may count, not ones that hit a same-named parameter, local, block
+  // binding or arrow default.
   itBundled("cjs2esm/UnwrappedModuleRequireNotReboundIsTreeShaken", {
     files: {
       "/entry.js": /* js */ `
@@ -452,11 +462,40 @@ describe("bundler", () => {
         const fixed = require("react");
         console.log(fixed.react);
 
+        function parameter(top) {
+          top = { react: "parameter" };
+          return top.react;
+        }
+        console.log(parameter(0));
+
+        function hoisted() {
+          for (var top = 0; top < 2;) {
+            top++;
+          }
+          // Assigned after the block closed; the var it hits is hoisted out of the block.
+          top = top * 10;
+          return top;
+        }
+        console.log(hoisted());
+
+        function redeclared(top) {
+          var top = "again";
+          return top;
+        }
+        console.log(redeclared(0));
+
+        {
+          let top = "block";
+          top += "!";
+          console.log(top);
+        }
+
+        console.log(((top = "arrow") => top)());
+
         function unrelated() {
           let fixed = 1;
           fixed = 2;
-          let top = "shadow";
-          return fixed + " " + top;
+          return fixed;
         }
         console.log(unrelated());
       `,
@@ -465,7 +504,7 @@ describe("bundler", () => {
     dce: true,
     treeShaking: true,
     run: {
-      stdout: "react\nreact\nreact\n2 shadow",
+      stdout: ["react", "react", "react", "parameter", "20", "again", "block!", "arrow", "2"].join("\n"),
     },
   });
   // A require() of an unwrapped package that initializes a destructuring

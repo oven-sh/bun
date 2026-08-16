@@ -280,8 +280,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Used with unwrap_commonjs_packages
     pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
     pub(crate) unwrap_all_requires: bool,
-    /// Names this file assigns to or declares twice; filled while parsing, read in `visit_decls`.
-    pub(crate) rebound_names: HashMap<&'a [u8], ()>,
+    /// Bindings this file declares twice or assigns to; see [`Self::binding_is_rebound`].
+    pub(crate) rebound_refs: RefMap,
+    /// Assignment targets as (scope, name), bound to symbols only once hoisting has run.
+    pub(crate) unresolved_rebound_targets: Vec<(js_ast::StoreRef<Scope>, Ref)>,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
     pub(crate) commonjs_named_exports_deoptimized: bool,
@@ -775,37 +777,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     pub(crate) fn record_rebound_target(&mut self, target: Expr) {
         if self.should_unwrap_common_js_to_esm() {
-            self.record_rebound_names_in(target);
+            self.record_rebound_targets_in(target);
         }
     }
 
-    fn record_rebound_names_in(&mut self, target: Expr) {
+    fn record_rebound_targets_in(&mut self, target: Expr) {
         match target.data {
             js_ast::ExprData::EIdentifier(id) => {
-                let name = self.load_name_from_ref(id.ref_);
-                self.rebound_names.insert(name, ());
+                self.unresolved_rebound_targets
+                    .push((self.current_scope, id.ref_));
             }
             js_ast::ExprData::EArray(array) => {
                 for item in array.items.slice() {
-                    self.record_rebound_names_in(*item);
+                    self.record_rebound_targets_in(*item);
                 }
             }
             js_ast::ExprData::EObject(object) => {
                 for property in object.properties.slice() {
                     if let Some(value) = property.value {
-                        self.record_rebound_names_in(value);
+                        self.record_rebound_targets_in(value);
                     }
                 }
             }
-            js_ast::ExprData::ESpread(spread) => self.record_rebound_names_in(spread.value),
+            js_ast::ExprData::ESpread(spread) => self.record_rebound_targets_in(spread.value),
             _ => {}
         }
     }
 
-    fn record_redeclared_name(&mut self, name: &'a [u8]) {
+    fn record_redeclared(&mut self, existing: Ref, redeclaration: Ref) {
         if self.should_unwrap_common_js_to_esm() {
-            self.rebound_names.insert(name, ());
+            self.rebound_refs.insert(existing, ());
+            self.rebound_refs.insert(redeclaration, ());
         }
+    }
+
+    /// Binds the recorded targets on first use, which is during the visit pass (hoisting is done)
+    /// and only in files where a `require()` of an unwrapped package initializes a `let`/`var`.
+    pub(crate) fn binding_is_rebound(&mut self, binding: Ref) -> bool {
+        for (scope, name_ref) in core::mem::take(&mut self.unresolved_rebound_targets) {
+            let name = self.load_name_from_ref(name_ref);
+            let hash = Scope::get_member_hash(name);
+            let mut scope = Some(scope);
+            while let Some(current) = scope {
+                if let Some(member) = current.get_member_with_hash(name, hash) {
+                    self.rebound_refs.insert(member.ref_, ());
+                    break;
+                }
+                scope = current.parent;
+            }
+        }
+        self.rebound_refs.contains_key(&binding)
     }
 
     #[inline]
@@ -3144,7 +3165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(member_in_scope) =
                             _scope.get_member_with_hash(name, hash.unwrap())
                         {
-                            self.record_redeclared_name(name);
+                            self.record_redeclared(member_in_scope.ref_, value.ref_);
                             let existing_idx = member_in_scope.ref_.inner_index() as usize;
                             let existing_kind = self.symbols[existing_idx].kind;
 
@@ -4641,7 +4662,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // arena-owned `Scope` map.
         let entry = unsafe { scope.members.get_or_put_borrowed(name) };
         if entry.found_existing {
-            self.record_redeclared_name(name);
             let existing: js_ast::scope::Member = *entry.value_ptr;
             let symbol_idx = existing.ref_.inner_index() as usize;
 
@@ -4685,6 +4705,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 MR::OverwriteWithNew => {}
             }
+            self.record_redeclared(existing.ref_, ref_);
         }
         *entry.value_ptr = js_ast::scope::Member { ref_, loc };
         Ok(ref_)
@@ -8848,7 +8869,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             runtime_imports: RuntimeImports::default(),
             imports_to_convert_from_require: BumpVec::new_in(arena),
             unwrap_all_requires,
-            rebound_names: Default::default(),
+            rebound_refs: RefMap::default(),
+            unresolved_rebound_targets: Vec::new(),
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,
             commonjs_named_exports_needs_conversion: u32::MAX,

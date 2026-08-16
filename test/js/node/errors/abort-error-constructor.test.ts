@@ -120,13 +120,19 @@ describe("node-style AbortError", () => {
   test("err.constructor rejects options that are not typeof object", async () => {
     const { "timers/promises": err } = await abortErrors();
     const AbortError = err.constructor;
+    const values = {
+      number: 42,
+      boolean: true,
+      bigint: 0n,
+      string: "not an object",
+      symbol: Symbol("options"),
+      function: function named() {},
+    };
     const rejected = Object.fromEntries(
-      Object.entries({ number: 42, boolean: true, string: "not an object", function: function named() {} }).map(
-        ([label, options]) => {
-          const invalid = thrown(() => new AbortError("message", options));
-          return [label, { name: invalid.name, code: invalid.code, message: invalid.message }];
-        },
-      ),
+      Object.entries(values).map(([label, options]) => {
+        const invalid = thrown(() => new AbortError("message", options));
+        return [label, { name: invalid.name, code: invalid.code, message: invalid.message }];
+      }),
     );
     const typeError = (received: string) => ({
       name: "TypeError",
@@ -136,7 +142,9 @@ describe("node-style AbortError", () => {
     expect(rejected).toEqual({
       number: typeError("type number (42)"),
       boolean: typeError("type boolean (true)"),
+      bigint: typeError("type bigint (0n)"),
       string: typeError("type string ('not an object')"),
+      symbol: typeError("type symbol (Symbol(options))"),
       function: typeError("function named"),
     });
   });

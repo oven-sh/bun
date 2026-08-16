@@ -35,15 +35,21 @@ it("bun create succeeds when install.security.scanner is set in global bunfig", 
     `[install.security]\nscanner = "@socketsecurity/bun-security-scanner"\n`,
   );
 
-  // Template with a trivial dependency so `bun install` is actually invoked
-  // by `bun create` (it's skipped when the template has no deps at all).
+  // Template with a `file:` dependency so `bun install` is actually invoked
+  // by `bun create` (it's skipped when the template has no deps at all) while
+  // never contacting a registry: the vendored dep dir is copied into the
+  // destination along with the rest of the template.
   await Bun.write(
     join(bunCreateDir, testTemplate, "package.json"),
     JSON.stringify({
       name: "scanner-template",
       version: "0.0.1",
-      dependencies: { "is-number": "7.0.0" },
+      dependencies: { "local-dep": "file:./local-dep" },
     }),
+  );
+  await Bun.write(
+    join(bunCreateDir, testTemplate, "local-dep", "package.json"),
+    JSON.stringify({ name: "local-dep", version: "1.0.0" }),
   );
 
   const destination = join(x_dir, "dest-scanner");
@@ -66,16 +72,13 @@ it("bun create succeeds when install.security.scanner is set in global bunfig", 
     },
   });
 
-  const [err, out, _exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
 
-  // The signal we care about is the scanner NOT tripping, so that scaffolding
-  // reaches the "Created …" success line. We deliberately don't assert on the
-  // exit code: `bun install` inside `bun create` can still fail to resolve
-  // `is-number` (no npm access in sandboxed/ASAN lanes), and pre-fix that same
-  // install would have tripped the scanner check long before reaching the
-  // resolve step. The absence of the scanner errors *plus* the success line is
-  // what proves the fix.
+  // Pre-fix, the child `bun install` resolved the file: dep and then died on
+  // the scanner-not-in-deps guard; post-fix the scanner is skipped and the
+  // fully-offline install succeeds.
   expect(out + err).not.toContain("SecurityScannerNotInDependencies");
   expect(out + err).not.toContain("is configured in bunfig.toml but is not installed");
   expect(out).toContain(`Created ${testTemplate} project successfully`);
+  expect(exitCode).toBe(0);
 }, 20_000);

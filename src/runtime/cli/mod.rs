@@ -1791,23 +1791,12 @@ pub mod command {
         }
         #[cfg(windows)]
         {
-            unsafe extern "C" {
-                fn SetEnvironmentVariableW(name: *const u16, value: *const u16) -> i32;
-            }
-            // `bun_core::w!` is NOT NUL-terminated — SetEnvironmentVariableW
-            // needs one, so park both in small stack buffers with a trailing 0.
-            let name_w = bun_core::w!("BUN_INTERNAL_SKIP_SECURITY_SCANNER");
-            let value_w = bun_core::w!("true");
-            let mut name_buf = [0u16; 64];
-            let mut value_buf = [0u16; 8];
-            debug_assert!(name_w.len() < name_buf.len());
-            debug_assert!(value_w.len() < value_buf.len());
-            name_buf[..name_w.len()].copy_from_slice(name_w);
-            value_buf[..value_w.len()].copy_from_slice(value_w);
-            // SAFETY: both buffers hold a NUL-terminated wide string; Win32
-            // copies the bytes into its env block and does not retain the pointer.
+            // SAFETY: both literals embed the NUL; Win32 copies into its env block.
             unsafe {
-                let _ = SetEnvironmentVariableW(name_buf.as_ptr(), value_buf.as_ptr());
+                let _ = bun_sys::windows::SetEnvironmentVariableW(
+                    bun_core::w!("BUN_INTERNAL_SKIP_SECURITY_SCANNER\0").as_ptr(),
+                    bun_core::w!("true\0").as_ptr(),
+                );
             }
         }
     }

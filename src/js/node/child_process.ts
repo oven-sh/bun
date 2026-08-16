@@ -1717,8 +1717,7 @@ function nodeToBun(item, index: number): string | number | null | NodeJS.TypedAr
   if (typeof item === "number") {
     return item;
   }
-  // Handle wraps, FileHandles, fs/tty streams and { fd } objects all share their
-  // `fd`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1058
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1058
   if (typeof item === "object") {
     const fd = item.fd;
     if (typeof fd === "number") return fd;

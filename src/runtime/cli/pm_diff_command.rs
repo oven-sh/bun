@@ -95,6 +95,7 @@ pub(crate) fn exec(
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
+    let mut left_early: Option<Tree> = None;
     if let (Spec::Dir(_) | Spec::Tarball(_), Spec::Registry { name, .. }) =
         (&left_spec, &mut right_spec)
     {
@@ -107,6 +108,7 @@ pub(crate) fn exec(
                 );
                 Global::exit(1);
             });
+            left_early = Some(local);
         }
     }
     let mut right = materialize(pm, &right_spec)?;
@@ -121,7 +123,10 @@ pub(crate) fn exec(
             });
         }
     }
-    let mut left = materialize(pm, &left_spec)?;
+    let mut left = match left_early {
+        Some(tree) => tree,
+        None => materialize(pm, &left_spec)?,
+    };
     // Show local paths the way they were typed, not as resolved against the invoking folder.
     for (tree, spec) in [(&mut left, &left_spec), (&mut right, &right_spec)] {
         if let Spec::Dir(p) | Spec::Tarball(p) = spec {
@@ -143,7 +148,7 @@ fn looks_like_path(spec: &[u8]) -> bool {
     spec.starts_with(b".")
         || spec.starts_with(b"/")
         || spec.starts_with(b"~/")
-        || (cfg!(windows) && spec.len() > 2 && spec[1] == b':')
+        || (cfg!(windows) && (spec.starts_with(b"\\") || (spec.len() > 2 && spec[1] == b':')))
 }
 
 fn classify(spec: &[u8]) -> Spec {
@@ -295,10 +300,19 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
     // Detach the lockfile while it loads so it and the manager are not borrowed through each other.
     let mut lockfile = core::mem::take(&mut pm.lockfile);
     let mut log = bun_ast::Log::init();
-    let loaded = matches!(
-        lockfile.load_from_cwd::<true>(Some(pm), &mut log),
-        LoadResult::Ok(_)
-    );
+    let log_level = pm.options.log_level;
+    let loaded = match lockfile.load_from_cwd::<true>(Some(pm), &mut log) {
+        LoadResult::Ok(_) => true,
+        LoadResult::NotFound => false,
+        // A lockfile that exists but will not load is reported as that, not as "package not installed".
+        broken @ LoadResult::Err(_) => {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors(
+                &broken, log_level,
+            );
+            false
+        }
+    };
     pm.lockfile = lockfile;
     if !loaded {
         return None;
@@ -366,6 +380,13 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
             continue;
         }
         let perm = next.entry().perm() & 0o777;
+        // libarchive returns NULL from the narrow accessor for non-ASCII names on Windows; go through UTF-16 there.
+        #[cfg(windows)]
+        let wide_path =
+            strings::to_utf8_list_with_type(Vec::new(), next.entry().pathname_w().as_slice())?;
+        #[cfg(windows)]
+        let path = wide_path.as_slice();
+        #[cfg(not(windows))]
         let path = next.entry().pathname().as_bytes();
         // npm tarballs root everything under one folder (usually `package/`).
         let rel = match strings::index_of_char(path, b'/') {
@@ -644,19 +665,21 @@ fn registry_get(
     if !token.is_empty() {
         headers.count(b"Authorization", b"");
         headers.content.cap += b"Bearer ".len() + token.len();
+        headers.count(b"npm-auth-type", b"legacy");
     } else if !auth.is_empty() {
         headers.count(b"Authorization", b"");
         headers.content.cap += b"Basic ".len() + auth.len();
+        headers.count(b"npm-auth-type", b"legacy");
     }
     headers.allocate()?;
     headers.append(b"Accept", accept);
+    // Raw-byte append: a non-UTF-8 token through Display would grow past the reserved count.
     if !token.is_empty() {
-        headers.append_fmt(
-            b"Authorization",
-            format_args!("Bearer {}", BStr::new(token)),
-        );
+        headers.append_bytes_value(b"Authorization", b"Bearer ", token);
+        headers.append(b"npm-auth-type", b"legacy");
     } else if !auth.is_empty() {
-        headers.append_fmt(b"Authorization", format_args!("Basic {}", BStr::new(auth)));
+        headers.append_bytes_value(b"Authorization", b"Basic ", auth);
+        headers.append(b"npm-auth-type", b"legacy");
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
@@ -888,7 +911,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         }
         if style.pretty {
             if let (Some(o), Some(n)) = (old, new) {
-                if (strings::contains(o, b"\r\n") || strings::contains(n, b"\r\n"))
+                if (strings::contains_char(o, b'\r') || strings::contains_char(n, b'\r'))
                     && strip_cr(o) == strip_cr(n)
                 {
                     change.semantic = Semantic::LineEndingsOnly;
@@ -1033,6 +1056,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             && !flags.stat
             && change.hunks.is_empty()
             && change.semantic == Semantic::Text
+            && (old.is_none() || new.is_none())
         {
             // Whole-file add/remove: render every line as +/-.
             let (op, body) = match (new, old) {
@@ -1084,7 +1108,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
 
     let path_width = changes
         .iter()
-        .map(|c| c.path.len())
+        .map(|c| defang(c.path).len())
         .max()
         .unwrap_or(0)
         .min(60);
@@ -1101,7 +1125,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             _ => "M",
         };
         if flags.name_only {
-            Output::print(format_args!("{status} {}\n", BStr::new(c.path)));
+            Output::print(format_args!("{status} {}\n", BStr::new(&defang(c.path))));
             continue;
         }
         if flags.stat {
@@ -1115,7 +1139,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                 }
             };
             let (bar_add, bar_del) = ("+".repeat(scale(c.added)), "-".repeat(scale(c.removed)));
-            let padded = format!("{:<width$}", BStr::new(c.path), width = path_width);
+            let padded = format!("{:<width$}", BStr::new(&defang(c.path)), width = path_width);
             let sep = if style.pretty { "│" } else { "|" };
             if let Semantic::FormattingOnly
             | Semantic::WhitespaceOnly

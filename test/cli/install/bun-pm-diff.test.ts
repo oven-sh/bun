@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { chmodSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Two versions of one small package, packed with `bun pm pack` and served from a
@@ -690,8 +690,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         "b/run.sh": "#!/bin/sh\necho hi\n",
         "b/install.js": "console.log(1)\n",
       });
-      const { chmodSync } = require("node:fs");
-      chmodSync(join(String(dir), "a/run.sh"), 0o644);
+        chmodSync(join(String(dir), "a/run.sh"), 0o644);
       chmodSync(join(String(dir), "b/run.sh"), 0o755);
       chmodSync(join(String(dir), "b/install.js"), 0o755);
       const run = async (env: Record<string, string | undefined>) => {
@@ -729,7 +728,6 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         "c/index.js": "module.exports = 3;\n",
         "c/secret.js": "nope\n",
       });
-      const { symlinkSync, chmodSync } = require("node:fs");
       symlinkSync("real/index.js", join(String(dir), "b/index.js"));
       symlinkSync("..", join(String(dir), "b/loop"));
       symlinkSync("does-not-exist.js", join(String(dir), "b/dangling.js"));

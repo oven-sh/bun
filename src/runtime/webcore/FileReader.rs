@@ -49,8 +49,9 @@ pub struct FileReader {
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
-    /// Read-only after construction.
+    /// Length of the slice window at `start_offset`; the stream ends there. Read-only after init.
     pub(crate) max_size: Option<usize>,
+    /// Bytes delivered so far; never exceeds `max_size`.
     pub(crate) total_readed: Cell<usize>,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
@@ -632,21 +633,14 @@ impl FileReader {
             self.reader().close();
             return false;
         }
-        let mut close = false;
-        let mut has_more = state != ReadState::Eof;
-        if let (Some(max_size), false) = (self.max_size, chunk.is_empty()) {
-            let total_readed = self.total_readed.get();
-            if total_readed >= max_size {
-                return false;
+        let window_exhausted = match self.window_remaining() {
+            Some(remaining) => {
+                chunk.truncate(remaining);
+                self.consume_window(chunk.len())
             }
-            let len = (max_size - total_readed).min(chunk.len());
-            chunk.truncate(len);
-            self.total_readed.set(total_readed + len);
-            if len == 0 {
-                close = true;
-                has_more = false;
-            }
-        }
+            None => false,
+        };
+        let has_more = state != ReadState::Eof && !window_exhausted;
 
         let sink = *self.sink.get();
         let keep_going = if sink.is_some() {
@@ -674,10 +668,35 @@ impl FileReader {
             }
             keep_going
         };
-        if close {
-            self.reader().close();
+        if window_exhausted {
+            // Closed only now: closing first would settle a parked read with `Done` ahead of this chunk.
+            self.end_at_window();
+            return false;
         }
         keep_going
+    }
+
+    /// Bytes the blob's slice window still allows; `None` when the source is unbounded.
+    fn window_remaining(&self) -> Option<usize> {
+        Some(self.max_size? - self.total_readed.get())
+    }
+
+    /// Charges `len` bytes to the window; `true` once it is used up, which is this stream's EOF.
+    fn consume_window(&self, len: usize) -> bool {
+        let Some(max_size) = self.max_size else {
+            return false;
+        };
+        let total_readed = self.total_readed.get() + len;
+        debug_assert!(total_readed <= max_size);
+        self.total_readed.set(total_readed);
+        total_readed == max_size
+    }
+
+    /// Ends the stream the way EOF does; `on_reader_done` settles whatever is waiting.
+    fn end_at_window(&self) {
+        if !self.reader().is_done() {
+            self.reader().close();
+        }
     }
 
     fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
@@ -828,9 +847,17 @@ impl FileReader {
         }
 
         if !self.reader().has_pending_read() && self.flowing.get() {
+            // `read_into` does not go through `on_read_chunk`, so the slice window is applied here: the read is cut to what is left of it (an empty destination reads nothing).
+            let len = self
+                .window_remaining()
+                .map_or(buffer.len(), |remaining| remaining.min(buffer.len()));
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
-            let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
-            bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
+            let (amount_read, state) =
+                unsafe { IOReader::read_into(self.reader.get(), &mut buffer[..len]) };
+            bun_core::scoped_log!(FileReader, "onPull({}) = {}", len, amount_read);
+            if self.consume_window(amount_read) {
+                self.end_at_window();
+            }
             let done = state == ReadState::Eof || self.reader().is_done();
             if amount_read > 0 {
                 let into = streams::IntoArray {

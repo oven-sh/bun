@@ -4549,8 +4549,6 @@ mod windows_impl {
         Err(Error::new(E::ENOTSUP, Tag::munmap))
     }
     pub type FcntlInt = isize;
-    pub const MSG_DONTWAIT: i32 = 0;
-    pub const SEND_FLAGS_NONBLOCK: i32 = 0;
 }
 #[cfg(windows)]
 pub use windows_impl::*;

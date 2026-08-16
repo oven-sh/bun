@@ -541,14 +541,6 @@ export function getWebStreamState(stream: ReadableStream | WritableStream): {
   }
 }
 
-export const fs = require("node:fs/promises").$data;
-
-export const fsStreamInternals = {
-  writeStreamFastPath(str) {
-    return str[require("internal/fs/streams").kWriteStreamFastPath];
-  },
-};
-
 export const arrayBufferViewHasBuffer = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_arrayBufferViewHasBuffer",
@@ -564,7 +556,6 @@ export const timerInternals = {
 export const dgramInternals = {
   newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
   closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
-  isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(

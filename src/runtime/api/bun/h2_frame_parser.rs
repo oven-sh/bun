@@ -1132,6 +1132,16 @@ enum BatchSegment {
     Ext { ptr: *const u8, len: u32 },
 }
 
+impl BatchSegment {
+    #[inline(always)]
+    fn raw_parts(self, batch: &[u8]) -> (*const u8, usize) {
+        match self {
+            BatchSegment::Batch { off, len } => (batch[off as usize..].as_ptr(), len as usize),
+            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
+        }
+    }
+}
+
 /// Flags for one `H2FrameParser::send_data` call.
 #[derive(Clone, Copy)]
 struct SendDataOptions {
@@ -3506,12 +3516,7 @@ impl H2FrameParser {
                     iov.clear();
                     iov.reserve(segments.len());
                     for seg in segments {
-                        let (ptr, len) = match *seg {
-                            BatchSegment::Batch { off, len } => {
-                                (batch[off as usize..].as_ptr(), len as usize)
-                            }
-                            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
-                        };
+                        let (ptr, len) = seg.raw_parts(batch);
                         if len == 0 {
                             continue;
                         }
@@ -3532,17 +3537,10 @@ impl H2FrameParser {
                 // to preserve order.
                 let mut all: Vec<u8> = Vec::new();
                 for seg in segments {
-                    match *seg {
-                        BatchSegment::Batch { off, len } => {
-                            all.extend_from_slice(&batch[off as usize..(off + len) as usize])
-                        }
-                        BatchSegment::Ext { ptr, len } => {
-                            // SAFETY: Ext slices are valid for the send_data call duration
-                            all.extend_from_slice(unsafe {
-                                core::slice::from_raw_parts(ptr, len as usize)
-                            })
-                        }
-                    }
+                    let (ptr, len) = seg.raw_parts(batch);
+                    // SAFETY: Batch ranges were recorded inside `batch`, and Ext slices are
+                    // valid for the send_data call duration, which is still running.
+                    all.extend_from_slice(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
                 let _ = self._write(&all);
                 return;
@@ -3553,17 +3551,12 @@ impl H2FrameParser {
             let mut skip = total_written;
             let mut buffered: usize = 0;
             for seg in segments {
-                let (ptr, len) = match *seg {
-                    BatchSegment::Batch { off, len } => {
-                        (batch[off as usize..].as_ptr(), len as usize)
-                    }
-                    BatchSegment::Ext { ptr, len } => (ptr, len as usize),
-                };
+                let (ptr, len) = seg.raw_parts(batch);
                 if skip >= len {
                     skip -= len;
                     continue;
                 }
-                // SAFETY: same provenance as the iovec build above; skip < len
+                // SAFETY: same as the copy path above; skip < len
                 let rest = unsafe { core::slice::from_raw_parts(ptr.add(skip), len - skip) };
                 skip = 0;
                 let _ = self.write_buffer.with_mut(|wb| wb.write(rest));

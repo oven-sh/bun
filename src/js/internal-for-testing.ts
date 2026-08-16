@@ -738,12 +738,7 @@ export const stringsInternals = {
 };
 
 export const pathsInternals = {
-  /**
-   * `bun_paths::string_paths::without_trailing_slash_windows`, the arm of
-   * `without_trailing_slash_windows_path` (the resolver's directory cache key
-   * normalizer) that its callers only reach on Windows. Bound directly so the
-   * drive-root handling is tested on every platform.
-   */
+  /** The Windows arm of `without_trailing_slash_windows_path` (src/paths/string_paths.rs), callable on every host. */
   withoutTrailingSlashWindows: $newRustFunction("string_paths.rs", "TestingAPIs.withoutTrailingSlashWindows", 1) as (
     path: string,
   ) => string,

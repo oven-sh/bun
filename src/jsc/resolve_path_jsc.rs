@@ -1,7 +1,5 @@
-//! JSC-facing entry points into `bun_paths`, which is itself JSC-free: the C++
-//! export that joins a path against the VM's cwd (it reaches into
-//! `globalObject.bunVM().transpiler.fs`; referenced from `PathInlines.h`), and
-//! the `bun:internal-for-testing` bridges in [`testing_apis`].
+//! JSC entry points into the JSC-free `bun_paths`: the cwd join that
+//! `PathInlines.h` calls, and the `bun:internal-for-testing` bridges.
 
 use crate::JSGlobalObject;
 use bun_core::String as BunString;
@@ -38,9 +36,7 @@ pub mod testing_apis {
     use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
     use bun_core::String as BunString;
 
-    /// `pathsInternals.withoutTrailingSlashWindows` in `internal-for-testing.ts`:
-    /// the Windows arm of `without_trailing_slash_windows_path`, which its
-    /// callers only reach on a Windows host.
+    /// `pathsInternals.withoutTrailingSlashWindows` in `internal-for-testing.ts`.
     #[bun_jsc::host_fn]
     pub fn without_trailing_slash_windows(
         global: &JSGlobalObject,

@@ -452,8 +452,7 @@ pub fn starts_with_windows_drive_letter_t<T: Ch>(s: &[T]) -> bool {
 
 pub use crate::strings::without_trailing_slash;
 
-/// Host-dispatched: [`without_trailing_slash_windows`] on Windows,
-/// [`without_trailing_slash`] elsewhere.
+/// [`without_trailing_slash_windows`] on Windows, [`without_trailing_slash`] elsewhere.
 pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     if cfg!(unix) {
         return without_trailing_slash(input);
@@ -461,10 +460,8 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     without_trailing_slash_windows(input)
 }
 
-/// [`without_trailing_slash`] that keeps a drive root's separator: `C:\foo\`
-/// becomes `C:\foo`, while `C:\` and `C:\\` both become `C:\` (`C:` alone would
-/// name the drive's current directory). Applies Windows rules on every host;
-/// paths without a drive letter are stripped like [`without_trailing_slash`].
+/// Windows rules on any host: strips trailing separators, but a drive root keeps
+/// its own (`C:\foo\` -> `C:\foo`, `C:\\` -> `C:\`; a bare `C:` is not the root).
 pub fn without_trailing_slash_windows(input: &[u8]) -> &[u8] {
     if input.len() < 3 || input[1] != b':' {
         return without_trailing_slash(input);
@@ -767,8 +764,7 @@ mod tests {
             ("C:\\", "C:\\"),
             ("C:/", "C:/"),
             ("c:\\", "c:\\"),
-            // Extra separators after the root used to survive, producing a
-            // second spelling of the root (`C:\\`) that no cache key may have.
+            // These used to keep one extra separator.
             ("C:\\\\", "C:\\"),
             ("C://", "C:/"),
             ("C:\\/", "C:\\"),

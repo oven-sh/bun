@@ -334,11 +334,9 @@ it.if(isWindows)("directory cache key computation", () => {
   expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
 });
 
-// After a failed resolution the directory cache is busted for the specifier's
-// dirname, which for `C:\\\x` is `C:\\`. The drive root is the one cache key
-// that keeps its separator, and stripping used to leave one extra separator
-// behind, so the key `C:\\` tripped the cache key assertion and took the
-// process down (debug and ASAN builds) instead of the import rejecting.
+// The failed resolution busts the directory cache for the dirname, which for
+// `C:\\\x` is `C:\\`. That used to reach the cache as-is and fail the cache key
+// assertion (debug and ASAN builds) instead of the import rejecting.
 it.if(isWindows)("directory cache key computation at the drive root", async () => {
   const drive = process.cwd().slice(0, 2);
   for (const separators of [2, 3, 4]) {

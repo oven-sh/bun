@@ -116,7 +116,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
+    // re-borrow after `build_with_vm`).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
         // SAFETY: p is the unique live VM on this thread; its loop is alive, so
         // queued work is released here rather than by a thread teardown.
@@ -211,28 +211,39 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    match build_with_vm(ctx, &cwd, &mut pt) {
-        Ok(()) => {}
+    let result = build_with_vm(ctx, &cwd, &mut pt);
+    // SAFETY: `build_with_vm` has returned, so its reborrows through `pt.vm` are
+    // dead; the VM is live until `global_exit` (or `_vm_guard`) destroys it.
+    let vm = unsafe { &mut *vm_ptr };
+    match result {
+        Ok(()) => return Ok(()),
         Err(crate::Error::JSError) => {
-            // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
-            let err_value = global.take_exception(jsc::JsError::Thrown);
-            // SAFETY: see above.
-            unsafe {
-                (*vm_ptr)
-                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
-            };
-            // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
-            if vm.exit_handler.exit_code == 0 {
-                vm.exit_handler.exit_code = 1;
-            }
-            vm.on_exit();
-            vm.global_exit();
+            let err_value = vm.global().take_exception(jsc::JsError::Thrown);
+            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
+        }
+        // The bundler reports what failed (parse, resolve and link errors)
+        // through the log; `BuildFailed` only says that it did. Without
+        // logged errors it is the internal error the caller reports it as.
+        Err(crate::Error::Bundler(bun_bundler::Error::BuildFailed))
+            if vm.log_ref().is_some_and(bun_ast::Log::has_errors) =>
+        {
+            print_build_log(vm);
         }
         Err(e) => return Err(e),
     }
-    Ok(())
+    if vm.exit_handler.exit_code == 0 {
+        vm.exit_handler.exit_code = 1;
+    }
+    vm.on_exit();
+    vm.global_exit()
+}
+
+fn print_build_log(vm: &VirtualMachine) {
+    // `vm.log` is the process-lifetime ctx.log set in build_command;
+    // `log_ref()` is the safe accessor encapsulating the NonNull deref.
+    if let Some(log) = vm.log_ref() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+    }
 }
 
 /// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
@@ -241,11 +252,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
 #[cold]
 #[inline(never)]
 fn fail_with_build_error(vm: &mut VirtualMachine) -> ! {
-    // `vm.log` is the process-lifetime ctx.log set in build_command;
-    // `log_ref()` is the safe accessor encapsulating the NonNull deref.
-    if let Some(log) = vm.log_ref() {
-        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-    }
+    print_build_log(vm);
     Global::exit(1);
 }
 
@@ -618,10 +625,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Lives in this block's stack frame, outliving the bundle call.
         let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
 
-        // Propagate via `?`. Do NOT
-        // catch-and-exit here: the bake path expects this call to succeed for
-        // valid inputs, and any `BuildFailed` indicates a bug upstream
-        // (in the bundler), not a user-facing diagnostic to swallow.
+        // `BuildFailed` (the errors are in the log) is reported by `build_command`.
         BundleV2::generate_from_bake_production_cli(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.

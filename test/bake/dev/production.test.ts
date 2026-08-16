@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps } from "../bake-harness";
+import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -365,6 +365,76 @@ export default function Docs() {
       .env(bunEnv)
       .throws(false);
     expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+  });
+
+  // The bundler's diagnostics are the whole report for a build it rejects. The build then exits 1
+  // through the build VM (so the config's 'exit' handler runs), like a build whose page throws
+  // while rendering. Before, the diagnostics were followed by
+  // "error: An internal error occurred (BuildFailed)" and the 'exit' handler did not run.
+  describe.concurrent("a build the bundler rejects", () => {
+    const config = `
+      process.on("exit", code => console.log("exit event: " + code));
+      export default { app: { framework: "react" } };
+    `;
+
+    async function build(dir: string) {
+      const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .quiet()
+        .throws(false);
+      // Everything printed after the bundler started.
+      const report = stderr.toString().split("Bundling routes\n").at(-1)!;
+      return { exitCode, stdout: stdout.toString(), report: normalizeBunSnapshot(report, dir) };
+    }
+
+    // Each case still bundles the framework on a debug (and ASAN) build before it fails; this is
+    // the budget the bake harness gives a production build.
+    const timeout = 30_000 * WAIT_MULTIPLIER;
+
+    test(
+      "a page that does not parse",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-parse-error", {
+          "src/index.tsx": config,
+          "pages/index.tsx": `export default function IndexPage() { return <p>index</p>; `,
+        });
+
+        const { exitCode, stdout, report } = await build(dir);
+        expect(report).toMatchInlineSnapshot(`
+          "1 | export default function IndexPage() { return <p>index</p>;
+                                                                        ^
+          error: Unexpected end of file
+              at <dir>/pages/index.tsx:1:59"
+        `);
+        expect(stdout).toBe("exit event: 1\n");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test(
+      "a page with an import that does not resolve",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-resolve-error", {
+          "src/index.tsx": config,
+          "pages/index.tsx": `import { title } from "../lib/title";
+export default function IndexPage() { return <p>{title}</p>; }
+`,
+        });
+
+        const { exitCode, stdout, report } = await build(dir);
+        expect(report).toMatchInlineSnapshot(`
+          "1 | import { title } from "../lib/title";
+                                    ^
+          error: Could not resolve: "../lib/title"
+              at <dir>/pages/index.tsx:1:23"
+        `);
+        expect(stdout).toBe("exit event: 1\n");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
   });
 
   test("handles build with no pages directory without crashing", async () => {

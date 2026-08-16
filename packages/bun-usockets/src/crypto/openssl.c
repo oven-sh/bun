@@ -162,6 +162,8 @@ static int us_ctx_cache_ex_idx = -1;
  * ca/caFile options or a later addCACert): the per-socket client attach must
  * not replace such a store with the process-shared default roots. */
 static int us_ctx_user_ca_ex_idx = -1;
+/* The resolved system-CA decision the context was built with (stored as value+1 so 0 = unset). */
+static int us_ctx_use_system_ca_ex_idx = -1;
 static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
 static int us_ssl_sni_pending_idx = -1;
@@ -443,6 +445,7 @@ static void us_ex_idx_init(void) {
   us_sni_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_cache_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, bun_ssl_ctx_cache_on_free);
   us_ctx_user_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ctx_use_system_ca_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ctx_sni_policy_ex_idx = SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
@@ -903,13 +906,15 @@ end:
  * the still-empty SSL_CTX_new() store are first replaced by a private full
  * default-root copy, and the context is marked so the per-socket attach keeps
  * it. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
+int us_ssl_ctx_use_system_ca(SSL_CTX *ctx) {
+  us_ex_idx_ensure();
+  intptr_t stored = (intptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_use_system_ca_ex_idx);
+  return stored ? (int)(stored - 1) : us_default_use_system_ca();
+}
+
 static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   X509_STORE *store = SSL_CTX_get_cert_store(ctx);
-  /* us_get_shared_default_ca_store() up-refs before returning, so release
-   * the reference taken just for this comparison. */
-  X509_STORE *shared = us_get_shared_default_ca_store();
-  int store_is_shared = store != NULL && store == shared;
-  X509_STORE_free(shared);
+  int store_is_shared = us_is_shared_default_ca_store(store);
   us_ex_idx_ensure();
   int store_is_empty = 0;
   if (store != NULL && !store_is_shared) {
@@ -921,7 +926,7 @@ static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
    * no `ca` configured at all may be seeded with the default roots here. */
   int user_ca = SSL_CTX_get_ex_data(ctx, us_ctx_user_ca_ex_idx) != NULL;
   if (store == NULL || store_is_shared || (store_is_empty && !user_ca)) {
-    X509_STORE *own = us_get_default_ca_store();
+    X509_STORE *own = us_get_default_ca_store(us_ssl_ctx_use_system_ca(ctx));
     if (own == NULL) {
       return NULL;
     }
@@ -1106,6 +1111,9 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
   /* Register the live-count free_func first thing so every exit (including
    * build_fail) balances. The packed reneg policy reuses the same slot. */
   SSL_CTX_set_ex_data(ssl_context, us_ssl_ctx_ex_idx(), NULL);
+  const int use_system_ca = us_resolve_use_system_ca(options.use_system_ca);
+  us_ex_idx_ensure();
+  SSL_CTX_set_ex_data(ssl_context, us_ctx_use_system_ca_ex_idx, (void *)(intptr_t)(use_system_ca + 1));
 
   /* Default options we rely on — changing these breaks the BIO logic. */
   SSL_CTX_set_read_ahead(ssl_context, 1);
@@ -1233,7 +1241,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
      * addRootCerts() when `ca` is absent - the handshake-time auto-chain and
      * (for requestCert) client verification both read it. The getter up-refs,
      * so set_cert_store owns exactly one reference per context. */
-    SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store());
+    SSL_CTX_set_cert_store(ssl_context, us_get_shared_default_ca_store(use_system_ca));
     if (options.request_cert) {
       SSL_CTX_set_verify(ssl_context,
           options.reject_unauthorized ? (SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT)
@@ -1574,7 +1582,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
          * A context whose store holds user-provided CAs (ca/caFile options or
          * addCACert) keeps using its own store - overriding it here would
          * hide those CAs from chain verification. */
-        X509_STORE *roots = us_get_shared_default_ca_store();
+        X509_STORE *roots = us_get_shared_default_ca_store(us_ssl_ctx_use_system_ca(ctx));
         if (roots) SSL_set0_verify_cert_store(ssl, roots);
       }
     }
@@ -2158,8 +2166,12 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
        * uWS layer's flushed==0-after-FIN guard, or hasFullyDrained() when
        * nothing is buffered, then closes the connection on this dispatch)
        * and dispatch directly, bypassing the is_shut_down gate below that
-       * ssl_fatal_error would otherwise trip. */
-      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before) {
+       * ssl_fatal_error would otherwise trip. On the libuv backend zero
+       * progress does not prove death (a stale SEND completion can run
+       * after this loop turn refilled the buffer), so confirm with the
+       * kernel before declaring the spill undrainable. */
+      if (s->ssl_end_delivered && loop_ssl_data->ssl_spill_off == spill_off_before &&
+          us_socket_stalled_write_means_peer_gone(s)) {
         ssl_release_spill(s->group->loop, s);
         s->ssl_fatal_error = 1;
         return us_dispatch_writable(s);

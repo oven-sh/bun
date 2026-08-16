@@ -923,7 +923,7 @@ impl SendQueueOwner {
                 .this_value
                 .get()
                 .try_get()
-                .unwrap_or(JSValue::ZERO),
+                .unwrap_or_default(),
             SendQueueOwner::Instance(_) => JSValue::ZERO,
         }
     }
@@ -1133,14 +1133,25 @@ impl SendQueue {
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
     }
 
-    /// `__bun_release_task_at_shutdown` hook: a scheduled deferred task that
-    /// will never run still owns a ref; drop it (skipping the JS callbacks).
+    /// `Taskable::release_unrun`: a scheduled deferred task that will never
+    /// run still owns a ref; drop it (skipping the JS callbacks).
     ///
     /// # Safety
     /// `this` is the queued root pointer, live via the ref taken at schedule.
     pub unsafe fn release_deferred_unrun(this: *mut SendQueue) {
         // SAFETY: caller contract.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    /// `uv::open_handles` closes the channel's pipe through here at a thread
+    /// teardown: close now (pending writes finish ECANCELED) and let the owner
+    /// observe the disconnect, rather than waiting for writes as a user close does.
+    #[cfg(windows)]
+    unsafe fn stop_for_vm_teardown(this: *mut c_void) {
+        // SAFETY: recorded at configure time by this live SendQueue; the pipe
+        // leaves the list when `windows_close` issues its uv_close.
+        let this = unsafe { &*this.cast::<SendQueue>() };
+        this.windows_close(true);
     }
 
     #[cfg(windows)]
@@ -1695,6 +1706,11 @@ impl SendQueue {
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
         self_.socket.set(SocketUnion::Open(ipc_pipe));
+        uv::open_handles::set_owner(
+            ipc_pipe.cast(),
+            this.cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
         self_.windows.with_mut(|w| w.is_server = true);
         // SAFETY: pipe is the live uv handle just stored in the socket cell.
         unsafe { (*ipc_pipe).data = this.cast() };
@@ -1748,6 +1764,11 @@ impl SendQueue {
         // SAFETY: caller contract — `this` is a live SendQueue.
         let self_ = unsafe { &*this };
         self_.socket.set(SocketUnion::Open(ipc_pipe));
+        uv::open_handles::set_owner(
+            ipc_pipe.cast(),
+            this.cast(),
+            Some(Self::stop_for_vm_teardown),
+        );
         self_.windows.with_mut(|w| w.is_server = false);
 
         // SAFETY: ipc_pipe is the live uv handle just stored in the socket cell.
@@ -1799,6 +1820,10 @@ impl uv::StreamReader for SendQueue {
 
 impl bun_event_loop::Taskable for SendQueue {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::SendQueueDeferred;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the SendQueue root queued with a held ref.
+        unsafe { SendQueue::release_deferred_unrun(this) }
+    }
 }
 
 impl Drop for SendQueue {

@@ -1,0 +1,22 @@
+FROM mariadb:11.8
+
+# Same baked-datadir trick as Dockerfile.mysql-plain: initialize the data
+# directory at build time into a sibling path (the base image declares
+# `VOLUME /var/lib/mysql`, which discards build-time writes there) so cold
+# container start skips first-boot init and is just `exec mariadbd`. The
+# MARIADB_* env vars below are build inputs only; at runtime the entrypoint
+# sees `$DATADIR/mysql` exists and execs straight away.
+ENV MARIADB_ALLOW_EMPTY_ROOT_PASSWORD=yes \
+    MARIADB_DATABASE=bun_sql_test
+
+RUN set -e; \
+    docker-entrypoint.sh mariadbd --datadir=/var/lib/mysql-init & pid=$!; \
+    for i in $(seq 180); do \
+        mariadb -h127.0.0.1 -uroot -e 'SELECT 1' >/dev/null 2>&1 && break; \
+        sleep 1; \
+    done; \
+    mariadb -h127.0.0.1 -uroot -e 'SELECT 1'; \
+    mariadb-admin -h127.0.0.1 -uroot shutdown; \
+    wait "$pid"
+
+CMD ["mariadbd", "--datadir=/var/lib/mysql-init"]

@@ -124,7 +124,7 @@ impl PipeReader {
             // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
             // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
-                this.reader.source = Some(bun_io::Source::Pipe(pipe));
+                this.reader.set_source(bun_io::Source::Pipe(pipe));
             }
         }
 
@@ -330,7 +330,7 @@ impl PipeReader {
         }
     }
 
-    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
@@ -343,7 +343,7 @@ impl PipeReader {
                 MarkedArrayBuffer::from_bytes(slice, jsc::JSType::Uint8Array)
                     .to_node_buffer(global_this)
             }
-            _ => JSValue::UNDEFINED,
+            _ => Ok(JSValue::UNDEFINED),
         }
     }
 

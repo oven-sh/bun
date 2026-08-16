@@ -664,7 +664,7 @@ it("process.versions", () => {
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
     lolhtml: "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e",
-    ares: "3ac47ee46edd8ea40370222f91613fc16c434853",
+    ares: "c7a3138dcfe3bb0eaaf10c0c24c36dc66dc790ab",
     libdeflate: "c8c56a20f8f621e6a966b716b31f1dedab6a41e3",
     zstd: "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
     lshpack: "8905c024b6d052f083a3d11d0a169b3c2735c8a1",
@@ -1389,6 +1389,10 @@ describe.concurrent(() => {
     expect(flags.has("--no_warnings")).toBe(true);
     expect(flags.has("--require=./foo.js")).toBe(true);
     expect(flags.has("--not-a-real-flag")).toBe(false);
+    // Every supported CA flag, including the --no- negation, is env-allowed as in node.
+    expect(
+      ["--use-system-ca", "--no-use-system-ca", "--use-openssl-ca", "--use-bundled-ca"].filter(f => flags.has(f)),
+    ).toEqual(["--use-system-ca", "--no-use-system-ca", "--use-openssl-ca", "--use-bundled-ca"]);
     flags.add("--not-a-real-flag");
     expect(flags.has("--not-a-real-flag")).toBe(false);
     // Node freezes the prototype and constructor too; the vendored upstream
@@ -2210,6 +2214,107 @@ it("removeAllListeners('warning') silences the default print", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
 });
 
+// Node registers onWarning at bootstrap (pre_execution.js setupWarningHandler),
+// so it is already in the listener list before user code runs. Verified against
+// node v24.18.0: every script below prints the same thing there.
+describe("default 'warning' listener is registered at startup", () => {
+  const env = { ...bunEnv, NODE_NO_WARNINGS: undefined };
+
+  async function run(cmd, extraEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      env: extraEnv ? { ...env, ...extraEnv } : env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("removeAllListeners('warning') before the first warning silences the print", async () => {
+    expect(await run(["-e", `process.removeAllListeners("warning"); process.emitWarning("hidden");`])).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent("a user listener installed after removeAllListeners is the only consumer", async () => {
+    expect(
+      await run([
+        "-e",
+        `process.removeAllListeners("warning");
+         process.on("warning", w => console.log("user:" + w.name + ":" + w.message));
+         process.emitWarning("hidden");`,
+      ]),
+    ).toEqual({ stdout: "user:Warning:hidden\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("is observable via listenerCount/listeners and removable by reference", async () => {
+    expect(
+      await run([
+        "-e",
+        `const [onWarning, ...rest] = process.listeners("warning");
+         console.log(JSON.stringify({ count: process.listenerCount("warning"), name: onWarning.name, rest: rest.length }));
+         process.removeListener("warning", onWarning);
+         console.log(process.listenerCount("warning"));
+         process.emitWarning("hidden");`,
+      ]),
+    ).toEqual({ stdout: `{"count":1,"name":"onWarning","rest":0}\n0\n`, stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("prints before a user listener added later runs", async () => {
+    const { stdout, stderr, exitCode } = await run([
+      "-e",
+      `process.on("warning", () => process.stderr.write("user-listener\\n"));
+       process.emitWarning("shown");`,
+    ]);
+    expect(stderr).toMatch(
+      /^\(node:\d+\) Warning: shown\n\(Use `.*--trace-warnings \.\.\.` to show where the warning was created\)\nuser-listener\n$/,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  it.concurrent("a bare process.emit('warning') with no prior emitWarning() still prints", async () => {
+    const { stdout, stderr, exitCode } = await run(["-e", `process.emit("warning", new Error("bare"));`]);
+    expect(stderr).toMatch(/^\(node:\d+\) Error: bare\n\(Use `.*--trace-warnings/);
+    expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+  });
+
+  it.concurrent.each([
+    ["--no-warnings", ["--no-warnings"], undefined],
+    ["NODE_NO_WARNINGS=1", [], { NODE_NO_WARNINGS: "1" }],
+  ])("%s registers no default listener but user listeners still fire", async (_, flags, extraEnv) => {
+    expect(
+      await run(
+        [
+          ...flags,
+          "-e",
+          `console.log(process.listenerCount("warning"));
+           process.on("warning", w => console.log("user:" + w.message));
+           process.emitWarning("quiet");`,
+        ],
+        extraEnv,
+      ),
+    ).toEqual({ stdout: "0\nuser:quiet\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("each worker_threads Worker gets its own default listener", async () => {
+    const worker = `const { parentPort } = require("node:worker_threads");
+       const before = process.listenerCount("warning");
+       process.removeAllListeners("warning");
+       process.emitWarning("hidden-in-worker");
+       setImmediate(() => parentPort.postMessage(before + ":" + process.listenerCount("warning")));`;
+    expect(
+      await run([
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         new Worker(${JSON.stringify(worker)}, { eval: true }).on("message", m => console.log(m));`,
+      ]),
+    ).toEqual({ stdout: "1:0\n", stderr: "", exitCode: 0 });
+  });
+});
+
 it("--disable-warning suppresses print but not user 'warning' listeners", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -2431,4 +2536,50 @@ describe("NODE_NO_WARNINGS", () => {
   it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
+});
+
+it("process.exit() does not run microtasks or nextTicks that were queued before it", async () => {
+  // Node runs 'exit' handlers and nothing queued before them; the exit-time
+  // teardown must discard, not drain, the pre-exit microtask/nextTick queues.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `process.nextTick(() => console.log("TICK_FIRED"));
+       queueMicrotask(() => console.log("MICROTASK_FIRED"));
+       Promise.resolve().then(() => console.log("THEN_FIRED"));
+       process.on("exit", () => console.log("exit handler"));
+       process.exit(0);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit handler\n");
+  expect(exitCode).toBe(0);
+});
+
+// Node runs its environment cleanup with JS execution disallowed: closing the
+// process's sockets/servers at exit dispatches no 'close'/'error' handlers, so
+// nothing of the user's runs after the 'exit' event.
+it("no socket close handler runs after the 'exit' event", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {}, close() { console.log("server socket closed after exit"); } } });
+       Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: {
+         data() {},
+         close() { console.log("client socket closed after exit"); },
+         open() { process.on("exit", () => console.log("exit")); process.exit(0); },
+       } });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("exit\n");
+  expect(exitCode).toBe(0);
 });

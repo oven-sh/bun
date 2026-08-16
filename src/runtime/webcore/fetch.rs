@@ -82,8 +82,8 @@ use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
-pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
+pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -643,8 +643,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -673,8 +673,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "compress: boolean | string | { encoding, level? }"
     'extract_compress: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -700,8 +700,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "maxRedirects: number"
     'extract_max_redirects: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -738,8 +738,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "tls: TLSConfig"
     ssl_config = 'extract_ssl_config: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -792,11 +792,20 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    // No `tls` options, but this thread's --use-system-ca decision differs from the process
+    // default the HTTP thread's shared client context was built with: give the request a config of
+    // its own (interned, so all such requests share one cached context).
+    if ssl_config.is_none() && vm.tls_use_system_ca_differs_from_process() {
+        ssl_config = Some(ssl_config_intern_for_http(
+            crate::socket::tls_true_defaults(vm),
+        ));
+    }
+
     // unix: string | undefined
     unix_socket_path = 'extract_unix_socket_path: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -822,8 +831,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -852,8 +861,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // timeout: false | number | undefined
     disable_timeout = 'extract_disable_timeout: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -903,8 +912,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         // Then check options/init objects which can override the Request's redirect
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -931,8 +940,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // keepalive: boolean | undefined;
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -961,8 +970,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // verbose: boolean | "curl" | undefined;
     verbose = 'extract_verbose: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -994,8 +1003,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `defer if (proxy_headers) |*hdrs| hdrs.deinit();` → Headers impls Drop.
     url_proxy_buffer = 'extract_proxy: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {

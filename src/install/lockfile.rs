@@ -1736,20 +1736,29 @@ impl<'a> Printer<'a> {
         // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
         let top_level_dir = fs.top_level_dir;
-        let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
-        let entries: &mut Fs::DirEntry = match entries_option {
-            Fs::EntriesOption::Entries(e) => &mut **e,
-            Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+        // Erase to raw so the `entries_mutex` reborrow below doesn't conflict
+        // with the `&mut self` borrow `read_directory` took.
+        let entries_option: *const Fs::EntriesOption =
+            fs.fs.read_directory(top_level_dir, None, 0, true)?;
+        // Copy the listing's basenames out under `entries_mutex`; `.data` must
+        // only be probed while the lock is held.
+        let entries = {
+            let _entries_lock = fs.fs.entries_mutex.lock_guard();
+            // SAFETY: BSSMap-owned slot; shared read under `entries_mutex`.
+            match unsafe { &*entries_option } {
+                Fs::EntriesOption::Entries(e) => {
+                    DotEnv::DirEntryKeys(e.data.iter().map(|(k, _)| Box::from(&**k)).collect())
+                }
+                Fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
+            }
         };
 
         let mut env_loader = DotEnv::Loader::init();
         env_loader.quiet = true;
 
         env_loader.load_process()?;
-        // `DotEnv::Loader::load` takes `impl DirEntryProbe` (bun_dotenv sits
-        // below `bun_resolver` in the crate graph); `Fs::DirEntry` impls it.
         env_loader.load(
-            &*entries,
+            &entries,
             &[] as &[&[u8]],
             DotEnv::DotEnvFileSuffix::Production,
             false,

@@ -16,25 +16,23 @@ pub(crate) enum ProfilerError {
     FilenameTooLong,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct CPUProfilerConfig {
-    // CLI-arg-backed and
-    // process-lifetime, so `&'static` is sound (no struct lifetime params).
-    pub name: &'static [u8],
-    pub dir: &'static [u8],
+    /// Empty: the default `CPU.<date>.<pid>.<tid>.<seq>` name / the cwd.
+    pub name: Box<[u8]>,
+    pub dir: Box<[u8]>,
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
-    /// 0 for the main thread; a worker's execution context id otherwise. Only
-    /// used to keep concurrently-written default filenames distinct.
+    /// `worker.threadId` (0 on the main thread): the tid segment of node's default profile names.
     pub thread_id: u32,
 }
 
 impl Default for CPUProfilerConfig {
     fn default() -> Self {
         Self {
-            name: b"",
-            dir: b"",
+            name: Box::default(),
+            dir: Box::default(),
             md_format: false,
             json_format: false,
             interval: 1000,
@@ -133,7 +131,7 @@ fn write_profile_to_file(
         let errno = err.get_errno();
         if errno == Errno::ENOENT || errno == Errno::EPERM || errno == Errno::EACCES {
             if !config.dir.is_empty() {
-                let _ = Fd::cwd().make_path(config.dir);
+                let _ = Fd::cwd().make_path(&config.dir);
                 // Retry write
                 let retry_result = bun_sys::File::write_file_os_path(
                     Fd::cwd(),
@@ -172,13 +170,13 @@ fn build_output_path(
                 let ext: &[u8] = if is_md_format { b".md" } else { b".cpuprofile" };
                 let mut cursor = std::io::Cursor::new(&mut filename_buf[..]);
                 cursor
-                    .write_all(config.name)
+                    .write_all(&config.name)
                     .and_then(|_| cursor.write_all(ext))
                     .map_err(|_| ProfilerError::FilenameTooLong)?;
                 let len = usize::try_from(cursor.position()).expect("int cast");
                 break 'blk &filename_buf[..len];
             } else {
-                break 'blk config.name;
+                break 'blk &config.name;
             }
         }
     } else {
@@ -186,7 +184,7 @@ fn build_output_path(
     };
 
     if !config.dir.is_empty() {
-        path.join(&[config.dir])
+        path.join(&[&config.dir])
             .map_err(|_| ProfilerError::FilenameTooLong)?;
     }
 

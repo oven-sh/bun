@@ -1021,7 +1021,7 @@ void populateESMExports(
         if (!ignoreESModuleAnnotation) {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
-            scope.assertNoException();
+            RETURN_IF_EXCEPTION(scope, );
             if (has) {
                 JSValue value = slot.getValue(globalObject, esModuleMarker);
                 CLEAR_IF_EXCEPTION(scope);

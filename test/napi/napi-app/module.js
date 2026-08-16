@@ -1259,6 +1259,11 @@ nativeTests.test_async_cleanup_hook_remove_nonexistent = () => {
   addon.test();
 };
 
+nativeTests.test_async_cleanup_hook_tsfn_release = () => {
+  const addon = require("./build/Debug/test_async_cleanup_hook_tsfn_release.node");
+  addon.start();
+};
+
 nativeTests.test_cleanup_hook_duplicates = () => {
   const addon = require("./build/Debug/test_cleanup_hook_duplicates.node");
   addon.test();
@@ -1390,6 +1395,13 @@ async function runOrphanWorker(workerData) {
 nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
   console.log("worker exited with", await runOrphanWorker());
   console.log(nativeTests.use_orphaned_threadsafe_functions());
+};
+
+// A finalizer that runs during a worker's env cleanup and registers another
+// finalizer (an external buffer's): the late one runs in that same cleanup.
+nativeTests.test_finalizer_registered_during_env_cleanup = async () => {
+  console.log("worker exited with", await runOrphanWorker({ lateFinalizer: true }));
+  console.log("late=" + nativeTests.late_finalizer_run_count());
 };
 
 // Bun-only: an orphaned threadsafe function is freed by whichever thread drops

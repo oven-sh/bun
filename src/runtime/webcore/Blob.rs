@@ -464,14 +464,12 @@ impl BlobExt for Blob {
 
             read_file::ReadFileUV::start::<Handler<'_, F>>(
                 // `bun_vm()` returns the live VM for this global; the event
-                // loop outlives any in-flight async fs request. `start<H>`
-                // takes the already-erased `*anyopaque` (caller casts); `H`
-                // (turbofish) supplies `Handler::run` for the callback.
+                // loop outlives any in-flight async fs request.
                 global.bun_vm().event_loop(),
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
-                handler.cast(),
+                handler,
             );
             return promise_value;
         }
@@ -482,28 +480,20 @@ impl BlobExt for Blob {
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
-                handler,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
-                global,
-                bun_core::heap::into_raw(file_read),
-            );
-
             // Create the Promise only after the store has been ref()'d.
-            // The garbage collector runs on memory allocations
-            // The JSPromise is the next GC'd memory allocation.
-            // This shouldn't really fix anything, but it's a little safer.
-            // `JSPromiseStrong.strong` is private; `init` creates the
-            // JSPromise *and* the strong handle in one step.
             // SAFETY: handler was just boxed; sole owner.
             unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
             // SAFETY: same `handler` as above; still solely owned here.
             let promise_value = unsafe { (*handler).promise.value() };
             promise_value.ensure_still_alive();
 
-            // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
-            read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
+            read_file::ReadFile::schedule(
+                file_read,
+                read_file::ReadFileCompletionFns::of(handler),
+                global,
+            );
 
             debug!("doReadFile: read_file_task scheduled");
             promise_value
@@ -546,6 +536,20 @@ impl BlobExt for Blob {
                     // SAFETY: `c` is the `*mut H` passed by the caller and kept alive
                     // across the async read by contract; exclusive borrow scoped to the call.
                     H::on_read_bytes(unsafe { &mut *c }, result);
+                }
+                fn cancel(c: *mut H) {
+                    // The caller owns `H` and waits for exactly one `on_read_bytes`.
+                    let err = jsc::SystemError {
+                        code: BunString::static_("ECANCELED").into(),
+                        message: BunString::static_(
+                            "The file read did not complete before its thread stopped",
+                        )
+                        .into(),
+                        syscall: BunString::static_("read").into(),
+                        ..Default::default()
+                    };
+                    // SAFETY: as for `call`.
+                    H::on_read_bytes(unsafe { &mut *c }, ReadBytesResult::Err(Box::new(err)));
                 }
             }
             self.do_read_file_internal::<H, Adapter<H>>(ctx, global);
@@ -685,26 +689,22 @@ impl BlobExt for Blob {
                 self.store().expect("infallible: store present").clone(),
                 self.offset.get(),
                 self.size.get(),
-                NewInternalReadFileHandler::<C, F>::run,
-                ctx.cast::<c_void>(),
+                NewInternalReadFileHandler::<C, F>::completion(ctx),
             );
         }
         #[cfg(not(windows))]
         {
-            let file_read = read_file::ReadFile::create_with_ctx(
+            let file_read = read_file::ReadFile::create(
                 self.store().expect("infallible: store present").clone(),
-                ctx.cast::<c_void>(),
-                NewInternalReadFileHandler::<C, F>::run,
                 self.offset.get(),
                 self.size.get(),
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
+            read_file::ReadFile::schedule(
+                file_read,
+                NewInternalReadFileHandler::<C, F>::completion(ctx),
                 global,
-                bun_core::heap::into_raw(file_read),
             );
-            // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
-            read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
         }
     }
     fn get_content_type(&self) -> Option<ZigStringSlice> {
@@ -3825,6 +3825,8 @@ pub(crate) enum FormDataEntry<'a> {
 /// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
 pub trait InternalReadFileFn<C> {
     fn call(ctx: *mut C, bytes: read_file::ReadFileResultType);
+    /// The read will never complete (its VM stopped first): do with `ctx` what its owner needs.
+    fn cancel(ctx: *mut C);
 }
 
 pub(crate) struct NewInternalReadFileHandler<C, F>(core::marker::PhantomData<(C, F)>);
@@ -3833,12 +3835,22 @@ impl<C, F> NewInternalReadFileHandler<C, F>
 where
     F: InternalReadFileFn<C>,
 {
-    /// Type-erased thunk: `handler` is the `*mut C` ctx that was passed into
-    /// `ReadFile`/`ReadFileUV` cast to `*mut c_void`.
-    pub(crate) fn run(handler: *mut c_void, bytes: read_file::ReadFileResultType) {
-        // SAFETY: every call site passes a `*mut C` round-tripped
-        // through `*mut c_void`; this is the inverse pointer cast.
-        F::call(handler.cast::<C>(), bytes);
+    /// The erased `(ctx, run, cancel)` a `ReadFile`/`ReadFileUV` carries for this handler.
+    pub(crate) fn completion(ctx: *mut C) -> read_file::ReadFileCompletionFns {
+        fn run<C, F: InternalReadFileFn<C>>(
+            ctx: *mut c_void,
+            bytes: read_file::ReadFileResultType,
+        ) {
+            F::call(ctx.cast::<C>(), bytes);
+        }
+        fn cancel<C, F: InternalReadFileFn<C>>(ctx: *mut c_void) {
+            F::cancel(ctx.cast::<C>());
+        }
+        read_file::ReadFileCompletionFns {
+            ctx: ctx.cast::<c_void>(),
+            run: run::<C, F>,
+            cancel: cancel::<C, F>,
+        }
     }
 }
 
@@ -4725,17 +4737,13 @@ pub(crate) fn write_file_with_source_destination(
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
-            let task = write_file_mod::WriteFileTask::create_on_js_thread(ctx, file_copier);
             // Defer promise creation until we're just about to schedule the task.
-            // `JSPromiseStrong.strong` is private in `bun_jsc`, so use `init` (which
-            // creates the JSPromise *and* the strong handle in one step).
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
             unsafe { (*write_file_promise).promise = jsc::JSPromiseStrong::init(ctx) };
             // SAFETY: same `write_file_promise` as above; still solely owned here.
             let promise_value = unsafe { (*write_file_promise).promise.value() };
             promise_value.ensure_still_alive();
-            // SAFETY: `task` was just heap-allocated by `create_on_js_thread`.
-            write_file_mod::WriteFileTask::schedule(unsafe { &mut *task });
+            write_file_mod::WriteFile::schedule(file_copier, ctx);
             return Ok(promise_value);
         }
     }
@@ -4754,7 +4762,7 @@ pub(crate) fn write_file_with_source_destination(
         }
         #[cfg(not(windows))]
         {
-            let mut file_copier = copy_file::CopyFile::create(
+            return Ok(copy_file::CopyFile::create(
                 destination_store,
                 source_store,
                 destination_blob.offset.get(),
@@ -4762,14 +4770,7 @@ pub(crate) fn write_file_with_source_destination(
                 ctx,
                 options.mkdirp_if_not_exists.unwrap_or(true),
                 options.mode,
-            );
-            file_copier.schedule();
-            // `ConcurrentPromiseTask` is consumed by the work-pool and freed via
-            // `ManualDeinit` → `destroy(*mut Self)`, so hand ownership over as a
-            // raw pointer (paired with `heap::take` in `destroy()`).
-            let promise_value = file_copier.promise.value();
-            let _ = bun_core::heap::into_raw(file_copier);
-            return Ok(promise_value);
+            ));
         }
     } else if destination_type == store::DataTag::File && source_type == store::DataTag::S3 {
         let s3 = source_store.data.as_s3();

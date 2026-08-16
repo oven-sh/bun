@@ -97,6 +97,12 @@ static JSC::JSValue invokeAccessor(
     frame[Info::kShouldThrowOnErrorIndex] = TaggedPointer(Info::kDontThrow);
     frame[Info::kValueIndex] = TaggedPointer();
 
+    // Keep the return-value slot rescuable while addon code runs: handle
+    // scopes closing inside the callback must not strand the Address the
+    // inline ReturnValue::Set stored there.
+    GlobalInternals::ActiveReturnValueSlotScope returnValueScope(
+        isolate->globalInternals(), &frame[Info::kReturnValueIndex]);
+
     if (setter) {
         Local<v8::Value> valueLocal = hs.createLocal<v8::Value>(vm, newValue);
         frame[Info::kValueIndex] = valueLocal.tagged();

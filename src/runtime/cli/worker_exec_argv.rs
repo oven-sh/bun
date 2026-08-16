@@ -396,11 +396,20 @@ pub fn scan_exec_argv<T: AsRef<[u8]>>(tokens: &[T]) -> ScanOutcome {
             b"--no-use-system-ca" => out.honored.use_system_ca = Some(false),
             b"--expose-gc" => out.honored.expose_gc = true,
             b"--cpu-prof" => out.honored.cpu_prof = true,
+            b"--cpu-prof-md" => out.honored.cpu_prof_md = true,
             b"--cpu-prof-interval" => {
                 out.honored.cpu_prof_interval = value
                     .as_deref()
                     .and_then(|v| std::str::from_utf8(v).ok())
                     .and_then(|s| s.parse().ok());
+            }
+            b"--cpu-prof-name" => {
+                out.honored.cpu_prof_name = value
+                    .as_deref()
+                    .map(crate::cli::arguments::replace_pid_placeholder);
+            }
+            b"--cpu-prof-dir" => {
+                out.honored.cpu_prof_dir = value.map(Vec::into_boxed_slice);
             }
             b"--require" | b"--preload" | b"-r" | b"--import" => {
                 if let Some(v) = value {
@@ -441,7 +450,10 @@ pub fn scan_process_exec_argv() -> WorkerExecArgv {
         let mut outcome = scan_exec_argv(&tokens);
         outcome.honored.preloads.clear();
         outcome.honored.cpu_prof = false;
+        outcome.honored.cpu_prof_md = false;
         outcome.honored.cpu_prof_interval = None;
+        outcome.honored.cpu_prof_name = None;
+        outcome.honored.cpu_prof_dir = None;
         outcome.honored
     });
     CACHED.clone()

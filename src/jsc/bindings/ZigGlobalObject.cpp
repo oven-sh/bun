@@ -595,20 +595,28 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 #if OS(WINDOWS)
                 JSC::JSObject* env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
                 JSC::JSArray* keyArray = JSC::constructEmptyArray(globalObject, nullptr, size);
-                scope.assertNoException();
-                unsigned keyIndex = 0;
-                size_t i = 0;
-                for (auto k : map) {
-                    keyArray->putByIndexInline(globalObject, keyIndex++, jsString(vm, k.key), false);
-                    scope.assertNoException();
-                    // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
-                    // ThrowScope). Seeded values are JSStrings so only OOM can throw.
-                    env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, k.key.convertToASCIIUppercase()), strings.at(i++));
-                    scope.assertNoException();
+                JSValue wrapped;
+                if (!scope.exception()) [[likely]] {
+                    unsigned keyIndex = 0;
+                    size_t i = 0;
+                    for (auto k : map) {
+                        keyArray->putByIndexInline(globalObject, keyIndex++, jsString(vm, k.key), false);
+                        if (scope.exception()) [[unlikely]]
+                            break;
+                        // Numeric env keys hit putDirectIndex → defineOwnProperty (declares a
+                        // ThrowScope). Seeded values are JSStrings, so this throws only on OOM
+                        // or under a termination already requested for this starting worker.
+                        env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, k.key.convertToASCIIUppercase()), strings.at(i++));
+                        if (scope.exception()) [[unlikely]]
+                            break;
+                    }
+                    if (!scope.exception()) [[likely]]
+                        wrapped = Bun::wrapInWindowsEnvProxy(globalObject, env, keyArray, /* syncOSEnv */ false);
                 }
-                JSValue wrapped = Bun::wrapInWindowsEnvProxy(globalObject, env, keyArray, /* syncOSEnv */ false);
-                scope.assertNoException();
-                globalObject->m_processEnvObject.set(vm, globalObject, wrapped.getObject());
+                // Same contract as the POSIX arm: the exception stays pending for the caller, and
+                // whatever was built is installed so nothing downstream reads a null env.
+                JSC::JSObject* installed = scope.exception() ? nullptr : wrapped.getObject();
+                globalObject->m_processEnvObject.set(vm, globalObject, installed ? installed : env);
 #else
                 // Same exotic object as the main thread so writes inside the
                 // worker coerce to string, reject symbol keys, and validate

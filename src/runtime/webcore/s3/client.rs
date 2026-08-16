@@ -784,8 +784,7 @@ pub(crate) fn upload_stream(
     content_type: Option<&[u8]>,
     content_disposition: Option<&[u8]>,
     content_encoding: Option<&[u8]>,
-    // Explicit proxy override (`fetch("s3://…", { proxy })`). `None`/empty
-    // resolves HTTP_PROXY/HTTPS_PROXY from the env per request.
+    // Explicit override; `None`/empty resolves env proxies per request.
     proxy: Option<&[u8]>,
     request_payer: bool,
     callback: Option<fn(S3UploadResult, *mut c_void)>,

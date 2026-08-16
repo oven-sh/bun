@@ -147,8 +147,7 @@ pub struct MultiPartUpload {
     pub(crate) uploaded_bytes: Cell<u64>,
 
     pub path: Box<[u8]>,
-    /// Explicit proxy override; empty means resolve HTTP_PROXY/HTTPS_PROXY
-    /// from the env against each part's signed URL.
+    /// Explicit override; empty resolves env proxies per part request.
     pub(crate) proxy: Box<[u8]>,
     pub(crate) content_type: Option<Box<[u8]>>,
     pub(crate) content_disposition: Option<Box<[u8]>>,

@@ -605,10 +605,11 @@ describe("bundler files option", () => {
   // #39252: a data: URL longer than PATH_MAX imported from an in-memory file
   // overflowed a fixed path buffer in FileMap resolution and crashed the
   // process. Spawn a subprocess so a panic fails the child, not the runner.
-  // 70000 bytes exceeds the path buffer on every platform.
+  // 100000 bytes exceeds MAX_PATH_BYTES on every platform (1024 macOS,
+  // 4096 Linux, 98302 Windows).
   test.concurrent("css data: url longer than PATH_MAX does not crash", async () => {
     const script = `
-      const url = "data:image/svg+xml," + Buffer.alloc(70000, "A").toString();
+      const url = "data:image/svg+xml," + Buffer.alloc(100000, "A").toString();
       const css = '.x { background: url("' + url + '") }';
       const result = await Bun.build({
         entrypoints: ["/style.css"],

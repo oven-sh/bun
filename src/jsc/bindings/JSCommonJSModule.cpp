@@ -91,6 +91,29 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
 
+// A module id (or the path a require function was bound to) may contain
+// forward slashes even on Windows — e.g. when the user calls require() with an
+// absolute forward-slash path and the resolver preserves the user's
+// separators. The dirname is then the substring up to the last separator of
+// either kind, matching how path.dirname treats both '/' and '\\' as
+// separators there. Finding only PLATFORM_SEP ('\\' on Windows) cuts the path
+// at the wrong position for such ids.
+// https://github.com/oven-sh/bun/issues/33325
+static size_t reverseFindPathSeparator(const WTF::String& path, size_t length)
+{
+#if OS(WINDOWS)
+    auto backslash = path.reverseFind(WINDOWS_PATH_SEP, length);
+    auto slash = path.reverseFind(POSIX_PATH_SEP, length);
+    if (backslash == WTF::notFound)
+        return slash;
+    if (slash == WTF::notFound)
+        return backslash;
+    return backslash > slash ? backslash : slash;
+#else
+    return path.reverseFind(POSIX_PATH_SEP, length);
+#endif
+}
+
 static bool canPerformFastEnumeration(Structure* s)
 {
     if (s->typeInfo().overridesGetOwnPropertySlot())
@@ -905,7 +928,7 @@ JSCommonJSModule* JSCommonJSModule::create(
 {
     auto& vm = JSC::getVM(globalObject);
     auto key = requireMapKey->value(globalObject);
-    auto index = key->reverseFind(PLATFORM_SEP, key->length());
+    auto index = reverseFindPathSeparator(key, key->length());
 
     JSString* dirname;
     if (index != WTF::notFound) {
@@ -1515,7 +1538,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        size_t index = reverseFindPathSeparator(sourceURL, sourceURL.length());
         JSString* dirname;
         JSString* filename = requireMapKey;
         if (index != WTF::notFound) {
@@ -1634,7 +1657,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
-        size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
+        size_t index = reverseFindPathSeparator(sourceURL, sourceURL.length());
         JSString* dirname;
         JSString* filename = requireMapKey;
         if (index != WTF::notFound) {
@@ -1674,7 +1697,7 @@ JSObject* JSCommonJSModule::createBoundRequireFunction(VM& vm, JSGlobalObject* l
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSString* filename = JSC::jsStringWithCache(vm, pathString);
-    auto index = pathString.reverseFind(PLATFORM_SEP, pathString.length());
+    auto index = reverseFindPathSeparator(pathString, pathString.length());
     JSString* dirname;
     if (index != WTF::notFound) {
         dirname = JSC::jsSubstring(globalObject, filename, 0, index);

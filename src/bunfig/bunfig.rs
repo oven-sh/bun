@@ -581,8 +581,8 @@ impl<'a> Parser<'a> {
                 }
 
                 if let Some(expr) = test.get(b"concurrent") {
+                    self.expect(&expr, ExprTag::EBoolean)?;
                     if !self.ctx.test_options.concurrent_from_cli {
-                        self.expect(&expr, ExprTag::EBoolean)?;
                         self.ctx.test_options.concurrent =
                             expr.as_bool().expect("infallible: type checked");
                     }

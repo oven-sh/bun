@@ -489,23 +489,20 @@ impl<'a> RouteLoader<'a> {
         }
 
         this.all_routes
-            .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
+            .sort_unstable_by(|a, b| sorter::compare(a, b));
 
         let mut route_list = RouteIndexList::default();
         route_list
             .set_capacity(this.all_routes.len())
             .expect("unreachable");
 
+        // `sorter::compare` puts every static route (the index route included)
+        // ahead of the first dynamic one, so the dynamic routes are one suffix.
         let mut dynamic_start: Option<usize> = None;
-        let mut index_id: Option<usize> = None;
 
         for (i, route) in this.all_routes.into_iter().enumerate() {
             if (route.kind as u8) > (pattern::Tag::Static as u8) && dynamic_start.is_none() {
                 dynamic_start = Some(i);
-            }
-
-            if route.full_hash == INDEX_ROUTE_HASH {
-                index_id = Some(i);
             }
 
             let (filepath, match_name) = (route.abs_path.as_bytes(), route.match_name.as_bytes());
@@ -517,17 +514,7 @@ impl<'a> RouteLoader<'a> {
             });
         }
 
-        let mut dynamic_len: usize = 0;
-        if let Some(dynamic_i) = dynamic_start {
-            dynamic_len = route_list.len() - dynamic_i;
-            if let Some(index_i) = index_id {
-                if index_i > dynamic_i {
-                    // Due to the sorting order, the index route can be the last route.
-                    // We don't want to attempt to match the index route or different stuff will break.
-                    dynamic_len -= 1;
-                }
-            }
-        }
+        let dynamic_len = dynamic_start.map_or(0, |dynamic_i| route_list.len() - dynamic_i);
 
         Routes {
             list: route_list,
@@ -977,72 +964,51 @@ impl Route {
 }
 
 pub(crate) mod sorter {
+    use super::pattern::Tag;
     use super::*;
 
-    const fn build_sort_table() -> [u8; 256] {
-        let mut table = [0u8; 256];
-        let mut i = 0usize;
-        while i < 256 {
-            table[i] = i as u8;
-            i += 1;
+    /// Sort key of one `/`-delimited segment of a route name. `Tag`'s numeric
+    /// order is the precedence order; static segments also order by name so
+    /// the list stays grouped by directory, parameter names never matter.
+    /// The prefixes are the ones `Pattern::init` dispatches on, and every name
+    /// reaching the sorter already passed `Pattern::validate`.
+    fn segment_key(segment: &[u8]) -> (u8, &[u8]) {
+        if segment.starts_with(b"[[...") {
+            (Tag::OptionalCatchAll as u8, b"")
+        } else if segment.starts_with(b"[...") {
+            (Tag::CatchAll as u8, b"")
+        } else if segment.starts_with(b"[") {
+            (Tag::Dynamic as u8, b"")
+        } else {
+            (Tag::Static as u8, segment)
         }
-        // move dynamic routes to the bottom
-        table[b'[' as usize] = 252;
-        table[b']' as usize] = 253;
-        // of each segment
-        table[b'/' as usize] = 254;
-        table
     }
 
-    static SORT_TABLE: [u8; 256] = build_sort_table();
-
-    pub(crate) fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
-        let n = lhs.len().min(rhs.len());
-        for (lhs_i, rhs_i) in lhs[0..n].iter().zip(&rhs[0..n]) {
-            match SORT_TABLE[*lhs_i as usize].cmp(&SORT_TABLE[*rhs_i as usize]) {
-                Ordering::Equal => continue,
-                Ordering::Less => return true,
-                Ordering::Greater => return false,
-            }
-        }
-        lhs.len().cmp(&rhs.len()) == Ordering::Less
-    }
-
-    pub(crate) fn sort_by_name(a: &Route, b: &Route) -> bool {
+    /// List order is match order (`Routes::match_dynamic` returns the first
+    /// route that matches), so this is Next.js's `getSortedRoutes` precedence:
+    /// routes are compared one segment at a time, the first segment whose kind
+    /// differs decides (static beats `[x]` beats `[...x]` beats `[[...x]]`), and
+    /// a route that ends first comes first. `opt/[[...rest]]` beats `[slug]`
+    /// for `/opt` because `opt` beats `[slug]` at depth one; that the former
+    /// ends in an optional catch-all (its `Route::kind`) is irrelevant.
+    ///
+    /// The only use of `kind` is to sort the fully static routes ahead of
+    /// everything else as a group, because `RouteLoader::load_all` splits the
+    /// list there; they are matched through `Routes::static_`, so their
+    /// relative order is cosmetic.
+    pub(crate) fn compare(a: &Route, b: &Route) -> Ordering {
         let a_name = a.match_name.as_bytes();
         let b_name = b.match_name.as_bytes();
-
-        // route order determines route match order
-        // - static routes go first because we match those first
-        // - dynamic, catch-all, and optional catch all routes are sorted lexicographically, except "[", "]" appear last so that deepest routes are tested first
-        // - catch-all & optional catch-all appear at the end because we want to test those at the end.
-        match (a.kind as u8).cmp(&(b.kind as u8)) {
-            Ordering::Equal => match a.kind {
-                // static + dynamic are sorted alphabetically
-                pattern::Tag::Static | pattern::Tag::Dynamic => sort_by_name_string(a_name, b_name),
-                // catch all and optional catch all must appear below dynamic
-                pattern::Tag::CatchAll | pattern::Tag::OptionalCatchAll => {
-                    match a.param_count.cmp(&b.param_count) {
-                        Ordering::Equal => sort_by_name_string(a_name, b_name),
-                        Ordering::Less => false,
-                        Ordering::Greater => true,
-                    }
-                }
-            },
-            Ordering::Less => true,
-            Ordering::Greater => false,
-        }
-    }
-
-    /// Adapter for slice::sort_by which expects an Ordering.
-    pub(crate) fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
-        if sort_by_name(a, b) {
-            Ordering::Less
-        } else if sort_by_name(b, a) {
-            Ordering::Greater
-        } else {
-            Ordering::Equal
-        }
+        (a.kind != Tag::Static)
+            .cmp(&(b.kind != Tag::Static))
+            .then_with(|| {
+                strings::tokenize(a_name, b"/")
+                    .map(segment_key)
+                    .cmp(strings::tokenize(b_name, b"/").map(segment_key))
+            })
+            // Only differing parameter names remain (`[a]/x` vs `[b]/x`); keep
+            // the winner deterministic instead of up to directory order.
+            .then_with(|| a_name.cmp(b_name))
     }
 }
 

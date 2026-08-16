@@ -166,6 +166,12 @@ static int us_ssl_reneg_state_idx = -1;
 /* Per-connection async-SNI suspension state (select_certificate_cb retry). */
 static int us_ssl_sni_pending_idx = -1;
 static int us_ssl_listener_ex_idx = -1;
+/* (SSL) (void*)1 when this socket was accepted on a listener that had at least
+ * one per-serverName requestCert entry. us_ssl_listener_ex_idx is wiped on
+ * listener close (the SNI tree is freed with it), so the Host-bypass check
+ * cannot resolve the name afterward; this marker lets it fail closed on a
+ * drained connection instead of silently allowing the gated Host. */
+static int us_ssl_accept_cert_policy_ex_idx = -1;
 /* Per-SSL socket-level SNI resolver (us_socket_sni_resolver_t), used when the
  * SSL has no listen socket behind it. */
 static int us_ssl_socket_sni_ex_idx = -1;
@@ -447,6 +453,7 @@ static void us_ex_idx_init(void) {
   us_ssl_reneg_state_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_reneg_state_free);
   us_ssl_sni_pending_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_sni_pending_free);
   us_ssl_listener_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
+  us_ssl_accept_cert_policy_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_socket_sni_ex_idx =
       SSL_get_ex_new_index(0, NULL, NULL, NULL, us_socket_sni_resolver_free);
   us_ssl_is_socket_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
@@ -1584,6 +1591,14 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
     /* sni_cb recovers ls per-SSL — never via the shared SSL_CTX. */
     us_ex_idx_ensure();
     SSL_set_ex_data(ssl, us_ssl_listener_ex_idx, listener);
+    /* Remember, for the lifetime of this SSL, whether it was accepted on a
+     * listener carrying a per-serverName requestCert policy: the listener (and
+     * its SNI tree) can be freed under us while this connection drains, and the
+     * Host-bypass check must then fail closed rather than resolve against a
+     * gone tree. */
+    if (listener && listener->sni_has_cert_policy) {
+      SSL_set_ex_data(ssl, us_ssl_accept_cert_policy_ex_idx, (void *)1);
+    }
   }
 
   s->ssl = ssl;
@@ -2814,7 +2829,15 @@ int us_socket_host_header_bypasses_sni_policy(struct us_socket_t *s,
   if (!ssl) return 0;
   struct us_listen_socket_t *ls =
       (struct us_listen_socket_t *)SSL_get_ex_data(ssl, us_ssl_listener_ex_idx);
-  if (!ls || !ls->sni_has_cert_policy || !ls->sni) return 0;
+  if (!ls || !ls->sni_has_cert_policy || !ls->sni) {
+    /* The listener (and its SNI tree) was freed while this connection drains
+     * after server.close(). If it was accepted on a cert-policy listener, the
+     * Host can no longer be proved ungated, so fail closed: reject rather than
+     * serve a gated name over a connection whose policy can't be verified. A
+     * socket never accepted on such a listener (plain adopted TLS, or a server
+     * with no gated name) keeps the fast path. */
+    return SSL_get_ex_data(ssl, us_ssl_accept_cert_policy_ex_idx) != NULL;
+  }
   /* Sized for a maximal 253-char DNS name plus the root dot and NUL. */
   char name[255];
   if (!us_internal_normalize_host_header(host, host_len, name, sizeof(name))) return 0;

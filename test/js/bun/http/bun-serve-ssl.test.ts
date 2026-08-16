@@ -425,4 +425,40 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     const bypass = await h3({ Host: "admin.example.com" });
     expect({ innocent: innocent.status, bypass: bypass.status }).toEqual({ innocent: 200, bypass: 421 });
   });
+
+  // The check resolves the Host against the accepting listener's SNI tree.
+  // A graceful server.stop() frees that tree while connections drain, so the
+  // check must fail closed: a gated Host on a connection whose policy can no
+  // longer be verified gets 421, not served.
+  test("a gated Host fails closed on a connection draining after server.stop()", async () => {
+    const server = Bun.serve({
+      port: 0,
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: "admin.example.com",
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      ],
+      fetch: req => new Response(`served ${req.headers.get("host")}`),
+    });
+    const { promise, resolve } = Promise.withResolvers<string>();
+    // No SNI (connect by IP): lands on the default context, no client cert.
+    const socket = tls.connect({ host: "127.0.0.1", port: server.port, rejectUnauthorized: false });
+    let received = "";
+    socket.on("secureConnect", () => {
+      // Graceful stop frees the listener (and its SNI tree) synchronously,
+      // while this handshaked-but-idle connection stays open to drain.
+      server.stop();
+      socket.write("GET / HTTP/1.1\r\nHost: admin.example.com\r\nConnection: close\r\n\r\n");
+    });
+    socket.on("data", chunk => (received += chunk.toString()));
+    socket.on("error", () => {});
+    socket.on("close", () => resolve(received.split("\r\n")[0] || "connection closed without a response"));
+    expect(await promise).toBe("HTTP/1.1 421 Misdirected Request");
+  });
 });

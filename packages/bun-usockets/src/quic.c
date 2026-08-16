@@ -115,9 +115,11 @@ struct us_quic_socket_s {
     int going_away;
     char *hostname;
     /* Server only: the SSL_CTX the handshake negotiated (the SNI-selected
-     * sni[] entry or the default), captured at hsk_done because lsquic drops
-     * the per-connection SSL object once the handshake is confirmed. Borrowed
-     * for pointer comparison only; every registered ctx outlives the conns. */
+     * sni[] entry or the default), captured at on_new_conn because lsquic
+     * drops the per-connection SSL object once the handshake is confirmed.
+     * Borrowed for pointer comparison only; every registered ctx outlives the
+     * conns. NULL only if lsquic_conn_get_ssl returned NULL at accept, which
+     * the per-request check below treats as fail-closed. */
     struct ssl_ctx_st *negotiated_ctx;
     /* ext follows */
 };
@@ -1148,7 +1150,11 @@ int us_quic_stream_host_header_bypasses_sni_policy(us_quic_stream_t *s,
     SSL_CTX *named = us_quic_match_sni_named(ctx, name);
     if (!named || !us_internal_ssl_ctx_sni_request_cert(named)) return 0;
     us_quic_socket_t *qs = us_quic_stream_socket(s);
-    if (!qs || !qs->negotiated_ctx) return 0;
+    if (!qs) return 0;
+    /* The :authority names a gated entry; without the negotiated context we
+     * cannot prove the handshake applied its policy, so fail closed (same
+     * direction the HTTP/1 check takes when SSL_get_SSL_CTX is unavailable). */
+    if (!qs->negotiated_ctx) return 1;
     return qs->negotiated_ctx != named;
 }
 

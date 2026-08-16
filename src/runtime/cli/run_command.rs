@@ -713,7 +713,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 // Say so. A silent substitution makes every downstream
                 // oddity (wrong package name, unexpected $PATH entry) look
                 // like it came from somewhere else.
-                if log_errors {
+                if opts.log_errors {
                     pretty_errorln!(
                         "<r><yellow>warn<r><d>:<r> cannot read {}; resolving from <b>{}<r> instead",
                         bun_core::fmt::QuotedFormatter {

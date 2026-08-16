@@ -179,7 +179,9 @@ describe.skipIf(!cg)("spawn({ cgroup })", () => {
 // These exercise the option's plumbing without root or a writable cgroupfs: a
 // plain directory is not a cgroup2 dir, so CLONE_INTO_CGROUP is refused and the
 // child falls back to writing "0" into <dir>/cgroup.procs before exec.
-describe.concurrent.skipIf(!isLinux)("spawn({ cgroup }) without cgroupfs", () => {
+// OHOS: the pre-exec cgroup.procs write is compiled out (bun-spawn.cpp),
+// so the fallback path never happens there.
+describe.concurrent.skipIf(!isLinux || Bun.env.BUN_OHOS === "1")("spawn({ cgroup }) without cgroupfs", () => {
   test("child writes itself into <dir>/cgroup.procs before exec", async () => {
     using dir = tempDir("spawn-cgroup", { "cgroup.procs": "" });
     await using proc = Bun.spawn({

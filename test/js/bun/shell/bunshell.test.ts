@@ -91,6 +91,89 @@ describe("bunshell", () => {
     );
   });
 
+  // touch and mkdir (everywhere) and cat (on Windows) resolve the operand
+  // against the cwd before the syscall; the error must still name the operand
+  // as the user wrote it, like ls/rm/mv and the system coreutils do. The flag
+  // turns the builtin cat on outside Windows; touch and mkdir are always
+  // builtins.
+  test("builtins name a failing operand as written", async () => {
+    using dir = tempDir("builtin-operand-as-written", { sub: {}, afile: "" });
+    const enoent = "No such file or directory";
+    const enotdir = "Not a directory";
+    // The operand is the last word of each command; stderr must be exactly
+    // `<builtin>: <operand>: <message>`.
+    const rows: [command: string[], message: string][] = [
+      [["cat", "missing.txt"], enoent],
+      [["cat", "sub/missing.txt"], enoent],
+      [["cat", "/bunshell-missing-operand/missing.txt"], enoent],
+      [["cat", join(String(dir), "missing.txt")], enoent],
+      [["touch", "nodir/file.txt"], enoent],
+      [["touch", "sub/nodir/file.txt"], enoent],
+      [["touch", "/bunshell-missing-operand/file.txt"], enoent],
+      [["touch", join(String(dir), "nodir", "file.txt")], enoent],
+      // A missing parent fails in the open() touch falls back to; a file in
+      // the way already fails in utimes() (Windows reports that as ENOENT too).
+      [["touch", "afile/file.txt"], isWindows ? enoent : enotdir],
+      [["mkdir", "nodir/child"], enoent],
+      [["mkdir", "sub/nodir/child"], enoent],
+      [["mkdir", "/bunshell-missing-operand/child"], enoent],
+      [["mkdir", join(String(dir), "nodir", "child")], enoent],
+      // -p is a separate code path; like before, it names the operand rather
+      // than the component that failed.
+      [["mkdir", "-p", "afile/child"], enotdir],
+    ];
+    // The first row of each builtin is also run with stderr redirected to a
+    // file, which takes the builtins' other output path.
+    const redirected = ["cat", "touch", "mkdir"].map(builtin => rows.find(([command]) => command[0] === builtin)!);
+
+    const script = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const results = {};
+      const record = async (key, promise) => {
+        const r = await promise.quiet();
+        results[key] = { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+      };
+      for (const command of ${JSON.stringify(rows.map(([command]) => command))}) {
+        const words = command.slice(0, -1).join(" ");
+        const operand = command[command.length - 1];
+        await record(command.join(" "), $\`\${{ raw: words }} \${operand}\`);
+      }
+      for (const command of ${JSON.stringify(redirected.map(([command]) => command))}) {
+        const words = command.slice(0, -1).join(" ");
+        const operand = command[command.length - 1];
+        const errFile = "err-" + command[0] + ".txt";
+        await record(command.join(" ") + " 2> " + errFile, $\`\${{ raw: words }} \${operand} 2> \${{ raw: errFile }}\`);
+      }
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [BUN, "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    const errorLine = (command: string[], message: string) =>
+      `${command[0]}: ${command[command.length - 1]}: ${message}\n`;
+    const results = JSON.parse(stdout);
+    const expected: Record<string, unknown> = {};
+    for (const [command, message] of rows) {
+      expected[command.join(" ")] = { stdout: "", stderr: errorLine(command, message), exitCode: 1 };
+    }
+    for (const [command, message] of redirected) {
+      const errFile = `err-${command[0]}.txt`;
+      expected[`${command.join(" ")} 2> ${errFile}`] = { stdout: "", stderr: "", exitCode: 1 };
+      expected[errFile] = errorLine(command, message);
+      results[errFile] = await Bun.file(join(String(dir), errFile)).text();
+    }
+    expect(results).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
   describe("concurrency", () => {
     test("writing to stdout", async () => {
       await Promise.all([
@@ -560,9 +643,7 @@ describe("bunshell", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    // On Windows the message carries the absolute path (shell_openat only
-    // re-tags the error with the argument as written on POSIX).
-    const missingFileError = expect.stringMatching(/^cat: (.*[\\/])?missing\.txt: No such file or directory\n$/);
+    const missingFileError = "cat: missing.txt: No such file or directory\n";
     expect(JSON.parse(stdout)).toEqual({
       "captured": { stdout: "hi\n", stderr: "", exitCode: 0 },
       "stdout to fd": { stdout: "", stderr: "", exitCode: 0 },

@@ -57,16 +57,6 @@ pub(crate) fn enobufs_error_code(
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn einval_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::js_number_from_int32(-UV_E::INVAL))
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn ebadf_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    Ok(JSValue::js_number_from_int32(-UV_E::BADF))
-}
-
-#[bun_jsc::host_fn]
 pub(crate) fn uv_translate_sys_error(
     _global: &JSGlobalObject,
     frame: &CallFrame,

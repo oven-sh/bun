@@ -382,16 +382,11 @@ impl<'a> LinkerContext<'a> {
         path: &bun_paths::fs::Path<'static>,
         arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
-        generic_path_with_pretty_initialized(
-            path,
-            self.options.target,
-            self.pretty_path_base_dir(),
-            arena,
-        )
+        generic_path_with_pretty_initialized(path, self.options.target, self.top_level_dir(), arena)
     }
 
-    /// Same rule as `BundleV2::pretty_path_base_dir`.
-    pub(crate) fn pretty_path_base_dir(&self) -> &[u8] {
+    /// `BundleOptions::top_level_dir`, read through the resolver's copy of the options.
+    fn top_level_dir(&self) -> &[u8] {
         if self.dev_server.is_some() {
             let root_dir: &[u8] = &self.resolver().opts.root_dir;
             debug_assert!(!root_dir.is_empty());

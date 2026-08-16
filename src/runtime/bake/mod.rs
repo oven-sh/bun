@@ -238,7 +238,7 @@ impl Framework {
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
-        // Read by the bundler's `pretty_path_base_dir`.
+        // Becomes `BundleOptions::top_level_dir()` for this build.
         out.options.root_dir = root.into();
 
         out.options.react_fast_refresh = mode == Mode::Development

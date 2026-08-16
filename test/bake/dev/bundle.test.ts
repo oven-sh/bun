@@ -926,12 +926,17 @@ devTest("app.root that is not the cwd", {
 });
 devTest("process.chdir() after the server was created", {
   files: {
+    // Root-absolute specifiers resolve against the project root, so the second
+    // script also depends on which directory the server considers the root.
     "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
+      scripts: ["index.ts", "/rooted.ts"],
     }),
     "index.ts": `
       console.log("loaded");
       import.meta.hot.accept();
+    `,
+    "rooted.ts": `
+      console.log("rooted loaded");
     `,
     "elsewhere/placeholder.txt": "",
     "bun.app.ts": `
@@ -957,7 +962,7 @@ devTest("process.chdir() after the server was created", {
     await dev.fetch("/chdir").equals("ok");
 
     await using c = await dev.client("/");
-    await c.expectMessage("loaded");
+    await c.expectMessageInAnyOrder("loaded", "rooted loaded");
 
     await dev.write(
       "index.ts",

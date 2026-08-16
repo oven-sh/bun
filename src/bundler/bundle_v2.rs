@@ -2492,7 +2492,7 @@ pub mod bv2_impl {
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
-                >(self.pretty_path_base_dir(), path.text);
+                >(self.transpiler.options.top_level_dir(), path.text);
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
@@ -5747,18 +5747,6 @@ pub mod bv2_impl {
             false
         }
 
-        /// Dev server bundles use the dev server's root (its transpilers' `root_dir`):
-        /// pretty paths are the module ids there, and the dev server resolves ids
-        /// against that root, which is not the cwd under `app.root` or after chdir().
-        fn pretty_path_base_dir(&self) -> &[u8] {
-            if self.dev_server.is_some() {
-                debug_assert!(!self.transpiler.options.root_dir.is_empty());
-                &self.transpiler.options.root_dir
-            } else {
-                self.transpiler.fs().top_level_dir
-            }
-        }
-
         fn path_with_pretty_initialized(
             &self,
             path: &Fs::Path<'static>,
@@ -5771,7 +5759,7 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.pretty_path_base_dir(),
+                self.transpiler.options.top_level_dir(),
                 bump,
             )?;
             Ok(out)
@@ -6357,12 +6345,13 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
+                                        // Undo the join `HTMLScanner` did for root-absolute specifiers.
+                                        let top_level_dir = transpiler.options.top_level_dir();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir,
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir.len()..];
+                                            && import_record.path.text.starts_with(top_level_dir)
+                                        {
+                                            let specifier_to_use =
+                                                &import_record.path.text[top_level_dir.len()..];
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
@@ -7570,7 +7559,7 @@ pub mod bv2_impl {
     pub fn generic_path_with_pretty_initialized(
         path: &bun_paths::fs::Path<'static>,
         target: options::Target,
-        base_dir: &[u8],
+        top_level_dir: &[u8],
         bump: &bun_alloc::Arena,
     ) -> crate::Result<bun_paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
@@ -7592,7 +7581,7 @@ pub mod bv2_impl {
             let rel = bun_paths::resolve_path::relative_platform_buf::<
                 bun_paths::resolve_path::platform::Loose,
                 false,
-            >(&mut **buf2, base_dir, path.text);
+            >(&mut **buf2, top_level_dir, path.text);
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             if target == options::Target::ServerComponentsSsr {
                 let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);

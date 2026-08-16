@@ -2,7 +2,6 @@ use core::marker::PhantomData;
 use std::borrow::Cow;
 
 use crate::Error;
-use crate::bun_fs as fs;
 use bun_alloc::AstAlloc;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Log, Range, Source};
@@ -18,14 +17,21 @@ pub(crate) struct HTMLScanner<'a> {
     pub import_records: Vec<ImportRecord>,
     pub log: &'a mut Log,
     pub source: &'a Source,
+    /// `BundleOptions::top_level_dir`: what root-absolute specifiers resolve against.
+    pub top_level_dir: &'a [u8],
 }
 
 impl<'a> HTMLScanner<'a> {
-    pub(crate) fn init(log: &'a mut Log, source: &'a Source) -> HTMLScanner<'a> {
+    pub(crate) fn init(
+        log: &'a mut Log,
+        source: &'a Source,
+        top_level_dir: &'a [u8],
+    ) -> HTMLScanner<'a> {
         HTMLScanner {
             import_records: Vec::new(),
             log,
             source,
+            top_level_dir,
         }
     }
 }
@@ -35,10 +41,7 @@ impl<'a> HTMLScanner<'a> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
-            resolve_path::join_abs_string::<platform::Auto>(
-                fs::FileSystem::instance().top_level_dir,
-                &[&input_path[1..]],
-            )
+            resolve_path::join_abs_string::<platform::Auto>(self.top_level_dir, &[&input_path[1..]])
         }
         // Check if imports to (e.g) "App.tsx" are actually relative imoprts w/o the "./"
         else if input_path.len() > 2 && input_path[0] != b'.' && input_path[1] != b'/' {

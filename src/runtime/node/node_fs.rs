@@ -7845,8 +7845,7 @@ impl NodeFS {
                 ))));
             }
         }
-        // With `throwIfNoEntry: false`, node's stat() reports both ENOENT and
-        // ENOTDIR as "no entry"; its lstat() only does so for ENOENT.
+        // node swallows ENOTDIR as well as ENOENT here, but only ENOENT in lstat().
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {

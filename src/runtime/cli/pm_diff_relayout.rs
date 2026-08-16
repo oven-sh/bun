@@ -118,8 +118,11 @@ fn class(arena: C, c: &mut bun_ast::G::Class) {
         opt_expr(arena, &mut p.value);
         opt_expr(arena, &mut p.initializer);
         if let Some(block) = &mut p.class_static_block {
-            for s in block.stmts.iter_mut() {
-                stmt(arena, s);
+            let mut list = StoreSlice::new_mut(block.stmts.as_mut_slice());
+            stmt_list(arena, &mut list);
+            if list.len() != block.stmts.len() {
+                block.stmts.clear();
+                block.stmts.extend_from_slice(list.slice());
             }
         }
     }

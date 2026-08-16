@@ -779,7 +779,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     let r = await pretty({ "a/m.js": one, "b/m.js": three });
     expect(r.text).toMatch(/\nm\.js ─+ formatting only\n/);
     // minified: both sides re-print the object the same way in the un-minified view
-    const pad = "/*" + "x".repeat(300) + "*/";
+    const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";
     const min = "module.exports=function m(t,c){return{$$typeof:1,type:t,compare:c===void 0?null:c}};";
     r = await pretty({ "a/m.min.js": pad + min, "b/m.min.js": pad + min.replace("return{", "return{\n") });
     expect(r.text).toMatch(/\nm\.min\.js ─+ formatting only\n/);

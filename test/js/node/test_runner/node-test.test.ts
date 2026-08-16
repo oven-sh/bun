@@ -1,36 +1,32 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import { run } from "node:test";
 
-describe("node:test", () => {
-  // These three drive the largest fixtures (01-harness has 32 node:test cases);
-  // a debug+ASAN `bun test` child takes several seconds to start, so give them
-  // headroom and let them spawn in parallel instead of serially.
-  test.concurrent(
-    "should run basic tests",
-    async () => {
-      const { exitCode, stderr } = await runTests(["01-harness.js"]);
-      expect({ exitCode, stderr }).toMatchObject({
-        exitCode: 0,
-        stderr: expect.stringContaining("0 fail"),
-      });
-    },
-    30_000,
-  );
+// Nearly every test here spawns a bun child, and a debug+ASAN child takes
+// several seconds just to start (more on a loaded machine), so the 5s default
+// is marginal for all of them. CI passes a much larger --timeout regardless.
+setDefaultTimeout(30_000);
 
-  test.concurrent(
-    "should run hooks in the right order",
-    async () => {
-      const { exitCode, stderr } = await runTests(["02-hooks.js"]);
-      expect({ exitCode, stderr }).toMatchObject({
-        exitCode: 0,
-        stderr: expect.stringContaining("0 fail"),
-      });
-    },
-    30_000,
-  );
+describe("node:test", () => {
+  // These three drive the largest fixtures (01-harness has 32 node:test cases),
+  // so let them spawn in parallel instead of serially.
+  test.concurrent("should run basic tests", async () => {
+    const { exitCode, stderr } = await runTests(["01-harness.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test.concurrent("should run hooks in the right order", async () => {
+    const { exitCode, stderr } = await runTests(["02-hooks.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
 
   test("should run tests with different variations", async () => {
     const { exitCode, stderr } = await runTests(["03-test-variations.js"]);
@@ -48,18 +44,14 @@ describe("node:test", () => {
     });
   });
 
-  test.concurrent(
-    "should run all tests from multiple files",
-    async () => {
-      const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
-      expect({ exitCode, stderr }).toMatchObject({
-        exitCode: 0,
-        // 32 from 01-harness + 3 from 02-hooks
-        stderr: expect.stringContaining("35 pass"),
-      });
-    },
-    30_000,
-  );
+  test.concurrent("should run all tests from multiple files", async () => {
+    const { exitCode, stderr } = await runTests(["01-harness.js", "02-hooks.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      // 32 from 01-harness + 3 from 02-hooks
+      stderr: expect.stringContaining("35 pass"),
+    });
+  });
 
   test("should run test() and describe() called inside another test() as subtests", async () => {
     const { exitCode, stderr } = await runTests(["05-test-in-test.js"]);

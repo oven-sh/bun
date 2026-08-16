@@ -1,8 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
+
+// Worker startup under debug/ASAN is slow enough that several tests here
+// cannot finish inside the 5s default (same ceiling worker_threads.test.ts uses).
+setDefaultTimeout(isDebug ? 90_000 : 10_000);
 
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
@@ -449,8 +453,10 @@ describe("web worker", () => {
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
       w.onmessage = () => received++;
-      // Three timer turns while the flood is running is the property; not the timing.
-      for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
+      // Timer turns keep firing while the flood runs is the property; poll until
+      // the flood reaches us (worker startup outlasts a fixed turn count under
+      // debug/ASAN) rather than counting turns.
+      while (received === 0) await new Promise<void>(r => setTimeout(r, 10));
       expect(received).toBeGreaterThan(0);
       w.terminate();
       await once(w, "close");

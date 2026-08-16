@@ -50,6 +50,23 @@ devTest("symbol collision with import identifier", {
     await dev.fetch("/").equals("Hello, 456, 987!");
   },
 });
+devTest("same top-level name in two modules keeps Function.prototype.name (#18017)", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { App as Other } from "./other";
+      export function App() {}
+      console.log(App.name + " " + Other.name);
+    `,
+    "other.ts": `
+      export function App() {}
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("App App");
+  },
+});
 devTest('uses "development" condition', {
   framework: minimalFramework,
   files: {

@@ -140,7 +140,7 @@ function helperFunction() {
     const cleanLines = lines.replace(/\x1b\[[0-9;]*m/g, "");
 
     const hasUtilsThrowLine = cleanLines.includes("helperFunction") && cleanLines.includes("5:1");
-    const hasUtilsCallLine = cleanLines.includes("doSomething2") && cleanLines.includes("1:28");
+    const hasUtilsCallLine = cleanLines.includes("doSomething") && cleanLines.includes("1:31");
     const hasPageCallLine = cleanLines.includes("NestedPage") && cleanLines.includes("3:38");
 
     expect(hasUtilsThrowLine).toBe(true);
@@ -194,8 +194,8 @@ devTest("server-side source maps stay correct across repeated reloads", {
       const cleanLines = dev.output.lines.join("\n").replace(/\x1b\[[0-9;]*m/g, "");
       // The throwing function is declared on line 6 + i of round i's version
       // of the source file; frames remap to the declaration position (see the
-      // `helperFunction`/`5:1` expectation above). `\w*` tolerates bundler
-      // symbol renaming (see `doSomething2` above).
+      // `helperFunction`/`5:1` expectation above). `\w*` tolerates any numeric
+      // suffix the bundler's renamer adds.
       expect(cleanLines).toMatch(new RegExp(`at churn${name}\\w* \\(.*pages[/\\\\]churn\\.tsx:${6 + i}:1\\)`));
     }
   },

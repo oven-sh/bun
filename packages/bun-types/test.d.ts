@@ -64,6 +64,7 @@ declare module "bun:test" {
    * - `Date.now()`
    * - `new Date()`
    * - `Intl.DateTimeFormat().format()`
+   * - `Temporal.Now` (`instant()`, `zonedDateTimeISO()`, `plainDateTimeISO()`, `plainDateISO()`, `plainTimeISO()`)
    *
    * @param now The time to set the system time to. If omitted, the system time is reset
    * @returns `this`

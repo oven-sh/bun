@@ -3086,16 +3086,19 @@ pub mod mock {
         Other,
     }
 
+    /// Unlike [`jest_mock_return_object_type`], a malformed or `incomplete`
+    /// entry is reported as [`MockResult::Other`] rather than thrown: the
+    /// `*ReturnedWith` matchers skip such entries.
     pub(crate) fn parse_mock_result(global: &JSGlobalObject, result: JSValue) -> JsResult<MockResult> {
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
-                if type_str.eql_comptime("return") {
-                    return Ok(MockResult::Return(result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED)));
-                }
-                if type_str.eql_comptime("throw") {
-                    return Ok(MockResult::Throw(result));
+                match RETURN_STATUS_MAP.from_js(global, result_type)? {
+                    Some(ReturnStatus::Return) => {
+                        return Ok(MockResult::Return(result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED)));
+                    }
+                    Some(ReturnStatus::Throw) => return Ok(MockResult::Throw(result)),
+                    Some(ReturnStatus::Incomplete) | None => {}
                 }
             }
         }

@@ -686,28 +686,30 @@ describe("keeps the event loop alive while a message listener is attached", () =
     Bun.gc(true);
     const base = count();
     await (async () => {
-      for (let i = 0; i < 3; i++) {
-        const channel = new MessageChannel();
-        const closed = Promise.withResolvers<void>();
-        channel.port1.addEventListener("close", () => closed.resolve());
-        channel.port1.addEventListener("message", () => {});
-        const worker = new Worker(
-          `
-            const { workerData } = require("worker_threads");
-            workerData.messagePort = null;             // drop the only ref
-            for (let i = 0; i < 10; i++) Bun.gc(true); // collect it inside the worker
-            `,
-          { eval: true, workerData: { messagePort: channel.port2 }, transferList: [channel.port2] },
-        );
-        await closed.promise;
-        await new Promise(r => worker.on("exit", r));
-      }
+      const channels = Array.from({ length: 10 }, () => new MessageChannel());
+      const closes = channels.map(c => new Promise<void>(r => c.port1.addEventListener("close", () => r())));
+      for (const c of channels) c.port1.addEventListener("message", () => {});
+      const worker = new Worker(
+        `
+        const { workerData } = require("worker_threads");
+        workerData.ports = null;                   // drop the only refs
+        for (let i = 0; i < 10; i++) Bun.gc(true); // collect them inside the worker
+        `,
+        {
+          eval: true,
+          workerData: { ports: channels.map(c => c.port2) },
+          transferList: channels.map(c => c.port2),
+        },
+      );
+      await Promise.all(closes);
+      await new Promise(r => worker.on("exit", r));
     })();
-    for (let i = 0; i < 4; i++) await new Promise(r => setImmediate(r));
+    for (let i = 0; i < 8; i++) await new Promise(r => setImmediate(r));
     Bun.gc(true);
     Bun.gc(true);
-    // All 3 listening ports (and their collected peers) must be swept; allow
-    // small slack for GC nondeterminism.
-    expect(count() - base).toBeLessThanOrEqual(2);
+    // Unfixed, all 10 listening ports stay pinned. Allow generous slack for
+    // wrappers kept by conservative stack scanning, which does not scale with
+    // the channel count.
+    expect(count() - base).toBeLessThanOrEqual(5);
   }, 60_000);
 });

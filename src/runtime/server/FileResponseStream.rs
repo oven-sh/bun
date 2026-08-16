@@ -504,11 +504,8 @@ impl FileResponseStream {
     }
 
     /// Clear all uWS callbacks pointing at us. Must run while `resp` is still
-    /// live (i.e., before `resp.end()` / `end_send_file()` / `force_close()` give
-    /// the socket back to uWS, which may free it on the next loop tick). After
-    /// this runs, `finish()` — which the reader still reaches through
-    /// `on_reader_done` after the chunk that ended the response — will not
-    /// touch `resp` again.
+    /// live, i.e. before `resp.end()` / `end_send_file()` / `force_close()` give
+    /// the socket back to uWS; the stream does not touch `resp` after that.
     fn detach_resp(&self) {
         if self.state.get().contains(State::RESP_DETACHED) {
             return;
@@ -575,11 +572,9 @@ impl FileResponseStream {
 // BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
 // cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
-// the duration of the handler since it can end in `finish()`. `ref_`/`deref`
-// pin the stream for the whole of a read dispatch: the chunk that uses the
-// body length up is followed by `on_reader_done` (which releases the owning
-// ref) while the reader's read loop or libuv completion still has the reader
-// embedded here on its stack.
+// the duration of the handler since it can end in `finish()`; `ref_`/`deref`
+// keep the stream alive for the reader's whole dispatch, which uses the reader
+// embedded here after `on_reader_done` has released the owning ref.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;

@@ -148,13 +148,8 @@ impl Drop for ParentKeepAlive {
     }
 }
 
-/// Bytes the reader may still take out of its source (a blob slice window), or `None` to read to EOF.
-///
-/// Enforced at the read itself: every read is cut to what is left, so the bytes after the window stay
-/// in a pipe or socket for the next reader, and using the window up is reported exactly like EOF
-/// (`Stop::Eof` / `ReadState::Eof` followed by `on_reader_done`), which is what ends the parent's stream.
-/// A window that is already used up is reported on the parent's first read request without touching
-/// the source, so an empty slice of a pipe ends without waiting for bytes it would not deliver anyway.
+/// Bytes the reader may still take out of its source (a blob slice window); `None` reads to EOF.
+/// Every read is cut to it before the syscall, and using it up (or starting used up) is reported as EOF.
 #[derive(Clone, Copy)]
 struct ReadLimit(Option<usize>);
 

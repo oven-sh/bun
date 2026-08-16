@@ -522,8 +522,7 @@ pub struct S3SimpleRequestOptions<'a> {
 
     // http request options
     pub(crate) body: &'a [u8],
-    /// Explicit proxy override (`fetch("s3://…", { proxy })`). `None`/empty
-    /// resolves HTTP_PROXY/HTTPS_PROXY from the env against the signed URL.
+    /// Explicit override; `None`/empty resolves env proxies per request.
     pub(crate) proxy_url: Option<&'a [u8]>,
     /// Owned; ownership transfers to the spawned task (or is dropped on sign error).
     pub(crate) range: Option<Box<[u8]>>,
@@ -551,17 +550,10 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     }
 }
 
-/// Resolve the proxy for an S3 request against the signed request URL,
-/// matching fetch: an explicit proxy (`fetch("s3://…", { proxy })`) is used
-/// as-is but still subject to NO_PROXY; otherwise HTTP_PROXY/HTTPS_PROXY is
-/// selected from the URL scheme with the NO_PROXY filter applied.
-///
-/// Returns an owned copy (possibly empty = no proxy): the env-derived href
-/// borrows the dotenv loader's map, which a later `process.env.HTTP_PROXY =`
-/// assignment can free while the request is in flight on the HTTP thread.
+/// Resolve the proxy like fetch: an explicit proxy is still subject to
+/// NO_PROXY; otherwise HTTP_PROXY/HTTPS_PROXY is picked by URL scheme.
+/// Owned (empty = none): `process.env` writes can free the env href.
 pub(crate) fn resolve_proxy_url(url: &URL<'_>, explicit: Option<&[u8]>) -> Box<[u8]> {
-    // `Transpiler::env_mut` is the safe accessor for the process-singleton
-    // dotenv loader (set during init).
     let env = VirtualMachine::get().transpiler.env_mut();
     if let Some(explicit) = explicit {
         if !explicit.is_empty() {

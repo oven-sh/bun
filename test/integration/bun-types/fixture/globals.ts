@@ -336,6 +336,14 @@ new Error("asdf", {
   cause: new Error("asdf"),
 });
 
+expectType(new DOMException("asdf", "AbortError")).is<DOMException>();
+expectType(new DOMException("asdf", { name: "AbortError", cause: err })).is<DOMException>();
+expectType(new DOMException("asdf", { name: "AbortError" })).is<DOMException>();
+expectType(new DOMException("asdf", { cause: "asdf" })).is<DOMException>();
+expectType(new DOMException().cause).is<unknown>();
+// @ts-expect-error the second argument is a name or an options object
+new DOMException("asdf", 20);
+
 // @ts-expect-error this interface is defined top level in globals.d.ts so we
 // are making sure that .d.ts is a module and that anything top level doesn't
 // leak to userland

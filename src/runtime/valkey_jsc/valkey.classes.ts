@@ -12,6 +12,8 @@ export default [
     configurable: false,
     JSType: "0b11101110",
     memoryCost: true,
+    // Every member here needs a declaration in packages/bun-types/redis.d.ts;
+    // test/internal/source-lints/redis-client-types.test.ts checks the two match.
     proto: {
       connected: {
         getter: "getConnected",

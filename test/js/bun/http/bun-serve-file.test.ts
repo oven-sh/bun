@@ -72,9 +72,8 @@ describe("Bun.file in serve routes", () => {
       }),
       "/partial.txt": new Response(Bun.file(join(tempDir, "partial.txt"))),
       "/partial-slice.txt": new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10)),
-      // An unread Bun.file() stream is turned back into the file Blob when a
-      // route or handler response is built from it; the slice must survive.
-      "/partial-slice-stream.txt": new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10).stream()),
+      // Rendering a handler response built from an unread Bun.file() stream
+      // turns the stream back into the file Blob; the slice must survive that.
       "/partial-slice-stream-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 10).stream()),
       "/partial-open-slice-stream-handler": () =>
         new Response(Bun.file(join(tempDir, "partial.txt")).slice(10).stream()),
@@ -722,13 +721,6 @@ describe("Bun.file in serve routes", () => {
       expect(res.headers.get("Content-Length")).toBe("5");
     });
 
-    it("serves the slice behind a sliced file's stream as a route", async () => {
-      const res = await fetch(new URL(`/partial-slice-stream.txt`, server.url));
-      expect(res.status).toBe(200);
-      expect(await res.text()).toBe("56789");
-      expect(res.headers.get("Content-Length")).toBe("5");
-    });
-
     it("serves the slice behind a sliced file's stream from a handler", async () => {
       const serve = async (pathname: string) => {
         const get = await fetch(new URL(pathname, server.url));
@@ -1219,6 +1211,85 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
   } finally {
     closeSync(writerFd);
   }
+});
+
+// A file route serves the window of the Bun.file() slice it was built from,
+// given either the slice or its unread stream (which is turned back into the
+// slice). FileRoute used to clamp the window to the file size without taking
+// the offset off, and to send an empty window to EOF: on this 16-byte file
+// slice(10) declared Content-Length: 16 and sent 6 bytes, slice(5, 5) declared
+// 0 and sent 11. Only the wire shows that (RFC 9112 6.3); fetch() drops bytes
+// past the declared length and turns a short body into a connection error.
+test("file routes frame a slice that reaches or starts past EOF by the bytes they serve", async () => {
+  using dir = tempDir("serve-file-route-slice-framing", { "partial.txt": "0123456789ABCDEF" });
+  const file = () => Bun.file(join(String(dir), "partial.txt"));
+  const windows = {
+    "slice(5, 10)": () => file().slice(5, 10),
+    "slice(10)": () => file().slice(10),
+    "slice(10, 100)": () => file().slice(10, 100),
+    "slice(5, 5)": () => file().slice(5, 5),
+    "slice(100)": () => file().slice(100),
+    "whole file": () => file(),
+  };
+  const names = Object.keys(windows) as (keyof typeof windows)[];
+  await using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: Object.fromEntries(
+      names.flatMap((name, i) => [
+        [`/blob/${i}`, new Response(windows[name]())],
+        [`/stream/${i}`, new Response(windows[name]().stream())],
+      ]),
+    ),
+    fetch: () => new Response("fallback", { status: 404 }),
+  });
+
+  // One GET on its own connection; `Connection: close` makes the server hang
+  // up once it considers the response finished, so `body` is every byte that
+  // followed the head, however many the head declared.
+  async function wire(path: string) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    let captured = "";
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open(socket) {
+          socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+        },
+        data(_socket, chunk) {
+          captured += Buffer.from(chunk).toString("latin1");
+        },
+        close() {
+          resolve(captured);
+        },
+        error() {
+          resolve(captured);
+        },
+      },
+    });
+    const raw = await promise;
+    const headEnd = raw.indexOf("\r\n\r\n");
+    return {
+      contentLength: /^content-length:\s*(\d+)/im.exec(raw.slice(0, headEnd))?.[1] ?? null,
+      body: raw.slice(headEnd + 4),
+    };
+  }
+
+  const results: Record<string, unknown> = {};
+  for (const [i, name] of names.entries()) {
+    results[name] = { blob: await wire(`/blob/${i}`), stream: await wire(`/stream/${i}`) };
+  }
+
+  const exactly = (body: string) => ({ contentLength: String(body.length), body });
+  expect(results).toEqual({
+    "slice(5, 10)": { blob: exactly("56789"), stream: exactly("56789") },
+    "slice(10)": { blob: exactly("ABCDEF"), stream: exactly("ABCDEF") },
+    "slice(10, 100)": { blob: exactly("ABCDEF"), stream: exactly("ABCDEF") },
+    "slice(5, 5)": { blob: exactly(""), stream: exactly("") },
+    "slice(100)": { blob: exactly(""), stream: exactly("") },
+    "whole file": { blob: exactly("0123456789ABCDEF"), stream: exactly("0123456789ABCDEF") },
+  });
 });
 
 // A request that declares a body arms the request-body (onData) callback on

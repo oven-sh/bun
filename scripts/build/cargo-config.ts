@@ -107,6 +107,10 @@ export function generateCargoConfig(cfg: Config): string {
       // STATUS_ACCESS_VIOLATION rather than a link error. The LNK2019/LNK4088
       // text link.exe still prints under /FORCE only reaches the user via
       // rustc's linker_messages lint, which the workspace lints already allow.
+      // The flag reaches every link a bare cargo performs on this host, but
+      // test/bench binaries are the only target executables bare cargo
+      // produces here: bun_bin is a staticlib, and bun_shim_impl is only
+      // built by rust.ts, whose CARGO_ENCODED_RUSTFLAGS replaces this table.
       lines.push(`rustflags = ["-C", "link-arg=/FORCE:UNRESOLVED"]`);
       continue;
     }

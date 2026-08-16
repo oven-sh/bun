@@ -20,7 +20,11 @@ import { generateCargoConfig } from "../../scripts/build/cargo-config.ts";
 import { resolveConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { allRustTargets } from "../../scripts/build/rust.ts";
 
-/** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
+/**
+ * A fully-populated fake toolchain. resolveConfig only records these paths; the
+ * one probe it runs (`cc --version` for the arch, Windows hosts only) fails on
+ * the fake path and falls back to the host arch.
+ */
 const mockToolchain: Toolchain = {
   cc: "/fake/llvm/bin/clang",
   cxx: "/fake/llvm/bin/clang++",
@@ -110,16 +114,21 @@ const workspaceResolvable =
 // bun_paths is the crate this was reported against: it depends on bun_core and
 // stubs only the two simdutf externs its tests execute (src/paths/string_paths.rs),
 // so without the generated rustflags link.exe reports the ~80 externs nothing
-// executes. RUSTFLAGS in the environment would replace the config file's
-// rustflags wholesale, so it is removed; the file is what is under test.
+// executes.
 //
+// The environment can override the file: RUSTFLAGS / CARGO_ENCODED_RUSTFLAGS
+// replace every rustflags source and CARGO_TARGET_<TRIPLE>_RUSTFLAGS replaces
+// that triple's [target.*] table. All of them are dropped (case-insensitively:
+// Windows environment names are) so the file is what is under test.
+const overridesCargoConfig = /^(RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_TARGET_.*_RUSTFLAGS)$/i;
+
 // `--no-run`: the link is the bug. Cold, this compiles bun_core and its
 // dependencies (~40 crates), hence the explicit ceiling; warm, it relinks in
 // about a second.
 test.skipIf(!isWindows || !cargo || !workspaceResolvable)(
   "cargo test -p bun_paths links on a Windows host through the generated .cargo/config.toml",
   async () => {
-    const { RUSTFLAGS: _rustflags, CARGO_ENCODED_RUSTFLAGS: _encoded, ...env } = process.env;
+    const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !overridesCargoConfig.test(name)));
     await using proc = Bun.spawn({
       cmd: [cargo!, "test", "--locked", "-p", "bun_paths", "--lib", "--no-run", "--quiet"],
       cwd: repoRoot,

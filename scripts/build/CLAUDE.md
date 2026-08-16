@@ -144,7 +144,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 1. `resolveToolchain()` — find clang/ar/lld/strip/cmake/cargo/bun/esbuild. Version-checked where it matters; paths stored on `Toolchain`.
 2. `resolveConfig(partial, toolchain)` — produce the flat `Config`. Detect host, derive all target booleans, compute paths, read package.json version + git sha.
 3. `validateBunConfig(cfg)` + `checkWorkarounds(cfg)` — fail early with clear errors.
-   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored) with the per-target `linker = ` from the discovered `cfg.hostCxx`, plus the `rustflags` (`/FORCE:UNRESOLVED`) that let `cargo test -p <crate>` link on the windows-msvc triples. Advisory only for `bun bd` (the ninja cargo edge sets the linker and `CARGO_ENCODED_RUSTFLAGS` via env); it's there for `cargo build`/`cargo check`/`cargo test`/rust-analyzer run directly.
+   - `generateCargoConfig(cfg)` — write the repo-root `.cargo/config.toml` (git-ignored): for the non-Windows triples a `linker` (the discovered `cfg.hostCxx`) plus lld `rustflags`; for the windows-msvc triples no `linker`, only the `rustflags` (`/FORCE:UNRESOLVED`) that let `cargo test -p <crate>` link there. Advisory only for `bun bd` (the ninja cargo edge sets the linker and `CARGO_ENCODED_RUSTFLAGS` via env); it's there for `cargo build`/`cargo check`/`cargo test`/rust-analyzer run directly.
 4. `globAllSources()` — one filesystem snapshot of all `.cpp`/`.c`/`.rs`/codegen-input globs.
 5. `new Ninja({buildDir})` + `registerAllRules(n, cfg)` — register every rule template.
 6. `emitGeneratorRule(n, cfg, partial)` — persist `configure.json`, emit `regen` rule so editing any build script triggers reconfigure.

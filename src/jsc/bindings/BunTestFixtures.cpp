@@ -3,10 +3,7 @@
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
 
-// Bridges for bun:test's `test.extend()` fixtures. The implementation lives in
-// src/js/builtins/BunTestFixtures.ts; the Rust test runner
-// (src/runtime/test_runner/ScopeFunctions.rs) calls these to merge fixture
-// registries and to wrap test callbacks with fixture setup/teardown.
+// Entry points into src/js/builtins/BunTestFixtures.ts for the test runner (ScopeFunctions.rs).
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__TestFixtures__merge(Zig::GlobalObject* global, JSC::EncodedJSValue parentFixtures, JSC::EncodedJSValue newFixtures)
 {

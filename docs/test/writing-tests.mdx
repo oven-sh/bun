@@ -393,16 +393,16 @@ test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
 
 ### test.extend
 
-Use `test.extend()` to create a test function with reusable setup and teardown, modeled on [Playwright](https://playwright.dev/docs/test-fixtures) and [Vitest](https://vitest.dev/guide/test-context.html#test-extend) fixtures. Each fixture is either a plain value or a setup function; tests access fixtures by destructuring the context object, which is passed as the test callback's last parameter.
+Use `test.extend()` to create a test function with reusable setup and teardown, modeled on [Playwright](https://playwright.dev/docs/test-fixtures) and [Vitest](https://vitest.dev/guide/test-context.html#test-extend) fixtures. Each fixture is either a plain value or a setup function; tests receive the fixtures as a context object, passed as the test callback's last parameter, and pick the ones they need by destructuring it.
 
 ```ts title="db.test.ts" icon="/icons/typescript.svg"
 import { test as base, expect } from "bun:test";
 
 const test = base.extend<{ db: Database }>({
   db: async ({}, use) => {
-    const db = await connect(); // runs before the test
+    const db = await connect(); // setup: runs before the test
     await use(db); // the test runs while use() is pending
-    await db.close(); // runs after the test
+    await db.close(); // teardown: runs after the test
   },
 });
 
@@ -412,18 +412,7 @@ test("select user", async ({ db }) => {
 });
 ```
 
-A fixture setup function receives the context as its first parameter and a `use` function as its second. Call `await use(value)` exactly once to provide the fixture value; code after `await use(value)` is the fixture's teardown and runs after the test finishes, even if the test fails. Teardown runs in reverse setup order.
-
-A fixture function can also return its value instead of calling `use()`. If the returned value is disposable (it implements `Symbol.asyncDispose` or `Symbol.dispose`), disposing it after the test is the fixture's teardown. This makes resources designed for `await using` one-liners:
-
-```ts
-// Database implements AsyncDisposable, so it is disposed after the test
-const test = base.extend<{ db: Database }>({
-  db: () => connect(),
-});
-```
-
-`await using` also composes with `use()`-style fixtures: the fixture function resumes after the test, so its `await using` declarations are disposed as teardown:
+A setup function receives the context as its first parameter and a `use` function as its second, and must call `await use(value)` exactly once. Resources declared with `await using` before `use()` are disposed as part of the teardown:
 
 ```ts
 const test = base.extend<{ db: Database }>({
@@ -435,7 +424,11 @@ const test = base.extend<{ db: Database }>({
 });
 ```
 
-Fixtures are **lazy**: a fixture is only set up when a test (or another fixture) destructures it. To run a fixture for every test regardless, pass `{ auto: true }`:
+#### Lifecycle
+
+For each test, fixtures are set up after the `beforeEach` hooks and torn down after the `afterEach` hooks, in reverse setup order. Teardown always runs, including when the test fails, times out, or a hook throws, and an error thrown during teardown fails the test.
+
+The fixtures a test uses are detected from the destructuring pattern of its context parameter, so the parameter must be written as an object destructuring pattern (`({ db }) => ...`, or `({}, use) => ...` for a fixture that depends on nothing); rest elements (`...rest`) are not supported. Fixtures are **lazy**: a fixture is only set up when the test, or another fixture it uses, destructures it. To set a fixture up for every test regardless, pass `{ auto: true }`:
 
 ```ts
 const test = base.extend<{ logs: string[] }>({
@@ -450,7 +443,9 @@ const test = base.extend<{ logs: string[] }>({
 });
 ```
 
-Fixtures can depend on other fixtures by destructuring them, and `.extend()` calls chain, with later fixtures overriding earlier ones of the same name:
+#### Composing fixtures
+
+Fixtures depend on other fixtures by destructuring them, and `.extend()` calls chain:
 
 ```ts
 const test = base.extend<{ port: number }>({ port: 3000 }).extend<{ url: string }>({
@@ -464,6 +459,16 @@ test("fixtures compose", ({ url }) => {
 });
 ```
 
+A fixture with the same name as an existing one replaces it for tests registered through the new test function. The replacement can destructure its own name to receive the value of the definition it replaces, which is how to wrap or configure a fixture defined elsewhere:
+
+```ts
+const loggedTest = test.extend<{ db: Database }>({
+  db: async ({ db }, use) => {
+    await use(withQueryLogging(db));
+  },
+});
+```
+
 The extended test function keeps all modifiers (`.skip`, `.only`, `.todo`, `.each`, `.if`, and so on). With `test.each`, the table arguments come first and the fixture context last:
 
 ```ts
@@ -474,7 +479,7 @@ withN.each([[1], [2]])("n + %i", (i, { n }) => {
 });
 ```
 
-Because the runner detects used fixtures from the destructuring pattern, the context parameter of a test (or fixture) must use object destructuring; rest elements (`...rest`) are not supported. Tests registered through an extended test function do not take a `done` callback; return a promise instead. Fixture teardown does not run for tests that time out.
+Tests registered through an extended test function do not take a `done` callback; return a promise instead. Fixtures are scoped to a single test: a fixture is set up and torn down again for every test (and every retry) that uses it, so share expensive resources across tests with `beforeAll`.
 
 ## Assertion Counting
 

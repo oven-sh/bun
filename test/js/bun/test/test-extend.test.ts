@@ -15,6 +15,13 @@ describe("test.extend", () => {
     expect(names).toEqual(["alice", "bob"]);
   });
 
+  // with no fixtures registered there is nothing to detect, so any parameter
+  // shape works and receives the (empty) context
+  const empty = test.extend({});
+  empty("an empty fixture map still passes a context object", (...args) => {
+    expect(args).toEqual([{}]);
+  });
+
   // setup/teardown ordering across dependent fixtures
   const order: string[] = [];
   const withDeps = test.extend<{ base: string; derived: string }>({
@@ -81,7 +88,7 @@ describe("test.extend", () => {
     expect(c).toBe(3);
   });
 
-  // fixture functions can depend on overridden fixtures
+  // fixture functions depend on the overriding definition of other fixtures
   const overridden = test
     .extend<{ value: number; doubled: number }>({
       value: 1,
@@ -93,6 +100,89 @@ describe("test.extend", () => {
 
   overridden("dependencies resolve against the overriding fixture", ({ doubled }) => {
     expect(doubled).toBe(42);
+  });
+
+  // an override that destructures its own name builds on the definition it replaces
+  const overrideOrder: string[] = [];
+  const wrapped = test
+    .extend<{ db: string[] }>({
+      db: async ({}, use) => {
+        overrideOrder.push("setup original");
+        await use(["original"]);
+        overrideOrder.push("teardown original");
+      },
+    })
+    .extend<{ db: string[] }>({
+      db: async ({ db }, use) => {
+        overrideOrder.push("setup override");
+        await use([...db, "override"]);
+        overrideOrder.push("teardown override");
+      },
+    })
+    .extend<{ db: string[] }>({
+      db: async ({ db }, use) => {
+        overrideOrder.push("setup second override");
+        await use([...db, "second override"]);
+        overrideOrder.push("teardown second override");
+      },
+    });
+
+  wrapped("an override receives the value of the definition it replaces", ({ db }) => {
+    expect(db).toEqual(["original", "override", "second override"]);
+    expect(overrideOrder).toEqual(["setup original", "setup override", "setup second override"]);
+  });
+
+  test("override chains tear down innermost first", () => {
+    expect(overrideOrder).toEqual([
+      "setup original",
+      "setup override",
+      "setup second override",
+      "teardown second override",
+      "teardown override",
+      "teardown original",
+    ]);
+  });
+
+  const wrappedValue = test.extend<{ n: number }>({ n: 20 }).extend<{ n: number }>({
+    n: async ({ n }, use) => {
+      await use(n + 22);
+    },
+  });
+  wrappedValue("an override can build on a plain value fixture", ({ n }) => {
+    expect(n).toBe(42);
+  });
+
+  // an override inherits `auto` unless it specifies its own options
+  const autoLog: string[] = [];
+  const autoBase = test.extend<{ tracker: string }>({
+    tracker: [
+      async ({}, use) => {
+        autoLog.push("base");
+        await use("base");
+      },
+      { auto: true },
+    ],
+  });
+  const autoInherited = autoBase.extend<{ tracker: string }>({
+    tracker: async ({}, use) => {
+      autoLog.push("inherited");
+      await use("inherited");
+    },
+  });
+  const autoDisabled = autoBase.extend<{ tracker: string }>({
+    tracker: [
+      async ({}, use) => {
+        autoLog.push("disabled");
+        await use("disabled");
+      },
+      { auto: false },
+    ],
+  });
+  autoInherited("an override inherits auto from the definition it replaces", () => {
+    expect(autoLog).toEqual(["inherited"]);
+  });
+  autoDisabled("an override with its own options replaces auto", () => {
+    expect(autoLog).toEqual(["inherited"]);
   });
 
   // diamond dependencies: d -> (b, c) -> a. The shared dependency is set up
@@ -130,50 +220,8 @@ describe("test.extend", () => {
     expect(diamondOrder).toEqual(["+a", "+b", "+c", "+d", "-d", "-c", "-b", "-a"]);
   });
 
-  // fixture functions may return the value instead of calling use(); a
-  // disposable return value (Symbol.asyncDispose / Symbol.dispose) is disposed
-  // after the test as the fixture's teardown
-  const disposeLog: string[] = [];
-  const returned = test.extend<{
-    res: { tag: string; [Symbol.asyncDispose](): Promise<void>; [Symbol.dispose](): void };
-    syncRes: { [Symbol.dispose](): void };
-    plain: number;
-    nothing: null;
-  }>({
-    res: () => ({
-      tag: "res",
-      async [Symbol.asyncDispose]() {
-        disposeLog.push("asyncDispose res");
-      },
-      [Symbol.dispose]() {
-        disposeLog.push("dispose res");
-      },
-    }),
-    syncRes: async () => ({
-      [Symbol.dispose]() {
-        disposeLog.push("dispose syncRes");
-      },
-    }),
-    plain: ({ res }) => (disposeLog.push("create plain"), res.tag.length),
-    nothing: () => null,
-  });
-
-  returned("return-style fixtures provide the returned value", ({ res, syncRes, plain, nothing }) => {
-    expect(res.tag).toBe("res");
-    expect(typeof syncRes[Symbol.dispose]).toBe("function");
-    expect(plain).toBe(3);
-    expect(nothing).toBeNull();
-    expect(disposeLog).toEqual(["create plain"]);
-  });
-
-  test("returned disposables were disposed in reverse order, preferring asyncDispose", () => {
-    // `plain` has no teardown; `syncRes` only has Symbol.dispose; `res` has
-    // both and asyncDispose wins. Setup order was res, syncRes, plain.
-    expect(disposeLog).toEqual(["create plain", "dispose syncRes", "asyncDispose res"]);
-  });
-
-  // `await using` inside a use()-style fixture disposes when the fixture
-  // function resumes after the test
+  // `await using` inside a fixture disposes when the fixture function resumes
+  // after the test
   const usingLog: string[] = [];
   const usingFixture = test.extend<{ conn: { name: string } }>({
     conn: async ({}, use) => {
@@ -188,7 +236,7 @@ describe("test.extend", () => {
     },
   });
 
-  usingFixture("await using composes with use()-style fixtures", ({ conn }) => {
+  usingFixture("await using inside a fixture is still alive during the test", ({ conn }) => {
     expect(conn.name).toBe("conn");
     expect(usingLog).toEqual([]);
   });
@@ -233,14 +281,27 @@ describe("test.extend", () => {
     expect(n).toBe(5);
   });
 
-  // .each combined with fixtures: case args come first, context last
+  // .each combined with fixtures, in either order: case args come first, context last
   modTest.each([
     [1, 2],
     [3, 4],
-  ])("each %d %d passes case args before the context", (x, y, { n }) => {
+  ])("extend().each() %d %d passes case args before the context", (x, y, { n }) => {
     expect(typeof x).toBe("number");
     expect(typeof y).toBe("number");
     expect(n).toBe(5);
+  });
+
+  const eachSeen: number[] = [];
+  test.each([[10], [20]]).extend<{ n: number }>({ n: 5 })(
+    "each().extend() %d passes case args before the context",
+    (x, { n }) => {
+      expect(n).toBe(5);
+      eachSeen.push(x);
+    },
+  );
+
+  test("each().extend() ran once per row", () => {
+    expect(eachSeen).toEqual([10, 20]);
   });
 
   // async value through use()
@@ -291,9 +352,9 @@ describe("test.extend", () => {
   });
 });
 
-// ── failure modes run in a child process so they don't fail this file ──────
+// ── lifecycle and failure modes run in a child process ──────────────────────
 
-async function runFixtureFile(contents: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+async function runFixtureFile(contents: string) {
   using dir = tempDir("test-extend", { "fixture.test.ts": contents });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "fixture.test.ts"],
@@ -306,34 +367,155 @@ async function runFixtureFile(contents: string): Promise<{ stdout: string; stder
   return { stdout, stderr, exitCode };
 }
 
-describe.concurrent("test.extend failure modes", () => {
-  test("fixture setup error fails the test and tears down earlier fixtures", async () => {
+/** The `error: ...` lines the runner printed, in order. */
+function errorLines(stderr: string): string[] {
+  return stderr.split(/\r?\n/).filter(line => line.startsWith("error: "));
+}
+
+/** The `event: ...` lines a fixture file logged, in order. */
+function events(stderr: string): string[] {
+  return stderr
+    .split(/\r?\n/)
+    .filter(line => line.startsWith("event:"))
+    .map(line => line.slice("event:".length).trim());
+}
+
+describe.concurrent("test.extend lifecycle", () => {
+  test("fixtures are set up after beforeEach and torn down after afterEach", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
-      import { test, expect } from "bun:test";
-      const t = test.extend<{ ok: string; bad: string }>({
-        ok: async ({}, use) => {
-          console.error("setup ok");
-          await use("ok");
-          console.error("teardown ok");
-        },
-        bad: async ({ ok }, use) => {
-          throw new Error("setup exploded");
+      import { test, beforeEach, afterEach } from "bun:test";
+      beforeEach(() => console.error("event: beforeEach"));
+      afterEach(() => console.error("event: afterEach"));
+      const t = test.extend<{ f: number }>({
+        f: async ({}, use) => {
+          console.error("event: setup");
+          await use(1);
+          console.error("event: teardown");
         },
       });
-      t("uses bad fixture", ({ bad }) => {});
-      t("later test still runs", ({ ok }) => {
-        expect(ok).toBe("ok");
+      t("ordering", ({ f }) => {
+        afterEach(() => console.error("event: afterEach registered inside the test"));
+        console.error("event: body");
       });
     `);
-    expect(stderr).toContain("setup exploded");
-    // the already-initialized fixture was torn down even though setup failed
-    expect(stderr).toContain("teardown ok");
+    expect(events(stderr)).toEqual([
+      "beforeEach",
+      "setup",
+      "body",
+      "afterEach registered inside the test",
+      "afterEach",
+      "teardown",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a test that times out is still torn down, after its afterEach hooks", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test, afterEach, expect } from "bun:test";
+      afterEach(() => console.error("event: afterEach"));
+      const t = test.extend<{ server: string }>({
+        server: async ({}, use) => {
+          console.error("event: setup");
+          await use("listening");
+          console.error("event: teardown");
+        },
+      });
+      t("hangs", async ({ server }) => {
+        console.error("event: body");
+        await new Promise(() => {});
+      }, { timeout: 50 });
+      t("the next test gets a fresh fixture", ({ server }) => {
+        expect(server).toBe("listening");
+        console.error("event: next body");
+      });
+    `);
+    expect(events(stderr)).toEqual([
+      "setup",
+      "body",
+      "afterEach",
+      "teardown",
+      "setup",
+      "next body",
+      "afterEach",
+      "teardown",
+    ]);
+    expect(stderr).toContain("timed out after 50ms");
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
 
-  test("fixture teardown error fails the test", async () => {
+  test("a throwing afterEach hook does not skip fixture teardown", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test, afterEach } from "bun:test";
+      afterEach(() => {
+        throw new Error("afterEach exploded");
+      });
+      const t = test.extend<{ f: number }>({
+        f: async ({}, use) => {
+          await use(1);
+          console.error("event: teardown");
+        },
+      });
+      t("body passes", ({ f }) => {});
+    `);
+    expect(events(stderr)).toEqual(["teardown"]);
+    expect(stderr).toContain("afterEach exploded");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a failing beforeEach hook skips setup, and there is nothing to tear down", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test, beforeEach } from "bun:test";
+      beforeEach(() => {
+        throw new Error("beforeEach exploded");
+      });
+      const t = test.extend<{ f: number }>({
+        f: async ({}, use) => {
+          console.error("event: setup");
+          await use(1);
+          console.error("event: teardown");
+        },
+      });
+      t("never runs", ({ f }) => {
+        console.error("event: body");
+      });
+    `);
+    expect(events(stderr)).toEqual([]);
+    expect(stderr).toContain("beforeEach exploded");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("fixture setup error fails the test and tears down earlier fixtures", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test, expect } from "bun:test";
+      const t = test.extend<{ ok: string; bad: string }>({
+        ok: async ({}, use) => {
+          console.error("event: setup ok");
+          await use("ok");
+          console.error("event: teardown ok");
+        },
+        bad: async ({ ok }, use) => {
+          throw new Error("setup exploded");
+        },
+      });
+      t("uses bad fixture", ({ bad }) => {
+        console.error("event: body");
+      });
+      t("later test still runs", ({ ok }) => {
+        expect(ok).toBe("ok");
+      });
+    `);
+    expect(events(stderr)).toEqual(["setup ok", "teardown ok", "setup ok", "teardown ok"]);
+    expect(stderr).toContain("setup exploded");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("fixture teardown error fails a test whose body passed", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test } from "bun:test";
       const t = test.extend<{ leaky: number }>({
@@ -345,30 +527,68 @@ describe.concurrent("test.extend failure modes", () => {
       t("body passes but teardown fails", ({ leaky }) => {});
     `);
     expect(stderr).toContain("teardown exploded");
+    expect(stderr).not.toContain("Unhandled error");
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
 
-  test("test body error takes precedence and teardown still runs", async () => {
+  test("body and teardown errors are all reported", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test } from "bun:test";
-      const t = test.extend<{ res: number }>({
-        res: async ({}, use) => {
+      const t = test.extend<{ first: number; second: number }>({
+        first: async ({}, use) => {
           await use(1);
-          console.error("teardown ran");
+          console.error("event: teardown first");
+          throw new Error("first teardown exploded");
+        },
+        second: async ({}, use) => {
+          await use(2);
+          console.error("event: teardown second");
+          throw new Error("second teardown exploded");
         },
       });
-      t("fails", ({ res }) => {
+      t("everything fails", ({ first, second }) => {
         throw new Error("body exploded");
       });
     `);
-    expect(stderr).toContain("body exploded");
-    expect(stderr).toContain("teardown ran");
+    expect(events(stderr)).toEqual(["teardown second", "teardown first"]);
+    // the body error and each teardown error (unpacked from the AggregateError)
+    // are reported exactly once, under the one failing test
+    expect(errorLines(stderr)).toEqual([
+      "error: body exploded",
+      "error: second teardown exploded",
+      "error: first teardown exploded",
+    ]);
+    expect(stderr).not.toContain("Unhandled error");
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
 
-  test("a fixture that neither calls use() nor returns a value fails the test", async () => {
+  test("a fixture that fails after use() is reported once, by the teardown", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test } from "bun:test";
+      const t = test.extend<{ server: number }>({
+        server: async ({}, use) => {
+          await Promise.race([use(1), Promise.reject(new Error("server closed unexpectedly"))]);
+        },
+      });
+      t("body runs to completion", async ({ server }) => {
+        await Promise.resolve();
+        console.error("event: body finished");
+      });
+      t("next test still runs", () => {
+        console.error("event: next test");
+      });
+    `);
+    expect(events(stderr)).toEqual(["body finished", "next test"]);
+    expect(errorLines(stderr)).toEqual(["error: server closed unexpectedly"]);
+    expect(stderr).not.toContain("Unhandled error");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a fixture that never calls use() fails the test", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test } from "bun:test";
       const t = test.extend<{ nope: number }>({
@@ -376,7 +596,7 @@ describe.concurrent("test.extend failure modes", () => {
       });
       t("uses nope", ({ nope }) => {});
     `);
-    expect(stderr).toContain('Fixture "nope" completed without calling use() or returning a value');
+    expect(stderr).toContain('Fixture "nope" completed without calling use()');
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
@@ -393,23 +613,6 @@ describe.concurrent("test.extend failure modes", () => {
       t("double use", ({ x }) => {});
     `);
     expect(stderr).toContain('Fixture "x" called use() more than once');
-    expect(stderr).toContain("1 fail");
-    expect(exitCode).toBe(1);
-  });
-
-  test("a throwing Symbol.asyncDispose on a returned fixture value fails the test", async () => {
-    const { stderr, exitCode } = await runFixtureFile(`
-      import { test } from "bun:test";
-      const t = test.extend<{ bad: object }>({
-        bad: () => ({
-          async [Symbol.asyncDispose]() {
-            throw new Error("dispose exploded");
-          },
-        }),
-      });
-      t("uses bad", ({ bad }) => {});
-    `);
-    expect(stderr).toContain("dispose exploded");
     expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
@@ -432,7 +635,22 @@ describe.concurrent("test.extend failure modes", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a non-destructured context parameter with fixtures fails with a helpful error", async () => {
+  test("a first definition that destructures its own name fails the test", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test } from "bun:test";
+      const t = test.extend({
+        db: async ({ db }, use) => {
+          await use(db);
+        },
+      });
+      t("self reference", ({ db }) => {});
+    `);
+    expect(stderr).toContain('Fixture "db" depends on itself, but there is no earlier definition of "db"');
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("a non-destructured context parameter fails with a helpful error", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test } from "bun:test";
       const t = test.extend<{ db: number }>({ db: 1 });
@@ -443,7 +661,7 @@ describe.concurrent("test.extend failure modes", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("rest parameters in the destructuring pattern fail with a helpful error", async () => {
+  test("rest elements in the destructuring pattern fail with a helpful error", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test } from "bun:test";
       const t = test.extend<{ db: number }>({ db: 1 });
@@ -454,7 +672,7 @@ describe.concurrent("test.extend failure modes", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("fixtures are re-created for each retry", async () => {
+  test("fixtures are set up and torn down again for every retry and repeat", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test, expect } from "bun:test";
       let setups = 0;
@@ -463,6 +681,7 @@ describe.concurrent("test.extend failure modes", () => {
         n: async ({}, use) => {
           setups++;
           await use(setups);
+          console.error("event: teardown " + setups);
         },
       });
       t("retry gets a fresh fixture", ({ n }) => {
@@ -470,46 +689,35 @@ describe.concurrent("test.extend failure modes", () => {
         expect(n).toBe(attempts);
         if (attempts < 3) throw new Error("flaky");
       }, { retry: 5 });
+      t("repeats get fresh fixtures", ({ n }) => {
+        expect(n).toBe(setups);
+      }, { repeats: 2 });
     `);
-    expect(stderr).toContain("1 pass");
+    // three attempts of the first test, then three runs of the second
+    expect(events(stderr)).toEqual([
+      "teardown 1",
+      "teardown 2",
+      "teardown 3",
+      "teardown 4",
+      "teardown 5",
+      "teardown 6",
+    ]);
+    expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);
   });
 
   test("extended test callbacks never receive a done callback", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
       import { test, expect } from "bun:test";
-      // a plain test with a parameter receives a done callback and would hang
-      // until timeout if it is never called; an extended test's parameter is
-      // the fixture context object instead.
+      // A plain test with a parameter receives a done callback and would hang
+      // until its timeout if it never called it; an extended test's parameter
+      // is the fixture context instead.
       const t = test.extend({});
-      t("context instead of done", (context) => {
-        expect(typeof context).toBe("object");
+      t("context instead of done", context => {
+        expect(context).toEqual({});
       });
     `);
     expect(stderr).toContain("1 pass");
-    expect(exitCode).toBe(0);
-  });
-
-  test("beforeEach/afterEach hooks run around fixture setup and teardown", async () => {
-    const { stderr, exitCode } = await runFixtureFile(`
-      import { test, beforeEach, afterEach } from "bun:test";
-      beforeEach(() => console.error("hook: beforeEach"));
-      afterEach(() => console.error("hook: afterEach"));
-      const t = test.extend<{ f: number }>({
-        f: async ({}, use) => {
-          console.error("fixture: setup");
-          await use(1);
-          console.error("fixture: teardown");
-        },
-      });
-      t("ordering", ({ f }) => {
-        console.error("test body");
-      });
-    `);
-    const lines = stderr
-      .split(/\r?\n/)
-      .filter(line => line.startsWith("hook:") || line.startsWith("fixture:") || line.startsWith("test body"));
-    expect(lines).toEqual(["hook: beforeEach", "fixture: setup", "test body", "fixture: teardown", "hook: afterEach"]);
     expect(exitCode).toBe(0);
   });
 });

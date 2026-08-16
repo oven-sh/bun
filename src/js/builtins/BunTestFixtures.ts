@@ -1,23 +1,23 @@
-// Fixture support for bun:test's `test.extend()` (modeled on vitest/playwright fixtures).
-//
-// A fixture registry is an array of records `{ name, value, isFn, auto }` built by
-// `mergeTestFixtures` when `.extend()` is called, and consumed by
-// `wrapTestFixtureCallback` each time a test registered through an extended test
-// function runs. Both functions are invoked from native code
-// (src/runtime/test_runner/ScopeFunctions.rs via Bun__TestFixtures__* in
-// src/jsc/bindings/BunTestFixtures.cpp).
+// bun:test `test.extend()` fixtures. Called from src/runtime/test_runner/ScopeFunctions.rs
+// through src/jsc/bindings/BunTestFixtures.cpp.
 
 interface FixtureRecord {
   name: string;
   value: unknown;
   isFn: boolean;
   auto: boolean;
+  /** The definition this one replaced; received by a fixture that destructures its own name. */
+  parent: FixtureRecord | undefined;
 }
 
-/**
- * Validate the object passed to `test.extend()` and merge it over the parent
- * registry (later `.extend()` calls override earlier fixtures with the same name).
- */
+interface RunState {
+  context: Record<string, unknown>;
+  /** Pushed during setup, run in reverse by `teardown`. */
+  teardowns: (() => Promise<void>)[];
+  resolved: FixtureRecord[];
+}
+
+/** Merges the object passed to `.extend()` over the parent registry; same-named fixtures replace their parent. */
 export function mergeTestFixtures(parentFixtures: FixtureRecord[] | undefined, newFixtures: unknown) {
   if (!$isObject(newFixtures) || $isJSArray(newFixtures) || $isCallable(newFixtures)) {
     throw new TypeError("test.extend() expects an object where each property is a fixture");
@@ -34,25 +34,21 @@ export function mergeTestFixtures(parentFixtures: FixtureRecord[] | undefined, n
   for (let i = 0; i < names.length; i++) {
     const name = names[i];
     let value = (newFixtures as Record<string, unknown>)[name];
-    let auto = false;
+    let options: { auto?: unknown; injected?: unknown; scope?: unknown } | undefined;
 
-    // `[value, options]` tuple form. Mirrors vitest: only treated as a tuple when the
-    // second element is an object carrying at least one known fixture option key;
-    // otherwise the array itself is the fixture value.
+    // `[value, options]` is only a tuple when the second element carries a known option key (as in vitest).
     if ($isJSArray(value) && (value as unknown[]).length >= 2) {
       const maybeOptions = (value as unknown[])[1];
       if ($isObject(maybeOptions) && !$isJSArray(maybeOptions)) {
         const optionKeys = Object.keys(maybeOptions as object);
-        let isOptions = false;
         for (let k = 0; k < optionKeys.length; k++) {
           const key = optionKeys[k];
           if (key === "auto" || key === "injected" || key === "scope") {
-            isOptions = true;
+            options = maybeOptions as typeof options;
             break;
           }
         }
-        if (isOptions) {
-          const options = maybeOptions as { auto?: unknown; injected?: unknown; scope?: unknown };
+        if (options !== undefined) {
           const scope = options.scope;
           if (scope !== undefined && scope !== "test") {
             throw new TypeError(
@@ -62,23 +58,30 @@ export function mergeTestFixtures(parentFixtures: FixtureRecord[] | undefined, n
           if (options.injected) {
             throw new TypeError(`test.extend() fixture "${name}": the "injected" option is not supported`);
           }
-          auto = !!options.auto;
           value = (value as unknown[])[0];
         }
       }
     }
 
-    const record: FixtureRecord = { name, value, isFn: $isCallable(value), auto };
-    let replaced = false;
+    let existingIndex = -1;
     for (let m = 0; m < merged.length; m++) {
       if (merged[m].name === name) {
-        merged[m] = record;
-        replaced = true;
+        existingIndex = m;
         break;
       }
     }
-    if (!replaced) {
+    const parent = existingIndex === -1 ? undefined : merged[existingIndex];
+    const record: FixtureRecord = {
+      name,
+      value,
+      isFn: $isCallable(value),
+      auto: options !== undefined ? !!options.auto : parent !== undefined && parent.auto,
+      parent,
+    };
+    if (existingIndex === -1) {
       $arrayPush(merged, record);
+    } else {
+      merged[existingIndex] = record;
     }
   }
 
@@ -86,23 +89,18 @@ export function mergeTestFixtures(parentFixtures: FixtureRecord[] | undefined, n
 }
 
 /**
- * Wrap a test callback so that, when the test runs, the fixtures it uses are set
- * up first (in dependency order), the callback receives the fixture context as
- * its last argument (after any `test.each` case arguments), and teardown runs in
- * reverse setup order once the callback settles. Fixture functions either call
- * `await use(value)` (code after it is the teardown) or return the value
- * directly (a disposable return value is disposed as the teardown).
+ * Returns `[run, teardown]` for one scheduled test. `run` is the test body (fixture setup, then the
+ * callback with the context appended); the runner schedules `teardown` after the afterEach hooks.
  */
 export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback: Function) {
-  function arrayIncludes(array: string[], value: string): boolean {
+  function includes<T>(array: T[], value: T): boolean {
     for (let i = 0; i < array.length; i++) {
       if (array[i] === value) return true;
     }
     return false;
   }
 
-  // Split a parameter list (or destructuring pattern body) at top-level commas,
-  // skipping over nested `{}`/`[]`/`()` groups.
+  /** Splits at top-level commas, skipping nested `{}`/`[]`/`()` groups. */
   function splitByComma(s: string): string[] {
     const result: string[] = [];
     const stack: string[] = [];
@@ -124,12 +122,7 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
     return result;
   }
 
-  // Determine which fixture names a function destructures from its context
-  // parameter (the parameter at `paramIndex`). Like vitest, this reads the
-  // function's source text, so the context parameter must use an object
-  // destructuring pattern for fixtures to be detected. Returns null when the
-  // source is unavailable (bound functions, AsyncLocalStorage-wrapped
-  // callbacks), in which case the caller decides a fallback.
+  /** Names destructured by `fn`'s parameter at `paramIndex` (read from its source, as in vitest); null if the source is unavailable. */
   function getUsedProps(fn: Function, paramIndex: number): string[] | null {
     let source: string;
     try {
@@ -142,8 +135,7 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
     }
     const parenIndex = source.indexOf("(");
     if (parenIndex === -1) {
-      // single-parameter arrow function with no parentheses; it cannot
-      // destructure, so it uses no fixtures.
+      // `x => ...` cannot destructure
       return [];
     }
     let depth = 1;
@@ -169,7 +161,7 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
       if (prop.startsWith("...")) {
         throw new TypeError(`Rest parameters are not supported when destructuring fixtures. Received "${prop}".`);
       }
-      // strip renames (`a: b`) and default values (`a = 1`)
+      // strip renames (`a: b`) and defaults (`a = 1`)
       let name = prop;
       for (let c = 0; c < prop.length; c++) {
         if (prop[c] === ":" || prop[c] === "=") {
@@ -178,11 +170,12 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
         }
       }
       name = name.trim();
+      const { length } = name;
       if (
-        name.length >= 2 &&
+        length >= 2 &&
         ((name.startsWith("'") && name.endsWith("'")) || (name.startsWith('"') && name.endsWith('"')))
       ) {
-        name = name.substring(1, name.length - 1);
+        name = name.substring(1, length - 1);
       }
       if (name) $arrayPush(used, name);
     }
@@ -196,145 +189,136 @@ export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback:
     return undefined;
   }
 
-  return async function (...caseArgs: unknown[]) {
-    const context: Record<string, unknown> = {};
-    if (fixtures.length === 0) {
-      return testCallback(...caseArgs, context);
+  /** Resolves to the value passed to `use()`; the fixture function stays parked in `use()` until teardown releases it. */
+  function runFixtureSetup(state: RunState, name: string, setupFn: Function): Promise<unknown> {
+    const valueCapability = $newPromiseCapability(Promise);
+    let useCalled = false;
+    let failedAfterUse = false;
+    let errorAfterUse: unknown;
+
+    async function use(value: unknown): Promise<void> {
+      if (useCalled) {
+        throw new Error(`Fixture "${name}" called use() more than once. Call \`await use(value)\` exactly once.`);
+      }
+      useCalled = true;
+      const release = $newPromiseCapability(Promise);
+      $arrayPush(state.teardowns, async () => {
+        release.resolve.$call(undefined);
+        await finished;
+        if (failedAfterUse) throw errorAfterUse;
+      });
+      valueCapability.resolve.$call(undefined, value);
+      await release.promise;
     }
 
-    const teardowns: (() => Promise<unknown>)[] = [];
-    const resolvedNames: string[] = [];
-
-    // Run one fixture function. The value passed to `use()` (or, when `use()` is
-    // never called, the function's resolved return value) becomes the fixture
-    // value. A `use()`-style fixture stays suspended inside `use()` until
-    // teardown, when the remainder of the fixture function runs. A return-style
-    // fixture whose value is disposable (`Symbol.asyncDispose`/`Symbol.dispose`)
-    // is disposed at teardown instead.
-    function runFixtureSetup(name: string, setupFn: Function): Promise<unknown> {
-      const valueCapability = $newPromiseCapability(Promise);
-      let useCalled = false;
-      // assigned before any teardown can run; teardown closures only execute
-      // after the test body, long after this synchronous assignment
-      let fixtureReturn: Promise<unknown>;
-      fixtureReturn = (async () => {
-        return await setupFn(context, async (useValue: unknown) => {
-          if (useCalled) {
-            throw new Error(`Fixture "${name}" called use() more than once. Call \`await use(value)\` exactly once.`);
-          }
-          useCalled = true;
-          valueCapability.resolve.$call(undefined, useValue);
-          const releaseCapability = $newPromiseCapability(Promise);
-          $arrayPush(teardowns, () => {
-            releaseCapability.resolve.$call(undefined);
-            return fixtureReturn;
-          });
-          await releaseCapability.promise;
-        });
-      })().$then(
-        (returnValue: unknown) => {
-          if (useCalled) return;
-          try {
-            if (returnValue === undefined) {
-              throw new Error(
-                `Fixture "${name}" completed without calling use() or returning a value. Call \`await use(value)\` or return the fixture value.`,
-              );
-            }
-            // return-style fixture: the resolved return value is the fixture
-            // value. If it is disposable, disposing it is the teardown.
-            if (returnValue !== null && (typeof returnValue === "object" || typeof returnValue === "function")) {
-              const asyncDispose = (returnValue as Record<symbol, unknown>)[Symbol.asyncDispose];
-              const dispose = $isCallable(asyncDispose)
-                ? asyncDispose
-                : (returnValue as Record<symbol, unknown>)[Symbol.dispose];
-              if ($isCallable(dispose)) {
-                $arrayPush(teardowns, async () => {
-                  await (dispose as Function).$call(returnValue);
-                });
-              }
-            }
-            valueCapability.resolve.$call(undefined, returnValue);
-          } catch (error) {
-            valueCapability.reject.$call(undefined, error);
-          }
-        },
-        (error: unknown) => {
-          if (!useCalled) {
-            // setup failed; surface the error where the fixture value is awaited
-            valueCapability.reject.$call(undefined, error);
-            return;
-          }
-          // teardown failed; surface the error when teardown awaits fixtureReturn
-          throw error;
-        },
-      );
-      return valueCapability.promise;
-    }
-
-    async function setupFixture(record: FixtureRecord, chain: string[]): Promise<void> {
-      const name = record.name;
-      if (arrayIncludes(resolvedNames, name)) return;
-      if (arrayIncludes(chain, name)) {
-        let path = "";
-        for (let i = 0; i < chain.length; i++) {
-          path += chain[i] + " -> ";
+    // Never rejects: a failure after use() is reported by the teardown, one before it by the value promise.
+    const finished: Promise<void> = (async () => {
+      await setupFn(state.context, use);
+    })().$then(
+      () => {
+        if (!useCalled) {
+          valueCapability.reject.$call(
+            undefined,
+            new Error(
+              `Fixture "${name}" completed without calling use(). Call \`await use(value)\` in the fixture function.`,
+            ),
+          );
         }
-        throw new Error(`Circular fixture dependency: ${path}${name}`);
+      },
+      (error: unknown) => {
+        if (useCalled) {
+          failedAfterUse = true;
+          errorAfterUse = error;
+        } else {
+          valueCapability.reject.$call(undefined, error);
+        }
+      },
+    );
+
+    return valueCapability.promise;
+  }
+
+  async function setupFixture(state: RunState, record: FixtureRecord, chain: FixtureRecord[]): Promise<void> {
+    if (includes(state.resolved, record)) return;
+    const name = record.name;
+    if (includes(chain, record)) {
+      let path = "";
+      for (let i = 0; i < chain.length; i++) {
+        path += chain[i].name + " -> ";
       }
-      if (!record.isFn) {
-        context[name] = record.value;
-        $arrayPush(resolvedNames, name);
-        return;
-      }
-      // a fixture function whose source is unavailable has no detectable
-      // dependencies; treat it as depending on nothing
-      const deps = getUsedProps(record.value as Function, 0) ?? [];
-      for (let i = 0; i < deps.length; i++) {
-        const dep = deps[i];
-        if (dep === name) continue;
-        const depRecord = findFixture(dep);
-        if (depRecord === undefined) continue;
-        const nextChain: string[] = [];
-        for (let c = 0; c < chain.length; c++) $arrayPush(nextChain, chain[c]);
-        $arrayPush(nextChain, name);
-        await setupFixture(depRecord, nextChain);
-      }
-      context[name] = await runFixtureSetup(name, record.value as Function);
-      $arrayPush(resolvedNames, name);
+      throw new Error(`Circular fixture dependency: ${path}${name}`);
+    }
+    if (!record.isFn) {
+      state.context[name] = record.value;
+      $arrayPush(state.resolved, record);
+      return;
     }
 
-    let bodyError: unknown;
-    let hasBodyError = false;
-    try {
-      // `test.each` case arguments are bound before the context parameter, so the
-      // destructuring pattern to analyze is the parameter after them. When the
-      // callback's source is unavailable, set up every fixture.
+    const nextChain: FixtureRecord[] = [];
+    for (let i = 0; i < chain.length; i++) $arrayPush(nextChain, chain[i]);
+    $arrayPush(nextChain, record);
+
+    const deps = getUsedProps(record.value as Function, 0) ?? [];
+    for (let i = 0; i < deps.length; i++) {
+      const dep = deps[i];
+      if (dep === name) {
+        if (record.parent === undefined) {
+          throw new Error(
+            `Fixture "${name}" depends on itself, but there is no earlier definition of "${name}" for it to extend.`,
+          );
+        }
+        await setupFixture(state, record.parent, nextChain);
+        continue;
+      }
+      const depRecord = findFixture(dep);
+      if (depRecord !== undefined) {
+        await setupFixture(state, depRecord, nextChain);
+      }
+    }
+
+    state.context[name] = await runFixtureSetup(state, name, record.value as Function);
+    $arrayPush(state.resolved, record);
+  }
+
+  /** Set by `run`, consumed by the `teardown` entry that follows it (also after a timed out body). */
+  let active: RunState | null = null;
+
+  async function run(...caseArgs: unknown[]) {
+    const state: RunState = { context: {}, teardowns: [], resolved: [] };
+    active = state;
+
+    const { length } = fixtures;
+    if (length !== 0) {
+      // the `.each` row values precede the context parameter
       const used = getUsedProps(testCallback, caseArgs.length);
-      for (let i = 0; i < fixtures.length; i++) {
+      for (let i = 0; i < length; i++) {
         const record = fixtures[i];
-        if (record.auto || used === null || arrayIncludes(used, record.name)) {
-          await setupFixture(record, []);
+        if (record.auto || used === null || includes(used, record.name)) {
+          await setupFixture(state, record, []);
         }
       }
-      await testCallback(...caseArgs, context);
-    } catch (error) {
-      hasBodyError = true;
-      bodyError = error;
     }
 
-    // Teardown in reverse setup order. Always run every teardown, even when the
-    // test body or an earlier teardown failed.
-    const teardownErrors: unknown[] = [];
-    for (let i = teardowns.length - 1; i >= 0; i--) {
+    await testCallback(...caseArgs, state.context);
+  }
+
+  async function teardown() {
+    const state = active;
+    active = null;
+    if (state === null) return;
+
+    const errors: unknown[] = [];
+    for (let i = state.teardowns.length - 1; i >= 0; i--) {
       try {
-        await teardowns[i]();
+        await state.teardowns[i]();
       } catch (error) {
-        $arrayPush(teardownErrors, error);
+        $arrayPush(errors, error);
       }
     }
+    const failures = errors.length;
+    if (failures === 1) throw errors[0];
+    if (failures > 1) throw new AggregateError(errors, `${failures} fixture teardowns failed`);
+  }
 
-    if (hasBodyError) throw bodyError;
-    if (teardownErrors.length === 1) throw teardownErrors[0];
-    if (teardownErrors.length > 1) throw new AggregateError(teardownErrors, "fixture teardown failed");
-  };
+  return [run, teardown];
 }

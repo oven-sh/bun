@@ -1,6 +1,46 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
+test.concurrent("collecting file blobs with Buffer paths does not crash during GC sweep", async () => {
+  // The S3/file blob store keeps the pinned path buffer until the wrapper is
+  // finalized inside the GC sweep; releasing the pin must not reach
+  // JSCell::classInfo() there (validateIsNotSweeping assert in debug builds).
+  const fixture = `
+    const enc = new TextEncoder();
+    for (let i = 0; i < 50; i++) {
+      new Bun.S3Client({}).file(Buffer.from("key-" + i));
+      new Bun.S3Client({}).file(new DataView(enc.encode("dv-key-" + i).buffer));
+      new Bun.S3Client({}).file(enc.encode("uint8-key-" + i));
+      Bun.file(Buffer.from("/tmp/buffer-path-" + i));
+      Bun.file(enc.encode("/tmp/uint8-path-" + i));
+      Bun.file(enc.encode("/tmp/enc-path-" + i).buffer);
+      Bun.gc(true);
+    }
+    console.log("ok");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({
+    stdout: normalizeBunSnapshot(stdout),
+    stderr: normalizeBunSnapshot(stderr),
+    exitCode,
+  }).toMatchInlineSnapshot(`
+    {
+      "exitCode": 0,
+      "stderr": "",
+      "stdout": "ok",
+    }
+  `);
+});
+
 test("S3 stream error parked before consumption survives GC", async () => {
   const fixture = `
     const stream = Bun.S3Client.file("some-key").stream();

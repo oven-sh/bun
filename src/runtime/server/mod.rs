@@ -226,6 +226,11 @@ bitflags::bitflags! {
         /// [`NewServer::bind_snapshot_pending`]. JS-reachable paths must
         /// tolerate the missing uws app while this is set.
         const SNAPSHOT_PENDING            = 1 << 3;
+        /// `server.unref()` was called while `SNAPSHOT_PENDING`. The keep-alive
+        /// is a plain active/inactive flag that `listen()` activates, so the
+        /// intent has to be carried separately and re-applied after the
+        /// restore-time bind; `server.ref()` while pending clears it.
+        const SNAPSHOT_PENDING_UNREF      = 1 << 4;
     }
 }
 
@@ -2893,6 +2898,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             if let Some(max) = this_ref.deferred_max_http_header_size.take() {
                 this_ref.set_max_http_header_size(max);
+            }
+            // `listen()` just activated the keep-alive; a build-time
+            // `server.unref()` asked for it not to be.
+            if this_ref.flags.contains(ServerFlags::SNAPSHOT_PENDING_UNREF) {
+                this_ref.flags.remove(ServerFlags::SNAPSHOT_PENDING_UNREF);
+                this_ref.unref();
             }
             (
                 this_ref.js_value.try_get(),

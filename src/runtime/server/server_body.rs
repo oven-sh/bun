@@ -2927,6 +2927,13 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // Nothing is bound, so there is nothing to hold the build's loop
+            // open with (doing so would keep an auto-mode build from ever
+            // draining); the restore-time bind refs like a fresh listen().
+            self.flags.remove(ServerFlags::SNAPSHOT_PENDING_UNREF);
+            return Ok(this_value);
+        }
         self.ref_();
         Ok(this_value)
     }
@@ -2938,6 +2945,12 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        if self.flags.contains(ServerFlags::SNAPSHOT_PENDING) {
+            // The keep-alive is not active yet, so `unref()` alone would be a
+            // no-op; remember the intent for the restore-time bind.
+            self.flags.insert(ServerFlags::SNAPSHOT_PENDING_UNREF);
+            return Ok(this_value);
+        }
         self.unref();
         Ok(this_value)
     }

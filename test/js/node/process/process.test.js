@@ -1132,18 +1132,35 @@ describe.concurrent(() => {
       ).toThrow("ERR_INVALID_ARG_VALUE");
     });
 
-    it("throws for invalid numeric values (NaN, Infinity, overflows)", () => {
-      const invalidNumbers = [NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1];
-      for (const val of invalidNumbers) {
+    describe.each([
+      [NaN, "NaN"],
+      [Infinity, "Infinity"],
+      [-Infinity, "-Infinity"],
+      [Number.MAX_SAFE_INTEGER + 1, "overflow"],
+    ])("throws for invalid numeric value: %s (%s)", (val) => {
+      it("rejects invalid user value", () => {
         expect(() => process.threadCpuUsage({ user: val, system: 100 })).toThrow();
+      });
+      it("rejects invalid system value", () => {
         expect(() => process.threadCpuUsage({ user: 100, system: val })).toThrow();
-      }
+      });
     });
 
     it("works with diff", () => {
       const init = process.threadCpuUsage();
+      
+      // Perform controlled CPU work to ensure thread CPU usage increments
+      const start = performance.now();
+      while (performance.now() - start < 10) {}
+
       const delta = process.threadCpuUsage(init);
+      const reference = process.threadCpuUsage();
+
       assertValidCpuUsage(delta);
+      assertValidCpuUsage(reference);
+      
+      // Verify that the init argument affects the result (delta should be less than the absolute reference)
+      expect(delta.user).toBeLessThan(reference.user);
     });
 
     it("throws on invalid property type", () => {

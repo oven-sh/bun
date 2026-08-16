@@ -572,8 +572,10 @@ impl FileReader {
                 _ => {}
             }
         }
-        if reader_done || self.done.get() {
+        if reader_done || self.done.get() || self.window_remaining() == Some(0) {
+            // Detach first: closing the reader would otherwise end the sink from on_reader_done as well.
             self.sink.set(SinkHandle::None);
+            self.end_at_window();
             sink.end(None);
             return;
         }

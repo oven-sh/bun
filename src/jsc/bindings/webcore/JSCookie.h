@@ -2,7 +2,6 @@
 
 #include "JSDOMWrapper.h"
 #include "Cookie.h"
-#include <wtf/NeverDestroyed.h>
 #include <JavaScriptCore/DateInstance.h>
 namespace WebCore {
 

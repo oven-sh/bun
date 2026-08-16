@@ -87,6 +87,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLiveCellAtRawAddress, (JSGlobalObject * glo
     return JSValue::encode(jsBoolean(JSC__JSValue__isLiveCell(static_cast<JSC::EncodedJSValue>(bits))));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectSyncWithoutSweep, (JSGlobalObject * globalObject, CallFrame*))
+{
+    JSC::getVM(globalObject).heap.collectSync(JSC::CollectionScope::Full);
+    return JSValue::encode(jsUndefined());
+}
+
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -106,6 +112,11 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
     object->putDirectNativeFunction(
         vm, globalObject, JSC::Identifier::fromString(vm, "rawCellAddress"_s), 1,
         jsFunctionRawCellAddress, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "collectSyncWithoutSweep"_s), 0,
+        jsFunctionCollectSyncWithoutSweep, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
     object->putDirectNativeFunction(

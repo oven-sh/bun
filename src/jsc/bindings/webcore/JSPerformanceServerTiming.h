@@ -65,6 +65,18 @@ protected:
     DECLARE_DEFAULT_FINISH_CREATION;
 };
 
+class JSPerformanceServerTimingOwner final : public JSC::WeakHandleOwner {
+public:
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
+    void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
+};
+
+inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, PerformanceServerTiming*)
+{
+    static NeverDestroyed<JSPerformanceServerTimingOwner> owner;
+    return &owner.get();
+}
+
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceServerTiming&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceServerTiming* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceServerTiming>&&);

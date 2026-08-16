@@ -2,7 +2,6 @@
 
 #include "JSDOMWrapper.h"
 #include "JavaScriptCore/WasmStreamingCompiler.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

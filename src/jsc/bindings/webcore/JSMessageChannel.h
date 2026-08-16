@@ -22,7 +22,6 @@
 
 #include "JSDOMWrapper.h"
 #include "MessageChannel.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

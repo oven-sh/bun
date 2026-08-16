@@ -569,21 +569,23 @@ it("deserialize applies the same nesting depth limit to arrays as to objects", a
 });
 
 describe("JsRef::Weak liveness", () => {
-  // Bun.gc(false) is collectSync without a sweep, so dead cells stay allocated until the sweeper reaches them.
+  // collectSyncWithoutSweep leaves dead cells allocated until the incremental sweeper reaches them.
   it("dead-but-unswept cells read as not live, kept cells read as live", () => {
     const { jscInternals } = require("bun:internal-for-testing");
-    function make(n: number) {
-      const out: bigint[] = [];
-      for (let i = 0; i < n; i++) out.push(jscInternals.rawCellAddress({ i, pad: [i] }));
-      return out;
+    let objects: object[] = [];
+    const dropped: bigint[] = [];
+    for (let i = 0; i < 2000; i++) {
+      const o = { i, pad: [i] };
+      objects.push(o);
+      dropped.push(jscInternals.rawCellAddress(o));
     }
-    const dropped = make(2000);
     const kept = { keep: true };
     const keptAddr = jscInternals.rawCellAddress(kept);
     expect(dropped.every(a => jscInternals.isLiveCellAtRawAddress(a))).toBe(true);
     expect(jscInternals.isLiveCellAtRawAddress(keptAddr)).toBe(true);
 
-    Bun.gc(false);
+    objects = [];
+    jscInternals.collectSyncWithoutSweep();
 
     // A few may survive via the conservative stack scan; the bulk must read as dead.
     const stillLive = dropped.filter(a => jscInternals.isLiveCellAtRawAddress(a)).length;

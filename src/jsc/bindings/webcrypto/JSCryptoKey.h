@@ -25,7 +25,6 @@
 #include "CryptoKey.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

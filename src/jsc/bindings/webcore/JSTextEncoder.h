@@ -25,7 +25,6 @@
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMWrapper.h"
 #include "TextEncoder.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

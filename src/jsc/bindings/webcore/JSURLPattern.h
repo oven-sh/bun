@@ -22,7 +22,6 @@
 
 #include "URLPattern.h"
 #include "JSDOMWrapper.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

@@ -2,7 +2,6 @@
 
 #include "JSDOMWrapper.h"
 #include "CookieMap.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

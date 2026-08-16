@@ -22,7 +22,6 @@
 
 #include "JSDOMWrapper.h"
 #include "PerformanceObserverEntryList.h"
-#include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 

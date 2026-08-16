@@ -354,12 +354,9 @@ if (IS_BUN_DEVELOPMENT) {
   };
 }
 
-// The execution/trigger async ids of the current scope. Node reports
-// executionAsyncId() === 1 (root) and triggerAsyncId() === 0 at the top
-// level. AsyncResource.prototype.runInAsyncScope swaps these to the
-// resource's ids for the duration of the callback, keeping the invariant
-// that inside a scope `executionAsyncId() === resource.asyncId()`. Promise,
-// timer and native resource boundaries still do not update them.
+// Current scope's execution/trigger async ids: 1/0 at the root like Node.
+// runInAsyncScope swaps in the resource's ids so `executionAsyncId() ===
+// resource.asyncId()` inside a scope; other async boundaries don't update them.
 let currentExecutionAsyncId = 1;
 let currentTriggerAsyncId = 0;
 
@@ -372,9 +369,7 @@ class AsyncResource {
   constructor(type, opts?) {
     validateString(type, "type");
 
-    // Node defaults to getDefaultTriggerAsyncId() (the current execution
-    // async id): 1 at the top level, or the enclosing resource's id inside a
-    // runInAsyncScope.
+    // Node defaults to getDefaultTriggerAsyncId(), the current execution async id.
     let triggerAsyncId =
       typeof opts === "number"
         ? opts

@@ -57,6 +57,44 @@ test("online fires before the entry point finishes", async () => {
   }
 });
 
+// Node reads all of these off one process-wide clock, so a stamp the worker takes
+// between the parent's send and receive lands between the parent's two stamps.
+// An origin restarted per VM puts every worker stamp behind the parent's by the
+// worker's spawn delay.
+test("hrtime, uptime, Bun.nanoseconds and performance share the parent's origin", async () => {
+  const worker = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.once("message", () => {
+       const [sec, nsec] = process.hrtime();
+       parentPort.postMessage({
+         hrtime: sec * 1e9 + nsec,
+         hrtimeBigint: Number(process.hrtime.bigint()),
+         uptime: Math.round(process.uptime() * 1e9),
+         nanoseconds: Bun.nanoseconds(),
+         performanceNow: Math.round(performance.now() * 1e6),
+         timeOrigin: performance.timeOrigin,
+       });
+     });
+     parentPort.postMessage("ready");`,
+    { eval: true },
+  );
+  try {
+    await once(worker, "message");
+    const sent = Number(process.hrtime.bigint());
+    worker.postMessage("ping");
+    const [{ timeOrigin, ...stamps }] = await once(worker, "message");
+    const received = Number(process.hrtime.bigint());
+
+    const outsideWindow = Object.fromEntries(
+      Object.entries(stamps as Record<string, number>).filter(([, ns]) => ns < sent || ns > received),
+    );
+    expect({ sent, received, outsideWindow }).toEqual({ sent, received, outsideWindow: {} });
+    expect(timeOrigin).toBe(performance.timeOrigin);
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");

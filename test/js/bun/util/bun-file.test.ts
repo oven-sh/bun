@@ -124,6 +124,7 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
       // > 1000 bytes: a Buffer this long starts out without an ArrayBuffer behind it.
       const existingLong = join(process.argv[2], "./".repeat(600) + "hello.txt");
       const protectedBefore = heapStats().protectedObjectCount;
+      const uint8Before = heapStats().objectTypeCounts.Uint8Array ?? 0;
       for (let i = 0; i < 2000; i++) {
         Bun.file(Buffer.from(join(process.argv[2], "missing-" + i)));
         Bun.file(new TextEncoder().encode(join(process.argv[2], "missing-u8-" + i)));
@@ -144,7 +145,7 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
         text: await Promise.all(keep.map(f => f.text())),
         missing: await Bun.file(Buffer.from(join(process.argv[2], "missing-0"))).exists(),
         leakedProtects: stats.protectedObjectCount - protectedBefore > 100,
-        leakedBuffers: (stats.objectTypeCounts.Uint8Array ?? 0) > 100,
+        leakedBuffers: (stats.objectTypeCounts.Uint8Array ?? 0) - uint8Before > 100,
       }));
     `,
   });

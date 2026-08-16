@@ -3571,7 +3571,7 @@ CPP_DECL JSC::ArrayBuffer* JSC__JSValue__retainPinnedArrayBuffer(JSC::EncodedJSV
     JSC::ArrayBuffer* buf = nullptr;
     if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
         buf = jb->impl();
-        if (!buf)
+        if (!buf || buf->isDetached())
             return nullptr;
         *out_ptr = static_cast<const uint8_t*>(buf->data());
         *out_len = buf->byteLength();

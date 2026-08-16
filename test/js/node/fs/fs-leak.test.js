@@ -141,6 +141,7 @@ test("async fs ops with Buffer path arguments do not leak the path argument", as
 
     function liveCounts(types) {
       Bun.gc(true);
+      Bun.gc(true);
       const counts = heapStats().objectTypeCounts;
       return types.map(t => counts[t] ?? 0);
     }

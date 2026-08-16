@@ -9,6 +9,7 @@
 import { sysErrorNameFromLibuv } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { isWindows } from "harness";
+import { getSystemErrorName } from "node:util";
 
 test.skipIf(!isWindows)("Error.name() with from_libuv=true does not overflow", () => {
   // errno values as stored by node_fs.zig: @intCast(-rc) where rc is the
@@ -16,7 +17,15 @@ test.skipIf(!isWindows)("Error.name() with from_libuv=true does not overflow", (
   expect(sysErrorNameFromLibuv(4058)).toBe("ENOENT"); // -UV_ENOENT
   expect(sysErrorNameFromLibuv(4083)).toBe("EBADF"); // -UV_EBADF
   expect(sysErrorNameFromLibuv(4092)).toBe("EACCES"); // -UV_EACCES
-  expect(sysErrorNameFromLibuv(4094)).toBe("EUNKNOWN"); // -UV_UNKNOWN
+  expect(sysErrorNameFromLibuv(4094)).toBe("UNKNOWN"); // -UV_UNKNOWN
+});
+
+// This name becomes err.code. libuv's uv_err_name(UV_UNKNOWN) is "UNKNOWN", and
+// so is Bun's own util.getSystemErrorName(-4094); the Rust variant is EUNKNOWN.
+test.skipIf(!isWindows)("Error.name() spells the unknown-errno fallback like node", () => {
+  expect(sysErrorNameFromLibuv(4094)).toBe(getSystemErrorName(-4094)); // -UV_UNKNOWN
+  // A code with no UV_E* constant folds to the same fallback.
+  expect(sysErrorNameFromLibuv(4000)).toBe("UNKNOWN");
 });
 
 test.skipIf(isWindows)("sysErrorNameFromLibuv is a no-op off Windows", () => {

@@ -1280,7 +1280,7 @@ pub(crate) fn inject<'a>(
                 // Map the Win32 code through the errno table so users see a
                 // name, not a raw integer.
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
+                    "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     e.to_system_errno()
                         .unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
                 );

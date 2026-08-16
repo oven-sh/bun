@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use super::text_diff::{self as diff, Hunk};
 use bun_core::output::ansi as colors;
-use bun_core::strings;
+use bun_core::strings::{self, str_utf8};
 
 pub(crate) struct DiffConfig {
     pub(crate) min_bytes_before_chunking: usize,
@@ -230,9 +230,9 @@ impl<'c, W: Write> Printer<'c, W> {
     /// never ends inside a UTF-8 sequence that the input didn't already break.
     fn flush(&mut self) {
         if self.result.is_ok() && !self.out.is_empty() {
-            self.result = match core::str::from_utf8(&self.out) {
-                Ok(s) => self.writer.write_str(s),
-                Err(_) => write!(self.writer, "{}", BStr::new(&self.out)),
+            self.result = match str_utf8(&self.out) {
+                Some(s) => self.writer.write_str(s),
+                None => write!(self.writer, "{}", BStr::new(&self.out)),
             };
         }
         self.out.clear();

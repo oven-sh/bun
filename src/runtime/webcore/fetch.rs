@@ -106,11 +106,12 @@ pub(crate) fn s3_credentials_from_env(global: &JSGlobalObject) -> bun_s3_signing
     // As in the AWS SDKs, `AWS_PROFILE` selects a profile even when
     // `AWS_ACCESS_KEY_ID`-style variables are also exported; Bun's own
     // `S3_*` variables stay explicit configuration and always apply.
-    let loader = global.bun_vm().as_mut().transpiler.env_mut();
-    let profile_selected = crate::webcore::cloud::env::Env::new(global)
+    let profile_in_env = crate::webcore::cloud::env::Env::new(global)
         .get(b"AWS_PROFILE")
-        .is_some_and(|p| !p.is_empty())
-        && loader.get(b"S3_ACCESS_KEY_ID").is_none_or(<[u8]>::is_empty);
+        .is_some_and(|p| !p.is_empty());
+    let loader = global.bun_vm().as_mut().transpiler.env_mut();
+    let profile_selected =
+        profile_in_env && loader.get(b"S3_ACCESS_KEY_ID").is_none_or(<[u8]>::is_empty);
     let env = loader.get_s3_credentials();
     let mut credentials = bun_s3_signing::S3Credentials::new_value(
         if profile_selected {
@@ -601,6 +602,25 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
     }
 
+    // `Bun.aws.fetch` / `Bun.gcp.fetch`: signing / token options live at
+    // the top level of `init` alongside the usual RequestInit fields.
+    // (Parsed before anything below takes a +1 on a JS string.)
+    let auth_options = options_object.unwrap_or(JSValue::UNDEFINED);
+    let aws_sign: Option<crate::webcore::aws::AwsSignOptions> = match &auth {
+        FetchAuth::Aws(base) => Some(base.with_overrides(global_this, auth_options)?),
+        _ => None,
+    };
+    let gcp_auth: Option<crate::webcore::cloud::gcp::GcpFetchOptions> = match &auth {
+        FetchAuth::Gcp(base) => Some(
+            crate::webcore::cloud::gcp::GcpFetchOptions::from_js_with_base(
+                global_this,
+                auth_options,
+                base,
+            )?,
+        ),
+        _ => None,
+    };
+
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
         StringOrURL::from_js(first_arg, global_this)?
@@ -621,23 +641,48 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
-    // `Bun.aws.fetch` / `Bun.gcp.fetch`: signing / token options live at
-    // the top level of `init` alongside the usual RequestInit fields.
-    let auth_options = options_object.unwrap_or(JSValue::UNDEFINED);
-    let aws_sign: Option<crate::webcore::aws::AwsSignOptions> = match &auth {
-        FetchAuth::Aws(base) => Some(base.with_overrides(global_this, auth_options)?),
-        _ => None,
-    };
-    let gcp_auth: Option<crate::webcore::cloud::gcp::GcpFetchOptions> = match &auth {
-        FetchAuth::Gcp(base) => Some(
-            crate::webcore::cloud::gcp::GcpFetchOptions::from_js_with_base(
-                global_this,
-                auth_options,
-                base,
-            )?,
-        ),
-        _ => None,
-    };
+    // What the caller's `signal` already says, without taking a ref: used to
+    // decide whether waiting for credentials may precede the real
+    // `extract_signal` (same precedence: `init.signal`, even null, wins).
+    enum SignalNow {
+        Live,
+        Aborted(JSValue),
+        Invalid,
+    }
+    macro_rules! signal_now {
+        () => {
+            'now: {
+                for obj in [
+                    options_object.unwrap_or_default(),
+                    request_init_object.unwrap_or_default(),
+                ] {
+                    if !obj.is_empty()
+                        && let Some(sig) = obj.get(global_this, "signal")?
+                    {
+                        break 'now match AbortSignal::from_js(sig) {
+                            Some(s) => {
+                                let s = bun_opaque::opaque_deref(s);
+                                if s.aborted() {
+                                    SignalNow::Aborted(s.js_reason(global_this))
+                                } else {
+                                    SignalNow::Live
+                                }
+                            }
+                            None if sig.is_null() => SignalNow::Live,
+                            None => SignalNow::Invalid,
+                        };
+                    }
+                }
+                if let Some(req) = request_mut!()
+                    && let Some(sig) = req.abort_signal()
+                    && sig.aborted()
+                {
+                    break 'now SignalNow::Aborted(sig.js_reason(global_this));
+                }
+                SignalNow::Live
+            }
+        };
+    }
 
     // Every arm carries a +1 (`from_js`/`dupe_ref`/`StringOrURL::from_js`).
     // `bun_core::String` is `Copy`
@@ -724,13 +769,29 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 if !credentials_ready =>
             {
                 // The region may come from the profile: resolve credentials
-                // first, then run this call again.
-                return defer_until_credentials::<ALLOW_GET_BODY, _>(
-                    global_this,
-                    arguments,
-                    &provider,
-                    false,
-                    auth,
+                // first, then run this call again — unless the signal has
+                // already decided the outcome.
+                let early = match signal_now!() {
+                    SignalNow::Live => {
+                        return defer_until_credentials::<ALLOW_GET_BODY, _>(
+                            global_this,
+                            arguments,
+                            &provider,
+                            false,
+                            auth,
+                        );
+                    }
+                    SignalNow::Aborted(reason) => reason,
+                    SignalNow::Invalid => ctx.to_type_error(
+                        jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("signal is not of type AbortSignal."),
+                    ),
+                };
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        early,
+                    ),
                 );
             }
             Err(err) => {
@@ -885,26 +946,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 })
             });
         if gcp_pending.is_some() || aws_pending.is_some() {
-            let already_aborted = 'aborted: {
-                for obj in [
-                    options_object.unwrap_or_default(),
-                    request_init_object.unwrap_or_default(),
-                ] {
-                    if !obj.is_empty()
-                        && let Some(sig) = obj.get(global_this, "signal")?
-                        && let Some(sig) = AbortSignal::from_js(sig)
-                    {
-                        break 'aborted bun_opaque::opaque_deref(sig).aborted();
-                    }
-                }
-                if let Some(req) = request_mut!()
-                    && let Some(sig) = req.abort_signal()
-                {
-                    break 'aborted sig.aborted();
-                }
-                false
-            };
-            if !already_aborted {
+            let already_settled = !matches!(signal_now!(), SignalNow::Live);
+            if !already_settled {
                 drop(s3_credentials.take());
                 if let Some(provider) = gcp_pending {
                     return defer_until_credentials::<ALLOW_GET_BODY, _>(

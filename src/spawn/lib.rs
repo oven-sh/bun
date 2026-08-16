@@ -251,8 +251,9 @@ pub struct RunOptions<'a> {
     pub argv: &'a [&'a [u8]],
     pub env_map: &'a bun_sys::EnvMap,
     /// Windows: append `argv[1..]` to the command line verbatim instead of
-    /// quoting each one (needed for `cmd.exe /C <command line>`). Ignored
-    /// elsewhere.
+    /// quoting each one (needed for `cmd.exe /C <command line>`), so quotes,
+    /// `&`, `|` … in them reach cmd.exe as written — only for arguments the
+    /// caller fully controls. Ignored elsewhere.
     pub windows_verbatim_arguments: bool,
 }
 

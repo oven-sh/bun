@@ -185,16 +185,20 @@ impl AwsSignOptions {
                 )));
             }
         } else if let Some(v) = value.get_truthy(global, "signingDate")? {
-            if v.is_number() || v.is_date() {
-                let ms = if v.is_number() {
-                    v.as_number()
-                } else {
-                    v.get_unix_timestamp()
-                };
-                if ms.is_finite() && ms >= 0.0 {
-                    out.datetime = Some(sigv4::amz_datetime((ms / 1000.0) as u64));
-                }
+            let ms = if v.is_number() {
+                v.as_number()
+            } else if v.is_date() {
+                v.get_unix_timestamp()
+            } else {
+                f64::NAN
+            };
+            // Up to 9999-12-31T23:59:59Z, which is all `x-amz-date` can spell.
+            if !(ms.is_finite() && (0.0..253_402_300_800_000.0).contains(&ms)) {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "signingDate must be a Date, epoch milliseconds, or a string like 20250101T000000Z"
+                )));
             }
+            out.datetime = Some(sigv4::amz_datetime((ms / 1000.0) as u64));
         }
         if let Some(endpoint) = get_truthy_string_utf8(value, global, b"endpoint", true)? {
             let e = endpoint.slice();

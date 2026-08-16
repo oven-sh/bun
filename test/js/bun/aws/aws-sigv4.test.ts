@@ -170,6 +170,22 @@ describe("Bun.aws.fetch", () => {
     await expect(Bun.aws.fetch(echo.url, { ...base, service: "bad service!" })).rejects.toThrow(
       /not a valid AWS service/,
     );
+    // signingDate: a Date, epoch ms, or an x-amz-date string; nothing else, nothing x-amz-date can't spell
+    const s3 = { ...base, service: "s3", region: "us-east-1" };
+    for (const signingDate of [
+      {},
+      -1,
+      1e21,
+      new Date(NaN),
+      new Date("+010000-01-01T00:00:00Z"),
+      "20250101T000000\n",
+      "nope",
+    ]) {
+      expect(() => Bun.aws.presign(echo.url, { ...s3, signingDate: signingDate as any })).toThrow(/signingDate/);
+    }
+    expect(await Bun.aws.presign(echo.url, { ...s3, signingDate: Date.UTC(2031, 0, 2, 3, 4, 5) })).toContain(
+      "X-Amz-Date=20310102T030405Z",
+    );
   });
 
   test("streaming bodies to s3 are sent with UNSIGNED-PAYLOAD", async () => {
@@ -319,6 +335,20 @@ describe("Bun.aws.fetch", () => {
     const ac = new AbortController();
     ac.abort();
     await expect(Bun.aws.fetch(echo.url, { signal: ac.signal })).rejects.toThrow(/aborted/i);
+    // …also when the region (relative URL) would have to come from the credential chain,
+    // and an invalid signal is a TypeError rather than a reason to go looking.
+    await expect(Bun.aws.fetch("/x", { service: "dynamodb", signal: ac.signal })).rejects.toThrow(/aborted/i);
+    await expect(Bun.aws.fetch("/x", { service: "dynamodb", signal: 42 as any })).rejects.toThrow(/AbortSignal/);
+    await expect(Bun.aws.fetch(echo.url, { signal: 42 as any })).rejects.toThrow(/AbortSignal/);
+    // init.signal: null detaches the Request's signal (as in plain fetch)
+    const res = await Bun.aws.fetch(new Request(echo.url, { signal: ac.signal }), {
+      accessKeyId,
+      secretAccessKey,
+      service: "s3",
+      region: "us-east-1",
+      signal: null,
+    });
+    expect(res.status).toBe(200);
   });
 
   test("signQuery to S3 with a body signs UNSIGNED-PAYLOAD (what S3 verifies)", async () => {
@@ -350,6 +380,12 @@ describe("Bun.aws.fetch", () => {
     expect(viaRequest.status).toBe(307);
     const followed = await Bun.aws.fetch(redirector.url, { ...base, redirect: "follow" });
     expect(followed.status).toBe(200);
+    // Following a cross-origin redirect drops the signature *and* the session token.
+    const hop = await Bun.aws.fetch(redirector.url, { ...base, sessionToken: "temporary", redirect: "follow" });
+    const seen = (await hop.json()).headers;
+    expect(seen.authorization).toBeUndefined();
+    expect(seen["x-amz-security-token"]).toBeUndefined();
+    expect(seen["x-amz-date"]).toBeString(); // (non-secret signing headers may remain)
   });
 
   test("AWSClient instances carry their own defaults; per-call options override", async () => {

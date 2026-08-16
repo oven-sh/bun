@@ -294,12 +294,13 @@ describe("Bun.aws.eventStream", () => {
   });
 
   test("end to end: signed request to a streaming endpoint, decoded as it arrives", async () => {
+    let authorization: string | null = null;
     let release!: () => void;
     const gate = new Promise<void>(r => (release = r));
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
-        expect(req.headers.get("authorization")).toStartWith("AWS4-HMAC-SHA256 Credential=AKID/");
+        authorization = req.headers.get("authorization");
         return new Response(
           new ReadableStream({
             async start(controller) {
@@ -348,5 +349,6 @@ describe("Bun.aws.eventStream", () => {
       "messageStop",
     ]);
     expect(text).toBe("Hello, world");
+    expect(authorization).toStartWith("AWS4-HMAC-SHA256 Credential=AKID/");
   });
 });

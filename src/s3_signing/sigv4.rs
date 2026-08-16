@@ -116,7 +116,7 @@ pub fn parse_iso8601(s: &[u8]) -> Option<u64> {
     let (y, mo, d, h, mi, se);
     // Seconds east of UTC (subtracted at the end).
     let mut offset: i64 = 0;
-    if s.len() >= 16 && s[8] == b'T' && s[4] != b'-' {
+    if s.len() == 16 && s[8] == b'T' && s[15] == b'Z' {
         y = digits(0..4)?;
         mo = digits(4..6)?;
         d = digits(6..8)?;
@@ -913,6 +913,9 @@ mod tests {
             Some(1_440_938_160)
         );
         assert_eq!(parse_iso8601(b"20150830T123600Z"), Some(1_440_938_160));
+        assert_eq!(parse_iso8601(b"20150830T123600+0500"), None);
+        assert_eq!(parse_iso8601(b"20150830T123600Zjunk"), None);
+        assert_eq!(parse_iso8601(b"20150830T123600\n"), None);
         assert_eq!(
             parse_iso8601(b"2015-08-30T14:36:00+02:00"),
             Some(1_440_938_160)

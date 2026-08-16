@@ -250,17 +250,32 @@ impl Resolver {
         if self.config.is_some() {
             return;
         }
-        let read = |path: Option<Vec<u8>>, is_config: bool| -> IniFile {
-            match path {
-                Some(p) => match File::read_from(Fd::cwd(), &p) {
-                    Ok(bytes) => IniFile::parse(&bytes, is_config),
-                    Err(_) => IniFile::default(),
-                },
-                None => IniFile::default(),
-            }
+        let (config, credentials) = (
+            self.cfg.config_file_path(),
+            self.cfg.credentials_file_path(),
+        );
+        self.config = Some(self.read_ini(config, true));
+        self.credentials = Some(self.read_ini(credentials, false));
+    }
+
+    fn read_ini(&mut self, path: Option<Vec<u8>>, is_config: bool) -> IniFile {
+        let Some(path) = path else {
+            return IniFile::default();
         };
-        self.config = Some(read(self.cfg.config_file_path(), true));
-        self.credentials = Some(read(self.cfg.credentials_file_path(), false));
+        match File::read_from(Fd::cwd(), &path) {
+            Ok(bytes) => IniFile::parse(&bytes, is_config),
+            Err(e) => {
+                if !matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) {
+                    let kind = if is_config { "config" } else { "credentials" };
+                    self.note(format_args!(
+                        "{} ({kind} file: {})",
+                        BStr::new(&path),
+                        BStr::new(e.name())
+                    ));
+                }
+                IniFile::default()
+            }
+        }
     }
 
     fn profile(&mut self, name: &[u8]) -> Option<Profile<'_>> {

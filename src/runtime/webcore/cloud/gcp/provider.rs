@@ -22,10 +22,6 @@ pub struct TokenProvider {
 }
 
 impl TokenProvider {
-    pub fn request(&self) -> &TokenRequest {
-        &self.request
-    }
-
     pub fn cached_usable(&self) -> Option<Arc<Token>> {
         self.cache.usable()
     }

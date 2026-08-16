@@ -145,9 +145,10 @@ impl CopyFile {
 
         let instance = jsc::SystemError::from(system_error)
             .to_error_instance_with_async_stack(global_this, promise);
-        if let Some(store) = self.store.take() {
-            drop(store); // deref()
-        }
+        // Only now: `source_file_store.pathlike` (read above) may borrow from
+        // the source store.
+        drop(self.source_store.take());
+        drop(self.store.take());
         promise.reject(global_this, Ok(instance))
     }
 
@@ -156,11 +157,10 @@ impl CopyFile {
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
-        drop(self.source_store.take()); // source_store.?.deref()
-
         if self.system_error.is_some() {
             return self.reject(promise, global_this);
         }
+        drop(self.source_store.take());
 
         promise.resolve(
             global_this,
@@ -1015,8 +1015,9 @@ fn read_write_loop_capped(
 // `source_file_store.pathlike` is a `PathLike` clone that is independently
 // droppable — `PathLike::clone` dupes owned string buffers (freed by the
 // clone's own `CowSlice` drop), bumps refs for WTF-backed slices, and only
-// shares the backing for borrowed-string/Buffer variants (whose owner is kept
-// alive by the `source_store` `StoreRef`). Each clone's field `Drop` frees
+// shares the backing for borrowed-string/Buffer/PinnedBuffer variants (whose
+// owner is kept alive by the `source_store` `StoreRef`, so that is dropped only
+// after the last read of the path — see `reject`). Each clone's field `Drop` frees
 // exactly what it owns; the `StoreRef`s release just their Store refcounts on
 // drop. No explicit `Drop` impl is needed.
 

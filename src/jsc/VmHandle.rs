@@ -409,11 +409,17 @@ impl VmHandle {
         self.0.state() == State::Open
     }
 
-    /// Is the calling thread this VM's thread? Any thread (a pointer compare
-    /// against the thread-local VM; nothing is dereferenced).
+    /// Is the calling thread this VM's thread? Any thread. Compares handle
+    /// identity, not the `VirtualMachine` address: this `Shared` outlives its
+    /// VM, so a later VM allocated at the same address is still told apart.
     #[inline]
     pub fn is_current_thread(&self) -> bool {
-        VirtualMachine::get_or_null() == Some(self.0.hot.vm)
+        match VirtualMachine::get_or_null() {
+            // SAFETY: the thread-local is this thread's live VM (cleared
+            // before a worker's VM is freed).
+            Some(vm) => Arc::ptr_eq(&unsafe { &*vm }.handle_ref().0, &self.0),
+            None => false,
+        }
     }
 
     pub(crate) fn tickets_outstanding(&self) -> u32 {

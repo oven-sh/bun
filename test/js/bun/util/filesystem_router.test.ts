@@ -496,7 +496,7 @@ it("throws instead of aborting when a relative dir no longer fits in a path buff
   // buffer and abort the process, so run the cases in a subprocess. An absolute
   // `dir` never touches the buffer and is reported as a missing directory.
   const maxPathBytes = isWindows ? 32767 * 3 + 1 : isMacOS ? 1024 : 4096;
-  const tooLong = `TypeError: Expected dir to resolve to a path shorter than ${maxPathBytes} bytes`;
+  const tooLong = `TypeError: Expected dir to resolve to a path of at most ${maxPathBytes} bytes`;
   using dir = tempDir("fsr-long-relative-dir", {
     "pages/index.tsx": "export default 1;\n",
   });
@@ -519,8 +519,8 @@ it("throws instead of aborting when a relative dir no longer fits in a path buff
     console.log(JSON.stringify({
       relative: construct(longDir),
       absolute: construct(path.parse(process.cwd()).root + longDir),
-      oneByteBelowLimit: construct(resolvingTo(${maxPathBytes} - 1)),
       atLimit: construct(resolvingTo(${maxPathBytes})),
+      oneByteOverLimit: construct(resolvingTo(${maxPathBytes} + 1)),
       afterwards: construct("pages"),
     }));
   `;
@@ -543,8 +543,8 @@ it("throws instead of aborting when a relative dir no longer fits in a path buff
     stdout: {
       relative: tooLong,
       absolute: "Error: Unable to find directory: <dir>",
-      oneByteBelowLimit: `Error: Unable to find directory: <cwd>${path.sep}<dir>`,
-      atLimit: tooLong,
+      atLimit: `Error: Unable to find directory: <cwd>${path.sep}<dir>`,
+      oneByteOverLimit: tooLong,
       afterwards: ["/"],
     },
     stderr: "",

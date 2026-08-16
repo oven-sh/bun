@@ -161,17 +161,15 @@ impl FileSystemRouter {
                 if path::Platform::AUTO.is_absolute(path_) {
                     root_dir_path = root_dir_path_;
                 } else {
-                    // Same limit as `Resolver::read_dir_info`, so a path it would reject by
-                    // length is reported as too long rather than as a missing directory.
                     let Some(joined) =
                         path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                             Fs::FileSystem::instance().top_level_dir,
-                            &mut dir_buf[..MAX_PATH_BYTES - 1],
+                            &mut dir_buf[..],
                             &[path_],
                         )
                     else {
                         return Err(global_this.throw_invalid_arguments(format_args!(
-                            "Expected dir to resolve to a path shorter than {} bytes",
+                            "Expected dir to resolve to a path of at most {} bytes",
                             MAX_PATH_BYTES
                         )));
                     };

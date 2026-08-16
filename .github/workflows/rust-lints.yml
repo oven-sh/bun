@@ -14,6 +14,8 @@ on:
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
+      - "scripts/rust-test.ts"
+      - "scripts/rust-workspace.ts"
       - "package.json"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -80,7 +82,18 @@ jobs:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: miri rust-src
 
+      - name: cargo test
+        # The same crates as ordinary host test binaries, linked by the clang
+        # and lld the setup installed. Miri never links, so this is what
+        # catches a test reaching a symbol only the full bun binary defines
+        # (scripts/rust-test.ts). It is the quick step, so it goes first; Miri
+        # below still reports when it fails.
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:test
+
       - name: cargo miri test
+        if: ${{ !cancelled() }}
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
         run: bun run rust:miri

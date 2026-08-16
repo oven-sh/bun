@@ -690,7 +690,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         "b/run.sh": "#!/bin/sh\necho hi\n",
         "b/install.js": "console.log(1)\n",
       });
-        chmodSync(join(String(dir), "a/run.sh"), 0o644);
+      chmodSync(join(String(dir), "a/run.sh"), 0o644);
       chmodSync(join(String(dir), "b/run.sh"), 0o755);
       chmodSync(join(String(dir), "b/install.js"), 0o755);
       const run = async (env: Record<string, string | undefined>) => {

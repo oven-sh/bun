@@ -73,7 +73,7 @@ void MessagePortPipe::scheduleDrain(uint8_t side, ScriptExecutionContextIdentifi
     }
 }
 
-void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx)
+void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx, bool fromYieldContinuation)
 {
     // Mirrors Node's MessagePort::OnMessage (src/node_messaging.cc): one
     // drain task processes the whole inbox in a loop, draining microtasks
@@ -104,6 +104,14 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             return;
         port = s.port.get();
         uint64_t st = s.state.load(std::memory_order_relaxed);
+        // A spent budget hands the rest to an after-yield continuation so a
+        // self-feeding message loop cannot starve timers and I/O; wakeup tasks
+        // posted by send() in the meantime stand down until it has run.
+        if (st & YieldPending) {
+            if (!fromYieldContinuation)
+                return;
+            st &= ~uint64_t(YieldPending);
+        }
         if (!port || (s.draining.isEmpty() && s.inbox.isEmpty())) {
             s.state.store(st & ~DrainScheduled, std::memory_order_release);
             return;
@@ -167,13 +175,14 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             }
             if (s.draining.isEmpty()) {
                 if (!limit) {
-                    // Budget spent; yield. If a racing send already posted a
-                    // wakeup let that task drain the rest, else claim the flag
-                    // and reschedule after the loop has polled.
-                    if (!(st & DrainScheduled)) {
-                        st |= DrainScheduled;
-                        rescheduleCtx = s.ctxId;
-                    }
+                    // Budget spent; the after-yield continuation posted below
+                    // is the only invocation allowed to keep draining, so
+                    // timers and I/O get a turn even when a racing send
+                    // already posted a regular wakeup task (which will stand
+                    // down on YieldPending). Nested waits still progress: the
+                    // loop tick they spin promotes after-yield tasks.
+                    st |= YieldPending;
+                    rescheduleCtx = s.ctxId;
                     if (ownsDispatching)
                         st &= ~uint64_t(Dispatching);
                     s.state.store(st, std::memory_order_release);
@@ -217,7 +226,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // its next loop iteration (after I/O and timers), not in this drain.
     if (rescheduleCtx) {
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
-            pipe->drainAndDispatch(side, rescheduleCtx);
+            pipe->drainAndDispatch(side, rescheduleCtx, /* fromYieldContinuation */ true);
         });
     }
 }
@@ -298,12 +307,12 @@ void MessagePortPipe::detach(uint8_t side)
         s.inbox.prepend(s.draining.takeLast());
     s.ctxId = 0;
     s.port = nullptr;
-    // Drop Attached, DrainScheduled and Dispatching. A drain task already in
-    // flight on the old context can't be recalled, but it captured the old
-    // ctxId and drainAndDispatch()'s s.ctxId != expectedCtx check makes it a
-    // no-op — even if a new owner attach()es to a different context before
-    // it runs. Messages remain queued for the next owner.
-    s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled | Dispatching), std::memory_order_acq_rel);
+    // Drop Attached, DrainScheduled, Dispatching and YieldPending. A drain
+    // task already in flight on the old context can't be recalled, but it
+    // captured the old ctxId and drainAndDispatch()'s s.ctxId != expectedCtx
+    // check makes it a no-op — even if a new owner attach()es to a different
+    // context before it runs. Messages remain queued for the next owner.
+    s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled | Dispatching | YieldPending), std::memory_order_acq_rel);
 }
 
 void MessagePortPipe::close(uint8_t side, CloseKind kind)

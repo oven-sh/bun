@@ -1,7 +1,8 @@
 import { describe, expect, mock, test } from "bun:test";
 import { existsSync } from "fs";
 import { open, readFile, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isGlibc, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, isLinux, tempDir } from "harness";
+import { devNull } from "os";
 import { join } from "path";
 test("fs.promises.writeFile async iterator", async () => {
   await using dir = tempDir("fs-promises-writeFile-async-iterator", {
@@ -54,8 +55,9 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   expect(fn[Symbol.asyncIterator]).not.toBeCalled();
 });
 
-// Node validates and honors `options.flush` for every kind of data, including
-// the (async) iterable path; Bun used to read it only for string/Buffer data.
+// Node validates `options.flush` for every kind of data and, when it is true,
+// fsyncs the file it opened for a path; Bun's (async) iterable path used to
+// ignore the option entirely.
 describe("fs.promises.writeFile async iterator: options.flush", () => {
   const invalidMessage = (received: string) =>
     `ERR_INVALID_ARG_TYPE: The "options.flush" property must be of type boolean. Received ${received}`;
@@ -104,14 +106,15 @@ describe("fs.promises.writeFile async iterator: options.flush", () => {
         "writeFile(handle, iterable)": await outcome(writeFile(fh, ["x"], { flush: "yes" } as any)),
         "handle.writeFile(iterable)": await outcome(fh.writeFile(["x"] as any, { flush: "yes" } as any)),
         "handle.appendFile(iterable)": await outcome(fh.appendFile(["x"] as any, { flush: "yes" } as any)),
-        // String data takes the native path, whose message is worded differently.
-        "handle.writeFile(string)": (await outcome(fh.writeFile("x", { flush: "yes" } as any))).split(":")[0],
+        "handle.writeFile(string)": await outcome(fh.writeFile("x", { flush: "yes" } as any)),
       };
       expect(results).toEqual({
         "writeFile(handle, iterable)": invalidMessage("type string ('yes')"),
         "handle.writeFile(iterable)": invalidMessage("type string ('yes')"),
         "handle.appendFile(iterable)": invalidMessage("type string ('yes')"),
-        "handle.writeFile(string)": "ERR_INVALID_ARG_TYPE",
+        // String data is validated by the native binding, which still words the
+        // name as an argument where node says `"options.flush" property`.
+        "handle.writeFile(string)": `ERR_INVALID_ARG_TYPE: The "flush" argument must be of type boolean. Received type string ('yes')`,
       });
     } finally {
       await fh.close();
@@ -128,6 +131,62 @@ describe("fs.promises.writeFile async iterator: options.flush", () => {
       results[String(flush)] = await readFile(path, "utf8");
     }
     expect(results).toEqual({ undefined: "ab", null: "ab", false: "ab", true: "ab" });
+  });
+
+  test.concurrent("rejects with whatever the iterable threw, even a falsy value", async () => {
+    await using dir = tempDir("writeFile-iterable-flush-falsy-throw", {});
+    const results: unknown[] = [];
+    for (const thrown of [0, null, undefined, false, ""]) {
+      function* failing() {
+        yield "p";
+        throw thrown;
+      }
+      const path = join(String(dir), `${results.length}.txt`);
+      results.push(
+        await writeFile(path, failing(), { flush: true }).then(
+          () => "resolved",
+          rejectedWith => ({ rejectedWith }),
+        ),
+      );
+    }
+    expect(results).toEqual([
+      { rejectedWith: 0 },
+      { rejectedWith: null },
+      { rejectedWith: undefined },
+      { rejectedWith: false },
+      { rejectedWith: "" },
+    ]);
+  });
+
+  // /dev/null cannot be fsynced (EINVAL), which makes it observable whether a
+  // sync was attempted: node syncs a path it opened itself and never syncs a
+  // caller's FileHandle. fsync's errno on other platforms is not pinned down.
+  test.skipIf(!isLinux)("syncs a path it opened, not a caller's FileHandle, like node", async () => {
+    const outcome = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "resolved",
+        e => `${e.code} from ${e.syscall}`,
+      );
+    const fh = await open(devNull, "w");
+    let results;
+    try {
+      results = {
+        "writeFile(handle, iterable)": await outcome(writeFile(fh, ["x"], { flush: true })),
+        "handle.writeFile(iterable)": await outcome(fh.writeFile(["x"] as any, { flush: true } as any)),
+        "handle.appendFile(iterable)": await outcome(fh.appendFile(["x"] as any, { flush: true } as any)),
+        "writeFile(path, iterable)": await outcome(writeFile(devNull, ["x"], { flush: true })),
+        "writeFile(path, iterable) without flush": await outcome(writeFile(devNull, ["x"])),
+      };
+    } finally {
+      await fh.close();
+    }
+    expect(results).toEqual({
+      "writeFile(handle, iterable)": "resolved",
+      "handle.writeFile(iterable)": "resolved",
+      "handle.appendFile(iterable)": "resolved",
+      "writeFile(path, iterable)": "EINVAL from fsync",
+      "writeFile(path, iterable) without flush": "resolved",
+    });
   });
 
   // Buffer and URL paths used to skip fs.open and hand the path straight to
@@ -219,17 +278,19 @@ const dir = process.argv[2];
 const file = name => dir + "/" + name + ".txt";
 const fsyncs = () => (fs.existsSync(process.env.FSYNC_LOG) ? fs.statSync(process.env.FSYNC_LOG).size : 0);
 const report = {};
-const describeError = err => (err.syscall ? err.code + " from " + err.syscall : err.code ?? err.message);
+const describeError = err =>
+  err instanceof Error ? (err.syscall ? err.code + " from " + err.syscall : err.code ?? err.message) : "rejected with " + err;
 async function section(name, run) {
   const before = fsyncs();
   const result = await run().then(value => value ?? "resolved", describeError);
   report[name] = { fsyncs: fsyncs() - before, result };
 }
 const contents = name => fs.readFileSync(file(name), "utf8");
-function* failing() {
+function* failingWith(thrown) {
   yield "1";
-  throw new Error("boom");
+  throw thrown;
 }
+const failing = () => failingWith(new Error("boom"));
 `;
 
     async function runFixture(dir: string, extraEnv: Record<string, string>) {
@@ -281,12 +342,11 @@ const withHandle = (name, flag, write) => section(name, async () => {
   }
   return contents(name);
 });
-await withHandle("writeFile(handle)", "w", fh => fsp.writeFile(fh, ["1", "2"], { flush: true }));
+await withHandle("writeFile(handle, iterable)", "w", fh => fsp.writeFile(fh, ["1", "2"], { flush: true }));
 await withHandle("handle.writeFile(iterable)", "w", fh => fh.writeFile(["1", "2"], { flush: true }));
-await withHandle("handle.writeFile(string)", "w", fh => fh.writeFile("12", { flush: true }));
-await withHandle("handle.writeFile(iterable) without flush", "w", fh => fh.writeFile(["1", "2"]));
 await withHandle("handle.appendFile(iterable)", "a", fh => fh.appendFile(["1", "2"], { flush: true }));
 await section("iterable throws", () => fsp.writeFile(file("i"), failing(), { flush: true }));
+await section("iterable throws undefined", () => fsp.writeFile(file("j"), failingWith(undefined), { flush: true }));
 console.log(JSON.stringify(report));
 `,
       });
@@ -298,12 +358,12 @@ console.log(JSON.stringify(report));
         "URL path": { fsyncs: 1, result: "12" },
         "Buffer path": { fsyncs: 1, result: "12" },
         "async iterable": { fsyncs: 1, result: "12" },
-        "writeFile(handle)": { fsyncs: 1, result: "12" },
-        "handle.writeFile(iterable)": { fsyncs: 1, result: "12" },
-        "handle.writeFile(string)": { fsyncs: 1, result: "12" },
-        "handle.writeFile(iterable) without flush": { fsyncs: 0, result: "12" },
-        "handle.appendFile(iterable)": { fsyncs: 1, result: "012" },
+        // Node validates flush for a FileHandle but never syncs one.
+        "writeFile(handle, iterable)": { fsyncs: 0, result: "12" },
+        "handle.writeFile(iterable)": { fsyncs: 0, result: "12" },
+        "handle.appendFile(iterable)": { fsyncs: 0, result: "012" },
         "iterable throws": { fsyncs: 0, result: "boom" },
+        "iterable throws undefined": { fsyncs: 0, result: "rejected with undefined" },
       });
     });
 
@@ -325,8 +385,10 @@ leakCheck("fsync fails");
 await section("flush: false never reaches fsync", () => fsp.writeFile(file("b"), ["1", "2"], { flush: false }));
 await section("iterable throws", () => fsp.writeFile(file("c"), failing(), { flush: true }));
 leakCheck("iterable throws");
+await section("iterable throws null", () => fsp.writeFile(file("d"), failingWith(null), { flush: true }));
+leakCheck("iterable throws null");
 await section("FileHandle", async () => {
-  const fh = await fsp.open(file("d"), "w");
+  const fh = await fsp.open(file("e"), "w");
   try {
     const result = await fsp.writeFile(fh, ["1", "2"], { flush: true }).then(() => "resolved", describeError);
     // writeFile must not close a descriptor it did not open.
@@ -343,7 +405,8 @@ console.log(JSON.stringify(report));
         "fsync fails": { fsyncs: 1, result: "EIO from fsync", contents: "12", leakedFds: 0 },
         "flush: false never reaches fsync": { fsyncs: 0, result: "resolved" },
         "iterable throws": { fsyncs: 0, result: "boom", leakedFds: 0 },
-        "FileHandle": { fsyncs: 1, result: "EIO from fsync, handle still has 2 bytes" },
+        "iterable throws null": { fsyncs: 0, result: "rejected with null", leakedFds: 0 },
+        "FileHandle": { fsyncs: 0, result: "resolved, handle still has 2 bytes" },
       });
     });
   });

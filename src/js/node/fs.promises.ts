@@ -1647,40 +1647,46 @@ async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, fla
 
   let totalBytesWritten = 0;
 
-  let error: Error | undefined;
+  // Tracked separately from `error`: an iterable may throw a falsy value.
+  let failed = false;
+  let error: unknown;
 
   try {
     totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding, signal);
   } catch (err) {
-    error = err as Error;
+    failed = true;
+    error = err;
   }
 
   // Handle cleanup outside of try-catch
-  if (mustClose && flagTruncates(flag)) {
-    try {
-      await fs.ftruncate(fdOrPath, totalBytesWritten);
-    } catch {}
-  }
-
-  // Node only syncs a write that succeeded; a failed one rejects with its own error.
-  if (flush && error === undefined) {
-    try {
-      await fs.fsync(fdOrPath);
-    } catch (err) {
-      error = err as Error;
-    }
-  }
-
   if (mustClose) {
+    if (flagTruncates(flag)) {
+      try {
+        await fs.ftruncate(fdOrPath, totalBytesWritten);
+      } catch {}
+    }
+
+    // Like node, `flush` syncs the file this call opened (never a caller's
+    // FileHandle), and only after a write that succeeded.
+    if (flush && !failed) {
+      try {
+        await fs.fsync(fdOrPath);
+      } catch (err) {
+        failed = true;
+        error = err;
+      }
+    }
+
     await fs.close(fdOrPath);
   }
 
   // Abort signal shadows other errors
   if (signal?.aborted) {
+    failed = true;
     error = $makeAbortError(undefined, { cause: signal.reason });
   }
 
-  if (error) {
+  if (failed) {
     throw error;
   }
 }

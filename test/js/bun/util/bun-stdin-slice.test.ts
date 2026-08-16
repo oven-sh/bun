@@ -138,6 +138,8 @@ describe("Bun.stdin.slice(0, N) over a pipe that stays open leaves the bytes aft
     const reader = proc.stdout.getReader();
     const decoder = new TextDecoder();
     let stdout = "";
+    // Drained from the start so a failing child can never block on a full stderr pipe while stdout is being waited on.
+    const stderr = proc.stderr.text();
     return {
       proc,
       async stdoutUntil(marker: string) {
@@ -149,8 +151,7 @@ describe("Bun.stdin.slice(0, N) over a pipe that stays open leaves the bytes aft
       async finish() {
         await proc.stdin.end();
         for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
-        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode };
+        return { stdout, stderr: await stderr, exitCode: await proc.exited };
       },
     };
   }

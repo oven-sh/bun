@@ -148,8 +148,9 @@ pub fn sign_fetch_request(
 /// A JS `Error` for a credential-provider failure, with `.code`.
 pub fn provider_error_to_js(global: &JSGlobalObject, err: &ProviderError) -> JSValue {
     let value = global.create_error_instance(format_args!("{}", bstr::BStr::new(&err.message)));
-    if let Ok(code) = bun_core::String::init(err.code.as_bytes()).to_js(global) {
-        value.put(global, b"code".as_slice(), code);
+    match bun_core::String::init(err.code.as_bytes()).to_js(global) {
+        Ok(code) => value.put(global, b"code".as_slice(), code),
+        Err(e) => return global.take_error(e),
     }
     value
 }

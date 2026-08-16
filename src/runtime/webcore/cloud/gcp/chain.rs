@@ -315,7 +315,8 @@ impl Resolver {
                 )),
             },
             None => self.note(format_args!(
-                "application default credentials (HOME is not set)"
+                "application default credentials ({} is not set)",
+                if cfg!(windows) { "APPDATA" } else { "HOME" }
             )),
         }
 
@@ -477,7 +478,7 @@ impl Resolver {
                 target_audience,
                 aud: token_uri,
                 iat: now.saturating_sub(10),
-                exp: now + 3600,
+                exp: now.saturating_sub(10) + 3600,
             },
         );
         // The RSA signature is a millisecond or two of CPU: not on the JS thread.
@@ -681,7 +682,7 @@ impl Resolver {
         if res
             .header(b"metadata-flavor")
             .is_none_or(|v| !v.eq_ignore_ascii_case(b"Google"))
-            && res.status != 200
+            && (res.status != 200 || !custom_host)
         {
             self.note(format_args!(
                 "metadata server ({} did not answer like one, HTTP {})",

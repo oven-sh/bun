@@ -1,7 +1,7 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createVerify, generateKeyPairSync } from "crypto";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 const STRIPPED = [
@@ -236,7 +236,7 @@ describe.concurrent("Bun.gcp", () => {
       aud: `http://127.0.0.1:${tokenServer.port}/token`,
       scope: "https://www.googleapis.com/auth/cloud-platform",
       iat: expect.any(Number),
-      exp: claims.iat + 3610,
+      exp: claims.iat + 3600,
     });
 
     // custom scopes (bare names expand), and an ID token for an audience
@@ -271,13 +271,6 @@ describe.concurrent("Bun.gcp", () => {
       source: "authorized-user",
       quotaProjectId: "billing-proj",
     });
-    // ~/.config/gcloud/ works too (POSIX layout)
-    using home = tempDir("gcp-home2", {
-      ".config": { gcloud: { "application_default_credentials.json": authorizedUserFile() } },
-    });
-    if (process.platform !== "win32") {
-      expect(await token({ HOME: String(home) })).toMatchObject({ source: "authorized-user" });
-    }
     // ID tokens: `target_audience` is sent and whatever Google issues is
     // returned, as google-auth-library does (for user credentials that is
     // usually a token for gcloud's client ID, which Cloud Run accepts).
@@ -300,6 +293,12 @@ describe.concurrent("Bun.gcp", () => {
     expect(missing.error.message).toContain("could not read credentials file");
   });
 
+  test.skipIf(isWindows)("authorized_user ADC file under ~/.config/gcloud (POSIX layout)", async () => {
+    using home = tempDir("gcp-home2", {
+      ".config": { gcloud: { "application_default_credentials.json": authorizedUserFile() } },
+    });
+    expect(await token({ HOME: String(home) })).toMatchObject({ source: "authorized-user" });
+  });
   test("metadata server (GCE / GKE / Cloud Run)", async () => {
     const env = { NO_GCE_CHECK: undefined, GCE_METADATA_HOST: `127.0.0.1:${metadata.port}` };
     const before = hits.metadata.length;

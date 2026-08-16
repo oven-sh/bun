@@ -408,7 +408,13 @@ impl JobContext for SpawnJob {
                     env_map: &env,
                     windows_verbatim_arguments: verbatim,
                 })
-                .map_err(|e| SpawnError::Failed(format!("{e:?}").into_bytes().into_boxed_slice()));
+                .map_err(|e| {
+                    SpawnError::Failed(
+                        format!("could not start \"{}\": {e}", bstr::BStr::new(argv[0]))
+                            .into_bytes()
+                            .into_boxed_slice(),
+                    )
+                });
                 if let Some(done) = shared.done.lock().take() {
                     *shared.result.lock() = Some(result);
                     done.finish();

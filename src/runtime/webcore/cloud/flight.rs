@@ -120,10 +120,12 @@ impl<P: Provider> Flights<P> {
     }
 }
 
-fn entry<P: Provider>(provider: &Arc<P>) -> &'static mut Entry<P> {
+/// Scoped access to `provider`'s entry: the borrow cannot outlive `f`, so
+/// nothing holds it across a call that may insert/evict or re-enter JS.
+fn with_entry<P: Provider, R>(provider: &Arc<P>, f: impl FnOnce(&mut Entry<P>) -> R) -> R {
     let flights = P::flights();
     let i = flights.index(provider);
-    &mut flights.entries[i]
+    f(&mut flights.entries[i])
 }
 
 fn run_waiters<V>(waiters: Vec<Continuation<V>>, result: &FlightResult<V>) -> JsResult<()> {
@@ -156,16 +158,19 @@ fn start<P: Provider>(
     waiters: Vec<Continuation<P::Value>>,
     hold: Hold,
 ) -> JsResult<()> {
-    {
-        let e = entry(provider);
+    let joined = with_entry(provider, |e| {
         if hold == Hold::Loop {
             e.keep_alive.ref_(bun_io::js_vm_ctx());
         }
         if let Some(existing) = &mut e.waiters {
             existing.extend(waiters);
-            return Ok(());
+            return true;
         }
         e.waiters = Some(waiters);
+        false
+    });
+    if joined {
+        return Ok(());
     }
     let io = Io::default();
     let chain = provider.begin(global, io.clone());
@@ -183,12 +188,11 @@ fn finish<P: Provider>(
     result: Result<P::Value, ProviderError>,
 ) -> JsResult<()> {
     let vm = VirtualMachine::get();
-    let (waiters, held) = {
-        let e = entry(provider);
+    let (waiters, held) = with_entry(provider, |e| {
         let held = e.keep_alive.is_active();
         e.keep_alive.unref(bun_io::js_vm_ctx());
         (e.waiters.take().unwrap_or_default(), held)
-    };
+    });
     if io.interrupted() {
         // Aborted by a VM stop phase, not the chain's verdict: cache nothing,
         // and if anyone live is still waiting (test isolation), go again.
@@ -216,7 +220,7 @@ fn finish<P: Provider>(
     if rearm {
         arm_refresh_timer(provider);
     } else {
-        entry(provider).refresh_timer = None;
+        with_entry(provider, |e| e.refresh_timer = None);
     }
     run_waiters(waiters, &settled)
 }
@@ -230,10 +234,11 @@ fn arm_refresh_timer<P: Provider>(provider: &Arc<P>) {
         return;
     };
     let address = Arc::as_ptr(provider).cast::<()>() as usize;
-    entry(provider)
-        .refresh_timer
-        .get_or_insert_with(|| CallbackTimer::new(on_refresh_timer::<P>, address))
-        .schedule(delay_ms);
+    with_entry(provider, |e| {
+        e.refresh_timer
+            .get_or_insert_with(|| CallbackTimer::new(on_refresh_timer::<P>, address))
+            .schedule(delay_ms);
+    });
 }
 
 fn on_refresh_timer<P: Provider>(address: usize) {
@@ -241,7 +246,7 @@ fn on_refresh_timer<P: Provider>(address: usize) {
     let Some(provider) = P::flights().by_address(address as *const ()) else {
         return;
     };
-    entry(&provider).refresh_timer = None;
+    with_entry(&provider, |e| e.refresh_timer = None);
     if vm.script_allowed() {
         refresh_ahead(vm.global(), &provider);
     }
@@ -259,7 +264,7 @@ fn refresh_ahead<P: Provider>(global: &JSGlobalObject, provider: &Arc<P>) {
 pub fn keep_warm<P: Provider>(global: &JSGlobalObject, provider: &Arc<P>) {
     if provider.cache().fresh().is_none() {
         refresh_ahead(global, provider);
-    } else if entry(provider).idle() {
+    } else if with_entry(provider, |e| e.idle()) {
         arm_refresh_timer(provider);
     }
 }
@@ -311,7 +316,7 @@ pub fn resolve_now_or_start<P: Provider>(
         return Now::Ready(Err(e));
     }
     let previous = cache.last_error();
-    if entry(provider).waiters.is_some() {
+    if with_entry(provider, |e| e.waiters.is_some()) {
         return Now::Pending { previous };
     }
     let slot: std::rc::Rc<core::cell::Cell<Option<FlightResult<P::Value>>>> = Default::default();

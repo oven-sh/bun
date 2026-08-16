@@ -1140,8 +1140,10 @@ impl Resolver {
             ));
         };
         // Best-effort write-back so other tools see the refreshed token.
-        let expires_at =
-            sigv4::amz_datetime(now_secs() + expires_in.unwrap_or(0.0).max(0.0) as u64);
+        let Some(expires_in) = expires_in.filter(|s| s.is_finite() && *s > 0.0) else {
+            return Ok(Some(access_token));
+        };
+        let expires_at = sigv4::amz_datetime(now_secs() + expires_in as u64);
         let iso = format!(
             "{}-{}-{}T{}:{}:{}Z",
             BStr::new(&expires_at[0..4]),

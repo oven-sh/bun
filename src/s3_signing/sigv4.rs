@@ -591,6 +591,7 @@ fn validate(creds: &Credentials<'_>, req: &Request<'_>) -> Result<(), SignError>
     if bad(creds.access_key_id)
         || creds.session_token.is_some_and(bad)
         || bad(req.host)
+        || bad(req.path)
         || bad(req.scope.region)
         || bad(req.scope.service)
         || bad(req.method)
@@ -1079,5 +1080,78 @@ mod tests {
             t("s3.eu-west-2.backblazeb2.com"),
             (Some("s3".into()), Some("eu-west-2".into()))
         );
+    }
+
+    #[test]
+    fn presign_vectors() {
+        let c = creds();
+        // S3: canonical path in the URL, UNSIGNED-PAYLOAD, session token echoed.
+        let session = Credentials {
+            session_token: Some(b"tok en"),
+            ..c
+        };
+        let req = Request {
+            method: b"GET",
+            host: b"examplebucket.s3.amazonaws.com",
+            path: b"/test file.txt",
+            query: b"",
+            headers: &[],
+            payload: Payload::Unsigned,
+            scope: Scope {
+                service: b"s3",
+                region: b"us-east-1",
+            },
+            datetime: Some(dt()),
+            s3_path_semantics: None,
+        };
+        let url = presign(&session, &req, b"https", 86400).unwrap().url;
+        let url = std::str::from_utf8(&url).unwrap();
+        assert!(url.starts_with("https://examplebucket.s3.amazonaws.com/test%20file.txt?"));
+        assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+        assert!(
+            url.contains("X-Amz-Credential=AKIDEXAMPLE%2F20150830%2Fus-east-1%2Fs3%2Faws4_request")
+        );
+        assert!(url.contains("X-Amz-Date=20150830T123600Z&X-Amz-Expires=86400"));
+        assert!(url.contains("X-Amz-Security-Token=tok%20en"));
+        assert!(url.contains("X-Amz-SignedHeaders=host&"));
+        assert_eq!(url.len() - url.rfind("X-Amz-Signature=").unwrap(), 16 + 64);
+        // Deterministic for a fixed datetime.
+        assert_eq!(
+            presign(&session, &req, b"https", 86400).unwrap().url,
+            presign(&session, &req, b"https", 86400).unwrap().url
+        );
+
+        // Non-S3: empty path becomes "/", existing query is kept and signed.
+        let iam = Request {
+            host: b"iam.amazonaws.com",
+            path: b"",
+            query: b"Action=ListUsers&Version=2010-05-08",
+            payload: Payload::Bytes(b""),
+            scope: Scope {
+                service: b"iam",
+                region: b"us-east-1",
+            },
+            ..req
+        };
+        let url = presign(&c, &iam, b"https", 60).unwrap().url;
+        let url = std::str::from_utf8(&url).unwrap();
+        assert!(url.starts_with(
+            "https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08&X-Amz-Algorithm="
+        ));
+        assert!(!url.contains("X-Amz-Security-Token"));
+
+        assert_eq!(
+            presign(&c, &req, b"https", 0).err(),
+            Some(SignError::InvalidExpires)
+        );
+        assert_eq!(
+            presign(&c, &req, b"https", MAX_PRESIGN_EXPIRES + 1).err(),
+            Some(SignError::InvalidExpires)
+        );
+        let crlf = Request {
+            path: b"/a\r\nb",
+            ..req
+        };
+        assert!(presign(&c, &crlf, b"https", 60).is_err());
     }
 }

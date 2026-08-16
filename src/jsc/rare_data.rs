@@ -1083,7 +1083,7 @@ impl Drop for RareData {
     fn drop(&mut self) {
         // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
         // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / tls_default_ciphers:
+        // path_buf / tls_default_ciphers / cloud_credentials (disarms its timers):
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

@@ -260,8 +260,6 @@ impl S3Credentials {
         !self.access_key_id.is_empty() && !self.secret_access_key.is_empty()
     }
 
-    /// True when signing would have to wait on the provider (nothing static,
-    /// nothing cached). Asynchronous callers resolve first in that case.
     /// Ambient credentials apply only when *neither* key was given; one
     /// without the other is a configuration error, not a cue to go looking.
     pub fn uses_provider(&self) -> bool {
@@ -270,6 +268,8 @@ impl S3Credentials {
             && self.provider.is_some()
     }
 
+    /// True when signing would have to wait on the provider (nothing static,
+    /// nothing cached). Asynchronous callers resolve first in that case.
     pub fn needs_credentials_resolution(&self) -> bool {
         self.uses_provider() && self.provider.as_ref().is_some_and(|p| p.needs_resolution())
     }

@@ -302,9 +302,6 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
-        // only to lazily memoize — single-threaded JS event-loop discipline applies.
         let env_creds = crate::webcore::fetch::s3_credentials_from_env(global);
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
@@ -665,8 +662,6 @@ impl S3Client {
         let object_keys = args[0];
         let options = opt_js(args[1]);
 
-        // get credentials from env — `Transpiler::env_mut` is the safe accessor
-        // for the process-singleton dotenv loader (set during init).
         let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(global);
 
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.

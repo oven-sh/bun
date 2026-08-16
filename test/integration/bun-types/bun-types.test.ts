@@ -337,7 +337,8 @@ describe("@types/bun integration test", () => {
   // so unlike the tests above we have to write a real tsconfig and spawn the CLI.
   // https://devblogs.microsoft.com/typescript/announcing-typescript-7-0-beta/
   describe("tsgo (TypeScript 7 native preview)", () => {
-    test.skipIf(isDebug)("checks without lib.dom.d.ts", async () => {
+    // OHOS: the native (Go) tsgo binary cannot execute on the musl sandbox.
+    test.skipIf(isDebug || Bun.env.BUN_OHOS === "1")("checks without lib.dom.d.ts", async () => {
       const fixtureDir = await createIsolatedFixture(["@typescript/native-preview"]);
 
       const tsconfig = structuredClone(sourceTsconfig);
@@ -370,7 +371,9 @@ describe("@types/bun integration test", () => {
   // Runs on debug builds too: spawning tsc over a single file is cheap,
   // unlike the in-process LanguageService runs above.
   describe("Bun.mmap", () => {
-    test("MMapOptions accepts offset and size", async () => {
+    // OHOS: typescript@latest is the native (Go) tsc, which cannot execute
+    // on the musl sandbox (EACCES), so the CLI spawn always fails.
+    test.skipIf(Bun.env.BUN_OHOS === "1")("MMapOptions accepts offset and size", async () => {
       const checkDir = join(TEMP_DIR, "mmap-options-check");
       const tsconfig = structuredClone(sourceTsconfig);
       tsconfig.include = ["mmap-options.ts"];

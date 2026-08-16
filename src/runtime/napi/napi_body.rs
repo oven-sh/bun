@@ -2946,8 +2946,7 @@ impl ThreadSafeFunction {
         (NapiStatus::ok as napi_status, false)
     }
 
-    /// Caller must hold `lock`. Reached from addon threads; the VM is reached
-    /// only through its handle.
+    /// Caller must hold `lock`; the VM is reached only through its handle.
     fn schedule_dispatch(&mut self) {
         let _ = self
             .dispatch_state

@@ -437,23 +437,21 @@ jobs:
           }
 
           # ─── configure (仅当需要) ───────────────────────────────────────
-          # build.ninja 存在 + HEAD 未变 + scripts/build 输入未变 → 跳过。
-          # HEAD 记录在 stamp 里 (persistent workspace 下 git checkout 只改
-          # 变化的文件, 未变文件 mtime 保持, 所以同一 HEAD 无需重新 configure)。
+          # configure 只依赖构建系统输入: build.ninja 缺失或
+          # scripts/build/、Cargo.toml/lock、rust-toolchain.toml、patches/
+          # 比 build.ninja 新才重跑。源码 (src/**) 改动不需要 reconfigure —
+          # 若每次都重跑, ninja 的 rust edge 会被判脏导致全量重编,
+          # 持久工作区的增量就白做了。
           nf="build/release/build.ninja"
-          stamp="build/release/.configure-head"
-          head_now=$(git rev-parse HEAD 2>/dev/null || echo unknown)
           need_configure=0
-          if [ ! -f "$nf" ]; then
-            need_configure=1
-          elif [ ! -f "$stamp" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$head_now" ]; then
-            need_configure=1
-          elif find scripts/build -newer "$nf" -type f 2>/dev/null | grep -q .; then
-            need_configure=1
-          fi
+          [ -f "$nf" ] || need_configure=1
+          if [ "$need_configure" = "0" ] && [ Cargo.toml -nt "$nf" ]; then need_configure=1; fi
+          if [ "$need_configure" = "0" ] && [ Cargo.lock -nt "$nf" ]; then need_configure=1; fi
+          if [ "$need_configure" = "0" ] && [ rust-toolchain.toml -nt "$nf" ]; then need_configure=1; fi
+          if [ "$need_configure" = "0" ] && find scripts/build patches -newer "$nf" -type f 2>/dev/null | grep -q .; then need_configure=1; fi
 
           if [ "$need_configure" = "1" ]; then
-            echo "=== configure (first run or inputs changed) ==="
+            echo "=== configure (first run or build inputs changed) ==="
             if ! "$BUN" scripts/build.ts \
               --profile=release \
               --os=ohos \
@@ -467,7 +465,6 @@ jobs:
               echo "configure failed (see $TMPDIR/build.log)"
               exit 1
             fi
-            echo "$head_now" > "$stamp"
           else
             echo "configure skipped (build.ninja up to date)"
           fi

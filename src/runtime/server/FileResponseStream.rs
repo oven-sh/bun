@@ -479,6 +479,24 @@ impl FileResponseStream {
         let resp = self.resp.get();
         resp.end_send_file(self.sendfile.get().offset, resp.should_close_connection());
         (self.on_complete.get())(self.ctx.get(), resp);
+        // `end_send_file` bypasses every shouldCloseConnection() gate: it does
+        // not go through internalEnd, and the onWritable gate is skipped
+        // because this frame returns `false` to it. Run the gate here — after
+        // `on_complete`, which must see a live socket — so Connection: close
+        // and the graceful-stop close-when-idle mark actually close.
+        //
+        // `resp` is still valid here: usockets never frees a socket
+        // synchronously — us_socket_close only links it onto the loop's
+        // closed list, freed by us_internal_free_closed_sockets at the end of
+        // the loop iteration — so the allocation outlives this frame no
+        // matter what `on_complete` did (the same invariant that makes
+        // passing `resp` to `on_complete` after the end sound). It is still
+        // *this* HTTP socket: an upgrade (us_socket_adopt) is only reachable
+        // from a live in-flight request, and this one just completed. And if
+        // anything in the frame closed it, the shim's leading
+        // us_socket_is_closed check returns before touching the destructed
+        // ext. Only `finish()` runs after this, and it never touches `resp`.
+        resp.close_if_done_and_marked();
         self.finish();
     }
 
@@ -543,6 +561,10 @@ impl FileResponseStream {
             let resp = self.resp.get();
             resp.end_without_body(resp.should_close_connection());
             (self.on_complete.get())(self.ctx.get(), resp);
+            // This end runs uncorked (reader callbacks), so no cork or parser
+            // gate will run the close check; do it here, after `on_complete`
+            // like `end_sendfile`, so the callbacks see a live socket.
+            resp.close_if_done_and_marked();
         }
 
         // Release the owner ref from `heap::into_raw` in `start()`. Every entry
@@ -583,7 +605,7 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| {
         let _guard = bun_ptr::ScopedRef::<Self>::new(this);
-        (*this).on_read_chunk(chunk, state)
+        (*this).on_read_chunk(&chunk, state)
     };
     on_reader_done  = |this| {
         let _guard = bun_ptr::ScopedRef::<Self>::new(this);
@@ -639,4 +661,9 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
 
 impl bun_event_loop::Taskable for FileResponseStream {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FileResponseStreamEof;
+    /// `on_read_chunk` took a ref for the queued EOF hop; drop it.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract; adopts the ref the enqueue took.
+        drop(unsafe { bun_ptr::ScopedRef::<FileResponseStream>::adopt(this) });
+    }
 }

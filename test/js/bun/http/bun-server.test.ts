@@ -598,11 +598,13 @@ test("should be able to await server.stop()", async () => {
 });
 
 describe.concurrent("server.stop() drain promise counts open connections", () => {
-  // The drain promise must not resolve while a keep-alive HTTP connection is
-  // still open. Previously it counted only in-flight requests (plus the
-  // listener and websockets), so an idle keep-alive socket let the promise
-  // resolve in 0 ms and the socket kept answering requests.
-  async function runDrainFixture(mode: "idle" | "inflight" | "force" | "closeIdle") {
+  // The drain promise must not resolve while a connection is still open, and
+  // a graceful stop() must actively drain: idle keep-alive connections close
+  // right away, busy ones close as soon as their in-flight work completes.
+  // The client never hangs up first, so every observed close below is
+  // server-initiated; idleTimeout is long enough that a timeout-driven close
+  // would flake the runtime budget long before firing.
+  async function runDrainFixture(mode: "idle" | "inflight" | "inflightHead" | "force") {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -615,6 +617,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           const server = Bun.serve({
             port: 0,
             hostname: "127.0.0.1",
+            idleTimeout: 255,
             async fetch(req) {
               if (new URL(req.url).pathname === "/slow") {
                 inflight.resolve();
@@ -634,26 +637,33 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             c.on("connect", resolve);
             c.on("error", reject);
           });
-          c.write("GET /" + (mode === "inflight" ? "slow" : "fast") + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-          if (mode === "inflight") {
-            await inflight.promise;
-          } else {
+          const method = mode === "inflightHead" ? "HEAD" : "GET";
+          c.write(method + " /" + (mode === "idle" ? "fast" : "slow") + " HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          if (mode === "idle") {
             while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
+          } else {
+            await inflight.promise;
           }
-          // One keep-alive connection exists (idle or with a request in flight).
           let resolved = false;
           const stopped = server.stop(false).then(() => { resolved = true; });
           await new Promise(r => setImmediate(r));
           const resolvedEarly = resolved;
-          if (mode === "inflight") release.resolve();
-          // Connection is (now) idle; promise must still be pending.
-          while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
-          await new Promise(r => setImmediate(r));
-          const resolvedWhileOpen = resolved;
-          // Drain it: the client hangs up or the caller escalates or sweeps.
-          if (mode === "force") server.stop(true);
-          else if (mode === "closeIdle") server.closeIdleConnections();
-          else c.destroy();
+          let responseAfterStop = false;
+          if (mode === "inflight" || mode === "inflightHead") {
+            // The held request completes; its full response must reach the
+            // client before the server closes the now-idle connection. A HEAD
+            // response has no body, so its completion goes through the
+            // no-body end path rather than internalEnd.
+            release.resolve();
+            const doneMark = mode === "inflightHead" ? "\\r\\n\\r\\n" : "\\r\\nok";
+            while (!buf.includes(doneMark) && !events.includes("close")) await new Promise(r => setImmediate(r));
+            responseAfterStop = buf.includes(doneMark);
+          } else if (mode === "force") {
+            // Escalation cuts the still-held request; release the handler so
+            // the aborted request can settle.
+            server.stop(true);
+            release.resolve();
+          }
           await stopped;
           // The client socket's 'close' and the server-side filter → promise
           // resolution race; poll so the assertion is order-independent.
@@ -663,7 +673,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
             await new Promise(r => setImmediate(r));
             closed = events.includes("close");
           }
-          console.log(JSON.stringify({ resolvedEarly, resolvedWhileOpen, resolved, closed }));
+          console.log(JSON.stringify({ resolvedEarly, responseAfterStop, resolved, closed }));
           c.destroy();
         `,
       ],
@@ -675,37 +685,474 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     return { stderr, out: JSON.parse(stdout.trim() || "null"), exitCode };
   }
 
-  test("idle keep-alive connection holds the promise until the client closes", async () => {
+  test("stop() closes an idle keep-alive connection and the promise resolves", async () => {
+    // The sweep closes the socket inside stop() itself, so the promise may
+    // already be resolved one tick later; resolvedEarly is not meaningful.
     expect(await runDrainFixture("idle")).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
+      out: { resolvedEarly: expect.any(Boolean), responseAfterStop: false, resolved: true, closed: true },
       exitCode: 0,
     });
   });
 
-  test("in-flight request's connection holds the promise past response end", async () => {
+  test("in-flight request completes across stop(), then its connection is closed", async () => {
     expect(await runDrainFixture("inflight")).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
+      out: { resolvedEarly: false, responseAfterStop: true, resolved: true, closed: true },
       exitCode: 0,
     });
   });
 
-  test("stop(true) after stop(false) force-closes the surviving connection", async () => {
+  test("in-flight HEAD request completes across stop(), then its connection is closed", async () => {
+    expect(await runDrainFixture("inflightHead")).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, responseAfterStop: true, resolved: true, closed: true },
+      exitCode: 0,
+    });
+  });
+
+  test("a handler rejection on a HEAD request still closes its drained connection", async () => {
+    // The production 500 for a rejected handler renders from the rejection
+    // microtask, uncorked, and a HEAD response ends without a body: no cork
+    // or parser gate runs, so RequestContext::end_without_body has to run the
+    // close gate itself for the stop() mark to take effect.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const inflight = Promise.withResolvers();
+          const release = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            development: false,
+            async fetch() {
+              inflight.resolve();
+              await release.promise;
+              throw new Error("boom");
+            },
+          });
+          const c = net.connect(server.port, "127.0.0.1");
+          let buf = "";
+          const closed = Promise.withResolvers();
+          c.on("data", d => (buf += d));
+          c.on("close", () => closed.resolve());
+          c.on("error", () => {});
+          await new Promise((resolve, reject) => { c.on("connect", resolve); c.on("error", reject); });
+          c.write("HEAD /slow HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          await inflight.promise;
+          let resolved = false;
+          const stopped = server.stop(false).then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          // The handler rejects; the 500 head renders from the microtask and
+          // the drained connection must close on its own.
+          release.resolve();
+          await stopped;
+          await closed.promise;
+          console.log(JSON.stringify({ resolvedEarly, got500: buf.includes(" 500 "), resolved }));
+          // The rejected handler marks the process exit code; the drain
+          // assertions above are what this test is about.
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The rejected handler is logged to stderr by design; drain it but assert
+    // only the drain behavior.
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      out: { resolvedEarly: false, got500: true, resolved: true },
+      exitCode: 0,
+    });
+  });
+
+  test("stop(true) after stop(false) force-closes the still-busy connection", async () => {
     expect(await runDrainFixture("force")).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
+      out: { resolvedEarly: false, responseAfterStop: false, resolved: true, closed: true },
       exitCode: 0,
     });
   });
 
-  test("closeIdleConnections() after stop(false) drains the surviving connection", async () => {
-    // close_idle_connections suppresses the filter's own dispatch while the
-    // uWS call runs (re-entrance guard); its trailing deinit_if_we_can() is
-    // what resolves the promise on this path.
-    expect(await runDrainFixture("closeIdle")).toEqual({
+  test("a connection mid-request survives stop() until the client closes", async () => {
+    // A connection that is receiving a request ("sending a request" - Node's
+    // idle definition excludes it) is spared by the graceful sweep, and with
+    // no dispatched request the connection count is the only term holding the
+    // drain promise open. The mid-request state is staged as a partial second
+    // request head on a keep-alive connection that already completed a full
+    // request, so the server demonstrably owns the socket. If the sweep still
+    // closed it, the partial head had not arrived when stop() ran (on a loaded
+    // host the bytes can lag the client's write by longer than any fixed tick
+    // budget, and a connection whose bytes the server never saw is closed as
+    // idle) - that round proves nothing and is retried on a fresh server.
+    //
+    // Two variants run on confirmed-spared rounds:
+    // - destroy: the promise keeps pending until the client hangs up.
+    // - complete: the client finishes the head after stop(); the request must
+    //   still dispatch and be answered (the close-when-idle mark has to
+    //   survive the dispatch's response-state reset, which only spares
+    //   connection-scoped bits), and then the mark closes the served
+    //   connection and the drain resolves.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          async function round(completeHead) {
+            const server = Bun.serve({
+              port: 0,
+              hostname: "127.0.0.1",
+              idleTimeout: 255,
+              fetch: () => new Response("ok"),
+            });
+            const c = net.connect(server.port, "127.0.0.1");
+            const state = { buf: "", closed: false };
+            c.on("data", d => (state.buf += d));
+            c.on("close", () => (state.closed = true));
+            c.on("error", () => {});
+            await new Promise((resolve, reject) => { c.on("connect", resolve); c.on("error", reject); });
+            c.write("GET /first HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+            while (!state.buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
+            // Half of a second request's head: mid-request, nothing dispatched.
+            c.write("GET /second HTTP/1.1\\r\\nHost: x\\r\\n");
+            // Yield so the server's parser can consume the head (stop() runs
+            // its sweep synchronously, and a head still in the kernel buffer
+            // leaves the connection idle). No tick budget is guaranteed to be
+            // enough - the void-round classification below covers the misses.
+            for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r));
+            let resolved = false;
+            const stopped = server.stop(false).then(() => { resolved = true; });
+            // The promise must stay pending while the mid-request connection
+            // is open; the client never hangs up during this window, so only
+            // the sweep can close the socket.
+            for (let i = 0; i < 20 && !resolved && !state.closed; i++) {
+              await new Promise(r => setImmediate(r));
+            }
+            if (resolved || state.closed) {
+              // Server-initiated close: the sweep saw the connection idle
+              // because the partial head had not arrived yet. Correct for an
+              // idle connection, but not the state under test - void round.
+              // A resolution with the socket left open would be the bug.
+              const until = Date.now() + 2000;
+              while (!state.closed && Date.now() < until) await new Promise(r => setImmediate(r));
+              if (!state.closed) return { fail: "stop() resolved while a mid-request connection was open" };
+              await stopped;
+              c.destroy();
+              return null;
+            }
+            // Confirmed: the sweep spared the mid-request connection, so the
+            // partial head was parsed and the close-when-idle mark is set.
+            if (completeHead) {
+              // Finish the head: the request dispatches on the marked
+              // connection, its response reaches the client, then the mark
+              // closes the drained connection (the client never hangs up).
+              c.write("\\r\\n");
+              while (!state.closed) await new Promise(r => setImmediate(r));
+              await stopped;
+              return {
+                resolved: true,
+                closed: true,
+                secondServed: (state.buf.match(/\\r\\nok/g) || []).length === 2,
+              };
+            }
+            c.destroy();
+            await stopped;
+            const until = Date.now() + 2000;
+            while (!state.closed && Date.now() < until) await new Promise(r => setImmediate(r));
+            return { resolved: true, closed: state.closed };
+          }
+          const results = {};
+          for (let attempt = 1; attempt <= 16 && (!results.destroy || !results.complete); attempt++) {
+            const variant = results.destroy ? "complete" : "destroy";
+            const r = await round(variant === "complete");
+            if (r === null) continue;
+            if (r.fail) { console.error(r.fail); process.exit(1); }
+            results[variant] = r;
+          }
+          if (!results.destroy || !results.complete) {
+            console.error("every round raced: the partial head never arrived before stop()");
+            process.exit(1);
+          }
+          console.log(JSON.stringify(results));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolvedWhileOpen: false, resolved: true, closed: true },
+      out: {
+        destroy: { resolved: true, closed: true },
+        complete: { resolved: true, closed: true, secondServed: true },
+      },
+      exitCode: 0,
+    });
+  });
+
+  test("in-flight Bun.file (sendfile) response completes across stop(), then its connection is closed", async () => {
+    // The sendfile completion path (uws_res_end_sendfile) bypasses internalEnd
+    // and returns `false` to uWS's onWritable, so none of the parser-side
+    // shouldCloseConnection() gates run; the explicit gate after the stream's
+    // on_complete is what closes the drained connection here.
+    const dir = tempDirWithFiles("drain-sendfile", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const SIZE = 16 * 1024 * 1024;
+          await Bun.write("big.bin", Buffer.alloc(SIZE, "x"));
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            fetch: () => new Response(Bun.file("big.bin")),
+          });
+          const c = net.connect(server.port, "127.0.0.1");
+          // Parse the response framing so the assertion is on body bytes, not
+          // raw socket bytes (headers must not mask a truncated body).
+          let head = "";
+          let headDone = false;
+          let contentLength = -1;
+          let bodyBytes = 0;
+          let sawClose = false;
+          const firstData = Promise.withResolvers();
+          c.on("data", d => {
+            if (!headDone) {
+              head += d.toString("latin1");
+              const he = head.indexOf("\\r\\n\\r\\n");
+              if (he !== -1) {
+                headDone = true;
+                contentLength = +(/\\r\\ncontent-length: *(\\d+)/i.exec(head.slice(0, he))?.[1] ?? -1);
+                bodyBytes = head.length - he - 4;
+              }
+            } else {
+              bodyBytes += d.length;
+            }
+            firstData.resolve();
+          });
+          c.on("close", () => (sawClose = true));
+          c.on("error", () => {});
+          await new Promise((resolve, reject) => { c.on("connect", resolve); c.on("error", reject); });
+          c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          // First bytes of the response have arrived; 16 MB cannot fit in the
+          // socket buffers, so the transfer is still in flight server-side.
+          await firstData.promise;
+          c.pause();
+          let resolved = false;
+          const stopped = server.stop(false).then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          c.resume();
+          // The full body must arrive, then the server closes the connection
+          // (the client never hangs up; idleTimeout is far beyond the test
+          // budget, so only the drain can close it).
+          while (!sawClose) await new Promise(r => setImmediate(r));
+          await stopped;
+          console.log(JSON.stringify({ resolvedEarly, contentLength, bodyBytes, resolved }));
+        `,
+      ],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, contentLength: 16 * 1024 * 1024, bodyBytes: 16 * 1024 * 1024, resolved: true },
+      exitCode: 0,
+    });
+  });
+
+  test("a response completing inside another socket's parse window still closes its drained connection", async () => {
+    // internalEnd's post-uncork close gate must key on WHICH socket the
+    // parser is on, not the context-wide isParsingHttp bit: B's parked
+    // response below completes in the microtask drain inside A's onData
+    // (A's body completion resolves it), and B gets no later gate of its
+    // own. With the context-wide bit, B lingered until idleTimeout and
+    // stop() hung.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const releaseB = Promise.withResolvers();
+          const bHeld = Promise.withResolvers();
+          const aStarted = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            async fetch(req) {
+              const path = new URL(req.url).pathname;
+              if (path === "/hold") {
+                bHeld.resolve();
+                await releaseB.promise;
+                return new Response("held");
+              }
+              if (path === "/poke") {
+                aStarted.resolve();
+                // Parks until the body arrives after stop(). The fin chunk is
+                // delivered inside A's parse window, so this continuation -
+                // and B's completion, which it unblocks - runs in that
+                // window's microtask drain.
+                await req.text();
+                releaseB.resolve();
+                return new Response("poked");
+              }
+              return new Response("ok");
+            },
+          });
+          function dial() {
+            const c = net.connect(server.port, "127.0.0.1");
+            const state = { c, buf: "", closed: false };
+            c.on("data", d => (state.buf += d));
+            c.on("close", () => (state.closed = true));
+            c.on("error", () => {});
+            return new Promise((res, rej) => {
+              c.on("connect", () => res(state));
+              c.on("error", rej);
+            });
+          }
+          const b = await dial();
+          b.c.write("GET /hold HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          await bHeld.promise;
+          const a = await dial();
+          // Complete head, held body: once the handler has started, A is
+          // dispatched and demonstrably owned by the server, and it stays
+          // busy at the sweep, so it is spared and marked close-when-idle.
+          // (A partial head could not be awaited: nothing observable fires
+          // for it, and on a loaded host its bytes can lag the client's
+          // write past the sweep, leaving the connection invisible to it.)
+          a.c.write("POST /poke HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 2\\r\\n\\r\\n");
+          await aStarted.promise;
+          let resolved = false;
+          const stopped = server.stop(false).then(() => { resolved = true; });
+          await new Promise(r => setImmediate(r));
+          const resolvedEarly = resolved;
+          // Complete A's body; the handler resumes inside A's parse window
+          // and resolves B. Both responses must be delivered, then both
+          // connections close server-initiated and the drain promise
+          // resolves.
+          a.c.write("hi");
+          while (!a.closed || !b.closed) await new Promise(r => setImmediate(r));
+          await stopped;
+          console.log(JSON.stringify({
+            resolvedEarly,
+            aGotResponse: a.buf.includes("poked"),
+            bGotResponse: b.buf.includes("held"),
+            resolved,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolvedEarly: false, aGotResponse: true, bGotResponse: true, resolved: true },
+      exitCode: 0,
+    });
+  });
+
+  test("closeIdleConnections() is a one-shot sweep that spares busy connections and keeps listening", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const inflight = Promise.withResolvers();
+          const release = Promise.withResolvers();
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            async fetch(req) {
+              if (new URL(req.url).pathname === "/slow") {
+                inflight.resolve();
+                await release.promise;
+              }
+              return new Response("ok");
+            },
+          });
+          const port = server.port;
+          function dial() {
+            const c = net.connect(port, "127.0.0.1");
+            const state = { c, buf: "", closed: false };
+            c.on("data", d => (state.buf += d));
+            c.on("close", () => (state.closed = true));
+            c.on("error", () => {});
+            return new Promise((resolve, reject) => {
+              c.on("connect", () => resolve(state));
+              c.on("error", reject);
+            });
+          }
+          const countOks = s => (s.buf.match(/\\r\\nok/g) || []).length;
+          const idle = await dial();
+          idle.c.write("GET /fast HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          while (countOks(idle) < 1) await new Promise(r => setImmediate(r));
+          const busy = await dial();
+          busy.c.write("GET /slow HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          await inflight.promise;
+
+          const closedFirst = server.closeIdleConnections();
+          // Idle connection closes; the busy one is spared.
+          while (!idle.closed) await new Promise(r => setImmediate(r));
+          const busyClosedBySweep = busy.closed;
+          release.resolve();
+          while (countOks(busy) < 1) await new Promise(r => setImmediate(r));
+          // One-shot: the spared connection was not marked close-when-idle, so
+          // it keeps serving keep-alive requests after its response completed.
+          busy.c.write("GET /fast HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          while (countOks(busy) < 2) await new Promise(r => setImmediate(r));
+          // The listener is untouched: a fresh connection still gets served.
+          const fresh = await dial();
+          fresh.c.write("GET /fast HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          while (countOks(fresh) < 1) await new Promise(r => setImmediate(r));
+          // Both surviving connections are idle keep-alive now; a second
+          // sweep closes them both and reports the count.
+          const closedSecond = server.closeIdleConnections();
+          while (!busy.closed || !fresh.closed) await new Promise(r => setImmediate(r));
+          console.log(JSON.stringify({
+            closedFirst,
+            busyClosedBySweep,
+            busyServedAfterSweep: countOks(busy) === 2,
+            freshServed: countOks(fresh) === 1,
+            closedSecond,
+          }));
+          server.stop(true);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: {
+        closedFirst: 1,
+        busyClosedBySweep: false,
+        busyServedAfterSweep: true,
+        freshServed: true,
+        closedSecond: 2,
+      },
       exitCode: 0,
     });
   });
@@ -761,8 +1208,10 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
   test("pre-handshake TLS close does not steal another connection's count", async () => {
     // For TLS, +1 fires in onHandshake, -1 in onClose. A socket that RSTs
     // before the handshake reaches onClose without a matching +1; without the
-    // per-socket filteredOpen gate that -1 would decrement the count for the
-    // live handshaken connection and stop(false) would resolve under it.
+    // per-socket filteredOpen gate that -1 would steal the live handshaken
+    // connection's count and leave it stuck after that connection closes, so
+    // stop(false) would never resolve. The live connection holds a request
+    // across stop() so the sweep cannot close it before the raw closes land.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -771,22 +1220,30 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           const net = require("net");
           const tls = require("tls");
           const { tls: serverTls } = require(${JSON.stringify(require.resolve("harness"))});
+          const inflight = Promise.withResolvers();
+          const release = Promise.withResolvers();
           const server = Bun.serve({
             port: 0, hostname: "127.0.0.1", tls: serverTls,
-            fetch: () => new Response("ok"),
+            async fetch() {
+              inflight.resolve();
+              await release.promise;
+              return new Response("ok");
+            },
           });
           const port = server.port;
           // One real TLS keep-alive connection: handshake completes, count=1.
           const c = tls.connect({ port, host: "127.0.0.1", ca: serverTls.cert, rejectUnauthorized: false });
           let buf = "";
+          const closed = Promise.withResolvers();
           c.on("data", d => (buf += d));
+          c.on("close", () => closed.resolve());
           c.on("error", () => {});
           await new Promise((resolve, reject) => {
             c.on("secureConnect", resolve);
             c.on("error", reject);
           });
           c.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-          while (!buf.includes("\\r\\nok")) await new Promise(r => setImmediate(r));
+          await inflight.promise;
           // Three raw TCP connects that close before the handshake. onClose
           // fires for each; without filteredOpen, each -1 would steal c's
           // count (and the rest would be swallowed by the prev==0 guard).
@@ -808,9 +1265,16 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           const stopped = server.stop(false).then(() => { resolved = true; });
           await new Promise(r => setImmediate(r));
           const resolvedEarly = resolved;
-          c.destroy();
-          await Promise.race([stopped, new Promise(r => setTimeout(r, 2000))]);
-          console.log(JSON.stringify({ resolvedEarly, resolved }));
+          // The held response completes, reaches the client, and the drain
+          // closes the connection (server-initiated; the client never hangs
+          // up); the promise must resolve on its own. The runner timeout is
+          // the stall bound for both awaits.
+          release.resolve();
+          await stopped;
+          // Reaching the log below proves the server-initiated close arrived.
+          await closed.promise;
+          const gotResponse = buf.includes("\\r\\nok");
+          console.log(JSON.stringify({ resolvedEarly, resolved, gotResponse }));
           process.exit(0);
         `,
       ],
@@ -821,14 +1285,17 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolved: true },
+      out: { resolvedEarly: false, resolved: true, gotResponse: true },
       exitCode: 0,
     });
   });
 
   test("server.reload() keeps the connection count coherent", async () => {
     // clearRoutes() used to wipe filterHandlers, so a connection open across
-    // reload left active_connection_count stuck > 0 forever.
+    // reload left active_connection_count stuck > 0 forever. With the stuck
+    // count (or a wiped filter, whose close would no longer decrement), the
+    // sweep in stop(false) closes the idle connection but the drain promise
+    // never resolves.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -837,12 +1304,15 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           const net = require("net");
           const server = Bun.serve({
             port: 0, hostname: "127.0.0.1",
+            idleTimeout: 255,
             fetch: () => new Response("ok"),
           });
           const port = server.port;
           const c = net.connect(port, "127.0.0.1");
           let buf = "";
+          const closed = Promise.withResolvers();
           c.on("data", d => (buf += d));
+          c.on("close", () => closed.resolve());
           c.on("error", () => {});
           await new Promise((resolve, reject) => {
             c.on("connect", resolve);
@@ -855,11 +1325,12 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
           server.reload({ fetch: () => new Response("ok") });
           let resolved = false;
           const stopped = server.stop(false).then(() => { resolved = true; });
-          await new Promise(r => setImmediate(r));
-          const resolvedEarly = resolved;
-          c.destroy();
-          await Promise.race([stopped, new Promise(r => setTimeout(r, 2000))]);
-          console.log(JSON.stringify({ resolvedEarly, resolved }));
+          // stop() closes the idle connection itself; the client never hangs
+          // up, so both awaits are server-driven and the runner timeout is
+          // the stall bound (a stuck count would hang right here).
+          await stopped;
+          await closed.promise;
+          console.log(JSON.stringify({ resolved }));
           process.exit(0);
         `,
       ],
@@ -870,7 +1341,7 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       stderr: "",
-      out: { resolvedEarly: false, resolved: true },
+      out: { resolved: true },
       exitCode: 0,
     });
   });
@@ -912,24 +1383,26 @@ test("should be able to await server.stop(true) with keep alive", async () => {
   expect(async () => await fetch(server.url)).toThrow();
 });
 
-// Shared rig for the two "late keep-alive" tests below: open a raw TCP
-// socket, hold the first request in-flight across stop()/close(), pipeline a
-// second request behind it, release, GC, and print the second response's
-// status line. The subprocess runs the rig so a (former) panic in the dispatch
-// trampoline surfaces as a non-zero exit instead of taking down the runner.
+// Shared rig for the "late keep-alive" tests below: open a raw TCP socket,
+// hold the first request in-flight across stop()/close(), pipeline a second
+// request behind it, release, GC, and print the second response's status
+// line (or "" if the connection closed instead). The subprocess runs the rig
+// so a (former) panic in the dispatch trampoline surfaces as a non-zero exit
+// instead of taking down the runner.
 //
 // `deinit_if_we_can` defers the wrapper downgrade while the connection is
-// still open, so both requests dispatch against a live wrapper. The pipelined
-// request carries `Connection: close`, so once it completes the connection
-// closes, the wrapper downgrades to Weak, and the GC pass below must collect
-// it cleanly. The `respond_stopped_503` guard in the trampolines is a safety
-// net for the `Finalized` case (wrapper GC'd while `self` still lives between
-// `finalize()` and the next-tick `schedule_deinit`); that window is not
-// deterministically reachable from a test.
+// still open, so the held request always dispatches and completes against a
+// live wrapper. What happens to the pipelined request depends on the server:
+// a Bun.serve graceful stop marks the busy connection close-when-idle, so the
+// connection closes right after the held response and the pipelined request
+// is dropped (secondOutcome: "closed"); node:http queues pipelined responses,
+// so close() still delivers it before the connection closes
+// (secondOutcome: "200"). Either way the wrapper then downgrades to Weak and
+// the GC pass below must collect it cleanly.
 //
 // `serverSnippet` must define `port` (the listen port) and `stop()` in scope,
 // and may read `release`/`inflight`/`hits` for the hold protocol.
-async function runLateKeepAlive(reqPath: string, serverSnippet: string) {
+async function runLateKeepAlive(reqPath: string, serverSnippet: string, secondOutcome: "200" | "closed") {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -994,10 +1467,12 @@ async function runLateKeepAlive(reqPath: string, serverSnippet: string) {
         })();
         // The only server binding is now out of scope.
 
-        // First request completes; the connection is still open so the
-        // wrapper stays Strong, and the pipelined request dispatches against
-        // it → 200. Previously: panic (or 503 when the gate checked
-        // Strong-only).
+        // First request completes against a live wrapper (the connection is
+        // open, so it stays Strong). What happens to the pipelined request
+        // depends on the caller: Bun.serve's drain closes the connection at
+        // idle and drops it (second = ""), node:http delivers the queued
+        // response (second = 200). Previously the late dispatch could panic
+        // (or 503 when the gate checked Strong-only).
         release.resolve();
         const first = await nextResponse();
         if (!first.includes("200")) throw new Error("first request failed: " + first);
@@ -1021,18 +1496,23 @@ async function runLateKeepAlive(reqPath: string, serverSnippet: string) {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // Must actually dispatch — empty would mean the socket was closed before the
-  // pipelined request reached the trampoline.
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: expect.stringMatching(/^HTTP\/1\.1 200\b/),
+    // "200": the pipelined request must actually dispatch and be answered.
+    // "closed": the connection must close cleanly after the held response
+    // without the pipelined request being answered (and without a panic).
+    stdout: secondOutcome === "200" ? expect.stringMatching(/^HTTP\/1\.1 200\b/) : "",
     stderr: "",
     exitCode: 0,
   });
 }
 
-test("late keep-alive request to a route after stop() still dispatches", async () => {
-  // Per-route handlers live in ServerRouteList, which is reachable from JS only
-  // through the Server wrapper — exercises on_user_route_request's gate.
+test("stop() completes the in-flight request, then closes the connection instead of serving a late pipelined request", async () => {
+  // The route handler is held across stop(), so the connection is busy during
+  // the sweep and gets marked close-when-idle; the held response must still be
+  // delivered in full, after which the connection closes and the pipelined
+  // request behind it is dropped (a pipelining client retries it elsewhere,
+  // RFC 9112 9.3.2). Must not panic: the close path runs against a server
+  // whose only JS binding went out of scope before the drain.
   await runLateKeepAlive(
     "/r",
     `
@@ -1052,17 +1532,17 @@ test("late keep-alive request to a route after stop() still dispatches", async (
       const port = server.port;
       const stop = () => server.stop();
     `,
+    "closed",
   );
 });
 
-test("late keep-alive WebSocket upgrade after stop() succeeds while the connection is still open", async () => {
+test("stop() closes the drained connection before a late pipelined WebSocket upgrade dispatches", async () => {
   // Sibling of the HTTP late-keep-alive test for the WebSocket upgrade path.
-  // `deinit_if_we_can` defers the wrapper downgrade (and the
-  // `handler.server`/`handler.app` clear) while the keep-alive connection is
-  // still open, so a pipelined upgrade on that connection reaches a live
-  // handler and `server.upgrade()` succeeds. On upgrade the socket's count
-  // moves from the HTTP tally to the WebSocket tally, so the server still
-  // drains cleanly once the WebSocket closes.
+  // The connection is busy during stop()'s sweep (held response), so it is
+  // marked close-when-idle: the held response is delivered, then the
+  // connection closes, and the upgrade request pipelined behind it never
+  // reaches the fetch handler (the client reconnects elsewhere). Must exit
+  // cleanly: the close runs on a gracefully stopped server.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1105,7 +1585,8 @@ test("late keep-alive WebSocket upgrade after stop() succeeds while the connecti
         sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Key: " + key + "\\r\\nSec-WebSocket-Version: 13\\r\\n\\r\\n");
         server.stop();
         release.resolve();
-        // Wait for both responses.
+        // Wait for the held response and the server-initiated close (the
+        // pipelined upgrade is dropped by the drain, so no second response).
         while (!sockClosed && (received.match(/\\r\\n\\r\\n/g) || []).length < 2) {
           await waiter.promise; waiter = Promise.withResolvers();
         }
@@ -1124,16 +1605,18 @@ test("late keep-alive WebSocket upgrade after stop() succeeds while the connecti
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const out = JSON.parse(stdout.trim() || "{}");
   expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  // First request 200 (held handler), pipelined upgrade accepted → 101.
-  expect(out.upgraded).toBe(true);
-  expect(out.statuses?.[0]).toMatch(/^HTTP\/1\.1 200\b/);
-  expect(out.statuses?.[1]).toMatch(/^HTTP\/1\.1 101\b/);
+  // Held request 200; the pipelined upgrade never dispatches (fetch is not
+  // called again, so `upgraded` is never assigned) and no 101 is written.
+  expect(out.upgraded).toBeUndefined();
+  expect(out.statuses).toEqual([expect.stringMatching(/^HTTP\/1\.1 200\b/)]);
 });
 
 test("late keep-alive request to a node:http server after close() still dispatches", async () => {
   // Same shape but through node:http so the request dispatches via
   // on_node_http_request_with_upgrade_ctx — the trampoline that would panic
-  // on a stale shadow without the `js_value_for_dispatch` gate.
+  // on a stale shadow without the `js_value_for_dispatch` gate. Unlike
+  // Bun.serve, node:http queues pipelined requests, so the queued response is
+  // still delivered after close() before the drain closes the connection.
   await runLateKeepAlive(
     "/",
     `
@@ -1152,6 +1635,13 @@ test("late keep-alive request to a node:http server after close() still dispatch
       // Also drops node:http's own reference to the Bun server.
       const stop = () => srv.close();
     `,
+    "200",
+  );
+});
+
+test("node:http close() drops the loop ref once in-flight requests finish, without waiting for the surviving connection", async () => {
+  expect(await bunRun(path.join(import.meta.dir, "node-http-close-unref-fixture.ts"))).toSpawn(
+    JSON.stringify({ status: "HTTP/1.1 200 OK", connectionOpenAtExit: true }),
   );
 });
 
@@ -1253,15 +1743,24 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         if (round > MIN_ROUNDS && elapsed > MIN_MS) break;
         const tag = round;
         const kind = round % 2 ? "fetch" : "routes";
+        // Every server binds the loopback address the parks dial. A wildcard
+        // port-0 bind is not safe here: macOS's ephemeral allocator honors
+        // only exact-address conflicts, so a wildcard listener can be handed
+        // a port some other process already holds at 127.0.0.1 (a leaked
+        // verdaccio from an install test, say), and that listener - being
+        // more specific - would answer this fixture's dials. With hundreds
+        // of binds per run, this fixture reliably finds such a port.
         let server =
           kind === "fetch"
             ? Bun.serve({
                 port: 0,
+                hostname: "127.0.0.1",
                 idleTimeout: 60,
                 fetch() { return new Response("ok " + tag); },
               })
             : Bun.serve({
                 port: 0,
+                hostname: "127.0.0.1",
                 idleTimeout: 60,
                 routes: { "/r/:id": req => new Response("ok " + tag + " " + req.params.id) },
                 fetch() { return new Response("ok " + tag + " fallback"); },
@@ -1289,7 +1788,7 @@ test("request on a connection surviving graceful stop() never reaches a collecte
         churn();
         churn();
         const decoys = [];
-        for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, fetch() { return new Response("decoy"); } }));
+        for (let i = 0; i < 3; i++) decoys.push(Bun.serve({ port: 0, hostname: "127.0.0.1", fetch() { return new Response("decoy"); } }));
         churn();
         const rs = await Promise.all(
           entries.flatMap(({ parks, kind, want, token }) =>

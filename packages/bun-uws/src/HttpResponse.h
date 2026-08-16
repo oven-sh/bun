@@ -96,6 +96,24 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_WROTE_DATE_HEADER;
     }
 
+    /* Shutdown+close when the connection is marked to close (Connection:
+     * close, peer FIN, close-when-idle), the response is complete and every
+     * outgoing byte has been flushed. Returns true when the socket was closed. */
+    bool closeIfDoneAndMarked(HttpResponseData<SSL> *httpResponseData) {
+        if (httpResponseData->shouldCloseConnection()) {
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
+                    ((AsyncSocket<SSL> *) this)->shutdown();
+                    /* We need to force close after sending FIN since we want to hinder
+                     * clients from keeping to send their huge data */
+                    ((AsyncSocket<SSL> *) this)->close();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure.
      * keepCorked: if true, skip the trailing uncork so the caller can batch
@@ -189,19 +207,22 @@ public:
 
             /* We need to check if we should close this socket here now */
             if (!Super::isCorked()) {
-                if (httpResponseData->shouldCloseConnection()) {
-                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                        if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                            ((AsyncSocket<SSL> *) this)->shutdown();
-                            /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                            ((AsyncSocket<SSL> *) this)->close();
-                            return true;
-                        }
-                    }
+                if (closeIfDoneAndMarked(httpResponseData)) {
+                    return true;
                 }
             } else if (!keepCorked) {
                 this->uncork();
+                /* That uncork released our cork slot, so the cork() wrapper's
+                 * post-uncork close gate will not run. When THIS socket is the
+                 * one being parsed, onData's post-parse gate closes it once
+                 * the buffer is fully consumed; any other socket (an async
+                 * handler completing, possibly inside another socket's parse
+                 * window via a drained microtask) gets no later gate, so close
+                 * here. */
+                if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this
+                    && closeIfDoneAndMarked(httpResponseData)) {
+                    return true;
+                }
             }
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
@@ -210,18 +231,25 @@ public:
         } else {
             /* Write content-length on first call */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-                /* Write mark, this propagates to WebSockets too */
-                writeMark();
+                /* Once write() has sent raw body bytes (close-delimited or
+                 * HTTP/1.0 streaming), the header section is already
+                 * terminated: writing a Content-Length here would inject
+                 * header bytes into the body. The connection close delimits
+                 * the message instead. */
+                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                    /* Write mark, this propagates to WebSockets too */
+                    writeMark();
 
-                /* WebSocket upgrades does not allow content-length */
-                if (allowContentLength) {
-                    /* Even zero is a valid content-length */
-                    Super::write("Content-Length: ", 16);
-                    writeUnsigned64(totalSize);
-                    Super::write("\r\n\r\n", 4);
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                } else if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    Super::write("\r\n", 2);
+                    /* WebSocket upgrades does not allow content-length */
+                    if (allowContentLength) {
+                        /* Even zero is a valid content-length */
+                        Super::write("Content-Length: ", 16);
+                        writeUnsigned64(totalSize);
+                        Super::write("\r\n\r\n", 4);
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                    } else {
+                        Super::write("\r\n", 2);
+                    }
                 }
 
                 /* Mark end called */
@@ -255,18 +283,15 @@ public:
 
                 /* We need to check if we should close this socket here now */
                 if (!Super::isCorked()) {
-                    if (httpResponseData->shouldCloseConnection()) {
-                        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
-                            if (((AsyncSocket<SSL> *) this)->hasFullyDrained()) {
-                                ((AsyncSocket<SSL> *) this)->shutdown();
-                                /* We need to force close after sending FIN since we want to hinder
-                                * clients from keeping to send their huge data */
-                                ((AsyncSocket<SSL> *) this)->close();
-                            }
-                        }
-                    }
+                    closeIfDoneAndMarked(httpResponseData);
                 }  else if (!keepCorked) {
                     this->uncork();
+                    /* Same as the chunked arm above: the cork slot is gone, so
+                     * run the close gate here unless THIS socket is the one
+                     * being parsed (then onData's post-parse gate handles it). */
+                    if (HttpContext<SSL>::fromSocket((us_socket_t *) this)->getSocketContextData()->parsingSocket != (us_socket_t *) this) {
+                        closeIfDoneAndMarked(httpResponseData);
+                    }
                 }
             }
 
@@ -591,6 +616,12 @@ public:
      * Starts a timeout in some cases. Returns [ok, hasResponded] */
     std::pair<bool, bool> tryEnd(std::string_view data, uintmax_t totalSize = 0, bool closeConnection = false) {
         bool ok = internalEnd(data, totalSize, true, true, closeConnection);
+        /* internalEnd's close gate may have closed the socket (destructing the
+         * ext hasResponded() reads); that only happens once the response has
+         * completed, so report responded without touching it. */
+        if (us_socket_is_closed((us_socket_t *) this)) {
+            return {ok, true};
+        }
         return {ok, hasResponded()};
     }
 

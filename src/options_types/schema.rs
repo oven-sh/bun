@@ -1,57 +1,5 @@
 //! Option/config structs shared by the CLI, bunfig, bundler and runtime
-//! (`TransformOptions`, `BunInstall`, …) plus the wire types for the
-//! `Bun.serve` development-mode error page (`FallbackMessageContainer`).
-
-/// Binary writer for the dev-mode error page payload
-/// (`js_parser::runtime::Base64FallbackMessage::fmt`), decoded by
-/// `src/fallback.ts` in the browser.
-pub struct Writer<'a> {
-    writable: &'a mut Vec<u8>,
-}
-
-impl<'a> Writer<'a> {
-    #[inline]
-    pub fn new(writable: &'a mut Vec<u8>) -> Self {
-        Self { writable }
-    }
-    #[inline]
-    pub(crate) fn write(&mut self, bytes: &[u8]) {
-        self.writable.extend_from_slice(bytes);
-    }
-    #[inline]
-    pub(crate) fn write_byte(&mut self, byte: u8) {
-        self.writable.push(byte);
-    }
-    /// Writes the int's native-endian raw bytes.
-    #[inline]
-    pub(crate) fn write_int<I: Copy>(&mut self, int: I) {
-        // SAFETY: `int` is a live stack local, so `&raw const int` is valid for reads of
-        // `size_of::<I>()` initialized bytes; `u8` has align 1 so the cast pointer is always
-        // aligned; the slice is consumed by `extend_from_slice` before `int` leaves scope.
-        let bytes = unsafe {
-            core::slice::from_raw_parts((&raw const int).cast::<u8>(), core::mem::size_of::<I>())
-        };
-        self.writable.extend_from_slice(bytes);
-    }
-    #[inline]
-    pub(crate) fn write_field_id(&mut self, id: u8) {
-        self.write_byte(id);
-    }
-    #[inline]
-    pub(crate) fn write_enum<E: Copy>(&mut self, val: E) {
-        self.write_int(val);
-    }
-    /// Length-prefixed byte slice.
-    #[inline]
-    pub(crate) fn write_array_u8(&mut self, slice: &[u8]) {
-        self.write_int(u32::try_from(slice.len()).unwrap());
-        self.write(slice);
-    }
-    #[inline]
-    pub(crate) fn end_message(&mut self) {
-        self.write_byte(0);
-    }
-}
+//! (`TransformOptions`, `BunInstall`, …).
 
 pub mod api {
     /// Canonical definition lives in bun_dotenv (lower tier).
@@ -177,6 +125,7 @@ pub mod api {
         pub serve_public_path: Option<Box<[u8]>>,
         pub serve_hmr: Option<bool>,
         pub serve_define: Option<StringMap>,
+        pub serve_sourcemap: Option<SourceMapMode>,
 
         /// from `--no-addons`. `None` == `true`.
         pub allow_addons: Option<bool>,
@@ -201,6 +150,31 @@ pub mod api {
         pub token: Box<[u8]>,
         /// email
         pub email: Box<[u8]>,
+    }
+
+    impl NpmRegistry {
+        pub fn from_url(str: &[u8]) -> NpmRegistry {
+            let url = bun_url::URL::parse(str);
+            let mut registry = NpmRegistry::default();
+
+            if url.username.is_empty() && !url.password.is_empty() {
+                registry.token = Box::from(url.password);
+                registry.url = url.href_without_auth();
+            } else if !url.username.is_empty() && !url.password.is_empty() {
+                registry.username = Box::from(url.username);
+                registry.password = Box::from(url.password);
+                registry.url = url.href_without_auth();
+            } else {
+                // Do not include a trailing slash. There might be parameters at the end.
+                registry.url = Box::from(url.href);
+            }
+
+            registry
+        }
+
+        pub fn has_credentials(&self) -> bool {
+            !self.token.is_empty() || !self.username.is_empty() || !self.password.is_empty()
+        }
     }
 
     /// Per-scope npm registry overrides, keyed by scope name.
@@ -343,6 +317,7 @@ pub mod api {
         yaml = 19,
         json5 = 20,
         md = 21,
+        xml = 22,
     }
 
     impl Loader {
@@ -373,6 +348,7 @@ pub mod api {
                 19 => Loader::yaml,
                 20 => Loader::json5,
                 21 => Loader::md,
+                22 => Loader::xml,
                 _ => Loader::_none,
             }
         }
@@ -426,153 +402,5 @@ pub mod api {
         #[default]
         Bundle = 0,
         External = 1,
-    }
-
-    // ── Fallback error-page wire types ──────────────────────────────────────
-    // Encoded by `Writer` above; the layout must stay in sync with the decoder
-    // in `src/api/schema.js` (bundled into `src/fallback.ts`).
-
-    #[repr(u8)]
-    #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
-    pub enum FallbackStep {
-        #[default]
-        _none = 0,
-        ssr_disabled = 1,
-        create_vm = 2,
-        configure_router = 3,
-        configure_defines = 4,
-        resolve_entry_point = 5,
-        load_entry_point = 6,
-        eval_entry_point = 7,
-        fetch_event_handler = 8,
-    }
-
-    /// peechy `struct Router`.
-    #[derive(Clone, Debug, Default)]
-    pub struct Router {
-        pub(crate) routes: StringMap,
-        pub(crate) route: i32,
-        pub(crate) params: StringMap,
-    }
-    impl Router {
-        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
-            self.routes.encode(w);
-            w.write_int(self.route);
-            self.params.encode(w);
-        }
-    }
-
-    /// peechy `struct Problems`.
-    #[derive(Clone, Debug, Default)]
-    pub struct Problems {
-        pub code: u16,
-        pub name: Box<[u8]>,
-        pub exceptions: Vec<JsException>,
-        pub build: Log,
-    }
-    impl Problems {
-        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
-            w.write_int(self.code);
-            w.write_array_u8(&self.name);
-            w.write_int(u32::try_from(self.exceptions.len()).unwrap());
-            for ex in &self.exceptions {
-                ex.encode(w);
-            }
-            self.build.encode(w);
-        }
-    }
-
-    /// peechy `message JsException` (all fields optional).
-    #[derive(Clone, Debug, Default)]
-    pub struct JsException {
-        pub name: Option<Box<[u8]>>,
-        pub message: Option<Box<[u8]>>,
-        pub runtime_type: Option<u16>,
-        pub code: Option<u8>,
-        // `stack: ?StackTrace` — omitted until StackTrace is ported.
-    }
-    impl JsException {
-        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
-            if let Some(ref v) = self.name {
-                w.write_field_id(1);
-                w.write_array_u8(v);
-            }
-            if let Some(ref v) = self.message {
-                w.write_field_id(2);
-                w.write_array_u8(v);
-            }
-            if let Some(v) = self.runtime_type {
-                w.write_field_id(3);
-                w.write_int(v);
-            }
-            if let Some(v) = self.code {
-                w.write_field_id(4);
-                w.write_int(v);
-            }
-            w.end_message();
-        }
-    }
-
-    impl StringMap {
-        pub(crate) fn encode(&self, w: &mut super::Writer<'_>) {
-            w.write_int(u32::try_from(self.keys.len()).unwrap());
-            for k in &self.keys {
-                w.write_array_u8(k);
-            }
-            w.write_int(u32::try_from(self.values.len()).unwrap());
-            for v in &self.values {
-                w.write_array_u8(v);
-            }
-        }
-    }
-
-    /// peechy `struct Log` (minimal: `warnings`, `errors`, `msgs`).
-    #[derive(Copy, Clone, Debug, Default)]
-    pub struct Log {
-        pub warnings: u32,
-        pub errors: u32,
-        // `msgs: []Message` — omitted until `Message` is ported.
-    }
-    impl Log {
-        pub(crate) fn encode(self, w: &mut super::Writer<'_>) {
-            w.write_int(self.warnings);
-            w.write_int(self.errors);
-            w.write_int(0u32); // msgs.len
-        }
-    }
-
-    /// peechy `message FallbackMessageContainer`.
-    #[derive(Clone, Debug, Default)]
-    pub struct FallbackMessageContainer {
-        pub message: Option<Box<[u8]>>,
-        pub router: Option<Router>,
-        pub reason: Option<FallbackStep>,
-        pub problems: Option<Problems>,
-        pub cwd: Option<Box<[u8]>>,
-    }
-    impl FallbackMessageContainer {
-        pub fn encode(&self, w: &mut super::Writer<'_>) {
-            if let Some(ref message) = self.message {
-                w.write_field_id(1);
-                w.write_array_u8(message);
-            }
-            if let Some(ref router) = self.router {
-                w.write_field_id(2);
-                router.encode(w);
-            }
-            if let Some(reason) = self.reason {
-                w.write_field_id(3);
-                w.write_enum(reason);
-            }
-            if let Some(ref problems) = self.problems {
-                w.write_field_id(4);
-                problems.encode(w);
-            }
-            if let Some(ref cwd) = self.cwd {
-                w.write_field_id(5);
-                w.write_array_u8(cwd);
-            }
-            w.end_message();
-        }
     }
 }

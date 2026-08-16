@@ -42,7 +42,6 @@ pub(crate) fn valkey_error_to_js(
             let _ = global.throw_out_of_memory();
             return global.take_exception(JsError::Thrown);
         }
-        RedisError::JSTerminated => return global.take_exception(JsError::Terminated),
     };
 
     let msg = message.as_ref();
@@ -73,10 +72,7 @@ fn valkey_str_to_js_value(
         // The parser's payload is an owned allocation that is only converted
         // once; adopt it as the Buffer backing store instead of copying it
         // into a fresh ArrayBuffer.
-        Ok(JSValue::create_buffer_from_box(
-            global,
-            core::mem::take(str),
-        ))
+        JSValue::create_buffer_from_box(global, core::mem::take(str))
     } else {
         bun_string_jsc::create_utf8_for_js(global, str)
     }

@@ -74,11 +74,6 @@ EventTarget::~EventTarget()
         data->clear();
 }
 
-bool EventTarget::isContextStopped() const
-{
-    return !scriptExecutionContext();
-}
-
 bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
 #if ASSERT_ENABLED
@@ -191,7 +186,7 @@ JSEventListener* EventTarget::attributeEventListener(const AtomString& eventType
             continue;
 
         auto& jsListener = downcast<JSEventListener>(listener);
-        if (jsListener.isAttribute() && &jsListener.isolatedWorld() == &isolatedWorld)
+        if (jsListener.isAttribute() && jsListener.isolatedWorld() == &isolatedWorld)
             return &jsListener;
     }
 

@@ -81,6 +81,8 @@ pub mod standalone_graph_jsc;
 pub mod toml_object;
 #[path = "api/UnsafeObject.rs"]
 pub mod unsafe_object;
+#[path = "api/XMLObject.rs"]
+pub mod xml_object;
 #[path = "api/YAMLObject.rs"]
 pub mod yaml_object;
 
@@ -188,6 +190,7 @@ pub use crate::api::markdown_object as MarkdownObject;
 pub use crate::api::native_promise_context as NativePromiseContext;
 pub use crate::api::toml_object as TOMLObject;
 pub use crate::api::unsafe_object as UnsafeObject;
+pub use crate::api::xml_object as XMLObject;
 pub use crate::api::yaml_object as YAMLObject;
 // `dns_jsc/mod.rs` IS the public surface (Resolver, Order, RecordType, internal::*);
 // the full `dns.rs` body is mounted privately as `dns_body` inside it.
@@ -215,38 +218,133 @@ fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
     path: &'static [u8],
-    accept_blob_or_buffer: bool,
-    reject_nullish: bool,
+    blob_or_buffer_input: BlobOrBufferInput,
+    nullish_input: NullishInput,
     f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
+) -> bun_jsc::JsResult<R> {
+    with_text_format_source_encoded(
+        global,
+        frame,
+        path,
+        blob_or_buffer_input,
+        nullish_input,
+        StringInput::Utf8,
+        |arena, log, source, _| f(arena, log, source),
+    )
+}
+
+/// What `parse` does with a `Blob`, `ArrayBuffer`, typed array or `DataView`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlobOrBufferInput {
+    /// Parses its bytes.
+    Bytes,
+    /// Stringifies it like any other argument, as `JSON.parse` would.
+    ToString,
+}
+
+/// What `parse` does with an `undefined` or `null` argument.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NullishInput {
+    Throw,
+    /// Parses the text `"undefined"` / `"null"`.
+    ToString,
+}
+
+/// What `parse` hands the closure for a string argument.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StringInput {
+    /// The string re-encoded as UTF-8 ([`SourceEncoding::Utf8Text`]).
+    Utf8,
+    /// The string's own storage, Latin-1 or UTF-16, as is.
+    AsIs,
+}
+
+/// How the bytes handed to the closure of
+/// [`with_text_format_source_encoded`] are encoded.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceEncoding {
+    /// A `Buffer` / typed array / `Blob`: bytes as given (UTF-8 expected).
+    Bytes,
+    /// A JS string, re-encoded as UTF-8.
+    Utf8Text,
+    /// A Latin-1 JS string, borrowed as is (only under [`StringInput::AsIs`]).
+    Latin1Text,
+    /// A UTF-16 JS string, borrowed as is: the bytes are its code units
+    /// (only under [`StringInput::AsIs`]).
+    Utf16Text,
+}
+
+fn with_text_format_source_encoded<R>(
+    global: &bun_jsc::JSGlobalObject,
+    frame: &bun_jsc::CallFrame,
+    path: &'static [u8],
+    blob_or_buffer_input: BlobOrBufferInput,
+    nullish_input: NullishInput,
+    string_input: StringInput,
+    f: impl FnOnce(
+        &bun_alloc::Arena,
+        &mut bun_ast::Log,
+        &bun_ast::Source,
+        SourceEncoding,
+    ) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+    // A private mi_heap costs microseconds to create, more than parsing a
+    // small document: keep one per thread and recycle it between calls.
+    // `#[thread_local]` rather than `thread_local!` so there is no
+    // destructor racing mimalloc's own thread teardown (as in
+    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
+    #[thread_local]
+    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
+    struct Recycle(Option<bun_alloc::Arena>);
+    impl Drop for Recycle {
+        fn drop(&mut self) {
+            if let Some(mut arena) = self.0.take() {
+                arena.reset_retain_with_limit(2 * 1024 * 1024);
+                ARENA.set(Some(arena));
+            }
+        }
+    }
+    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
+    let arena = recycle.0.as_ref().expect("set above");
+    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
 
     let input_value = frame.argument(0);
-    if reject_nullish && input_value.is_empty_or_undefined_or_null() {
+    if nullish_input == NullishInput::Throw && input_value.is_empty_or_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected a string to parse")));
     }
 
-    // Hold whichever input storage applies; both expose `.slice() -> &[u8]`.
+    // Hold whichever input storage applies; all expose the bytes.
     // Conditional-init + drop-flag — only the taken branch's holder is live.
     let _blob_hold: BlobOrStringOrBuffer;
-    let _str_hold;
-    let bytes: &[u8] = if accept_blob_or_buffer {
-        _blob_hold = match BlobOrStringOrBuffer::from_js(global, input_value)? {
-            Some(v) => v,
-            None => {
-                // `to_slice` moves the +1 ref into the returned slice's
-                // `.underlying`, so the temporary `BunString` drop is a no-op.
-                let mut s = input_value.to_bun_string(global)?;
-                BlobOrStringOrBuffer::StringOrBuffer(StringOrBuffer::String(s.to_slice()))
+    // `SliceWithUnderlyingString` has no `Drop`; `StringOrBuffer`'s releases
+    // the string's ref.
+    let _str_hold: StringOrBuffer;
+    let _latin1_hold: bun_core::OwnedString;
+    let mut encoding = SourceEncoding::Utf8Text;
+    let bytes: &[u8] = 'bytes: {
+        if blob_or_buffer_input == BlobOrBufferInput::Bytes && !input_value.is_string() {
+            if let Some(v) = BlobOrStringOrBuffer::from_js(global, input_value)? {
+                _blob_hold = v;
+                encoding = SourceEncoding::Bytes;
+                break 'bytes _blob_hold.slice();
             }
-        };
-        _blob_hold.slice()
-    } else {
-        _str_hold = input_value.to_slice(global)?;
+        }
+        let mut s = input_value.to_bun_string(global)?;
+        if string_input == StringInput::AsIs {
+            _latin1_hold = bun_core::OwnedString::new(s);
+            if _latin1_hold.is_8bit() {
+                encoding = SourceEncoding::Latin1Text;
+                break 'bytes _latin1_hold.latin1();
+            }
+            encoding = SourceEncoding::Utf16Text;
+            break 'bytes bytemuck::cast_slice(_latin1_hold.utf16());
+        }
+        // `to_slice` moves the +1 ref into the returned slice's
+        // `.underlying`, so the temporary `BunString` drop is a no-op.
+        _str_hold = StringOrBuffer::String(s.to_slice());
         _str_hold.slice()
     };
 
@@ -268,71 +366,18 @@ fn with_text_format_source<R>(
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
-    f(&arena, &mut log, &source)
+    f(arena, &mut log, &source, encoding)
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────
 
-fn estring_to_js(
-    str: &bun_ast::E::EString,
-    global: &bun_jsc::JSGlobalObject,
-) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-    use bun_jsc::StringJsc as _;
-    // NOTE: the text-format parsers never build ropes, so the simple
-    // slice → JS path is sufficient.
-    if str.is_utf16 {
-        let zig = bun_core::ZigString::init_utf16(str.slice16());
-        let bun_s = bun_core::String::init(zig);
-        bun_s.to_js(global)
-    } else {
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
-    }
-}
-
+/// `Expr` → `JSValue` for the text-format parsers (TOML, JSON5), through the
+/// same converter the module loader uses for imported data files, so
+/// `Bun.TOML.parse` and `import "./x.toml"` cannot drift apart.
 fn expr_to_js(
     expr: bun_ast::Expr,
     global: &bun_jsc::JSGlobalObject,
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-    expr_to_js_with_check(expr, global, bun_core::StackCheck::init())
-}
-
-fn expr_to_js_with_check(
-    expr: bun_ast::Expr,
-    global: &bun_jsc::JSGlobalObject,
-    stack_check: bun_core::StackCheck,
-) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-    use bun_ast::expr::Data as ExprData;
-    use bun_collections::VecExt as _;
-    use bun_jsc::JSValue;
-
-    if !stack_check.is_safe_to_recurse() {
-        return Err(global.throw_stack_overflow());
-    }
-    match expr.data {
-        ExprData::ENull(_) => Ok(JSValue::NULL),
-        ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-        ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
-        ExprData::EString(str) => estring_to_js(str.get(), global),
-        ExprData::EArray(arr) => {
-            JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
-                expr_to_js_with_check(*item, global, stack_check)
-            })
-        }
-        ExprData::EObject(obj) => {
-            let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
-            for prop in obj.properties.slice() {
-                let key_expr = prop.key.expect("infallible: prop has key");
-                let value = expr_to_js_with_check(
-                    prop.value.expect("infallible: prop has value"),
-                    global,
-                    stack_check,
-                )?;
-                let key_js = expr_to_js_with_check(key_expr, global, stack_check)?;
-                let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
-                js_obj.put_may_be_index(global, &key_str, value)?;
-            }
-            Ok(js_obj)
-        }
-        _ => Ok(JSValue::UNDEFINED),
-    }
+    bun_js_parser_jsc::expr_to_js(&expr, global)
+        .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
 }

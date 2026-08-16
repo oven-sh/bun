@@ -101,7 +101,6 @@ export default {
   ObjectGetOwnPropertyNames: Object.getOwnPropertyNames,
   ObjectGetPrototypeOf: Object.getPrototypeOf,
   ObjectKeys: Object.keys,
-  ObjectSetPrototypeOf: Object.setPrototypeOf,
   Promise,
   PromiseReject: v => PromiseRejectFn.$call(Promise, v),
   ReflectApply: (fn, thisArg, args) => fn.$apply(thisArg, args),

@@ -17,33 +17,35 @@ use crate::versioned_url::VersionedURLType;
 pub type Resolution = ResolutionType<u64>;
 
 impl Resolution {
-    /// True when this resolution can satisfy `version`: npm ranges by
+    /// True when this resolution can satisfy `dep_version`: npm ranges by
     /// semver, git/github by exact repo equality. Any other kind pairing
     /// (workspace, folder, tarball, dist-tag, …) never satisfies. This is
     /// the comparison the resolver's deferred-peer phase uses to bind peer
     /// edges against already-resolved packages.
     pub(crate) fn satisfies_dependency_version(
         &self,
-        version: &dependency::Version,
-        version_buf: &[u8],
+        dep_version: &dependency::Version,
+        dep_version_buf: &[u8],
         resolution_buf: &[u8],
     ) -> bool {
-        if self.tag == Tag::Npm && version.tag == dependency::VersionTag::Npm {
-            return version.npm().version.satisfies(
+        if self.tag == Tag::Npm && dep_version.tag == dependency::VersionTag::Npm {
+            return dep_version.npm().version.satisfies(
                 self.npm().version,
-                version_buf,
+                dep_version_buf,
                 resolution_buf,
             );
         }
 
-        if self.tag == Tag::Git && version.tag == dependency::VersionTag::Git {
-            return self.git().eql(version.git(), resolution_buf, version_buf);
+        if self.tag == Tag::Git && dep_version.tag == dependency::VersionTag::Git {
+            return self
+                .git()
+                .eql(dep_version.git(), resolution_buf, dep_version_buf);
         }
 
-        if self.tag == Tag::Github && version.tag == dependency::VersionTag::Github {
+        if self.tag == Tag::Github && dep_version.tag == dependency::VersionTag::Github {
             return self
                 .github()
-                .eql(version.github(), resolution_buf, version_buf);
+                .eql(dep_version.github(), resolution_buf, dep_version_buf);
         }
 
         false
@@ -461,10 +463,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    pub(crate) fn fmt_store_path<'a>(
-        &'a self,
-        string_buf: &'a [u8],
-    ) -> StorePathFormatter<'a, SemverInt> {
+    pub fn fmt_store_path<'a>(&'a self, string_buf: &'a [u8]) -> StorePathFormatter<'a, SemverInt> {
         StorePathFormatter {
             res: self,
             string_buf,
@@ -929,7 +928,7 @@ impl Tag {
     pub(crate) const Uninitialized: Tag = Tag(0);
     pub const Root: Tag = Tag(1);
     pub const Npm: Tag = Tag(2);
-    pub(crate) const Folder: Tag = Tag(4);
+    pub const Folder: Tag = Tag(4);
 
     pub(crate) const LocalTarball: Tag = Tag(8);
 
@@ -937,7 +936,7 @@ impl Tag {
 
     pub(crate) const Git: Tag = Tag(32);
 
-    pub(crate) const Symlink: Tag = Tag(64);
+    pub const Symlink: Tag = Tag(64);
 
     pub const Workspace: Tag = Tag(72);
 

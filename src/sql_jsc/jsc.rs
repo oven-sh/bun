@@ -29,7 +29,7 @@ use core::ptr::NonNull;
 pub use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef,
     JSArrayIterator, JSCell, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef,
-    JsResult, MarkedArgumentBuffer, StringJsc, StrongOptional, bun_string_jsc, host_fn,
+    JsResult, MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc, host_fn,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -51,7 +51,6 @@ pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgres
     match e {
         JsError::Thrown => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 #[inline]
@@ -60,7 +59,6 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
     match e {
         JsError::Thrown => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 
@@ -617,7 +615,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {

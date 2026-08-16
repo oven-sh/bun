@@ -21,7 +21,6 @@ pub enum RedisError {
     InvalidVerbatimString,
     JSError,
     OutOfMemory,
-    JSTerminated,
     UnsupportedProtocol,
     ConnectionTimeout,
     IdleTimeout,

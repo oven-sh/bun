@@ -267,7 +267,8 @@ inline constexpr BunLoaderType BunLoaderTypeTOML = 9;
 inline constexpr BunLoaderType BunLoaderTypeWASM = 10;
 inline constexpr BunLoaderType BunLoaderTypeNAPI = 11;
 inline constexpr BunLoaderType BunLoaderTypeYAML = 19;
-inline constexpr BunLoaderType BunLoaderTypeMD = 20;
+inline constexpr BunLoaderType BunLoaderTypeMD = 21;
+inline constexpr BunLoaderType BunLoaderTypeXML = 22;
 
 #pragma mark - Stream
 
@@ -334,6 +335,7 @@ typedef struct {
     uint8_t cell_type;
     bool shared;
     bool resizable;
+    bool pinned;
 } Bun__ArrayBuffer;
 
 #include "SyntheticModuleType.h"
@@ -404,7 +406,7 @@ extern "C" JSC::EncodedJSValue Bun__encoding__constructFromUTF16(void*, const ch
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
 
 /// @note throws a JS exception and returns false if a stack overflow occurs
-template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype = false>
+template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity = false>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope& scope, bool addToStack);
 
 /**

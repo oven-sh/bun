@@ -1,4 +1,3 @@
-import { LoaderKeys } from "../api/schema";
 import NodeErrors from "../jsc/bindings/ErrorCode.ts";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
@@ -9,7 +8,6 @@ import { registerNativeCall } from "./generate-js2native";
 export const replacements: ReplacementRule[] = [
   { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
-  { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
@@ -89,10 +87,35 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
-// These enums map to $<enum>IdToLabel and $<enum>LabelToId
+// These enums map to $<enum>IdToLabel and $<enum>LabelToId (ids start at 1)
 // Make sure to define in ./builtins.d.ts
 export const enums = {
-  Loader: LoaderKeys,
+  // Ids are the `bun_options_types::schema::api::Loader` discriminants
+  // (JSBundler passes those numbers to BundlerPlugin.ts).
+  Loader: [
+    "jsx",
+    "js",
+    "ts",
+    "tsx",
+    "css",
+    "file",
+    "json",
+    "jsonc",
+    "toml",
+    "wasm",
+    "napi",
+    "base64",
+    "dataurl",
+    "text",
+    "bunsh",
+    "sqlite",
+    "sqlite_embedded",
+    "html",
+    "yaml",
+    "json5",
+    "md",
+    "xml",
+  ],
   ImportKind: [
     "entry-point-run",
     "entry-point-build",
@@ -125,13 +148,9 @@ export const define: Record<string, string> = {
 
 // ------------------------------ //
 
-for (const name in enums) {
-  const value = enums[name];
-  if (typeof value !== "object") throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  if (typeof value === null) throw new Error("Invalid enum object " + name + " defined in " + import.meta.file);
-  const keys = Array.isArray(value) ? value : Object.keys(value).filter(k => !k.match(/^[0-9]+$/));
+for (const [name, keys] of Object.entries(enums)) {
   define[`$${name}IdToLabel`] = "[" + keys.map(k => `"${k}"`).join(", ") + "]";
-  define[`$${name}LabelToId`] = "{" + keys.map(k => `"${k}": ${keys.indexOf(k) + 1}`).join(", ") + "}";
+  define[`$${name}LabelToId`] = "{" + keys.map((k, i) => `"${k}": ${i + 1}`).join(", ") + "}";
 }
 
 for (const name of globalsToPrefix) {
@@ -149,7 +168,6 @@ export interface ReplacementRule {
   from: RegExp;
   to?: string;
   toRaw?: string;
-  global?: boolean;
 }
 
 export const function_replacements = [

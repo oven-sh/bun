@@ -12,7 +12,7 @@ use crate::{JSGlobalObject, JSValue, JsError};
 // `holdAPILock` keeps a raw `*mut c_void` ctx (opaque round-trip; C++ never
 // dereferences it as Rust data) so it stays `unsafe fn`.
 unsafe extern "C" {
-    safe fn JSC__VM__setControlFlowProfiler(vm: &VM, enabled: bool);
+    safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
     // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
@@ -50,8 +50,8 @@ impl VM {
 
     // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
 
-    pub fn set_control_flow_profiler(&self, enabled: bool) {
-        JSC__VM__setControlFlowProfiler(self, enabled)
+    pub fn enable_control_flow_profiler(&self) {
+        JSC__VM__enableControlFlowProfiler(self)
     }
 
     pub fn has_execution_time_limit(&self) -> bool {
@@ -118,8 +118,10 @@ impl VM {
         JSC__VM__notifyNeedTermination(self)
     }
 
-    pub(crate) fn clear_has_termination_request(&self) {
-        crate::cpp::JSC__VM__clearHasTerminationRequest(self)
+    /// Has termination been requested on this VM (worker.terminate(), or
+    /// teardown's forbidExecution)? JS thread.
+    pub fn has_termination_request(&self) -> bool {
+        crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
     #[track_caller]

@@ -31,7 +31,7 @@
 #pragma once
 
 #include "WebSocketDeflate.h"
-#include "ContextDestructionObserver.h"
+#include "ActiveDOMObject.h"
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 #include <wtf/URL.h>
@@ -107,10 +107,15 @@ private:
     void* m_ptr { nullptr };
 };
 
-class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
+class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
 public:
+    // ActiveDOMObject.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
+
     static ASCIILiteral subprotocolSeparator();
 
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url);
@@ -190,10 +195,7 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const final;
 
-    using RefCounted::deref;
-    using RefCounted::ref;
     void didConnect();
-    void disablePendingActivity();
     void didStartClosingHandshake();
     void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
@@ -210,11 +212,13 @@ public:
     };
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
 
-    void updateHasPendingActivity();
-    bool hasPendingActivity() const
+    // A single claim the native client holds while it has queued work that will call back in.
+    void holdPendingActivityForClient()
     {
-        return m_hasPendingActivity.load();
+        ASSERT(!m_pendingActivityForClient);
+        m_pendingActivityForClient = makePendingActivity(*this);
     }
+    void releasePendingActivityForClient() { m_pendingActivityForClient = nullptr; }
 
     void setRejectUnauthorized(bool rejectUnauthorized)
     {
@@ -267,22 +271,6 @@ public:
         return m_rejectUnauthorized;
     }
 
-    void incPendingActivityCount()
-    {
-        ASSERT(m_pendingActivityCount < std::numeric_limits<size_t>::max());
-        m_pendingActivityCount++;
-        ref();
-        updateHasPendingActivity();
-    }
-
-    void decPendingActivityCount()
-    {
-        ASSERT(m_pendingActivityCount > 0);
-        m_pendingActivityCount--;
-        updateHasPendingActivity();
-        deref();
-    }
-
     size_t memoryCost() const;
 
 private:
@@ -296,7 +284,10 @@ private:
         ClientSSL,
     };
 
-    std::atomic<bool> m_hasPendingActivity { true };
+    // ActiveDOMObject. Read from the GC thread; a stale answer keeps or drops the wrapper one
+    // cycle early or late, as upstream tolerates.
+    void stop() final;
+    bool virtualHasPendingActivity() const final { return m_state != CLOSED; }
 
     explicit WebSocket(ScriptExecutionContext&);
 
@@ -331,13 +322,20 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
+    // Drop the in-flight upgrade / the connected client without a closing handshake. Neither
+    // dispatches anything itself; the native side may call back synchronously.
+    void cancelUpgradeClient();
+    void cancelConnectedClient();
     bool m_rejectUnauthorized { false };
     // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
     // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
     bool m_offerPerMessageDeflate { true };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
-    size_t m_pendingActivityCount { 0 };
+    // connect()'s claim on the wrapper: held from connect() until the socket reaches CLOSED (or
+    // stop()). Posted event tasks keep it alive through queueTaskKeepingObjectAlive().
+    RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
+    RefPtr<PendingActivity<WebSocket>> m_pendingActivityForClient;
 
     // TLS options (native heap SSLConfig — ownership is released to the
     // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).

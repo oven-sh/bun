@@ -125,17 +125,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
 
 BUN_DECLARE_HOST_FUNCTION(jsFunctionResolveObjectURL);
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
-    (JSGlobalObject * globalObject,
-        CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    throwException(globalObject, scope,
-        createError(globalObject, "Not implemented"_s));
-    return {};
-}
+BUN_DECLARE_HOST_FUNCTION(jsBufferTranscode);
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -157,7 +147,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGl
 
 DEFINE_NATIVE_MODULE(NodeBuffer)
 {
-    INIT_NATIVE_MODULE(12);
+    INIT_NATIVE_MODULE(NodeBuffer, 12);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     put(JSC::Identifier::fromString(vm, "Buffer"_s), globalObject->JSBufferConstructor());
@@ -176,7 +166,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
         auto name = Identifier::fromString(vm, "INSPECT_MAX_BYTES"_s);
         auto value = JSC::CustomGetterSetter::create(vm, jsGetter_INSPECT_MAX_BYTES, jsSetter_INSPECT_MAX_BYTES);
         auto attributes = PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor;
-        defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
+        if (!defaultObjectWasCached)
+            defaultObject->putDirectCustomAccessor(vm, name, value, (unsigned)attributes);
         exportNames.append(name);
         // We cannot assign a custom getter/setter to ESM exports.
         exportValues.append(jsNumber(defaultGlobalObject(lexicalGlobalObject)->INSPECT_MAX_BYTES));
@@ -203,7 +194,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(atobI, atobV);
     put(btoaI, btoaV);
 
-    auto* transcode = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, globalObject, 1, "transcode"_s, jsFunctionNotImplemented);
+    auto* transcode = JSC::JSFunction::create(vm, globalObject, 3, "transcode"_s, jsBufferTranscode, ImplementationVisibility::Public, NoIntrinsic, jsBufferTranscode);
 
     put(JSC::Identifier::fromString(vm, "transcode"_s), transcode);
 

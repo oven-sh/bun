@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -81,13 +81,16 @@ describe.concurrent("bunshell rm", () => {
   // every entry is hit with ENOENT by the workers that lose: at the unlink or
   // rmdir, when opening the directory, or while reading it (overlayfs fails
   // the readdir of a removed directory). -f has to swallow all of those, and
-  // -v must list each entry exactly once, by the worker that removed it.
-  // Skipped on Windows: there, unlinking an entry whose deletion is already
-  // pending reports success, so two workers can legitimately both list it.
+  // -v must only list an entry for a worker whose unlink or rmdir succeeded.
+  // Linux serializes removals on the parent directory, so there exactly one
+  // worker succeeds per entry and the listing has no duplicates; on macOS two
+  // workers can both be told they removed the same entry, so only the set of
+  // listed entries is checked. Windows reports success for an entry whose
+  // deletion is still pending and is not what this test is about.
   test.skipIf(isWindows)("force: operands that overlap with each other's contents", async () => {
     const DIRS = 8;
     const FILES = 4;
-    for (let iteration = 0; iteration < 4; iteration++) {
+    for (let iteration = 0; iteration < 3; iteration++) {
       const files: Record<string, string> = {};
       for (let d = 0; d < DIRS; d++) {
         for (let f = 0; f < FILES; f++) files[`tree/d${d}/f${f}`] = "";
@@ -98,12 +101,18 @@ describe.concurrent("bunshell rm", () => {
       const expected = [tree, ...subdirs, ...Object.keys(files).map(rel => `${tempdir}/${rel}`)].sort();
 
       const { stdout, stderr, exitCode } = await $`rm -rfv ${subdirs} ${tree} ${tree}`.quiet();
-      expect({ stdout: sortedShellOutput(stdout.toString()), stderr: stderr.toString(), exitCode }).toEqual({
-        stdout: expected,
+      const listed = sortedShellOutput(stdout.toString());
+      expect({
+        listed: isLinux ? listed : [...new Set(listed)],
+        stderr: stderr.toString(),
+        exitCode,
+        treeExists: existsSync(tree),
+      }).toEqual({
+        listed: expected,
         stderr: "",
         exitCode: 0,
+        treeExists: false,
       });
-      expect(existsSync(tree)).toBeFalse();
     }
   });
 

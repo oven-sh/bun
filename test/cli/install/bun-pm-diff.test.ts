@@ -539,8 +539,9 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
       "b/notes.txt": `one  two\n\tthree \n\n`,
     };
     const plain = await pretty(files);
-    expect(plain.text).toMatch(/\nflags\.js ─+ normalized \+1 -1\n/);
-    expect(plain.text).toMatch(/\nsum\.js ─+ normalized \+5 -5\n/);
+    // Equivalent spellings fold away by default now; only the renamed locals and the whitespace file remain.
+    expect(plain.text).toMatch(/\nflags\.js ─+ formatting only\n/);
+    expect(plain.text).toMatch(/\nsum\.js ─+ \+4 -4\n/);
     expect(plain.text).toMatch(/\nnotes\.txt ─+ \+3 -2\n/);
     const folded = await pretty(files, ["--minify", "--unminify", "-w"]);
     expect(folded.text).toMatch(/\nflags\.js ─+ formatting only\n/);
@@ -663,13 +664,63 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       "a/api.ts": "export function f(x: number): number { return x; }\n",
       "b/api.ts": "export function f(x: string): string { return x; }\n",
     });
-    expect(text).toMatch(/\nlib\.js ─+ comments only \+2 -2\n/);
+    // Shown as the author wrote them: comment edits and type edits are changes, quote style is not.
+    expect(text).toMatch(/\nlib\.js ─+ \+2 -2\n/);
     expect(text).toContain("│- // lib v1 (MIT)");
-    expect(text).toMatch(/\nlegal\.js ─+ normalized \+1 -1\n/);
+    expect(text).toContain("│- module.exports = 1; // one");
+    expect(text).toMatch(/\nlegal\.js ─+ \+1 -1\n/);
     expect(text).toContain("│- /*! lib v1 | MIT */");
+    expect(text).not.toContain("~ module.exports = 1;");
     expect(text).toMatch(/\nquotes\.js ─+ formatting only\n/);
-    expect(text).toMatch(/\napi\.ts ─+ types\/formatting \+1 -1\n/);
+    expect(text).toMatch(/\napi\.ts ─+ \+1 -1\n/);
     expect(text).toContain("│+ export function f(x: string): string { return x; }");
+    expect(exitCode).toBe(0);
+  });
+
+  test("changes are decided on meaning and shown as written: folds hide, control flow shows, dead code is flagged", async () => {
+    const before = [
+      "// math helpers",
+      "const LIMIT = 1 + 1;",
+      "export function clamp(x) {",
+      "  if (x > LIMIT) return LIMIT; // cap",
+      "  return x;",
+      "}",
+      "export const flags = { on: !0, s: 'a' + 'b' };",
+      "if (false) {",
+      "  fetch('https://x.test/never');",
+      "}",
+      "",
+    ].join("\n");
+    const after = [
+      "// math helpers (v2)",
+      "const LIMIT = 2;",
+      "export function clamp(x) {",
+      "  if (x >= LIMIT) return LIMIT; // cap",
+      "  return x;",
+      "}",
+      'export const flags = {on: true, s: "ab"};',
+      "if (true) {",
+      "  fetch('https://x.test/never');",
+      "}",
+      "",
+    ].join("\n");
+    const { text, exitCode } = await pretty({ "a/m.js": before, "b/m.js": after });
+    // `1 + 1`/`2`, `!0`/`true`, `'a' + 'b'`/`"ab"` and spacing fold away…
+    expect(text).not.toContain("- const LIMIT = 1 + 1;");
+    expect(text).not.toContain("+ const LIMIT = 2;");
+    expect(text).not.toMatch(/[-+] export const flags/);
+    // …the comment edit and the operator change are shown in the author's words…
+    expect(text).toContain("│- // math helpers\n");
+    expect(text).toContain("│+ // math helpers (v2)\n");
+    expect(text).toContain("│-   if (x > LIMIT) return LIMIT; // cap\n");
+    expect(text).toContain("│+   if (x >= LIMIT) return LIMIT; // cap\n");
+    // …and flipping the constant makes the previously-dead call show up as affected, though its text never changed.
+    expect(text).toContain("│- if (false) {\n");
+    expect(text).toContain("│+ if (true) {\n");
+    expect(text).toContain("│~   fetch('https://x.test/never');\n");
+    expect(text).toContain("  const LIMIT = 2;\n");
+    expect(text).toContain('│  export const flags = {on: true, s: "ab"};\n    8 │- if (false) {\n    8 │+ if (true) {\n');
+    expect(text).toMatch(/\nm\.js ─+ 2 equivalent hidden \+3 -3\n/);
     expect(exitCode).toBe(0);
   });
 

@@ -23,7 +23,8 @@ use bun_sys::{Fd, FdExt as _, dir_iterator as DirIterator};
 use bun_url::URL;
 
 use crate::cli::pm_diff_normalize as normalize;
-use crate::test_runner::diff::diff_match_patch::{self, DiffMatchPatch, Operation};
+use crate::cli::pm_diff_semantic::{self as semantic, Op};
+use crate::test_runner::diff::diff_match_patch::Operation;
 
 use bun_core::fmt::buf_print_infallible as buf_print;
 
@@ -725,10 +726,9 @@ enum Semantic {
     LineEndingsOnly,
     /// Same bytes, different permission bits.
     ModeOnly,
-    /// The code re-prints identically but the comments do not; raw hunks are shown.
-    CommentsOnly,
-    /// A `.ts` file whose re-print (types stripped) is identical: a type or layout change; raw hunks are shown.
-    TypesOrFormatting,
+    /// Original lines shown, but what counts as a change was decided on the canonical form; `hidden` textual
+    /// differences were folded away as equivalent.
+    Projected { hidden: usize },
 }
 
 #[derive(Default)]
@@ -932,6 +932,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         }
         let nopts = normalize::Options {
             minify_syntax: flags.minify,
+            dce: false,
         };
         // Canonical re-print: same parser and printer on both sides, so only meaning survives.
         let (norm_old, norm_new) = if flags.raw {
@@ -974,43 +975,24 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         // those are checked separately before anything is called "formatting only".
         let reprint_equal =
             matches!((&norm_old, &norm_new), (Some(a), Some(b)) if a.text == b.text);
-        let same_comments = || match (old, new) {
-            (Some(o), Some(n)) => {
-                normalize::comments_of(path, o) == normalize::comments_of(path, n)
-            }
-            _ => true,
-        };
-        let is_ts = normalize::is_typescript(path);
-        change.formatting_only = reprint_equal && !is_ts && same_comments();
+        let js_family = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)));
+        change.formatting_only = reprint_equal && !js_family;
         match (old, new, &norm_old, &norm_new) {
             // Patch output must apply to the real files, so only the terminal view uses the re-print.
-            (Some(o), Some(n), Some(no), Some(nn)) if style.pretty && no.text == nn.text => {
-                change.semantic = if change.formatting_only {
-                    Semantic::FormattingOnly
+            (Some(o), Some(n), Some(no), Some(nn))
+                if style.pretty
+                    && (js_family || no.was_minified || nn.was_minified)
+                    && (no.was_minified || nn.was_minified || flags.unminify) =>
+            {
+                // Minified: the original is one enormous line, so the un-minified re-print is what gets shown.
+                change.semantic = Semantic::Normalized { unminified: true };
+                if no.text == nn.text {
+                    change.semantic = Semantic::FormattingOnly;
+                    change.formatting_only = true;
                 } else {
-                    // Something the re-print cannot see changed: show the real lines.
-                    unified_hunks(o, n, flags.context, style, (None, None), &mut change);
-                    if is_ts {
-                        Semantic::TypesOrFormatting
-                    } else {
-                        Semantic::CommentsOnly
-                    }
-                };
-            }
-            (Some(o), Some(n), Some(no), Some(nn)) if style.pretty => {
-                let unminified = no.was_minified || nn.was_minified || flags.unminify;
-                change.semantic = Semantic::Normalized { unminified };
-                if unminified {
-                    unified_hunks(
-                        &no.text,
-                        &nn.text,
-                        flags.context,
-                        style,
-                        (None, None),
-                        &mut change,
-                    );
+                    unified_hunks(&no.text, &nn.text, flags.context, style, &mut change);
                     // Minifier name churn: retry with positional names and keep whichever diff is smaller.
-                    if change.added + change.removed > 2 {
+                    if js_family && change.added + change.removed > 2 {
                         if let Some((co, cn)) =
                             normalize::normalize_minified_pair(path, o, n, nopts)
                         {
@@ -1023,33 +1005,58 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                                 alt.semantic = Semantic::FormattingOnly;
                             } else {
                                 alt.semantic = change.semantic;
-                                unified_hunks(
-                                    &co.text,
-                                    &cn.text,
-                                    flags.context,
-                                    style,
-                                    (None, None),
-                                    &mut alt,
-                                );
+                                unified_hunks(&co.text, &cn.text, flags.context, style, &mut alt);
                             }
                             if alt.added + alt.removed < change.added + change.removed {
                                 change.semantic = alt.semantic;
+                                change.formatting_only = alt.semantic == Semantic::FormattingOnly;
                                 change.added = alt.added;
                                 change.removed = alt.removed;
                                 change.hunks = alt.hunks;
                             }
                         }
                     }
-                } else {
-                    let maps = (Some(no.line_map.as_slice()), Some(nn.line_map.as_slice()));
-                    unified_hunks(&no.text, &nn.text, flags.context, style, maps, &mut change);
                 }
+            }
+            (Some(o), Some(n), Some(_), Some(_)) if style.pretty && js_family => {
+                // Readable code: decide on the aggressive canonical form, show the author's lines.
+                match (
+                    normalize::normalize(path, o, normalize::Options::KEY),
+                    normalize::normalize(path, n, normalize::Options::KEY),
+                ) {
+                    (Some(ko), Some(kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                        let (old_v, new_v) = (view_bytes(o), view_bytes(n));
+                        let projection = semantic::project(&old_v, &new_v, &ko, &kn);
+                        let shown = projection
+                            .ops
+                            .iter()
+                            .any(|op| op.kind != Operation::Equal || op.affected);
+                        if shown {
+                            change.semantic = Semantic::Projected {
+                                hidden: projection.hidden,
+                            };
+                            render_ops(
+                                &projection.ops,
+                                flags.context,
+                                style,
+                                &mut change,
+                                (false, false),
+                            );
+                        } else {
+                            change.semantic = Semantic::FormattingOnly;
+                            change.formatting_only = true;
+                        }
+                    }
+                    _ => unified_hunks(o, n, flags.context, style, &mut change),
+                }
+            }
+            (Some(_), Some(_), Some(_), Some(_)) if style.pretty && reprint_equal => {
+                // JSON / CSS: no source map to project through; an identical re-print is formatting.
+                change.semantic = Semantic::FormattingOnly;
             }
             (None, Some(n), _, _) => change.added = count_lines(n),
             (Some(o), None, _, _) => change.removed = count_lines(o),
-            (Some(o), Some(n), _, _) => {
-                unified_hunks(o, n, flags.context, style, (None, None), &mut change)
-            }
+            (Some(o), Some(n), _, _) => unified_hunks(o, n, flags.context, style, &mut change),
             (None, None, _, _) => unreachable!(),
         }
         if !flags.name_only
@@ -1081,6 +1088,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     line,
                     change.highlight,
                     None,
+                    false,
                 );
             }
             if unterminated {
@@ -1787,7 +1795,7 @@ fn expr_text(e: &bun_js_parser::Expr, bump: &Bump) -> Vec<u8> {
     out
 }
 
-struct Lines<'a>(&'a [u8]);
+pub(crate) struct Lines<'a>(pub &'a [u8]);
 impl<'a> Iterator for Lines<'a> {
     type Item = &'a [u8];
     fn next(&mut self) -> Option<&'a [u8]> {
@@ -1854,8 +1862,10 @@ impl Style {
         text: &[u8],
         highlight: bool,
         emph: Option<(usize, usize)>,
+        affected: bool,
     ) {
         let sign = match op {
+            Operation::Equal if affected => b'~',
             Operation::Equal => b' ',
             Operation::Delete => b'-',
             Operation::Insert => b'+',
@@ -1877,6 +1887,8 @@ impl Style {
         let text: &[u8] = &defang(text);
         // Changed lines get a tinted background so the foreground is free for syntax colours.
         let (num, accent, bg, strong) = match op {
+            // Unchanged text whose meaning moved (now dead, or newly live): flagged, not tinted.
+            Operation::Equal if affected => (new_no, "\x1b[33m", "", ""),
             Operation::Equal => (new_no, "\x1b[2m", "", ""),
             Operation::Delete => (old_no, "\x1b[31m", "\x1b[48;5;52m", "\x1b[48;5;88m"),
             Operation::Insert => (new_no, "\x1b[32m", "\x1b[48;5;22m", "\x1b[48;5;28m"),
@@ -1977,8 +1989,7 @@ impl Style {
             Semantic::WhitespaceOnly => "\x1b[2mwhitespace only\x1b[0m",
             Semantic::LineEndingsOnly => "\x1b[2mline endings only\x1b[0m",
             Semantic::ModeOnly => "",
-            Semantic::CommentsOnly => "\x1b[2mcomments only\x1b[0m ",
-            Semantic::TypesOrFormatting => "\x1b[2mtypes/formatting\x1b[0m ",
+            Semantic::Projected { .. } => "",
             Semantic::Normalized { unminified: true } => "\x1b[35munminified\x1b[0m ",
             Semantic::Normalized { unminified: false } => "\x1b[2mnormalized\x1b[0m ",
         };
@@ -2028,6 +2039,11 @@ impl Style {
                 format!("{mode} {badge}")
             };
         }
+        if let Semantic::Projected { hidden } = c.semantic {
+            if hidden > 0 {
+                badge = format!("\x1b[2m{hidden} equivalent hidden\x1b[0m {badge}");
+            }
+        }
         if let Some(why) = c.not_normalized {
             badge = format!("\x1b[2m{why}\x1b[0m {badge}");
         }
@@ -2060,24 +2076,24 @@ fn strip_ansi_len(s: &[u8]) -> usize {
 }
 
 /// For a `-` line immediately followed by exactly one `+` line (or vice versa), the byte range where they differ.
-fn pair_emphasis(ops: &[(Operation, &[u8])], k: usize) -> Option<(usize, usize)> {
-    let (op, text) = ops[k];
+fn pair_emphasis(ops: &[Op<'_>], k: usize) -> Option<(usize, usize)> {
+    let (op, text) = (ops[k].kind, ops[k].text);
     let partner = match op {
         Operation::Delete
             if k + 1 < ops.len()
-                && ops[k + 1].0 == Operation::Insert
-                && ops.get(k + 2).is_none_or(|o| o.0 != Operation::Insert)
-                && (k == 0 || ops[k - 1].0 != Operation::Delete) =>
+                && ops[k + 1].kind == Operation::Insert
+                && ops.get(k + 2).is_none_or(|o| o.kind != Operation::Insert)
+                && (k == 0 || ops[k - 1].kind != Operation::Delete) =>
         {
-            ops[k + 1].1
+            ops[k + 1].text
         }
         Operation::Insert
             if k > 0
-                && ops[k - 1].0 == Operation::Delete
-                && ops.get(k + 1).is_none_or(|o| o.0 != Operation::Insert)
-                && (k < 2 || ops[k - 2].0 != Operation::Delete) =>
+                && ops[k - 1].kind == Operation::Delete
+                && ops.get(k + 1).is_none_or(|o| o.kind != Operation::Insert)
+                && (k < 2 || ops[k - 2].kind != Operation::Delete) =>
         {
-            ops[k - 1].1
+            ops[k - 1].text
         }
         _ => return None,
     };
@@ -2108,132 +2124,121 @@ fn unified_hunks(
     new: &[u8],
     context: usize,
     style: Style,
-    (old_map, new_map): (Option<&[u32]>, Option<&[u32]>),
     change: &mut FileChange<'_>,
 ) {
-    let map = |m: Option<&[u32]>, line: usize| {
-        m.and_then(|m| m.get(line.wrapping_sub(1)))
-            .map_or(line, |&l| l as usize)
-    };
     // The terminal view compares CRLF files as if they were LF, so a line-ending flip is not a wall of -/+.
-    let (old_lf, new_lf);
-    let (old, new) = if style.pretty
-        && (strings::contains_char(old, b'\r') || strings::contains_char(new, b'\r'))
-    {
-        old_lf = strip_cr(old);
-        new_lf = strip_cr(new);
-        (old_lf.as_slice(), new_lf.as_slice())
+    let (old_v, new_v);
+    let (old, new) = if style.pretty {
+        (old_v, new_v) = (view_bytes(old), view_bytes(new));
+        (&*old_v, &*new_v)
     } else {
         (old, new)
     };
-    let mut dmp = DiffMatchPatch::<usize>::default();
-    dmp.config.diff_timeout = 1000;
-    let l2c = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(old, new));
-    let char_diffs = bun_core::handle_oom(dmp.diff(&l2c.chars_1, &l2c.chars_2, false));
-    let diffs = bun_core::handle_oom(diff_match_patch::diff_chars_to_lines(
-        &char_diffs,
-        l2c.line_array.as_slice(),
-    ));
+    let ops = semantic::line_ops(old, new);
+    // `patch`/`git apply` need to know when a side's last line had no terminator.
+    let unterminated = (
+        !old.is_empty() && !old.ends_with(b"\n"),
+        !new.is_empty() && !new.ends_with(b"\n"),
+    );
+    render_ops(&ops, context, style, change, unterminated);
+}
 
-    // Flatten to (op, line) so context windows are easy to compute.
-    let mut ops: Vec<(Operation, &[u8])> = Vec::new();
-    for d in &diffs {
-        for line in Lines(&d.text) {
-            ops.push((d.operation, line));
-        }
-        match d.operation {
-            Operation::Insert => change.added += count_lines(&d.text),
-            Operation::Delete => change.removed += count_lines(&d.text),
+/// What the terminal view compares and shows for a text file: line-ending CRs dropped.
+fn view_bytes(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if strings::contains_char(bytes, b'\r') {
+        std::borrow::Cow::Owned(strip_cr(bytes))
+    } else {
+        std::borrow::Cow::Borrowed(bytes)
+    }
+}
+
+/// Windows of `context` lines around every change (a `~` affected line counts as one), rendered per the style.
+fn render_ops(
+    ops: &[Op<'_>],
+    context: usize,
+    style: Style,
+    change: &mut FileChange<'_>,
+    (old_unterminated, new_unterminated): (bool, bool),
+) {
+    for op in ops {
+        match op.kind {
+            Operation::Insert => change.added += 1,
+            Operation::Delete => change.removed += 1,
             Operation::Equal => {}
         }
     }
-    // SAFETY-free lifetime note: `d.text` is owned by `diffs`, which lives to the end of this fn; hunks are rendered here.
-    // `patch`/`git apply` need to know when a side's last line had no terminator.
-    let old_unterminated = !old.is_empty() && !old.ends_with(b"\n");
-    let new_unterminated = !new.is_empty() && !new.ends_with(b"\n");
-    let last_old = ops.iter().rposition(|(op, _)| *op != Operation::Insert);
-    let last_new = ops.iter().rposition(|(op, _)| *op != Operation::Delete);
+    let is_change = |op: &Op| op.kind != Operation::Equal || op.affected;
+    let last_old = ops.iter().rposition(|op| op.kind != Operation::Insert);
+    let last_new = ops.iter().rposition(|op| op.kind != Operation::Delete);
     let n = ops.len();
     let mut i = 0;
     let mut first = true;
-    let (mut old_line, mut new_line) = (1usize, 1usize);
     while i < n {
-        if ops[i].0 == Operation::Equal {
-            old_line += 1;
-            new_line += 1;
+        if !is_change(&ops[i]) {
             i += 1;
             continue;
         }
-        // Start of a hunk: back up `context` equal lines.
         let mut start = i;
-        let mut back = 0;
-        while start > 0 && ops[start - 1].0 == Operation::Equal && back < context {
+        while start > 0 && !is_change(&ops[start - 1]) && i - start < context {
             start -= 1;
-            back += 1;
         }
-        let hunk_old_start = old_line - back;
-        let hunk_new_start = new_line - back;
-        // Extend until we see more than 2*context equal lines in a row (or the end).
+        // Extend until more than 2*context quiet lines in a row (or the end), then keep `context` of them.
         let mut end = i;
-        let mut equal_run = 0;
+        let mut quiet = 0;
         while end < n {
-            if ops[end].0 == Operation::Equal {
-                equal_run += 1;
-                if equal_run > 2 * context {
+            if is_change(&ops[end]) {
+                quiet = 0;
+            } else {
+                quiet += 1;
+                if quiet > 2 * context {
                     break;
                 }
-            } else {
-                equal_run = 0;
             }
             end += 1;
         }
-        // Trim trailing context to `context` lines.
-        let mut trailing = 0;
         let mut e = end;
-        while e > start && ops[e - 1].0 == Operation::Equal {
+        let mut trailing = 0;
+        while e > start && !is_change(&ops[e - 1]) {
             trailing += 1;
             e -= 1;
         }
         let end = e + trailing.min(context);
+        let window = &ops[start..end];
 
-        let (mut old_len, mut new_len) = (0, 0);
-        for (op, _) in &ops[start..end] {
-            match op {
-                Operation::Equal => {
-                    old_len += 1;
-                    new_len += 1;
-                }
-                Operation::Delete => old_len += 1,
-                Operation::Insert => new_len += 1,
-            }
-        }
-        let old_start = if old_len == 0 {
-            hunk_old_start.saturating_sub(1)
-        } else {
-            hunk_old_start
-        };
-        let new_start = if new_len == 0 {
-            hunk_new_start.saturating_sub(1)
-        } else {
-            hunk_new_start
-        };
+        let old_len = window
+            .iter()
+            .filter(|op| op.kind != Operation::Insert)
+            .count();
+        let new_len = window
+            .iter()
+            .filter(|op| op.kind != Operation::Delete)
+            .count();
+        // An op numbers the line it consumed; a side that did not advance still names the line before the gap.
+        let old_start = window
+            .iter()
+            .find(|op| op.kind != Operation::Insert)
+            .map_or(window[0].old_no, |op| op.old_no);
+        let new_start = window
+            .iter()
+            .find(|op| op.kind != Operation::Delete)
+            .map_or(window[0].new_no, |op| op.new_no);
         style.hunk_header(
             &mut change.hunks,
             (old_start, old_len, new_start, new_len),
             first,
         );
         first = false;
-        let (mut o, mut nn) = (hunk_old_start, hunk_new_start);
-        for (k, (op, line)) in ops[start..end].iter().enumerate() {
-            let emph = pair_emphasis(&ops[start..end], k);
+        for (k, op) in window.iter().enumerate() {
+            let emph = pair_emphasis(window, k);
             style.line(
                 &mut change.hunks,
-                *op,
-                map(old_map, o),
-                map(new_map, nn),
-                line,
+                op.kind,
+                op.old_no,
+                op.new_no,
+                op.text,
                 change.highlight,
                 emph,
+                op.affected,
             );
             let idx = start + k;
             if !style.pretty
@@ -2241,25 +2246,6 @@ fn unified_hunks(
                     || (Some(idx) == last_new && new_unterminated))
             {
                 change.hunks.extend_from_slice(NO_NEWLINE_MARKER);
-            }
-            match op {
-                Operation::Equal => {
-                    o += 1;
-                    nn += 1;
-                }
-                Operation::Delete => o += 1,
-                Operation::Insert => nn += 1,
-            }
-        }
-        // Advance line counters past this hunk.
-        for (op, _) in &ops[i..end] {
-            match op {
-                Operation::Equal => {
-                    old_line += 1;
-                    new_line += 1;
-                }
-                Operation::Delete => old_line += 1,
-                Operation::Insert => new_line += 1,
             }
         }
         i = end;

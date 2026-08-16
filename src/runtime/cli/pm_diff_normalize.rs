@@ -2,12 +2,19 @@
 //! formatting-only releases collapse to nothing and minified bundles become line-diffable.
 
 use bun_alloc::Arena;
-use bun_core::Ordinal;
+
+/// One source-map point: printed (line, col) came from original (line, col); all 0-based.
+#[derive(Clone, Copy)]
+pub(crate) struct MapPoint {
+    pub gen_line: u32,
+    pub orig_line: u32,
+    pub orig_col: u32,
+}
 
 pub(crate) struct Normalized {
     pub text: Vec<u8>,
-    /// Printed line (0-based index) → original 1-based line, when the printer gave us a source map.
-    pub line_map: Vec<u32>,
+    /// Every source-map point in printed order (JS only; empty when the printer gave none).
+    pub map: Vec<MapPoint>,
     /// `import`/`require` specifiers, in source order, internal/unused ones dropped.
     pub imports: Vec<Vec<u8>>,
     /// The original had so few newlines relative to its size that original line numbers are meaningless.
@@ -37,82 +44,6 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub(crate) fn is_typescript(path: &[u8]) -> bool {
-    matches!(
-        kind_for(path),
-        Some(Kind::Js(bun_ast::Loader::Ts | bun_ast::Loader::Tsx))
-    )
-}
-
-/// The comments of a JS/TS/CSS file, whitespace-trimmed, in order — what the re-print cannot vouch for. A small
-/// scanner (strings, templates and regex-looking slashes are skipped); when in doubt it reports a comment, which
-/// only ever costs a "formatting only" label, never hides a change.
-pub(crate) fn comments_of<'a>(path: &[u8], text: &'a [u8]) -> Vec<&'a [u8]> {
-    let mut out = Vec::new();
-    if !matches!(kind_for(path), Some(Kind::Js(_) | Kind::Css)) {
-        return out;
-    }
-    let (mut i, n) = (0usize, text.len());
-    let mut last_significant = b'\n';
-    while i < n {
-        let b = text[i];
-        match b {
-            b'/' if text.get(i + 1) == Some(&b'/') => {
-                let end = bun_core::strings::index_of_char(&text[i..], b'\n')
-                    .map_or(n, |e| i + e as usize);
-                out.push(text[i..end].trim_ascii());
-                i = end;
-            }
-            b'/' if text.get(i + 1) == Some(&b'*') => {
-                let end =
-                    bun_core::strings::index_of(&text[i + 2..], b"*/").map_or(n, |e| i + 2 + e + 2);
-                out.push(text[i..end.min(n)].trim_ascii());
-                i = end.min(n);
-            }
-            // A `/` after an operand divides; anywhere else it starts a regex literal — skip to its end.
-            b'/' if !(last_significant.is_ascii_alphanumeric()
-                || matches!(last_significant, b')' | b']' | b'}' | b'_' | b'$')) =>
-            {
-                i += 1;
-                let mut in_class = false;
-                while i < n && text[i] != b'\n' {
-                    match text[i] {
-                        b'\\' => i += 1,
-                        b'[' => in_class = true,
-                        b']' => in_class = false,
-                        b'/' if !in_class => break,
-                        _ => {}
-                    }
-                    i += 1;
-                }
-                last_significant = b'/';
-                i += 1;
-            }
-            b'"' | b'\'' | b'`' => {
-                let quote = b;
-                i += 1;
-                while i < n && text[i] != quote {
-                    if text[i] == b'\\' {
-                        i += 1;
-                    } else if quote != b'`' && text[i] == b'\n' {
-                        break;
-                    }
-                    i += 1;
-                }
-                last_significant = quote;
-                i += 1;
-            }
-            _ => {
-                if !b.is_ascii_whitespace() {
-                    last_significant = b;
-                }
-                i += 1;
-            }
-        }
-    }
-    out
-}
-
 pub(crate) fn kind_for(path: &[u8]) -> Option<Kind> {
     let ext = &path[bun_core::strings::last_index_of_char(path, b'.')? + 1..];
     // `.d.ts` carries no statements; re-printing it yields an empty file.
@@ -129,6 +60,16 @@ pub(crate) const MAX_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) struct Options {
     /// Fold equivalent syntax too (`!0`/`true`, quote style, redundant parens), not only layout.
     pub minify_syntax: bool,
+    /// Drop unreachable code, so a branch that became dead reads as a change where it happened.
+    pub dce: bool,
+}
+
+impl Options {
+    /// For the comparison key of readable files: as aggressive as the printer gets without renaming.
+    pub(crate) const KEY: Options = Options {
+        minify_syntax: true,
+        dce: true,
+    };
 }
 
 pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<Normalized> {
@@ -219,7 +160,7 @@ fn parse_js<'a>(
 ) -> Option<Box<bun_ast::Ast<'a>>> {
     let mut opts = bun_js_parser::ParserOptions::init(Default::default(), loader);
     // Print what is there: no dead-code removal, no macro execution, no import trimming.
-    opts.features.dead_code_elimination = false;
+    opts.features.dead_code_elimination = options.dce;
     opts.features.no_macros = true;
     opts.features.trim_unused_imports = false;
     opts.features.minify_syntax = options.minify_syntax;
@@ -280,7 +221,7 @@ fn print_js<'a>(
     .ok()?;
     let text = printer.ctx.get_written().to_vec();
 
-    let mut line_map = Vec::new();
+    let mut map = Vec::new();
     if let Some(chunk) = collector.0 {
         let printed_lines = bun_core::strings::count_char(&text, b'\n') + 1;
         if let Ok(parsed) = bun_sourcemap::mapping::parse(
@@ -293,23 +234,22 @@ fn print_js<'a>(
                 sort: true,
             },
         ) {
-            line_map.reserve(printed_lines);
-            let mut last = 1u32;
-            for line in 0..printed_lines {
-                // The last mapping on the printed line tells us where its content came from.
-                if let Some(m) = parsed.mappings.find(
-                    Ordinal::from_zero_based(line as i32),
-                    Ordinal::from_zero_based(i32::MAX - 1),
-                ) {
-                    last = (m.original_line() + 1).max(1) as u32;
+            let (generated, original) = (parsed.mappings.generated(), parsed.mappings.original());
+            map.reserve(generated.len());
+            for (g, o) in generated.iter().zip(original) {
+                if g.lines.zero_based() >= 0 && o.lines.zero_based() >= 0 {
+                    map.push(MapPoint {
+                        gen_line: g.lines.zero_based() as u32,
+                        orig_line: o.lines.zero_based() as u32,
+                        orig_col: o.columns.zero_based().max(0) as u32,
+                    });
                 }
-                line_map.push(last);
             }
         }
     }
     Some(Normalized {
         text,
-        line_map,
+        map,
         imports,
         was_minified: false,
     })
@@ -721,7 +661,7 @@ fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
         .collect();
     Some(Normalized {
         text: result.code,
-        line_map: Vec::new(),
+        map: Vec::new(),
         imports,
         was_minified: false,
     })
@@ -747,7 +687,7 @@ fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
     .ok()?;
     Some(Normalized {
         text: printer.ctx.get_written().to_vec(),
-        line_map: Vec::new(),
+        map: Vec::new(),
         imports: Vec::new(),
         was_minified: false,
     })

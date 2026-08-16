@@ -14,12 +14,19 @@ new ReadableStream<string>({
 // Not fixable because ReadableStream has no ReadableStreamConstructor interface
 // we can merge into. See https://github.com/microsoft/TypeScript-DOM-lib-generator/pull/1941
 // for details about when/why/how TypeScript might support this.
-new ReadableStream({
+const directStream = new ReadableStream({
   type: "direct",
   async pull(controller) {
     controller.write(new TextEncoder().encode("Hello, world!"));
+    controller.write("Hello, world!");
   },
 });
+// https://github.com/oven-sh/bun/issues/16054: strings written to a type:"direct"
+// stream are UTF-8 encoded; reading via a default reader yields Uint8Array chunks.
+expectType(directStream).is<ReadableStream<Uint8Array<ArrayBuffer>>>();
+for await (const chunk of directStream) {
+  expectType(chunk).is<Uint8Array<ArrayBuffer>>();
+}
 
 declare const uint8stream: ReadableStream<Uint8Array<ArrayBuffer>>;
 

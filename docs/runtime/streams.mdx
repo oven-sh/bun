@@ -68,7 +68,7 @@ const stream = new ReadableStream({
 });
 ```
 
-When using a direct `ReadableStream`, the destination handles all chunk queueing. The consumer of the stream receives exactly what is passed to `controller.write()`, without any encoding or modification.
+When using a direct `ReadableStream`, the destination handles all chunk queueing. `controller.write()` accepts a string, `ArrayBufferView`, or `ArrayBuffer`, and returns the number of bytes written. Strings are UTF-8 encoded. When the stream is read via a default reader (for example with `for await` or `getReader().read()`), chunks are delivered as `Uint8Array`, and consecutive writes may be coalesced into a single chunk.
 
 ### Handling backpressure
 

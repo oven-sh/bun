@@ -307,6 +307,17 @@ declare module "bun" {
     type?: undefined;
   }
 
+  /**
+   * Underlying source for a Bun `type: "direct"` {@link ReadableStream}.
+   *
+   * The `pull` callback is passed a {@link ReadableStreamDirectController} whose
+   * `write()` accepts a string, `ArrayBufferView`, or `ArrayBuffer` and returns the
+   * number of bytes written (strings are UTF-8 encoded). Reading the stream via a
+   * default reader yields `Uint8Array` chunks.
+   *
+   * @template R Retained for backward compatibility; the stream's chunk type is
+   * always `Uint8Array` regardless of `R`.
+   */
   interface DirectUnderlyingSource<R = any> {
     cancel?: UnderlyingSourceCancelCallback;
     pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;

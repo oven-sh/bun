@@ -732,42 +732,47 @@ describe("@types/bun integration test", () => {
         },
         {
           code: 2339,
-          line: "streams.ts:46:19",
+          line: "streams.ts:21:16",
+          message: "Property 'write' does not exist on type 'ReadableByteStreamController'.",
+        },
+        {
+          code: 2339,
+          line: "streams.ts:53:19",
           message: "Property 'json' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
           code: 2339,
-          line: "streams.ts:47:19",
+          line: "streams.ts:54:19",
           message: "Property 'bytes' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
           code: 2339,
-          line: "streams.ts:48:19",
+          line: "streams.ts:55:19",
           message: "Property 'text' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
           code: 2339,
-          line: "streams.ts:49:19",
+          line: "streams.ts:56:19",
           message: "Property 'blob' does not exist on type 'ReadableStream<Uint8Array<ArrayBufferLike>>'.",
         },
         {
           code: 2345,
-          line: "streams.ts:63:66",
+          line: "streams.ts:70:66",
           message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
         },
         {
           code: 2345,
-          line: "streams.ts:63:113",
+          line: "streams.ts:70:113",
           message: "Argument of type '\"brotli\"' is not assignable to parameter of type 'CompressionFormat'.",
         },
         {
           code: 2345,
-          line: "streams.ts:64:66",
+          line: "streams.ts:71:66",
           message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
         },
         {
           code: 2345,
-          line: "streams.ts:64:111",
+          line: "streams.ts:71:111",
           message: "Argument of type '\"zstd\"' is not assignable to parameter of type 'CompressionFormat'.",
         },
         {

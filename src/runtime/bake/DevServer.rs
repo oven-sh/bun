@@ -119,8 +119,6 @@ impl DevServer {
     }
 
     // ── transpiler accessors ───────────────────────────────────────────────
-    // `init()` fills the server and client slots before it returns `Ok`; the
-    // SSR slot only when the framework has a separate SSR graph.
     #[inline]
     pub(crate) fn server_transpiler(&self) -> &Transpiler<'static> {
         self.server_transpiler.get()
@@ -141,11 +139,8 @@ impl DevServer {
     pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         self.ssr_transpiler.get_mut()
     }
-    /// The transpiler `BundleV2` should use for the SSR graph: the dedicated
-    /// one when it exists, otherwise the server transpiler (the same aliasing
-    /// `BundleV2::init` sets up by itself; the bundler only dereferences it for
-    /// files in a separate SSR graph). Raw because the server transpiler is
-    /// handed to the bundler as `&mut` at the same time.
+    /// Without a separate SSR graph this is the server transpiler, the alias
+    /// `BundleV2` would set up on its own and never dereferences.
     #[inline]
     fn ssr_transpiler_ptr_for_bundle(&mut self) -> *mut Transpiler<'static> {
         if self.ssr_transpiler.is_initialized() {
@@ -400,11 +395,9 @@ pub struct DevServer {
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
     // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
     // the server.
-    // Empty until `Framework::init_transpiler` fills them in `init()` below;
-    // `ssr_transpiler` stays empty unless the framework has a separate SSR
-    // graph (see `ssr_transpiler_ptr_for_bundle`).
     pub(crate) server_transpiler: bake::TranspilerSlot<'static>,
     pub(crate) client_transpiler: bake::TranspilerSlot<'static>,
+    /// Only filled when the framework has a separate SSR graph.
     pub(crate) ssr_transpiler: bake::TranspilerSlot<'static>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
@@ -493,18 +486,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .map(|sc| sc.separate_ssr_graph)
         .unwrap_or(false);
 
-    // `bun_watcher` and `watcher_atomics` point back at the server, so they
-    // need its heap address before it exists as a value, and the struct is
-    // ~15 KiB (three inline transpiler slots plus the deferred request pool),
-    // which a struct literal would build on the stack and copy (see the note
-    // on `hive_array::Fallback::new_boxed`). Instead: allocate uninitialized
-    // storage, build those two against its address, write every field with
-    // `addr_of_mut!().write()`, `assume_init()`.
-    //
-    // `MaybeUninit` never drops what was written into it, so the steps that
-    // can fail come either before anything is written (below) or after
-    // `assume_init()`, where a failure drops the `Box<DevServer>` and `Drop`
-    // tears down whatever exists, like any later failure in this function.
+    // Field by field because the watcher needs the server's address first and the
+    // ~15 KiB struct should not be built on the stack (see `Fallback::new_boxed`).
+    // Nothing fallible may run between the first write and `assume_init()`.
     use ::core::mem::MaybeUninit;
     use ::core::ptr::addr_of_mut;
 
@@ -514,19 +498,14 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    // FileSystem is a process-lifetime singleton; `init` interns the path into
-    // the `DirnameStore` (process-lifetime arena) so no caller-side leak is
-    // needed for the `'static` it stores.
+    // Process-lifetime singleton; the root it interns is never freed.
     let _fs = match bun_resolver::fs::FileSystem::init(Some(options.root.as_bytes())) {
         Ok(fs) => fs,
         Err(err) => return Err(global.throw_error(err, generic_action)),
     };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
-    // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
-    // not dereference it until `start()` spawns the watcher thread, by which point
-    // every `DevServer` field is initialized (`assume_init` below precedes
-    // `bun_watcher.start()`).
+    // Only stores `p`; nothing dereferences it before `bun_watcher.start()` below.
     let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
         Ok(w) => w,
         Err(err) => {
@@ -545,11 +524,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         };
     }
 
-    // SAFETY: `p` is a freshly-allocated, properly-aligned `*mut DevServer`; each
-    // `addr_of_mut!((*p).field)` computes an in-bounds field address without
-    // creating a reference to the (partially-uninit) whole. Every field is
-    // written exactly once below and nothing in between can fail, so the
-    // `assume_init()` at the end of the block is sound.
+    // SAFETY: `p` is fresh, aligned storage and `w!` never forms a reference to the
+    // whole; every field is written exactly once below and nothing in between fails.
     let mut dev: Box<DevServer> = unsafe {
         w!(magic, Magic::Valid);
         w!(root, Box::from(options.root.as_bytes()));
@@ -643,9 +619,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             }
         );
         w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher));
-        // `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
-        // as a BACKREF for later `concurrent_task.from(dev)` / `run`; it is not
-        // dereferenced during construction.
+        // Only stores `p` as a back-reference.
         w!(watcher_atomics, WatcherAtomics::init(p));
         w!(bundler_framework_views, Vec::with_capacity(4));
         w!(server_transpiler, bake::TranspilerSlot::uninit());
@@ -667,10 +641,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     let _unlock = dev.graph_safety_lock.guard();
 
-    // `Transpiler<'static>` erases the arena lifetime — `options.arena` is the
-    // `UserOptions.arena`, which outlives the `DevServer` box.
-    // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
-    // `Options::arena` doc — "must live until DevServer drops").
+    // SAFETY: `options.arena` outlives the `DevServer` (see `Options::arena`), and
+    // with it every `Transpiler<'static>` built from it below.
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
     let graphs: &[bake::Graph] = if separate_ssr_graph {
         &[bake::Graph::Server, bake::Graph::Client, bake::Graph::Ssr]
@@ -678,10 +650,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         &[bake::Graph::Server, bake::Graph::Client]
     };
     for &graph in graphs {
-        // The bundler crate (lower tier) reads the framework through its own
-        // projection, which the transpiler borrows for as long as it lives.
-        // Registered with `dev` before the call so that `Drop` destroys it
-        // whether or not the transpiler gets built.
+        // Registered before the call so `Drop` destroys it even if the transpiler is never built.
         let view: *mut bun_bundler::bake_types::Framework =
             arena.alloc(dev.framework.as_bundler_view());
         dev.bundler_framework_views.push(view);
@@ -697,8 +666,8 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 bake::Mode::Development,
                 graph,
                 slot,
-                // SAFETY: a fresh slot in `arena`, which outlives `dev`; it is only
-                // dropped in place by `Drop for DevServer`, after the transpilers.
+                // SAFETY: fresh arena slot; only `Drop for DevServer` destroys it, after
+                // the transpilers.
                 unsafe { &*view },
                 config,
             )
@@ -3162,16 +3131,12 @@ impl DevServer {
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
         let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
-        // `BundleV2` keeps these as raw pointers into `*self` (which outlives
-        // `bv2`, held in `current_bundle`) and never moves them. Taken as raw
-        // pointers up front so the server transpiler can be both the `&mut`
-        // argument and, without a separate SSR graph, the SSR alias.
+        // Raw because `ssr_ptr` may alias the server transpiler passed as `&mut` below.
         let ssr_ptr = self.ssr_transpiler_ptr_for_bundle();
         let client_ptr = self.client_transpiler.as_mut_ptr();
         let server_ptr = self.server_transpiler.as_mut_ptr();
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
-            // SAFETY: populated in `init()`; `self` holds no other reference to
-            // it while the bundle is set up.
+            // SAFETY: filled in `init()`; `*self` outlives `bv2` and nothing else borrows it here.
             unsafe { &mut *server_ptr },
             Some(bundler::bundle_v2::BakeOptions {
                 framework: self.framework.as_bundler_view(),

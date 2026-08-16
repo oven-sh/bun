@@ -197,10 +197,7 @@ impl Framework {
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
     ///
-    /// `framework_view` is the caller's projection of `self` (see
-    /// `as_bundler_view`); the transpiler borrows it for as long as it lives.
-    /// On `Err`, `out` may already hold the partially configured transpiler;
-    /// the slot drops it.
+    /// `framework_view` is `self.as_bundler_view()`, borrowed for the transpiler's lifetime.
     pub(crate) fn init_transpiler<'a>(
         &self,
         arena: &'a bun_alloc::Arena,
@@ -461,10 +458,8 @@ impl Framework {
     }
 }
 
-/// Storage that a `Framework::init_transpiler*` fills in place (a configured
-/// `Transpiler` points into its own fields, so it cannot be built and moved)
-/// and that knows whether it was filled. Owners that can stop part-way through
-/// building several of them (`DevServer::init`) just drop their slots.
+/// A `Transpiler` built in place by `Framework::init_transpiler` (once configured
+/// it points into its own fields), or nothing yet; drops whichever it holds.
 pub(crate) struct TranspilerSlot<'a> {
     transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
     initialized: bool,
@@ -492,34 +487,30 @@ impl<'a> TranspilerSlot<'a> {
         transpiler
     }
 
-    /// Panics if the slot was never filled (`init_transpiler` did not return `Ok` for it).
+    /// Panics if the slot is empty.
     pub(crate) fn get(&self) -> &bun_bundler::Transpiler<'a> {
         assert!(self.initialized, "transpiler slot is empty");
-        // SAFETY: `initialized` is only set by `write`, once it has stored the
-        // transpiler, and only cleared by `clear`, which drops it.
+        // SAFETY: `initialized` is set by `write` after it stores the transpiler and
+        // cleared by `clear` as it drops it.
         unsafe { self.transpiler.assume_init_ref() }
     }
 
-    /// See `get`.
+    /// Panics if the slot is empty.
     pub(crate) fn get_mut(&mut self) -> &mut bun_bundler::Transpiler<'a> {
         assert!(self.initialized, "transpiler slot is empty");
         // SAFETY: see `get`.
         unsafe { self.transpiler.assume_init_mut() }
     }
 
-    /// For handing the transpiler to code that keeps raw pointers to it
-    /// (`BundleV2`), or for reaching one of its fields without forming a
-    /// reference to the whole transpiler. Only valid to dereference while the
-    /// slot is initialized.
+    /// Only valid to dereference while the slot is filled.
     pub(crate) fn as_mut_ptr(&mut self) -> *mut bun_bundler::Transpiler<'a> {
         self.transpiler.as_mut_ptr()
     }
 
-    /// Drops the transpiler, if there is one, leaving the slot empty.
     pub(crate) fn clear(&mut self) {
         if core::mem::take(&mut self.initialized) {
-            // SAFETY: `initialized` was set, so the slot holds a transpiler, and
-            // it was just cleared, so nothing drops it a second time.
+            // SAFETY: the flag was set, so a transpiler is stored; it is already
+            // cleared, so nothing drops the transpiler again.
             unsafe { self.transpiler.assume_init_drop() };
         }
     }

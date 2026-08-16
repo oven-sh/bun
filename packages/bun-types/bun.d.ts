@@ -8157,19 +8157,27 @@ declare module "bun" {
   type WritableSubprocess = Subprocess<"pipe", any, any>;
   /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `"pipe"`. A combination of {@link ReadableSubprocess} and {@link WritableSubprocess} */
   type PipedSubprocess = Subprocess<"pipe", "pipe", "pipe">;
-  /** Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `null` or similar. */
+  /**
+   * Utility type for any process from {@link Bun.spawn()} with stdin, stdout, stderr all set to `"ignore"`, `"inherit"`
+   * or `null`, so none of them is exposed on the process.
+   *
+   * An `undefined` option means the slot's default. That qualifies for stdin (`"ignore"`) and stderr (`"inherit"`),
+   * but not for stdout, whose default is `"pipe"`.
+   */
   type NullSubprocess = Subprocess<
     "ignore" | "inherit" | null | undefined,
-    "ignore" | "inherit" | null | undefined,
+    "ignore" | "inherit" | null,
     "ignore" | "inherit" | null | undefined
   >;
   /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `"pipe"` */
   type ReadableSyncSubprocess = SyncSubprocess<"pipe", "pipe">;
-  /** Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `null` or similar */
-  type NullSyncSubprocess = SyncSubprocess<
-    "ignore" | "inherit" | null | undefined,
-    "ignore" | "inherit" | null | undefined
-  >;
+  /**
+   * Utility type for any process from {@link Bun.spawnSync()} with both stdout and stderr set to `"ignore"`, `"inherit"`
+   * or `null`, so neither is captured.
+   *
+   * An `undefined` option does not qualify: {@link Bun.spawnSync()} defaults both slots to `"pipe"`.
+   */
+  type NullSyncSubprocess = SyncSubprocess<"ignore" | "inherit" | null, "ignore" | "inherit" | null>;
 
   /**
    * Options for creating a pseudo-terminal (PTY).

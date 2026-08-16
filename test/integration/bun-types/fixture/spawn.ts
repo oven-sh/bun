@@ -185,6 +185,23 @@ tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "pipe",
 tsd.expectAssignable<WritableSubprocess>(Bun.spawn([], { stdio: ["pipe", "ignore", "inherit"] }));
 tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: ["ignore", "inherit", "ignore"] }));
 tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [null, null, null] }));
+// A Null* process exposes none of its stdio slots. An undefined option means the slot's default: "ignore"
+// for Bun.spawn's stdin and "inherit" for its stderr, but "pipe" for Bun.spawn's stdout and for both
+// Bun.spawnSync slots. So the aliases accept undefined in Bun.spawn's stdin and stderr slots only.
+tsd.expectType<NullSubprocess["stdin"]>().is<undefined>();
+tsd.expectType<NullSubprocess["stdout"]>().is<undefined>();
+tsd.expectType<Bun.NullSyncSubprocess["stdout"]>().is<undefined>();
+tsd.expectType<Bun.NullSyncSubprocess["stderr"]>().is<undefined>();
+tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: [undefined, "ignore", undefined] }));
+tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdout: "ignore" }));
+// @ts-expect-error stdout: undefined means "pipe", so this process has a stdout stream
+tsd.expectAssignable<NullSubprocess>(Bun.spawn([], { stdio: ["ignore", undefined, "ignore"] }));
+tsd.expectAssignable<Bun.NullSyncSubprocess>(Bun.spawnSync([], { stdio: ["ignore", "ignore", "inherit"] }));
+tsd.expectAssignable<Bun.NullSyncSubprocess>(Bun.spawnSync([], { stdio: [null, null, null] }));
+// @ts-expect-error stdout: undefined means "pipe", so this process has a stdout Buffer
+tsd.expectAssignable<Bun.NullSyncSubprocess>(Bun.spawnSync([], { stdio: ["ignore", undefined, "ignore"] }));
+// @ts-expect-error stderr: undefined means "pipe" in spawnSync, so this process has a stderr Buffer
+tsd.expectAssignable<Bun.NullSyncSubprocess>(Bun.spawnSync([], { stdio: ["ignore", "ignore", undefined] }));
 
 tsd.expectAssignable<SyncSubprocess<Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>>(Bun.spawnSync([], {}));
 

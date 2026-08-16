@@ -191,6 +191,19 @@ describe("scan errors", () => {
     ]);
   });
 
+  test("app router files that are not pages or layouts", () => {
+    expect(
+      scanErrors("nextjs-app-ui", {
+        "page.tsx": "1",
+        "loading.tsx": "1",
+        "docs/not-found.tsx": "1",
+      }),
+    ).toEqual([
+      'Invalid route "docs/not-found.tsx": Bun Bake currently does not support "not-found" files',
+      'Invalid route "loading.tsx": Bun Bake currently does not support "loading" files',
+    ]);
+  });
+
   test("invalid routes and collisions are reported together", () => {
     const params = Array.from({ length: 65 }, (_, i) => `[p${i}]`).join("/");
     expect(

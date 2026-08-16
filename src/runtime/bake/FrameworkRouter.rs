@@ -1682,7 +1682,17 @@ impl FrameworkRouter {
                             ParsedPatternKind::Page => FileKind::Page,
                             ParsedPatternKind::Layout => FileKind::Layout,
                             ParsedPatternKind::Extra => {
-                                panic!("TODO: associate extra files with route")
+                                log.fail(
+                                    format_args!(
+                                        "Bun Bake currently does not support \"{}\" files",
+                                        bstr::BStr::new(paths::stem(base))
+                                    ),
+                                    full_rel_path.len() - base.len(),
+                                    base.len(),
+                                );
+                                ctx.on_router_syntax_error(full_rel_path, log)?;
+                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
+                                continue 'outer;
                             }
                         };
 
@@ -1771,7 +1781,7 @@ pub struct JSFrameworkRouter {
 pub(crate) enum StoredScanError {
     InvalidRoute {
         rel_path: Box<[u8]>,
-        log: TinyLog,
+        message: Box<[u8]>,
     },
     Collision {
         rel_path: Box<[u8]>,
@@ -1881,11 +1891,11 @@ impl JSFrameworkRouter {
             } = &*jsfr;
             let arr = JSValue::create_array_from_iter(global, stored_scan_errors.iter(), |item| {
                 Ok(match item {
-                    StoredScanError::InvalidRoute { rel_path, log } => global
+                    StoredScanError::InvalidRoute { rel_path, message } => global
                         .create_error_instance(format_args!(
                             "Invalid route {}: {}",
                             bun_core::fmt::quote(rel_path),
-                            bstr::BStr::new(log.msg.const_slice()),
+                            bstr::BStr::new(message),
                         )),
                     StoredScanError::Collision {
                         rel_path,
@@ -2135,7 +2145,7 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     fn on_router_syntax_error(&mut self, rel_path: &[u8], log: TinyLog) -> Result<(), AllocError> {
         self.stored_scan_errors.push(StoredScanError::InvalidRoute {
             rel_path: rel_path.into(),
-            log,
+            message: log.msg.const_slice().into(),
         });
         Ok(())
     }

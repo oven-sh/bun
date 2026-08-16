@@ -725,6 +725,27 @@ export default function IndexPage() {
       expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
     });
 
+    test("an app router file bake does not support fails the build", async () => {
+      using dir = tempDir("bake-production-app-router-extra-file", {
+        "src/index.tsx": `export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "app", style: "nextjs-app-ui", serverEntryPoint: "./server.ts" }],
+            },
+          },
+        };`,
+        "server.ts": `export default {};`,
+        "app/page.tsx": `export default function Page() { return "page"; }`,
+        "app/loading.tsx": `export default function Loading() { return "loading"; }`,
+      });
+
+      const { exitCode, stderr } = await build(String(dir));
+      expect(stderr).toContain('"app/loading.tsx" is not a valid route');
+      expect(stderr).toContain('Bun Bake currently does not support "loading" files');
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    });
+
     test("every route error is reported before the build fails", async () => {
       const tooManyParams = "pages/" + Array.from({ length: 65 }, (_, i) => `[p${i}]`).join("/") + ".tsx";
       const dir = await tempDirWithBakeDeps("bake-production-route-errors", {

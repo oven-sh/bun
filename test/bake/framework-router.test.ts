@@ -197,9 +197,13 @@ describe("scan errors", () => {
         "page.tsx": "1",
         "loading.tsx": "1",
         "docs/not-found.tsx": "1",
+        // A plain error.tsx on Windows. On POSIX this is a file whose name starts with ".\",
+        // which the scan normalizes away, so the report must be derived from the normalized path.
+        ".\\error.tsx": "1",
       }),
     ).toEqual([
       'Invalid route "docs/not-found.tsx": Bun Bake currently does not support "not-found" files',
+      'Invalid route "error.tsx": Bun Bake currently does not support "error" files',
       'Invalid route "loading.tsx": Bun Bake currently does not support "loading" files',
     ]);
   });

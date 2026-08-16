@@ -740,8 +740,12 @@ export default function IndexPage() {
       });
 
       const { exitCode, stderr } = await build(String(dir));
-      expect(stderr).toContain('"app/loading.tsx" is not a valid route');
-      expect(stderr).toContain('Bun Bake currently does not support "loading" files');
+      // The file name is underlined (the indentation matches `error: "app/`).
+      expect(stderr).toContain(
+        'error: "app/loading.tsx" is not a valid route\n' +
+          "            ----------\n" +
+          '            Bun Bake currently does not support "loading" files\n',
+      );
       expect(exitCode).toBe(1);
       expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
     });
@@ -771,8 +775,12 @@ export default function IndexPage() {
       expect(stderr).toContain("  - pages/[name].tsx");
       expect(stderr).toContain('"pages/blog-[slug].tsx" is not a valid route');
       expect(stderr).toContain("Parameters must take up the entire file name");
-      expect(stderr).toContain(`"${tooManyParams}" is not a valid route`);
-      expect(stderr).toContain("Pattern cannot have more than 64 params");
+      // The whole path is underlined (the indentation matches `error: "`).
+      expect(stderr).toContain(
+        `error: "${tooManyParams}" is not a valid route\n` +
+          `        ${Buffer.alloc(tooManyParams.length - 1, "-").toString()}\n` +
+          "        Pattern cannot have more than 64 params\n",
+      );
       expect(exitCode).toBe(1);
       expect(existsSync(path.join(dir, "dist"))).toBe(false);
     });

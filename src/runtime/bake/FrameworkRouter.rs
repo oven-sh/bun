@@ -1682,13 +1682,14 @@ impl FrameworkRouter {
                             ParsedPatternKind::Page => FileKind::Page,
                             ParsedPatternKind::Layout => FileKind::Layout,
                             ParsedPatternKind::Extra => {
+                                let file_name = paths::basename(full_rel_path);
                                 log.fail(
                                     format_args!(
                                         "Bun Bake currently does not support \"{}\" files",
-                                        bstr::BStr::new(paths::stem(base))
+                                        bstr::BStr::new(paths::stem(full_rel_path))
                                     ),
-                                    full_rel_path.len() - base.len(),
-                                    base.len(),
+                                    full_rel_path.len() - file_name.len(),
+                                    file_name.len(),
                                 );
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);

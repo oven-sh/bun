@@ -240,3 +240,24 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     expect(pkg.dependencies["is-even"]).toBe("0.1.0");
   });
 });
+
+describe.concurrent("bun update --interactive error handling", () => {
+  test("errors without a lockfile", async () => {
+    using dir = tempDir("update-interactive-no-lockfile", {
+      "package.json": JSON.stringify({ name: "no-lockfile", version: "1.0.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stderr, _stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).toContain("error: missing lockfile, nothing to update");
+    expect(exitCode).toBe(1);
+  });
+});

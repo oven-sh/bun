@@ -580,6 +580,39 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
+                if let Some(expr) = test.get(b"parallel") {
+                    if !self.ctx.test_options.parallel_from_cli {
+                        match expr.data {
+                            ExprData::EBoolean(b) => {
+                                if b.value {
+                                    self.ctx.test_options.parallel =
+                                        u32::from(bun_core::get_thread_count().max(1));
+                                    self.ctx.test_options.isolate = true;
+                                }
+                            }
+                            ExprData::ENumber(n) => {
+                                let parsed = num_to_u32(n.value());
+                                if parsed == 0 {
+                                    self.add_error(
+                                        expr.loc,
+                                        b"\"parallel\" must be a positive integer or boolean",
+                                    )?;
+                                    return Ok(());
+                                }
+                                self.ctx.test_options.parallel = parsed;
+                                self.ctx.test_options.isolate = true;
+                            }
+                            _ => {
+                                self.add_error(
+                                    expr.loc,
+                                    b"\"parallel\" must be a boolean or a positive integer",
+                                )?;
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+
                 if let Some(expr) = test.get(b"concurrentTestGlob") {
                     match &expr.data {
                         ExprData::EString(s) => {

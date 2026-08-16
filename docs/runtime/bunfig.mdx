@@ -366,6 +366,17 @@ onlyFailures = true
 
 Equivalent to the `--only-failures` flag.
 
+### `test.parallel`
+
+Run test files in parallel worker processes. `true` uses one worker per CPU thread, and a positive integer sets the number of workers. Parallel workers run each test file in a fresh global scope, like `--isolate`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+parallel = 2
+```
+
+Equivalent CLI flag: `--parallel`. CLI flags override the `bunfig.toml` value entirely.
+
 ### `test.reporter`
 
 Configure the test reporter settings.

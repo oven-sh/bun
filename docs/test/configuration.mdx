@@ -256,6 +256,17 @@ Re-run each test file multiple times to identify flaky tests:
 rerunEach = 3
 ```
 
+#### parallel
+
+Run test files in parallel worker processes. `true` uses one worker per CPU thread, and a positive integer sets the number of workers:
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+parallel = 2
+```
+
+The `--parallel` CLI flag overrides this setting.
+
 ## Coverage Options
 
 ### Basic Coverage Settings

@@ -48,7 +48,6 @@ pub(crate) fn valkey_error_to_js(
             let _ = global.throw_out_of_memory();
             return global.take_exception(JsError::Thrown);
         }
-        RedisError::JSTerminated => return global.take_exception(JsError::Terminated),
     };
 
     let msg = message.as_ref();

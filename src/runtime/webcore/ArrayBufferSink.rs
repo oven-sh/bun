@@ -66,24 +66,6 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    // NOT a `host_fn_finalize` target — JSSink uses its own
-    // `${abi_name}__finalize` thunk (generated_jssink.rs), which calls
-    // the trait `JsSinkType::finalize(&mut self)`; that forwards here. The
-    // `Box<Self>` contract applies only to generate-classes.ts classes.
-    /// # Safety
-    /// `this` must be the m_ctx payload allocated via `heap::alloc` in
-    /// init/JSSink. Called from (a) `~JSArrayBufferSink` during lazy sweep
-    /// and (b) synchronously from `${name}__doClose` (prototype `.close()`),
-    /// on the mutator thread in both cases.
-    // Forwards `this` to `destroy` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on this forwarding wrapper.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn finalize(this: *mut Self) {
-        // SAFETY: `this` is the heap-allocated m_ctx payload (see `# Safety`
-        // above); it has not been freed yet, so `destroy` may reclaim it.
-        unsafe { Self::destroy(this) };
-    }
-
     // In-place init (JSSink m_ctx slot) — codegen calls this on a
     // pre-allocated slot.
     pub(crate) fn construct(this: &mut core::mem::MaybeUninit<Self>) {
@@ -134,8 +116,8 @@ impl ArrayBufferSink {
     }
 
     /// # Safety
-    /// `this` must have been allocated via `heap::alloc` (i.e. by the JSSink
-    /// codegen path) and not yet freed.
+    /// `this` is the allocation `js_construct` leaked into the JS wrapper, whose
+    /// `__finalize` (the sole caller) frees it exactly once, here.
     pub(crate) unsafe fn destroy(this: *mut Self) {
         // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
         // frees the box.
@@ -216,28 +198,15 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const HAS_FLUSH_FROM_JS: bool = true;
     const START_TAG: Option<streams::StartTag> = Some(streams::StartTag::ArrayBufferSink);
 
-    fn memory_cost(&self) -> usize {
-        Self::memory_cost(self)
-    }
-    fn finalize(&mut self) {
-        // The `JSSink::finalize` C export owns destroying the heap
-        // allocation; the trait impl here is the *inner* finalize.
-        Self::finalize(std::ptr::from_mut::<Self>(self));
+    crate::impl_js_sink_forwarders!();
+
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: trait contract — `this` is the wrapper's live sink, which
+        // `js_construct` allocated for it alone; nothing uses it afterwards.
+        unsafe { Self::destroy(this) };
     }
     fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         Self::construct(this);
-    }
-    fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write(self, data)
-    }
-    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_utf16(self, data)
-    }
-    fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable {
-        Self::write_latin1(self, data)
-    }
-    fn end(&mut self, err: Option<syscall::Error>) -> bun_sys::Result<()> {
-        Self::end(self, err)
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, global) {
@@ -247,15 +216,6 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
             }),
             bun_sys::Result::Err(e) => bun_sys::Result::Err(e),
         }
-    }
-    fn flush(&mut self) -> bun_sys::Result<()> {
-        Self::flush(self)
-    }
-    fn flush_from_js(&mut self, global: &JSGlobalObject, wait: bool) -> bun_sys::Result<JSValue> {
-        Self::flush_from_js(self, global, wait)
-    }
-    fn start(&mut self, config: streams::Start) -> bun_sys::Result<()> {
-        Self::start(self, &config)
     }
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(&mut self.source)

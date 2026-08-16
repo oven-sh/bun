@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { itBundled } from "./expectBundled";
 
 describe.concurrent("bundler", () => {
@@ -393,6 +394,64 @@ console.log("About manifest:", aboutHtml);
     expect(jsA.path).not.toBe(jsB.path);
     expect(htmlA.path).toBe(htmlB.path);
     expect(htmlA.headers.etag).not.toBe(htmlB.headers.etag);
+  });
+
+  // The manifest JSON is spliced into the chunk in place of a 25-byte
+  // placeholder after the source map was generated, so the map has to be
+  // shifted by the size difference. With whitespace minified, the rest of the
+  // chunk shares the manifest's line, so every mapping after it depends on
+  // that shift accounting for the full length of each spliced manifest.
+  test("html-import/source-map-columns-after-manifest", async () => {
+    const source = [
+      `import home from "./home.html";`,
+      `import about from "./about.html";`,
+      `function manifests() { return [home, about]; }`,
+      `console.log(manifests());`,
+      ``,
+    ].join("\n");
+    await using dir = tempDir("html-import-sourcemap", {
+      "server.ts": source,
+      "home.html": `<!doctype html><script type="module" src="./home.ts"></script>`,
+      "about.html": `<!doctype html><script type="module" src="./about.ts"></script>`,
+      "home.ts": `console.log("home");`,
+      "about.ts": `console.log("about");`,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "server.ts")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      sourcemap: "external",
+      minify: { whitespace: true },
+    });
+    expect(build.logs).toBeEmpty();
+
+    const generated = await build.outputs.find(o => o.path.endsWith("server.js"))!.text();
+    const map = await build.outputs.find(o => o.path.endsWith("server.js.map"))!.json();
+
+    // 1-based line, 0-based column, as `source-map` reports positions.
+    const lineColumn = (text: string, index: number) => {
+      expect(index).not.toBe(-1);
+      const before = text.slice(0, index);
+      return { line: before.split("\n").length, column: index - (before.lastIndexOf("\n") + 1) };
+    };
+
+    // Both manifests and the user code end up on one generated line.
+    const manifestLine = lineColumn(generated, generated.indexOf("__jsonParse(")).line;
+    expect(lineColumn(generated, generated.lastIndexOf("__jsonParse(")).line).toBe(manifestLine);
+    expect(lineColumn(generated, generated.indexOf("function manifests(")).line).toBe(manifestLine);
+
+    await SourceMapConsumer.with(map, null, consumer => {
+      const positions = ["function manifests(", "return[", "console.log("].map(token => {
+        const mapped = consumer.originalPositionFor(lineColumn(generated, generated.indexOf(token)));
+        return { token, source: mapped.source?.split(/[\\/]/).pop(), line: mapped.line, column: mapped.column };
+      });
+      expect(positions).toEqual([
+        { token: "function manifests(", source: "server.ts", ...lineColumn(source, source.indexOf("function ")) },
+        { token: "return[", source: "server.ts", ...lineColumn(source, source.indexOf("return ")) },
+        { token: "console.log(", source: "server.ts", ...lineColumn(source, source.indexOf("console.")) },
+      ]);
+    });
   });
 
   // Test that import with {type: 'file'} still works as a file import

@@ -1268,6 +1268,17 @@ pub struct LinkerOptions {
     pub(crate) public_path: &'static [u8],
 }
 
+impl LinkerOptions {
+    /// ESM bytecode in a `--compile` build: JSC does not parse the chunk, so
+    /// its `JSModuleRecord` is built from a `ModuleInfo` the linker records
+    /// while printing (see `post_process_js_chunk`).
+    pub(crate) fn generates_module_info(&self) -> bool {
+        self.generate_bytecode_cache
+            && self.output_format == Format::Esm
+            && self.compile_mode.is_executable()
+    }
+}
+
 impl Default for LinkerOptions {
     fn default() -> Self {
         Self {
@@ -1355,9 +1366,14 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `line_offset_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.line_offset_wait_group.finish();
+            // SAFETY: live until this lets the linker's `wait()` return; the linker then frees
+            // the tasks at once (`generate_chunks_in_parallel`), and nothing below touches `ctx`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.line_offset_wait_group,
+                )
+            };
         }
 
         // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
@@ -1392,9 +1408,13 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `quoted_contents_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.quoted_contents_wait_group.finish();
+            // SAFETY: as in `run_line_offset`, for `quoted_contents_wait_group`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.quoted_contents_wait_group,
+                )
+            };
         }
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
@@ -1581,11 +1601,11 @@ pub struct GenerateChunkCtx<'a> {
     pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
     /// Backref to the full `chunks: &mut [Chunk]` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
+    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
-    /// safe `Deref`. Tasks that need write provenance (HTML loader) recover
-    /// the raw `*mut [Chunk]` via [`bun_ptr::BackRef::as_ptr`].
-    pub(crate) chunks: bun_ptr::BackRef<[Chunk], bun_ptr::Mut>,
+    /// safe `Deref`. Read-only: each task writes only through its own
+    /// `*mut Chunk`.
+    pub(crate) chunks: bun_ptr::BackRef<[Chunk]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write
     /// provenance; per-task slot writes recover the raw `*mut Chunk` via
@@ -1631,7 +1651,7 @@ impl<'a> GenerateChunkCtx<'a> {
 
 pub struct PendingPartRange<'a> {
     pub(crate) part_range: PartRange,
-    pub(crate) task: ThreadPoolLib::Task,
+    pub(crate) task: ThreadPoolLib::CountedTask,
     pub(crate) ctx: &'a GenerateChunkCtx<'a>,
     pub(crate) i: u32,
 }
@@ -1742,7 +1762,7 @@ impl<'a> LinkerContext<'a> {
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
-            // `transpiler_for_target` only reads `bundle.browser_transpiler`.
+            // `transpiler_for_target` only reads `bundle.client_transpiler`.
             let bundle = unsafe {
                 &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
             };
@@ -2142,6 +2162,7 @@ impl<'a> LinkerContext<'a> {
         runtime_require_ref: Option<Ref>,
         source_index: Index,
         source: &Source,
+        module_info: Option<&mut crate::analyze_transpiled_module::ModuleInfo>,
     ) -> js_printer::PrintResult {
         let parts_to_print = &[Part {
             stmts: bun_ast::StoreSlice::new_mut(out_stmts),
@@ -2221,6 +2242,7 @@ impl<'a> LinkerContext<'a> {
                 None
             },
             mangled_props: Some(mangled_props),
+            module_info,
             ..Default::default()
         };
 
@@ -2977,7 +2999,7 @@ impl<'a> LinkerContext<'a> {
         log: &mut Log,
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
-        // the duration of `scanImportsAndExports`; we only test `is_none()`.
+        // the duration of `scan_imports_and_exports`; we only test `is_none()`.
         let css_asts = unsafe { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {

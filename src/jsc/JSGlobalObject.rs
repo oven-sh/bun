@@ -985,6 +985,13 @@ impl JSGlobalObject {
         JSGlobalObject__hasException(self)
     }
 
+    /// The pending exception is the VM's TerminationException: for host code that handles ordinary errors
+    /// itself but must let a termination keep unwinding without taking it.
+    #[inline]
+    pub fn has_pending_termination_exception(&self) -> bool {
+        crate::cpp::JSC__JSGlobalObject__hasPendingTerminationException(self)
+    }
+
     pub fn clear_exception(&self) {
         JSGlobalObject__clearException(self)
     }
@@ -1009,35 +1016,17 @@ impl JSGlobalObject {
             JsError::OutOfMemory => {
                 let _ = self.throw_out_of_memory();
             }
-            JsError::Terminated => {}
         }
 
         self.try_take_exception().unwrap_or_else(|| {
-            panic!(
-                "A JavaScript exception was thrown, but it was cleared before it could be read."
-            );
+            panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
         })
     }
 
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        match proof {
-            JsError::Thrown => {}
-            JsError::OutOfMemory => {
-                let _ = self.throw_out_of_memory();
-            }
-            JsError::Terminated => {}
-        }
-
-        self.try_take_exception()
-            .unwrap_or_else(|| {
-                panic!(
-                    "A JavaScript exception was thrown, but it was cleared before it could be read."
-                );
-            })
-            .to_error()
-            .unwrap_or_else(|| {
-                panic!("Couldn't convert a JavaScript exception to an Error instance.");
-            })
+        self.take_exception(proof).to_error().unwrap_or_else(|| {
+            panic!("Couldn't convert a JavaScript exception to an Error instance.");
+        })
     }
 
     pub fn try_take_exception(&self) -> Option<JSValue> {
@@ -1046,28 +1035,6 @@ impl JSGlobalObject {
             return None;
         }
         Some(value)
-    }
-
-    /// This is for the common scenario you are calling into JavaScript, but there is
-    /// no logical way to handle a thrown exception other than to treat it as unhandled.
-    ///
-    /// The pattern:
-    ///
-    /// ```ignore
-    /// let result = match value.call(...) {
-    ///     Ok(v) => v,
-    ///     Err(err) => return global.report_active_exception_as_unhandled(err),
-    /// };
-    /// ```
-    ///
-    pub fn report_active_exception_as_unhandled(&self, err: JsError) {
-        let exception = self.take_exception(err);
-        if !exception.is_termination_exception() {
-            let _ = self
-                .bun_vm()
-                .as_mut()
-                .uncaught_exception(self, exception, false);
-        }
     }
 
     pub fn vm(&self) -> &VM {
@@ -1380,17 +1347,6 @@ impl JSGlobalObject {
         Zig__GlobalObject__createForTestIsolation(old_global, console)
     }
 
-    pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
-        crate::mark_binding();
-        let exc = self
-            .take_exception(proof)
-            .as_exception(std::ptr::from_ref::<VM>(self.vm()).cast_mut())
-            .expect("exception value must be an Exception cell");
-        // `as_exception` returned a non-null cell pointer rooted on the VM;
-        // `Exception` is an opaque ZST handle — safe deref (panics on null).
-        let _ = report_uncaught_exception(self, crate::Exception::opaque_ref(exc));
-    }
-
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
         code.fmt(self, args)
     }
@@ -1496,13 +1452,6 @@ unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
     crate::mark_binding();
     // SAFETY: C++ passes valid non-null pointers.
     unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
-}
-
-// Safe wrapper used internally.
-#[inline]
-pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
-    crate::mark_binding();
-    VirtualMachine::report_uncaught_exception(global, exception)
 }
 
 #[unsafe(no_mangle)]

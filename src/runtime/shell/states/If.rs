@@ -18,8 +18,6 @@ pub enum IfState {
     #[default]
     Idle,
     Exec(Exec),
-    WaitingWriteErr,
-    Done,
 }
 
 pub struct Exec {
@@ -164,8 +162,6 @@ impl If {
                             Action::SpawnStmt(stmt_node)
                         }
                     }
-                    IfState::WaitingWriteErr => return Yield::suspended(),
-                    IfState::Done => panic!("This code should not be reachable"),
                 }
             };
             return match action {

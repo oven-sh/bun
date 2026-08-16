@@ -2,7 +2,6 @@ use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // `jsc.Strong.Optional` collides with this module's own `Strong`, so import it under an alias.
-use crate::JsTerminated;
 use crate::strong::Optional as JscStrong;
 use crate::virtual_machine::VirtualMachine;
 
@@ -78,11 +77,7 @@ impl Strong {
         }
     }
 
-    pub fn reject(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JsResult<JSValue>,
-    ) -> Result<(), JsTerminated> {
+    pub fn reject(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
         self.swap().reject(global, val)
     }
 
@@ -90,11 +85,7 @@ impl Strong {
     /// resolves, `Err` rejects with the exception the failed conversion left
     /// pending (see [`JSPromise::resolve`]). Prefer this over
     /// `resolve(v.unwrap_or(..))`.
-    pub fn settle(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JsResult<JSValue>,
-    ) -> Result<(), JsTerminated> {
+    pub fn settle(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
         self.swap().settle(global, val)
     }
 
@@ -105,7 +96,7 @@ impl Strong {
         &mut self,
         global: &JSGlobalObject,
         val: JsResult<JSValue>,
-    ) -> Result<(), JsTerminated> {
+    ) -> JsResult<()> {
         let err = match val {
             Ok(v) => v,
             Err(_) => return self.reject(global, val),
@@ -114,27 +105,19 @@ impl Strong {
         self.swap().reject(global, Ok(err))
     }
 
-    pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
+    pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> JsResult<()> {
         self.swap().resolve(global, val)
     }
 
     /// [`settle`](Self::settle) from a native completion at the top of the
     /// event loop (drains microtasks when the scope exits).
-    pub fn settle_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JsResult<JSValue>,
-    ) -> Result<(), JsTerminated> {
+    pub fn settle_task(&mut self, global: &JSGlobalObject, val: JsResult<JSValue>) -> JsResult<()> {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.settle(global, val)
     }
 
     /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn resolve_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JSValue,
-    ) -> Result<(), JsTerminated> {
+    pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) -> JsResult<()> {
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.resolve(global, val)
     }
@@ -220,7 +203,7 @@ impl JSPromise {
     // The trampoline routes through `crate::to_js_host_call`, and the
     // surrounding `top_scope!` + `assert_no_exception_except_termination`
     // handle the exception-scope plumbing.
-    pub fn wrap<F>(global: &JSGlobalObject, f: F) -> Result<JSValue, JsTerminated>
+    pub fn wrap<F>(global: &JSGlobalObject, f: F) -> JsResult<JSValue>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
     {
@@ -246,12 +229,9 @@ impl JSPromise {
         // `ctx` outlives the synchronous FFI call; `call::<F>` matches the expected
         // `extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue` signature.
         let promise = JSC__JSPromise__wrap(global, (&raw mut ctx).cast::<c_void>(), call::<F>);
-        // JSC__JSPromise__wrap converts any thrown exception into a rejected promise,
-        // so a pending non-termination exception here indicates a bug; assert and
-        // surface termination as JsTerminated.
-        scope
-            .assert_no_exception_except_termination()
-            .map_err(|_| JsTerminated::JSTerminated)?;
+        // JSC__JSPromise__wrap converts any thrown exception into a rejected promise, so the only
+        // exception that can be pending here is the termination; it stays pending and unwinds.
+        scope.assert_no_exception_except_termination()?;
         Ok(promise)
     }
 
@@ -343,20 +323,15 @@ impl JSPromise {
     /// If you want to create a new Promise that is already resolved, see `resolved_promise_value`.
     // ── the native → promise boundary ─────────────────────────────────────
     //
-    // Every settlement native code performs funnels through `resolve` /
-    // `reject` below (the `Strong` methods delegate here), so the rule lives
-    // here once: an empty `JSValue` is never a value — it means the producer's
-    // JS conversion threw and left the exception pending (a termination request
-    // landing mid-conversion is the common case). It becomes "reject with that
-    // exception", which itself yields to a termination (`Err(JSTerminated)`,
-    // exception left pending to unwind the caller).
-    //
-    // Whether a *completion* should reach script at all once the VM is
-    // stopping is decided where completions enter (`job::complete_erased`,
-    // the event loop's callback entry), not here: a host function that is
-    // still running script settles promises normally until its own trap fires.
+    // Every settlement native code performs funnels through `resolve` / `reject` below (the `Strong`
+    // methods delegate here). Settling enters JS and can throw (a thenable's `then`, stack overflow,
+    // the VM's termination), so these return `JsResult<()>` with the exception pending, like any
+    // other call into JS: a host function `?`s it; a loop-level completion folds it
+    // (`report_error_or_terminate`). An empty `JSValue` is never a value — it means the producer's
+    // conversion threw and left the exception pending; it becomes "reject with that exception",
+    // except a pending termination, which is not an outcome to record: it stays pending and unwinds.
 
-    pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), JsTerminated> {
+    pub fn resolve(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             debug_assert!(
                 global.has_exception(),
@@ -366,26 +341,17 @@ impl JSPromise {
         }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__resolve(self, global, value)
-            .map_err(|_| JsTerminated::JSTerminated)
     }
 
     /// See [`Strong::settle`].
-    pub fn settle(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JsResult<JSValue>,
-    ) -> Result<(), JsTerminated> {
+    pub fn settle(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
         match value {
             Ok(v) => self.resolve(global, v),
             Err(e) => self.reject(global, Err(e)),
         }
     }
 
-    pub fn reject(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JsResult<JSValue>,
-    ) -> Result<(), JsTerminated> {
+    pub fn reject(&mut self, global: &JSGlobalObject, value: JsResult<JSValue>) -> JsResult<()> {
         let err = match value {
             Ok(v) if v.is_empty() => {
                 debug_assert!(
@@ -398,39 +364,30 @@ impl JSPromise {
             // We can't use `global.take_exception()` because it throws an
             // out-of-memory error when we instead need to take the exception.
             Err(JsError::OutOfMemory) => global.create_out_of_memory_error(),
-            Err(JsError::Terminated) => return Err(JsTerminated::JSTerminated),
+            Err(JsError::Thrown) if global.has_pending_termination_exception() => {
+                return Err(JsError::Thrown);
+            }
             Err(JsError::Thrown) => {
                 let Some(exception) = global.try_take_exception() else {
                     panic!(
                         "A JavaScript exception was thrown, but it was cleared before it could be read."
                     );
                 };
-                // A termination request that landed in the producer's conversion
-                // is not an outcome to report; it stays pending and unwinds us.
-                if exception.is_termination_exception() {
-                    return Err(JsTerminated::JSTerminated);
-                }
                 exception.to_error().unwrap_or(exception)
             }
         };
 
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__reject(self, global, err)
-            .map_err(|_| JsTerminated::JSTerminated)
     }
 
-    pub fn reject_as_handled(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), JsTerminated> {
+    pub fn reject_as_handled(&mut self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         if value.is_empty() {
             self.set_handled();
             return self.reject(global, Ok(value));
         }
         // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__rejectAsHandled(self, global, value)
-            .map_err(|_| JsTerminated::JSTerminated)
     }
 
     /// Like `reject` but first attaches async stack frames from this promise's
@@ -441,7 +398,7 @@ impl JSPromise {
         &mut self,
         global: &JSGlobalObject,
         value: JsResult<JSValue>,
-    ) -> Result<(), JsTerminated> {
+    ) -> JsResult<()> {
         let err = match value {
             Ok(v) => v,
             Err(_) => return self.reject(global, value),

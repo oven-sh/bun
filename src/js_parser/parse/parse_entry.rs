@@ -104,6 +104,9 @@ pub struct Options<'a> {
     /// - Wraps last expression in { value: expr } for result capture
     /// - Wraps code with await in async IIFE
     pub repl_mode: bool,
+
+    /// Lower `toml_datetime`-tagged strings in a lazy-export AST to `Temporal.*.from` calls.
+    pub lower_toml_datetimes: bool,
 }
 
 impl<'a> Default for Options<'a> {
@@ -135,6 +138,7 @@ impl<'a> Default for Options<'a> {
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            lower_toml_datetimes: false,
         }
     }
 }
@@ -218,6 +222,7 @@ impl<'a> Options<'a> {
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
             framework: self.framework,
             repl_mode: self.repl_mode,
+            lower_toml_datetimes: self.lower_toml_datetimes,
         }
     }
 
@@ -289,6 +294,7 @@ impl<'a> Options<'a> {
             lower_import_meta_main_for_node_js: false,
             framework: None,
             repl_mode: false,
+            lower_toml_datetimes: loader == options::Loader::Toml,
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -307,6 +313,7 @@ impl<'a> Parser<'a> {
         define: &'a Define,
         bump: &'a Arena,
     ) -> Result<Parser<'a>, Error> {
+        source.check_parseable_len(log, "File")?;
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
         lexer.track_comments = options.features.minify_identifiers;
@@ -559,6 +566,14 @@ impl<'a> Parser<'a> {
 
         let mut final_expr = expr;
 
+        // TOML date/time literals become `Temporal.*.from("...")` calls over
+        // a real unbound symbol, so the chunk renamer reserves the name
+        // instead of letting a user `Temporal` binding capture it.
+        if p.options.lower_toml_datetimes {
+            let mut temporal_ref: Option<js_ast::Ref> = None;
+            lower_date_time_literals(p, &mut final_expr, &mut temporal_ref)?;
+        }
+
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
             let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
@@ -604,7 +619,110 @@ impl<'a> Parser<'a> {
             b"",
         )?))
     }
+}
 
+/// A container queued by `lower_date_time_literals`' worklist.
+enum DateTimeLowerContainer {
+    Object(js_ast::StoreRef<E::Object>),
+    Array(js_ast::StoreRef<E::Array>),
+}
+
+/// Rewrites every `toml_datetime`-tagged `E::String` in `expr` (in place)
+/// into a `Temporal.<Class>.from("<text>")` call, declaring the unbound
+/// `Temporal` symbol on first use. The calls are pure-annotated so tree
+/// shaking may drop unused exports. Iterative: deep dotted TOML headers nest
+/// objects far beyond safe recursion depth.
+fn lower_date_time_literals<'a>(
+    p: &mut JavaScriptParser<'a>,
+    expr: &mut Expr,
+    temporal_ref: &mut Option<js_ast::Ref>,
+) -> Result<(), Error> {
+    let mut work: Vec<DateTimeLowerContainer> = Vec::new();
+    lower_one_date_time_literal(p, expr, temporal_ref, &mut work)?;
+    while let Some(container) = work.pop() {
+        match container {
+            DateTimeLowerContainer::Object(mut obj) => {
+                for property in obj.properties.slice_mut() {
+                    if let Some(value) = &mut property.value {
+                        lower_one_date_time_literal(p, value, temporal_ref, &mut work)?;
+                    }
+                }
+            }
+            DateTimeLowerContainer::Array(mut arr) => {
+                for item in arr.items.slice_mut() {
+                    lower_one_date_time_literal(p, item, temporal_ref, &mut work)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn lower_one_date_time_literal<'a>(
+    p: &mut JavaScriptParser<'a>,
+    expr: &mut Expr,
+    temporal_ref: &mut Option<js_ast::Ref>,
+    work: &mut Vec<DateTimeLowerContainer>,
+) -> Result<(), Error> {
+    match expr.data {
+        js_ast::ExprData::EString(str) if str.toml_datetime.is_some() => {
+            let ref_ = match *temporal_ref {
+                Some(ref_) => ref_,
+                None => {
+                    let ref_ =
+                        p.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"Temporal")?;
+                    *temporal_ref = Some(ref_);
+                    ref_
+                }
+            };
+            let (class, text) = {
+                let str = str.get();
+                let kind = str.toml_datetime.expect("infallible: guard checked");
+                (kind.temporal_class(), str.slice8())
+            };
+            let loc = expr.loc;
+            p.record_usage(ref_);
+            let namespace = p.new_expr(E::Identifier::init(ref_), loc);
+            let class_dot = p.new_expr(
+                E::Dot {
+                    target: namespace,
+                    name: E::Str::new(class),
+                    name_loc: loc,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let from_dot = p.new_expr(
+                E::Dot {
+                    target: class_dot,
+                    name: E::Str::new(b"from"),
+                    name_loc: loc,
+                    can_be_removed_if_unused: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+            let arg = p.new_expr(E::String::init(text), loc);
+            let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| arg);
+            *expr = p.new_expr(
+                E::Call {
+                    target: from_dot,
+                    args: Vec::from_arena_slice(args_slice),
+                    can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
+                    ..Default::default()
+                },
+                loc,
+            );
+        }
+        js_ast::ExprData::EArray(arr) => work.push(DateTimeLowerContainer::Array(arr)),
+        js_ast::ExprData::EObject(obj) => work.push(DateTimeLowerContainer::Object(obj)),
+        _ => {}
+    }
+    Ok(())
+}
+
+impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
@@ -1353,22 +1471,17 @@ impl<'a> Parser<'a> {
                                     let right = bin.right;
 
                                     if bin.op == js_ast::op::Code::BinAssign
-                                        && matches!(right.data, js_ast::ExprData::ERequireString(_))
+                                        && let js_ast::ExprData::ERequireString(req) = right.data
+                                        && let Some(unwrapped_id) = req.unwrapped_id.get()
                                         && matches!(&left.data, js_ast::ExprData::EDot(d)
                                             if d.name == b"exports"
                                                 && matches!(&d.target.data, js_ast::ExprData::EIdentifier(id)
                                                     if id.ref_.eql(p.module_ref)))
                                     {
-                                        let req = match &right.data {
-                                            js_ast::ExprData::ERequireString(r) => r,
-                                            _ => unreachable!(),
-                                        };
                                         p.export_star_import_records.push(req.import_record_index);
-                                        let namespace_ref =
-                                            p.imports_to_convert_from_require.as_slice()
-                                                [req.unwrapped_id as usize]
-                                                .namespace
-                                                .ref_;
+                                        let deferred = &p.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        let namespace_ref = deferred.namespace.ref_;
 
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {

@@ -834,6 +834,22 @@ describe("util.isDeepStrictEqual", () => {
     expect(calls).toBe(2);
   });
 
+  test("reads a DOMException's cause once per side", () => {
+    let calls = 0;
+    const make = () =>
+      new DOMException("x", {
+        name: "AbortError",
+        cause: {
+          get k() {
+            calls++;
+            return 42;
+          },
+        },
+      });
+    expect(util.isDeepStrictEqual(make(), make())).toBe(true);
+    expect(calls).toBe(2);
+  });
+
   // The third argument was added in Node v26.
   describe("skipPrototype", () => {
     class Foo {

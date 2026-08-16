@@ -224,6 +224,47 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
         });
       expect(() => deepEquals(throwing(), throwing())).toThrow(RangeError);
     });
+
+    it("reads each cause once per side, as for Error", () => {
+      let reads = 0;
+      const cause = () => ({
+        get value() {
+          reads++;
+          return 1;
+        },
+      });
+      deepEquals(
+        new DOMException("boom", { name: "AbortError", cause: cause() }),
+        new DOMException("boom", { name: "AbortError", cause: cause() }),
+      );
+      expect(reads).toBe(2);
+      reads = 0;
+      deepEquals(new Error("boom", { cause: cause() }), new Error("boom", { cause: cause() }));
+      expect(reads).toBe(2);
+    });
+
+    // Each level used to be compared twice, once per argument order, so a chain
+    // of n causes took 2^n comparisons.
+    it("compares a long chain of causes in linear time", () => {
+      const chain = (depth: number, leafMessage: string) => {
+        let exception = new DOMException(leafMessage, "AbortError");
+        for (let i = 0; i < depth; i++) {
+          exception = new DOMException(`level ${i}`, { name: "AbortError", cause: exception });
+        }
+        return exception;
+      };
+      expect(deepEquals(chain(64, "leaf"), chain(64, "leaf"))).toBe(true);
+      expect(deepEquals(chain(64, "leaf"), chain(64, "other leaf"))).toBe(false);
+    });
+
+    it("terminates on a cause cycle", () => {
+      const cyclic = () => {
+        const exception = new DOMException("boom", { name: "AbortError", cause: null });
+        exception.cause = exception;
+        return exception;
+      };
+      expect(deepEquals(cyclic(), cyclic())).toBe(true);
+    });
   });
 });
 

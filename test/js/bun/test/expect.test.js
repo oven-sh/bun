@@ -355,6 +355,25 @@ describe("expect()", () => {
       );
     });
 
+    test("DOMException causes are read once per side", () => {
+      let reads = 0;
+      const make = () =>
+        new DOMException("boom", {
+          name: "AbortError",
+          cause: {
+            get value() {
+              reads++;
+              return 1;
+            },
+          },
+        });
+      expect(make()).toEqual(make());
+      expect(reads).toBe(2);
+      reads = 0;
+      expect(make()).toStrictEqual(make());
+      expect(reads).toBe(2);
+    });
+
     // TODO: FormData
     // It would need to compare Blob, which is tricky.
   });

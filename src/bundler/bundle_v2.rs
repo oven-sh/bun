@@ -970,9 +970,8 @@ pub mod bv2_impl {
 
                     // Also try joining a relative specifier against the importer's
                     // directory. Relative = not posix-absolute and not Windows
-                    // drive-absolute (e.g. `C:/`). Specifiers that can't fit in a
-                    // path buffer (e.g. long `data:` URLs) can't match a map key
-                    // this way; skip so the real resolver handles them (#39252).
+                    // drive-absolute (e.g. `C:/`). Specifiers too long for a path
+                    // buffer (e.g. `data:` URLs) fall through to the real resolver.
                     if !specifier.is_empty() && !bun_paths::is_absolute_loose(specifier) {
                         // `source_file` may itself be relative (e.g. on Windows
                         // when the bundler stores paths relative to cwd).

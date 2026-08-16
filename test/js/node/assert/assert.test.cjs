@@ -92,6 +92,70 @@ describe("assert.partialDeepStrictEqual", () => {
     assert.partialDeepStrictEqual([arr], arr);
   });
 
+  // Node reads `cause` like message/name/errors (an undefined expected value is not compared)
+  // and additionally requires an own `cause` on expected to exist on actual.
+  // Expectations below were checked against Node v26.
+  describe("error cause", () => {
+    class InheritedCauseError extends Error {
+      get cause() {
+        return 1;
+      }
+    }
+
+    const rejected = [
+      [
+        "no actual cause vs own undefined expected cause",
+        () => new Error("x"),
+        () => new Error("x", { cause: undefined }),
+      ],
+      [
+        "own undefined actual cause vs defined expected cause",
+        () => new Error("x", { cause: undefined }),
+        () => new Error("x", { cause: 1 }),
+      ],
+      ["different causes", () => new Error("x", { cause: 1 }), () => new Error("x", { cause: 2 })],
+      [
+        "actual cause differs from an inherited expected cause",
+        () => new Error("x", { cause: 2 }),
+        () => new InheritedCauseError("x"),
+      ],
+      ["no actual cause vs an inherited expected cause", () => new Error("x"), () => new InheritedCauseError("x")],
+      [
+        "inherited actual cause vs an own expected cause with the same value",
+        () => new InheritedCauseError("x"),
+        () => new Error("x", { cause: 1 }),
+      ],
+    ];
+
+    const accepted = [
+      [
+        "defined actual cause vs own undefined expected cause",
+        () => new Error("x", { cause: 1 }),
+        () => new Error("x", { cause: undefined }),
+      ],
+      ["same causes", () => new Error("x", { cause: 1 }), () => new Error("x", { cause: 1 })],
+      [
+        "expected cause is a subset of the actual cause",
+        () => new Error("x", { cause: { a: 1, b: 2 } }),
+        () => new Error("x", { cause: { a: 1 } }),
+      ],
+      ["actual cause vs no expected cause", () => new Error("x", { cause: 1 }), () => new Error("x")],
+      [
+        "own actual cause vs an inherited expected cause with the same value",
+        () => new Error("x", { cause: 1 }),
+        () => new InheritedCauseError("x"),
+      ],
+    ];
+
+    test.each(rejected)("rejects %s", (_name, actual, expected) => {
+      expect(() => assert.partialDeepStrictEqual(actual(), expected())).toThrow(assert.AssertionError);
+    });
+
+    test.each(accepted)("accepts %s", (_name, actual, expected) => {
+      assert.partialDeepStrictEqual(actual(), expected());
+    });
+  });
+
   // DOMException is `instanceof Error` but has no own enumerable properties (name and message
   // are prototype accessors), so node compares it like an Error: name, message and cause.
   // Expectations below were checked against Node v26.
@@ -220,6 +284,11 @@ describe("assert.partialDeepStrictEqual", () => {
       [
         "own undefined cause on both",
         () => new DOMException("boom", { name: "AbortError", cause: undefined }),
+        () => new DOMException("boom", { name: "AbortError", cause: undefined }),
+      ],
+      [
+        "defined cause on actual, own undefined cause on expected",
+        () => new DOMException("boom", { name: "AbortError", cause: 1 }),
         () => new DOMException("boom", { name: "AbortError", cause: undefined }),
       ],
       [

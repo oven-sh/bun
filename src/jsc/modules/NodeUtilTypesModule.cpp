@@ -1,4 +1,5 @@
 #include "BunClientData.h"
+#include "JSDOMException.h"
 #include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
 #include "node/crypto/JSKeyObject.h"
@@ -755,6 +756,18 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         if (actualURL.href() != expectedURL.href())
             return false;
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
+    }
+
+    // DOMException is `instanceof Error`, so node compares it like an Error, but it is a DOM
+    // wrapper whose name/message are prototype accessors: the own-property walk at the bottom
+    // sees nothing to compare. Must stay ahead of the ErrorInstance arm and separate from it:
+    // node rejects DOMException vs Error on the Object.prototype.toString tag.
+    const bool actualIsDOMException = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMException>();
+    const bool expectedIsDOMException = expected.isCell() && expected.asCell()->inherits<WebCore::JSDOMException>();
+    if (actualIsDOMException || expectedIsDOMException) {
+        if (!actualIsDOMException || !expectedIsDOMException)
+            return false;
+        return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, errorSubset);
     }
 
     const bool actualIsError = actual.isCell() && actual.asCell()->inherits<JSC::ErrorInstance>();

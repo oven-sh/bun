@@ -412,9 +412,10 @@ export function initializeNextTickQueue(
     };
     if (tickInitHooks.length !== 0) {
       // node fires one TickObject init per process.nextTick() call, at
-      // construction time (before the callback runs).
+      // construction time (before the callback runs), with the current
+      // execution async id as the trigger.
       const asyncHooksTick = require("internal/async_hooks_tick");
-      asyncHooksTick.emitInit(asyncHooksTick.newAsyncId(), "TickObject", 0, tock);
+      asyncHooksTick.emitInit(asyncHooksTick.newAsyncId(), "TickObject", asyncHooksTick.executionAsyncId(), tock);
     }
     queue.push(tock);
     $putInternalField(nextTickQueue, 0, 1);

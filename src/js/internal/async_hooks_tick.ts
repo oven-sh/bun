@@ -6,10 +6,27 @@
 const tickInitHooks = [];
 let nextAsyncId = 1;
 
+// Current scope's execution/trigger async ids: 1/0 at the root like Node.
+// AsyncResource.runInAsyncScope (node/async_hooks.ts) swaps in the resource's
+// ids; other async boundaries don't update them. Lives here so both `init`
+// emitters can report them.
+let currentExecutionAsyncId = 1;
+let currentTriggerAsyncId = 0;
+
 export default {
   tickInitHooks,
   newAsyncId() {
     return ++nextAsyncId;
+  },
+  executionAsyncId() {
+    return currentExecutionAsyncId;
+  },
+  triggerAsyncId() {
+    return currentTriggerAsyncId;
+  },
+  setCurrentAsyncIds(executionAsyncId, triggerAsyncId) {
+    currentExecutionAsyncId = executionAsyncId;
+    currentTriggerAsyncId = triggerAsyncId;
   },
   emitInit(asyncId, type, triggerAsyncId, resource) {
     // .slice(): enable()/disable() from inside a hook must not affect the

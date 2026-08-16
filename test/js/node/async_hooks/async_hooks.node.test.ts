@@ -162,3 +162,27 @@ test("createHook init fires for AsyncResource construction", () => {
     hook.disable();
   }
 });
+
+test("TickObject init receives the current executionAsyncId as its triggerAsyncId", async () => {
+  const triggers: number[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  const hook = createHook({
+    init(asyncId, type, triggerAsyncId, resource) {
+      // Match our tick exactly; the runtime may schedule unrelated ticks.
+      if (type === "TickObject" && (resource as { callback?: unknown })?.callback === resolve) {
+        triggers.push(triggerAsyncId);
+      }
+    },
+  }).enable();
+  try {
+    const a = new AsyncResource("T");
+    expect(a.asyncId()).toBeGreaterThan(1);
+    a.runInAsyncScope(() => {
+      process.nextTick(resolve);
+    });
+    await promise;
+    expect(triggers).toEqual([a.asyncId()]);
+  } finally {
+    hook.disable();
+  }
+});

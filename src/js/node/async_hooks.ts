@@ -354,11 +354,11 @@ if (IS_BUN_DEVELOPMENT) {
   };
 }
 
-// Current scope's execution/trigger async ids: 1/0 at the root like Node.
-// runInAsyncScope swaps in the resource's ids so `executionAsyncId() ===
-// resource.asyncId()` inside a scope; other async boundaries don't update them.
-let currentExecutionAsyncId = 1;
-let currentTriggerAsyncId = 0;
+// The current execution/trigger async ids live in internal/async_hooks_tick
+// so the TickObject init emitter can report them too. runInAsyncScope swaps
+// in the resource's ids so `executionAsyncId() === resource.asyncId()` inside
+// a scope; other async boundaries don't update them.
+const asyncHooksTick = require("internal/async_hooks_tick");
 
 class AsyncResource {
   type;
@@ -374,7 +374,7 @@ class AsyncResource {
       typeof opts === "number"
         ? opts
         : opts?.triggerAsyncId === undefined
-          ? currentExecutionAsyncId
+          ? asyncHooksTick.executionAsyncId()
           : opts.triggerAsyncId;
     if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
       throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
@@ -386,7 +386,6 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
-    const asyncHooksTick = require("internal/async_hooks_tick");
     this.#asyncId = asyncHooksTick.newAsyncId();
     this.#triggerAsyncId = triggerAsyncId;
     if (asyncHooksTick.tickInitHooks.length !== 0) {
@@ -416,17 +415,15 @@ class AsyncResource {
 
   runInAsyncScope(fn, thisArg, ...args) {
     var prev = get();
-    const prevExecutionAsyncId = currentExecutionAsyncId;
-    const prevTriggerAsyncId = currentTriggerAsyncId;
+    const prevExecutionAsyncId = asyncHooksTick.executionAsyncId();
+    const prevTriggerAsyncId = asyncHooksTick.triggerAsyncId();
     set(this.#snapshot);
-    currentExecutionAsyncId = this.#asyncId;
-    currentTriggerAsyncId = this.#triggerAsyncId;
+    asyncHooksTick.setCurrentAsyncIds(this.#asyncId, this.#triggerAsyncId);
     try {
       return fn.$apply(thisArg, args);
     } finally {
       set(prev);
-      currentExecutionAsyncId = prevExecutionAsyncId;
-      currentTriggerAsyncId = prevTriggerAsyncId;
+      asyncHooksTick.setCurrentAsyncIds(prevExecutionAsyncId, prevTriggerAsyncId);
     }
   }
 
@@ -520,8 +517,6 @@ function createHook(hook) {
   return {
     enable() {
       if (init !== undefined && enabledInit === undefined) {
-        // init is delivered for TickObject resources (process.nextTick);
-        // other resource types are still unimplemented.
         // Per-instance wrapper: two hooks registered with the same init
         // function must stay independently removable (removal is by
         // identity, and removing the other instance's entry would reorder
@@ -560,11 +555,11 @@ const executionAsyncIdNotImpl = createWarning(
 );
 function executionAsyncId() {
   executionAsyncIdNotImpl();
-  return currentExecutionAsyncId;
+  return asyncHooksTick.executionAsyncId();
 }
 
 function triggerAsyncId() {
-  return currentTriggerAsyncId;
+  return asyncHooksTick.triggerAsyncId();
 }
 
 const executionAsyncResourceWarning = createWarning(

@@ -58,6 +58,11 @@ pub(crate) fn print_diff_main(
         return Ok(());
     }
 
+    // Unequal values can still render identically (distinct symbols, a hole vs undefined).
+    if received_slice == expected_slice {
+        return print_identical_rendering(expected_slice, writer, config);
+    }
+
     // check if the diffs are single-line
     if strings::index_of_char(received_slice, b'\n').is_none()
         && strings::index_of_char(expected_slice, b'\n').is_none()
@@ -387,18 +392,15 @@ fn print_truncated_line(
         writer.write_str(colors::RESET)?;
     }
 
-    if config.enable_ansi_colors {
-        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97
-    }
     // The context is shown on both sides, so we truncate line.len - 2 * context
-    write!(
+    print_truncation_notice(
         writer,
-        "... ({} bytes truncated) ...",
-        line.len() - 2 * config.truncate_context
+        config,
+        format_args!(
+            "... ({} bytes truncated) ...",
+            line.len() - 2 * config.truncate_context
+        ),
     )?;
-    if config.enable_ansi_colors {
-        writer.write_str(colors::RESET)?;
-    }
 
     if config.enable_ansi_colors {
         writer.write_str(style.text_color)?;
@@ -412,6 +414,59 @@ fn print_truncated_line(
         writer.write_str(colors::RESET)?;
     }
     Ok(())
+}
+
+fn print_truncation_notice(
+    writer: &mut impl Write,
+    config: &DiffConfig,
+    notice: std::fmt::Arguments<'_>,
+) -> std::fmt::Result {
+    if config.enable_ansi_colors {
+        writer.write_str(colors::BRIGHT_WHITE)?; // preserve SGR 97
+    }
+    writer.write_fmt(notice)?;
+    if config.enable_ansi_colors {
+        writer.write_str(colors::RESET)?;
+    }
+    Ok(())
+}
+
+/// Past `truncate_threshold` only `chunk_context_lines` at each end are kept.
+fn print_identical_rendering(
+    rendering: &[u8],
+    writer: &mut impl Write,
+    config: &DiffConfig,
+) -> std::fmt::Result {
+    let line_count = strings::count_char(rendering, b'\n') + 1;
+    let context = config.chunk_context_lines;
+    let truncate = rendering.len() > config.truncate_threshold && line_count > 2 * context;
+    let truncated_lines = if truncate {
+        context..line_count - context
+    } else {
+        0..0
+    };
+
+    print_line_prefix(writer, config, prefix_styles::SINGLE_LINE_REMOVED)?;
+    for (i, line) in strings::split(rendering, b"\n").enumerate() {
+        if truncated_lines.contains(&i) {
+            if i == truncated_lines.start {
+                writer.write_str("\n")?;
+                print_truncation_notice(
+                    writer,
+                    config,
+                    format_args!("... ({} lines truncated) ...", truncated_lines.len()),
+                )?;
+            }
+            continue;
+        }
+        if i > 0 {
+            writer.write_str("\n")?;
+        }
+        print_truncated_line(line, writer, config, styles::REMOVED_LINE)?;
+    }
+    writer.write_str("\n")?;
+    print_line_prefix(writer, config, prefix_styles::SINGLE_LINE_INSERTED)?;
+    writer.write_str("serializes to the same string")
 }
 
 fn print_segment(

@@ -18,12 +18,14 @@ describe.concurrent("WebKit 3722912ff800 upgrade", () => {
     expect(g().includes(5)).toBe(false);
   });
 
-  test("cyclic Array.prototype.join throws RangeError (f2f2c2ddf637)", () => {
-    // StringRecursionChecker was removed; cyclic join now recurses until the
-    // stack check throws instead of short-circuiting to the empty string.
-    const a: unknown[] = [];
+  test("cyclic Array.prototype.join converts the cycle to the empty string, as in node (f2f2c2ddf637, oven-sh/WebKit#446)", () => {
+    // Upstream f2f2c2ddf637 removed StringRecursionChecker, which made this
+    // throw a RangeError. Bun's WebKit keeps the array cycle detection V8 has
+    // (oven-sh/WebKit#446), so this matches node and Bun 1.3. The full matrix is
+    // test/js/bun/jsc-stress/fixtures/string-conversion-recursion.js.
+    const a: unknown[] = [1];
     a.push(a);
-    expect(() => a.join()).toThrow(RangeError);
+    expect([a.join(), a.join("-"), String(a), `${a}`, a.toLocaleString()]).toEqual(["1,", "1-", "1,", "1,", "1,"]);
   });
 
   test("WebAssembly.Exception gains options.traceStack and stack getter (bf6512f84f7d)", () => {

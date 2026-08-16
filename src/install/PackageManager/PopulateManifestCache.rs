@@ -278,7 +278,6 @@ pub fn populate_manifest_cache(
                     cache_ctx,
                     scope.get(),
                     package_name,
-                    ManifestLoad::LoadFromMemoryFallbackToDisk,
                     needs_extended_manifest,
                 );
                 if cached.is_none() {

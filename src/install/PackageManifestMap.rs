@@ -83,14 +83,7 @@ impl PackageManifestMap {
         name_hash: PackageNameHash,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
-        self.by_name_hash_allow_expired(
-            ctx,
-            scope,
-            name,
-            name_hash,
-            None,
-            needs_extended_manifest,
-        )
+        self.by_name_hash_allow_expired(ctx, scope, name, name_hash, None, needs_extended_manifest)
     }
 
     /// Memory-only lookup: no disk fallback, so no `ctx`/`scope`. Exposed

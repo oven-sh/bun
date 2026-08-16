@@ -48,8 +48,6 @@ test("dead Rust symbols (install, webcore, jsc, leaf crates) do not reappear", (
     // webcore: StartTag variants never constructed; only the 8 sink tags are
     // used as START_TAG consts and const-generic args.
     ["src/runtime/webcore/streams.rs", /pub enum StartTag \{[^}]*OwnedAndDone/],
-    // webcore: never produced by on_read_chunk.
-    ["src/runtime/webcore/FileReader.rs", /AmountRead\(usize\)/],
 
     // sha_hmac: deprecated-API hashers with no callers (only SHA1 and SHA256
     // have consumers), plus unused evp types.

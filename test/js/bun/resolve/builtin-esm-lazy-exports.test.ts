@@ -34,26 +34,43 @@ const helper = `
   export { fs };
 `;
 
-// The "bun" module is generated natively from the Bun object (generateNativeModule_BunObject). Most Bun.* properties
-// are PropertyCallback entries of its static table that construct their value (a class, the shell, the default
-// SQL/S3/Redis clients, ...) the first time they are read, at which point they become own properties of the object.
-// bun:jsc's describe() dumps the object's Structure, i.e. exactly the set of properties that have been constructed,
-// which is the readout used here. WATCHED is a sample of them plus `write`, the plain function the entries below import.
+// "bun", "node:process" and "node:module" are generated natively from an existing object (the Bun object, process,
+// the Module constructor; see BUN_FOREACH_LAZY_ESM_NATIVE_MODULE). Most of those objects' properties are
+// PropertyCallback entries of a static table that construct their value (a class, the shell, the default
+// SQL/S3/Redis clients, the stdio streams, the builtinModules array, ...) the first time they are read, at which
+// point they become own properties of the object. bun:jsc's describe() dumps the object's Structure, i.e. exactly the
+// set of properties that have been constructed, which is the readout used here. (Object.keys and Reflect.ownKeys list
+// static entries without constructing them; for...in constructs all of them, so the entries below avoid it.) The
+// watched names are a sample of those entries plus the plain function (`write`, `createRequire`) an entry imports.
 //
 // Note that a literal `import ... from "bun"` (and `import("bun")` / `require("bun")`) is rewritten by the
 // transpiler into a read of globalThis.Bun and never loads the module; the module is what `export ... from "bun"`
-// and a non-literal import() specifier go through.
+// and a non-literal import() specifier go through. Imports of node:process and node:module always load the module.
 const WATCHED = ["$", "CryptoHasher", "Glob", "S3Client", "SQL", "TOML", "Transpiler", "secrets", "write"] as const;
+const PROCESS_WATCHED = ["allowedNodeEnvironmentFlags", "config", "release", "stderr", "stdin", "stdout", "versions"];
+const MODULE_WATCHED = [
+  "SourceMap",
+  "_cache",
+  "_extensions",
+  "builtinModules",
+  "constants",
+  "createRequire",
+  "globalPaths",
+];
 
-const bunHelper = `
+const nativeHelper = `
   import { describe } from "bun:jsc";
-  const WATCHED = ${JSON.stringify(WATCHED)};
-  /** The WATCHED names that are own properties of the Bun object by now, i.e. whose value has been constructed. */
-  export function constructed() {
-    const properties = /\\{([^}]*)\\}/.exec(describe(Bun))[1];
+  /** The names out of \`watched\` that are own properties of \`object\` by now, i.e. whose value has been constructed. */
+  function constructedOn(object, watched) {
+    const properties = /\\{([^}]*)\\}/.exec(describe(object))[1];
     const names = properties.split(",").map(entry => entry.trim().split(":")[0]);
-    return WATCHED.filter(name => names.includes(name));
+    return watched.filter(name => names.includes(name));
   }
+  export const constructed = () => constructedOn(Bun, ${JSON.stringify(WATCHED)});
+  export const constructedOnProcess = () => constructedOn(process, ${JSON.stringify(PROCESS_WATCHED)});
+  // getBuiltinModule hands out the constructor itself without going through the ES module.
+  export const constructedOnModule = () =>
+    constructedOn(process.getBuiltinModule("node:module"), ${JSON.stringify(MODULE_WATCHED)});
   export function print(result) {
     console.log(JSON.stringify(result));
   }
@@ -68,7 +85,11 @@ const bunReexport = `
 `;
 
 async function run(files: Record<string, string>, args: string[] = ["entry.mjs"], env: Record<string, string> = {}) {
-  using dir = tempDir("builtin-esm-lazy-exports", { "helper.mjs": helper, "bun-helper.mjs": bunHelper, ...files });
+  using dir = tempDir("builtin-esm-lazy-exports", {
+    "helper.mjs": helper,
+    "native-helper.mjs": nativeHelper,
+    ...files,
+  });
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd: String(dir),
@@ -270,7 +291,7 @@ test.concurrent('"bun": re-exports construct the properties that get bound, not 
       // Linking this import is what constructs Bun.write; nothing else is read.
       import { write } from "./reexport.mjs";
       import * as reexported from "./reexport.mjs";
-      import { constructed, print } from "./bun-helper.mjs";
+      import { constructed, print } from "./native-helper.mjs";
       const afterLink = constructed();
       const present = "SQL" in reexported;
       const afterIn = constructed();
@@ -308,7 +329,7 @@ test.concurrent('"bun": re-exports construct the properties that get bound, not 
 
 test.concurrent('"bun": import() namespace has the same export list, and every export is the Bun.* value', async () => {
   const result = await runEntry(`
-    import { constructed, print, specifier } from "./bun-helper.mjs";
+    import { constructed, print, specifier } from "./native-helper.mjs";
     const ns = await import(specifier);
     const afterImport = constructed();
     // Neither [[OwnPropertyKeys]] of the namespace nor Object.keys of the Bun object reads any of the properties.
@@ -348,7 +369,7 @@ test.concurrent('"bun": a property whose getter throws only fails the binding th
     `
       import { write } from "./reexport.mjs";
       import * as reexported from "./reexport.mjs";
-      import { print } from "./bun-helper.mjs";
+      import { print } from "./native-helper.mjs";
       function message(read) {
         try {
           read();
@@ -383,7 +404,7 @@ test.concurrent('"bun": mock.module replaces a binding without constructing the 
       "lazy.test.ts": `
         import { expect, mock, test } from "bun:test";
         import * as reexported from "./reexport.mjs";
-        import { constructed } from "./bun-helper.mjs";
+        import { constructed } from "./native-helper.mjs";
 
         test("mock.module('bun')", () => {
           expect(constructed()).toEqual([]);
@@ -401,4 +422,94 @@ test.concurrent('"bun": mock.module replaces a binding without constructing the 
   expect(stderr).toContain(" 1 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
+});
+
+test.concurrent("node:process: linking constructs the linked bindings, not the stdio streams", async () => {
+  const result = await runEntry(`
+    import proc, { on, release } from "node:process";
+    import * as ns from "node:process";
+    import { constructedOnProcess, print } from "./native-helper.mjs";
+    const afterLink = constructedOnProcess();
+    // The exports are the enumerable names of process and its prototype chain, as listed when the module loaded.
+    // (Object.keys does not reify anything, unlike for...in, and nothing has changed the chain since loading: that
+    // happens further down, when reading stdout loads node:events.)
+    const enumerable = new Set();
+    for (let object = process; object !== null; object = Object.getPrototypeOf(object)) {
+      for (const name of Object.keys(object)) enumerable.add(name);
+    }
+    const exportNames = Reflect.ownKeys(ns).filter(key => typeof key === "string");
+    const exportListMatches = exportNames.sort().join() === [...enumerable, "default"].sort().join();
+    const afterListing = constructedOnProcess();
+    const stdout = ns.stdout;
+    print({
+      defaultIsProcess: proc === process,
+      afterLink,
+      release: release === process.release,
+      // Inherited from the EventEmitter prototype, so it was never stored on process itself.
+      on: on === process.on && !Object.hasOwn(process, "on"),
+      exportListMatches,
+      afterListing,
+      stdout: stdout === process.stdout && typeof stdout.write === "function",
+      afterStdoutRead: constructedOnProcess(),
+      argv: ns.argv === process.argv,
+    });
+  `);
+  expect(result).toEqual({
+    defaultIsProcess: true,
+    afterLink: ["release"],
+    release: true,
+    on: true,
+    exportListMatches: true,
+    afterListing: ["release"],
+    stdout: true,
+    afterStdoutRead: ["release", "stdout"],
+    argv: true,
+  });
+});
+
+test.concurrent("node:process: a value already stored on the object is exported as it was at load", async () => {
+  const result = await runEntry(`
+    import { print } from "./native-helper.mjs";
+    process.addedBeforeLoad = "at load";
+    const ns = await import("node:process");
+    process.addedBeforeLoad = "after load";
+    process.addedAfterLoad = true;
+    print({ addedBeforeLoad: ns.addedBeforeLoad, exportsAddedAfterLoad: "addedAfterLoad" in ns });
+  `);
+  expect(result).toEqual({ addedBeforeLoad: "at load", exportsAddedAfterLoad: false });
+});
+
+test.concurrent("node:module: linking constructs the linked bindings, not the rest of the table", async () => {
+  const result = await runEntry(`
+    import Module, { createRequire } from "node:module";
+    import * as ns from "node:module";
+    import { constructedOnModule, print } from "./native-helper.mjs";
+    const afterLink = constructedOnModule();
+    const exportNames = Reflect.ownKeys(ns).filter(key => typeof key === "string");
+    // The export list is the static table, which is also exactly what Object.keys of the constructor lists.
+    const exportListMatches = exportNames.sort().join() === [...Object.keys(Module), "default"].sort().join();
+    const afterListing = constructedOnModule();
+    const builtinModules = ns.builtinModules;
+    print({
+      defaultIsTheConstructor: Module === process.getBuiltinModule("node:module"),
+      afterLink,
+      createRequire: typeof createRequire(import.meta.url)("node:path").join === "function",
+      exportListMatches,
+      afterListing,
+      builtinModules: Array.isArray(builtinModules) && builtinModules === Module.builtinModules,
+      afterRead: constructedOnModule(),
+      // Backed by an accessor rather than a constructed value; the binding gets what the accessor returns.
+      resolveFilename: ns._resolveFilename === Module._resolveFilename && typeof ns._resolveFilename === "function",
+    });
+  `);
+  expect(result).toEqual({
+    defaultIsTheConstructor: true,
+    afterLink: ["createRequire"],
+    createRequire: true,
+    exportListMatches: true,
+    afterListing: ["createRequire"],
+    builtinModules: true,
+    afterRead: ["builtinModules", "createRequire"],
+    resolveFilename: true,
+  });
 });

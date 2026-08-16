@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
@@ -1634,4 +1635,57 @@ describe("bundler", () => {
       },
     };
   });
+
+  for (const [name, call, tuple] of [
+    ["addFilter", 1, `[123, () => {}]`],
+    ["onBeforeParse", 3, `[123, {}, "symbol", undefined]`],
+  ] as const) {
+    test.concurrent(`plugin/${name} throws a TypeError when the filter is not a RegExp`, async () => {
+      using dir = tempDir("plugin-filter-not-regexp", {
+        "index.ts": `console.log("hi");`,
+        "build.mjs": `
+          const originalEntries = Map.prototype.entries;
+          let calls = 0;
+          try {
+            await Bun.build({
+              entrypoints: ["./index.ts"],
+              plugins: [
+                {
+                  name: "entries",
+                  setup(build) {
+                    Map.prototype.entries = function () {
+                      if (++calls !== ${call}) return originalEntries.call(this);
+                      Map.prototype.entries = originalEntries;
+                      return [["file", [${tuple}]]][Symbol.iterator]();
+                    };
+                  },
+                },
+              ],
+            });
+            console.log("resolved");
+          } catch (e) {
+            console.log([e.name, e.code, e.message].join("|"));
+          } finally {
+            Map.prototype.entries = originalEntries;
+          }
+          console.log("calls=" + calls);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr }).toEqual({
+        stdout: `TypeError|ERR_INVALID_ARG_TYPE|Expected filter (1st argument) to be a RegExp\ncalls=${call}\n`,
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
 });

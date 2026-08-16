@@ -14,7 +14,7 @@
 //! touches the parent's `Worker` object or a thread-affine ref.
 //!
 //! Thread lifecycle (`thread_main`):
-//!   1. `start_vm()`  — arena, cloned env, `VirtualMachine`, publish `vm` under `vm_lock`.
+//!   1. `start_vm()`  — arena, env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
 //!   2. `spin()`      — load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,
 //!                      `beforeExit` on a natural drain.
@@ -29,9 +29,13 @@
 //! performs the parent-side release itself (`parentContextWillDestroy`). This
 //! is Node's `stop_sub_worker_contexts()`; there is no process-global list.
 //!
-//! `vm_lock` closes the TOCTOU between another thread reading a non-null `vm`
-//! (to raise a TerminationException / wake the loop) and this thread freeing
-//! it: held while publishing, while unpublishing, and around that read.
+//! Threads: everything the worker thread needs from its parent VM (transform
+//! options, an env snapshot, the standalone graph) is copied on the parent
+//! thread in `create()`, and the thread holds a `Ticket` on the parent for its
+//! whole life, so the parent cannot be destroyed under it. The parent (or an
+//! exiting ancestor) reaches the worker's VM only through `vm_handle` — the
+//! worker VM's uncounted handle, published once the VM exists — never through
+//! a pointer to it.
 
 use crate::JsCell;
 use core::cell::Cell;
@@ -42,7 +46,6 @@ use std::thread::JoinHandle;
 
 use bun_core::{String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
-use bun_threading::Mutex;
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
@@ -55,11 +58,17 @@ pub struct WebWorker {
     /// The C++ `WorkerMessagingProxy`; the thread holds a ref on it, so it is
     /// valid for as long as this thread runs. Opaque here.
     messaging_proxy: *mut c_void,
-    /// The `VirtualMachine` of the thread that created this worker. Read on the
-    /// worker thread by `start_vm()` (transform options, env, standalone graph)
-    /// and on the parent thread for `parent_poll_ref` / `child_workers`. Valid
-    /// because a parent joins its children before its own VM is destroyed.
-    parent: bun_ptr::BackRef<VirtualMachine>,
+    /// The `VirtualMachine` of the thread that created this worker.
+    /// **Parent thread only** (`child_workers`, `parent_poll_ref`); the worker
+    /// thread never dereferences it — what it needs was copied below.
+    parent: *mut VirtualMachine,
+    /// The parent's `--hot` / `--watch` mode, inherited by the worker VM.
+    hot_reload: crate::virtual_machine::HotReload,
+    /// Whether the worker VM arms `bun_jsc::vm_handle`'s test gate (debug
+    /// builds, `BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE`, first-level workers only:
+    /// a nested worker parked on a post to its worker parent would keep that
+    /// parent from ever reaching its own wait).
+    arm_test_gate: bool,
     execution_context_id: u32,
     mini: bool,
     eval_mode: bool,
@@ -80,10 +89,10 @@ pub struct WebWorker {
     /// the worker itself (`process.exit()`); polled by the worker loop between
     /// ticks and turned into a JSC TerminationException for running script.
     requested_terminate: AtomicBool,
-    /// The worker's `VirtualMachine`, null before `start_vm()` publishes it and
-    /// after `shutdown()` unpublishes it. Cross-thread readers hold `vm_lock`.
-    vm: Cell<*mut VirtualMachine>,
-    vm_lock: Mutex,
+    /// The worker VM's uncounted handle: how the parent (or an exiting
+    /// ancestor) asks it to terminate. `None` before `start_vm()` publishes it
+    /// and after `shutdown()` unpublishes it.
+    vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
 
     // ---- Parent-thread only ---------------------------------------------------
     /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
@@ -95,6 +104,9 @@ pub struct WebWorker {
     // ---- Worker-thread only -----------------------------------------------------
     // Mutated only on the worker thread, but through `&self` because other
     // threads hold `&WebWorker` concurrently; hence the cells.
+    /// The worker's `VirtualMachine`; null before `start_vm()` and after
+    /// `shutdown()`.
+    vm: Cell<*mut VirtualMachine>,
     status: Cell<Status>,
     // The VM's allocator IS this arena.
     arena: JsCell<Option<bun_alloc::Arena>>,
@@ -105,8 +117,16 @@ pub struct WebWorker {
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
     /// parent) while its VM was live — as opposed to the thread stopping itself,
-    /// or being stopped before it started. Written under `vm_lock`.
+    /// or being stopped before it started. Written under the `vm_handle` lock.
     terminated_by_parent: AtomicBool,
+}
+
+/// Copied from the parent VM on its thread at `new Worker()`; consumed by
+/// `start_vm()` on the worker thread.
+struct WorkerVmInit {
+    transform_options: bun_options_types::schema::api::TransformOptions,
+    env_map: bun_dotenv::Map,
+    proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
 enum EntryOutcome {
@@ -195,12 +215,7 @@ impl WebWorker {
         self.requested_terminate.load(Ordering::Acquire)
     }
 
-    /// Raw read of the `vm` cell. Worker-thread-only callers (which are also
-    /// the writers) may call this without `vm_lock`; cross-thread callers
-    /// (`request_termination`, an exiting ancestor) must hold
-    /// `vm_lock`. The cell itself is `Cell<*mut _>` so the read is a safe
-    /// `Copy` load; synchronization (where required) is the caller's
-    /// responsibility per the doc above.
+    /// Worker thread only.
     #[inline]
     fn vm_ptr(&self) -> *mut VirtualMachine {
         self.vm.get()
@@ -325,13 +340,59 @@ impl WebWorker {
             }
         }
 
-        // SAFETY: `parent` is live (see above); borrow ends at `;`.
-        let store_fd = unsafe { (*parent).transpiler.resolver.store_fd };
+        // Everything the worker thread needs from this VM is copied here, on
+        // its own thread; the worker never dereferences `parent`.
+        // SAFETY: `parent` is the calling thread's live VM.
+        let parent_ref = unsafe { &*parent };
+        let store_fd = parent_ref.transpiler.resolver.store_fd;
+        let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
+        if !inherit_exec_argv {
+            let hooks = runtime_hooks().expect("RuntimeHooks not installed");
+            // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
+            // the hook only reads the slice. Only honours `--no-addons` today;
+            // `None` on parse failure keeps the parent's setting.
+            let parsed = unsafe {
+                (hooks.parse_worker_exec_argv_allow_addons)(bun_core::ffi::slice(
+                    exec_argv_ptr,
+                    exec_argv_len,
+                ))
+            };
+            if let Some(allow) = parsed {
+                let parent_allows = transform_options.allow_addons.unwrap_or(true);
+                transform_options.allow_addons = Some(parent_allows && allow);
+            }
+        }
+        // The worker's `process.env` starts as a copy of the parent's now (as in
+        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
+        // parent's proxy_env_storage: snapshot slots + map under its lock so
+        // every slice copied is backed by a ref the snapshot holds.
+        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
+        let mut env_map = {
+            let parent_slots = parent_ref.proxy_env_storage.lock();
+            proxy_env_slots.clone_from(&parent_slots);
+            match parent_ref.env_loader().map.clone_with_allocator() {
+                Ok(m) => m,
+                Err(_) => {
+                    *error_message = BunString::static_(b"Out of memory");
+                    return core::ptr::null_mut();
+                }
+            }
+        };
+        proxy_env_slots.sync_into(&mut env_map);
+        let init = WorkerVmInit {
+            transform_options,
+            env_map,
+            proxy_env_slots,
+        };
 
         let worker = bun_core::heap::into_raw(Box::new(WebWorker {
             messaging_proxy: proxy,
-            // `parent` is the calling thread's live VM; non-null by FFI contract.
-            parent: bun_ptr::BackRef::from(NonNull::new(parent).expect("parent VM")),
+            parent,
+            hot_reload: parent_ref.hot_reload,
+            arm_test_gate: cfg!(debug_assertions)
+                && parent_ref.is_main_thread()
+                && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
+                    .unwrap_or(false),
             execution_context_id: this_context_id,
             mini,
             eval_mode,
@@ -350,8 +411,8 @@ impl WebWorker {
             },
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             requested_terminate: AtomicBool::new(false),
+            vm_handle: bun_threading::Guarded::new(None),
             vm: Cell::new(core::ptr::null_mut()),
-            vm_lock: Mutex::new(),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
             status: Cell::new(Status::Start),
@@ -375,18 +436,37 @@ impl WebWorker {
 
         // The thread's own ref, taken before it exists so it can never observe zero.
         worker_ref.ref_();
-        struct SendPtr(*mut WebWorker);
-        // SAFETY: heap-allocated, refcounted; the new thread holds the ref taken above.
-        unsafe impl Send for SendPtr {}
-        let send = SendPtr(worker);
+        // The thread is something of this VM's on another thread for as long as
+        // it runs: the parent joins it before its own teardown's wait, which
+        // this ticket would otherwise hold.
+        let parent_ticket = parent_ref.ticket();
+        /// What the worker thread is handed: its refcounted `WebWorker` (the ref
+        /// taken above is the thread's), the parent's snapshot, and a ticket on
+        /// the parent VM.
+        struct ThreadStart {
+            worker: *mut WebWorker,
+            init: WorkerVmInit,
+            _parent_ticket: crate::Ticket,
+        }
+        // SAFETY: `WebWorker` is shared across threads by design (atomics,
+        // `Guarded`, thread-confined cells — see the struct doc) and holds no
+        // parent-VM state; `init` is an owned copy — byte buffers, scalars and
+        // `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
+        // itself is kept by `_parent_ticket`.
+        unsafe impl Send for ThreadStart {}
+        let start = ThreadStart {
+            worker,
+            init,
+            _parent_ticket: parent_ticket,
+        };
         let spawn = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
-                let send = send;
-                // SAFETY: `send.0` is live (the thread's ref); `&WebWorker`, never `&mut`.
-                unsafe { (*send.0).thread_main() };
-                // SAFETY: dropping the thread's ref; nothing below touches `send.0`.
-                unsafe { WebWorker::deref(send.0) };
+                let start = start;
+                // SAFETY: `worker` is live (the thread's ref); `&WebWorker`, never `&mut`.
+                unsafe { (*start.worker).thread_main(start.init) };
+                // SAFETY: dropping the thread's ref; nothing below touches `worker`.
+                unsafe { WebWorker::deref(start.worker) };
             });
         match spawn {
             Ok(handle) => {
@@ -463,38 +543,25 @@ impl WebWorker {
     #[unsafe(export_name = "WebWorker__requestTermination")]
     pub(crate) extern "C" fn request_termination(this: *mut WebWorker) {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
-        // vm_lock serialises against shutdown() nulling `vm` and freeing the
-        // arena it lives in — and is taken *before* the flag is published: a
-        // worker that breaks out of its loop because it saw the flag then blocks
-        // in shutdown() until `terminated_by_parent` and the gate are set here,
-        // instead of racing past with neither.
-        this.vm_lock.lock();
+        // The handle's lock is taken *before* the flag is published: a worker
+        // that breaks out of its loop because it saw the flag then blocks in
+        // shutdown() (unpublish) until `terminated_by_parent` and the stop are
+        // set here, instead of racing past with neither.
+        let handle = this.vm_handle.lock();
         if this.set_requested_terminate() {
-            this.vm_lock.unlock();
             return;
         }
         log!("[{}] requestTermination", this.execution_context_id);
-        // vm_lock held; `vm` is published/unpublished under vm_lock.
-        let vm_ptr = this.vm_ptr();
-        if !vm_ptr.is_null() {
+        if let Some(handle) = &*handle {
             // Node: being stopped only counts (exit code 1) once the environment
             // exists and before the thread starts tearing it down on its own.
             this.terminated_by_parent.store(true, Ordering::Relaxed);
             // From now on the worker's native code enters no script and settles
             // no promises (Node's `ExitEnv` → `is_stopping`), even before its
-            // thread notices: whatever completes on its loop meanwhile bails.
-            // SAFETY: vm_ptr published under vm_lock; the handle is any-thread.
-            unsafe { (*vm_ptr).handle().stop() };
-            // SAFETY: vm_ptr published under vm_lock and non-null here.
-            // jsc_vm is a valid JSC::VM*; notify_need_termination is
-            // documented thread-safe (VMTraps). Cast through the real opaque
-            // `crate::VM` (the `crate::VM` stub is layout-only). No
-            // `&VirtualMachine` binding (raw field reads only, off-thread).
-            unsafe { (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination() };
-            // SAFETY: event_loop() returns the live `*mut EventLoop` self-ptr.
-            unsafe { (*(*vm_ptr).event_loop()).wakeup() };
+            // thread notices; a TerminationException is raised at its next
+            // safepoint and its loop woken.
+            handle.request_termination();
         }
-        this.vm_lock.unlock();
     }
 
     /// The parent is releasing this thread: drop the keep-alive on the parent's
@@ -504,15 +571,20 @@ impl WebWorker {
         let this_ref = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         this_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
-        let children = unsafe { &mut (*NonNull::from(this_ref.parent).as_ptr()).child_workers };
+        let children = unsafe { &mut (*this_ref.parent).child_workers };
         if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {
             children.swap_remove(i);
         }
     }
 
     #[inline]
-    pub(crate) fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
-        self.parent
+    pub(crate) fn hot_reload(&self) -> crate::virtual_machine::HotReload {
+        self.hot_reload
+    }
+
+    #[inline]
+    pub(crate) fn arm_test_gate(&self) -> bool {
+        self.arm_test_gate
     }
 
     #[inline]
@@ -541,7 +613,7 @@ impl WebWorker {
     // an exiting ancestor), so materialising `&mut WebWorker` here would
     // be aliased-&mut UB. Worker-thread-only mutable fields are wrapped in
     // `Cell` / `UnsafeCell` instead.
-    fn thread_main(&self) {
+    fn thread_main(&self, init: WorkerVmInit) {
         bun_analytics::features::workers_spawned.fetch_add(1, Ordering::Relaxed);
 
         if !self.name.is_empty() {
@@ -559,7 +631,7 @@ impl WebWorker {
             return;
         }
 
-        let vm_ptr = match self.start_vm() {
+        let vm_ptr = match self.start_vm(init) {
             Ok(vm) => vm,
             Err(err) => {
                 bun_core::output::panic(format_args!(
@@ -574,9 +646,9 @@ impl WebWorker {
             return;
         }
 
-        // `start_vm()` published `vm_ptr` under `vm_lock` AND installed it as
-        // this thread's per-thread VM (`VirtualMachine::init` → `VMHolder`), so
-        // the safe thread-local accessor returns the same allocation.
+        // `start_vm()` installed `vm_ptr` as this thread's per-thread VM
+        // (`VirtualMachine::init` → `VMHolder`), so the safe thread-local
+        // accessor returns the same allocation.
         debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
         let global = VirtualMachine::get().global();
         // Take the API lock for the thread's whole life and abandon it with the
@@ -590,73 +662,25 @@ impl WebWorker {
     ///
     /// Returns the published VM pointer; `Ok(null)` means the early-terminate
     /// checkpoint already ran `shutdown()`.
-    fn start_vm(&self) -> Result<*mut VirtualMachine, crate::CrateError> {
+    fn start_vm(&self, init: WorkerVmInit) -> Result<*mut VirtualMachine, crate::CrateError> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-
-        // `parent` is a `BackRef` and outlives this worker while
-        // `parent_poll_ref` is held (see file header). The parent VM runs
-        // concurrently on its own thread, so we must NOT materialise a
-        // `&mut VirtualMachine` here — a
-        // `&mut` would assert uniqueness we don't have. All uses
-        // below are read-only (clone of transform_options, locked read of
-        // proxy_env_storage / env.map, copy of standalone_module_graph),
-        // so a shared reference is sufficient.
-        let parent = self.parent.get();
-        // Deref-clone out of the `Arc` — worker mutates `allow_addons` below
-        // and passes the owned struct as `args` to the new VM.
-        let mut transform_options = (*parent.transpiler.options.transform_options).clone();
-
-        if let Some(exec_argv) = self.exec_argv() {
-            // Parse `execArgv` with the
-            // RunCommand param table. The param table lives in
-            // `bun_runtime::cli` (forward-dep), so dispatch through
-            // `RuntimeHooks::parse_worker_exec_argv_allow_addons`. Currently
-            // only honours `--no-addons`; the hook owns the temporary UTF-8
-            // alloc + clap parse + `args.deinit()`. `None` on parse failure
-            // (the parent's setting is kept).
-
-            // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
-            // owning `WebCore::Worker` for `self`'s lifetime; the hook only
-            // reads the slice and owns its own temporary allocations.
-            let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
-            if let Some(allow_addons) = parsed {
-                let parent_allows = transform_options.allow_addons.unwrap_or(true);
-                transform_options.allow_addons = Some(parent_allows && allow_addons);
-            }
-        }
+        let WorkerVmInit {
+            transform_options,
+            env_map,
+            proxy_env_slots,
+        } = init;
 
         // worker-thread only field; no other thread reads `arena`.
         self.arena.set(Some(bun_alloc::Arena::new()));
-
-        // Proxy-env values may be RefCountedEnvValue bytes owned by the
-        // parent's proxy_env_storage. We need a consistent snapshot of
-        // (storage slots + env.map entries) so every slice we copy is backed
-        // by a ref we hold. The parent's storage.lock serialises against
-        // Bun__setEnvValue on the main thread — it covers both the slot swap
-        // and the map.put, so cloneFrom and cloneWithAllocator see the same
-        // state.
-        let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
-
-        // Box the Loader on the global heap and hand ownership to the VM via
-        // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
-        let mut map = {
-            let parent_slots = parent.proxy_env_storage.lock();
-            temp_proxy_slots.clone_from(&parent_slots);
-            // SAFETY: `parent.transpiler.env` is the parent-owned `DotEnv::Loader`
-            // set in `Transpiler::init`; valid while `parent` lives. Read-only.
-            parent.env_loader().map.clone_with_allocator()?
-        };
-        // Ensure map entries point at the exact bytes we hold refs on.
-        temp_proxy_slots.sync_into(&mut map);
 
         // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
         // it on every path — including the early-terminate checkpoint below,
         // which calls `shutdown()` before the VM exists.
         let loader_ptr: *mut bun_dotenv::Loader =
-            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(map)));
+            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(env_map)));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
@@ -664,7 +688,6 @@ impl WebWorker {
         // above, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
-            drop(temp_proxy_slots);
             self.shutdown();
             return Ok(core::ptr::null_mut());
         }
@@ -675,16 +698,12 @@ impl WebWorker {
                 args: transform_options,
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
-                graph: parent.standalone_module_graph,
+                graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
         )?;
-        // Pre-publish init: the VM is not yet visible to the parent thread,
-        // so a scoped `&mut VirtualMachine` is safe here. The borrow MUST
-        // end before the publish below — once `self.vm` is published under
-        // `vm_lock`, `request_termination`
-        // may concurrently dereference the same pointer on another thread,
-        // and a still-live `&mut VirtualMachine` would be aliased-&mut UB.
+        // Scoped `&mut VirtualMachine` for the worker-specific fields; ends
+        // before anything else on this thread re-derives access to the VM.
         {
             // SAFETY: init_worker returns a valid heap-allocated VM ptr;
             // not yet published, so this `&mut` is exclusive.
@@ -696,15 +715,14 @@ impl WebWorker {
                 .arena
                 .with_mut(|a| NonNull::new(std::ptr::from_mut(a.as_mut().unwrap())));
 
-            // Move the pre-cloned proxy storage into the worker VM.
-            *vm_ref.proxy_env_storage.lock() = core::mem::take(&mut temp_proxy_slots);
+            *vm_ref.proxy_env_storage.lock() = proxy_env_slots;
 
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
         }
 
-        // Publish `vm` now (rather than at the end of startVM) so that:
+        // Publish now (rather than at the end of startVM) so that:
         //   - a concurrent request_termination() (parent, or an exiting ancestor) can
         //     wake us once JS starts running, and
         //   - early returns below reach spin()/shutdown() with this.vm set,
@@ -714,21 +732,18 @@ impl WebWorker {
         // non-null vm runs vm.onExit() (JS), which requires holdAPILock.
         // Instead we return; threadMain enters holdAPILock(spin) and spin()'s
         // first check observes requested_terminate.
-        self.vm_lock.lock();
-        // vm_lock held; this is the publish point.
         self.vm.set(vm);
-        self.vm_lock.unlock();
+        // SAFETY: `vm` is the live VM just built on this thread.
+        *self.vm_handle.lock() = Some(unsafe { (*vm).handle() });
 
-        // Post-publish: do NOT re-form `&mut VirtualMachine`. Field/method
-        // access goes through the raw `*mut` so any autoref is scoped to the
-        // single expression. The parent-thread readers likewise never bind
-        // `&VirtualMachine` (see `request_termination`).
         // SAFETY: `vm` is a valid heap-allocated VM ptr (checked above).
         unsafe {
             let b = &mut (*vm).transpiler;
             b.resolver.env_loader = NonNull::new(b.env);
+            b.options.env.behavior =
+                bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
-            if let Some(graph) = parent.standalone_module_graph {
+            if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
                 (hooks.apply_standalone_runtime_flags)(b, graph);
             }
         }
@@ -741,7 +756,7 @@ impl WebWorker {
             return Ok(vm);
         }
 
-        // SAFETY: see post-publish note above.
+        // SAFETY: this thread's live VM; per-expression derefs, no long-lived `&mut`.
         unsafe {
             if (*vm).transpiler.configure_defines().is_err() {
                 // Fall through to spin() → shutdown() for full teardown under
@@ -765,20 +780,13 @@ impl WebWorker {
     fn spin(&self) {
         log!("[{}] spin start", self.execution_context_id);
 
-        // vm published in start_vm; non-null past this point. Do NOT bind a
-        // long-lived `&mut VirtualMachine`: while the event loop runs, the
-        // parent / main thread may dereference the same pointer under
-        // `vm_lock` (`request_termination`, an exiting ancestor).
-        // Those cross-thread paths only form raw-ptr field reads (never
-        // `&mut VirtualMachine`), so holding `&VirtualMachine` here is sound;
-        // mutation goes through `vm.as_mut()` which forms a fresh short-lived
-        // `&mut` per call (the `JsCell` escape hatch — provenance from the
-        // thread-local `*mut`).
+        // vm set in start_vm; non-null past this point. Mutation goes through
+        // `vm.as_mut()` which forms a fresh short-lived `&mut` per call (the
+        // `JsCell` escape hatch — provenance from the thread-local `*mut`).
         let vm_ptr: *mut VirtualMachine = self.vm_ptr();
-        // vm published in `start_vm` under `vm_lock`; non-null and live for the
-        // worker thread's duration. This IS the worker thread's per-thread VM
-        // (set by `VirtualMachine::init` → `VMHolder`), so the safe
-        // thread-local accessor returns the same allocation.
+        // This IS the worker thread's per-thread VM (set by
+        // `VirtualMachine::init` → `VMHolder`), so the safe thread-local
+        // accessor returns the same allocation.
         debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
         let vm: &VirtualMachine = VirtualMachine::get();
         debug_assert!(self.status.get() == Status::Start);
@@ -802,9 +810,7 @@ impl WebWorker {
         // here would never run anyway.
         let mut resolve_error = BunString::empty();
         let vm_log = vm.log_mut().unwrap();
-        // SAFETY: `vm_ptr` is the live worker-thread VM; the fn takes a raw ptr
-        // (no `&mut`) because `vm` is already published under `vm_lock` — see
-        // `resolve_entry_point_specifier` Safety contract.
+        // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
             resolve_entry_point_specifier(
                 vm_ptr,
@@ -973,8 +979,8 @@ impl WebWorker {
         self.shutdown();
     }
 
-    /// Phase 3: unpublish `vm` under `vm_lock` (a racing `requestTermination`
-    /// now sees null), run the user 'exit' handlers, then the shared
+    /// Phase 3: unpublish the VM's handle (a racing `requestTermination` now
+    /// finds none), run the user 'exit' handlers, then the shared
     /// [`VirtualMachine::teardown`] (stop → forbid script → ~VM → loops →
     /// destroy), free the thread's remaining state, and last of all report
     /// `workerGlobalScopeDestroyed` — the parent joins this thread from that
@@ -990,16 +996,14 @@ impl WebWorker {
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
-        self.vm_lock.lock();
-        // vm_lock held; this is the unpublish point.
+        drop(self.vm_handle.lock().take());
         let vm_ptr = self.vm.replace(core::ptr::null_mut());
-        self.vm_lock.unlock();
 
         // ---- 2. User exit handlers -----------------------------------------
         let mut exit_code: i32 = 0;
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr valid; unpublished above under vm_lock, so no
-            // other thread can dereference it now — `&mut` is exclusive.
+            // SAFETY: vm_ptr valid; no other thread holds a pointer to it (they
+            // only ever held its handle) — `&mut` is exclusive.
             let vm = unsafe { &mut *vm_ptr };
             vm.is_shutting_down = true;
             vm.on_exit();
@@ -1009,8 +1013,8 @@ impl WebWorker {
                 self.execution_context_id
             );
 
-            // ---- 3–5. Stop, forbid script, ~VM, loops, destroy ---------------
-            // SAFETY: unpublished under `vm_lock`; this thread is the sole owner.
+            // ---- 3–5. Stop, forbid script, wait, ~VM, loops, destroy ----------
+            // SAFETY: this thread's VM; sole owner.
             unsafe { VirtualMachine::teardown(vm_ptr, crate::virtual_machine::Teardown::Worker) };
 
             // `destroy()` deinits the fields; reclaim the storage `init` put on
@@ -1087,19 +1091,11 @@ impl WebWorker {
         // Stop subsequent JS at the next safepoint. `this.vm` is null during
         // `vm.onExit()` (shutdown nulls it first), so a re-entrant
         // process.exit() from an exit handler does not re-arm the trap.
-        // worker-thread only; `vm` is read here on the same thread
-        // that publishes/unpublishes it, so no lock is needed for the load.
         let vm_ptr = self.vm_ptr();
         if !vm_ptr.is_null() {
-            // SAFETY: vm_ptr non-null; jsc_vm is a valid JSC::VM*;
-            // notify_need_termination is documented thread-safe (VMTraps).
-            // Cast through the real opaque `crate::VM`.
-            unsafe {
-                // As for a parent's terminate(): nothing more may enter script
-                // (Node's `Stop(env)` on the worker's own exit).
-                (*vm_ptr).handle().stop();
-                (*(*vm_ptr).jsc_vm.cast_const()).notify_need_termination();
-            }
+            // From an immediate this runs before the turn's poll; the wake is what ends it.
+            // SAFETY: this thread's live VM.
+            unsafe { (*vm_ptr).handle_ref().request_termination() };
         }
     }
 
@@ -1135,11 +1131,10 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            // A termination request landed while building the error: as above.
-            Err(JsError::Terminated) => return,
             Err(JsError::Thrown) => {
-                // Building an error from log messages threw: report that instead.
-                global.report_active_exception_as_unhandled(JsError::Thrown);
+                // The worker's start sequence is its outermost frame: building the error from the
+                // log threw, and that is reported here instead (a termination just stands down).
+                let _ = crate::task::report_error_or_terminate(global, JsError::Thrown);
                 return;
             }
         };
@@ -1148,19 +1143,7 @@ impl WebWorker {
             WebWorker__dispatchError(global, self.messaging_proxy, &mut str, err)
         });
         if let Err(e) = dispatch {
-            // `take_exception` on a `JsError` always returns an Exception
-            // cell; None is unreachable. Do not silently drop the error.
-            let exc = global
-                .take_exception(e)
-                .as_exception(global.vm().as_mut_ptr())
-                .expect("takeException returned non-Exception");
-            // `Exception` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-            // centralised non-null-ZST deref proof (`exc` is non-null per the
-            // `expect` above).
-            let _ = jsc::js_global_object::report_uncaught_exception(
-                global,
-                jsc::Exception::opaque_ref(exc),
-            );
+            let _ = crate::task::report_error_or_terminate(global, e);
         }
     }
 }
@@ -1217,13 +1200,11 @@ fn on_unhandled_rejection(
         },
     );
     if let Err(err) = format_result {
-        match err {
-            JsError::Thrown | JsError::Terminated => {}
-            JsError::OutOfMemory => {
-                let _ = global_object.throw_out_of_memory();
-            }
-        }
-        error_instance = global_object.try_take_exception().unwrap();
+        error_instance = global_object.take_exception(err);
+    }
+    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
+    if error_instance.is_termination_exception() {
+        return;
     }
     jsc::mark_binding();
     // We RETURN through
@@ -1266,20 +1247,8 @@ fn on_unhandled_rejection(
     // second time (a second `workerGlobalScopeDestroyed` → double deref of
     // the proxy's thread-held reference).
     //
-    // Instead, arm the JSC termination trap so any further JS halts at the
-    // next safepoint, and let the stack unwind normally back to `spin()`,
-    // whose loop observes `requested_terminate` and reaches the single
-    // `shutdown()` call at its bottom with no live JSC frames above it. The
-    // promise-rejection path in `spin()` (line ~1044) gets there even sooner:
-    // `uncaught_exception` returns `handled == false`, so `spin()` calls
-    // `return self.shutdown()` directly — same observable ordering.
-    // `vm.jsc_vm` is the worker's live `JSC::VM*` (we just used it via
-    // `global_object`); `notify_need_termination` is documented thread-safe
-    // (VMTraps). The gate closes with it, as for exit()/terminate(): the
-    // native→JS entries still reached this tick refuse rather than run into
-    // the pending termination.
-    vm.handle().stop();
-    vm.jsc_vm().notify_need_termination();
+    // Instead, request the stop as `exit()` does and unwind to `spin()`'s `shutdown()`.
+    vm.handle_ref().request_termination();
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can
@@ -1288,14 +1257,10 @@ fn on_unhandled_rejection(
 /// free it.
 ///
 /// # Safety
-/// `parent` must point at a live `VirtualMachine`. Passed as a raw pointer
-/// (not `&mut`) because when called from `spin()` the WORKER's VM has already
-/// been published under `vm_lock`; the parent / main thread may concurrently
-/// dereference the same allocation in `request_termination`
-/// (`(*vm_ptr).jsc_vm`, `(*vm_ptr).event_loop()`).
-/// A live `&mut VirtualMachine` here would be aliased-&mut UB. Per-use
-/// `(*parent)` derefs keep any autoref scoped to the single expression — the
-/// same pattern `spin()` uses post-publish.
+/// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
+/// pointer (not `&mut`) because callers hold other borrows into the VM (its
+/// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
+/// the single expression.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
@@ -1398,8 +1363,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
     // SAFETY: per fn contract; `global` is a read-only field, and the resolver
     // (`transpiler`) is mutated only on `parent`'s owning thread — both call
     // sites (`create()` on the parent thread, `spin()` on the worker thread)
-    // satisfy that. The cross-thread readers under `vm_lock` never touch
-    // `transpiler`.
+    // satisfy that.
     let global = unsafe { (*parent).global };
     // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
     // owning thread (the caller's thread per fn contract).
@@ -1418,7 +1382,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                     return None;
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown | JsError::Terminated) => {
+                Err(JsError::Thrown) => {
                     *error_message = BunString::static_(b"unexpected exception");
                     return None;
                 }

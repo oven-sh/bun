@@ -243,8 +243,14 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    pub fn finalize(&mut self) {
-        if let Some(task) = self.task.take() {
+    /// # Safety
+    /// `this` must be live and must not be used after the call: the tasklet
+    /// owns this allocation, and if the ref released here was its last one,
+    /// its `deinit` → `clear_sink` frees `*this`.
+    pub unsafe fn finalize(this: *mut Self) {
+        // SAFETY: caller contract; `this` is not touched again after this line.
+        let task = unsafe { (*this).task.take() };
+        if let Some(task) = task {
             // Balances the `ref_()` taken in `start_request_stream` when the
             // assign_to_stream-result handler never ran to release it.
             FetchTasklet::deref(task.as_ptr());
@@ -278,8 +284,9 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn finalize(&mut self) {
-        Self::finalize(self)
+    unsafe fn finalize(this: *mut Self) {
+        // SAFETY: same contract, forwarded.
+        unsafe { Self::finalize(this) }
     }
     fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, global)

@@ -719,7 +719,7 @@ pub extern "C" fn TextDecoder__createForStream(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
     if !this.is_null() {
-        // SAFETY: `this` was returned by `__createForStream` and has not been
+        // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
         unsafe { bun_core::heap::destroy(this) };
     }

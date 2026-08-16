@@ -163,6 +163,61 @@ bun list --trusted
 └── esbuild@0.21.5
 ```
 
+## licenses
+
+List every installed package grouped by license, as read from each package's `package.json` in `node_modules`. Bun lists packages without a `license` field under `Unknown`. Bun marks packages only reachable through `devDependencies` with `(dev)`.
+
+```bash terminal icon="terminal"
+bun pm licenses
+# or
+bun pm licenses ls
+```
+
+```txt
+MIT (2)
+├── path-parse@1.0.6
+└── resolve@1.9.0
+
+Unknown (4)
+├── a-dep@1.0.1 (dev)
+├── no-deps@1.0.0
+├── no-deps@1.0.1
+└── one-dep@1.0.0
+```
+
+| Flag                           | Description                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `--json`                       | Print a JSON object keyed by license                                            |
+| `--long`                       | Also print each package's `author`, `description`, and `homepage`               |
+| `--prod`, `-p`                 | Skip `devDependencies` (same as `--omit=dev`)                                   |
+| `--dev`, `-D`                  | Only list what `devDependencies` pull in                                        |
+| `--omit=<dev\|optional\|peer>` | Skip a dependency type, as with `bun install`                                   |
+| `--filter <pattern>`, `-F`     | Only list dependencies of the matching workspaces ([filter syntax](/pm/filter)) |
+
+```bash terminal icon="terminal"
+bun pm licenses --json --prod
+```
+
+```json
+{
+  "MIT": [
+    {
+      "name": "path-parse",
+      "versions": ["1.0.6"],
+      "paths": ["/home/me/app/node_modules/path-parse"],
+      "license": "MIT",
+      "homepage": "https://github.com/jbgutierrez/path-parse#readme",
+      "author": "Javier Blanco <http://jbgutierrez.info>",
+      "description": "Node.js path.parse() ponyfill"
+    }
+  ]
+}
+```
+
+From a workspace root, Bun lists every workspace's dependencies. From inside a workspace package, Bun lists only that package's dependencies. Use [`bun why`](/pm/cli/why) to find out what pulls in an unexpected package.
+
+Requires both `bun.lock` and `node_modules`. Bun skips packages that are in the lockfile but missing from `node_modules` (e.g. after `bun install --production`) and prints a warning.
+
 ## whoami
 
 Print your npm username. Requires you to be logged in (`bunx npm login`) with credentials in either `bunfig.toml` or `.npmrc`:

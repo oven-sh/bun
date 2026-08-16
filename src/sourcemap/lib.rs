@@ -105,25 +105,11 @@ pub struct ParseUrl {
     pub source_contents: Option<Box<[u8]>>,
 }
 
-pub enum ParseResult {
-    Fail(ParseResultFail),
-    Success(ParsedSourceMap),
-}
+pub type ParseResult = core::result::Result<ParsedSourceMap, ParseFail>;
 
-pub struct ParseResultFail {
+pub struct ParseFail {
     pub loc: bun_ast::Loc,
-    pub(crate) err: crate::Error,
-    pub msg: &'static [u8],
-}
-
-impl Default for ParseResultFail {
-    fn default() -> Self {
-        Self {
-            loc: bun_ast::Loc::default(),
-            err: crate::Error::Unknown,
-            msg: b"",
-        }
-    }
+    pub err: crate::Error,
 }
 
 /// The sourcemap spec says line and column offsets are zero-based.
@@ -980,8 +966,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
                 sort: true,
             },
         ) {
-            ParseResult::Success(x) => x,
-            ParseResult::Fail(fail) => return Err(fail.err),
+            Ok(x) => x,
+            Err(fail) => return Err(fail.err),
         };
 
         if let ParseUrlResultHint::All {

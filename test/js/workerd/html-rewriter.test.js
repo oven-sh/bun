@@ -1,7 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { bunEnv, bunExe, gcTick, tempDir, tls, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gcTick,
+  isASAN,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tls,
+  tmpdirSync,
+} from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -659,6 +670,35 @@ describe("HTMLRewriter", () => {
         const out = path.join(String(dir), "out.html");
         await Bun.write(out, suspending());
         expect(await Bun.file(out).text()).toBe("<p>new</p>");
+      });
+    });
+
+    // Same as above, but the rewriter has already produced output (the `<a>`)
+    // by the time the handler suspends. Nothing is consuming the body yet, so
+    // those bytes sit in the rewriter's own buffer; the stream that `.body` or
+    // `.clone()` creates afterwards has to be seeded with them, or the output
+    // would start at `<p>`. Both consumers are attached before the handler
+    // resumes.
+    describe("output produced before the rewrite suspended reaches a stream created later", () => {
+      const expected = "<a>first</a><p>new</p>";
+      const suspending = () =>
+        new HTMLRewriter()
+          .on("p", {
+            async element(element) {
+              await setImmediatePromise();
+              element.setInnerContent("new");
+            },
+          })
+          .transform(new Response("<a>first</a><p>old</p>"));
+
+      it(".body", async () => {
+        expect(await suspending().body.text()).toBe(expected);
+      });
+
+      it(".clone() seeds both branches", async () => {
+        const res = suspending();
+        const clone = res.clone();
+        expect(await Promise.all([res.text(), clone.text()])).toEqual([expected, expected]);
       });
     });
 
@@ -1860,6 +1900,379 @@ describe("output ByteStream backpressured when a native sink is wired", () => {
     const { body } = await makeParkedStreaming();
     expect(await new Response(body).text()).toBe(streamed);
   });
+
+  it("completes when read with a JS reader", async () => {
+    const { body } = await makeParked();
+    const reader = body.getReader();
+    const chunks = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe(out);
+  });
+});
+
+// A streamed input (file, fetch body, ReadableStream) is paced by the output's
+// reader: `transform()` itself feeds at most one upstream chunk, a reader that
+// falls behind holds the input, and with no reader at all the rewrite still
+// runs to completion from the event loop, one chunk per turn.
+describe("streamed input pacing", () => {
+  const text = Buffer.alloc(1000, "a").toString();
+  const piece = `<p>${text}</p>`;
+  const count = 2500; // ~2.4 MB of input: many upstream chunks
+  const input = Buffer.alloc(piece.length * count, piece).toString();
+  const rewritten = Buffer.alloc((piece.length + 6) * count, `<p x="1">${text}</p>`).toString();
+  // A second document made of different bytes, for the tests below that read
+  // it while another document is being parsed: if that read lands in the
+  // other document's buffer, these bytes show up in its output.
+  const otherText = Buffer.alloc(1000, "b").toString();
+  const otherPiece = `<p>${otherText}</p>`;
+  const otherRewritten = Buffer.alloc((otherPiece.length + 6) * count, `<p x="1">${otherText}</p>`).toString();
+  const dir = tempDirWithFiles("hr-pacing", {
+    "in.html": input,
+    "other.html": Buffer.alloc(otherPiece.length * count, otherPiece).toString(),
+  });
+  const file = path.join(dir, "in.html");
+  const otherFile = path.join(dir, "other.html");
+
+  function transformInput(body = Bun.file(file)) {
+    let seen = 0;
+    const res = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          seen++;
+          e.setAttribute("x", "1");
+        },
+      })
+      .transform(new Response(body));
+    return { res, seen: () => seen };
+  }
+
+  async function readAll(body) {
+    const reader = body.getReader();
+    const chunks = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString();
+  }
+
+  it("transform() feeds at most one upstream chunk before returning", async () => {
+    const { res, seen } = transformInput();
+    expect(seen()).toBeLessThan(count);
+    expect(await res.text()).toBe(rewritten);
+    expect(seen()).toBe(count);
+  });
+
+  // Each consumer that can attach to the still-pending body drives the held
+  // input to the end and gets every byte.
+  const consumers = {
+    ".text()": res => res.text(),
+    ".arrayBuffer()": async res => Buffer.from(await res.arrayBuffer()).toString(),
+    ".blob()": async res => (await res.blob()).text(),
+    ".bytes()": async res => Buffer.from(await res.bytes()).toString(),
+    ".body touched, then .text()": res => (res.body, res.text()),
+    "JS reader": res => readAll(res.body),
+    "for await": async res => {
+      const chunks = [];
+      for await (const chunk of res.body) chunks.push(chunk);
+      return Buffer.concat(chunks).toString();
+    },
+    "textStream()": async res => {
+      let out = "";
+      for await (const s of res.textStream()) out += s;
+      return out;
+    },
+    "new Response(res.body).text()": res => new Response(res.body).text(),
+    "second HTMLRewriter": res => new HTMLRewriter().transform(res).text(),
+    ".clone()": async res => {
+      const clone = res.clone();
+      const [a, b] = await Promise.all([clone.text(), res.text()]);
+      expect(a).toBe(b);
+      return b;
+    },
+    "Bun.write(file, res)": async res => {
+      const out = path.join(dir, `out-${Math.random().toString(36).slice(2)}.html`);
+      await Bun.write(out, res);
+      return Bun.file(out).text();
+    },
+    "returned from Bun.serve": async res => {
+      await using server = Bun.serve({ port: 0, fetch: () => res });
+      return await (await fetch(server.url)).text();
+    },
+    "res.body returned from Bun.serve": async res => {
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(res.body) });
+      return await (await fetch(server.url)).text();
+    },
+    "Bun.spawn stdin": async res => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+        env: bunEnv,
+        stdin: res,
+        stdout: "pipe",
+      });
+      return await proc.stdout.text();
+    },
+  };
+  it.each(Object.keys(consumers))("held file input completes via %s", async name => {
+    const { res, seen } = transformInput();
+    expect(await consumers[name](res)).toBe(rewritten);
+    expect(seen()).toBe(count);
+  });
+
+  it("held fetch() input completes via a JS reader", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(file)) });
+    const { res, seen } = transformInput((await fetch(server.url)).body);
+    expect(await readAll(res.body)).toBe(rewritten);
+    expect(seen()).toBe(count);
+  });
+
+  // Progress is driven by the reader's pulls: one read yields one chunk and
+  // leaves the rest of the document unread until the next.
+  it("a locked reader paces the input by its reads", async () => {
+    const { res, seen } = transformInput();
+    const reader = res.body.getReader();
+    const first = await reader.read();
+    const held = seen();
+    expect(held).toBeLessThan(count);
+    // Locked but not reading: give the loop real work to turn on and check the input did not advance meanwhile.
+    // (Windows reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.)
+    expect((await Bun.file(otherFile).bytes()).length).toBe(otherPiece.length * count);
+    expect(seen() - held).toBeLessThanOrEqual(isWindows ? (256 * 1024) / piece.length : 0);
+    const second = await reader.read();
+    expect(seen()).toBeGreaterThan(held);
+    expect(seen()).toBeLessThan(count);
+    reader.releaseLock();
+    const rest = await readAll(res.body);
+    expect(Buffer.concat([first.value, second.value]).toString() + rest).toBe(rewritten);
+    expect(seen()).toBe(count);
+  });
+
+  // With nothing reading the output the rewrite is a side effect the caller is
+  // waiting on: it must still run every handler, finish, and let the process
+  // exit — for a file (paced from the event loop) and for a fetch() body
+  // (whose connection must not be parked forever).
+  it.each(["file", "fetch", "fetch, .body touched"])("an unread transform over a %s runs to completion", async kind => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file(file)) });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let n = 0, ended = false;
+         const input = ${kind === "file"} ? Bun.file(process.argv[1]) : (await fetch(process.argv[2])).body;
+         const res = new HTMLRewriter().on("p", { element() { n++; } }).onDocument({ end() { ended = true; } }).transform(new Response(input));
+         if (${kind === "fetch, .body touched"}) res.body;
+         const fed = n;
+         process.on("exit", () => console.log(JSON.stringify({ heldAtReturn: fed < ${count}, n, ended })));`,
+        file,
+        server.url.href,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ heldAtReturn: true, n: count, ended: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // The whole document arrives in the first read: it finishes with that read
+  // however large its output — inside `transform()` where regular-file reads
+  // are synchronous (POSIX), on the read's completion otherwise — so the body
+  // is already materialized for consumers that need that (Content-Length,
+  // static routes) without anything reading it.
+  it("a document that arrives in one chunk finishes with that chunk", async () => {
+    const small = path.join(dir, "small.html");
+    await Bun.write(small, Buffer.alloc(12 * 4000, "<p>hello</p>").toString());
+    let ended = false;
+    const res = new HTMLRewriter()
+      .on("p", { element: e => void e.setAttribute("x", "1") })
+      .onDocument({ end: () => void (ended = true) })
+      .transform(new Response(Bun.file(small)));
+    if (!isWindows) expect(ended).toBe(true);
+    while (!ended) await setImmediatePromise();
+    await using server = Bun.serve({ port: 0, fetch: () => res });
+    const served = await fetch(server.url);
+    expect(served.headers.get("content-length")).toBe(String(18 * 4000));
+    expect(await served.text()).toBe(Buffer.alloc(18 * 4000, '<p x="1">hello</p>').toString());
+  });
+
+  it(".blob() keeps the response's content type", async () => {
+    const res = new HTMLRewriter().transform(
+      new Response(Bun.file(file), { headers: { "content-type": "text/html" } }),
+    );
+    expect((await res.blob()).type).toBe("text/html;charset=utf-8");
+  });
+
+  // The outer document is being parsed out of the read buffer when the handler
+  // starts a second file read; the two must not share it.
+  it("a handler may consume another held transform", async () => {
+    const other = transformInput().res;
+    let inner;
+    const outer = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          e.setAttribute("x", "1");
+          inner ??= other.text();
+        },
+      })
+      .transform(new Response(Bun.file(file)));
+    expect(await outer.text()).toBe(rewritten);
+    expect(await inner).toBe(rewritten);
+  });
+
+  // Starting a transform inside the handler and reading it are two reads
+  // nested in the outer one, which still has its document in the read buffer:
+  // the second nested read must be kept out of it just like the first.
+  it("a handler may transform and read another file", async () => {
+    let inner;
+    const outer = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          e.setAttribute("x", "1");
+          inner ??= transformInput(Bun.file(otherFile)).res.text();
+        },
+      })
+      .transform(new Response(Bun.file(file)));
+    expect(await outer.text()).toBe(rewritten);
+    expect(await inner).toBe(otherRewritten);
+  });
+
+  // Same, with the outer document arriving on a pipe (the child's stdin): a
+  // pipe is read by a different loop than a regular file, out of the same
+  // buffer.
+  it("a handler may transform and read another file while its document arrives on stdin", async () => {
+    const pieces = 64;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const attr = { element: e => void e.setAttribute("x", "1") };
+         let inner;
+         const outer = new HTMLRewriter()
+           .on("p", {
+             element(e) {
+               attr.element(e);
+               inner ??= new HTMLRewriter().on("p", attr).transform(new Response(Bun.file(process.argv[1]))).text();
+             },
+           })
+           .transform(new Response(Bun.stdin));
+         const out = await outer.text();
+         const innerText = await inner;
+         const expectedInner = await new HTMLRewriter().on("p", attr).transform(new Response(await Bun.file(process.argv[1]).bytes())).text();
+         console.log(JSON.stringify({ out, innerMatches: innerText === expectedInner, innerLength: innerText.length }));`,
+        otherFile,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(Buffer.alloc(piece.length * pieces, piece));
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      out: Buffer.alloc((piece.length + 6) * pieces, `<p x="1">${text}</p>`).toString(),
+      innerMatches: true,
+      innerLength: otherRewritten.length,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Same hazard with the other user of that read buffer: readFileSync reads
+  // the file into it before deciding whether it needs to stat. Covers both a
+  // regular-file input and a pipe (stdin of a child).
+  describe("a handler may call readFileSync", () => {
+    const otherContent = Buffer.alloc(4096, "Z").toString();
+    const otherTxt = path.join(dir, "other.txt");
+    beforeAll(() => fs.writeFileSync(otherTxt, otherContent));
+
+    it("while the input is a file", async () => {
+      let intactInnerReads = 0;
+      const res = new HTMLRewriter()
+        .on("p", {
+          element(e) {
+            e.setAttribute("x", "1");
+            if (fs.readFileSync(otherTxt, "utf8") === otherContent) intactInnerReads++;
+          },
+        })
+        .transform(new Response(Bun.file(file)));
+      expect(await res.text()).toBe(rewritten);
+      expect(intactInnerReads).toBe(count);
+    });
+
+    it("while the input is a pipe", async () => {
+      const pieces = 64;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { readFileSync } from "fs";
+           const otherContent = Buffer.alloc(4096, "Z").toString();
+           const res = new HTMLRewriter()
+             .on("p", {
+               element(e) {
+                 e.setAttribute("x", "1");
+                 if (readFileSync(process.argv[1], "utf8") !== otherContent) throw new Error("inner read corrupted");
+               },
+             })
+             .transform(new Response(Bun.stdin));
+           process.stdout.write(await res.text());`,
+          otherTxt,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write(Buffer.alloc(piece.length * pieces, piece));
+      proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(Buffer.alloc((piece.length + 6) * pieces, `<p x="1">${text}</p>`).toString());
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Regular-file reads are synchronous on POSIX, so reading ahead of the
+  // consumer would show up as `transform()` itself reading (and buffering the
+  // rewrite of) the entire file. Sparse files keep these cheap.
+  describe.skipIf(isWindows)("large sparse file", () => {
+    // 5 GiB: a body size that does not fit lol_html's `u32::MAX` memory limit.
+    it.concurrent.each([256 * 1024 * 1024, 5 * 1024 * 1024 * 1024])(
+      "of %d bytes: transform() does not read ahead",
+      async size => {
+        using dir = tempDir("hr-sparse", { "in.html": "" });
+        const file = path.join(String(dir), "in.html");
+        fs.truncateSync(file, size);
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const before = process.memoryUsage.rss();
+             const res = new HTMLRewriter().on("a", { element() {} }).transform(new Response(Bun.file(process.argv[1])));
+             const delta = process.memoryUsage.rss() - before;
+             await res.body.cancel();
+             console.log(Math.round(delta / 1024 / 1024));`,
+            file,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        // RSS growth across transform(), in MB: one upstream chunk and its
+        // rewrite, where reading ahead cost more than the file size.
+        expect(parseInt(stdout)).toBeLessThan(isDebug || isASAN ? 96 : 48);
+        expect(exitCode).toBe(0);
+      },
+    );
+  });
 });
 
 const payloads = [
@@ -1946,6 +2359,62 @@ it.each([
   expect(res.bodyUsed).toBe(true);
   expect(() => rw.transform(res)).toThrow("Response body already used");
   await expect(res.text()).rejects.toThrow("Body already used");
+});
+
+// `on()` stores one (selector, handlers) record per call; `transform()` turns
+// the records collected so far into a fresh lol-html rewriter each time.
+describe("on() registrations", () => {
+  it("each selector runs the handlers it was registered with, also after a rejected on()", () => {
+    const rw = new HTMLRewriter();
+    const count = 24;
+    for (let i = 0; i < count; i++) {
+      if (i === count / 2) {
+        // Neither of these may leave a half-registered record behind, or the
+        // registrations after them would pair up with the wrong handlers.
+        expect(() => rw.on("p[", { element() {} })).toThrow(expect.objectContaining({ name: "HTMLRewriterError" }));
+        expect(() => rw.on(`p[data-i="${i}"]`, { element: "not a function" })).toThrow("element must be a function");
+      }
+      if (i % 2 === 0) {
+        rw.on(`p[data-i="${i}"]`, { element: el => el.setInnerContent(`element ${i}`) });
+      } else {
+        rw.on(`p[data-i="${i}"]`, {
+          text(chunk) {
+            if (chunk.text) chunk.replace(`text ${i}`);
+          },
+        });
+      }
+    }
+
+    const indices = Array.from({ length: count }, (_, i) => count - 1 - i);
+    const input = indices.map(i => `<p data-i="${i}">x</p>`).join("");
+    const expected = indices.map(i => `<p data-i="${i}">${i % 2 === 0 ? "element" : "text"} ${i}</p>`).join("");
+    expect(rw.transform(input)).toBe(expected);
+    expect(rw.transform(input)).toBe(expected);
+  });
+
+  it("on() from inside a handler applies to the next transform, not the running one", () => {
+    const rw = new HTMLRewriter();
+    let grown = false;
+    rw.on("div", {
+      element(el) {
+        el.setInnerContent("div");
+        if (!grown) {
+          grown = true;
+          // Many more records than were registered before this transform
+          // started, so the registry has to grow while lol-html is still
+          // calling the handlers registered above and below.
+          for (let i = 0; i < 64; i++) {
+            rw.on("span", { element: span => span.setAttribute("n", String(i)) });
+          }
+        }
+      },
+    });
+    rw.on("span", { element: el => el.setInnerContent("span") });
+
+    const input = "<div>1</div><span>2</span><div>3</div><span>4</span>";
+    expect(rw.transform(input)).toBe("<div>div</div><span>span</span><div>div</div><span>span</span>");
+    expect(rw.transform(input)).toBe('<div>div</div><span n="63">span</span><div>div</div><span n="63">span</span>');
+  });
 });
 
 // lol-html reports an absent attribute with a NULL pointer and a

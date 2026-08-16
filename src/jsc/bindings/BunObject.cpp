@@ -42,6 +42,7 @@
 #include "GeneratedBunObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
+#include "_NativeModule.h"
 #include "JSCookie.h"
 #include "JSCookieMap.h"
 #include "Secrets.h"
@@ -482,7 +483,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(data), length });
+            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(data), length });
             if (str.isNull()) {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -581,7 +582,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen });
+            auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(sliceData), sliceLen });
             if (str.isNull()) {
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
@@ -1151,9 +1152,6 @@ JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 } // namespace Bun
 
 namespace Zig {
-// Every export except `default` is declared without a value: JSC reads `Bun[name]` the first time
-// something binds to it (SyntheticModuleRecord::materializeLazyExport), so importing the module does
-// not run the PropertyCallbacks in bunObjectTable, most of which construct a class or load a builtin.
 JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
@@ -1164,25 +1162,13 @@ JSC::JSObject* generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobal
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = globalObject->bunObject();
 
-    // Static table entries are listed whether or not they have been reified.
+    // Static table entries are listed whether or not they have been reified, so this is the same export
+    // list that reifying them all used to produce, minus the cost of constructing every one of them.
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    exportNames.reserveCapacity(propertyNames.size() + 1);
-    exportValues.ensureCapacity(propertyNames.size() + 1);
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(object);
-
-    for (const auto& propertyName : propertyNames) {
-        if (propertyName == vm.propertyNames->defaultKeyword) [[unlikely]]
-            continue;
-        exportNames.append(propertyName);
-        exportValues.append(JSValue());
-    }
-
-    return object;
+    return exportObjectProperties(vm, object, propertyNames, exportNames, exportValues);
 }
 
 } // namespace Zig

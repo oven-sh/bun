@@ -40,11 +40,11 @@ fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
         .cast::<boring_ssl::ENGINE>()
 }
 
-/// Local helper replacing `input == .blob && input.blob.isBunFile()`.
+/// The synchronous hashers only accept in-memory input, not a `Bun.file()`.
 #[inline]
 fn is_bun_file_blob(input: &BlobOrStringOrBuffer) -> bool {
     match input {
-        BlobOrStringOrBuffer::Blob(b) => b.is_bun_file(),
+        BlobOrStringOrBuffer::Blob(b) => b.needs_to_read_file(),
         _ => false,
     }
 }
@@ -257,7 +257,7 @@ impl CryptoHasher {
             let Some(string_value) = next_eat() else {
                 return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
             };
-            if string_value.is_undefined_or_null() {
+            if !string_value.is_string_literal() {
                 return Err(global.throw_invalid_arguments(format_args!("Expected string")));
             }
             string_value.get_zig_string(global)?
@@ -322,7 +322,7 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let tag: &'static [u8] = match this {
-            CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
+            CryptoHasher::Evp(inner) => inner.get().algorithm().tag_cstr().to_bytes(),
             CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
@@ -1416,17 +1416,6 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if this.digested.get() {
-            return Err(global
-                .err(
-                    ErrorCode::INVALID_STATE,
-                    format_args!(
-                        "{} hasher already digested, create a new instance to update",
-                        H::NAME
-                    ),
-                )
-                .throw());
-        }
         let this_value = callframe.this();
         let input = callframe.argument(0);
         let buffer = match BlobOrStringOrBuffer::from_js(global, input)? {
@@ -1442,6 +1431,17 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
             return Err(global.throw(format_args!(
                 "Bun.file() is not supported here yet (it needs an async version)"
             )));
+        }
+        if this.digested.get() {
+            return Err(global
+                .err(
+                    ErrorCode::INVALID_STATE,
+                    format_args!(
+                        "{} hasher already digested, create a new instance to update",
+                        H::NAME
+                    ),
+                )
+                .throw());
         }
         this.hashing.with_mut(|h| h.update(buffer.slice()));
         Ok(this_value)

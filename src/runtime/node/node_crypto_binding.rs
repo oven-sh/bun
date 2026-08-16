@@ -5,13 +5,12 @@ use core::ffi::{c_char, c_void};
 
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
-use bun_jsc::vm_handle::Borrow;
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
     JsThread, Protected, Strong,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{Flavor, StringObjects, StringOrBuffer};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -127,13 +126,12 @@ macro_rules! extern_crypto_job {
 
                 fn run(
                     this: &mut Self,
-                    vm: &Borrow,
                     done: bun_jsc::Completion<Self>,
                 ) -> Option<bun_jsc::Completion<Self>> {
-                    // SAFETY: the creating global, alive under the borrow; C++
+                    // SAFETY: the creating global, alive under the job's ticket; C++
                     // only threads it through to error reporting state.
                     ctx_run_task(Ctx::opaque_ref(this.ctx.0), unsafe {
-                        this.global.under_borrow(vm)
+                        this.global.under_ticket(done.ticket())
                     });
                     Some(done)
                 }
@@ -147,17 +145,13 @@ macro_rules! extern_crypto_job {
                     // `runFromJS` never sees the callback, so it cannot run user
                     // JS; free the ctx first, then invoke.
                     drop(this);
-                    match produced {
-                        Ok(()) => {
-                            global.bun_vm().event_loop_mut().run_callback(
-                                callback.get(),
-                                global,
-                                JSValue::UNDEFINED,
-                                args.as_slice(),
-                            );
-                        }
-                        Err(err) => global.report_active_exception_as_unhandled(err),
-                    }
+                    produced?;
+                    global.bun_vm().event_loop_mut().run_callback(
+                        callback.get(),
+                        global,
+                        JSValue::UNDEFINED,
+                        args.as_slice(),
+                    );
                     Ok(())
                 }
             }
@@ -210,8 +204,8 @@ pub mod random {
     /// `crypto.randomFill` / `randomBytes` off the JS thread.
     enum RandomFillJob {
         /// `randomBytes`: the ArrayBuffer was allocated by us and nothing else
-        /// can observe it yet, so fill its bytes directly (under the VM borrow
-        /// that keeps it alive).
+        /// can observe it yet, so fill its bytes directly (under the job's ticket,
+        /// which keeps its VM alive).
         InPlace { bytes: JsPtr<u8>, length: usize },
         /// `randomFill`: the caller's buffer stays untouched until completion;
         /// fill `scratch` off-thread and copy it in at `offset` on the JS thread.
@@ -237,18 +231,17 @@ pub mod random {
 
         fn run(
             this: &mut Self,
-            vm: &Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             match this {
                 RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
                 RandomFillJob::InPlace { bytes, length } => {
                     // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
-                    // the borrow keeps the VM (and so that buffer) alive; `length` is
+                    // the ticket keeps the VM (and so that buffer) alive; `length` is
                     // the buffer's own allocation size.
                     let slice = unsafe {
                         core::slice::from_raw_parts_mut(
-                            core::ptr::from_mut(bytes.under_borrow(vm)),
+                            core::ptr::from_mut(bytes.under_ticket(done.ticket())),
                             *length,
                         )
                     };
@@ -742,7 +735,8 @@ pub mod random {
 pub(crate) struct Scrypt {
     // Plain `StringOrBuffer` — NOT `ThreadSafe<_>`. The struct serves both
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
-    // `from_js_maybe_async(.., true)`, adopted into a `ThreadSafe` by the job).
+    // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadSafe`
+    // by the job).
     password: StringOrBuffer,
     salt: StringOrBuffer,
     n: u32,
@@ -775,6 +769,11 @@ mod _impl {
             ] = call_frame.arguments_as_array::<5>();
             let mut maybe_options_value: Option<JSValue> = Some(options_arg);
             let mut callback = callback_arg;
+            let flavor = if IS_ASYNC {
+                Flavor::Async
+            } else {
+                Flavor::Sync
+            };
 
             if IS_ASYNC {
                 if callback.is_undefined() {
@@ -783,8 +782,12 @@ mod _impl {
                 }
             }
 
-            let Some(password) =
-                StringOrBuffer::from_js_maybe_async(global, password_value, IS_ASYNC, true)?
+            let Some(password) = StringOrBuffer::from_js_maybe_async(
+                global,
+                password_value,
+                flavor,
+                StringObjects::Allow,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"password",
@@ -802,8 +805,12 @@ mod _impl {
                 }
             });
 
-            let Some(salt) =
-                StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
+            let Some(salt) = StringOrBuffer::from_js_maybe_async(
+                global,
+                salt_value,
+                flavor,
+                StringObjects::Allow,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"salt",
@@ -1035,8 +1042,8 @@ mod _impl {
     }
 
     impl bun_jsc::Unprotect for Scrypt {
-        /// Release the `protect()` taken by `from_js_maybe_async(.., true)` on the
-        /// async path (via the job's `ThreadSafe`). The sync path never calls this.
+        /// Release the `protect()` taken by `from_js_maybe_async(.., Flavor::Async, ..)`
+        /// on the async path (via the job's `ThreadSafe`). The sync path never calls this.
         #[inline]
         fn unprotect(&mut self) {
             bun_jsc::Unprotect::unprotect(&mut self.password);
@@ -1045,7 +1052,7 @@ mod _impl {
     }
 
     /// `crypto.scrypt` off the JS thread: derives straight into the result
-    /// ArrayBuffer's bytes under the VM borrow that keeps them alive.
+    /// ArrayBuffer's bytes under the job's ticket, which keeps their VM alive.
     pub(crate) struct ScryptJob {
         params: bun_jsc::ThreadSafe<Scrypt>,
         result: JsPtr<[u8]>,
@@ -1064,11 +1071,10 @@ mod _impl {
 
         fn run(
             this: &mut Self,
-            vm: &Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
-            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the borrow.
-            let key = unsafe { this.result.under_borrow(vm) };
+            // SAFETY: `result` is `buf`'s backing store (kept by the Js side); VM alive under the ticket.
+            let key = unsafe { this.result.under_ticket(done.ticket()) };
             this.err = this.params.run_task_impl(key);
             Some(done)
         }
@@ -1117,14 +1123,14 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, true)?;
+        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
 
         Ok(pbkdf2::create_job(global_this, data))
     }
 
     #[bun_jsc::host_fn]
     fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, false)?;
+        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Sync)?;
         // `PBKDF2`'s `StringOrBuffer` fields release on `Drop`, so the local
         // just goes out of scope.
         let mut data = data;
@@ -1132,8 +1138,7 @@ mod _impl {
         // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
         // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
         // (`.toString('hex')`, `.readUInt32BE`, …) depend on it.
-        let out_arraybuffer =
-            JSValue::create_buffer_from_length(global_this, data.length as usize)?;
+        let out_arraybuffer = JSValue::create_buffer_from_length(global_this, data.length)?;
         let Some(mut output) = out_arraybuffer.as_array_buffer(global_this) else {
             return Err(global_this.throw_out_of_memory());
         };

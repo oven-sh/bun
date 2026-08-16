@@ -324,7 +324,14 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     const START_TAG: Option<streams::StartTag> = None;
 
     fn memory_cost(&self) -> usize;
-    fn finalize(&mut self);
+    /// `${abi}__finalize`: the JS cell holding `this` as `m_sinkPtr` is giving
+    /// up its claim on the sink. Raw pointer, not `&mut self`: for
+    /// `ArrayBufferSink`, `FileSink` and `FetchRequestBodySink` that releases
+    /// the allocation, and freeing under a live reference argument is UB.
+    ///
+    /// # Safety
+    /// `this` is the cell's live sink and must not be used after the call.
+    unsafe fn finalize(this: *mut Self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -611,9 +618,14 @@ impl<T: JsSinkType> JSSink<T> {
     }
 
     /// `${abi_name}__finalize` body.
+    ///
+    /// # Safety
+    /// As [`JsSinkType::finalize`].
     #[inline]
-    pub(crate) fn js_finalize(this: &mut T) {
-        this.finalize();
+    pub(crate) unsafe fn js_finalize(this: *mut T) {
+        debug_assert!(!this.is_null());
+        // SAFETY: the caller's contract is the same one.
+        unsafe { T::finalize(this) }
     }
 
     /// `${abi_name}__controllerDetached` body — called from

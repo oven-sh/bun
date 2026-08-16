@@ -93,7 +93,13 @@ declare var CompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "CompressionStream",
   {
     prototype: CompressionStream;
-    new (format: Bun.CompressionFormat): CompressionStream;
+    /**
+     * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
+     * output one input chunk produces per step: the largest piece a reader receives per `read()`,
+     * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
+     * its own size per step.
+     */
+    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): CompressionStream;
   }
 >;
 
@@ -102,7 +108,13 @@ declare var DecompressionStream: Bun.__internal.UseLibDomIfAvailable<
   "DecompressionStream",
   {
     prototype: DecompressionStream;
-    new (format: Bun.CompressionFormat): DecompressionStream;
+    /**
+     * @param strategy Bun extension. Its `highWaterMark` (bytes, default 64 KiB) bounds how much
+     * output one input chunk produces per step: the largest piece a reader receives per `read()`,
+     * and how far decoding runs ahead of a slow reader. A chunk larger than that may produce up to
+     * its own size per step.
+     */
+    new (format: Bun.CompressionFormat, strategy?: { highWaterMark?: number }): DecompressionStream;
   }
 >;
 

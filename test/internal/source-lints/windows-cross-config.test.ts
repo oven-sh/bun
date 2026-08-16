@@ -20,6 +20,8 @@ import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
 
+const repoRoot = join(import.meta.dir, "..", "..", "..");
+
 /** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   return {
@@ -264,7 +266,7 @@ describe("src/bun.ico", () => {
     // file's own encoding is what ships. PNG-in-ICO has been the standard
     // container for 256px icons since Vista; storing the 256x256 frame as a
     // raw BITMAPINFOHEADER DIB instead costs ~258 KB in every bun.exe.
-    const ico = readFileSync(join(import.meta.dir, "..", "..", "src", "bun.ico"));
+    const ico = readFileSync(join(repoRoot, "src", "bun.ico"));
 
     // ICONDIR: reserved must be 0, type 1 = icon.
     expect({ reserved: ico.readUInt16LE(0), type: ico.readUInt16LE(2) }).toEqual({ reserved: 0, type: 1 });

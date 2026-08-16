@@ -378,8 +378,6 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
     const files = opts.files ?? [];
-    // Node's root numbers its FileTest subtests in order, so a file node's
-    // testId and testNumber are both the file's 1-based position in the run.
     let i = 0;
     for (; i < files.length; i++) {
       if (opts.signal?.aborted) break;
@@ -622,9 +620,7 @@ function rebuildError(serialized: any, depth = 0): Error {
   return error;
 }
 
-// Events keep the child's `nesting`: node's FileTest forwards it unchanged, so a
-// file's top-level tests are nesting 0 under run() too; the file node is not
-// their parent.
+// `nesting` is forwarded as-is: the file node is not the parent of the file's tests.
 function republishChildEvent(
   event: { type: string; data: any },
   file: string,

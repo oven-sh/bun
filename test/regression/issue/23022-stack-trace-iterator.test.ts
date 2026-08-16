@@ -27,8 +27,7 @@ test("V8StackTraceIterator handles frames without parentheses (issue #23022)", a
   const stackFrames = err.stack?.split("\n").filter(line => line.trim().startsWith("at"));
   expect(stackFrames?.length).toBeGreaterThan(3);
 
-  // Frames on both sides of the location-less ("at unknown") frame are present;
-  // the placeholder itself is skipped, as it is when printing from live frames.
+  // https://github.com/oven-sh/bun/issues/23022: frames after the `at unknown` placeholder must survive; the placeholder itself is skipped.
   expect(inspected).toContain("at _write");
   expect(inspected.replaceAll("\\", "/")).toContain(import.meta.path.replaceAll("\\", "/"));
   expect(inspected).not.toContain("at unknown");

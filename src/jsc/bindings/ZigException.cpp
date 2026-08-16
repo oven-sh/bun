@@ -643,13 +643,13 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                         }
                     }
                 }
-            }
 
-            except.stack.frames_len = 1;
-            PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
-            except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
-            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-                return;
+                except.stack.frames_len = 1;
+                PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
+                except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
+                if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                    return;
+            }
         }
     }
 }

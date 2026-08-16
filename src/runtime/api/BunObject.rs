@@ -2726,12 +2726,11 @@ pub mod JSZstd {
 
         let level = get_level(global_this, options_val)?;
 
-        let allow_string_object = true;
         if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
             global_this,
             buffer_value,
-            true,
-            allow_string_object,
+            node::Flavor::Async,
+            node::StringObjects::Allow,
         )? {
             return Ok((buffer, options_val, level));
         }
@@ -2807,7 +2806,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `is_async=true` (JS-backed buffer protected); the
+        /// Created with `Flavor::Async` (JS-backed buffer protected); the
         /// [`bun_jsc::ThreadSafe`] releases that with the job.
         pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,

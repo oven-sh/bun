@@ -2914,38 +2914,6 @@ function uploadArtifactsToBuildKite(glob) {
 }
 
 /**
- * @param {string} [glob]
- * @param {string} [step]
- */
-function listArtifactsFromBuildKite(glob, step) {
-  const args = [
-    "artifact",
-    "search",
-    "--no-color",
-    "--allow-empty-results",
-    "--include-retried-jobs",
-    "--format",
-    "%p\n",
-    glob || "*",
-  ];
-  if (step) {
-    args.push("--step", step);
-  }
-  const { error, status, signal, stdout, stderr } = spawnSync("buildkite-agent", args, {
-    stdio: ["ignore", "ignore", "ignore"],
-    encoding: "utf-8",
-    timeout: spawnTimeout,
-    cwd,
-  });
-  if (status === 0) {
-    return stdout?.split("\n").map(line => line.trim()) || [];
-  }
-  const cause = error ?? signal ?? `code ${status}`;
-  console.warn("Failed to list artifacts from BuildKite:", cause, stderr);
-  return [];
-}
-
-/**
  * @param {string} name
  * @param {string} value
  */
@@ -2988,14 +2956,6 @@ function getAnsi(color) {
  */
 function stripAnsi(string) {
   return string.replace(/\u001b\[\d+m/g, "");
-}
-
-/**
- * @param {string} string
- * @returns {string}
- */
-function escapeGitHubAction(string) {
-  return string.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 }
 
 /**

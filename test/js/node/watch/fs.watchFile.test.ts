@@ -186,6 +186,7 @@ describe("fs.watchFile", () => {
       ["Object.create({ persistent: false })", true],
       ["{ persistent: false }", false],
       ["{ persistent: 0 }", false],
+      ['{ persistent: "" }', false],
       ["{ persistent: null }", false],
       ["{ persistent: undefined }", false],
     ];

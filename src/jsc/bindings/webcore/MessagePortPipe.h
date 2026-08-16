@@ -48,6 +48,7 @@ public:
         ContextKnown = 1ull << 3, // ctxId/port are valid for close-notification only (no drains).
         ClosedByRequest = 1ull << 4, // the Closed above came from close(), not from the port being collected.
         Dispatching = 1ull << 5, // drainAndDispatch is mid-dispatch on this side (GC liveness; see hasPendingActivity).
+        YieldPending = 1ull << 6, // budget spent; only the posted after-yield continuation drains (anti-starvation).
 
         QueuedShift = 8,
         QueuedOne = 1ull << QueuedShift,
@@ -92,7 +93,7 @@ private:
 
     void scheduleDrain(uint8_t side, ScriptExecutionContextIdentifier, BunLoopKind);
     void notifyPeerClosed(uint8_t peerSide);
-    void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx);
+    void drainAndDispatch(uint8_t side, ScriptExecutionContextIdentifier expectedCtx, bool fromYieldContinuation = false);
 
     struct Side {
         WTF::Lock lock;

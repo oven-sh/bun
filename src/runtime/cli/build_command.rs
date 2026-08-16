@@ -66,10 +66,7 @@ impl BuildCommand {
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
         let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
-        // `--compile --target=browser` with only HTML entry points produces
-        // self-contained HTML documents rather than an executable. Decided here
-        // because `Transpiler::init` below captures the target and defines, so
-        // the executable-only overrides have to be skipped before it runs.
+        // Decided before `Transpiler::init`, which captures the target and defines.
         let standalone_html = ctx.bundler_options.compile
             && ctx.args.target == Some(api::Target::Browser)
             && !ctx.args.entry_points.is_empty()

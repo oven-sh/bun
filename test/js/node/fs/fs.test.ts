@@ -1496,27 +1496,21 @@ describe("stat family accepts the bigint/throwIfNoEntry values node accepts", ()
   async function fieldTypes(options: any) {
     using dir = tempDir("stat-option-values", { "file.txt": "x" });
     const file = join(String(dir), "file.txt");
-    const fd = openSync(file, "r");
-    const handle = await promises.open(file, "r");
-    try {
-      return {
-        statSync: typeof statSync(file, options)!.size,
-        lstatSync: typeof lstatSync(file, options)!.size,
-        fstatSync: typeof fstatSync(fd, options).size,
-        statfsSync: typeof statfsSync(file, options).bsize,
-        stat: typeof (await statCallback(file, options)).size,
-        lstat: typeof (await lstatCallback(file, options)).size,
-        fstat: typeof (await fstatCallback(fd, options)).size,
-        statfs: typeof (await statfsCallback(file, options)).bsize,
-        "promises.stat": typeof (await promises.stat(file, options)).size,
-        "promises.lstat": typeof (await promises.lstat(file, options)).size,
-        "promises.statfs": typeof (await promises.statfs(file, options)).bsize,
-        "FileHandle.stat": typeof (await handle.stat(options)).size,
-      };
-    } finally {
-      await handle.close();
-      closeSync(fd);
-    }
+    await using handle = await promises.open(file, "r");
+    return {
+      statSync: typeof statSync(file, options)!.size,
+      lstatSync: typeof lstatSync(file, options)!.size,
+      fstatSync: typeof fstatSync(handle.fd, options).size,
+      statfsSync: typeof statfsSync(file, options).bsize,
+      stat: typeof (await statCallback(file, options)).size,
+      lstat: typeof (await lstatCallback(file, options)).size,
+      fstat: typeof (await fstatCallback(handle.fd, options)).size,
+      statfs: typeof (await statfsCallback(file, options)).bsize,
+      "promises.stat": typeof (await promises.stat(file, options)).size,
+      "promises.lstat": typeof (await promises.lstat(file, options)).size,
+      "promises.statfs": typeof (await promises.statfs(file, options)).bsize,
+      "FileHandle.stat": typeof (await handle.stat(options)).size,
+    };
   }
 
   function allEntryPoints(type: "number" | "bigint") {

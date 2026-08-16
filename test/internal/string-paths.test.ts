@@ -2,13 +2,15 @@
 // the resolver's directory cache keys: no trailing separator, except that a
 // drive root keeps its one separator (`C:\`), see
 // `Resolver::assert_valid_cache_key`. Its drive-letter arm only runs on
-// Windows hosts, so it is bound directly through `bun:internal-for-testing`
-// and pinned here on every platform.
+// Windows hosts, and the only thing that observes its result there is that
+// assertion (debug and ASAN builds; see "directory cache key computation at
+// the drive root" in test/js/bun/resolve/resolve.test.ts), so the arm is bound
+// directly through `bun:internal-for-testing` and its results pinned here on
+// every platform. The same table runs under `cargo test -p bun_paths`.
 //
 // It used to stop stripping one byte past `windows_filesystem_root`, so `C:\\`
-// (the root plus one more separator) came back unchanged: a second spelling of
-// the root, which the cache key assertion rejects in debug builds and which
-// names a cache entry nothing else reads or busts in release builds.
+// (the root plus one more separator) came back unchanged and failed the
+// assertion.
 //
 // Namespace import: on a build without the binding, `pathsInternals` is
 // undefined and each test below fails, instead of the file failing to link.

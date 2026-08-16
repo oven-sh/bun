@@ -45,6 +45,11 @@ pub enum BundleV2Result {
 // provides the `CompletionStruct` impl for the forward-decl.
 pub(crate) struct BundleThread<C: Node> {
     pub(crate) waker: Async::Waker,
+    /// Set by the bundle thread instead of `waker` when `Waker::init()` fails
+    /// (`eventfd`/`kqueue` at the open-files limit). Published by
+    /// `ready_event`, read once by `spawn()`, which then reports it and the
+    /// allocation is freed.
+    pub(crate) waker_error: Option<Async::Error>,
     pub(crate) ready_event: ResetEvent,
     // `bun.UnboundedQueue(CompletionStruct, .next)` — intrusive over `C.next`;
     // the field offset is encoded via the `Node` supertrait on `CompletionStruct`.
@@ -125,10 +130,13 @@ impl<C: CompletionStruct> BundleThread<C> {
     // Windows), so zeroing them is *language-level* UB even if never read.
     // `placeholder()` yields a fully-initialized inert value instead.
     // `ready_event.wait()` in `spawn()` blocks until `thread_main` overwrites
-    // it via `ptr::write`, so the placeholder is never observed live.
+    // it via `ptr::write`, so the placeholder is never observed live; if
+    // `thread_main` fails instead, the whole struct is freed and dropping the
+    // placeholder is harmless (it owns nothing).
     pub(crate) fn uninitialized() -> Self {
         Self {
             waker: Async::Waker::placeholder(),
+            waker_error: None,
             queue: UnboundedQueue::new(),
             generation: 0,
             ready_event: ResetEvent::default(),
@@ -138,11 +146,11 @@ impl<C: CompletionStruct> BundleThread<C> {
     /// # Safety
     /// `instance` must be valid for `'static`: after `Ok` the bundle thread accesses it
     /// forever, so callers must only touch it through the raw-pointer methods on this
-    /// impl (e.g. `enqueue`) and never materialize a `&mut Self`. After `Err` no thread
-    /// exists and the caller still owns it.
-    pub(crate) unsafe fn spawn(
-        instance: *mut Self,
-    ) -> std::io::Result<std::thread::JoinHandle<()>> {
+    /// impl (e.g. `enqueue`) and never materialize a `&mut Self`. After `Err` nothing
+    /// refers to `*instance` any more and the caller still owns it: either no thread
+    /// was started, or the one that was has been joined without ever looking at the
+    /// queue.
+    pub(crate) unsafe fn spawn(instance: *mut Self) -> std::io::Result<()> {
         // `std::thread::Builder` (not `std::thread::spawn`) so the spawn error
         // is surfaced to the caller.
         struct SendPtr<T>(*mut T);
@@ -156,15 +164,32 @@ impl<C: CompletionStruct> BundleThread<C> {
                 let ptr = ptr;
                 // SAFETY: caller guarantees `instance` is valid for 'static; `thread_main`
                 // accesses fields only via raw-ptr projection (never `&Self`/`&mut Self`)
-                // and is the sole writer of `waker`/`generation`, so concurrent `enqueue()`
-                // from other threads is sound.
+                // and is the sole writer of `waker`/`waker_error`/`generation`, so
+                // concurrent `enqueue()` from other threads is sound.
                 unsafe { Self::thread_main(ptr.0) }
             })?;
-        // SAFETY: field projection via raw ptr — the spawned thread is concurrently
-        // writing `waker`, so we must not hold `&Self`/`&mut Self` here. `ready_event`
-        // itself is a sync primitive safe to wait on from this thread.
-        unsafe { (*instance).ready_event.wait() };
-        Ok(thread)
+        // SAFETY: field projections via raw ptr — the spawned thread is concurrently
+        // writing `waker` / `waker_error`, so we must not hold `&Self`/`&mut Self` here.
+        // `ready_event` itself is a sync primitive safe to wait on from this thread, and
+        // the bundle thread writes `waker_error` before `set()`, so the read after
+        // `wait()` observes it.
+        let waker_error = unsafe {
+            (*instance).ready_event.wait();
+            (*instance).waker_error
+        };
+        match waker_error {
+            None => {
+                // `std.Thread.detach()` — drop the JoinHandle without joining.
+                drop(thread);
+                Ok(())
+            }
+            Some(err) => {
+                // `thread_main` returns right after `set()`; wait for the thread to be
+                // gone so the caller can free `*instance`.
+                let _ = thread.join();
+                Err(waker_error_to_io(err))
+            }
+        }
     }
 
     /// # Safety
@@ -189,12 +214,27 @@ impl<C: CompletionStruct> BundleThread<C> {
     unsafe fn thread_main(instance: *mut Self) {
         Output::Source::configure_named_thread(zstr!("Bundler"));
 
+        // The waker has to be created on this thread (on Windows it is this
+        // thread's libuv loop), which is why `spawn()` cannot create it up front
+        // and instead learns of a failure through `waker_error`.
+        let waker = match Async::Waker::init() {
+            Ok(waker) => waker,
+            Err(err) => {
+                // SAFETY: `spawn()` is blocked in `ready_event.wait()` and reads
+                // `waker_error` only once that returns; `set()` is this thread's last
+                // access to `*instance`, and `spawn()` joins this thread before the
+                // allocation is freed.
+                unsafe {
+                    core::ptr::addr_of_mut!((*instance).waker_error).write(Some(err));
+                    (*instance).ready_event.set();
+                }
+                return;
+            }
+        };
+
         // SAFETY: `waker` is written exactly once here, before `ready_event.set()`
         // releases any thread that could call `enqueue` (which reads `waker`).
-        unsafe {
-            core::ptr::addr_of_mut!((*instance).waker)
-                .write(Async::Waker::init().unwrap_or_else(|_| panic!("Failed to create waker")));
-        }
+        unsafe { core::ptr::addr_of_mut!((*instance).waker).write(waker) };
 
         // Unblock the calling thread so it can continue.
         // SAFETY: raw-ptr field projection; spawning thread is blocked in `ready_event.wait()`.
@@ -343,6 +383,23 @@ impl<C: CompletionStruct> BundleThread<C> {
     }
 }
 
+/// Carries a failed waker creation out of `spawn()` in the form `singleton::get`
+/// reports: `SystemErrno::from_io_error` recovers the errno for the named
+/// message, the rest fall through to the OS-description path.
+fn waker_error_to_io(err: Async::Error) -> std::io::Error {
+    match err {
+        // The POSIX wakers store the OS's errno and `SystemErrno`'s
+        // discriminants are those values, so the code round-trips. (Windows'
+        // waker cannot fail; its `raw_os_error` space is Win32 codes, so a
+        // `Sys` from it must not take this path.)
+        Async::Error::Sys(errno) => std::io::Error::from_raw_os_error(errno as i32),
+        // No OS code to carry; the log then shows the variant's Display.
+        Async::Error::MachportCreationFailed | Async::Error::Unexpected => {
+            std::io::Error::other(err)
+        }
+    }
+}
+
 /// Lazily-initialized singleton. This is used for `Bun.build` since the
 /// bundle thread may not be needed.
 // Rust forbids generic statics, so the storage is
@@ -364,8 +421,9 @@ pub mod singleton {
 
     static INSTANCE: bun_threading::Guarded<Option<Instance>> = bun_threading::Guarded::new(None);
 
-    /// Starts the bundle thread on first use; a failed spawn leaves the slot empty
-    /// for the next build to retry.
+    /// Starts the bundle thread on first use; a failed start (`pthread_create`,
+    /// or the thread's waker at the open-files limit) leaves the slot empty for
+    /// the next build to retry.
     ///
     /// # Safety
     /// All calls (across the process) must use the same `C`; the static is
@@ -380,14 +438,11 @@ pub mod singleton {
             bun_core::heap::into_raw_nn(Box::new(BundleThread::<C>::uninitialized()));
         // SAFETY: a leaked Box, valid for 'static; passed as a raw pointer so no
         // `&mut` aliases the bundle thread's own access.
-        match unsafe { BundleThread::spawn(bundle_thread.as_ptr()) } {
-            // `std.Thread.detach()` — drop the JoinHandle without joining.
-            Ok(os_thread) => drop(os_thread),
-            Err(err) => {
-                // SAFETY: `spawn` started nothing, so this is still the sole owner.
-                unsafe { bun_core::heap::destroy(bundle_thread.as_ptr()) };
-                return Err(err);
-            }
+        if let Err(err) = unsafe { BundleThread::spawn(bundle_thread.as_ptr()) } {
+            // SAFETY: per `spawn`'s contract no thread refers to the allocation
+            // after `Err`, so this is the sole owner again.
+            unsafe { bun_core::heap::destroy(bundle_thread.as_ptr()) };
+            return Err(err);
         }
         *instance = Some(Instance(bundle_thread.cast::<()>()));
         Ok(bundle_thread.as_ptr())
@@ -427,9 +482,13 @@ pub mod singleton {
         let mut log = bun_ast::Log::init();
         match errno {
             Some(errno) => {
-                // Unix reports an exhausted thread or pid limit as EAGAIN.
+                // Unix reports an exhausted thread or pid limit as EAGAIN;
+                // EMFILE/ENFILE is the waker's eventfd/kqueue at the open-files
+                // limit.
                 let hint = if cfg!(not(windows)) && errno == SystemErrno::EAGAIN {
                     " The process or thread limit may have been reached (ulimit -u, or the container's pids limit)."
+                } else if matches!(errno, SystemErrno::EMFILE | SystemErrno::ENFILE) {
+                    " The open file limit may have been reached (ulimit -n, or the system-wide limit)."
                 } else {
                     ""
                 };

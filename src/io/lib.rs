@@ -2107,9 +2107,11 @@ pub mod waker {
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        /// Process-global `WindowsLoop` singleton. `BackRef` invariant (pointee
-        /// outlives holder) holds trivially: the loop is never freed. `None`
-        /// only between [`placeholder`] and [`init`]; every dispatch path
+        /// The `WindowsLoop` of the thread that called [`init`] (uws keeps one
+        /// per thread, freed when that thread exits). `BackRef` invariant
+        /// (pointee outlives holder) holds because the only user, the bundle
+        /// thread, never exits once it holds a waker. `None` only between
+        /// [`placeholder`] and [`init`]; every dispatch path
         /// (`wake`/`wait`/`uv_loop`) unwraps and would have UB-derefed the old
         /// raw null anyway.
         ///
@@ -2130,7 +2132,9 @@ pub mod waker {
             Self { loop_: None }
         }
 
-        pub fn init() -> crate::Result<Self> {
+        /// Binds the calling thread's loop, so call it on the thread that will
+        /// `wait()`. Same signature as the POSIX wakers; cannot fail today.
+        pub fn init() -> crate::error::Result<Self> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
                     core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())
@@ -2149,15 +2153,14 @@ pub mod waker {
 
         pub fn wait(&self) {
             // Do NOT route through `WindowsLoop::wait(&mut self)`: that would
-            // materialize a `&mut WindowsLoop` over the process-global
-            // singleton for the entire duration of `us_loop_run`/`uv_run`,
-            // and a concurrent `wake()` from a worker thread (BundleThread,
-            // HTTPThread) would alias it — two live `&mut T` to one
+            // materialize a `&mut WindowsLoop` over the loop for the entire
+            // duration of `us_loop_run`/`uv_run`, and a concurrent `wake()`
+            // from another thread would alias it — two live `&mut T` to one
             // allocation is UB under Stacked/Tree Borrows. Call the C entry
             // point with the raw pointer directly so no Rust reference is
             // ever formed.
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton,
-            // non-null after `init()`.
+            // SAFETY: `loop_` is live for as long as this waker is (see the
+            // field doc) and non-null after `init()`.
             unsafe { bun_uws_sys::loop_::us_loop_run(self.loop_ref().as_const_ptr().cast_mut()) };
         }
 
@@ -2166,23 +2169,22 @@ pub mod waker {
             // `&mut WindowsLoop` here would alias the event-loop thread's
             // borrow held across `us_loop_run`. Pass the raw pointer to the
             // thread-safe C wake (`uv_async_send`) instead.
-            // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
-            // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
+            // SAFETY: `loop_` is live for as long as this waker is (see the
+            // field doc); `us_wakeup_loop` → `uv_async_send` is documented
+            // thread-safe.
             unsafe {
                 bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr().cast_mut())
             };
         }
 
-        /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
-        ///
-        /// `loop_` is the process-global singleton from `WindowsLoop::get()`
-        /// (set in [`init`]), so the returned pointer has process lifetime —
-        /// safe to hand to `uv::Timer::init` and friends without an `unsafe`
-        /// block at the call site.
+        /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`. It
+        /// lives as long as `loop_` does (see the field doc), so it is safe to
+        /// hand to `uv::Timer::init` and friends without an `unsafe` block at
+        /// the call site.
         #[inline]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
-            // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
-            // is a `Copy` field set once by C `us_create_loop`.
+            // `BackRef` deref is safe for the same reason; `uv_loop` is a
+            // `Copy` field set once by C `us_create_loop`.
             self.loop_ref().uv_loop
         }
     }

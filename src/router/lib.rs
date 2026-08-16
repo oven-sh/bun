@@ -308,9 +308,7 @@ impl Routes {
         let pathname = strings::trim_left(pathname_, b"/");
 
         if pathname.is_empty() {
-            // "/" is index.js when there is one. Otherwise it can still be
-            // served by a root-level optional catch-all ([[...slug]].js), the
-            // only dynamic pattern that accepts an empty path.
+            // Without an index.js, a root-level `[[...slug]].js` still serves "/".
             if let Some(index) = self.index {
                 return Some(index.as_ptr().cast_const());
             }
@@ -1178,8 +1176,7 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
-                        // A dynamic segment needs a non-empty URL segment: `docs/[page]` does not
-                        // match "docs", and `a/[x]/[y]` does not match "a//b".
+                        // `[x]` takes one non-empty segment: `docs/[x]` serves neither "docs" nor "docs//a".
                         if path_.is_empty() || path_[0] == b'/' {
                             params.clear();
                             return false;

@@ -16,10 +16,8 @@ declare_scope!(FormData, visible);
 
 pub struct FormData {}
 
-// `Encoding` and `AsyncFormData` are JSC-free and live in the lower-tier
-// `bun_core::form_data` so `Body`/`Request`/`Response` can name them without
-// depending on `bun_runtime`. Re-exported here so `crate::webcore::
-// form_data::*` callers see the same nominal types.
+// JSC-free, so they live in the lower-tier `bun_core::form_data`; re-exported
+// here so `form_data::*` callers name the same types.
 pub use bun_core::form_data::{AsyncFormData, Encoding};
 
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it

@@ -121,11 +121,9 @@ impl ByteStream {
         drop(core::mem::take(self));
     }
 
-    /// Seeds the stream with what the producer's `on_start_streaming` handed
-    /// over: the bytes it had already buffered, or its estimate of the total.
-    /// Init-time like [`Self::setup`] (no JS wrapper yet, so `&mut self` is
-    /// sound). Callers drop the body to `Null` on `Aborted` instead of
-    /// realising a stream, so that arm has nothing to seed.
+    /// Seeds the stream from what `on_start_streaming` handed over (buffered
+    /// bytes or a size estimate). Init-time like [`Self::setup`], so `&mut self`
+    /// is sound; callers drop `Aborted` bodies to `Null`, so that arm seeds nothing.
     pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
         match drain_result {
             DrainResult::EstimatedSize(estimated_size) => {

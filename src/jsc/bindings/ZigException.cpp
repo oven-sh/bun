@@ -603,7 +603,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (sourceURL) {
-            if (sourceURL.isString()) {
+            if (sourceURL.isString() && asString(sourceURL)->length()) {
                 except.stack.frames_ptr[0].source_url.deref();
                 except.stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]

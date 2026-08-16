@@ -1,7 +1,7 @@
 // Parsing of the `app` option of `Bun.serve({ app })` (src/runtime/bake/bake_body.rs,
 // UserOptions::from_js). The dev server strips `app.root` off absolute file paths to build
 // route patterns and module IDs, so the value the user passes has to be resolved against
-// the cwd and normalized before it gets there.
+// the working directory and normalized before it gets there.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
@@ -15,16 +15,17 @@ const framework = `{
 }`;
 
 describe("app.root", () => {
-  // Every spelling below names the cwd, which is also what `root` defaults to.
-  test.concurrent.each([".", "./", "routes/..", "<cwd>/"])("routes are served when root is %j", async spelling => {
+  // `root` defaults to the cwd; every other spelling below names that same directory.
+  const spellings: (string | undefined)[] = [undefined, "", ".", "./", "routes/..", "<cwd>/"];
+  test.concurrent.each(spellings)("routes are served when root is %p", async spelling => {
     using dir = tempDir("bake-app-root", {
       ...appFiles,
       "serve.ts": `
-        const root = process.argv[2].replace("<cwd>", process.cwd());
+        const { root } = JSON.parse(process.argv[2]);
         const server = Bun.serve({
           port: 0,
           development: true,
-          app: { framework: ${framework}, root },
+          app: { framework: ${framework}, root: root?.replace("<cwd>", process.cwd()) },
           fetch: () => new Response("fallback"),
         });
         const res = await fetch(server.url);
@@ -34,7 +35,7 @@ describe("app.root", () => {
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "serve.ts", spelling],
+      cmd: [bunExe(), "serve.ts", JSON.stringify({ root: spelling })],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -48,7 +49,7 @@ describe("app.root", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("values that cannot be used as a root are rejected while parsing the options", async () => {
+  test.concurrent("values that cannot be used as a root are rejected while parsing the options", async () => {
     using dir = tempDir("bake-app-root-invalid", {
       ...appFiles,
       "check.ts": `
@@ -96,7 +97,8 @@ describe("app.root", () => {
     expect(JSON.parse(stdout)).toEqual({
       "root: null": "accepted",
       "root: 123": 'The "root" property must be of type string, got number',
-      "root: 100k chars": "'app.root' is too long",
+      // The limit is the platform's path buffer size (1024 on macOS, 4096 on Linux, larger on Windows).
+      "root: 100k chars": expect.stringMatching(/^'app\.root' resolves to a path longer than \d+ bytes$/),
       "plugins[0].name: 123": 'The "name" property must be of type string, got number',
       "serverComponents.serverRuntimeImportSource: 123":
         'The "serverRuntimeImportSource" property must be of type string, got number',

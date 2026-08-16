@@ -250,7 +250,11 @@ fn resolve_root(
         &mut buf[..],
         &[user_root.slice()],
     ) else {
-        return Err(global.throw_invalid_arguments(format_args!("'{}.root' is too long", API_NAME)));
+        return Err(global.throw_invalid_arguments(format_args!(
+            "'{}.root' resolves to a path longer than {} bytes",
+            API_NAME,
+            paths::MAX_PATH_BYTES
+        )));
     };
     Ok(arena_dupe_z(
         arena,

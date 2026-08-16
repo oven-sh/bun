@@ -1,7 +1,6 @@
 [bun_ast]
 
 [bun_bundler]
-"bare_bool_args:src/bundler/Chunk.rs" = 1
 "defaulted_failure:src/bundler/bundle_v2.rs" = 2
 "narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
 
@@ -13,17 +12,14 @@
 [bun_install]
 "defaulted_failure:src/install/npm.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
-"same_match_twice:src/install/PackageManager/install_with_manager.rs" = 1
 
 [bun_js_parser]
 "same_match_twice:src/js_parser/p.rs" = 3
-"sentinel_integer:src/js_parser/parse/parse_entry.rs" = 1
 
 [bun_js_printer]
 "parallel_vecs:src/js_printer/lib.rs" = 1
 
 [bun_jsc]
-"bare_bool_args:src/jsc/ZigStackFrame.rs" = 1
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
 "same_match_twice:src/jsc/VirtualMachine.rs" = 1
 
@@ -34,13 +30,9 @@
 "reimplemented_helper:src/react_compiler/reactive_scopes/propagate_early_returns.rs" = 1
 
 [bun_runtime]
-"bare_bool_args:src/runtime/api.rs" = 2
-"bare_bool_args:src/runtime/dns_jsc/dns.rs" = 1
-"bare_bool_args:src/runtime/node/types.rs" = 4
 "defaulted_failure:src/runtime/ffi/ffi_body.rs" = 1
 "defaulted_failure:src/runtime/server/RequestContext.rs" = 1
 "defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
-"derived_field:src/runtime/test_runner/bun_test.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 32
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
@@ -50,16 +42,11 @@
 "same_match_twice:src/runtime/api/bun/h2_frame_parser.rs" = 1
 "same_match_twice:src/runtime/cli/pack_command.rs" = 1
 "same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2
-"same_match_twice:src/runtime/server/RequestContext.rs" = 4
-"same_match_twice:src/runtime/shell/builtin/cat.rs" = 1
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
 "unchecked_construction:src/runtime/server/mod.rs" = 1
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
-
-[bun_shell_parser]
-"bare_bool_args:src/shell_parser/parse.rs" = 1
 
 [bun_sql_jsc]
 

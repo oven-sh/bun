@@ -1,6 +1,6 @@
 {
   "src/ast/runtime.rs": 1,
-  "src/bun_core/lib.rs": 1,
+  "src/bun_core/lib.rs": 2,
   "src/bun_core/output.rs": 1,
   "src/bun_core_macros/comptime_string_map.rs": 2,
   "src/bundler/Chunk.rs": 2,

@@ -16,8 +16,8 @@ pub mod assert {
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
-    AllowFile, AllowStringObject, BlobOrStringOrBuffer, Dirent, Encoding, FileSystemFlags, IsAsync,
-    PathLike, PathOrBlob, PathOrFileDescriptor, PinBuffers, StringOrBuffer, Valid,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, FileSystemFlags, Flavor, PathLike,
+    PathOrBlob, PathOrFileDescriptor, PinBuffers, StringObjects, StringOrBuffer, Valid,
     VectorArrayBuffer, mode_from_js,
 };
 

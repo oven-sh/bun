@@ -349,6 +349,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// The JS wrapper that owns this socket is being finalized: whatever the
+    /// close below unwinds must not reach back into JS objects.
+    pub fn prepare_for_finalize(&self) {
+        on_socket!(self.socket;
+            connected _s => {},
+            connecting _c => {},
+            detached => {},
+            duplex d => d.abandon_js_side(),
+            pipe _p => {},
+        )
+    }
+
     pub fn shutdown(&self) {
         on_socket!(self.socket;
             connected s => s.shutdown(),
@@ -725,6 +737,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             None,
             ext_size,
             handle.native() as LIBUS_SOCKET_DESCRIPTOR,
+            0,
             is_ipc,
         );
         if raw.is_null() {

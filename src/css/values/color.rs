@@ -405,10 +405,10 @@ impl CssColor {
 
         match token {
             css::Token::UnrestrictedHash(v) | css::Token::IdHash(v) => {
-                let Some((r, g, b, a)) = css::color::parse_hash_color(v) else {
+                let Some(rgba) = css::color::parse_hash_color(v) else {
                     return Err(location.new_unexpected_token_error(token));
                 };
-                Ok(CssColor::Rgba(RGBA::new(r, g, b, a)))
+                Ok(CssColor::Rgba(rgba))
             }
             css::Token::Ident(value) => crate::match_ignore_ascii_case! { value, {
                 b"currentcolor" => Ok(CssColor::CurrentColor),
@@ -1176,10 +1176,20 @@ pub(crate) fn parse_color_function(
 
 bun_core::bool_enum!(pub(crate) LegacySyntax);
 
+/// The channels of an `rgb()` / `rgba()` call, up to but not including the
+/// alpha: 0..=255 in the legacy comma syntax, otherwise 0..=1 (NaN for `none`).
+pub(crate) struct RgbComponents {
+    pub(crate) r: f32,
+    pub(crate) g: f32,
+    pub(crate) b: f32,
+    /// `rgb(0, 0, 0, 0.5)`: the alpha that follows is comma-separated too.
+    pub(crate) is_legacy: LegacySyntax,
+}
+
 pub(crate) fn parse_rgb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
-) -> CssResult<(f32, f32, f32, LegacySyntax)> {
+) -> CssResult<RgbComponents> {
     let red = parser.parse_number_or_percentage(input)?;
 
     let is_legacy_syntax = parser.from.is_none()
@@ -1230,7 +1240,12 @@ pub(crate) fn parse_rgb_components(
     if is_legacy_syntax && (g.is_nan() || b.is_nan()) {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
-    Ok((r, g, b, LegacySyntax::from_bool(is_legacy_syntax)))
+    Ok(RgbComponents {
+        r,
+        g,
+        b,
+        is_legacy: LegacySyntax::from_bool(is_legacy_syntax),
+    })
 }
 
 fn map_gamut<T>(color: T) -> T
@@ -1427,7 +1442,7 @@ fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult
     // https://drafts.csswg.org/css-color-4/#rgb-functions
     input.parse_nested_block(|i| {
         parser.parse_relative::<SRGB, CssColor, _>(i, |i, p| {
-            let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+            let RgbComponents { r, g, b, is_legacy } = parse_rgb_components(i, p)?;
             let alpha = if is_legacy == LegacySyntax::Yes {
                 parse_legacy_alpha(i, p)?
             } else {
@@ -1474,11 +1489,7 @@ pub(crate) fn parse_number_or_percentage(
     input: &mut css::Parser,
     parser: &ComponentParser,
 ) -> CssResult<f32> {
-    let result = parser.parse_number_or_percentage(input)?;
-    Ok(match result {
-        NumberOrPercentage::Number { value } => value,
-        NumberOrPercentage::Percentage { unit_value } => unit_value,
-    })
+    Ok(parser.parse_number_or_percentage(input)?.unit_value())
 }
 
 impl LABColor {
@@ -2530,7 +2541,14 @@ impl HueInterpolationMethod {
     }
 }
 
-fn rectangular_to_polar(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
+/// The channels of a polar lab-form space (`LCH`, `OKLCH`), without alpha.
+struct LchComponents {
+    l: f32,
+    c: f32,
+    h: f32,
+}
+
+fn rectangular_to_polar(l: f32, a: f32, b: f32) -> LchComponents {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L375
 
     let mut h = b.atan2(a) * 180.0 / core::f32::consts::PI;
@@ -2541,7 +2559,7 @@ fn rectangular_to_polar(l: f32, a: f32, b: f32) -> (f32, f32, f32) {
     let c = (a.powi(2) + b.powi(2)).sqrt();
 
     h = h.rem_euclid(360.0);
-    (l, c, h)
+    LchComponents { l, c, h }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2661,59 +2679,43 @@ pub(crate) fn write_predefined(
 
 use bun_core::powf as bun_powf;
 
-fn gam_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+fn gam_srgb_component(c: f32) -> f32 {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L31
-    // convert an array of linear-light sRGB values in the range 0.0-1.0
+    // convert a linear-light sRGB channel in the range 0.0-1.0
     // to gamma corrected form
     // https://en.wikipedia.org/wiki/SRGB
     // Extended transfer function:
     // For negative values, linear portion extends on reflection
     // of axis, then uses reflected pow below that
 
-    fn gam_srgb_component(c: f32) -> f32 {
-        let abs = c.abs();
-        if abs > 0.0031308 {
-            let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-            let x: f32 = bun_powf(abs, 1.0 / 2.4);
-            let y: f32 = 1.055 * x;
-            let z: f32 = y - 0.055;
-            return sign * z;
-        }
-
-        12.92 * c
+    let abs = c.abs();
+    if abs > 0.0031308 {
+        let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
+        let x: f32 = bun_powf(abs, 1.0 / 2.4);
+        let y: f32 = 1.055 * x;
+        let z: f32 = y - 0.055;
+        return sign * z;
     }
 
-    (
-        gam_srgb_component(r),
-        gam_srgb_component(g),
-        gam_srgb_component(b),
-    )
+    12.92 * c
 }
 
-fn lin_srgb(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
+fn lin_srgb_component(c: f32) -> f32 {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L11
-    // convert sRGB values where in-gamut values are in the range [0 - 1]
+    // convert an sRGB channel where in-gamut values are in the range [0 - 1]
     // to linear light (un-companded) form.
     // https://en.wikipedia.org/wiki/SRGB
     // Extended transfer function:
     // for negative values, linear portion is extended on reflection of axis,
     // then reflected power function is used.
 
-    fn lin_srgb_component(c: f32) -> f32 {
-        let abs = c.abs();
-        if abs < 0.04045 {
-            return c / 12.92;
-        }
-
-        let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
-        sign * bun_powf((abs + 0.055) / 1.055, 2.4)
+    let abs = c.abs();
+    if abs < 0.04045 {
+        return c / 12.92;
     }
 
-    (
-        lin_srgb_component(r),
-        lin_srgb_component(g),
-        lin_srgb_component(b),
-    )
+    let sign: f32 = if c < 0.0 { -1.0 } else { 1.0 };
+    sign * bun_powf((abs + 0.055) / 1.055, 2.4)
 }
 
 /// PERF: SIMD?
@@ -2724,12 +2726,19 @@ fn multiply_matrix(m: &[f32; 9], x: f32, y: f32, z: f32) -> (f32, f32, f32) {
     (a, b, c)
 }
 
-fn polar_to_rectangular(l: f32, c: f32, h: f32) -> (f32, f32, f32) {
+/// The channels of a rectangular lab-form space (`LAB`, `OKLAB`), without alpha.
+struct LabComponents {
+    l: f32,
+    a: f32,
+    b: f32,
+}
+
+fn polar_to_rectangular(l: f32, c: f32, h: f32) -> LabComponents {
     // https://github.com/w3c/csswg-drafts/blob/fba005e2ce9bcac55b49e4aa19b87208b3a0631e/css-color-4/conversions.js#L385
 
     let a = c * (h * core::f32::consts::PI / 180.0).cos();
     let b = c * (h * core::f32::consts::PI / 180.0).sin();
-    (l, a, b)
+    LabComponents { l, a, b }
 }
 
 const D50: [f32; 3] = [
@@ -2770,7 +2779,7 @@ impl From<HWB> for RGBA {
 impl From<LAB> for LCH {
     fn from(lab_: LAB) -> LCH {
         let lab = lab_.resolve_missing();
-        let (l, c, h) = rectangular_to_polar(lab.l, lab.a, lab.b);
+        let LchComponents { l, c, h } = rectangular_to_polar(lab.l, lab.a, lab.b);
         LCH {
             l,
             c,
@@ -2828,11 +2837,10 @@ impl From<LAB> for XYZd50 {
 impl From<SRGB> for SRGBLinear {
     fn from(rgb: SRGB) -> SRGBLinear {
         let srgb = rgb.resolve_missing();
-        let (r, g, b) = lin_srgb(srgb.r, srgb.g, srgb.b);
         SRGBLinear {
-            r,
-            g,
-            b,
+            r: lin_srgb_component(srgb.r),
+            g: lin_srgb_component(srgb.g),
+            b: lin_srgb_component(srgb.b),
             alpha: srgb.alpha,
         }
     }
@@ -2954,11 +2962,10 @@ impl From<SRGBLinear> for PredefinedColor {
 impl From<SRGBLinear> for SRGB {
     fn from(rgb_: SRGBLinear) -> SRGB {
         let rgb = rgb_.resolve_missing();
-        let (r, g, b) = gam_srgb(rgb.r, rgb.g, rgb.b);
         SRGB {
-            r,
-            g,
-            b,
+            r: gam_srgb_component(rgb.r),
+            g: gam_srgb_component(rgb.g),
+            b: gam_srgb_component(rgb.b),
             alpha: rgb.alpha,
         }
     }
@@ -3016,8 +3023,12 @@ impl From<P3> for XYZd65 {
         ];
 
         let p3 = p3_.resolve_missing();
-        let (r, g, b) = lin_srgb(p3.r, p3.g, p3.b);
-        let (x, y, z) = multiply_matrix(&MATRIX, r, g, b);
+        let (x, y, z) = multiply_matrix(
+            &MATRIX,
+            lin_srgb_component(p3.r),
+            lin_srgb_component(p3.g),
+            lin_srgb_component(p3.b),
+        );
         XYZd65 {
             x,
             y,
@@ -3492,12 +3503,12 @@ impl From<XYZd65> for P3 {
         ];
 
         let xyz = xyz_.resolve_missing();
-        let (r1, g1, b1) = multiply_matrix(&MATRIX, xyz.x, xyz.y, xyz.z);
-        let (r, g, b) = gam_srgb(r1, g1, b1); // same as sRGB
+        let (r, g, b) = multiply_matrix(&MATRIX, xyz.x, xyz.y, xyz.z);
+        // display-p3 uses the sRGB transfer curve.
         P3 {
-            r,
-            g,
-            b,
+            r: gam_srgb_component(r),
+            g: gam_srgb_component(g),
+            b: gam_srgb_component(b),
             alpha: xyz.alpha,
         }
     }
@@ -3507,7 +3518,7 @@ impl From<XYZd65> for P3 {
 impl From<LCH> for LAB {
     fn from(lch_: LCH) -> LAB {
         let lch = lch_.resolve_missing();
-        let (l, a, b) = polar_to_rectangular(lch.l, lch.c, lch.h);
+        let LabComponents { l, a, b } = polar_to_rectangular(lch.l, lch.c, lch.h);
         LAB {
             l,
             a,
@@ -3521,7 +3532,7 @@ impl From<LCH> for LAB {
 impl From<OKLAB> for OKLCH {
     fn from(labb: OKLAB) -> OKLCH {
         let lab = labb.resolve_missing();
-        let (l, c, h) = rectangular_to_polar(lab.l, lab.a, lab.b);
+        let LchComponents { l, c, h } = rectangular_to_polar(lab.l, lab.a, lab.b);
         OKLCH {
             l,
             c,
@@ -3579,7 +3590,7 @@ impl From<OKLAB> for XYZd65 {
 impl From<OKLCH> for OKLAB {
     fn from(lch_: OKLCH) -> OKLAB {
         let lch = lch_.resolve_missing();
-        let (l, a, b) = polar_to_rectangular(lch.l, lch.c, lch.h);
+        let LabComponents { l, a, b } = polar_to_rectangular(lch.l, lch.c, lch.h);
         OKLAB {
             l,
             a,

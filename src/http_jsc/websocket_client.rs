@@ -230,12 +230,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         let had_tunnel = this.proxy_tunnel.get().is_some();
         this.clear_data();
 
-        if SSL {
-            // we still want to send pending SSL buffer + close_notify
-            this.tcp.get().close(uws::CloseKind::Normal);
-        } else {
-            this.tcp.get().close(uws::CloseKind::Failure);
-        }
+        // Failure still sends close_notify best-effort but never waits for the peer's reply.
+        this.tcp.get().close(uws::CloseKind::Failure);
 
         // In tunnel mode tcp is .detached so close() above is a no-op and
         // handle_close() never fires. Mirror what handle_close() does for
@@ -507,7 +503,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return 0;
         }
 
-        self.buffer_payload(data).expect("unreachable");
+        bun_core::handle_oom(self.buffer_payload(data));
         if frame_complete {
             self.receive_body_remain.set(0);
             if is_final {
@@ -524,9 +520,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         kind: Opcode,
         is_final: Fin,
     ) -> usize {
-        if !data.is_empty() && self.buffer_payload(data).is_err() {
-            self.terminate(ErrorCode::Closed);
-            return 0;
+        if !data.is_empty() {
+            bun_core::handle_oom(self.buffer_payload(data));
         }
 
         if data.len() == left_in_fragment {
@@ -1024,9 +1019,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let Ok(writable) = send_buffer.writable_with_size(frame_size) else {
-                return false;
-            };
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(frame_size));
             Copy::copy_compressed(
                 &self.global_this,
                 &mut writable[..frame_size],
@@ -1051,9 +1044,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let writable = send_buffer
-                .writable_with_size(write_len)
-                .expect("unreachable");
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(write_len));
             bytes.copy(
                 &self.global_this,
                 &mut writable[..write_len],
@@ -1765,12 +1756,31 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         if !this.tcp.get().is_closed() {
-            // no need to be .failure we still wanna to send pending SSL buffer + close_notify
-            if SSL {
-                this.tcp.get().close(uws::CloseKind::Normal);
-            } else {
-                this.tcp.get().close(uws::CloseKind::Failure);
-            }
+            this.tcp.get().close(uws::CloseKind::Failure);
+        }
+    }
+
+    /// The owning C++ WebSocket's context is being torn down: forget it (nothing
+    /// here may call back into it or into script) and drop the connection now —
+    /// a raw close on TLS too, since no loop remains to finish a graceful one.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) extern "C" fn drop_connection_without_callback(this_ptr: *mut Self) {
+        log!("dropConnectionWithoutCallback");
+        // SAFETY: called from C++ with a valid `heap::alloc` pointer; the guard
+        // keeps the allocation alive across clear_data()/close re-entry.
+        let _guard = unsafe { bun_ptr::ScopedRef::new(this_ptr) };
+        // SAFETY: as above.
+        let this = unsafe { &*this_ptr };
+
+        let had_cpp = this.outgoing_websocket.take().is_some();
+        this.clear_data();
+        if !this.tcp.get().is_closed() {
+            this.tcp.get().close(uws::CloseKind::Failure);
+        }
+        if had_cpp {
+            // The ref held on behalf of the C++ object.
+            // SAFETY: allocation kept live by the local guard above.
+            unsafe { Self::deref(this_ptr) };
         }
     }
 
@@ -1849,6 +1859,7 @@ macro_rules! export_websocket_client {
         cancel = $cancel:ident,
         close = $close:ident,
         finalize = $finalize:ident,
+        drop_connection_without_callback = $drop_connection_without_callback:ident,
         init = $init:ident,
         init_with_tunnel = $init_with_tunnel:ident,
         memory_cost = $memory_cost:ident,
@@ -1867,6 +1878,10 @@ macro_rules! export_websocket_client {
         #[unsafe(no_mangle)]
         pub extern "C" fn $finalize(this: *mut WebSocket<$ssl>) {
             WebSocket::<$ssl>::finalize(this)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $drop_connection_without_callback(this: *mut WebSocket<$ssl>) {
+            WebSocket::<$ssl>::drop_connection_without_callback(this)
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn $init(
@@ -1939,6 +1954,7 @@ export_websocket_client!(
     cancel = Bun__WebSocketClient__cancel,
     close = Bun__WebSocketClient__close,
     finalize = Bun__WebSocketClient__finalize,
+    drop_connection_without_callback = Bun__WebSocketClient__dropConnectionWithoutCallback,
     init = Bun__WebSocketClient__init,
     init_with_tunnel = Bun__WebSocketClient__initWithTunnel,
     memory_cost = Bun__WebSocketClient__memoryCost,
@@ -1951,6 +1967,7 @@ export_websocket_client!(
     cancel = Bun__WebSocketClientTLS__cancel,
     close = Bun__WebSocketClientTLS__close,
     finalize = Bun__WebSocketClientTLS__finalize,
+    drop_connection_without_callback = Bun__WebSocketClientTLS__dropConnectionWithoutCallback,
     init = Bun__WebSocketClientTLS__init,
     init_with_tunnel = Bun__WebSocketClientTLS__initWithTunnel,
     memory_cost = Bun__WebSocketClientTLS__memoryCost,
@@ -2038,26 +2055,21 @@ pub enum ErrorCode {
     Closed = 14,
     FailedToWrite = 15,
     FailedToConnect = 16,
-    HeadersTooLarge = 17,
     Ended = 18,
     FailedToAllocateMemory = 19,
     ControlFrameIsFragmented = 20,
     InvalidControlFrame = 21,
     CompressionUnsupported = 22,
     InvalidCompressedData = 23,
-    CompressionFailed = 24,
     UnexpectedMaskFromServer = 25,
-    ExpectedControlFrame = 26,
     UnsupportedControlFrame = 27,
     UnexpectedOpcode = 28,
     InvalidUtf8 = 29,
     TlsHandshakeFailed = 30,
     MessageTooBig = 31,
-    ProtocolError = 32,
     // Proxy error codes
     ProxyConnectFailed = 33,
     ProxyAuthenticationRequired = 34,
-    ProxyConnectionRefused = 35,
     ProxyTunnelFailed = 36,
     UnexpectedRsv1 = 37,
 }

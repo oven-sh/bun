@@ -24,10 +24,25 @@ pub struct DateTimeText {
     pub(crate) microsecond: u32,
 }
 
+/// Whether the 10-byte date-only form (`YYYY-MM-DD`) parses, or only the full
+/// date-and-time shape does.
+#[derive(Clone, Copy)]
+enum TimePart {
+    Optional,
+    Required,
+}
+
+/// Which bytes may separate the date from the time.
+#[derive(Clone, Copy)]
+enum Separator {
+    Space,
+    SpaceOrT,
+}
+
 /// MySQL DATE/DATETIME/TIMESTAMP text. Accepts the 10-byte date-only form
 /// (`YYYY-MM-DD`) and either `' '` or `'T'` as the date/time separator.
 pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, AllowDateOnly::Yes, AllowTSeparator::Yes)
+    parse(text, TimePart::Optional, Separator::SpaceOrT)
 }
 
 /// Postgres `timestamp` (WITHOUT TIME ZONE) text. Requires the full
@@ -35,17 +50,10 @@ pub(crate) fn parse_mysql(text: &[u8]) -> Option<DateTimeText> {
 /// separator, `infinity`, BC dates, 5+ digit years) returns `None` so the
 /// caller can fall back to `Date.parse`.
 pub(crate) fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
-    parse(text, AllowDateOnly::No, AllowTSeparator::No)
+    parse(text, TimePart::Required, Separator::Space)
 }
 
-bun_core::bool_enum!(AllowDateOnly);
-bun_core::bool_enum!(AllowTSeparator);
-
-fn parse(
-    text: &[u8],
-    allow_date_only: AllowDateOnly,
-    allow_t_separator: AllowTSeparator,
-) -> Option<DateTimeText> {
+fn parse(text: &[u8], time_part: TimePart, separator: Separator) -> Option<DateTimeText> {
     fn parse_u(bytes: &[u8]) -> Option<u32> {
         if bytes.is_empty() {
             return None;
@@ -70,15 +78,16 @@ fn parse(
         ..Default::default()
     };
     if text.len() == 10 {
-        return if allow_date_only == AllowDateOnly::Yes {
-            Some(result)
-        } else {
-            None
+        return match time_part {
+            TimePart::Optional => Some(result),
+            TimePart::Required => None,
         };
     }
 
-    let separator_ok =
-        text[10] == b' ' || (allow_t_separator == AllowTSeparator::Yes && text[10] == b'T');
+    let separator_ok = match separator {
+        Separator::Space => text[10] == b' ',
+        Separator::SpaceOrT => text[10] == b' ' || text[10] == b'T',
+    };
     if text.len() < 19 || !separator_ok || text[13] != b':' || text[16] != b':' {
         return None;
     }

@@ -323,17 +323,38 @@ declare module "bun" {
       max_lifetime?: number | undefined;
 
       /**
-       * Whether to use TLS/SSL for the connection
+       * Whether to use TLS/SSL for the connection. A string selects the
+       * SSL mode (`"disable"`, `"allow"`, `"prefer"`, `"require"`, `"verify-ca"`, `"verify-full"`).
        * @default false
        */
-      tls?: Bun.BunFile | TLSOptions | boolean | undefined;
+      tls?:
+        | Bun.BunFile
+        | TLSOptions
+        | boolean
+        | "disable"
+        | "allow"
+        | "prefer"
+        | "require"
+        | "verify-ca"
+        | "verify-full"
+        | undefined;
 
       /**
        * Whether to use TLS/SSL for the connection (alias for tls)
        * @deprecated Prefer {@link tls}
        * @default false
        */
-      ssl?: Bun.BunFile | TLSOptions | boolean | undefined;
+      ssl?:
+        | Bun.BunFile
+        | TLSOptions
+        | boolean
+        | "disable"
+        | "allow"
+        | "prefer"
+        | "require"
+        | "verify-ca"
+        | "verify-full"
+        | undefined;
 
       /**
        * Unix domain socket path for connection
@@ -411,6 +432,17 @@ declare module "bun" {
      * ```
      */
     type Options = SQLiteOptions | PostgresOrMySQLOptions;
+
+    /** One registration made by {@link SQL.listen}. */
+    interface ListenSubscription extends AsyncDisposable {
+      readonly channel: string;
+      /**
+       * Remove this registration. Resolves once the channel is no longer
+       * subscribed, or immediately when other registrations on it remain.
+       * Idempotent; `await using` calls it at the end of the scope.
+       */
+      unlisten(): Promise<void>;
+    }
 
     /**
      * A pending SQL query. Extends `Promise`, so it can be awaited, and adds
@@ -914,22 +946,81 @@ declare module "bun" {
      *
      * `sql.unsafe` can be nested inside a safe `sql` expression, for example
      * when only part of the query is unsafe.
+     *
+     * With the SQLite adapter, `values` may also be an object of named
+     * parameters (`:name`, `$name`, or `@name` placeholders). Object keys
+     * keep the prefix unless the connection sets `strict: true`.
      * @example
      * ```ts
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
+     * const row = await sql.unsafe("select * from users where id = :id", { ":id": 1 })
      * ```
      */
-    unsafe<T = any>(string: string, values?: any[]): SQL.Query<T>;
+    unsafe<T = any>(string: string, values?: any[] | Record<string, any>): SQL.Query<T>;
 
     /**
      * Reads a file and runs its contents as a query.
-     * Pass `values` if the file uses positional parameters (`$1`, `$2`, ...)
+     * Pass `values` if the file uses positional parameters (`$1`, `$2`, ...).
+     * With the SQLite adapter, `values` may also be an object of named
+     * parameters (`:name`, `$name`, or `@name` placeholders); keys keep the
+     * prefix unless the connection sets `strict: true`.
      * @example
      * ```ts
      * const result = await sql.file("query.sql", [1, 2, 3]);
      * ```
      */
-    file<T = any>(filename: string, values?: any[]): SQL.Query<T>;
+    file<T = any>(filename: string, values?: any[] | Record<string, any>): SQL.Query<T>;
+
+    /**
+     * Subscribe to a PostgreSQL `LISTEN` channel. Resolves once the server has
+     * acknowledged the subscription, with a handle that removes it again.
+     *
+     * Every call is its own registration: several on one channel share a
+     * single server-side subscription and each receives every notification.
+     * All of them share one dedicated connection, opened by the first
+     * `listen()` and closed when the last registration is removed. If it
+     * drops, it is reconnected with exponential backoff and every channel is
+     * re-subscribed; `onlisten` runs again each time.
+     *
+     * A throwing `onnotify` or `onlisten` is reported as an uncaught exception.
+     *
+     * @param channel - Channel name, quoted for you; at most 63 bytes, the
+     * PostgreSQL identifier limit
+     * @param onnotify - Receives each notification's payload
+     * @param onlisten - Runs once the `LISTEN` is acknowledged, initially and
+     * after every reconnect
+     *
+     * @example
+     * ```ts
+     * const subscription = await sql.listen("events", payload => console.log(payload));
+     * await sql.notify("events", "hello");
+     * await subscription.unlisten();
+     * ```
+     *
+     * @example
+     * ```ts
+     * await using subscription = await sql.listen("events", handle);
+     * ```
+     */
+    listen(
+      channel: string,
+      onnotify: (payload: string) => void,
+      onlisten?: () => void,
+    ): Promise<SQL.ListenSubscription>;
+
+    /**
+     * Send a PostgreSQL `NOTIFY` via `pg_notify`. Runs as a normal query on
+     * this handle, so on a `sql.begin()` transaction it is delivered on commit
+     * and discarded on rollback. Omitting `payload` sends an empty one, like a
+     * bare `NOTIFY channel`.
+     *
+     * @example
+     * ```ts
+     * await sql.notify("events", JSON.stringify({ id: 1 }));
+     * await sql.notify("cache-invalidated");
+     * ```
+     */
+    notify(channel: string, payload?: string): Promise<void>;
   }
 
   /**

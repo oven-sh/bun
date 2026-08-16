@@ -92,13 +92,20 @@ pub struct Flags {
     pub(crate) binary: bool,
     pub(crate) bigint: bool,
     pub(crate) simple: bool,
-    pub(crate) pipelined: bool,
-    /// Set when this request's dispatch incremented the connection's
-    /// `pipelined_requests` / `nonpipelinable_requests` counter; cleared when
-    /// `finish_request` consumes that contribution. Makes the decrement
-    /// idempotent across the three `finish_request` call sites.
-    pub(crate) counted: bool,
+    /// Which connection counter this request's dispatch incremented; reset to
+    /// `None` when `finish_request` consumes that contribution, so the
+    /// decrement is idempotent across its call sites.
+    pub(crate) counter: RequestCounter,
     pub(crate) result_mode: PostgresSQLQueryResultMode,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RequestCounter {
+    None,
+    /// `PostgresSQLConnection::nonpipelinable_requests`
+    Nonpipelinable,
+    /// `PostgresSQLConnection::pipelined_requests`
+    Pipelined,
 }
 
 impl Default for Flags {
@@ -108,8 +115,7 @@ impl Default for Flags {
             binary: false,
             bigint: false,
             simple: false,
-            pipelined: false,
-            counted: false,
+            counter: RequestCounter::None,
             result_mode: PostgresSQLQueryResultMode::Objects,
         }
     }
@@ -493,7 +499,7 @@ impl PostgresSQLQuery {
         }
 
         let this_value = callframe.this();
-        let binding_value = js::binding_get_cached(this_value).unwrap_or(JSValue::ZERO);
+        let binding_value = js::binding_get_cached(this_value).unwrap_or_default();
         let query_str = this.query.to_utf8();
         // query_str: Utf8Slice<'_> — Drop frees.
         let writer = connection.writer();
@@ -549,7 +555,7 @@ impl PostgresSQLQuery {
                 connection
                     .nonpipelinable_requests
                     .set(connection.nonpipelinable_requests.get() + 1);
-                this.update_flags(|f| f.counted = true);
+                this.update_flags(|f| f.counter = RequestCounter::Nonpipelinable);
                 this.status.set(Status::Running);
             } else {
                 this.status.set(Status::Pending);
@@ -685,10 +691,7 @@ impl PostgresSQLQuery {
                                     connection.flags.set(f);
                                 }
                                 this.status.set(Status::Binding);
-                                this.update_flags(|f| {
-                                    f.pipelined = true;
-                                    f.counted = true;
-                                });
+                                this.update_flags(|f| f.counter = RequestCounter::Pipelined);
                                 connection
                                     .pipelined_requests
                                     .set(connection.pipelined_requests.get() + 1);

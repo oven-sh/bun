@@ -6,6 +6,7 @@
 #include "ScriptExecutionContext.h"
 #include "helpers.h"
 #include "JSSocketAddressDTO.h"
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -672,12 +673,20 @@ void JSNodeHTTPServerSocket::onClose()
         EnsureStillAliveScope ensureStillAlive(self);
 
         if (globalObject->scriptExecutionStatus(globalObject, thisObject) == ScriptExecutionStatus::Running) {
+            // Notifying the responses runs script; it may leave an exception (a
+            // termination arriving meanwhile), and nothing is entered on top of one.
+            auto& vm = JSC::getVM(globalObject);
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             notifyResponsesOnClose(thisObject);
-
-            profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
-
-            if (auto* ptr = exception.get()) {
-                exception.clear();
+            if (!scope.exception()) {
+                profiledCall(globalObject, JSC::ProfilingReason::API, callbackObject, callData, thisObject, args, exception);
+                if (auto* ptr = exception.get()) {
+                    exception.clear();
+                    globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
+                }
+            } else if (!vm.hasPendingTerminationException()) {
+                auto* ptr = scope.exception();
+                scope.clearException();
                 globalObject->reportUncaughtExceptionAtEventLoop(globalObject, ptr);
             }
         }

@@ -132,7 +132,6 @@ pub(crate) fn to_have_returned_with(
     } else {
         // Case: No errors, but no match (and multiple returns)
         let list_formatter = mock::SuccessfulReturnsFormatter {
-            global_this: global,
             successful_returns: &successful_returns,
             formatter: core::cell::RefCell::new(&mut list_fmt),
         };

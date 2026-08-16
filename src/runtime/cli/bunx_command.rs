@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use crate::cli::command::ContextData;
 use crate::cli::{self, Command};
-use crate::run_command::{ForceUsingBun, LogErrors, RunCommand as Run};
+use crate::run_command::{ConfigureEnvOptions, ForceUsingBun, RunCommand as Run};
 
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
@@ -19,7 +19,7 @@ use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER, PathBuffer};
-use bun_resolver::fs::{RealFS, StoreFd};
+use bun_resolver::fs::RealFS;
 #[cfg(windows)]
 use bun_sys::FdExt as _;
 use bun_sys::{self, Fd, FdDirExt as _, O};
@@ -751,8 +751,10 @@ impl BunxCommand {
             ctx,
             &mut this_transpiler_slot,
             None,
-            LogErrors::Yes,
-            StoreFd::Yes,
+            ConfigureEnvOptions {
+                log_errors: true,
+                store_root_fd: true,
+            },
         )?;
         // SAFETY: `configure_env_for_run` returned `Ok`, so the slot is fully
         // initialized via `MaybeUninit::write`.

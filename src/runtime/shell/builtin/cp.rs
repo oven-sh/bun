@@ -483,13 +483,15 @@ impl ShellCpTask {
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
     pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
-        // SAFETY: caller contract — `this` is live and exclusively owned by
-        // this thread until `enqueue_to_event_loop` hands it off.
+        // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
+        // completion; `this` is live and ours. The pool side finished (and
+        // dropped its poster) when it handed the copy to that task, so continue
+        // in place rather than bouncing through the concurrent queue again.
         unsafe {
             if let Err(e) = result {
                 (*this).err = Some(ShellErr::new_sys(&e));
             }
-            Self::enqueue_to_event_loop(this);
+            ShellTask::run_from_main_thread::<ShellCpTask>(this);
         }
     }
 
@@ -512,6 +514,7 @@ impl ShellCpTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
+            (*st).arm();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }
@@ -529,9 +532,22 @@ impl ShellCpTask {
                 task,
                 <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
             );
-            if let Some(e) = (*this).run_from_thread_pool_impl() {
+            // Moved out first: on success the copy is handed to a
+            // `ShellAsyncCpTask` whose completion may free `*this` at once.
+            let poster = (*this)
+                .task
+                .poster
+                .take()
+                .expect("shell cp task on the pool is armed");
+            if let Some(e) = (*this).run_from_thread_pool_impl(&poster) {
                 (*this).err = Some(e);
+                (*this).task.poster = Some(poster);
                 Self::enqueue_to_event_loop(this);
+            } else {
+                // The copy now belongs to a `ShellAsyncCpTask` (holding its
+                // own poster, completing on the JS thread via `cp_on_finish`);
+                // this task's pool part is over.
+                drop(poster);
             }
         }
     }
@@ -575,7 +591,10 @@ impl ShellCpTask {
     /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
     /// the node:fs async cp implementation.
-    fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
+    fn run_from_thread_pool_impl(
+        &mut self,
+        poster: &bun_jsc::ConcurrentPoster,
+    ) -> Option<ShellErr> {
         use resolve_path::{Platform, platform};
 
         let mut buf2 = bun_paths::PathBuffer::uninit();
@@ -706,36 +725,14 @@ impl ShellCpTask {
             },
         };
 
-        match self.task.event_loop {
-            EventLoopHandle::Js { .. } => {
-                let vm_ptr = self
-                    .task
-                    .event_loop
-                    .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
-                // SAFETY: `Js` arm always has a live VM (set at interpreter
-                // construction); accessed read-only here for the
-                // global-object handle and event-loop pointer.
-                // Read the raw `global`
-                // field instead of `vm.global()` so the `&mut VirtualMachine`
-                // passed below doesn't overlap a `&JSGlobalObject` borrow.
-                let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };
-                let _ = crate::node::fs::ShellAsyncCpTask::create_with_shell_task(
-                    global,
-                    args,
-                    vm,
-                    std::ptr::from_mut::<ShellCpTask>(self),
-                    crate::node::fs::EnablePromise::No,
-                );
-            }
-            EventLoopHandle::Mini(mini) => {
-                let _ = crate::node::fs::ShellAsyncCpTask::create_mini(
-                    args,
-                    mini.as_ptr(),
-                    std::ptr::from_mut::<ShellCpTask>(self),
-                );
-            }
-        }
+        // Pool thread: hand the copy to an fs.cp task bound to the loop and
+        // poster this shell task captured on its own thread.
+        let _ = crate::node::fs::ShellAsyncCpTask::create_for_shell(
+            args,
+            self.task.event_loop,
+            poster.clone(),
+            std::ptr::from_mut::<ShellCpTask>(self),
+        );
 
         None
     }
@@ -752,6 +749,15 @@ impl ShellCpTask {
 
 impl bun_event_loop::Taskable for ShellCpTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
+    /// A pool completion that will not run: drop the keep-alive and the box
+    /// (nothing else frees an unrun one).
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box the builtin scheduled.
+        unsafe {
+            (*this).task.unref_unrun();
+            drop(bun_core::heap::take(this));
+        }
+    }
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {

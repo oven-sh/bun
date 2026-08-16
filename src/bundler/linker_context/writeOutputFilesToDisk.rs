@@ -10,7 +10,7 @@ use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
-use crate::chunk::{Content, EnableSourceMapShifts, Flags as ChunkFlags, ForceAbsolutePath};
+use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -247,8 +247,8 @@ pub(crate) fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                ForceAbsolutePath::No,
-                EnableSourceMapShifts::No,
+                ReferencePathStyle::ImporterRelative,
+                SourceMapShiftTracking::Disabled,
                 scc,
             ) {
                 Ok(r) => r,
@@ -265,14 +265,9 @@ pub(crate) fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                ForceAbsolutePath::from_bool(
-                    resolver_opts.compile
-                        && !chunk
-                            .flags
-                            .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
-                ),
-                EnableSourceMapShifts::from_bool(
-                    chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None,
+                ReferencePathStyle::for_chunk(chunk, resolver_opts.compile),
+                SourceMapShiftTracking::for_source_map(
+                    chunk.content.sourcemap(c.options.source_maps),
                 ),
             ) {
                 Ok(r) => r,

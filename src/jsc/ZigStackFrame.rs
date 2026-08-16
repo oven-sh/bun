@@ -56,7 +56,7 @@ impl ZigStackFrame {
                 self.source_url_formatter(
                     root_path,
                     origin,
-                    ExcludeLineColumn::Yes,
+                    LineColumn::Exclude,
                     AnsiColors::Disabled
                 )
             )
@@ -94,12 +94,12 @@ impl ZigStackFrame {
         &self,
         root_path: &'a [u8],
         origin: Option<&'a ZigURL<'a>>,
-        exclude_line_column: ExcludeLineColumn,
+        line_column: LineColumn,
         enable_color: AnsiColors,
     ) -> SourceURLFormatter<'a> {
         SourceURLFormatter {
             source_url: self.source_url,
-            exclude_line_column,
+            line_column,
             origin,
             root_path,
             position: self.position,
@@ -109,14 +109,19 @@ impl ZigStackFrame {
     }
 }
 
-bun_core::bool_enum!(pub(crate) ExcludeLineColumn);
+/// Whether [`SourceURLFormatter`] appends the frame's `:line:column` to the source URL.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum LineColumn {
+    Include,
+    Exclude,
+}
 
 pub struct SourceURLFormatter<'a> {
     pub(crate) source_url: BunString,
     pub(crate) position: ZigStackFramePosition,
     pub(crate) enable_color: AnsiColors,
     pub(crate) origin: Option<&'a ZigURL<'a>>,
-    pub(crate) exclude_line_column: ExcludeLineColumn,
+    pub(crate) line_column: LineColumn,
     pub(crate) remapped: bool,
     pub(crate) root_path: &'a [u8],
 }
@@ -124,7 +129,6 @@ pub struct SourceURLFormatter<'a> {
 impl<'a> fmt::Display for SourceURLFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let enable_color = self.enable_color == AnsiColors::Enabled;
-        let exclude_line_column = self.exclude_line_column == ExcludeLineColumn::Yes;
         // `Output::pretty_fmt!` expands to a `&'static str` literal (substituting `<r>`/`<cyan>`/
         // etc. for ANSI sequences at compile time), so it is usable as a `write!` format string.
         if enable_color {
@@ -174,7 +178,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             }
         }
 
-        if !exclude_line_column
+        if self.line_column == LineColumn::Include
             && !source_slice.is_empty()
             && (self.position.line.is_valid() || self.position.column.is_valid())
         {
@@ -189,7 +193,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
             f.write_str(Output::pretty_fmt!("<r>", true))?;
         }
 
-        if !exclude_line_column {
+        if self.line_column == LineColumn::Include {
             if self.position.line.is_valid() && self.position.column.is_valid() {
                 if enable_color {
                     write!(

@@ -850,7 +850,7 @@ impl<'bump> Parser<'bump> {
         let mut exprs = bun_alloc::ArenaVec::new_in(self.alloc);
 
         while if self.inside_subshell.is_none() {
-            !self.match_any_comptime(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
+            !self.match_any(&[TokenTag::Semicolon, TokenTag::Newline, TokenTag::Eof])
         } else {
             !self.match_any(&[
                 TokenTag::Semicolon,
@@ -882,7 +882,7 @@ impl<'bump> Parser<'bump> {
 
     fn parse_binary(&mut self) -> ParseResult<ast::Expr<'bump>> {
         let mut left = self.parse_pipeline()?;
-        while self.match_any_comptime(&[TokenTag::DoubleAmpersand, TokenTag::DoublePipe]) {
+        while self.match_any(&[TokenTag::DoubleAmpersand, TokenTag::DoublePipe]) {
             let op: ast::BinaryOp = {
                 let previous = self.prev().tag();
                 match previous {
@@ -1794,17 +1794,6 @@ impl<'bump> Parser<'bump> {
         false
     }
 
-    fn match_any_comptime(&mut self, toktags: &[TokenTag]) -> bool {
-        let peeked = self.peek().tag();
-        for &tag in toktags {
-            if peeked == tag {
-                let _ = self.advance();
-                return true;
-            }
-        }
-        false
-    }
-
     fn match_any(&mut self, toktags: &[TokenTag]) -> bool {
         let peeked = self.peek().tag();
         for &tag in toktags {
@@ -2197,9 +2186,16 @@ pub(crate) enum RedirectDirection {
     In,
 }
 
-bun_core::bool_enum!(AddDelimiter);
-bun_core::bool_enum!(InNormalSpace);
-bun_core::bool_enum!(InOperator);
+/// Whether `Lexer::break_word` follows the text it flushes with a `Token::Delimit`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AddDelimiter {
+    /// More of the same word follows (`$VAR`, `*`, `{`, a quote).
+    No,
+    /// Only after text that was pending; nothing is pushed otherwise.
+    AfterText,
+    /// Whitespace or an operator: delimits the word even when its last part was already pushed.
+    AfterWord,
+}
 
 #[derive(Clone, Copy)]
 struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
@@ -2412,7 +2408,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             let input = match self.eat() {
                 Some(i) => i,
                 None => {
-                    self.break_word(AddDelimiter::Yes)?;
+                    self.break_word(AddDelimiter::AfterText)?;
                     break;
                 }
             };
@@ -2466,7 +2462,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     let p2 = match self.peek() {
                                         Some(p2) => p2,
                                         None => {
-                                            self.break_word(AddDelimiter::Yes)?;
+                                            self.break_word(AddDelimiter::AfterText)?;
                                             self.tokens.push(Token::DoubleBracketClose);
                                             fell_through = true;
                                             break 'escaped;
@@ -2481,7 +2477,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                             || c2 == u32::from(b'\n')
                                             || c2 == u32::from(b'\t') =>
                                         {
-                                            self.break_word(AddDelimiter::Yes)?;
+                                            self.break_word(AddDelimiter::AfterText)?;
                                             self.tokens.push(Token::DoubleBracketOpen);
                                         }
                                         _ => break 'do_backtrack,
@@ -2510,7 +2506,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                     let p2 = match self.peek() {
                                         Some(p2) => p2,
                                         None => {
-                                            self.break_word(AddDelimiter::Yes)?;
+                                            self.break_word(AddDelimiter::AfterText)?;
                                             self.tokens.push(Token::DoubleBracketClose);
                                             fell_through = true;
                                             break 'escaped;
@@ -2532,7 +2528,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                                 | b'>')
                                         ) =>
                                         {
-                                            self.break_word(AddDelimiter::Yes)?;
+                                            self.break_word(AddDelimiter::AfterText)?;
                                             self.tokens.push(Token::DoubleBracketClose);
                                         }
                                         _ => break 'do_backtrack,
@@ -2559,7 +2555,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             if !whitespace_preceding {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::Yes)?;
+                            self.break_word(AddDelimiter::AfterText)?;
                             self.eat_comment();
                             fell_through = true;
                         }
@@ -2570,7 +2566,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::Yes)?;
+                            self.break_word(AddDelimiter::AfterText)?;
                             self.tokens.push(Token::Semicolon);
                             fell_through = true;
                         }
@@ -2581,11 +2577,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word_impl(
-                                AddDelimiter::Yes,
-                                InNormalSpace::Yes,
-                                InOperator::No,
-                            )?;
+                            self.break_word(AddDelimiter::AfterWord)?;
                             self.tokens.push(Token::Newline);
                             fell_through = true;
                         }
@@ -2651,7 +2643,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
                             if self.in_subshell == Some(SubShellKind::Backtick) {
-                                self.break_word_operator()?;
+                                self.break_word(AddDelimiter::AfterWord)?;
                                 if let Some(toktag) = self.last_tok_tag() {
                                     if toktag != TokenTag::Delimit {
                                         self.tokens.push(Token::Delimit);
@@ -2713,7 +2705,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word(AddDelimiter::Yes)?;
+                            self.break_word(AddDelimiter::AfterText)?;
                             self.eat_subshell(SubShellKind::Normal)?;
                             fell_through = true;
                         }
@@ -2732,7 +2724,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 break 'escaped;
                             }
 
-                            self.break_word(AddDelimiter::Yes)?;
+                            self.break_word(AddDelimiter::AfterText)?;
                             // Command substitution can be put in a word so need to add delimiter
                             if self.in_subshell == Some(SubShellKind::Dollar) {
                                 if let Some(toktag) = self.last_tok_tag() {
@@ -2761,7 +2753,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             }
                             let snapshot = self.make_snapshot();
                             if let Some(redirect) = self.eat_redirect(input) {
-                                self.break_word(AddDelimiter::Yes)?;
+                                self.break_word(AddDelimiter::AfterText)?;
                                 self.tokens.push(Token::Redirect(redirect));
                                 fell_through = true;
                                 break 'escaped;
@@ -2777,7 +2769,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word_operator()?;
+                            self.break_word(AddDelimiter::AfterWord)?;
 
                             let next = match self.peek() {
                                 Some(n) => n,
@@ -2805,7 +2797,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word_operator()?;
+                            self.break_word(AddDelimiter::AfterWord)?;
                             let redirect = self.eat_simple_redirect(RedirectDirection::Out);
                             self.tokens.push(Token::Redirect(redirect));
                             fell_through = true;
@@ -2817,7 +2809,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word_operator()?;
+                            self.break_word(AddDelimiter::AfterWord)?;
                             let redirect = self.eat_simple_redirect(RedirectDirection::In);
                             self.tokens.push(Token::Redirect(redirect));
                             fell_through = true;
@@ -2829,7 +2821,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             {
                                 break 'escaped;
                             }
-                            self.break_word_operator()?;
+                            self.break_word(AddDelimiter::AfterWord)?;
 
                             let next = match self.peek() {
                                 Some(n) => n,
@@ -2892,11 +2884,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                         c if c == u32::from(b' ') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b' ' as usize));
                             if self.chars.state == CharState::Normal {
-                                self.break_word_impl(
-                                    AddDelimiter::Yes,
-                                    InNormalSpace::Yes,
-                                    InOperator::No,
-                                )?;
+                                self.break_word(AddDelimiter::AfterWord)?;
                                 fell_through = true;
                                 break 'escaped;
                             }
@@ -2915,7 +2903,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             else if char == u32::from(b'\n') {
                 debug_assert!(input.escaped);
                 if self.chars.state != CharState::Double {
-                    self.break_word_impl(AddDelimiter::Yes, InNormalSpace::Yes, InOperator::No)?;
+                    self.break_word(AddDelimiter::AfterWord)?;
                 }
                 continue;
             }
@@ -2964,15 +2952,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Ok(())
     }
 
-    fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
-        self.break_word_impl(add_delimiter, InNormalSpace::No, InOperator::No)
-    }
-
-    /// NOTE: this adds a delimiter
-    fn break_word_operator(&mut self) -> Result<(), LexerError> {
-        self.break_word_impl(AddDelimiter::Yes, InNormalSpace::No, InOperator::Yes)
-    }
-
     #[inline]
     fn is_immediately_escaped_quote(&self) -> bool {
         (self.chars.state == CharState::Double
@@ -2995,12 +2974,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     .is_some_and(|p| !p.escaped && p.char == u32::from(b'\'')))
     }
 
-    fn break_word_impl(
-        &mut self,
-        add_delimiter: AddDelimiter,
-        in_normal_space: InNormalSpace,
-        in_operator: InOperator,
-    ) -> Result<(), LexerError> {
+    fn break_word(&mut self, add_delimiter: AddDelimiter) -> Result<(), LexerError> {
         let start: u32 = self.word_start;
         let end: u32 = self.j;
         if start != end || self.is_immediately_escaped_quote() {
@@ -3010,10 +2984,10 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 CharState::Double => Token::DoubleQuotedText(TextRange { start, end }),
             };
             self.tokens.push(tok);
-            if add_delimiter == AddDelimiter::Yes {
+            if add_delimiter != AddDelimiter::No {
                 self.tokens.push(Token::Delimit);
             }
-        } else if (in_normal_space == InNormalSpace::Yes || in_operator == InOperator::Yes)
+        } else if add_delimiter == AddDelimiter::AfterWord
             && !self.tokens.is_empty()
             && match self.tokens[self.tokens.len() - 1].tag() {
                 TokenTag::Var

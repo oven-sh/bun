@@ -685,6 +685,13 @@ pub struct VisitArgsOpts<'a> {
 }
 
 #[derive(Clone, Copy)]
+pub struct VisitDeclOpts {
+    pub(crate) was_anonymous_named_expr: bool,
+    pub(crate) could_be_const_value: bool,
+    pub(crate) could_be_macro: bool,
+}
+
+#[derive(Clone, Copy)]
 pub struct TransposeState {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,

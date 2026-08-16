@@ -11,7 +11,7 @@ use crate::p::{LowerUsingDeclarationsContext, P, ShouldHoistFns};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    is_eval_or_arguments,
+    VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -37,9 +37,6 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
-bun_core::bool_enum!(pub(crate) WasAnonymousNamedExpr);
-bun_core::bool_enum!(pub(crate) CouldBeConstValue);
-bun_core::bool_enum!(pub(crate) CouldBeMacro);
 bun_core::bool_enum!(pub(crate) IsInOrOf);
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -363,11 +360,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let ref_ = id.r#ref;
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
-                                    if req.unwrapped_id != u32::MAX {
-                                        self.imports_to_convert_from_require
-                                            [req.unwrapped_id as usize]
-                                            .namespace
-                                            .ref_ = ref_;
+                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
+                                        let deferred = &mut self.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        deferred.namespace.ref_ = ref_;
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;
@@ -395,12 +391,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
-                    WasAnonymousNamedExpr::from_bool(was_anonymous_named_expr),
-                    CouldBeConstValue::from_bool(was_const && !is_after),
-                    if Self::ALLOW_MACROS {
-                        CouldBeMacro::from_bool(prev_macro_call_count != self.macro_call_count)
-                    } else {
-                        CouldBeMacro::No
+                    VisitDeclOpts {
+                        was_anonymous_named_expr,
+                        could_be_const_value: was_const && !is_after,
+                        could_be_macro: if Self::ALLOW_MACROS {
+                            prev_macro_call_count != self.macro_call_count
+                        } else {
+                            false
+                        },
                     },
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
@@ -421,9 +419,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let is_after = self.vis_scope().is_after_const_local_prefix;
                             self.visit_decl(
                                 decl,
-                                WasAnonymousNamedExpr::No,
-                                CouldBeConstValue::from_bool(was_const && !is_after),
-                                CouldBeMacro::No,
+                                VisitDeclOpts {
+                                    was_anonymous_named_expr: false,
+                                    could_be_const_value: was_const && !is_after,
+                                    could_be_macro: false,
+                                },
                             );
                         } else {
                             continue 'outer;
@@ -482,18 +482,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // output_properties[end] = output_properties[query.i]
-                                    // SAFETY: both indices < object.properties.len; G::Property
-                                    // has no Drop; src/dst may alias when end == query.i.
-                                    unsafe {
-                                        let props_ptr = object.properties.slice_mut().as_mut_ptr();
-                                        core::ptr::copy(
-                                            props_ptr.add(query.i as usize),
-                                            props_ptr.add(end as usize),
-                                            1,
-                                        );
+                                    let i = query.i as usize;
+                                    if i >= end as usize {
+                                        object.properties.slice_mut().swap(i, end as usize);
+                                        end += 1;
                                     }
-                                    end += 1;
                                 }
                             }
                         }
@@ -531,21 +524,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn visit_decl(
-        &mut self,
-        decl: &mut G::Decl,
-        was_anonymous_named_expr: WasAnonymousNamedExpr,
-        could_be_const_value: CouldBeConstValue,
-        could_be_macro: CouldBeMacro,
-    ) {
-        let could_be_macro = could_be_macro == CouldBeMacro::Yes;
+    pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
+        let VisitDeclOpts {
+            was_anonymous_named_expr,
+            could_be_const_value,
+            could_be_macro,
+        } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {
                 let id_ref = id.r#ref;
-                if could_be_const_value == CouldBeConstValue::Yes
-                    || (Self::ALLOW_MACROS && could_be_macro)
-                {
+                if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
                             self.const_values.put(id_ref, val).expect("oom");
@@ -561,7 +550,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 decl.value = Some(self.maybe_keep_expr_symbol_name(
                     decl.value.unwrap(),
                     original_name,
-                    was_anonymous_named_expr == WasAnonymousNamedExpr::Yes,
+                    was_anonymous_named_expr,
                 ));
             }
             BData::BObject(_) | BData::BArray(_) => {

@@ -213,8 +213,14 @@ pub(super) fn blob_payload<'a>(
     Ok(Some(blob.shared_view()))
 }
 
-bun_core::bool_enum!(Tls { Plain, Tls });
-bun_core::bool_enum!(PublishToSelf);
+/// Handler state a `publish*` method reads once up front (`publish_ctx`).
+#[derive(Clone, Copy)]
+struct PublishCtx {
+    /// The server's `uws_app_t*`; `ssl` says which `NewApp<SSL>` it is.
+    app: *mut c_void,
+    ssl: bool,
+    publish_to_self: bool,
+}
 
 impl ServerWebSocket {
     #[inline]
@@ -256,20 +262,20 @@ impl ServerWebSocket {
     // bool flags — net more code than three small orthogonal helpers.
     // ──────────────────────────────────────────────────────────────────────
 
-    /// `(app, ssl, publish_to_self)` from the handler, or `None` when the
-    /// server has been torn down (`handler.app == None`). The "publish() closed"
-    /// log + `0` return is the caller's responsibility (it varies in nothing,
-    /// but keeping it inline preserves the per-method `scoped_log!` callsite).
+    /// The handler state a publish needs, or `None` when the server has been
+    /// torn down (`handler.app == None`). The "publish() closed" log + `0`
+    /// return is the caller's responsibility (it varies in nothing, but keeping
+    /// it inline preserves the per-method `scoped_log!` callsite).
     #[inline]
-    fn publish_ctx(&self) -> Option<(*mut c_void, Tls, PublishToSelf)> {
+    fn publish_ctx(&self) -> Option<PublishCtx> {
         let handler = self.handler();
         let app = handler.app?;
         let flags = handler.flags;
-        Some((
+        Some(PublishCtx {
             app,
-            Tls::from_bool(flags.contains(HandlerFlags::SSL)),
-            PublishToSelf::from_bool(flags.contains(HandlerFlags::PUBLISH_TO_SELF)),
-        ))
+            ssl: flags.contains(HandlerFlags::SSL),
+            publish_to_self: flags.contains(HandlerFlags::PUBLISH_TO_SELF),
+        })
     }
 
     /// Shared `compress` argument validation for publish*/send*. Preserves the
@@ -300,25 +306,16 @@ impl ServerWebSocket {
     #[inline]
     fn do_publish(
         &self,
-        ssl: Tls,
-        app: *mut c_void,
-        publish_to_self: PublishToSelf,
+        ctx: PublishCtx,
         topic: &[u8],
         buffer: &[u8],
         opcode: Opcode,
         compress: Compress,
     ) -> JSValue {
-        let status = if publish_to_self == PublishToSelf::No && !self.is_closed() {
+        let status = if !ctx.publish_to_self && !self.is_closed() {
             self.websocket().publish(topic, buffer, opcode, compress)
         } else {
-            AnyWebSocket::publish_with_options(
-                ssl == Tls::Tls,
-                app,
-                topic,
-                buffer,
-                opcode,
-                compress,
-            )
+            AnyWebSocket::publish_with_options(ctx.ssl, ctx.app, topic, buffer, opcode, compress)
         };
         send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
@@ -391,8 +388,9 @@ impl ServerWebSocket {
         // Both callers route through `on_upgrade`'s `handler.server.is_none()`
         // refusal, so this is normally `Some`; keep the `and_then` as
         // defense-in-depth (option getters between that guard and here can
-        // re-enter JS and `stop(true)`, and `js_value_for_dispatch` still
-        // returns `None` on `Finalized`).
+        // re-enter JS and `stop(true)`, and `js_value_for_dispatch` returns
+        // `None` once the wrapper is `Finalized` or the VM's script gate has
+        // closed).
         if let Some(server_js) = handler.server.and_then(|s| s.js_value_for_dispatch()) {
             js::server_set_cached(this_value, global_object, server_js);
         }
@@ -413,7 +411,7 @@ impl ServerWebSocket {
     /// here without aliasing a `noalias` borrow. `handler`/`vm`/`global_object`
     /// are detached `&'a` borrows of the server config (a separate allocation),
     /// so they may legally span the call.
-    pub(crate) fn on_open(&self, ws: AnyWebSocket) {
+    pub(crate) fn on_open(&self, ws: AnyWebSocket) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "OnOpen");
         self.update_flags(|f| {
             f.set_packed_websocket_ptr(ws.raw() as usize as u64);
@@ -432,16 +430,11 @@ impl ServerWebSocket {
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
         let on_error = handler.on_error;
-        if vm.is_shutting_down() {
-            bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution");
-            ws.close();
-            return;
-        }
 
         self.update_flags(|f| f.set_opened(false));
 
         if on_open_handler.is_empty_or_undefined_or_null() {
-            return;
+            return Ok(());
         }
 
         let this_value = self
@@ -479,18 +472,25 @@ impl ServerWebSocket {
                 this_value.unprotect();
             }
 
-            handler.run_error_callback(on_error, global_object, err_value);
+            let handled = handler.run_error_callback(on_error, global_object, err_value);
             if closed_here {
                 if let Some(server) = server {
                     // May run the idle pass; no `&Handler` borrow is live here.
                     server.on_websocket_closed();
                 }
             }
+            return handled;
         }
+        Ok(())
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub(crate) fn on_message(&self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
+    pub(crate) fn on_message(
+        &self,
+        ws: AnyWebSocket,
+        message: &[u8],
+        opcode: Opcode,
+    ) -> JsResult<()> {
         bun_output::scoped_log!(
             WebSocketServer,
             "onMessage({}): {}",
@@ -500,32 +500,28 @@ impl ServerWebSocket {
         let on_message_handler = self.handler().on_message;
         let on_error = self.handler().on_error;
         if on_message_handler.is_empty_or_undefined_or_null() {
-            return;
+            return Ok(());
         }
         let global_object = self.handler().global_object();
         // This is the start of a task.
         let vm = self.handler().vm();
-        if vm.is_shutting_down() {
-            bun_output::scoped_log!(WebSocketServer, "onMessage called after script execution");
-            ws.close();
-            return;
-        }
 
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let data = match opcode {
+            Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message),
+            Opcode::Binary => self.binary_to_js(global_object, message),
+            _ => unreachable!(),
+        };
+        // Converting the payload threw (or the VM is terminating): there is
+        // no message to deliver; the handler's landing frame folds it.
+        let data = data?;
         let arguments = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            match opcode {
-                Opcode::Text => jsc::bun_string_jsc::create_utf8_for_js(global_object, message)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
-                Opcode::Binary => self
-                    .binary_to_js(global_object, message)
-                    .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
-                _ => unreachable!(),
-            },
+            data,
         ];
 
         let mut corker = Corker {
@@ -540,13 +536,13 @@ impl ServerWebSocket {
         let result = corker.result;
 
         if result.is_empty_or_undefined_or_null() {
-            return;
+            return Ok(());
         }
 
         if let Some(err_value) = result.to_error() {
-            self.handler()
+            return self
+                .handler()
                 .run_error_callback(on_error, global_object, err_value);
-            return;
         }
 
         if let Some(promise) = result.as_any_promise() {
@@ -557,11 +553,12 @@ impl ServerWebSocket {
                     // `isHandledFlag` so this doesn't surface as an
                     // unhandledRejection.
                     let _ = promise.result(global_object.vm());
-                    return;
+                    return Ok(());
                 }
                 _ => {}
             }
         }
+        Ok(())
     }
 
     #[inline]
@@ -570,12 +567,12 @@ impl ServerWebSocket {
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub(crate) fn on_drain(&self, _ws: AnyWebSocket) {
+    pub(crate) fn on_drain(&self, _ws: AnyWebSocket) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onDrain");
         let handler = self.handler();
         let vm = handler.vm();
-        if self.is_closed() || vm.is_shutting_down() {
-            return;
+        if self.is_closed() {
+            return Ok(());
         }
 
         let on_drain = handler.on_drain;
@@ -600,9 +597,10 @@ impl ServerWebSocket {
             let result = corker.result;
 
             if let Some(err_value) = result.to_error() {
-                handler.run_error_callback(on_error, global_object, err_value);
+                handler.run_error_callback(on_error, global_object, err_value)?;
             }
         }
+        Ok(())
     }
 
     fn binary_to_js(&self, global_this: &JSGlobalObject, data: &[u8]) -> JsResult<JSValue> {
@@ -616,74 +614,72 @@ impl ServerWebSocket {
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub(crate) fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) {
+    pub(crate) fn on_ping(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_ping;
         let on_error = handler.on_error;
         let vm = handler.vm();
-        if cb.is_empty_or_undefined_or_null() || vm.is_shutting_down() {
-            return;
+        if cb.is_empty_or_undefined_or_null() {
+            return Ok(());
         }
         let global_this = handler.global_object();
 
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let data = self.binary_to_js(global_this, data)?;
         let args = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            self.binary_to_js(global_this, data)
-                .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
+            data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
-            handler.run_error_callback(on_error, global_this, err);
+            handler.run_error_callback(on_error, global_this, err)?;
         }
+        Ok(())
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
-    pub(crate) fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) {
+    pub(crate) fn on_pong(&self, _ws: AnyWebSocket, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_pong;
         let on_error = handler.on_error;
         if cb.is_empty_or_undefined_or_null() {
-            return;
+            return Ok(());
         }
 
         let global_this = handler.global_object();
         let vm = handler.vm();
 
-        if vm.is_shutting_down() {
-            return;
-        }
-
         // This is the start of a task.
         let _loop_guard = vm.enter_event_loop_scope();
 
+        let data = self.binary_to_js(global_this, data)?;
         let args = [
             self.this_value
                 .get()
                 .try_get()
                 .unwrap_or(JSValue::UNDEFINED),
-            self.binary_to_js(global_this, data)
-                .unwrap_or(JSValue::ZERO), // TODO: properly propagate exception upwards
+            data,
         ];
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
-            handler.run_error_callback(on_error, global_this, err);
+            handler.run_error_callback(on_error, global_this, err)?;
         }
+        Ok(())
     }
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     /// Re-entrant `ws.close()` from the close handler routes through the same
     /// `Cell<Flags>` / `JsCell<JsRef>`, so no `noalias` view is invalidated.
-    pub fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) {
+    pub fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
@@ -735,15 +731,12 @@ impl ServerWebSocket {
         });
 
         let vm = handler.vm();
-        if vm.is_shutting_down() {
-            return;
-        }
 
-        // on_open's error branch closes the socket, landing here with the
-        // termination from its handler still pending. Both branches below
-        // enter JS, which trips assertNoException().
+        // on_open's error branch closes the socket, landing here nested with
+        // the termination from its handler still pending: it belongs to that
+        // frame, so this dispatch neither enters JS over it nor claims it.
         if handler.global_object().has_exception() {
-            return;
+            return Ok(());
         }
 
         // Copy to a stack local before `sig.signal()` re-enters JS: a GC
@@ -773,8 +766,7 @@ impl ServerWebSocket {
                         "onClose error (message) {}",
                         was_not_empty
                     );
-                    handler.run_error_callback(on_error, global_object, err);
-                    return;
+                    return handler.run_error_callback(on_error, global_object, err);
                 }
             };
 
@@ -782,8 +774,7 @@ impl ServerWebSocket {
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
                 let err = global_object.take_exception(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
-                handler.run_error_callback(on_error, global_object, err);
-                return;
+                return handler.run_error_callback(on_error, global_object, err);
             }
         } else if let Some(sig) = signal {
             let _loop_guard = vm.enter_event_loop_scope();
@@ -795,6 +786,7 @@ impl ServerWebSocket {
                 sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
             }
         }
+        Ok(())
     }
 
     pub(crate) fn behavior<ServerType, const SSL: bool>(
@@ -846,7 +838,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -874,27 +866,11 @@ impl ServerWebSocket {
 
         if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
             let buffer = array_buffer.slice();
-            return Ok(self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                buffer,
-                Opcode::Binary,
-                compress,
-            ));
+            return Ok(self.do_publish(ctx, topic_slice.slice(), buffer, Opcode::Binary, compress));
         }
 
         if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
-            let ret = self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                slice,
-                Opcode::Binary,
-                compress,
-            );
+            let ret = self.do_publish(ctx, topic_slice.slice(), slice, Opcode::Binary, compress);
             message_value.ensure_still_alive();
             return Ok(ret);
         }
@@ -905,9 +881,7 @@ impl ServerWebSocket {
             let slice = view.to_slice();
 
             let ret = self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
+                ctx,
                 topic_slice.slice(),
                 slice.slice(),
                 Opcode::Text,
@@ -931,7 +905,7 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -959,9 +933,7 @@ impl ServerWebSocket {
         let slice = view.to_slice();
 
         let ret = self.do_publish(
-            ssl,
-            app,
-            publish_to_self,
+            ctx,
             topic_slice.slice(),
             slice.slice(),
             Opcode::Text,
@@ -986,7 +958,7 @@ impl ServerWebSocket {
             );
         }
 
-        let Some((app, ssl, publish_to_self)) = self.publish_ctx() else {
+        let Some(ctx) = self.publish_ctx() else {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
         };
@@ -1016,9 +988,7 @@ impl ServerWebSocket {
 
         if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
             return Ok(self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
+                ctx,
                 topic_slice.slice(),
                 array_buffer.slice(),
                 Opcode::Binary,
@@ -1027,15 +997,7 @@ impl ServerWebSocket {
         }
 
         if let Some(slice) = blob_payload(global_this, "publishBinary", message_value)? {
-            let ret = self.do_publish(
-                ssl,
-                app,
-                publish_to_self,
-                topic_slice.slice(),
-                slice,
-                Opcode::Binary,
-                compress,
-            );
+            let ret = self.do_publish(ctx, topic_slice.slice(), slice, Opcode::Binary, compress);
             message_value.ensure_still_alive();
             return Ok(ret);
         }
@@ -1602,36 +1564,37 @@ impl WebSocketHandler for ServerWebSocket {
     // R-2: trait keeps `*mut Self` (FFI userdata round-trip needs raw write
     // provenance); the single `&*this` reborrow here is the ONE audited unsafe
     // boundary. Inherent `on_*` take `&self`, so the re-entrant JS dispatch
-    // never stacks a `noalias` `&mut ServerWebSocket`.
+    // never stacks a `noalias` `&mut ServerWebSocket`. These are the uWS
+    // callbacks' landing frames: what a handler left pending is folded here.
     #[inline(always)]
     unsafe fn on_open(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract — `this` is the live user-data slot.
-        unsafe { &*this }.on_open(ws)
+        crate::dispatch::fold(unsafe { &*this }.on_open(ws));
     }
     #[inline(always)]
     unsafe fn on_message(this: *mut Self, ws: AnyWebSocket, message: &[u8], opcode: Opcode) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_message(ws, message, opcode)
+        crate::dispatch::fold(unsafe { &*this }.on_message(ws, message, opcode));
     }
     #[inline(always)]
     unsafe fn on_drain(this: *mut Self, ws: AnyWebSocket) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_drain(ws)
+        crate::dispatch::fold(unsafe { &*this }.on_drain(ws));
     }
     #[inline(always)]
     unsafe fn on_ping(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_ping(ws, message)
+        crate::dispatch::fold(unsafe { &*this }.on_ping(ws, message));
     }
     #[inline(always)]
     unsafe fn on_pong(this: *mut Self, ws: AnyWebSocket, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_pong(ws, message)
+        crate::dispatch::fold(unsafe { &*this }.on_pong(ws, message));
     }
     #[inline(always)]
     unsafe fn on_close(this: *mut Self, ws: AnyWebSocket, code: i32, message: &[u8]) {
         // SAFETY: per trait contract.
-        unsafe { &*this }.on_close(ws, code, message)
+        crate::dispatch::fold(unsafe { &*this }.on_close(ws, code, message));
     }
 }
 

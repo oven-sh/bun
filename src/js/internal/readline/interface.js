@@ -22,7 +22,6 @@ const {
   MathMaxApply,
   NumberIsFinite,
   ObjectDefineProperty,
-  ObjectSetPrototypeOf,
   RegExpPrototypeExec,
   SafeStringIterator,
   StringPrototypeCodePointAt,

@@ -327,6 +327,9 @@ pub mod __s3_multipart;
 #[doc(hidden)]
 #[path = "webcore/s3/simple_request.rs"]
 pub mod __s3_simple_request;
+#[doc(hidden)]
+#[path = "webcore/s3/xml_response.rs"]
+pub mod __s3_xml_response;
 pub mod s3 {
     pub use super::multipart_options_impl as multipart_options;
     pub use super::multipart_options_impl::MultiPartUploadOptions;
@@ -339,6 +342,7 @@ pub mod s3 {
     pub use super::__s3_list_objects as list_objects;
     pub use super::__s3_multipart as multipart;
     pub use super::__s3_simple_request as simple_request;
+    pub(crate) use super::__s3_xml_response as xml_response;
     pub use multipart::MultiPartUpload;
 }
 

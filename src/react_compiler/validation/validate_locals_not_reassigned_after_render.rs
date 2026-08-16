@@ -14,8 +14,7 @@ use crate::hir::visitors::{
     each_instruction_lvalue_ids, each_instruction_value_operand, each_terminal_operand,
 };
 use crate::hir::{
-    Effect, FunctionNesting, HirFunction, Identifier, IdentifierId, IdentifierName,
-    InstructionValue, Place, Type,
+    Effect, HirFunction, Identifier, IdentifierId, IdentifierName, InstructionValue, Place, Type,
 };
 
 /// Validates that local variables cannot be reassigned after render.
@@ -35,8 +34,7 @@ pub(crate) fn validate_locals_not_reassigned_after_render(
         &env.functions,
         env,
         &mut context_variables,
-        FunctionNesting::TopLevel,
-        InAsync::No,
+        Nesting::Outer,
         &mut diagnostics,
     );
 
@@ -80,7 +78,14 @@ fn format_variable_name(place: &Place, identifiers: &[Identifier]) -> String {
     }
 }
 
-bun_core::bool_enum!(InAsync);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Nesting {
+    Outer,
+    FunctionExpression {
+        /// Also set when a function expression enclosing this one is async.
+        is_async: bool,
+    },
+}
 
 /// Recursively checks whether a function (or its dependencies) reassigns a
 /// context variable. Returns the reassigned place if found, or None.
@@ -93,11 +98,14 @@ fn get_context_reassignment(
     functions: &[HirFunction],
     env: &Environment,
     context_variables: &mut HashSet<IdentifierId>,
-    is_function_expression: FunctionNesting,
-    is_async: InAsync,
+    nesting: Nesting,
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) -> Option<Place> {
-    let is_function_expression = is_function_expression == FunctionNesting::Nested;
+    let (is_function_expression, is_async) = match nesting {
+        Nesting::Outer => (false, false),
+        Nesting::FunctionExpression { is_async } => (true, is_async),
+    };
+
     // Maps identifiers to the place that they reassign
     let mut reassigning_functions: IdMap<IdentifierId, Place> = IdMap::new();
 
@@ -109,8 +117,7 @@ fn get_context_reassignment(
                 InstructionValue::FunctionExpression { lowered_func, .. }
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
                     let inner_function = &functions[lowered_func.func.0 as usize];
-                    let inner_is_async =
-                        InAsync::from_bool(is_async == InAsync::Yes || inner_function.is_async);
+                    let inner_is_async = is_async || inner_function.is_async;
 
                     // Recursively check the inner function
                     let mut reassignment = get_context_reassignment(
@@ -120,8 +127,9 @@ fn get_context_reassignment(
                         functions,
                         env,
                         context_variables,
-                        FunctionNesting::Nested,
-                        inner_is_async,
+                        Nesting::FunctionExpression {
+                            is_async: inner_is_async,
+                        },
                         diagnostics,
                     );
 
@@ -140,7 +148,7 @@ fn get_context_reassignment(
 
                     // If the function or its dependencies reassign, handle it
                     if let Some(ref reassignment_place) = reassignment {
-                        if inner_is_async == InAsync::Yes {
+                        if inner_is_async {
                             // Async functions that reassign get an immediate error
                             let variable_name =
                                 format_variable_name(reassignment_place, identifiers);

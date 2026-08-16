@@ -386,7 +386,8 @@ pub mod features {
     pub fn yaml_parse_inc() {
         YAML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
-    /// parsers crate calls `bun_core::analytics::Features::xml_parse_inc()`.
+    /// Bumped by the `Bun.XML` API and `.xml` imports (not by internal users
+    /// of the parser, such as the S3 client).
     #[inline]
     pub fn xml_parse_inc() {
         XML_PARSE.fetch_add(1, core::sync::atomic::Ordering::Relaxed);

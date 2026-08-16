@@ -59,14 +59,41 @@ pub use bun_sys::PlatformIoVec;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_core::bool_enum!(
-    /// Whether the parsed value will be used off the JS thread (threadpool
-    /// task): strings are converted to thread-safe slices and buffers are
-    /// pinned/protected.
-    pub IsAsync
-);
-bun_core::bool_enum!(pub AllowStringObject);
-bun_core::bool_enum!(pub AllowFile);
+/// Whether a call is serviced on the JS thread before it returns (`Sync`) or
+/// handed to the thread pool (`Async`). A few FS operations take a different
+/// path per flavor (`read_file`'s scratch buffer, recursive `readdir`), and
+/// the arguments parsed for an async call must outlive it off the JS thread:
+/// strings are copied or re-referenced thread-safely, buffers are pinned and
+/// `protect()`ed until the owner calls [`bun_jsc::Unprotect::unprotect`].
+#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
+pub enum Flavor {
+    Sync,
+    Async,
+}
+
+/// Whether a `String` wrapper object (`new String("..")`) counts as a string
+/// when parsing a string-or-buffer argument. Node's `fs.writeFile` family
+/// rejects wrapper objects; everything else unwraps them.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum StringObjects {
+    Allow,
+    /// Only primitive strings match; a wrapper object parses as "not a string
+    /// or buffer", so the caller throws its own type error.
+    Reject,
+}
+
+/// What [`BlobOrStringOrBuffer`] parsing does with a file-backed `Blob`
+/// (`Bun.file(..)`). Nothing here reads the file: an allowed one is returned
+/// as [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its `slice()`
+/// is empty.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum FileBlobs {
+    Allow,
+    /// Throws "File blob cannot be used here".
+    Reject,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 
 pub enum BlobOrStringOrBuffer {
     Blob(Box<Blob>),
@@ -101,16 +128,12 @@ impl BlobOrStringOrBuffer {
     pub(crate) fn from_js_maybe_file_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
-        allow_file: AllowFile,
-        is_async: IsAsync,
+        file_blobs: FileBlobs,
+        flavor: Flavor,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         // Check StringOrBuffer first because it's more common and cheaper.
-        let str = match StringOrBuffer::from_js_maybe_async(
-            global,
-            value,
-            is_async,
-            AllowStringObject::Yes,
-        )? {
+        let str = StringOrBuffer::from_js_maybe_async(global, value, flavor, StringObjects::Allow)?;
+        let str = match str {
             Some(s) => s,
             None => {
                 // `as_class_ref` is the safe shared-borrow downcast (centralised
@@ -120,12 +143,12 @@ impl BlobOrStringOrBuffer {
                 let Some(blob) = value.as_class_ref::<Blob>() else {
                     return Ok(None);
                 };
-                if allow_file == AllowFile::Yes && blob.needs_to_read_file() {
+                if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
                     return Err(global
                         .throw_invalid_arguments(format_args!("File blob cannot be used here")));
                 }
 
-                if is_async == IsAsync::Yes {
+                if flavor == Flavor::Async {
                     // For async/cross-thread usage, copy the blob data to an owned slice
                     // rather than referencing the store which isn't thread-safe
                     let blob_data = blob.shared_view();
@@ -146,23 +169,23 @@ impl BlobOrStringOrBuffer {
     pub(crate) fn from_js_maybe_file(
         global: &JSGlobalObject,
         value: JSValue,
-        allow_file: AllowFile,
+        file_blobs: FileBlobs,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, allow_file, IsAsync::No)
+        Self::from_js_maybe_file_maybe_async(global, value, file_blobs, Flavor::Sync)
     }
 
     pub fn from_js(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file(global, value, AllowFile::Yes)
+        Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
     pub(crate) fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, AllowFile::Yes, IsAsync::Yes)
+        Self::from_js_maybe_file_maybe_async(global, value, FileBlobs::Reject, Flavor::Async)
     }
 
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
@@ -238,7 +261,7 @@ impl BlobOrStringOrBuffer {
             global,
             value,
             encoding_value,
-            AllowStringObject::Yes,
+            StringObjects::Allow,
         )? {
             Some(s) => Ok(Some(Self::StringOrBuffer(s))),
             None => Ok(None),
@@ -307,8 +330,8 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 impl bun_jsc::Unprotect for StringOrBuffer {
     /// JS-side half of cleanup — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
-    /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
-    /// `Drop`.
+    /// `from_js_maybe_async(.., Flavor::Async, ..)`. Owned slices are released
+    /// by `Drop`.
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
@@ -369,7 +392,7 @@ impl StringOrBuffer {
                 if buffer.buffer.value != JSValue::ZERO {
                     return Ok(buffer.buffer.value);
                 }
-                Ok(buffer.to_node_buffer(ctx))
+                buffer.to_node_buffer(ctx)
             }
         }
     }
@@ -398,18 +421,17 @@ impl StringOrBuffer {
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
-        is_async: IsAsync,
-        allow_string_object: AllowStringObject,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<bool> {
         use jsc::JSType;
-        let is_async = is_async == IsAsync::Yes;
         match value.js_type() {
             str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
-                if allow_string_object == AllowStringObject::No && str_type != JSType::String {
+                if string_objects == StringObjects::Reject && str_type != JSType::String {
                     return Ok(false);
                 }
                 let mut str = bun_core::String::from_js(value, global)?;
-                if is_async {
+                if flavor == Flavor::Async {
                     let mut possible_clone = str;
                     let mut sliced = possible_clone.to_thread_safe_slice();
                     sliced.report_extra_memory(global.vm());
@@ -451,14 +473,14 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
+                let buffer = if flavor == Flavor::Async {
                     Buffer::from_js_pinned(global, value)
                         .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
                 } else {
                     Buffer::from_array_buffer(global, value)
                 };
 
-                if is_async {
+                if flavor == Flavor::Async {
                     buffer.buffer.value.protect();
                 }
 
@@ -473,11 +495,11 @@ impl StringOrBuffer {
     pub(crate) fn from_js_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
-        is_async: IsAsync,
-        allow_string_object: AllowStringObject,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<Option<StringOrBuffer>> {
         let mut out = Self::EMPTY;
-        if Self::from_js_maybe_async_into(&mut out, global, value, is_async, allow_string_object)? {
+        if Self::from_js_maybe_async_into(&mut out, global, value, flavor, string_objects)? {
             Ok(Some(out))
         } else {
             Ok(None)
@@ -486,7 +508,7 @@ impl StringOrBuffer {
 
     #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
-        Self::from_js_maybe_async(global, value, IsAsync::No, AllowStringObject::Yes)
+        Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
     #[inline]
@@ -499,8 +521,8 @@ impl StringOrBuffer {
             global,
             value,
             encoding,
-            IsAsync::No,
-            AllowStringObject::Yes,
+            Flavor::Sync,
+            StringObjects::Allow,
         )
     }
 
@@ -517,8 +539,8 @@ impl StringOrBuffer {
             global,
             value,
             encoding,
-            IsAsync::No,
-            AllowStringObject::Yes,
+            Flavor::Sync,
+            StringObjects::Allow,
         )
     }
 
@@ -531,17 +553,17 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-        is_async: IsAsync,
-        allow_string_object: AllowStringObject,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async == IsAsync::Yes {
+            let buffer = if flavor == Flavor::Async {
                 Buffer::from_js_pinned(global, value)
                     .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
             } else {
                 Buffer::from_array_buffer(global, value)
             };
-            if is_async == IsAsync::Yes {
+            if flavor == Flavor::Async {
                 buffer.buffer.value.protect();
             }
             *out = Self::Buffer(buffer);
@@ -549,25 +571,13 @@ impl StringOrBuffer {
         }
 
         if encoding == Encoding::Utf8 {
-            return Self::from_js_maybe_async_into(
-                out,
-                global,
-                value,
-                is_async,
-                allow_string_object,
-            );
+            return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
         }
 
         if value.is_string() {
             let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
             if str.is_empty() {
-                return Self::from_js_maybe_async_into(
-                    out,
-                    global,
-                    value,
-                    is_async,
-                    allow_string_object,
-                );
+                return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
             }
 
             use crate::webcore::encoding::BunStringEncode as _;
@@ -586,8 +596,8 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-        is_async: IsAsync,
-        allow_string_object: AllowStringObject,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<Option<StringOrBuffer>> {
         let mut out = Self::EMPTY;
         if Self::from_js_with_encoding_maybe_async_into(
@@ -595,8 +605,8 @@ impl StringOrBuffer {
             global,
             value,
             encoding,
-            is_async,
-            allow_string_object,
+            flavor,
+            string_objects,
         )? {
             Ok(Some(out))
         } else {
@@ -608,7 +618,7 @@ impl StringOrBuffer {
         global: &JSGlobalObject,
         value: JSValue,
         encoding_value: JSValue,
-        allow_string_object: AllowStringObject,
+        string_objects: StringObjects,
     ) -> JsResult<Option<StringOrBuffer>> {
         let encoding: Encoding = 'brk: {
             if !encoding_value.is_cell() {
@@ -616,13 +626,12 @@ impl StringOrBuffer {
             }
             break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
         };
-        let is_async = IsAsync::No;
         Self::from_js_with_encoding_maybe_async(
             global,
             value,
             encoding,
-            is_async,
-            allow_string_object,
+            Flavor::Sync,
+            string_objects,
         )
     }
 }
@@ -929,7 +938,7 @@ pub trait PathLikeExt {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: &mut bun_core::String,
-        will_be_async: IsAsync,
+        will_be_async: Flavor,
     ) -> JsResult<PathLike>
     where
         Self: Sized;
@@ -1208,11 +1217,12 @@ impl PathLikeExt for PathLike {
 
                 arguments.eat();
 
-                Ok(Some(Self::from_bun_string(
-                    ctx,
-                    &mut str,
-                    IsAsync::from_bool(arguments.will_be_async),
-                )?))
+                let flavor = if arguments.will_be_async {
+                    Flavor::Async
+                } else {
+                    Flavor::Sync
+                };
+                Ok(Some(Self::from_bun_string(ctx, &mut str, flavor)?))
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
@@ -1254,11 +1264,12 @@ impl PathLikeExt for PathLike {
                     }
                     arguments.eat();
 
-                    return Ok(Some(Self::from_bun_string(
-                        ctx,
-                        &mut str,
-                        IsAsync::from_bool(arguments.will_be_async),
-                    )?));
+                    let flavor = if arguments.will_be_async {
+                        Flavor::Async
+                    } else {
+                        Flavor::Sync
+                    };
+                    return Ok(Some(Self::from_bun_string(ctx, &mut str, flavor)?));
                 }
 
                 Ok(None)
@@ -1269,9 +1280,9 @@ impl PathLikeExt for PathLike {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: &mut bun_core::String,
-        will_be_async: IsAsync,
+        will_be_async: Flavor,
     ) -> JsResult<PathLike> {
-        if will_be_async == IsAsync::Yes {
+        if will_be_async == Flavor::Async {
             let sliced = str.to_thread_safe_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
@@ -1605,7 +1616,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 /// Non-exhaustive set of flag values; newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct FileSystemFlags(pub c_int);
+pub struct FileSystemFlags(c_int);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FileSystemFlagsKind {

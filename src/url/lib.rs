@@ -71,7 +71,7 @@ pub mod whatwg {
         safe fn URL__getFileURLString(input: &mut String) -> String;
         safe fn URL__getHrefJoin(base: &mut String, relative: &mut String) -> String;
         safe fn URL__fragmentIdentifier(url: &URL) -> String;
-        fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
+        fn URL__originLength(latin1_slice: *const u8, len: usize) -> usize;
     }
 
     // The C ABI wants a mutable address. We take `&String` (matching existing call sites
@@ -106,7 +106,7 @@ pub mod whatwg {
         // to hand C++ only the leading ASCII prefix (latin1-safe).
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
         // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
-        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) } as usize;
+        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
         if len == 0 || len > first_non_ascii {
             return None;
         }
@@ -585,6 +585,11 @@ impl<'a> URL<'a> {
             b'@' => {
                 offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
                 offset += url.parse_host(&base[offset as usize..]).unwrap_or(0);
+            }
+            // Bare bracketed IPv6 host, e.g. the `[::1]:4873/` left of an .npmrc
+            // `//[::1]:4873/:_authToken` key once its `//` is stripped.
+            b'[' => {
+                offset += url.parse_host(base).unwrap_or(0);
             }
             b'/' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b':' => {
                 let is_protocol_relative = base.len() > 1 && base[1] == b'/';

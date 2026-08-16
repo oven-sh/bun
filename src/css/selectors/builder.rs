@@ -26,10 +26,6 @@ use crate::selector::parser::{
     SpecificityAndFlags, compute_specificity,
 };
 
-bun_core::bool_enum!(pub(crate) ParsedPseudo);
-bun_core::bool_enum!(pub(crate) ParsedSlotted);
-bun_core::bool_enum!(pub(crate) ParsedPart);
-
 /// Top-level SelectorBuilder struct. This should be stack-allocated by the
 /// consumer and never moved (because it contains a lot of inline data that
 /// would be slow to memmov).
@@ -114,23 +110,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// Consumes the builder, producing a Selector.
     ///
     /// *NOTE*: This will free all allocated memory in the builder
-    pub(crate) fn build(
-        &mut self,
-        parsed_pseudo: ParsedPseudo,
-        parsed_slotted: ParsedSlotted,
-        parsed_part: ParsedPart,
-    ) -> BuildResult<Impl> {
+    pub(crate) fn build(&mut self, flags: SelectorFlags) -> BuildResult<Impl> {
         let specificity = compute_specificity::<Impl>(self.simple_selectors.slice());
-        let mut flags = SelectorFlags::empty();
-        if parsed_pseudo == ParsedPseudo::Yes {
-            flags |= SelectorFlags::HAS_PSEUDO;
-        }
-        if parsed_slotted == ParsedSlotted::Yes {
-            flags |= SelectorFlags::HAS_SLOTTED;
-        }
-        if parsed_part == ParsedPart::Yes {
-            flags |= SelectorFlags::HAS_PART;
-        }
         // `build_with_specificity_and_flags()` drains the contents; `Drop` on
         // `SelectorBuilder` frees the SmallList capacity when the builder goes
         // out of scope.

@@ -824,10 +824,7 @@ impl ShellRmTask {
         }
     }
 
-    /// Records `path` for `-v` output; call it only after the entry was
-    /// actually removed. An ENOENT that `-f` swallows removed nothing and is
-    /// not recorded; returning `()` keeps such an arm from using this call as
-    /// its success value.
+    /// Records `path` for `-v`; only for an entry this worker actually removed.
     ///
     /// Takes `dir_task` as a raw pointer (not `&mut DirTask`) so callers in
     /// `remove_entry*` — which already hold `&self: &ShellRmTask` and a
@@ -1041,9 +1038,7 @@ impl ShellRmTask {
         let mut i: usize = 0;
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
-                // The directory itself was removed while we were reading it
-                // (another operand of the same rm, or another process); the
-                // rmdir below then sees ENOENT too, and -f ignores both.
+                // overlayfs: the directory was removed under us (e.g. by an overlapping operand).
                 Err(e) if self.opts.force && e.get_errno() == E::ENOENT => break Ok(()),
                 Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
                 Ok(None) => break Ok(()),

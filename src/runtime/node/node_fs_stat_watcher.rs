@@ -1100,10 +1100,8 @@ impl Arguments {
         if let Some(options_or_callable) = arguments.next_eat() {
             // options
             if options_or_callable.is_object() {
-                // Node spreads the caller's own options over `{ persistent: true }`
-                // and never validates these two: `persistent` is tested for
-                // truthiness (so an own `persistent: undefined` unrefs the watcher)
-                // and `bigint` only counts when it is exactly `true`.
+                // Node spreads the caller's own options over its defaults and never
+                // validates these two, so an own property of any type counts here.
                 persistent = options_or_callable
                     .get_own(global, &bun_core::String::static_("persistent"))?
                     .is_none_or(JSValue::to_boolean);

@@ -1,6 +1,15 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  runBunInstall,
+  tempDir,
+  VerdaccioRegistry,
+} from "harness";
 import {
   chmodSync,
   closeSync,
@@ -1974,7 +1983,7 @@ test.concurrent("isolated + publicHoistPattern: hoisted links follow their store
   expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
 });
 
-test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+test.concurrent.skipIf(isWindows || isRoot)(
   "a failed deletion is reported, the rest is removed, exit code 1",
   async () => {
     const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });

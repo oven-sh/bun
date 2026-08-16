@@ -9,6 +9,7 @@ import {
   isASAN,
   isDebug,
   isLinux,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -1070,12 +1071,7 @@ function hasNobodyUser(): boolean {
   }
 }
 
-const canUseRunuser =
-  isLinux &&
-  typeof process.getuid === "function" &&
-  process.getuid() === 0 &&
-  !!Bun.which("runuser") &&
-  hasNobodyUser();
+const canUseRunuser = isLinux && isRoot && !!Bun.which("runuser") && hasNobodyUser();
 
 test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permission", () => {
   using dir = tempDir("env-eacces", {

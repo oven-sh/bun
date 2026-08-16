@@ -25,9 +25,10 @@ export const isAndroid = process.platform === "android";
 export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
 /**
- * Root bypasses file and directory mode bits, so a test that expects EACCES
- * from a `chmod 000` fixture cannot pass as uid 0; skip such tests on it.
- * Always false on Windows, where `process.getuid` does not exist.
+ * Whether the tests are running as uid 0. Root bypasses file and directory
+ * mode bits, so tests that expect EACCES from a `chmod 000` fixture skip on it,
+ * while tests that need to setuid/setgid a child only run on it. Always false
+ * on Windows, where `process.getuid` does not exist.
  */
 export const isRoot = process.getuid?.() === 0;
 export const isIntelMacOS = isMacOS && process.arch === "x64";

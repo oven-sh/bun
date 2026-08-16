@@ -6,6 +6,7 @@ import {
   bunRunAsScript,
   isLinux,
   isMacOS,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -532,8 +533,6 @@ describe("fs.watch", () => {
   // on windows 0o200 will be readable (match nodejs behavior)
   // Root has CAP_DAC_OVERRIDE, so the chmod 0o200 below never yields the
   // EACCES these two tests expect; they only make sense as a non-root user.
-  const isRoot = process.getuid?.() === 0;
-
   test.skipIf(isWindows || isRoot)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
@@ -708,7 +707,7 @@ describe("fs.watch", () => {
   // seccomp. The same `add_one` error branch is reachable with EACCES by
   // watching a tree that contains one unreadable subdirectory as an
   // unprivileged user, so this test drops privileges to trigger it.
-  test.skipIf(!isLinux || process.getuid?.() !== 0)(
+  test.skipIf(!isLinux || !isRoot)(
     "recursive watch surfaces inotify_add_watch failure on a subdirectory as an 'error' event",
     async () => {
       const NOBODY = 65534;

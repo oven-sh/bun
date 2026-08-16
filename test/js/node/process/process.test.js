@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -1111,7 +1111,7 @@ describe.concurrent(() => {
     // bmalloc scavenger) had signal-suspended a thread, it could never ack the barrier
     // and the whole process wedged at 0% CPU. The race is probabilistic, so hammer
     // seteuid under GC pressure from many processes at once and require each to exit.
-    it.skipIf(process.platform !== "linux" || process.getuid() !== 0)(
+    it.skipIf(process.platform !== "linux" || !isRoot)(
       "seteuid under GC pressure does not deadlock",
       async () => {
         using dir = tempDir("seteuid-deadlock", {
@@ -2335,21 +2335,18 @@ it("_rawDebug never throws when fd 2 is closed", async () => {
   expect(exitCode).toBe(0);
 });
 
-it.skipIf(isWindows || process.getuid?.() === 0)(
-  "process.initgroups passes an unknown string user straight to initgroups(3)",
-  () => {
-    // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
-    // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
-    let err;
-    try {
-      process.initgroups("zz_no_user_zz", 0);
-    } catch (e) {
-      err = e;
-    }
-    expect(err?.code).toBe("EPERM");
-    expect(err?.syscall).toBe("initgroups");
-  },
-);
+it.skipIf(isWindows || isRoot)("process.initgroups passes an unknown string user straight to initgroups(3)", () => {
+  // Node hands string users to initgroups(3) as-is (no getpwnam pre-resolve),
+  // so as non-root we see the syscall's EPERM, not ERR_UNKNOWN_CREDENTIAL.
+  let err;
+  try {
+    process.initgroups("zz_no_user_zz", 0);
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.code).toBe("EPERM");
+  expect(err?.syscall).toBe("initgroups");
+});
 
 it.skipIf(isWindows)("process.initgroups pre-resolves a numeric uid through passwd", () => {
   // Numeric users go through getpwuid_r first, so an unknown uid surfaces

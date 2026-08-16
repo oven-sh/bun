@@ -6,6 +6,7 @@ import {
   bunExe,
   isLinux,
   isPosix,
+  isRoot,
   isWindows,
   nodeExe,
   runBunInstall,
@@ -1008,7 +1009,6 @@ done
 });
 
 describe("uid/gid options", () => {
-  const isRoot = process.getuid?.() === 0;
   // 65534 is "nobody" on every Linux distro and on macOS.
   const NOBODY = 65534;
 

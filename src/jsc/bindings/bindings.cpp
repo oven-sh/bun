@@ -6536,6 +6536,17 @@ extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObjec
     return JSValue::encode(JSC::createRangeError(globalObject, str->toWTFString(BunString::ZeroCopy)));
 }
 
+// An ErrorInstance whose location is supplied rather than captured from the
+// current JS stack — the same constructor structured-clone deserialization
+// uses. `line`/`column`/`sourceURL`/`stack` materialize lazily as the usual
+// non-enumerable own properties.
+extern "C" EncodedJSValue JSC__createErrorWithLocation(JSC::JSGlobalObject* globalObject, uint8_t errorType, const BunString* message, const BunString* sourceURL, int32_t line, int32_t column, const BunString* stack)
+{
+    return JSValue::encode(JSC::ErrorInstance::create(globalObject, message->toWTFString(), static_cast<JSC::ErrorType>(errorType),
+        { line < 0 ? 0u : static_cast<unsigned>(line), column < 0 ? 0u : static_cast<unsigned>(column) },
+        sourceURL->toWTFString(), stack->toWTFString()));
+}
+
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);

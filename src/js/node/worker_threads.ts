@@ -5,7 +5,7 @@ const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce, reportUncaughtException } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -1385,7 +1385,18 @@ class Worker extends EventEmitter {
         (error as any).code = "MODULE_NOT_FOUND";
       }
     }
-    this.emit("error", error);
+    if (this.listenerCount("error") > 0) {
+      this.emit("error", error);
+      return;
+    }
+    // Unhandled: this becomes the parent's uncaught exception. The error came
+    // from another thread, so there is no throw site here worth showing —
+    // report the value itself rather than `throw`ing it from inside emit().
+    try {
+      this.emit("error", error); // errorMonitor listeners, ERR_UNHANDLED_ERROR wrapping
+    } catch (unhandled) {
+      reportUncaughtException(unhandled);
+    }
   }
 
   #onMessage(event: MessageEvent) {

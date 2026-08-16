@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv, bunExe, tls } from "harness";
+import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
 import { deflate } from "node:zlib";
@@ -935,6 +935,70 @@ describe("Error serialization semantics", () => {
     } finally {
       Error.prepareStackTrace = original;
     }
+  });
+
+  // Bun's parse/resolve diagnostics wrap VM-local state; they cross a
+  // structured-clone boundary as the plain error carrying message + location.
+  describe("Bun diagnostics", () => {
+    const dir = tempDir("structured-clone-diagnostics", {
+      "bad-syntax.js": "// line 1\nconst y = ;\n",
+      "bad-import.js": "// line 1\nimport 'this-package-does-not-exist';\n",
+    });
+    afterAll(() => dir[Symbol.dispose]());
+    const badSyntax = join(String(dir), "bad-syntax.js");
+    const badImport = join(String(dir), "bad-import.js");
+    const slashes = (s: unknown) => String(s).replaceAll("\\", "/");
+
+    test("BuildMessage clones as a SyntaxError with the parse error's location", async () => {
+      const buildMessage: any = await import(badSyntax).then(
+        () => expect.unreachable(),
+        e => e,
+      );
+      expect(buildMessage.constructor.name).toBe("BuildMessage");
+      for (const clone of [structuredClone, jscSerializeRoundtrip]) {
+        const cloned = clone(buildMessage);
+        expect({
+          constructor: cloned.constructor,
+          message: cloned.message,
+          sourceURL: slashes(cloned.sourceURL),
+          line: cloned.line,
+          column: cloned.column,
+          stack: slashes(cloned.stack),
+        }).toEqual({
+          constructor: SyntaxError,
+          message: buildMessage.message,
+          sourceURL: slashes(badSyntax),
+          line: 2,
+          column: 11,
+          stack: `SyntaxError: ${buildMessage.message}\n    at ${slashes(badSyntax)}:2:11`,
+        });
+      }
+      // Still enters the object pool: duplicate references keep their identity.
+      const [a, b] = structuredClone([buildMessage, buildMessage]);
+      expect(a).toBe(b);
+    });
+
+    test("ResolveMessage clones as an Error pointing at the importer", async () => {
+      const resolveMessage: any = await import(badImport).then(
+        () => expect.unreachable(),
+        e => e,
+      );
+      expect(resolveMessage.constructor.name).toBe("ResolveMessage");
+      for (const clone of [structuredClone, jscSerializeRoundtrip]) {
+        const cloned = clone(resolveMessage);
+        expect({
+          constructor: cloned.constructor,
+          message: cloned.message,
+          sourceURL: slashes(cloned.sourceURL),
+          stack: slashes(cloned.stack),
+        }).toEqual({
+          constructor: Error,
+          message: resolveMessage.message,
+          sourceURL: slashes(badImport),
+          stack: `Error: ${slashes(resolveMessage.message)}\n    at ${slashes(badImport)}`,
+        });
+      }
+    });
   });
 });
 

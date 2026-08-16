@@ -5490,6 +5490,35 @@ impl VirtualMachine {
         self.remap_stack_frames_mutex.unlock();
     }
 
+    fn is_unknown_source(url: &bun_core::String) -> bool {
+        url.is_empty()
+            || url.eql_comptime("[unknown]")
+            // FormatStackTraceForJS spells them this way in `.stack` strings.
+            || url.eql_comptime("unknown")
+            || url.eql_comptime("native")
+            || url.has_prefix_comptime(b"[source:")
+    }
+
+    /// The frame the source preview describes — the top-most locatable
+    /// non-runtime frame when hiding internals, else frame 0 — and whether
+    /// every frame was internal/unlocatable (so frame 0 is only a fallback).
+    fn preview_frame(&self, frames: &[crate::ZigStackFrame]) -> (usize, bool) {
+        if !self.hide_bun_stackframes {
+            return (0, false);
+        }
+        for (i, frame) in frames.iter().enumerate() {
+            if frame.position.is_invalid()
+                || frame.source_url.has_prefix_comptime(b"bun:")
+                || frame.source_url.has_prefix_comptime(b"node:")
+                || Self::is_unknown_source(&frame.source_url)
+            {
+                continue;
+            }
+            return (i, false);
+        }
+        (0, !frames.is_empty())
+    }
+
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
     pub(crate) fn remap_zig_exception(
         &mut self,
@@ -5585,9 +5614,7 @@ impl VirtualMachine {
         fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
             f.source_url.eql_comptime("bun:wrap") || f.function_name.eql_comptime("::bunternal::")
         }
-        fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty() || url.eql_comptime("[unknown]") || url.has_prefix_comptime(b"[source:")
-        }
+        let is_unknown_source = Self::is_unknown_source;
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
@@ -5621,12 +5648,13 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // Note: `frames[j] = frame`. `ZigStackFrame` impls
-                    // `Drop` so `copy_within` is unavailable; swap instead —
-                    // the discarded tail past `j` is never read after we
-                    // truncate `frames_len` below.
+                    // Swap rather than copy so each frame's refs stay owned
+                    // exactly once; the discarded frames collect past `j`.
                     frames_buf.swap(j, i);
                     j += 1;
+                }
+                for discarded in &mut frames_buf[j..frames_len] {
+                    discarded.deinit();
                 }
                 exception.stack.frames_len = j as u8;
                 frames_len = j;
@@ -5638,27 +5666,7 @@ impl VirtualMachine {
             return;
         }
 
-        // Pick the top-most non-builtin frame for source preview.
-        let mut top: usize = 0;
-        let mut top_frame_is_builtin = false;
-        if self.hide_bun_stackframes {
-            for (i, frame) in frames.iter().enumerate() {
-                if frame.source_url.has_prefix_comptime(b"bun:")
-                    || frame.source_url.has_prefix_comptime(b"node:")
-                    || frame.source_url.is_empty()
-                    || frame.source_url.eql_comptime("native")
-                    || frame.source_url.eql_comptime("unknown")
-                    || frame.source_url.eql_comptime("[unknown]")
-                    || frame.source_url.has_prefix_comptime(b"[source:")
-                {
-                    top_frame_is_builtin = true;
-                    continue;
-                }
-                top = i;
-                top_frame_is_builtin = false;
-                break;
-            }
-        }
+        let (top, top_frame_is_builtin) = self.preview_frame(frames);
 
         // Don't show source code preview for REPL frames — it would show the
         // transformed IIFE wrapper code, not what the user typed.
@@ -5669,32 +5677,37 @@ impl VirtualMachine {
         let top_source_url = frames[top].source_url.to_utf8();
 
         let already_remapped = frames[top].remapped;
-        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> = if already_remapped {
-            Some(bun_sourcemap::mapping::Lookup {
-                mapping: bun_sourcemap::mapping::Mapping {
-                    generated: bun_sourcemap::LineColumnOffset::default(),
-                    original: bun_sourcemap::LineColumnOffset {
-                        lines: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.line.zero_based().max(0),
-                        ),
-                        columns: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.column.zero_based().max(0),
-                        ),
+        let maybe_lookup: Option<bun_sourcemap::mapping::Lookup> =
+            if already_remapped && !frames[top].position.line.is_valid() {
+                // `at <file>` with no line (e.g. parsed from a `.stack`): nothing
+                // to look up or preview.
+                None
+            } else if already_remapped {
+                Some(bun_sourcemap::mapping::Lookup {
+                    mapping: bun_sourcemap::mapping::Mapping {
+                        generated: bun_sourcemap::LineColumnOffset::default(),
+                        original: bun_sourcemap::LineColumnOffset {
+                            lines: bun_sourcemap::Ordinal::from_zero_based(
+                                frames[top].position.line.zero_based().max(0),
+                            ),
+                            columns: bun_sourcemap::Ordinal::from_zero_based(
+                                frames[top].position.column.zero_based().max(0),
+                            ),
+                        },
+                        source_index: 0,
+                        name_index: -1,
                     },
-                    source_index: 0,
-                    name_index: -1,
-                },
-                source_map: None,
-                prefetched_source_code: None,
-            })
-        } else {
-            self.resolve_source_mapping(
-                top_source_url.slice(),
-                frames[top].position.line,
-                frames[top].position.column,
-                bun_sourcemap::SourceContentHandling::SourceContents,
-            )
-        };
+                    source_map: None,
+                    prefetched_source_code: None,
+                })
+            } else {
+                self.resolve_source_mapping(
+                    top_source_url.slice(),
+                    frames[top].position.line,
+                    frames[top].position.column,
+                    bun_sourcemap::SourceContentHandling::SourceContents,
+                )
+            };
 
         if let Some(lookup) = maybe_lookup {
             // The source-map Arc drops on scope exit.
@@ -5767,12 +5780,14 @@ impl VirtualMachine {
             };
 
             if enable_source_code_preview.get() && code.slice().is_empty() {
-                exception.collect_source_lines(error_instance, global);
+                exception.collect_source_lines(top);
             }
 
-            // Direct copy; both sides are `bun_core::Ordinal`.
-            frames[top].position.line = mapping.original.lines;
-            frames[top].position.column = mapping.original.columns;
+            if !already_remapped {
+                // Direct copy; both sides are `bun_core::Ordinal`.
+                frames[top].position.line = mapping.original.lines;
+                frames[top].position.column = mapping.original.columns;
+            }
             exception.remapped = true;
             frames[top].remapped = true;
 
@@ -5811,14 +5826,14 @@ impl VirtualMachine {
                 *source_code_slice = Some(code);
             }
         } else if enable_source_code_preview.get() {
-            exception.collect_source_lines(error_instance, global);
+            exception.collect_source_lines(top);
         }
 
         drop(top_source_url);
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                if i == top || frames[i].position.is_invalid() || frames[i].remapped {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();
@@ -6163,19 +6178,8 @@ impl VirtualMachine {
                 }
 
                 let frames = exception.stack.frames();
-                let mut top_frame: Option<&crate::ZigStackFrame> = frames.first();
-                if self.hide_bun_stackframes {
-                    for frame in frames {
-                        if frame.position.is_invalid()
-                            || frame.source_url.has_prefix_comptime(b"bun:")
-                            || frame.source_url.has_prefix_comptime(b"node:")
-                        {
-                            continue;
-                        }
-                        top_frame = Some(frame);
-                        break;
-                    }
-                }
+                let top_frame: Option<&crate::ZigStackFrame> =
+                    frames.get(self.preview_frame(frames).0);
 
                 let trimmed = source.trimmed_text();
 

@@ -1168,17 +1168,6 @@ fn on_unhandled_rejection(
         .to_error()
         .unwrap_or(error_instance_or_exception);
 
-    // A parse failure rejects with a BuildMessage, which doesn't survive structured
-    // clone. Node reports a SyntaxError; build a real one from the formatted parse
-    // error so the subtype reaches the parent intact.
-    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
-        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
-        // worker (JS) thread that owns it.
-        let text = unsafe { (*bm).msg.data.text.clone() };
-        error_instance =
-            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
-    }
-
     let mut array: Vec<u8> = Vec::new();
 
     // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the

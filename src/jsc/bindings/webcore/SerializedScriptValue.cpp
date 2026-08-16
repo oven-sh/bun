@@ -205,6 +205,27 @@ enum SerializationTag {
 // pointer is gone.
 extern "C" SYSV_ABI void BlockList__onStructuredCloneDestroy(void*);
 
+extern "C" JSC::EncodedJSValue BuildMessage__toErrorInstance(void*, JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue ResolveMessage__toErrorInstance(void*, JSC::JSGlobalObject*);
+
+// Bun's parse and resolve diagnostics have Error.prototype in their chain but
+// wrap VM-local parser state, so they serialize as the plain SyntaxError /
+// Error carrying their message and location.
+static bool serializesAsError(JSC::JSObject* object)
+{
+    return object->isErrorInstance() || object->inherits<JSBuildMessage>() || object->inherits<JSResolveMessage>();
+}
+
+// The ErrorInstance to write for an `object` that `serializesAsError`.
+static JSC::ErrorInstance* toSerializableErrorInstance(JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
+{
+    if (object->isErrorInstance())
+        return uncheckedDowncast<JSC::ErrorInstance>(object);
+    if (auto* buildMessage = dynamicDowncast<JSBuildMessage>(object))
+        return uncheckedDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(BuildMessage__toErrorInstance(buildMessage->wrapped(), globalObject)));
+    return uncheckedDowncast<JSC::ErrorInstance>(JSC::JSValue::decode(ResolveMessage__toErrorInstance(uncheckedDowncast<JSResolveMessage>(object)->wrapped(), globalObject)));
+}
+
 enum ArrayBufferViewSubtag {
     DataViewTag = 0,
     Int8ArrayTag = 1,
@@ -1183,9 +1204,10 @@ private:
                 write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
                 return true;
             }
-            if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
-                if (!startObjectInternal(errorInstance)) // handle duplicates
+            if (serializesAsError(obj)) {
+                if (!startObjectInternal(obj)) // handle duplicates
                     return true;
+                auto* errorInstance = toSerializableErrorInstance(m_lexicalGlobalObject, obj);
                 auto& vm = m_lexicalGlobalObject->vm();
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);

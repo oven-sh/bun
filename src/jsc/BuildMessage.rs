@@ -95,6 +95,25 @@ impl BuildMessage {
         Ok(build_error.to_js(global))
     }
 
+    /// The `SyntaxError` this diagnostic becomes when it has to leave the realm
+    /// it was created in (structured clone / worker error reporting): a
+    /// `BuildMessage` wraps parser state that can't cross, but its message and
+    /// file/line/column can.
+    pub fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue {
+        let (file, line, column): (&[u8], i32, i32) = match &self.msg.data.location {
+            Some(loc) => (&loc.file, loc.line, loc.column),
+            None => (b"", 0, 0),
+        };
+        crate::bun_string_jsc::error_instance_from_location(
+            global,
+            crate::JSErrorCode::SyntaxError,
+            &self.msg.data.text,
+            file,
+            line,
+            column,
+        )
+    }
+
     #[crate::host_fn(method)]
     pub fn to_string(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(self.to_string_fn(global))
@@ -197,4 +216,13 @@ impl BuildMessage {
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(ZigString::init(self.msg.kind.string()).to_js(global))
     }
+}
+
+// SerializedScriptValue.cpp
+#[unsafe(no_mangle)]
+extern "C" fn BuildMessage__toErrorInstance(
+    this: &BuildMessage,
+    global: &JSGlobalObject,
+) -> JSValue {
+    this.to_error_instance(global)
 }

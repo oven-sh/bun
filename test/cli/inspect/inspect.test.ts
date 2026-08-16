@@ -589,17 +589,5 @@ test("error.stack doesnt lose frames", () => {
   `);
 
   // In Bun v1.2.20 and lower, we would only have the first frame here.
-  expect(yes).toMatchInlineSnapshot(`
-    "
-    error: test
-          at bottom (<dir>/inspect.test.ts:<num>:<num>)
-          at middle (<dir>/inspect.test.ts:<num>:<num>)
-          at IGNORE_ME_BEFORE_THIS_LINE (<dir>/inspect.test.ts:<num>:<num>)
-          at accessErrorStackProperty (<dir>/inspect.test.ts:<num>:<num>)
-          at <dir>/inspect.test.ts:<num>:<num>
-    "
-  `);
-
-  // We allow it to differ by the existence of <anonymous> as a string. But that's it.
-  expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+  expect(yes).toBe(no);
 });

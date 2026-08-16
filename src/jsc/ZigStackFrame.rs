@@ -1,4 +1,5 @@
 use core::fmt;
+use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -23,8 +24,10 @@ pub struct ZigStackFrame {
     /// This informs formatters whether to display as a blob URL or not
     pub remapped: bool,
 
-    /// -1 means not set.
-    pub jsc_stack_frame_index: i32,
+    /// Ref'd by C++ when `position` was computed from a JSC frame: the
+    /// `SourceProvider` that position indexes into, so
+    /// `ZigException::collect_source_lines` can slice the preview out of it.
+    pub source_provider: Option<NonNull<crate::SourceProvider>>,
 }
 
 impl ZigStackFrame {
@@ -40,6 +43,9 @@ impl ZigStackFrame {
     pub(crate) fn deinit(&mut self) {
         self.function_name.deref();
         self.source_url.deref();
+        if let Some(provider) = self.source_provider.take() {
+            crate::SourceProvider::opaque_mut(provider.as_ptr()).deref();
+        }
     }
 
     pub(crate) fn snapshot(
@@ -72,7 +78,7 @@ impl ZigStackFrame {
         position: ZigStackFramePosition::INVALID,
         is_async: false,
         remapped: false,
-        jsc_stack_frame_index: -1,
+        source_provider: None,
     };
 
     pub fn name_formatter(&self, enable_color: bool) -> NameFormatter {
@@ -173,7 +179,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 
         if self.line_column == LineColumn::Include
             && !source_slice.is_empty()
-            && (self.position.line.is_valid() || self.position.column.is_valid())
+            && self.position.line.is_valid()
         {
             if self.enable_color {
                 f.write_str(Output::pretty_fmt!("<r><d>:", true))?;

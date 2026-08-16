@@ -152,7 +152,7 @@ impl ErrorReportRequest {
                 code_type: ZigStackFrameCode::NONE,
                 is_async: false,
                 remapped: false,
-                jsc_stack_frame_index: -1,
+                source_provider: None,
             });
         }
 

@@ -56,11 +56,6 @@ static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsi
 using namespace JSC;
 using namespace WebCore;
 
-enum PopulateStackTraceFlags {
-    OnlyPosition,
-    OnlySourceLines,
-};
-
 #define SYNTAX_ERROR_CODE 4
 
 using Zig::FinalizerSafety;
@@ -127,9 +122,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, JSC::JSGlobalObject* globalO
     frame.is_async = stackFrame.isAsyncFrame();
 }
 
-static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunString* source_lines,
-    OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
+static void populateStackFramePosition(const JSC::StackFrame& stackFrame, ZigStackFrame& frame)
 {
     auto code = stackFrame.codeBlock();
     if (!code)
@@ -147,95 +140,81 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (!stackFrame.hasBytecodeIndex()) {
         if (stackFrame.hasLineAndColumnInfo()) {
             auto lineColumn = stackFrame.computeLineAndColumn();
-            position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-            position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+            frame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+            frame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         }
 
-        position.byte_position = -1;
+        frame.position.byte_position = -1;
         return;
     }
 
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
-    memcpy(&position, &location, sizeof(ZigStackFramePosition));
-    if (flags == PopulateStackTraceFlags::OnlyPosition)
-        return;
+    memcpy(&frame.position, &location, sizeof(ZigStackFramePosition));
 
-    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
-        // Search for the beginning of the line
-        unsigned int lineStart = location.byte_position;
-        while (lineStart > 0 && sourceString[lineStart] != '\n') {
-            lineStart--;
-        }
-
-        // Search for the end of the line
-        unsigned int lineEnd = location.byte_position;
-        unsigned int maxSearch = sourceString.length();
-        while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
-            lineEnd++;
-        }
-
-        const unsigned char* bytes = sourceString.span8().data();
-
-        // Most of the time, when you look at a stack trace, you want a couple lines above.
-
-        // It is key to not clone this data because source code strings are large.
-        // Usage of toStringView (non-owning) is safe as we ref the provider.
-        provider->ref();
-        if (*referenced_source_provider != nullptr) {
-            (*referenced_source_provider)->deref();
-        }
-        *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
-        source_line_numbers[0] = location.line();
-
-        if (lineStart > 0) {
-            auto byte_offset_in_source_string = lineStart - 1;
-            uint8_t source_line_i = 1;
-            auto remaining_lines_to_grab = source_lines_count - 1;
-
-            {
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
-
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-            }
-
-            while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
-                unsigned int end_of_line_offset = byte_offset_in_source_string;
-
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
-
-                // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
-
-                source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
-                source_line_i++;
-
-                remaining_lines_to_grab--;
-
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-            }
-        }
-    }
+    // Pin the provider so the frame's source lines can be sliced out later
+    // (collectSourceLines) without going back to JSC's weakly-held frames.
+    provider->ref();
+    if (frame.source_provider)
+        frame.source_provider->deref();
+    frame.source_provider = provider;
 }
 
-static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::StackFrame& stackFrame,
-    ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety)
+static void populateStackFrame(JSC::VM& vm, const JSC::StackFrame& stackFrame, ZigStackFrame& frame, JSC::JSGlobalObject* globalObject, FinalizerSafety finalizerSafety)
 {
-    if (flags == PopulateStackTraceFlags::OnlyPosition) {
-        populateStackFrameMetadata(vm, globalObject, stackFrame, frame, finalizerSafety);
-        populateStackFramePosition(stackFrame, nullptr,
-            nullptr,
-            0, frame.position, referenced_source_provider, flags);
-    } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
-            is_top ? trace.source_lines_numbers : nullptr,
-            is_top ? trace.source_lines_to_collect : 0, frame.position, referenced_source_provider, flags);
+    populateStackFrameMetadata(vm, globalObject, stackFrame, frame, finalizerSafety);
+    populateStackFramePosition(stackFrame, frame);
+}
+
+// Frame `topFrame`'s line and a few above it, for the source preview. Most of
+// the time the printer reads the original file itself; this is the fallback
+// for sources that only exist in memory (eval, builtins, blobs).
+static void collectSourceLines(ZigStackTrace& trace, uint8_t topFrame)
+{
+    if (topFrame >= trace.frames_len || trace.source_lines_ptr == nullptr || trace.source_lines_to_collect <= 1)
+        return;
+    ZigStackFrame& top = trace.frames_ptr[topFrame];
+    JSC::SourceProvider* provider = top.source_provider;
+    if (!provider || top.position.byte_position < 0)
+        return;
+    WTF::StringView sourceString = provider->source();
+    if (sourceString.isNull() || !sourceString.is8Bit() || static_cast<unsigned>(top.position.byte_position) >= sourceString.length())
+        return;
+
+    BunString* source_lines = trace.source_lines_ptr;
+    OrdinalNumber* source_line_numbers = trace.source_lines_numbers;
+    const uint8_t source_lines_count = trace.source_lines_to_collect;
+    const OrdinalNumber line = top.position.line();
+    const unsigned length = sourceString.length();
+    const Latin1Character* bytes = sourceString.span8().data();
+
+    // It is key to not clone this data because source code strings are large.
+    // Usage of toStringView (non-owning) is safe as we ref the provider.
+    provider->ref();
+    if (trace.referenced_source_provider != nullptr) {
+        trace.referenced_source_provider->deref();
+    }
+    trace.referenced_source_provider = provider;
+
+    // The top frame's line…
+    unsigned lineStart = top.position.byte_position;
+    while (lineStart > 0 && bytes[lineStart - 1] != '\n')
+        lineStart--;
+    unsigned lineEnd = top.position.byte_position;
+    while (lineEnd < length && bytes[lineEnd] != '\n')
+        lineEnd++;
+    source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+    source_line_numbers[0] = line;
+
+    // …and a few above it, since that is what you want to see in a stack trace.
+    uint8_t i = 1;
+    while (i < source_lines_count && lineStart > 0) {
+        lineEnd = lineStart - 1; // the '\n' ending the line above
+        lineStart = lineEnd;
+        while (lineStart > 0 && bytes[lineStart - 1] != '\n')
+            lineStart--;
+        source_lines[i] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+        source_line_numbers[i] = OrdinalNumber::fromZeroBasedInt(line.zeroBasedInt() - i);
+        i++;
     }
 }
 
@@ -245,8 +224,8 @@ public:
     public:
         StringView functionName {};
         StringView sourceURL {};
-        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
-        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::fromZeroBasedInt(0);
+        WTF::OrdinalNumber lineNumber = WTF::OrdinalNumber::beforeFirst();
+        WTF::OrdinalNumber columnNumber = WTF::OrdinalNumber::beforeFirst();
 
         bool isConstructor = false;
         bool isGlobalCode = false;
@@ -296,21 +275,21 @@ public:
         if (openingParentheses > closingParentheses)
             openingParentheses = WTF::notFound;
 
+        StringView functionName;
+        StringView lineInner;
         if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
-            // Special case: "unknown" frames don't have parentheses but are valid
-            // These appear in stack traces from certain error paths
-            if (line == "unknown"_s) {
-                frame.sourceURL = line;
-                frame.functionName = StringView();
-                return true;
+            // `at <url>:<line>:<column>` — anonymous and top-level frames carry
+            // no name and no parentheses (V8 and Bun both print them this way).
+            lineInner = line;
+            if (lineInner.startsWith("async "_s)) {
+                frame.isAsync = true;
+                lineInner = lineInner.substring(6);
             }
-
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+        } else {
+            lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
+            if (openingParentheses > 0)
+                functionName = line.substring(0, openingParentheses - 1);
         }
-
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -383,8 +362,6 @@ public:
         }
     done_block:
 
-        StringView functionName = line.substring(0, openingParentheses - 1);
-
         if (functionName == "global code"_s) {
             functionName = StringView();
             frame.isGlobalCode = true;
@@ -398,10 +375,6 @@ public:
         if (functionName.startsWith("new "_s)) {
             frame.isConstructor = true;
             functionName = functionName.substring(4);
-        }
-
-        if (functionName == "<anonymous>"_s) {
-            functionName = StringView();
         }
 
         frame.functionName = functionName;
@@ -421,37 +394,26 @@ public:
     }
 };
 
-static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer)
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer)
 {
-    if (flags == PopulateStackTraceFlags::OnlyPosition) {
-        uint8_t frame_i = 0;
-        size_t stack_frame_i = 0;
-        const size_t total_frame_count = frames.size();
-        const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
+    uint8_t frame_i = 0;
+    size_t stack_frame_i = 0;
+    const size_t total_frame_count = frames.size();
+    const uint8_t frame_count = total_frame_count < trace.frames_cap ? total_frame_count : trace.frames_cap;
 
-        while (frame_i < frame_count && stack_frame_i < total_frame_count) {
-            // Skip native frames
-            while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
-                stack_frame_i++;
-            }
-            if (stack_frame_i >= total_frame_count)
-                break;
-
-            ZigStackFrame& frame = trace.frames_ptr[frame_i];
-            frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
-            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
+    while (frame_i < frame_count && stack_frame_i < total_frame_count) {
+        // Skip native frames
+        while (stack_frame_i < total_frame_count && !(frames.at(stack_frame_i).hasLineAndColumnInfo()) && !(frames.at(stack_frame_i).isWasmFrame())) {
             stack_frame_i++;
-            frame_i++;
         }
-        trace.frames_len = frame_i;
-    } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        for (uint8_t i = 0; i < trace.frames_len; i++) {
-            ZigStackFrame& frame = trace.frames_ptr[i];
-            if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
-                continue;
-            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
-        }
+        if (stack_frame_i >= total_frame_count)
+            break;
+
+        populateStackFrame(vm, frames[stack_frame_i], trace.frames_ptr[frame_i], globalObject, finalizerSafety);
+        stack_frame_i++;
+        frame_i++;
     }
+    trace.frames_len = frame_i;
 }
 
 static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)
@@ -473,21 +435,16 @@ static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, J
 
 static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     JSC::ErrorInstance* err, const Vector<JSC::StackFrame>* stackTrace,
-    JSC::JSValue val, PopulateStackTraceFlags flags)
+    JSC::JSValue val)
 {
     JSC::JSObject* obj = dynamicDowncast<JSC::JSObject>(val);
     auto& vm = JSC::getVM(global);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    bool getFromSourceURL = false;
     if (stackTrace != nullptr && stackTrace->size() > 0) {
-        populateStackTrace(vm, *stackTrace, except.stack, global, flags);
-
+        populateStackTrace(vm, *stackTrace, except.stack, global);
     } else if (err->stackTrace() != nullptr && err->stackTrace()->size() > 0) {
-        populateStackTrace(vm, *err->stackTrace(), except.stack, global, flags, FinalizerSafety::MustNotTriggerGC);
-
-    } else {
-        getFromSourceURL = true;
+        populateStackTrace(vm, *err->stackTrace(), except.stack, global, FinalizerSafety::MustNotTriggerGC);
     }
     except.type = (unsigned char)err->errorType();
     if (err->isStackOverflowError()) {
@@ -574,8 +531,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         }
     }
 
-    if (getFromSourceURL) {
-
+    if (except.stack.frames_len == 0) {
         // we don't want to serialize JSC::StackFrame longer than we need to
         // so in this case, we parse the stack trace as a string
 
@@ -602,10 +558,17 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
 
                     iterator.forEachFrame([&](const V8StackTraceIterator::StackFrame& frame, bool& stop) -> void {
                         ASSERT(except.stack.frames_len < frame_count);
+                        // A frame that can't be located isn't worth a slot: no URL, the
+                        // `unknown`/`native` placeholders populateStackTrace would have skipped
+                        // as native frames, or a bare word with neither line nor path.
+                        bool hasLine = frame.lineNumber.zeroBasedInt() >= 0;
+                        bool urlIsPath = frame.sourceURL.find('/') != WTF::notFound || frame.sourceURL.find('\\') != WTF::notFound;
+                        if (frame.sourceURL.isEmpty() || (!hasLine && (frame.sourceURL == "unknown"_s || frame.sourceURL == "native"_s || (frame.functionName.isEmpty() && !urlIsPath))))
+                            return;
                         auto& current = except.stack.frames_ptr[except.stack.frames_len];
                         current = {};
 
-                        String functionName = frame.functionName.toString();
+                        String functionName = frame.functionName == "<anonymous>"_s ? String() : frame.functionName.toString();
                         String sourceURL = frame.sourceURL.toString();
                         current.function_name = Bun::toStringRef(functionName);
                         current.source_url = Bun::toStringRef(sourceURL);
@@ -619,6 +582,8 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (!frame.functionName.isEmpty()) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;
@@ -626,21 +591,19 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                         stop = except.stack.frames_len >= frame_count;
                     });
 
-                    if (except.stack.frames_len > 0) {
-                        getFromSourceURL = false;
+                    if (except.stack.frames_len > 0)
                         except.remapped = true;
-                    }
                 }
             }
         }
     }
 
-    if (except.stack.frames_len == 0 && getFromSourceURL) {
+    if (except.stack.frames_len == 0) {
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         if (sourceURL) {
-            if (sourceURL.isString()) {
+            if (sourceURL.isString() && asString(sourceURL)->length()) {
                 except.stack.frames_ptr[0].source_url.deref();
                 except.stack.frames_ptr[0].source_url = Bun::toStringRef(global, sourceURL);
                 if (!scope.clearExceptionExceptTermination()) [[unlikely]]
@@ -680,14 +643,7 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                         }
                     }
                 }
-            }
 
-            {
-                for (int i = 1; i < except.stack.frames_len; i++) {
-                    auto frame = except.stack.frames_ptr[i];
-                    frame.function_name.deref();
-                    frame.source_url.deref();
-                }
                 except.stack.frames_len = 1;
                 PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
                 except.stack.frames_ptr[0].remapped = obj->getNonIndexPropertySlot(global, names.originalLinePublicName(), slot);
@@ -828,7 +784,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)
 {
-    populateStackTrace(arg0->vm(), arg0->stack(), *trace, global, PopulateStackTraceFlags::OnlyPosition);
+    populateStackTrace(arg0->vm(), arg0->stack(), *trace, global);
 }
 
 extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
@@ -846,12 +802,12 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
         JSValue unwrapped = jscException->value();
 
         if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(unwrapped)) {
-            fromErrorInstance(*exception, global, error, &jscException->stack(), unwrapped, PopulateStackTraceFlags::OnlyPosition);
+            fromErrorInstance(*exception, global, error, &jscException->stack(), unwrapped);
             return;
         }
 
         if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlyPosition);
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global);
         }
 
         exceptionFromString(*exception, unwrapped, global);
@@ -859,36 +815,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     }
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
-        fromErrorInstance(*exception, global, error, nullptr, value, PopulateStackTraceFlags::OnlyPosition);
+        fromErrorInstance(*exception, global, error, nullptr, value);
         return;
     }
 
     exceptionFromString(*exception, value, global);
 }
 
-extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+extern "C" void ZigException__collectSourceLines(ZigException* exception, uint8_t topFrame)
 {
-    JSC::JSValue value = JSC::JSValue::decode(jsException);
-    if (value == JSC::JSValue {}) {
-        return;
-    }
-
-    if (value.classInfoOrNull() == JSC::Exception::info()) {
-        auto* jscException = uncheckedDowncast<JSC::Exception>(value);
-        JSValue unwrapped = jscException->value();
-
-        if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
-        }
-
-        exceptionFromString(*exception, unwrapped, global);
-        return;
-    }
-
-    if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
-        if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
-            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
-        }
-        return;
-    }
+    collectSourceLines(exception->stack, topFrame);
 }

@@ -9,9 +9,9 @@
 #include <JavaScriptCore/Debugger.h>
 #include <utility>
 
-#include "InternalModuleRegistryConstants.h"
 #include "wtf/Forward.h"
 
+#include "BuiltinModuleBytecode.h"
 #include "NativeModuleImpl.h"
 namespace Bun {
 
@@ -29,27 +29,22 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 #endif
 }
 
-// The `INTERNAL_MODULE_REGISTRY_GENERATE` macro handles inlining code to compile and run a
-// JS builtin that acts as a module. In debug mode, we use a different implementation that reads
-// from the developer's filesystem. This allows reloading code without recompiling bindings.
-
-JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString)
+// Compiles and runs a JS builtin that acts as a module.
+JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString, unsigned moduleId)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto&& origin = SourceOrigin(WTF::URL(urlString));
-    SourceCode source = JSC::makeSource(SOURCE, origin, JSC::SourceTaintedOrigin::Untainted, moduleName);
+    SourceCode source = builtinModuleSourceCode(SOURCE, moduleName, urlString);
     maybeAddCodeCoverage(vm, source);
+
+    // Only a `--compile --bytecode` executable has entries to decode; everything else parses.
+    UnlinkedFunctionExecutable* unlinkedExecutable = decodeBuiltinModuleBytecode(globalObject, vm, source, moduleName, moduleId);
+    if (!unlinkedExecutable)
+        unlinkedExecutable = createBuiltinModuleExecutable(vm, source, moduleName);
+
     JSFunction* func
         = JSFunction::create(
             vm, globalObject,
-            createBuiltinExecutable(
-                vm, source,
-                Identifier::fromString(vm, moduleName),
-                ImplementationVisibility::Public,
-                ConstructorKind::None,
-                ConstructAbility::CannotConstruct,
-                InlineAttribute::None)
-                ->link(vm, nullptr, source),
+            unlinkedExecutable->link(vm, nullptr, source),
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -100,33 +95,8 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
     return defaultValue;
 }
 
-#ifdef BUN_DYNAMIC_JS_LOAD_PATH
-JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)
-{
-    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTF::move(fileBase));
-    if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
-        auto string = WTF::String::fromUTF8(contents.value());
-        return generateModule(globalObject, vm, string, moduleName, urlString);
-    } else {
-        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
-               "Please re-compile Bun to continue.\n\n",
-            moduleName.utf8().span().data(), file.utf8().span().data());
-        CRASH();
-    }
-}
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString) \
-    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
-#else
-
-// The module sources are linked as one read-only blob (bun_internal_modules_data,
-// see the generated InternalModuleRegistryConstants.S); each module is a span at
-// a known offset/length. createWithoutCopying is the same path the old
-// ASCIILiteral → String conversion took.
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString)                         \
-    return generateModule(globalObject, vm,                                                                                        \
-        WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + (OFFSET), (LENGTH)))), \
-        moduleId, urlString)
-#endif
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, index, moduleName, urlString) \
+    return generateModule(globalObject, vm, builtinModuleSource(index), moduleName, urlString, index)
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };
 

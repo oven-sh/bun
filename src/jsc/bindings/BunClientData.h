@@ -136,6 +136,10 @@ public:
 
     static void create(JSC::VM*, void* bunVM, bool isWorkerVM);
 
+    // Registers Bun's `@`-private names with a VM that compiles builtins but never runs
+    // them and so has no Bun VirtualMachine for create() to attach to.
+    static void registerBuiltinNames(JSC::VM&);
+
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
     JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }

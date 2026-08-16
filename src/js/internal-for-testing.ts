@@ -15,6 +15,14 @@ export const escapePowershell = (code: string) => fmtBinding(code, "escape-power
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
 
+// How many JS builtins this process loaded from an embedded bytecode cache rather than
+// parsing. Only ever nonzero inside a `bun build --compile --bytecode` executable.
+export const builtinModuleBytecodeDecodedCount: () => number = $newCppFunction(
+  "BuiltinModuleBytecode.cpp",
+  "Bun__builtinModuleBytecodeDecodedCount",
+  0,
+);
+
 // Runtime-dispatched SIMD xxHash3 kernel (src/jsc/bindings/xxhash3.cpp), driven
 // directly so tests can exercise the Highway path independent of Bun.hash.
 export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) => bigint = $newCppFunction(

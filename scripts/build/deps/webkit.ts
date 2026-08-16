@@ -3,7 +3,11 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "f0f60fd2324817dae9656d8bf2fcae25ceaccc37";
+// Temporarily a PR preview build: the builtin bytecode cache needs
+// encodeFunctionExecutable()/decodeFunctionExecutable(), added in
+// https://github.com/oven-sh/WebKit/pull/270 (rebased onto f0f60fd2, the sha
+// main pins). Re-point this at the merged main autobuild sha before landing.
+export const WEBKIT_VERSION = "autobuild-preview-pr-270-ce6f2091";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

@@ -103,6 +103,14 @@ JSVMClientData::~JSVMClientData()
     if (vmHandle)
         Bun__VmHandle__release(std::exchange(vmHandle, nullptr));
 }
+
+void JSVMClientData::registerBuiltinNames(VM& vm)
+{
+    // The constructor's appendExternalName() calls copy every name into the VM's own
+    // private-name set; the object itself is not needed afterwards.
+    BunBuiltinNames names(vm);
+}
+
 void JSVMClientData::create(VM* vm, void* bunVM, bool isWorkerVM)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();

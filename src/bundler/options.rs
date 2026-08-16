@@ -1290,6 +1290,10 @@ pub struct BundleOptions<'a> {
     pub debugger: bool,
 
     pub compile_mode: CompileMode,
+    /// `--compile` without a cross `--target`. The JS builtins are specialized per platform
+    /// at Bun's own build time, so their bytecode cache is only worth embedding when the
+    /// executable will run on the platform that generated it.
+    pub compile_target_is_host: bool,
     pub metafile: bool,
     /// Path to write JSON metafile (for Bun.build API)
     pub metafile_json_path: Box<[u8]>,
@@ -1478,6 +1482,7 @@ impl<'a> BundleOptions<'a> {
             code_coverage: self.code_coverage,
             debugger: self.debugger,
             compile_mode: self.compile_mode,
+            compile_target_is_host: self.compile_target_is_host,
             metafile: self.metafile,
             metafile_json_path: self.metafile_json_path.clone(),
             metafile_markdown_path: self.metafile_markdown_path.clone(),
@@ -1722,6 +1727,7 @@ impl<'a> BundleOptions<'a> {
             code_coverage: false,
             debugger: false,
             compile_mode: CompileMode::None,
+            compile_target_is_host: false,
             metafile: false,
             metafile_json_path: Box::default(),
             metafile_markdown_path: Box::default(),

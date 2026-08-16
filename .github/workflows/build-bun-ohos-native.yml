@@ -78,20 +78,31 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # 同 ohos-build-rust.yml: 本机仓库做 hardlink reference, 网络走 gh-proxy。
+      # 本机仓库做 hardlink reference, 网络走 gh-proxy; 断网时回退到
+      # git clone --local (纯本地硬链接, 不依赖 cp --link — OHOS toybox cp 不支持)。
       - name: Checkout Bun source (incremental)
         run: |
           LOCAL=/storage/Users/currentUser/springsources/bun
           REMOTE="https://gh-proxy.com/https://github.com/${{ github.repository }}.git"
           rm -rf bun
           if [ -d "$LOCAL/.git" ]; then
-            # Hardlink from local checkout — ~5s; a network clone of the
-            # 36GB repo (even depth-1 via gh-proxy) takes much longer.
-            git clone --reference "$LOCAL/.git" "$REMOTE" bun 2>/dev/null || \
-              cp -a --link "$LOCAL" bun
+            # 1. 优先: reference clone (fetch 最新 refs)
+            if ! git clone --reference "$LOCAL/.git" "$REMOTE" bun 2>/dev/null; then
+              echo "⚠️  reference clone failed (network?) — falling back to git clone --local"
+              git clone --local "$LOCAL" bun
+            fi
             cd bun
             git remote set-url origin "$REMOTE"
-            git fetch "$REMOTE" ohos-aarch64 --depth=1 2>/dev/null || true
+            # 2. 尝试同步最新 ohos-aarch64 (重试 3 次, gh-proxy 间歇性)
+            attempt=1
+            while [ $attempt -le 3 ]; do
+              echo "fetch attempt $attempt/3"
+              if git fetch "$REMOTE" ohos-aarch64 --depth=1 2>/dev/null; then
+                break
+              fi
+              attempt=$((attempt + 1))
+              sleep 5
+            done
             if git rev-parse --verify FETCH_HEAD >/dev/null 2>&1; then
               git checkout -f FETCH_HEAD
             else
@@ -157,13 +168,22 @@ jobs:
             current=$(git -C "$WEBKIT_SRC" rev-parse HEAD 2>/dev/null || true)
             if [ "$current" != "$WEBKIT_COMMIT" ]; then
               echo "WebKit sync: $current -> $WEBKIT_COMMIT"
-              git -C "$WEBKIT_SRC" fetch --depth 1 origin "$WEBKIT_COMMIT" 2>&1 | tail -1
+              # gh-proxy + 重试 (直连 github.com 在本机间歇性不可达)
+              attempt=1
+              while [ $attempt -le 3 ]; do
+                echo "webkit fetch attempt $attempt/3"
+                if git -C "$WEBKIT_SRC" fetch --depth 1 "https://gh-proxy.com/https://github.com/oven-sh/WebKit.git" "$WEBKIT_COMMIT" 2>&1 | tail -1; then
+                  break
+                fi
+                attempt=$((attempt + 1))
+                sleep 5
+              done
               git -C "$WEBKIT_SRC" checkout "$WEBKIT_COMMIT"
             else
               echo "WebKit already at target commit"
             fi
           else
-            git clone --depth 1 https://github.com/oven-sh/WebKit.git "$WEBKIT_SRC"
+            git clone --depth 1 https://gh-proxy.com/https://github.com/oven-sh/WebKit.git "$WEBKIT_SRC"
             git -C "$WEBKIT_SRC" checkout "$WEBKIT_COMMIT"
           fi
           perl_path=$(command -v perl 2>/dev/null || echo "$HOMEBREW_PREFIX/bin/perl")

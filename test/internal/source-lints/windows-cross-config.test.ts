@@ -212,20 +212,23 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
 /**
  * A release config for a unix target, resolved the way the CI lane does.
  *
- * freebsd passes an explicit fake sysroot for the same reason
+ * Both targets pass an explicit fake sysroot, for the same reason
  * resolveWindowsCross passes a fake winsysroot: without one, resolveConfig
- * falls back to detectFreebsdSysroot(), which probes the filesystem and
- * throws when nothing is there. Only the Linux build image provisions
- * /opt/freebsd-sysroot, so this test would otherwise pass there and throw on
- * the darwin and Windows test agents. An explicit path is used verbatim, so
- * it never has to exist.
+ * probes the real host and filesystem (detectLinuxGlibcSysroot /
+ * detectFreebsdSysroot) and throws whenever the host is not the target. An
+ * x64-glibc build image happens to satisfy the linux target natively and
+ * provisions /opt/freebsd-sysroot, so these tests pass there either way; the
+ * darwin, Windows, musl and aarch64 test agents throw. An explicit path is
+ * used verbatim, so it never has to exist.
  */
 function resolveUnixRelease(os: "linux" | "freebsd"): Config {
   return resolveConfig(
     {
       os,
       arch: "x64",
-      ...(os === "linux" ? { abi: "gnu" as const } : { freebsdSysroot: "/fake/freebsd-sysroot" }),
+      ...(os === "linux"
+        ? { abi: "gnu" as const, linuxSysroot: "/fake/linux-sysroot" }
+        : { freebsdSysroot: "/fake/freebsd-sysroot" }),
       buildType: "Release",
       ci: true,
       buildkite: false,

@@ -49,10 +49,8 @@ pub struct FileReader {
     pub(crate) fd: Cell<Fd>,
     /// Read-only after construction (set via struct literal in `from_blob_*`).
     pub(crate) start_offset: Option<usize>,
-    /// Length of the slice window at `start_offset`; the stream ends there. Read-only after init.
+    /// Length of the slice window at `start_offset`; the reader is limited to it when it is started and ends the stream there. Read-only after init.
     pub(crate) max_size: Option<usize>,
-    /// Bytes delivered so far; never exceeds `max_size`.
-    pub(crate) total_readed: Cell<usize>,
     pub(crate) started: Cell<bool>,
     pub(crate) waiting_for_on_reader_done: Cell<bool>,
     pub(crate) event_loop: Cell<EventLoopHandle>,
@@ -79,7 +77,6 @@ impl Default for FileReader {
             fd: Cell::new(Fd::INVALID),
             start_offset: None,
             max_size: None,
-            total_readed: Cell::new(0),
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
             // Sentinel only; never dispatched (callers must overwrite before use).
@@ -400,6 +397,7 @@ impl FileReader {
                 unsafe { (*self.parent()).increment_count() };
                 self.waiting_for_on_reader_done.set(true);
             }
+            self.reader().set_limit(self.max_size);
             let start_result = if let Some(offset) = self.start_offset {
                 self.reader()
                     .start_file_offset(self.fd.get(), pollable, offset)
@@ -621,7 +619,7 @@ impl FileReader {
         true
     }
 
-    pub(crate) fn on_read_chunk(&self, mut chunk: Chunk<'_>, state: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&self, chunk: Chunk<'_>, state: ReadState) -> bool {
         bun_core::scoped_log!(
             FileReader,
             "onReadChunk() = {} ({})",
@@ -633,17 +631,10 @@ impl FileReader {
             self.reader().close();
             return false;
         }
-        let window_exhausted = match self.window_remaining() {
-            Some(remaining) => {
-                chunk.truncate(remaining);
-                self.consume_window(chunk.len())
-            }
-            None => false,
-        };
-        let has_more = state != ReadState::Eof && !window_exhausted;
+        let has_more = state != ReadState::Eof;
 
         let sink = *self.sink.get();
-        let keep_going = if sink.is_some() {
+        if sink.is_some() {
             self.write_chunk_to_sink(sink, &chunk, has_more)
         } else if self.pending.get().state == streams::PendingState::Pending {
             // Pipes may return 0-byte reads short of EOF; keep reading.
@@ -667,35 +658,6 @@ impl FileReader {
                 self.reader().pause();
             }
             keep_going
-        };
-        if window_exhausted {
-            // Closed only now: closing first would settle a parked read with `Done` ahead of this chunk.
-            self.end_at_window();
-            return false;
-        }
-        keep_going
-    }
-
-    /// Bytes the blob's slice window still allows; `None` when the source is unbounded.
-    fn window_remaining(&self) -> Option<usize> {
-        Some(self.max_size? - self.total_readed.get())
-    }
-
-    /// Charges `len` bytes to the window; `true` once it is used up, which is this stream's EOF.
-    fn consume_window(&self, len: usize) -> bool {
-        let Some(max_size) = self.max_size else {
-            return false;
-        };
-        let total_readed = self.total_readed.get() + len;
-        debug_assert!(total_readed <= max_size);
-        self.total_readed.set(total_readed);
-        total_readed == max_size
-    }
-
-    /// Ends the stream the way EOF does; `on_reader_done` settles whatever is waiting.
-    fn end_at_window(&self) {
-        if !self.reader().is_done() {
-            self.reader().close();
         }
     }
 
@@ -847,17 +809,9 @@ impl FileReader {
         }
 
         if !self.reader().has_pending_read() && self.flowing.get() {
-            // `read_into` does not go through `on_read_chunk`, so the slice window is applied here: the read is cut to what is left of it (an empty destination reads nothing).
-            let len = self
-                .window_remaining()
-                .map_or(buffer.len(), |remaining| remaining.min(buffer.len()));
             // SAFETY: the reader cell is live for `self`'s lifetime; `read_into` is the raw re-entrancy-safe entry (EOF/error dispatch runs user JS).
-            let (amount_read, state) =
-                unsafe { IOReader::read_into(self.reader.get(), &mut buffer[..len]) };
-            bun_core::scoped_log!(FileReader, "onPull({}) = {}", len, amount_read);
-            if self.consume_window(amount_read) {
-                self.end_at_window();
-            }
+            let (amount_read, state) = unsafe { IOReader::read_into(self.reader.get(), buffer) };
+            bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader().is_done();
             if amount_read > 0 {
                 let into = streams::IntoArray {

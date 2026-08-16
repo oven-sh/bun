@@ -1,8 +1,6 @@
 //! Contains helpers for C++ to do TextEncoder/Decoder like operations.
 //! Also contains the code used by `bun.String.encode` and `bun.String.encodeInto`
 
-use core::slice;
-
 use crate::node::types::Encoding;
 use crate::webcore::jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_core::String as BunString;
@@ -589,15 +587,17 @@ fn byte_length_u8<const ENCODING: u8>(input: &[u8]) -> usize {
 
 /// # Safety
 /// `input` must be valid for reading `len` `u16`s and `to` must be valid for
-/// writing `to_len` bytes. For `Ucs2`/`Utf16le` the ranges may overlap (memmove
-/// semantics); for all other encodings they must not.
+/// writing `to_len` bytes; either pointer may be null when its length is 0 (a
+/// detached `ArrayBufferView` has a null vector and a byte length of 0). For
+/// `Ucs2`/`Utf16le` the ranges may overlap (memmove semantics); for all other
+/// encodings they must not.
 pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bool>(
     input: *const u16,
     len: usize,
     to: *mut u8,
     to_len: usize,
 ) -> Result<usize, crate::Error> {
-    if len == 0 {
+    if len == 0 || to_len == 0 {
         return Ok(0);
     }
 
@@ -615,7 +615,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             let (input_slice, to_slice) = unsafe {
                 (
                     bun_core::ffi::slice(input, len),
-                    slice::from_raw_parts_mut(to, to_len),
+                    bun_core::ffi::slice_mut(to, to_len),
                 )
             };
             Ok(
@@ -630,7 +630,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             let (input_slice, to_slice) = unsafe {
                 (
                     bun_core::ffi::slice(input, out),
-                    slice::from_raw_parts_mut(to, to_len),
+                    bun_core::ffi::slice_mut(to, to_len),
                 )
             };
             strings::copy_u16_into_u8(to_slice, input_slice);
@@ -666,7 +666,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
             let (input_slice, to_slice) = unsafe {
                 (
                     bun_core::ffi::slice(input, len),
-                    slice::from_raw_parts_mut(to, to_len),
+                    bun_core::ffi::slice_mut(to, to_len),
                 )
             };
             Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice))

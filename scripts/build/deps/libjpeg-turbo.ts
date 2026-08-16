@@ -70,7 +70,6 @@ const cmakedefine = (truthy: boolean): [string, string] => ["#cmakedefine", trut
 
 export const libjpegTurbo: Dependency = {
   name: "libjpeg-turbo",
-  versionMacro: "LIBJPEG_TURBO",
 
   source: () => ({
     kind: "github-archive",

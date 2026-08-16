@@ -66,11 +66,11 @@ describe.skipIf(!isASAN)("worker.terminate() with commands in flight does not le
         hostname: "127.0.0.1",
         port: 0,
         socket: {
-          open(s) { s.data = { hello: false }; },
+          open(s) { s.data = { buf: "", hello: false }; },
           data(s, chunk) {
-            const text = chunk.toString("latin1");
-            if (!s.data.hello && text.includes("HELLO")) { s.data.hello = true; s.write(HELLO); }
-            if (text.includes("INCR")) onCommands();
+            s.data.buf += chunk.toString("latin1");
+            if (!s.data.hello && s.data.buf.includes("HELLO")) { s.data.hello = true; s.write(HELLO); }
+            if (s.data.buf.includes("INCR")) onCommands();
           },
           close() {},
           error() {},

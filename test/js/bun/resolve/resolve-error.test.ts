@@ -170,6 +170,75 @@ describe("ResolveMessage", () => {
   });
 });
 
+describe.concurrent("static import of an unknown node: builtin", () => {
+  const specifier = "node:this_builtin_does_not_exist";
+  const importer = `import "${specifier}";`;
+
+  // require()d files and the entry point are transpiled on the JS thread, import()ed files on the
+  // concurrent transpiler (unless it is disabled). The JS thread used to reject the import while
+  // transpiling, with a different message; every path now leaves it to the runtime resolver.
+  it.each([
+    ["concurrent transpiler", {}],
+    ["concurrent transpiler disabled", { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" }],
+  ])("rejects the same way from require() and import() (%s)", async (_, env) => {
+    using dir = tempDir("unknown-node-builtin", {
+      "required.ts": importer,
+      "imported.ts": importer,
+      "main.ts": `
+        const describe = e => ({ name: e.name, code: e.code, specifier: e.specifier, message: e.message });
+        const errors = {};
+        try {
+          require("./required.ts");
+        } catch (e) {
+          errors.required = describe(e);
+        }
+        try {
+          await import("./imported.ts");
+        } catch (e) {
+          errors.imported = describe(e);
+        }
+        console.log(JSON.stringify(errors));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const error = {
+      name: "ResolveMessage",
+      code: "ERR_UNKNOWN_BUILTIN_MODULE",
+      specifier,
+      message: `No such built-in module: ${specifier}`,
+    };
+    expect({ errors: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      errors: { required: error, imported: error },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is reported by the entry point with the same message", async () => {
+    using dir = tempDir("unknown-node-builtin-entry", { "entry.ts": importer });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain(`error: No such built-in module: ${specifier}`);
+    expect(exitCode).toBe(1);
+  });
+});
+
 // These tests reproduce panics where the module resolver wrote past fixed-size
 // PathBuffers when given very long import specifiers. The bug triggers when
 // `import_path < PATH_MAX` but `baseUrl + import_path > PATH_MAX` (otherwise a

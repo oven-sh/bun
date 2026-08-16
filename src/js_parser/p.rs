@@ -1356,7 +1356,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Bump-allocate a binding payload and wrap it in `Binding`.
     ///
-    /// If a caller needs to wrap an already-stored payload, call `Binding::init` directly.
+    /// If a caller needs to wrap an already-stored payload, construct
+    /// `Binding { loc, data }` directly.
     #[inline]
     pub(crate) fn b<T>(&mut self, t: T, loc: bun_ast::Loc) -> Binding
     where

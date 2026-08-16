@@ -314,24 +314,6 @@ BunString toStringView(StringView view)
 // strings that are unlikely to ever be atomized.
 static constexpr unsigned int kMinCrossThreadShareableLength = 256;
 
-bool isCrossThreadShareable(const WTF::String& string)
-{
-    if (string.length() < kMinCrossThreadShareableLength)
-        return false;
-
-    const auto* impl = string.impl();
-
-    // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
-    if (impl->isAtom() || impl->isSymbol())
-        return false;
-
-    // 2) Don't share slices
-    if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return false;
-
-    return true;
-}
-
 // An isolated copy still gets handed to (possibly several) receiving threads —
 // BroadcastChannel fans a single SerializedScriptValue out to N contexts, each
 // of which deserializes the same stored string — so the copy needs the same

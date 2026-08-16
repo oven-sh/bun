@@ -2320,10 +2320,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include <JavaScriptCore/FunctionPrototype.h>
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/DFGAbstractHeap.h>
 
 #include "JSDOMConvertBufferSource.h"

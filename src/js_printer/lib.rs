@@ -2130,8 +2130,6 @@ pub(crate) mod __gated_printer {
                             properties: js_ast::StoreSlice::new_mut(temp_bindings.as_mut_slice()),
                             is_single_line: true,
                         };
-                        // `Binding::init(*B.Object, loc)` is gated upstream;
-                        // inline its body — it just tags the union and copies `loc`.
                         // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
                         // pointee is a stack local but `print_binding` only reads it and
                         // returns before `b_object` is dropped (same as the prior `&raw mut`).

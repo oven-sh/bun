@@ -897,9 +897,13 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            let waited = vm.wait_for_promise(promise);
+            // The quiet scope covered the call; the wait runs the event loop, and what rejects
+            // meanwhile is other code's and is reported as usual (as `.rejects` and async custom
+            // matchers do). This promise's own rejection is the result being waited for.
+            promise.set_handled(global_this.vm());
             scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
+            vm.wait_for_promise(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));

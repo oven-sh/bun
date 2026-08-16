@@ -973,14 +973,15 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
     // the `has_pending_immediate` read below is correct.
     // SAFETY: `el` is the live per-thread event loop; `vm` per fn contract.
     unsafe { (*el).tick_immediate_tasks(vm) };
-    if waiting_on.is_some() {
+    let mut waiter_satisfied = false;
+    if let Some(promise) = waiting_on {
         // The frame blocked in the wait usually has the loop entered already
         // (it is a timer, immediate or task callback, or runs in a microtask
         // drain), so the immediates' own exits above were not the outermost
         // and did not checkpoint microtasks. What settles the awaited promise
         // is normally one of those microtasks (an await continuation), and the
         // wait's next `tick()` would only run them after the poll below: run
-        // them now so the poll sees the promise settled.
+        // them now, so that the poll can see the promise settled.
         //
         // A stop found by the drain is the wait's to act on at its gate, as is
         // one found by the immediates above or by `get_timeout`'s timers: the
@@ -988,11 +989,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
         // the stop woke the loop, so the poll returns at once.
         // SAFETY: as above.
         let _ = unsafe { (*el).drain_microtasks() };
+        // Nothing else before the poll runs script (the timers `get_timeout`
+        // fires are JSC-internal), so this is final: a settled promise wakes
+        // nothing, and the waiter acts on it as soon as this tick returns, so
+        // the poll must not park, same as with an immediate queued.
+        waiter_satisfied = promise.status() != PromiseStatus::Pending;
     }
     // SAFETY: as above.
     let has_yielded_tasks = unsafe { (*el).promote_yield_tasks() };
     #[cfg(windows)]
-    if has_yielded_tasks || !unsafe { &*el }.immediate_tasks.is_empty() {
+    if has_yielded_tasks || waiter_satisfied || !unsafe { &*el }.immediate_tasks.is_empty() {
         // SAFETY: `el` is the live per-thread event loop.
         unsafe { (*el).wakeup() };
     }
@@ -1054,9 +1060,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
         // Read `immediate_tasks` AFTER
         // `tickImmediateTasks` swaps `next_immediate_tasks` in, so this
         // reflects next-tick immediates (queued during the drain above).
-        // SAFETY: `el` is the live per-thread event loop.
+        // True when something is acted on as soon as the poll returns, so it
+        // must not park.
         // SAFETY: `el` is the live per-thread event loop.
         let has_pending_immediate = has_yielded_tasks
+            || waiter_satisfied
             || !unsafe { &*el }.immediate_tasks.is_empty()
             || unsafe { &*el }.has_pending_tasks();
         // Fold the QUIC deadline into the poll timeout.
@@ -1102,23 +1110,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            // Checked after `get_timeout`, whose WTFTimer drain is the last
-            // thing before the poll that can settle the promise: the caller
-            // returns as soon as this tick does, so the poll must not park on
-            // its behalf once it has settled.
-            let waiter_satisfied = waiting_on.is_some_and(|p| p.status() != PromiseStatus::Pending);
-            if waiter_satisfied {
-                // SAFETY: `loop_` is the live per-thread uws loop.
-                unsafe { (*loop_).tick_without_idle() };
-            } else {
-                // SAFETY: `loop_` is the live per-thread uws loop.
-                unsafe {
-                    (*loop_).tick_with_timeout(
-                        if have_timeout { Some(&timespec) } else { None },
-                        now_ns,
-                    )
-                };
-            }
+            // SAFETY: `loop_` is the live per-thread uws loop.
+            unsafe {
+                (*loop_)
+                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
+            };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe { (*loop_).tick_without_idle() };

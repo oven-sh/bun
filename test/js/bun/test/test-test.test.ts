@@ -758,9 +758,10 @@ test("my-test", () => {
 // the turn is allowed to park in the poll, and it is the only thing that could
 // end such a park. The wait returning with the timer unfired shows the turn did
 // not park; a turn that parks returns only once the timer has fired. (Bun's
-// idle GC timer is disabled because it would otherwise end the park within a
-// second, which is what the bug looks like in practice: every such wait taking
-// up to a second.)
+// idle GC timer is disabled because it would otherwise end the park itself,
+// which is what the bug looks like in practice: every such wait taking up to
+// that timer's period, a second, or 30 seconds once the heap has been quiet
+// for a while.)
 test("a synchronous wait on a promise returns as soon as an immediate settles it", async () => {
   using dir = tempDir("wait-settled-by-immediate", {
     "entry.ts": "export default 1;\n",
@@ -853,4 +854,143 @@ test("a synchronous wait on a promise returns as soon as an immediate settles it
     ,
     }
   `);
+});
+
+// The same wait, made by the runtime itself: loading the entry point, a
+// --preload and a test file each block until the module's promise settles, and
+// with --hot / --watch through a separate loop that tracks reloads. Each
+// fixture's top-level await is settled by an immediate; what is observed is the
+// thing gated on the load returning (the rejection report, the entry point, the
+// tests), against the same kind of ref'd timer as above.
+describe("a module load returns as soon as an immediate settles the module's promise", () => {
+  const files = {
+    "detector.ts": /* ts */ `
+      let parked = false;
+      const timer = setInterval(() => (parked = true), 2_000);
+      export function report(what) {
+        clearInterval(timer);
+        console.log(what + ": " + (parked ? "parked" : "returned"));
+      }
+    `,
+    "preload.ts": /* ts */ `
+      import "./detector.ts";
+      await new Promise(resolve => setImmediate(resolve));
+    `,
+    "entry.ts": /* ts */ `
+      import { report } from "./detector.ts";
+      report("the entry point ran");
+      process.exit(0);
+    `,
+    "immediates.test.ts": /* ts */ `
+      import { test } from "bun:test";
+      import { report } from "./detector.ts";
+      // The runner pre-arms one wake-up before loading a file, which covers the
+      // first immediate's turn; the second one has to be covered by the load itself.
+      await new Promise(resolve => setImmediate(resolve));
+      await new Promise(resolve => setImmediate(resolve));
+      test("first", () => {
+        report("the tests ran");
+        process.exit(0);
+      });
+    `,
+    "rejects.ts": /* ts */ `
+      // If the load parks after this module's promise rejects, this is what ends
+      // the park, and it exits before the rejection has been reported.
+      setInterval(() => process.exit(3), 2_000);
+      await new Promise(resolve => setImmediate(resolve));
+      throw new Error("rejected after an immediate");
+    `,
+  };
+  const env = { ...bunEnv, BUN_GC_TIMER_DISABLE: "1" };
+
+  test.concurrent.each([
+    ["a --preload", ["--preload", "./preload.ts", "entry.ts"], "the entry point ran"],
+    ["a --preload under --hot", ["--hot", "--preload", "./preload.ts", "entry.ts"], "the entry point ran"],
+    ["a test file", ["test", "./immediates.test.ts"], "the tests ran"],
+    ["a test file under --watch", ["test", "--watch", "./immediates.test.ts"], "the tests ran"],
+  ])("%s", async (_, args, what) => {
+    using dir = tempDir("module-load-settled-by-immediate", files);
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain(`${what}: returned`);
+    expect(exitCode).toBe(0);
+  });
+
+  // Plain: the process exits right after the report, so stderr ends with it.
+  // --hot: the process stays up after reporting, so read until the report
+  // arrives (or, when the load parked, until the fixture's timer has exited the
+  // process without one) and let the disposer kill it.
+  test.concurrent.each([
+    ["a rejecting entry point", ["rejects.ts"]],
+    ["a rejecting entry point under --hot", ["--hot", "rejects.ts"]],
+  ])("%s is reported as soon as it rejects", async (_, args) => {
+    using dir = tempDir("module-load-settled-by-immediate", files);
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env, stdout: "ignore", stderr: "pipe" });
+    const chunks: Uint8Array[] = [];
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      chunks.push(chunk);
+      stderr = Buffer.concat(chunks).toString();
+      if (stderr.includes("error: rejected after an immediate")) break;
+    }
+    expect(stderr).toContain("error: rejected after an immediate");
+  });
+});
+
+// toThrow() on a function returning a promise runs the event loop until the
+// promise settles. What other code rejects meanwhile fails the test, as it does
+// during a .resolves wait (the matcher keeps only the function's own synchronous
+// rejection to itself); the awaited promise's own rejection is the matcher's
+// result, not an error.
+test("a rejection left by other code during a toThrow() wait fails the test", async () => {
+  using dir = tempDir("to-throw-wait-rejections", {
+    "rejections.test.ts": /* ts */ `
+      import { expect, test } from "bun:test";
+
+      const afterImmediate = () => new Promise(resolve => setImmediate(resolve));
+
+      test("a reaction to the awaited promise rejects", () => {
+        const promise = afterImmediate();
+        promise.then(() => Promise.reject(new Error("REJECTED_BY_A_REACTION")));
+        expect(() => promise).not.toThrow();
+      });
+
+      test("the awaited function leaves a rejection behind", () => {
+        expect(async () => {
+          await afterImmediate();
+          Promise.reject(new Error("LEFT_BEHIND_BY_THE_FUNCTION"));
+        }).not.toThrow();
+      });
+
+      test("the awaited promise's own rejection is the result", () => {
+        expect(async () => {
+          await afterImmediate();
+          throw new Error("THE_RESULT");
+        }).toThrow("THE_RESULT");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./rejections.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(
+    stderr
+      .split("\n")
+      .filter(line => /^error: |^\((pass|fail)\)|^ \d+ (pass|fail)$/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, "")),
+  ).toEqual([
+    "error: REJECTED_BY_A_REACTION",
+    "(fail) a reaction to the awaited promise rejects",
+    "error: LEFT_BEHIND_BY_THE_FUNCTION",
+    "(fail) the awaited function leaves a rejection behind",
+    "(pass) the awaited promise's own rejection is the result",
+    " 1 pass",
+    " 2 fail",
+  ]);
+  expect(exitCode).toBe(1);
 });

@@ -1133,8 +1133,6 @@ enum BatchSegment {
 }
 
 impl BatchSegment {
-    /// Start and length of the bytes this segment puts on the wire. Dereference only
-    /// while the send_data call that recorded the segment is still running.
     #[inline(always)]
     fn raw_parts(self, batch: &[u8]) -> (*const u8, usize) {
         match self {

@@ -580,7 +580,7 @@ impl<'a> Parser<'a> {
                         num_to_u32(expr.as_number().expect("infallible: type checked"));
                 }
 
-                if let Some(expr) = test.get(b"testTimeout") {
+                if let Some(expr) = test.get(b"timeout") {
                     self.expect(&expr, ExprTag::ENumber)?;
                     let value = expr.as_number().expect("infallible: type checked");
                     // `as u32` would silently truncate fractions and saturate
@@ -592,7 +592,7 @@ impl<'a> Parser<'a> {
                     {
                         self.add_error(
                             expr.loc,
-                            b"\"testTimeout\" must be a non-negative integer (milliseconds)",
+                            b"\"timeout\" must be a non-negative integer (milliseconds)",
                         )?;
                         return Ok(());
                     }

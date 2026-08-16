@@ -390,13 +390,13 @@ junit = "test-results.xml"
 
 CI systems and other tools can consume the report.
 
-### `test.testTimeout`
+### `test.timeout`
 
 Default per-test timeout in milliseconds. Tests that take longer than this fail with a timeout error. Default `5000`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-testTimeout = 10000
+timeout = 10000
 ```
 
 Equivalent CLI flag: `--timeout`. CLI flags override the `bunfig.toml` value entirely.

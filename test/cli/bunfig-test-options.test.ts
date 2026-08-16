@@ -197,9 +197,9 @@ describe("bunfig.toml test options", () => {
     expect(output).toContain("4 pass");
   });
 
-  test.concurrent("test.testTimeout option applies a default timeout", async () => {
+  test.concurrent("test.timeout option applies a default timeout", async () => {
     using dir = tempDir("bunfig-test-timeout", {
-      "bunfig.toml": `[test]\ntestTimeout = 200`,
+      "bunfig.toml": `[test]\ntimeout = 200`,
       "a.test.ts": `
         import { test, expect } from "bun:test";
         test("slow", async () => {
@@ -223,9 +223,9 @@ describe("bunfig.toml test options", () => {
     expect(exitCode).not.toBe(0);
   });
 
-  test.concurrent("CLI --timeout overrides test.testTimeout", async () => {
+  test.concurrent("CLI --timeout overrides test.timeout", async () => {
     using dir = tempDir("bunfig-test-timeout-cli", {
-      "bunfig.toml": `[test]\ntestTimeout = 200`,
+      "bunfig.toml": `[test]\ntimeout = 200`,
       "a.test.ts": `
         import { test, expect } from "bun:test";
         test("slow", async () => {
@@ -251,9 +251,9 @@ describe("bunfig.toml test options", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.each(["1.5", "-1"])("test.testTimeout rejects invalid value %s", async value => {
+  test.concurrent.each(["1.5", "-1"])("test.timeout rejects invalid value %s", async value => {
     using dir = tempDir("bunfig-test-timeout-invalid", {
-      "bunfig.toml": `[test]\ntestTimeout = ${value}`,
+      "bunfig.toml": `[test]\ntimeout = ${value}`,
       "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
     });
 
@@ -267,13 +267,13 @@ describe("bunfig.toml test options", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout + stderr).toContain("testTimeout");
+    expect(stdout + stderr).toContain("timeout");
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("test.testTimeout rejects non-number values even with --timeout", async () => {
+  test.concurrent("test.timeout rejects non-number values even with --timeout", async () => {
     using dir = tempDir("bunfig-test-timeout-type", {
-      "bunfig.toml": `[test]\ntestTimeout = "abc"`,
+      "bunfig.toml": `[test]\ntimeout = "abc"`,
       "a.test.ts": `import { test, expect } from "bun:test"; test("a", () => expect(1).toBe(1));`,
     });
 

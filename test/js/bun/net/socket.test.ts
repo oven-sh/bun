@@ -4769,4 +4769,89 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
     expect(stdout.trim()).toBe("OK drained " + 4 * 1024 * 1024);
     expect(exitCode).toBe(0);
   }, 15_000);
+
+  it("a half-open socket that consumed the peer FIN survives its abort watch and stays usable", async () => {
+    // After a half-open socket reads the peer's FIN to EOF, usockets parks
+    // its poll subscribed to only UV_PRIORITIZED: the abort-only watch that
+    // lets a later reset still close the socket. That mask armed no fd set
+    // on the slow path, so select() failed WSAEINVAL and error-closed the
+    // healthy socket, same class as the DISCONNECT-only bug. (A reset that
+    // arrives after the FIN was consumed is invisible to the socket API
+    // itself, per probing: peek stays 0, SO_ERROR stays 0, so only the AFD
+    // fast path can deliver that one; the slow path's job is to survive
+    // the park and deliver what a peek can see.)
+    const { stdout, stderr, exitCode } = await runChild(`
+        let sawError = null;
+        let closeError = null;
+        let closed = false;
+        let victim;
+        const opened = Promise.withResolvers();
+        const clientGotReply = Promise.withResolvers();
+        const gone = Promise.withResolvers();
+        using server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          allowHalfOpen: true,
+          socket: {
+            open(s) {
+              victim = s;
+              opened.resolve();
+            },
+            data() {},
+            end() {},
+            error(s, e) {
+              sawError = e?.code || String(e);
+              gone.resolve("error");
+            },
+            close(s, e) {
+              closeError = e?.code || (e ? String(e) : null);
+              closed = true;
+              gone.resolve("close");
+            },
+          },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          allowHalfOpen: true,
+          socket: {
+            data(s, buf) {
+              clientGotReply.resolve(buf.toString());
+            },
+            end() {},
+            error() {},
+            close() {},
+          },
+        });
+        await opened.promise;
+        client.write("x");
+        // FIN with the byte consumed on the server side: the server reads
+        // to EOF, drops READABLE, and parks on the abort-only watch. The
+        // broken path error-closes it within a loop iteration; hold the
+        // state across a fixed window (nothing JS-observable marks the
+        // park itself).
+        client.shutdown();
+        await Bun.sleep(1500);
+        if (sawError || closed) {
+          console.log("FAIL early-death error=" + (sawError || closeError) + " closed=" + closed);
+          process.exit(1);
+        }
+        // Still usable for writes after surviving parked.
+        victim.write("reply");
+        const got = await clientGotReply.promise;
+        if (got !== "reply") {
+          console.log("FAIL reply corrupted: " + got);
+          process.exit(1);
+        }
+        // Answer the FIN: both directions done, clean teardown.
+        victim.end();
+        await gone.promise;
+        const bad = sawError || closeError;
+        console.log(bad ? "FAIL " + bad : "OK survived the abort watch");
+        process.exit(bad ? 1 : 0);
+      `);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK survived the abort watch");
+    expect(exitCode).toBe(0);
+  }, 15_000);
 });

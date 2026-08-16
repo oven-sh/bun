@@ -64,9 +64,10 @@ export const libuv: Dependency = {
   // win-slow-poll-disconnect: the select()-based slow poll path (taken when
   // a winsock LSP with a non-IFS protocol chain owns the socket) never
   // reported UV_DISCONNECT, and a poll subscribed to only UV_DISCONNECT
-  // handed select() three empty fd sets, which fails WSAEINVAL and killed
-  // the watcher with a bogus error. usockets arms UV_DISCONNECT on every
-  // poll and parks paused/half-closed sockets in exactly that state.
+  // (or only UV_PRIORITIZED, the abort watch) handed select() three empty
+  // fd sets, which fails WSAEINVAL and killed the watcher with a bogus
+  // error. usockets arms UV_DISCONNECT on every poll and parks
+  // paused/half-closed sockets in exactly those states.
   // Synthesize UV_DISCONNECT from select() readability + MSG_PEEK, and add
   // the BUN_FEATURE_FLAG_UV_FORCE_SLOW_POLL=1 hook so tests reach the path without an LSP.
   // Upstreamable to libuv/libuv (minus the hook).

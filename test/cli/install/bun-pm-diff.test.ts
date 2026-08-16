@@ -545,7 +545,8 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     const plain = await pretty(files);
     // Equivalent spellings fold away by default now; only the renamed locals and the whitespace file remain.
     expect(plain.text).toMatch(/\nflags\.js ─+ formatting only\n/);
-    expect(plain.text).toMatch(/\nsum\.js ─+ \+4 -4\n/);
+    // A consistent rename of locals is not a change either: the key names every local by structure.
+    expect(plain.text).toMatch(/\nsum\.js ─+ formatting only\n/);
     expect(plain.text).toMatch(/\nnotes\.txt ─+ \+3 -2\n/);
     const folded = await pretty(files, ["--minify", "--unminify", "-w"]);
     expect(folded.text).toMatch(/\nflags\.js ─+ formatting only\n/);

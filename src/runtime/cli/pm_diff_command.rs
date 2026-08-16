@@ -934,6 +934,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
         let nopts = normalize::Options {
             minify_syntax: flags.minify,
             dce: false,
+            relayout: true,
         };
         // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
         // so it gets the gentler display print. One parse+print per side either way.
@@ -947,13 +948,20 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             nopts
         };
         // Canonical re-print: same parser and printer on both sides, so only meaning survives.
-        let (norm_old, norm_new) = if flags.raw {
-            (None, None)
-        } else {
-            (
+        let (norm_old, norm_new) = match (flags.raw, readable_js, old, new) {
+            (true, ..) => (None, None),
+            // Both sides of readable JS are keyed together so their locals get lockstep names.
+            (false, true, Some(o), Some(n)) => match normalize::normalize_key_pair(path, o, n) {
+                Some((ko, kn)) => (Some(ko), Some(kn)),
+                None => (
+                    normalize::normalize(path, o, popts),
+                    normalize::normalize(path, n, popts),
+                ),
+            },
+            _ => (
                 old.and_then(|b| normalize::normalize(path, b, popts)),
                 new.and_then(|b| normalize::normalize(path, b, popts)),
-            )
+            ),
         };
         if !flags.raw && normalize::kind_for(path).is_some() {
             let too_big = |b: Option<&[u8]>| b.is_some_and(|b| b.len() > normalize::MAX_BYTES);

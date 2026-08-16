@@ -178,6 +178,17 @@ fn changed_lines(a: &[u8], b: &[u8]) -> (Vec<bool>, Vec<bool>) {
     (ca, cb)
 }
 
+fn widen(text: &[u8], (mut lo, mut hi): (usize, usize)) -> (usize, usize) {
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$' || b & 0x80 != 0;
+    while lo > 0 && ident(text[lo - 1]) && text.get(lo).is_some_and(|&b| ident(b)) {
+        lo -= 1;
+    }
+    while hi < text.len() && ident(text[hi]) && hi > 0 && ident(text[hi - 1]) {
+        hi += 1;
+    }
+    (lo, hi)
+}
+
 /// The differing byte span of `a` against `b` (common prefix/suffix removed).
 fn span(a: &[u8], b: &[u8]) -> (usize, usize) {
     let lo = a.iter().zip(b).take_while(|(x, y)| x == y).count();
@@ -264,8 +275,9 @@ pub(crate) fn project<'a>(
                 let (dl, nl) = (d.old_no - 1, n.new_no - 1);
                 let mut hide = ok(&so, dl, d.text, &unseen_new) && ok(&sn, nl, n.text, &unseen_old);
                 if hide && !so.no_image(dl) && !sn.no_image(nl) {
-                    let (dlo, dhi) = span(d.text, n.text);
-                    let (nlo, nhi) = span(n.text, d.text);
+                    // Out to token edges, so a renamed identifier is judged by its own mapping (`utils` → `utils$1`).
+                    let (dlo, dhi) = widen(d.text, span(d.text, n.text));
+                    let (nlo, nhi) = widen(n.text, span(n.text, d.text));
                     let ws = |t: &[u8], lo: usize, hi: usize| {
                         t[lo..hi].iter().all(u8::is_ascii_whitespace)
                     };

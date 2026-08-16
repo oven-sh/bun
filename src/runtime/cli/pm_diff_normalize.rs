@@ -62,6 +62,8 @@ pub(crate) struct Options {
     pub minify_syntax: bool,
     /// Drop unreachable code, so a branch that became dead reads as a change where it happened.
     pub dce: bool,
+    /// One declaration / call per line: undo `var a, b, c` and `a(), b()` chains (the un-minified display).
+    pub relayout: bool,
 }
 
 impl Options {
@@ -69,6 +71,7 @@ impl Options {
     pub(crate) const KEY: Options = Options {
         minify_syntax: true,
         dce: true,
+        relayout: false,
     };
 }
 
@@ -110,19 +113,63 @@ pub(crate) fn normalize_minified_pair(
     let source_n = bun_ast::Source::init_path_string(path, new);
     let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
     let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
+    let profiles = [
+        super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
+        super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
+    ];
     {
         let mut namer = Namer::new(
             &arena_o,
             &arena_n,
             ast_o.symbols.as_mut_slice(),
             ast_n.symbols.as_mut_slice(),
-        );
+        )
+        .with_profiles(profiles);
         namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
     }
     let mut o = print_js(&arena_o, ast_o, &source_o, options)?;
     let mut n = print_js(&arena_n, ast_n, &source_n, options)?;
     o.was_minified = true;
     n.was_minified = true;
+    Some((o, n))
+}
+
+/// Both sides of a readable JS file printed as the comparison key: aggressive options plus every local renamed
+/// in lockstep, so a bundler's `utils` → `utils$1` (or any consistent rename) is not a difference. Never displayed.
+pub(crate) fn normalize_key_pair(
+    path: &[u8],
+    old: &[u8],
+    new: &[u8],
+) -> Option<(Normalized, Normalized)> {
+    let Some(Kind::Js(loader)) = kind_for(path) else {
+        return None;
+    };
+    if old.len() > MAX_BYTES || new.len() > MAX_BYTES {
+        return None;
+    }
+    let options = Options::KEY;
+    let _store = StoreScope::enter();
+    let (arena_o, arena_n) = (Arena::new(), Arena::new());
+    let source_o = bun_ast::Source::init_path_string(path, old);
+    let source_n = bun_ast::Source::init_path_string(path, new);
+    let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
+    let mut ast_n = parse_js(&arena_n, &source_n, loader, options)?;
+    let profiles = [
+        super::pm_diff_profile::profiles(&ast_o, ast_o.symbols.len()),
+        super::pm_diff_profile::profiles(&ast_n, ast_n.symbols.len()),
+    ];
+    {
+        let mut namer = Namer::new(
+            &arena_o,
+            &arena_n,
+            ast_o.symbols.as_mut_slice(),
+            ast_n.symbols.as_mut_slice(),
+        )
+        .for_key(profiles);
+        namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
+    }
+    let o = print_js(&arena_o, ast_o, &source_o, options)?;
+    let n = print_js(&arena_n, ast_n, &source_n, options)?;
     Some((o, n))
 }
 
@@ -181,6 +228,9 @@ fn print_js<'a>(
     source: &'a bun_ast::Source,
     options: Options,
 ) -> Option<Normalized> {
+    if options.relayout {
+        super::pm_diff_relayout::relayout(arena, &mut ast);
+    }
     let imports: Vec<Vec<u8>> = ast
         .import_records
         .as_slice()
@@ -269,6 +319,10 @@ struct Namer<'s> {
     scratch: Vec<u8>,
     /// Subtree member counts, computed once per scope.
     weights: WeightMemo,
+    /// Rename every local (the comparison key), not only mangled-looking ones (the un-minified display).
+    all_names: bool,
+    /// Per side, per symbol: name-free use-site profile hash (0 = unused / not computed).
+    profiles: [Vec<u64>; 2],
 }
 
 #[derive(Clone, Copy)]
@@ -277,6 +331,10 @@ struct Candidate {
     kind: u8,
     /// kind + bucketed use count: hub symbols keep their bucket when a release adds a call site or two.
     fingerprint: u64,
+    /// How the symbol is used (properties read, call arities, …); 0 when unknown.
+    profile: u64,
+    /// The spelling, used only to break ties between structurally identical candidates.
+    name_hash: u64,
 }
 
 fn count_bucket(n: u32) -> u64 {
@@ -303,11 +361,35 @@ impl<'s> Namer<'s> {
         Namer {
             arenas: [arena_o, arena_n],
             weights: Default::default(),
+            all_names: false,
+            profiles: [Vec::new(), Vec::new()],
             renamed: [vec![false; old.len()], vec![false; new.len()]],
             symbols: [old, new],
             taken,
             scratch: Vec::new(),
         }
+    }
+
+    /// Key mode: every local is renamed, symbols are matched by how they are used, and any global's name is off limits.
+    fn with_profiles(mut self, profiles: [Vec<u64>; 2]) -> Self {
+        self.profiles = profiles;
+        self
+    }
+
+    fn for_key(mut self, profiles: [Vec<u64>; 2]) -> Self {
+        self.all_names = true;
+        self.profiles = profiles;
+        self.taken.clear();
+        for side in 0..2 {
+            for sym in self.symbols[side].iter() {
+                if sym.kind == bun_ast::symbol::Kind::Unbound {
+                    self.taken.push(sym.original_name.slice().to_vec());
+                }
+            }
+        }
+        self.taken.sort_unstable();
+        self.taken.dedup();
+        self
     }
 
     fn root(symbols: &[bun_ast::Symbol], mut i: usize) -> usize {
@@ -336,7 +418,7 @@ impl<'s> Namer<'s> {
             let i = Self::root(symbols, inner as usize);
             let sym = &symbols[i];
             if self.renamed[side][i]
-                || sym.original_name.len() > 2
+                || (!self.all_names && sym.original_name.len() > 2)
                 || sym.slot_namespace() != bun_ast::symbol::SlotNamespace::Default
             {
                 continue;
@@ -344,10 +426,16 @@ impl<'s> Namer<'s> {
             if out.iter().any(|c: &Candidate| c.symbol == i) {
                 continue;
             }
+            let profile = self.profiles[side]
+                .get(inner as usize)
+                .copied()
+                .unwrap_or(0);
             out.push(Candidate {
                 symbol: i,
                 kind: sym.kind as u8,
                 fingerprint: (sym.kind as u64) << 32 | count_bucket(sym.use_count_estimate),
+                profile,
+                name_hash: bun_wyhash::hash(sym.original_name.slice()),
             });
         }
         out
@@ -394,7 +482,23 @@ impl<'s> Namer<'s> {
         let co = old.map_or(Vec::new(), |s| self.candidates(0, s));
         let cn = new.map_or(Vec::new(), |s| self.candidates(1, s));
         let mut index = 0;
-        let mut aligned = align(&co, &cn, |c| c.fingerprint);
+        // Strongest evidence first: identical use-site profile (+kind), then kind + use bucket, then kind alone. The
+        // spelling only ever breaks a tie between candidates the structure cannot tell apart.
+        let key = |c: &Candidate| {
+            if c.profile != 0 {
+                (u64::from(c.kind) << 56) ^ c.profile
+            } else {
+                c.fingerprint
+            }
+        };
+        let mut aligned = align(&co, &cn, key);
+        rematch_runs(&mut aligned, |i, j| {
+            co[i].fingerprint == cn[j].fingerprint && co[i].name_hash == cn[j].name_hash
+        });
+        rematch_runs(&mut aligned, |i, j| co[i].fingerprint == cn[j].fingerprint);
+        rematch_runs(&mut aligned, |i, j| {
+            co[i].kind == cn[j].kind && co[i].name_hash == cn[j].name_hash
+        });
         rematch_runs(&mut aligned, |i, j| co[i].kind == cn[j].kind);
         for pair in aligned {
             if let (Some(i), _) = pair {

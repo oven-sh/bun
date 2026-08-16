@@ -6867,13 +6867,24 @@ pub trait FileOpener: Sized {
     #[cfg(windows)]
     fn open_callback(&self) -> fn(&mut Self, Fd);
 
+    /// The store's path bytes. `get_fd_by_opening` runs on a pool thread, where
+    /// the store's `PathLike` may be read but not cloned or dropped (a
+    /// `PinnedBuffer`'s refcount is JS-thread-only), so it copies these into
+    /// its `PathBuffer` instead of cloning.
+    fn store_path(&self) -> &[u8] {
+        match self.pathlike() {
+            PathOrFileDescriptor::Path(p) => p.slice(),
+            PathOrFileDescriptor::Fd(_) => unreachable!(),
+        }
+    }
+
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::PathBuffer::uninit();
-        let path_string = match self.pathlike() {
-            PathOrFileDescriptor::Path(p) => p.clone(),
+        let len = match self.pathlike() {
+            PathOrFileDescriptor::Path(p) => p.slice_z_with_force_copy::<true>(&mut buf).len(),
             PathOrFileDescriptor::Fd(_) => unreachable!(),
         };
-        let path = path_string.slice_z(&mut buf);
+        let path = bun_core::ZStr::from_buf(&buf[..], len);
 
         #[cfg(windows)]
         {
@@ -6891,17 +6902,11 @@ pub trait FileOpener: Sized {
                     // SAFETY: req is the live uv_fs_t from the open request.
                     let result = unsafe { (*req).result };
                     if let Some(err_enum) = result.err_enum_e() {
-                        let path_string_2 = match self_.pathlike() {
-                            PathOrFileDescriptor::Path(p) => p.clone(),
-                            PathOrFileDescriptor::Fd(_) => unreachable!(),
-                        };
+                        let system_error = bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
+                            .with_path(self_.store_path())
+                            .to_system_error();
                         self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
-                        self_.set_system_error(
-                            bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
-                                .with_path(path_string_2.slice())
-                                .to_system_error()
-                                .into(),
-                        );
+                        self_.set_system_error(system_error.into());
                         self_.set_opened_fd(bun_sys::Fd::INVALID);
                     } else {
                         self_.set_opened_fd(Fd::from_uv(result.to_fd()));
@@ -6940,13 +6945,11 @@ pub trait FileOpener: Sized {
                 )
             };
             if let Some(errno) = rc.err_enum_e() {
+                let system_error = bun_sys::Error::from_code(errno, bun_sys::Tag::open)
+                    .with_path(self.store_path())
+                    .to_system_error();
                 self.set_errno(bun_errno::from_errno(errno as i32).into());
-                self.set_system_error(
-                    bun_sys::Error::from_code(errno, bun_sys::Tag::open)
-                        .with_path(path_string.slice())
-                        .to_system_error()
-                        .into(),
-                );
+                self.set_system_error(system_error.into());
                 self.set_opened_fd(bun_sys::Fd::INVALID);
                 // `callback` may free `self` (see comment above) — must be the
                 // last thing we touch on this path.
@@ -6970,7 +6973,7 @@ pub trait FileOpener: Sized {
                     }
                     bun_sys::Result::Err(err) => {
                         if err.get_errno() == bun_sys::E::ENOENT {
-                            match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                            match self.try_mkdirp(err.clone(), path, path.as_bytes()) {
                                 Retry::Continue => continue,
                                 Retry::Fail => {
                                     // `mkdir_if_not_exists` already populated
@@ -6981,10 +6984,9 @@ pub trait FileOpener: Sized {
                                 Retry::No => {}
                             }
                         }
+                        let err = err.with_path(self.store_path());
                         self.set_errno(bun_errno::from_errno(err.errno as i32).into());
-                        self.set_system_error(jsc::SysErrorJsc::to_system_error(
-                            &err.with_path(path_string.slice()),
-                        ));
+                        self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
                         self.set_opened_fd(Fd::INVALID);
                         break;
                     }

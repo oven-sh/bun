@@ -1106,8 +1106,21 @@ impl PinnedArrayBuffer {
     }
 }
 
+impl PinnedArrayBuffer {
+    /// The refcount is not atomic: a pool thread may read `slice()` but must
+    /// never clone or drop one of these.
+    #[inline]
+    fn assert_js_thread() {
+        debug_assert!(
+            crate::virtual_machine::VirtualMachine::get_or_null().is_some(),
+            "PinnedArrayBuffer cloned/dropped off the JS thread"
+        );
+    }
+}
+
 impl Clone for PinnedArrayBuffer {
     fn clone(&self) -> Self {
+        Self::assert_js_thread();
         JSC__ArrayBuffer__retainPinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
         Self {
             owner: self.owner,
@@ -1119,6 +1132,7 @@ impl Clone for PinnedArrayBuffer {
 
 impl Drop for PinnedArrayBuffer {
     fn drop(&mut self) {
+        Self::assert_js_thread();
         JSC__ArrayBuffer__releasePinned(JSCArrayBuffer::opaque_ref(self.owner.as_ptr()));
     }
 }

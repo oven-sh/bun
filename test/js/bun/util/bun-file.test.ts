@@ -143,10 +143,14 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
       Bun.gc(true);
       Bun.gc(true);
       const stats = heapStats();
+      // The threadpool open/copy paths read the store's path off the JS thread.
+      await Bun.write(Bun.file(Buffer.from(longDir + "sub/out.txt")), "x".repeat(300 * 1024));
+      await Bun.write(Bun.file(new TextEncoder().encode(longDir + "copy.txt")), keep[3]);
       console.log(JSON.stringify({
         longPathBytes: Buffer.from(existingLong).length > 1000 && Buffer.from(existingLong).length < 1024,
         exists: await Promise.all(keep.map(f => f.exists())),
         text: await Promise.all(keep.map(f => f.text())),
+        written: [(await Bun.file(longDir + "sub/out.txt").text()).length, await Bun.file(longDir + "copy.txt").text()],
         missing: await Bun.file(Buffer.from(join(process.argv[2], "missing-0"))).exists(),
         leakedProtects: stats.protectedObjectCount - protectedBefore > 100,
         leakedBuffers: (stats.objectTypeCounts.Uint8Array ?? 0) - uint8Before > 100,
@@ -167,6 +171,7 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
     longPathBytes: true,
     exists: [true, true, true, true],
     text: ["hello", "hello", "hello", "hello"],
+    written: [300 * 1024, "hello"],
     missing: false,
     leakedProtects: false,
     leakedBuffers: false,

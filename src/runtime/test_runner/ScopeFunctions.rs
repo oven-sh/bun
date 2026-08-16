@@ -165,8 +165,7 @@ impl ScopeFunctions {
         create_bound(global, this.mode, this.each, merged, this.cfg, strings::EXTEND())
     }
 
-    /// Splits a `test.extend()` callback into its `[run, teardown]` pair. The pair holds one
-    /// run's fixture state, so this is called once per scheduled test (once per `.each` row).
+    /// The `[run, teardown]` pair holds one run's fixture state, so this is called once per scheduled test.
     fn wrap_with_fixtures(
         &self,
         global: &JSGlobalObject,
@@ -220,8 +219,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
     )?;
 
-    // `test.extend()` callbacks take the fixture context where a done callback would go,
-    // so their length must not feed the done-callback heuristic.
+    // An extended callback's extra parameter is the fixture context, not a done callback.
     let uses_fixtures = this.mode == Mode::Test && !this.fixtures.is_empty() && args.callback.is_some();
     let callback_length: usize = match args.callback {
         Some(callback) if !uses_fixtures => callback.get_length(global)? as usize,

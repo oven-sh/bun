@@ -1824,8 +1824,6 @@ impl DescribeScope {
         }
     }
 
-    /// `fixture_teardown` (the teardown half of a `test.extend()` callback pair) is
-    /// scheduled as its own entry after the test's afterEach hooks, see `Order`.
     pub(crate) fn append_test(
         &mut self,
         name_not_owned: Option<&[u8]>,
@@ -1930,8 +1928,7 @@ pub struct ExecutionEntry {
     pub(crate) next: Option<*mut ExecutionEntry>,
     /// if this entry fails, go to the entry 'failure_skip_past.next'
     pub(crate) failure_skip_past: Option<*mut ExecutionEntry>,
-    /// Test entries registered through `test.extend()` own the entry that tears their
-    /// fixtures down; `Order` links it into the sequence after the afterEach hooks.
+    /// Set on `test.extend()` tests; `Order` schedules it after the test's afterEach hooks.
     pub(crate) fixture_teardown: Option<Box<ExecutionEntry>>,
 }
 

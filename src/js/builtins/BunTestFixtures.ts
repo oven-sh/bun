@@ -1,5 +1,4 @@
-// bun:test `test.extend()` fixtures. Called from src/runtime/test_runner/ScopeFunctions.rs
-// through src/jsc/bindings/BunTestFixtures.cpp.
+// bun:test `test.extend()` fixtures; ScopeFunctions.rs calls in through src/jsc/bindings/BunTestFixtures.cpp.
 
 interface FixtureRecord {
   name: string;
@@ -88,10 +87,7 @@ export function mergeTestFixtures(parentFixtures: FixtureRecord[] | undefined, n
   return merged;
 }
 
-/**
- * Returns `[run, teardown]` for one scheduled test. `run` is the test body (fixture setup, then the
- * callback with the context appended); the runner schedules `teardown` after the afterEach hooks.
- */
+/** Returns `[run, teardown]` for one scheduled test; the runner schedules `teardown` after the afterEach hooks. */
 export function wrapTestFixtureCallback(fixtures: FixtureRecord[], testCallback: Function) {
   function includes<T>(array: T[], value: T): boolean {
     for (let i = 0; i < array.length; i++) {

@@ -592,9 +592,7 @@ impl<'a> WorkerLoop<'a> {
             } else {
                 Global::mimalloc_cleanup(false);
             }
-            self.reporter
-                .jest
-                .reset_default_timeout_override_for_next_file(vm.test_isolation_enabled);
+            self.reporter.jest.default_timeout_override = u32::MAX;
 
             let elapsed_ns = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime)
                 .ns()

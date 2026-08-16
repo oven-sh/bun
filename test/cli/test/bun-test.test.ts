@@ -440,12 +440,15 @@ describe("bun test", () => {
       return { timeouts, exitCode };
     }
 
+    // A huge scale-up delay keeps the run on a single worker, so that worker runs every
+    // file (in path order) and the files go through the worker's between-files path.
+    const oneWorker = ["--parallel=2", "--parallel-delay=1000000"];
+
     test.each([
       ["one shared global", []],
       ["--isolate", ["--isolate"]],
-      // A huge scale-up delay keeps the run on a single worker, so that worker runs every file.
-      ["--parallel --no-isolate", ["--parallel=2", "--parallel-delay=1000000", "--no-isolate"]],
-      ["--parallel", ["--parallel=2", "--parallel-delay=1000000"]],
+      ["--parallel --no-isolate", [...oneWorker, "--no-isolate"]],
+      ["--parallel", oneWorker],
     ])("applies to every file: %s", async (_, flags) => {
       const { timeouts, exitCode } = await timeoutPerFile(
         { "preload.ts": preload, "a.test.ts": hangingTest, "b.test.ts": hangingTest, "c.test.ts": hangingTest },
@@ -518,10 +521,14 @@ describe("bun test", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("--isolate: a file gets what its own evaluation of the preload set", async () => {
+    test.each([
+      ["--isolate", ["--isolate"]],
+      ["--parallel", oneWorker],
+    ])("a fresh global gets what its own evaluation of the preload set: %s", async (_, flags) => {
       const { timeouts, exitCode } = await timeoutPerFile(
         {
-          // Evaluated once per file under --isolate; only the first evaluation sets a timeout.
+          // Evaluated once per file when each file gets a fresh global; only the first
+          // evaluation sets a timeout, so the second file must be back on --timeout.
           "preload.ts": `
             import { setDefaultTimeout } from "bun:test";
             import { existsSync, writeFileSync } from "node:fs";
@@ -533,7 +540,7 @@ describe("bun test", () => {
           "a.test.ts": hangingTest,
           "b.test.ts": hangingTest,
         },
-        "--isolate",
+        ...flags,
         "--preload",
         "./preload.ts",
         "./a.test.ts",

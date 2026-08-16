@@ -1082,7 +1082,7 @@ pub struct ExtractData {
 /// borrowed `*const [u8]` raw slice with `Copy` semantics, which broke
 /// ownership: callers push into this buffer; the raw-ptr version cannot grow
 /// and aliases caller memory with no lifetime. Own the buffer.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct DependencyInstallContext {
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) path: Vec<u8>,

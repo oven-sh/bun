@@ -227,7 +227,7 @@ pub trait ResolverContext {
     }
     fn dep_id(&self) -> install::DependencyID {
         debug_assert!(false, "ResolverContext::dep_id called on non-git resolver");
-        install::DependencyID::default()
+        install::INVALID_DEPENDENCY_ID
     }
     fn new_name(&self) -> &[u8] {
         b""

@@ -7,10 +7,10 @@ use bun_semver::String as SemverString;
 
 use crate::lockfile_real::package::Alphabetizer;
 use bun_install::Dependency;
-use bun_install::PackageID;
 use bun_install::Resolution;
 use bun_install::dependency::{self, Behavior, VersionExt as _};
 use bun_install::lockfile::package;
+use bun_install::{INVALID_PACKAGE_ID, PackageID};
 // `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (hand-expanded per Package.rs).
@@ -70,7 +70,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
         Vec::with_capacity(resolutions_buffer.len());
 
     let package_count = names.len();
-    let mut alphabetized_names: Vec<PackageID> = vec![PackageID::default(); package_count - 1];
+    let mut alphabetized_names: Vec<PackageID> = vec![INVALID_PACKAGE_ID; package_count - 1];
 
     let string_buf: &[u8] = this.lockfile.buffers.string_bytes.as_slice();
 

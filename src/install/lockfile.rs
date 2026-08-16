@@ -2586,7 +2586,7 @@ pub mod package_index {
         /// the caller writes the real `Entry::Id(..)` / `Entry::Ids(..)`.
         #[inline]
         fn default() -> Self {
-            Entry::Id(PackageID::default())
+            Entry::Id(invalid_package_id)
         }
     }
 }
@@ -2867,7 +2867,7 @@ impl Lockfile {
         let resolutions: &[Resolution] = &self.packages.items_resolution()[..packages_len];
         let bytes = self.buffers.string_bytes.as_slice();
         let mut alphabetized_names: Vec<PackageID> =
-            vec![PackageID::default(); packages_len.saturating_sub(1)];
+            vec![invalid_package_id; packages_len.saturating_sub(1)];
 
         const HASH_PREFIX: &[u8] =
             b"\n-- BEGIN SHA512/256(`${alphabetize(name)}@${order(version)}`) --\n";

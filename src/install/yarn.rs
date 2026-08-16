@@ -803,7 +803,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     };
 
     let mut yarn_entry_to_package_id: Vec<PackageID> =
-        vec![PackageID::default(); yarn_lock.entries.len()];
+        vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
 
     let mut package_versions: StringHashMap<VersionInfo> = StringHashMap::new();
 

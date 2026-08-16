@@ -30,22 +30,16 @@ use bun_semver::{
 /// Distinct from [`DependencyID`] so that the two kinds of index cannot be
 /// mixed up: `resolutions[dep_id]` is a `PackageID`, and the package columns
 /// are indexed by `PackageID`. Both are serialized into `bun.lockb` as the
-/// bare `u32` (`#[repr(transparent)]`).
-///
-/// `Default` is id 0 (the root package), matching the zero-initialised `u32`
-/// it replaced; "no package" is [`PackageID::INVALID`].
+/// bare `u32` (`#[repr(transparent)]`). `Default` is [`PackageID::INVALID`].
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PackageID(u32);
 
 /// Index into the lockfile's dependency buffer (`Lockfile.buffers.dependencies`).
 /// The same index into `Lockfile.buffers.resolutions` gives the [`PackageID`]
-/// the dependency resolved to.
-///
-/// `Default` is id 0, matching the zero-initialised `u32` it replaced; "no
-/// dependency" is [`DependencyID::INVALID`].
+/// the dependency resolved to. `Default` is [`DependencyID::INVALID`].
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DependencyID(u32);
 
 macro_rules! impl_id {
@@ -73,6 +67,15 @@ macro_rules! impl_id {
             #[inline]
             pub const fn index(self) -> usize {
                 self.0 as usize
+            }
+        }
+
+        /// The sentinel, so a slot that was never assigned fails loudly when
+        /// used as an index instead of silently naming entry 0.
+        impl Default for $name {
+            #[inline]
+            fn default() -> Self {
+                Self::INVALID
             }
         }
 
@@ -1412,7 +1415,7 @@ impl Features {
     };
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct TaskCallbackContext {
     pub root_request_id: PackageID,
 }

@@ -1485,6 +1485,7 @@ pub trait AutoInstaller {
         &mut self,
         name: &[u8],
         version: &DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID>;
     fn enqueue_dependency_to_root(
         &mut self,

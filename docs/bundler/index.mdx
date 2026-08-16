@@ -1608,7 +1608,7 @@ class BuildMessage {
   name: string;
   position?: Position;
   message: string;
-  level: "error" | "warning" | "info" | "debug" | "verbose";
+  level: "error" | "warn" | "note" | "debug" | "verbose";
 }
 
 class ResolveMessage extends BuildMessage {
@@ -1814,17 +1814,17 @@ declare class ResolveMessage {
   readonly referrer: string;
   readonly specifier: string;
   readonly importKind:
-    | "entry_point"
-    | "stmt"
-    | "require"
-    | "import"
-    | "dynamic"
-    | "require_resolve"
-    | "at"
-    | "at_conditional"
-    | "url"
-    | "internal";
-  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+    | "import-statement"
+    | "require-call"
+    | "require-resolve"
+    | "dynamic-import"
+    | "import-rule"
+    | "url-token"
+    | "composes"
+    | "internal"
+    | "entry-point-run"
+    | "entry-point-build";
+  readonly level: "error" | "warn" | "note" | "debug" | "verbose";
 
   toString(): string;
 }

@@ -49,6 +49,22 @@ Bun.build({
           expectType(result.success).is<boolean>();
           expectType(result.outputs).is<Bun.BuildArtifact[]>();
           expectType(result.logs).is<Array<BuildMessage | ResolveMessage>>();
+
+          for (const log of result.logs) {
+            // The unions themselves are checked against src/ast/lib.rs by
+            // test/internal/source-lints/import-kind-and-level-names.test.ts.
+            expectType(log.level).is<Bun.BuildMessageLevel>();
+            if (log.level === "warn") {
+              expectType(log.level).is<"warn">();
+            }
+
+            if (log instanceof ResolveMessage) {
+              expectType(log.importKind).is<Bun.ImportKind>();
+              if (log.importKind === "require-call") {
+                expectType(log.importKind).is<"require-call">();
+              }
+            }
+          }
         });
 
         build.onBeforeParse(

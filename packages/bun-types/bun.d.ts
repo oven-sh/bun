@@ -2863,20 +2863,42 @@ declare module "bun" {
   }
 
   type ImportKind =
+    /** An `import` or `export ... from` statement */
     | "import-statement"
+    /** A `require()` call */
     | "require-call"
+    /** A `require.resolve()` call */
     | "require-resolve"
+    /** An `import()` expression */
     | "dynamic-import"
+    /** A CSS `@import` rule */
     | "import-rule"
+    /** A CSS `url()` token */
     | "url-token"
+    /** A CSS modules `composes: ... from "./other.module.css"` declaration */
+    | "composes"
+    /** An import injected by Bun itself */
     | "internal"
+    /** An entry point passed to `bun run` or `bun <file>` */
     | "entry-point-run"
+    /** An entry point passed to `bun build` or `Bun.build()` */
     | "entry-point-build";
 
   interface Import {
     path: string;
     kind: ImportKind;
   }
+
+  /**
+   * Severity of a {@link BuildMessage} or {@link ResolveMessage}.
+   *
+   * - `"error"`: the build (or module load) failed because of this message
+   * - `"warn"`: reported, but the build went on
+   * - `"note"`: additional context for another message
+   * - `"debug"` and `"verbose"`: only reported when the log level is raised
+   *   above the default, for example with {@link TranspilerOptions.logLevel}
+   */
+  type BuildMessageLevel = "error" | "warn" | "note" | "debug" | "verbose";
 
   namespace Build {
     type Architecture = "x64" | "arm64" | "aarch64";

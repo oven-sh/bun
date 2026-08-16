@@ -798,7 +798,8 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
         stderr: "pipe",
         stdin: "ignore",
       });
-      return await p.stdout.text();
+      const [stdout] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+      return stdout;
     };
     expect(await run({ COLORFGBG: "15;0", COLORTERM: "" })).toContain("\x1b[48;5;52m");
     expect(await run({ COLORFGBG: "0;15", COLORTERM: "" })).toContain("\x1b[48;5;224m");

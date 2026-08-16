@@ -188,10 +188,7 @@ fn filter_matches(filter: &[u8], path: &[u8]) -> bool {
     {
         return true;
     }
-    if filter
-        .iter()
-        .any(|&b| matches!(b, b'*' | b'?' | b'[' | b'{'))
-    {
+    if strings::index_of_any(filter, b"*?[{").is_some() {
         return bun_glob::r#match(filter, path).matches()
             || (!strings::contains_char(filter, b'/')
                 && bun_glob::r#match(filter, bun_paths::basename(path)).matches());
@@ -2022,7 +2019,7 @@ impl Style {
             let truecolor = bun_core::env_var::COLORTERM.get().is_some_and(|v| {
                 strings::eql_comptime(v, b"truecolor") || strings::eql_comptime(v, b"24bit")
             });
-            let light = bun_md::root::detect_light_background();
+            let light = bun_md::root::detect_light_background_probing();
             &PALETTES[usize::from(light) * 2 + usize::from(truecolor)]
         } else {
             &PALETTES[0]

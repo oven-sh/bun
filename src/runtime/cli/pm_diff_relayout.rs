@@ -210,6 +210,9 @@ fn stmt(arena: C, s: &mut Stmt) {
         S::STry(x) => {
             stmt_list(arena, &mut x.body);
             if let Some(c) = &mut x.catch {
+                if let Some(b) = &mut c.binding {
+                    binding(arena, b);
+                }
                 stmt_list(arena, &mut c.body);
             }
             if let Some(f) = &mut x.finally {
@@ -304,6 +307,10 @@ fn expr(arena: C, e: &mut Expr) {
             for part in x.parts.slice_mut() {
                 expr(arena, &mut part.value);
             }
+        }
+        E::EImport(x) => {
+            expr(arena, &mut x.expr);
+            expr(arena, &mut x.options);
         }
         E::EAwait(x) => expr(arena, &mut x.value),
         E::EYield(x) => opt_expr(arena, &mut x.value),

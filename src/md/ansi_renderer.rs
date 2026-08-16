@@ -2435,16 +2435,23 @@ fn resolve_href(detail: &SpanDetail) -> Box<[u8]> {
 // Theme detection helpers (callable from the runner)
 // ========================================
 
-/// Detect whether the terminal background is light. Preference order:
-/// 1. `COLORFGBG` env var (set by rxvt, xterm, Konsole, iTerm2 in some modes)
-/// 2. Ask the terminal (OSC 11) when we are attached to one; the answer is cached
-/// 3. Dark mode (default)
+/// Detect whether the terminal background is light from the environment alone (`COLORFGBG`, set by rxvt, xterm,
+/// Konsole, iTerm2 in some modes); dark otherwise. Never touches the tty, so it is safe from any context.
 pub fn detect_light_background() -> bool {
-    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *CACHED.get_or_init(detect_light_background_uncached)
+    colorfgbg_light().unwrap_or(false)
 }
 
-fn detect_light_background_uncached() -> bool {
+/// Like `detect_light_background`, but when the environment says nothing and we own the tty, asks the terminal
+/// (OSC 11). Reads a reply from stdin, so only for commands that are the interactive foreground, never from a
+/// JS-visible API. The answer is cached.
+pub fn detect_light_background_probing() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        colorfgbg_light().unwrap_or_else(|| probe_background_luminance().is_some_and(|l| l > 0.5))
+    })
+}
+
+fn colorfgbg_light() -> Option<bool> {
     if let Some(value) = bun_core::getenv_z(bun_core::zstr!("COLORFGBG")) {
         // Format: "fg;bg" or "fg;default;bg" — only 7 (white) and 15
         // (bright white) are light terminal backgrounds. Bright colors
@@ -2454,14 +2461,11 @@ fn detect_light_background_uncached() -> bool {
             last = part;
         }
         if !last.is_empty() {
-            let bg = match bun_core::fmt::parse_int::<u8>(last, 10).ok() {
-                Some(n) => n,
-                None => return false,
-            };
-            return bg == 7 || bg == 15;
+            let bg = bun_core::fmt::parse_int::<u8>(last, 10).ok()?;
+            return Some(bg == 7 || bg == 15);
         }
     }
-    probe_background_luminance().is_some_and(|l| l > 0.5)
+    None
 }
 
 /// OSC 11 (`ESC ] 11 ; ? BEL`): the terminal answers with its background as `rgb:RRRR/GGGG/BBBB`. xterm, iTerm2,

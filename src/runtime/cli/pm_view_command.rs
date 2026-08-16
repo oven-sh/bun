@@ -209,9 +209,7 @@ pub(crate) fn view(
                         let query = Semver::query::parse(version, sliced_literal)?;
                         // `defer query.deinit()` — handled by Drop
                         // Use the same pattern as outdated_command: findBestVersion(query.head, string_buf)
-                        if let Some(result) =
-                            parsed_manifest.find_best_version(&query, &parsed_manifest.string_buf)
-                        {
+                        if let Some(result) = parsed_manifest.find_best_version(&query, version) {
                             break 'brk2 result.version;
                         }
                     }

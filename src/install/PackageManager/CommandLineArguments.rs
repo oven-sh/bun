@@ -1207,6 +1207,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // Some subcommands (e.g. `bun update [-i]`) re-enter `parse` with the
         // same argv; the first parse's `Args` is canonical.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
+        let first_parse;
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
             clap::ParseOptions {
@@ -1216,8 +1217,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             },
         ) {
             Ok(a) => {
-                // On re-entry `set` fails; reuse the cached first parse.
-                let _ = PARSED_ARGS.set(a);
+                // `set` succeeds only on the first parse; on re-entry reuse
+                // the cached one.
+                first_parse = PARSED_ARGS.set(a).is_ok();
                 PARSED_ARGS.get().unwrap()
             }
             Err(err) => {
@@ -1547,13 +1549,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
         }
 
-        // Apply `--cwd` only on the first parse: `bun update [-i]` re-enters
-        // `parse`, and a second relative `chdir` would resolve from the
-        // already-changed cwd and hit ENOENT (#31152).
-        static CWD_APPLIED: core::sync::atomic::AtomicBool =
-            core::sync::atomic::AtomicBool::new(false);
         if let Some(cwd_) = args.option(b"--cwd") {
-            if !CWD_APPLIED.load(core::sync::atomic::Ordering::Relaxed) {
+            // A re-entrant parse already chdir'd; a second relative `chdir`
+            // would resolve from the changed cwd and hit ENOENT (#31152).
+            if first_parse {
                 let mut buf = PathBuffer::uninit();
                 let mut buf2 = PathBuffer::uninit();
 
@@ -1584,7 +1583,6 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                     );
                     Global::crash();
                 }
-                CWD_APPLIED.store(true, core::sync::atomic::Ordering::Relaxed);
             }
         }
 

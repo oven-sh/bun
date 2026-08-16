@@ -358,15 +358,13 @@ impl OutdatedCommand {
         let mut outdated_ids: Vec<OutdatedInfo> = Vec::new();
 
         for &workspace_pkg_id in workspace_pkg_ids {
-            let pkg_deps =
-                manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
-            for dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let package_id = manager.lockfile.buffers.resolutions[dep_id as usize];
-                if package_id == bun_install::INVALID_PACKAGE_ID {
+            for edge in manager.lockfile.edges(workspace_pkg_id) {
+                let Some(package_id) = edge.resolved() else {
                     continue;
-                }
+                };
+                let dep_id = edge.dep_id;
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-                let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                let dep = edge.dependency;
                 let Some(resolved_version) = manager.lockfile.resolve_catalog_dependency(dep)
                 else {
                     continue;

@@ -215,6 +215,52 @@ pub struct Lockfile {
 
 pub(crate) type PackageList = self::package::List<u64>;
 
+/// One dependency edge of a package. See [`Lockfile::edges`].
+#[derive(Clone, Copy)]
+pub struct Edge<'a> {
+    pub dep_id: DependencyID,
+    pub dependency: &'a Dependency,
+    /// `invalid_package_id` if the dependency is unresolved.
+    pub package_id: PackageID,
+}
+
+impl Edge<'_> {
+    pub fn resolved(&self) -> Option<PackageID> {
+        (self.package_id != invalid_package_id).then_some(self.package_id)
+    }
+}
+
+pub struct Edges<'a> {
+    dependencies: &'a [Dependency],
+    resolutions: &'a [PackageID],
+    next: DependencyID,
+}
+
+impl<'a> Iterator for Edges<'a> {
+    type Item = Edge<'a>;
+
+    fn next(&mut self) -> Option<Edge<'a>> {
+        let (dependency, dependencies) = self.dependencies.split_first()?;
+        let (&package_id, resolutions) = self.resolutions.split_first()?;
+        self.dependencies = dependencies;
+        self.resolutions = resolutions;
+        let dep_id = self.next;
+        self.next += 1;
+        Some(Edge {
+            dep_id,
+            dependency,
+            package_id,
+        })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.dependencies.len().min(self.resolutions.len());
+        (len, Some(len))
+    }
+}
+
+impl ExactSizeIterator for Edges<'_> {}
+
 // ────────────────────────────────────────────────────────────────────────────
 // DepSorter
 // ────────────────────────────────────────────────────────────────────────────
@@ -738,6 +784,29 @@ impl Lockfile {
         let catalog_dep = self.catalogs.get(self, catalog_name, dep.name)?;
 
         Some(catalog_dep.version)
+    }
+
+    /// The dependency edges declared by `package_id`, in declaration order,
+    /// with what each one resolved to in this lockfile.
+    pub fn edges(&self, package_id: PackageID) -> Edges<'_> {
+        self.edges_in(package_id, &self.buffers.resolutions)
+    }
+
+    /// [`edges`](Self::edges), reading the targets out of `resolutions`, a
+    /// buffer parallel to `buffers.dependencies` (dedupe walks candidate
+    /// buffers this way).
+    pub fn edges_in<'a>(
+        &'a self,
+        package_id: PackageID,
+        resolutions: &'a [PackageID],
+    ) -> Edges<'a> {
+        let range = self.packages.items_dependencies()[package_id as usize];
+        let (begin, end) = (range.begin() as usize, range.end() as usize);
+        Edges {
+            dependencies: &self.buffers.dependencies[begin..end],
+            resolutions: &resolutions[begin..end],
+            next: range.begin(),
+        }
     }
 
     /// Is this a direct dependency of the workspace root package.json?

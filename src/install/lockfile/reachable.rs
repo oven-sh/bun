@@ -1,6 +1,5 @@
-use crate::dependency::{Behavior, Dependency};
-use crate::lockfile::DependencySlice;
-use crate::lockfile::package::{Meta, PackageColumns as _};
+use crate::dependency::Behavior;
+use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, OperatingSystem};
 use crate::{PackageID, PackageManager};
@@ -105,10 +104,9 @@ pub fn dev_packages_from(
     }
     let mut worklist: Vec<PackageID> = Vec::new();
     while let Some(importer) = importers.pop() {
-        let slice = walk.dep_slices[importer as usize];
-        for dep_id in slice.begin() as usize..slice.end() as usize {
-            let behavior = walk.deps[dep_id].behavior;
-            let target = walk.resolutions[dep_id];
+        for edge in walk.edges(importer) {
+            let behavior = edge.dependency.behavior;
+            let target = edge.package_id;
             if behavior.is_workspace() {
                 if follow_workspace_edges && mark(&mut seen, target) {
                     importers.push(target);
@@ -125,9 +123,7 @@ pub fn dev_packages_from(
 }
 
 struct Walk<'a> {
-    dep_slices: &'a [DependencySlice],
-    metas: &'a [Meta],
-    deps: &'a [Dependency],
+    lockfile: &'a Lockfile,
     resolutions: &'a [PackageID],
     follow_workspace_edges: bool,
     follow_all: bool,
@@ -142,9 +138,7 @@ impl<'a> Walk<'a> {
         options: Options,
     ) -> Walk<'a> {
         Walk {
-            dep_slices: lockfile.packages.items_dependencies(),
-            metas: lockfile.packages.items_meta(),
-            deps: lockfile.buffers.dependencies.as_slice(),
+            lockfile,
             resolutions,
             follow_workspace_edges,
             follow_all: follow_workspace_edges
@@ -158,7 +152,11 @@ impl<'a> Walk<'a> {
     }
 
     fn empty_seen(&self) -> DynamicBitSet {
-        DynamicBitSet::init_empty(self.dep_slices.len()).unwrap_or_oom()
+        DynamicBitSet::init_empty(self.lockfile.packages.len()).unwrap_or_oom()
+    }
+
+    fn edges(&self, package_id: PackageID) -> crate::lockfile_real::Edges<'a> {
+        self.lockfile.edges_in(package_id, self.resolutions)
     }
 
     fn follows(&self, behavior: Behavior) -> bool {
@@ -185,7 +183,7 @@ impl<'a> Walk<'a> {
             return;
         }
         if let Some((cpu, os)) = self.options.platform
-            && self.metas[target as usize].is_disabled(cpu, os)
+            && self.lockfile.packages.items_meta()[target as usize].is_disabled(cpu, os)
         {
             return;
         }
@@ -195,12 +193,11 @@ impl<'a> Walk<'a> {
 
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
-            let slice = self.dep_slices[parent as usize];
-            for dep_id in slice.begin() as usize..slice.end() as usize {
-                if !(self.follow_all || self.follows(self.deps[dep_id].behavior)) {
+            for edge in self.edges(parent) {
+                if !(self.follow_all || self.follows(edge.dependency.behavior)) {
                     continue;
                 }
-                self.admit(self.resolutions[dep_id], seen, worklist);
+                self.admit(edge.package_id, seen, worklist);
             }
         }
     }

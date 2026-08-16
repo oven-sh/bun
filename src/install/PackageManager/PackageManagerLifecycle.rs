@@ -1,4 +1,3 @@
-use crate::lockfile::package::PackageColumns as _;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
@@ -23,7 +22,7 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{PackageID, PackageManager, PreinstallState};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -443,24 +442,19 @@ impl PackageManager {
         if self.options.do_.trust_dependencies_from_args() && self.lockfile.packages.len() > 0 {
             let root_id = self
                 .root_package_id
-                .get(&self.lockfile, self.workspace_name_hash) as usize;
-            let root_deps = self.lockfile.packages.items_dependencies()[root_id];
-            let mut dep_id = root_deps.off;
-            let end = dep_id.saturating_add(root_deps.len);
-            while dep_id < end {
-                let root_dep = &self.lockfile.buffers.dependencies[dep_id as usize];
+                .get(&self.lockfile, self.workspace_name_hash);
+            let string_buf = self.lockfile.buffers.string_bytes.as_slice();
+            for edge in self.lockfile.edges(root_id) {
                 for request in self.update_requests.iter() {
-                    if request.matches(root_dep, self.lockfile.buffers.string_bytes.as_slice()) {
-                        let package_id = self.lockfile.buffers.resolutions[dep_id as usize];
-                        if package_id == invalid_package_id {
+                    if request.matches(edge.dependency, string_buf) {
+                        let Some(package_id) = edge.resolved() else {
                             continue;
-                        }
+                        };
 
                         add_package_to_set(&mut set, &self.lockfile, package_id);
                         break;
                     }
                 }
-                dep_id += 1;
             }
         }
 
@@ -478,18 +472,10 @@ fn add_package_to_set(
     }
     let mut stack: Vec<PackageID> = vec![package_id];
     while let Some(current) = stack.pop() {
-        let dependencies_slice = lockfile.packages.items_dependencies()[current as usize];
-        let begin = dependencies_slice.off;
-        let end = begin.saturating_add(dependencies_slice.len);
-        let mut dep_id = begin;
-        while dep_id < end {
-            let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
-            if dep_package_id != invalid_package_id
-                && !handle_oom(set.get_or_put(dep_package_id)).found_existing
-            {
+        for dep_package_id in lockfile.edges(current).filter_map(|edge| edge.resolved()) {
+            if !handle_oom(set.get_or_put(dep_package_id)).found_existing {
                 stack.push(dep_package_id);
             }
-            dep_id += 1;
         }
     }
 }

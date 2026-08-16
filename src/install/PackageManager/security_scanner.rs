@@ -157,53 +157,32 @@ struct ScannerFinder<'a> {
 
 impl<'a> ScannerFinder<'a> {
     fn find_in_root_dependencies(&self) -> Option<PackageID> {
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_dependencies = pkgs.items_dependencies();
-        let pkg_resolutions = pkgs.items_resolution();
-        let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
+        let lockfile = &self.manager.lockfile;
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
 
         let root_pkg_id: PackageID = 0;
-        let root_deps = pkg_dependencies[root_pkg_id as usize];
-
-        for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-            let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-
-            if dep_pkg_id == invalid_package_id {
-                continue;
-            }
-
-            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-            if dep_res.tag != bun_install::resolution::Tag::Npm {
-                continue;
-            }
-
-            let dep_name = self.manager.lockfile.buffers.dependencies[dep_id as usize].name;
-            if dep_name.slice(string_buf) == self.scanner_name {
-                return Some(dep_pkg_id);
-            }
-        }
-
-        None
+        lockfile.edges(root_pkg_id).find_map(|edge| {
+            let dep_pkg_id = edge.resolved()?;
+            (pkg_resolutions[dep_pkg_id as usize].tag == bun_install::resolution::Tag::Npm
+                && edge.dependency.name.slice(string_buf) == self.scanner_name)
+                .then_some(dep_pkg_id)
+        })
     }
 
     fn validate_not_in_workspaces(&self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_deps = pkgs.items_dependencies();
-        let pkg_res = pkgs.items_resolution();
-        let string_buf = self.manager.lockfile.buffers.string_bytes.as_slice();
+        let lockfile = &self.manager.lockfile;
+        let pkg_res = lockfile.packages.items_resolution();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
 
-        for pkg_idx in 0..pkgs.len() {
+        for pkg_idx in 0..pkg_res.len() {
             if pkg_res[pkg_idx].tag != bun_install::resolution::Tag::Workspace {
                 continue;
             }
 
-            let deps = pkg_deps[pkg_idx];
-            for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-                let dep = &self.manager.lockfile.buffers.dependencies[dep_id as usize];
-
-                if dep.name.slice(string_buf) == self.scanner_name {
+            let pkg_id: PackageID = PackageID::try_from(pkg_idx).expect("int cast");
+            for edge in lockfile.edges(pkg_id) {
+                if edge.dependency.name.slice(string_buf) == self.scanner_name {
                     return Err(crate::Error::SecurityScannerInWorkspace);
                 }
             }
@@ -470,81 +449,54 @@ impl<'a> PackageCollector<'a> {
     }
 
     fn collect_all_packages(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_dependencies = pkgs.items_dependencies();
-        let pkg_resolutions = pkgs.items_resolution();
-
-        let root_pkg_id: PackageID = 0;
-        let root_deps = pkg_dependencies[root_pkg_id as usize];
+        let lockfile = &self.manager.lockfile;
+        let pkg_resolutions = lockfile.packages.items_resolution();
 
         // collect all npm deps from the root package
-        for _dep_id in root_deps.begin()..root_deps.end() {
-            let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-            let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
+        let root_pkg_id: PackageID = 0;
+        self.enqueue_edges_of(root_pkg_id)?;
 
-            if dep_pkg_id == invalid_package_id {
+        // and collect npm deps from workspace packages
+        for pkg_idx in 0..pkg_resolutions.len() {
+            if pkg_resolutions[pkg_idx].tag != bun_install::resolution::Tag::Workspace {
                 continue;
             }
+
+            self.enqueue_edges_of(PackageID::try_from(pkg_idx).expect("int cast"))?;
+        }
+
+        Ok(())
+    }
+
+    /// Queues every resolved dependency of `parent` that has not been seen yet.
+    fn enqueue_edges_of(&mut self, parent: PackageID) -> Result<(), Error> {
+        let lockfile = &self.manager.lockfile;
+        for edge in lockfile.edges(parent) {
+            let Some(dep_pkg_id) = edge.resolved() else {
+                continue;
+            };
 
             if self.dedupe.get_or_put(dep_pkg_id)?.found_existing {
                 continue;
             }
 
-            let pkg_path_buf: Vec<PackageID> = vec![root_pkg_id, dep_pkg_id];
-
-            let dep_path_buf: Vec<DependencyID> = vec![dep_id];
-
             self.queue.push_back(QueueItem {
                 pkg_id: dep_pkg_id,
-                dep_id,
-                pkg_path: pkg_path_buf,
-                dep_path: dep_path_buf,
+                dep_id: edge.dep_id,
+                pkg_path: vec![parent, dep_pkg_id],
+                dep_path: vec![edge.dep_id],
             });
-        }
-
-        // and collect npm deps from workspace packages
-        for pkg_idx in 0..pkgs.len() {
-            let pkg_id: PackageID = PackageID::try_from(pkg_idx).expect("int cast");
-            if pkg_resolutions[pkg_id as usize].tag != bun_install::resolution::Tag::Workspace {
-                continue;
-            }
-
-            let workspace_deps = pkg_dependencies[pkg_id as usize];
-            for _dep_id in workspace_deps.begin()..workspace_deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-                let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-
-                if dep_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                if self.dedupe.get_or_put(dep_pkg_id)?.found_existing {
-                    continue;
-                }
-
-                let pkg_path_buf: Vec<PackageID> = vec![pkg_id, dep_pkg_id];
-
-                let dep_path_buf: Vec<DependencyID> = vec![dep_id];
-
-                self.queue.push_back(QueueItem {
-                    pkg_id: dep_pkg_id,
-                    dep_id,
-                    pkg_path: pkg_path_buf,
-                    dep_path: dep_path_buf,
-                });
-            }
         }
 
         Ok(())
     }
 
     fn collect_update_packages(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_resolutions = pkgs.items_resolution();
-        let pkg_dependencies = pkgs.items_dependencies();
+        let lockfile = &self.manager.lockfile;
+        let pkg_resolutions = lockfile.packages.items_resolution();
 
         for req in self.manager.update_requests.iter() {
-            for _update_pkg_id in 0..pkgs.len() {
+            for _update_pkg_id in 0..pkg_resolutions.len() {
                 let update_pkg_id: PackageID =
                     PackageID::try_from(_update_pkg_id).expect("int cast");
                 if update_pkg_id != req.package_id {
@@ -554,7 +506,7 @@ impl<'a> PackageCollector<'a> {
                 let mut update_dep_id: DependencyID = invalid_dependency_id;
                 let mut parent_pkg_id: PackageID = invalid_package_id;
 
-                'update_dep_id: for _pkg_id in 0..pkgs.len() {
+                'update_dep_id: for _pkg_id in 0..pkg_resolutions.len() {
                     let pkg_id: PackageID = PackageID::try_from(_pkg_id).expect("int cast");
                     let pkg_res = &pkg_resolutions[pkg_id as usize];
                     if pkg_res.tag != bun_install::resolution::Tag::Root
@@ -563,19 +515,12 @@ impl<'a> PackageCollector<'a> {
                         continue;
                     }
 
-                    let pkg_deps = pkg_dependencies[pkg_id as usize];
-                    for _dep_id in pkg_deps.begin()..pkg_deps.end() {
-                        let dep_id: DependencyID =
-                            DependencyID::try_from(_dep_id).expect("int cast");
-                        let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
-                        if dep_pkg_id == invalid_package_id {
-                            continue;
-                        }
-                        if dep_pkg_id != update_pkg_id {
+                    for edge in lockfile.edges(pkg_id) {
+                        if edge.package_id != update_pkg_id {
                             continue;
                         }
 
-                        update_dep_id = dep_id;
+                        update_dep_id = edge.dep_id;
                         parent_pkg_id = pkg_id;
                         break 'update_dep_id;
                     }
@@ -613,34 +558,32 @@ impl<'a> PackageCollector<'a> {
             return Ok(());
         }
 
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_dependencies = pkgs.items_dependencies();
-        let resolutions = self.manager.lockfile.buffers.resolutions.as_slice();
+        let lockfile = &self.manager.lockfile;
+        let package_count = lockfile.packages.len();
 
-        let mut wanted = bun_collections::DynamicBitSet::init_empty(pkgs.len())?;
+        let mut wanted = bun_collections::DynamicBitSet::init_empty(package_count)?;
         for &seed in seeds {
-            if (seed as usize) < pkgs.len() {
+            if (seed as usize) < package_count {
                 wanted.set(seed as usize);
             }
         }
 
-        for (parent_idx, deps) in pkg_dependencies.iter().enumerate() {
+        for parent_idx in 0..package_count {
             let parent: PackageID = PackageID::try_from(parent_idx).expect("int cast");
-            for _dep_id in deps.begin()..deps.end() {
-                let dep_id: DependencyID = DependencyID::try_from(_dep_id).expect("int cast");
-                let target = resolutions[dep_id as usize];
-                if target == invalid_package_id || !wanted.is_set(target as usize) {
+            for edge in lockfile.edges(parent) {
+                let Some(target) = edge.resolved() else {
                     continue;
-                }
-                if self.dedupe.get_or_put(target)?.found_existing {
+                };
+                if !wanted.is_set(target as usize) || self.dedupe.get_or_put(target)?.found_existing
+                {
                     continue;
                 }
 
                 self.queue.push_back(QueueItem {
                     pkg_id: target,
-                    dep_id,
+                    dep_id: edge.dep_id,
                     pkg_path: vec![parent, target],
-                    dep_path: vec![dep_id],
+                    dep_path: vec![edge.dep_id],
                 });
             }
         }
@@ -649,9 +592,8 @@ impl<'a> PackageCollector<'a> {
     }
 
     fn process_queue(&mut self) -> Result<(), Error> {
-        let pkgs = self.manager.lockfile.packages.slice();
-        let pkg_resolutions = pkgs.items_resolution();
-        let pkg_dependencies = pkgs.items_dependencies();
+        let lockfile = &self.manager.lockfile;
+        let pkg_resolutions = lockfile.packages.items_resolution();
 
         while let Some(item) = self.queue.pop_front() {
             // `defer mutable_item.{pkg,dep}_path.deinit(...)` — Vec drops at end of loop body.
@@ -672,15 +614,11 @@ impl<'a> PackageCollector<'a> {
                 )?;
             }
 
-            let pkg_deps = pkg_dependencies[pkg_id as usize];
-            for _next_dep_id in pkg_deps.begin()..pkg_deps.end() {
-                let next_dep_id: DependencyID =
-                    DependencyID::try_from(_next_dep_id).expect("int cast");
-                let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
-
-                if next_pkg_id == invalid_package_id {
+            for edge in lockfile.edges(pkg_id) {
+                let Some(next_pkg_id) = edge.resolved() else {
                     continue;
-                }
+                };
+                let next_dep_id = edge.dep_id;
 
                 if self.dedupe.get_or_put(next_pkg_id)?.found_existing {
                     continue;

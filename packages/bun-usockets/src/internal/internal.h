@@ -241,6 +241,13 @@ unsigned int us_internal_ssl_spill_pending(us_socket_r s);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 const char *us_internal_ssl_sni_servername(us_socket_r s);
+/* Lowercases and strips :port / a trailing root dot off an HTTP Host (or H3
+ * :authority) value for an SNI-name lookup; 0 when it cannot name an entry. */
+size_t us_internal_normalize_host_header(const char *host, size_t host_len,
+    char *out, size_t out_cap);
+/* Whether a per-serverName entry's SSL_CTX has requestCert recorded on it
+ * (us_ssl_ctx_set_sni_policy). */
+int us_internal_ssl_ctx_sni_request_cert(struct ssl_ctx_st *ctx);
 /* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
 /* Opaque SSL_CTX_up_ref/SSL_CTX_free so context.c needn't include OpenSSL. */

@@ -394,4 +394,35 @@ describe("Bun.serve per-serverName client certificate policy", () => {
     socket.on("close", () => resolve(statuses()));
     expect(await promise).toEqual(["HTTP/1.1 200 OK", "HTTP/1.1 421 Misdirected Request"]);
   });
+
+  test("HTTP/3: an :authority naming a gated serverName gets 421 on a connection that bypassed its policy", async () => {
+    using server = Bun.serve({
+      port: 0,
+      http3: true,
+      tls: [
+        { key: serverKey, cert: serverCert },
+        {
+          serverName: "admin.example.com",
+          key: serverKey,
+          cert: serverCert,
+          ca: clientCa,
+          requestCert: true,
+          rejectUnauthorized: true,
+        },
+      ],
+      fetch: req => new Response(`served ${req.headers.get("host")}`),
+    });
+    const h3 = (headers: Record<string, string> = {}) =>
+      fetch(`https://127.0.0.1:${server.port}/`, {
+        protocol: "http3",
+        headers,
+        tls: { rejectUnauthorized: false },
+      } as RequestInit);
+    // The first request pools a QUIC connection handshaken without SNI (the
+    // host is an IP literal): the default context, no client certificate
+    // requested. The second rides that connection with a spoofed authority.
+    const innocent = await h3();
+    const bypass = await h3({ Host: "admin.example.com" });
+    expect({ innocent: innocent.status, bypass: bypass.status }).toEqual({ innocent: 200, bypass: 421 });
+  });
 });

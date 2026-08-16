@@ -215,10 +215,11 @@ describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path b
   // Windows' own path limit is below MAX_PATH_BYTES, so such a tree cannot be created there.
   test.skipIf(isWindows)("scanning a root skips the entries whose paths do not fit instead of crashing", () => {
     using dir = tempDir("fsr-scan-long-entries", {});
-    // 200 bytes below the limit: the root's own short files fit, entries with a maximum-length name do not.
+    // About 200 bytes below the limit: the root's own short files fit, entries with a maximum-length name do not.
+    // Every segment adds at least two bytes (separator included), so this terminates whatever length `dir` has.
     let root = String(dir);
     while (root.length < MAX_PATH_BYTES - 200) {
-      const part = Math.min(200, MAX_PATH_BYTES - 200 - root.length - 1);
+      const part = Math.max(1, Math.min(200, MAX_PATH_BYTES - 200 - root.length - 1));
       root = path.join(root, Buffer.alloc(part, "d").toString());
     }
     mkdirSync(root, { recursive: true });

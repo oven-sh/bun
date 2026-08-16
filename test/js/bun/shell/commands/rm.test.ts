@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -73,6 +73,37 @@ describe.concurrent("bunshell rm", () => {
         exitCode: 0,
       });
       expect(await fileExists(`${tempdir}/other.txt`)).toBeFalse();
+    }
+  });
+
+  // Every operand is removed on its own worker, so naming a tree and its
+  // subdirectories in one command makes the workers race each other and
+  // every entry is hit with ENOENT by the workers that lose: at the unlink or
+  // rmdir, when opening the directory, or while reading it (overlayfs fails
+  // the readdir of a removed directory). -f has to swallow all of those, and
+  // -v must list each entry exactly once, by the worker that removed it.
+  // Skipped on Windows: there, unlinking an entry whose deletion is already
+  // pending reports success, so two workers can legitimately both list it.
+  test.skipIf(isWindows)("force: operands that overlap with each other's contents", async () => {
+    const DIRS = 8;
+    const FILES = 4;
+    for (let iteration = 0; iteration < 4; iteration++) {
+      const files: Record<string, string> = {};
+      for (let d = 0; d < DIRS; d++) {
+        for (let f = 0; f < FILES; f++) files[`tree/d${d}/f${f}`] = "";
+      }
+      await using tempdir = tempDir("rmoverlap", files);
+      const tree = `${tempdir}/tree`;
+      const subdirs = Array.from({ length: DIRS }, (_, d) => `${tree}/d${d}`);
+      const expected = [tree, ...subdirs, ...Object.keys(files).map(rel => `${tempdir}/${rel}`)].sort();
+
+      const { stdout, stderr, exitCode } = await $`rm -rfv ${subdirs} ${tree} ${tree}`.quiet();
+      expect({ stdout: sortedShellOutput(stdout.toString()), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: expected,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(existsSync(tree)).toBeFalse();
     }
   });
 

@@ -824,14 +824,19 @@ impl ShellRmTask {
         }
     }
 
+    /// Records `path` for `-v` output; call it only after the entry was
+    /// actually removed. An ENOENT that `-f` swallows removed nothing and is
+    /// not recorded; returning `()` keeps such an arm from using this call as
+    /// its success value.
+    ///
     /// Takes `dir_task` as a raw pointer (not `&mut DirTask`) so callers in
     /// `remove_entry*` — which already hold `&self: &ShellRmTask` and a
     /// `&ZStr` borrowed from `dir_task.path` — never materialise an aliasing
     /// `&mut DirTask`. Only the disjoint `deleted_entries` field is reborrowed
     /// mutably here.
-    fn verbose_deleted(&self, dir_task: *mut DirTask, path: &[u8]) -> bun_sys::Maybe<()> {
+    fn verbose_deleted(&self, dir_task: *mut DirTask, path: &[u8]) {
         if !self.opts.verbose {
-            return Ok(());
+            return;
         }
         // SAFETY: a DirTask's non-atomic fields are single-owner-at-a-time.
         // Ownership starts on the worker that runs `remove_entry*` and is
@@ -850,7 +855,6 @@ impl ShellRmTask {
         }
         entries.extend_from_slice(path);
         entries.push(b'\n');
-        Ok(())
     }
 
     /// Join into `buf` honoring [`join_style`].
@@ -957,7 +961,10 @@ impl ShellRmTask {
             };
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
-                    Ok(()) => return self.verbose_deleted(dir_task, path.as_bytes()),
+                    Ok(()) => {
+                        self.verbose_deleted(dir_task, path.as_bytes());
+                        return Ok(());
+                    }
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
@@ -1034,6 +1041,10 @@ impl ShellRmTask {
         let mut i: usize = 0;
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
+                // The directory itself was removed while we were reading it
+                // (another operand of the same rm, or another process); the
+                // rmdir below then sees ENOENT too, and -f ignores both.
+                Err(e) if self.opts.force && e.get_errno() == E::ENOENT => break Ok(()),
                 Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
                 Ok(None) => break Ok(()),
                 Ok(Some(ent)) => ent,
@@ -1126,7 +1137,10 @@ impl ShellRmTask {
         }
 
         match bun_sys::unlinkat_with_flags(self.cwd, path, bun_sys::AT_REMOVEDIR) {
-            Ok(()) => self.verbose_deleted(dir_task, path.as_bytes()),
+            Ok(()) => {
+                self.verbose_deleted(dir_task, path.as_bytes());
+                Ok(())
+            }
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
@@ -1156,7 +1170,7 @@ impl ShellRmTask {
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
                     Ok(()) => {
-                        let _ = self.verbose_deleted(dir_task, path.as_bytes());
+                        self.verbose_deleted(dir_task, path.as_bytes());
                         return Ok(true);
                     }
                     Err(e) => match e.get_errno() {
@@ -1197,7 +1211,10 @@ impl ShellRmTask {
     ) -> bun_sys::Maybe<()> {
         let dirfd = self.cwd;
         match bun_sys::unlinkat_with_flags(dirfd, path, 0) {
-            Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
+            Ok(()) => {
+                self.verbose_deleted(parent_dir_task, path.as_bytes());
+                Ok(())
+            }
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
@@ -1235,7 +1252,10 @@ impl ShellRmTask {
                                 bun_sys::AT_REMOVEDIR,
                             ) {
                                 // it was empty, we saved a syscall
-                                Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
+                                Ok(()) => {
+                                    self.verbose_deleted(parent_dir_task, path.as_bytes());
+                                    Ok(())
+                                }
                                 Err(e2) => match e2.get_errno() {
                                     // not empty, process directory as we would normally
                                     E::ENOTEMPTY => vtable.on_dir_not_empty(
@@ -1244,6 +1264,8 @@ impl ShellRmTask {
                                         is_absolute,
                                         buf,
                                     ),
+                                    // removed between the two calls
+                                    E::ENOENT if self.opts.force => Ok(()),
                                     // actually a file, the error is a permissions error
                                     E::ENOTDIR => Err(self.error_with_path(&e, path.as_bytes())),
                                     _ => Err(self.error_with_path(&e2, path.as_bytes())),

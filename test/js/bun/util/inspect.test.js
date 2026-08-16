@@ -977,8 +977,11 @@ describe("property lookup throws while formatting", () => {
   it.concurrent("lazy property initializer throws", async () => {
     // Bun.$ is the first lazy property on the Bun object and its initializer
     // calls Symbol(), so it throws here. The properties after it must still be
-    // printed.
+    // printed. node:util is loaded up front because formatting a value with a
+    // custom inspect function (Bun.env on Windows) needs util.inspect, which
+    // can no longer be loaded once Symbol is gone.
     const { stdout, exitCode } = await run(`
+      require("node:util");
       globalThis.Symbol = {};
       const text = Bun.inspect(Bun);
       console.log(text.includes("Archive:"), text.includes("inspect:"));

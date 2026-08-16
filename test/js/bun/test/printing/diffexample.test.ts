@@ -745,14 +745,12 @@ test.concurrent("color", async () => {
     });
   const spawn = spawnFixture("1");
   const plainSpawn = spawnFixture("0");
-  await spawn.exited;
-  const stderr = await spawn.stderr.text();
-  const stdout = await spawn.stdout.text();
+  const [stdout, stderr] = await Promise.all([spawn.stdout.text(), spawn.stderr.text(), spawn.exited]);
+  const [plainStdout] = await Promise.all([plainSpawn.stdout.text(), plainSpawn.stderr.text(), plainSpawn.exited]);
 
   // Colour only ever adds escape sequences; the text underneath must be what
   // the uncoloured renderer prints.
-  await plainSpawn.exited;
-  expect(cleanAnsiEscapes(stdout)).toEqual(await plainSpawn.stdout.text());
+  expect(cleanAnsiEscapes(stdout)).toEqual(plainStdout);
 
   expect(stderr).toMatchInlineSnapshot(`""`);
   expect(stdout).toMatchInlineSnapshot(`

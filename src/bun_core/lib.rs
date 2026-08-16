@@ -992,18 +992,6 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
     &mut dest[..off]
 }
 
-/// Allocate a fresh `Box<[T]>` holding all `parts` joined. No zero-init: `extend_from_slice`
-/// is `memcpy`-specialized for `T: Copy`, so no `Default` bound is required.
-#[inline]
-pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
-    let len: usize = parts.iter().map(|p| p.len()).sum();
-    let mut v: Vec<T> = Vec::with_capacity(len);
-    for p in parts {
-        v.extend_from_slice(p);
-    }
-    v.into_boxed_slice()
-}
-
 /// Back-compat alias for the original `u8`-only buffer-concat. New code should
 /// call [`concat_into`] directly.
 #[inline]

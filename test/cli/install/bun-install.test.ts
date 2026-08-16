@@ -10861,6 +10861,111 @@ it("fails when a transitive file: dependency's folder does not exist", async () 
   expect(exitCode).toBe(1);
 });
 
+describe.concurrent("file: tarball declared by a file: folder dependency", () => {
+  // `bar-0.0.2.tgz` is planted at the path the declaration means and
+  // `baz-0.0.3.tgz` at the other candidate path, so reading the tarball
+  // relative to the wrong directory installs `baz` instead of failing with ENOENT.
+  const expected = readFileSync(join(import.meta.dir, "bar-0.0.2.tgz"));
+  const decoy = readFileSync(join(import.meta.dir, "baz-0.0.3.tgz"));
+
+  const fixture = (root: object, lib: object, tarballs: Record<string, Buffer>) => ({
+    "package.json": JSON.stringify({
+      name: "my-app",
+      version: "1.0.0",
+      dependencies: { lib: "file:./vendor/lib" },
+      ...root,
+    }),
+    "vendor/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", main: "index.js", ...lib }),
+    "vendor/lib/index.js": `const pkg = require("tool/package.json"); module.exports = pkg.name + "@" + pkg.version;`,
+    ...tarballs,
+  });
+
+  // The first install resolves `tool` from vendor/lib/package.json and reads
+  // the tarball in the process. The second one starts from the lockfile with
+  // an empty cache, so it has to read the tarball again from the path recorded
+  // there; both have to pick the same file.
+  async function installAndRequireLib(projectDir: string, linker: "hoisted" | "isolated") {
+    const cacheDir = join(projectDir, ".bun-cache");
+    const installed: string[] = [];
+
+    for (const args of [["install"], ["install", "--frozen-lockfile"]]) {
+      await Promise.all([
+        rm(join(projectDir, "node_modules"), { recursive: true, force: true }),
+        rm(cacheDir, { recursive: true, force: true }),
+      ]);
+
+      await using install = spawn({
+        cmd: [bunExe(), ...args, `--linker=${linker}`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, BUN_INSTALL_CACHE_DIR: cacheDir },
+      });
+      const [installErr, installOut, installExit] = await Promise.all([
+        install.stderr.text(),
+        install.stdout.text(),
+        install.exited,
+      ]);
+      expect(installErr).not.toContain("error:");
+      expect(installOut).toContain("2 packages installed");
+      expect(installExit).toBe(0);
+
+      await using run = spawn({
+        cmd: [bunExe(), "-e", `console.log(require("lib"))`],
+        cwd: projectDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [runErr, runOut, runExit] = await Promise.all([run.stderr.text(), run.stdout.text(), run.exited]);
+      expect(runErr).toBe("");
+      expect(runExit).toBe(0);
+      installed.push(runOut.trim());
+    }
+
+    return { installed, lockfile: await file(join(projectDir, "bun.lock")).text() };
+  }
+
+  for (const linker of ["hoisted", "isolated"] as const) {
+    it(`is read relative to the folder (${linker} linker)`, async () => {
+      using dir = tempDir(
+        "folder-dep-tarball",
+        fixture(
+          {},
+          { dependencies: { tool: "file:./tool.tgz" } },
+          { "vendor/lib/tool.tgz": expected, "tool.tgz": decoy },
+        ),
+      );
+
+      const { installed, lockfile } = await installAndRequireLib(String(dir), linker);
+      expect(installed).toEqual(["bar@0.0.2", "bar@0.0.2"]);
+      // The lockfile records the path as declared; the name in front of it is
+      // read from the tarball that was extracted.
+      expect(lockfile).toContain('"lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "file:./tool.tgz" } }]');
+      expect(lockfile).toContain('"tool": ["bar@./tool.tgz", {}, "sha512-');
+    });
+  }
+
+  it("is read relative to the project when a root override supplies the path", async () => {
+    // `overrides` can only be written in the root package.json, so the path it
+    // contains means the project directory even though the dependency it is
+    // applied to is declared by vendor/lib/package.json.
+    using dir = tempDir(
+      "folder-dep-tarball-override",
+      fixture(
+        { overrides: { tool: "file:./tool.tgz" } },
+        { dependencies: { tool: "^1.0.0" } },
+        { "tool.tgz": expected, "vendor/lib/tool.tgz": decoy },
+      ),
+    );
+
+    const { installed, lockfile } = await installAndRequireLib(String(dir), "hoisted");
+    expect(installed).toEqual(["bar@0.0.2", "bar@0.0.2"]);
+    expect(lockfile).toContain('"lib": ["lib@file:vendor/lib", { "dependencies": { "tool": "^1.0.0" } }]');
+    expect(lockfile).toContain('"tool": ["bar@./tool.tgz", {}, "sha512-');
+  });
+});
+
 it("does not extract a local file: tarball outside the temp dir for a dependency alias containing '..' path segments", async () => {
   // For `file:` tarball dependencies, the dependency alias (the key in
   // `dependencies`) is used to derive the temporary extraction folder name.

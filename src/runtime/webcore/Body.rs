@@ -656,6 +656,18 @@ impl ValueError {
     }
 }
 
+impl From<AnyBlob> for Value {
+    /// Each arm moves its payload as is: a `WTFStringImpl`'s `+1` travels with
+    /// the pointer and is released by `Value::drop`, so nothing is ref'd here.
+    fn from(blob: AnyBlob) -> Value {
+        match blob {
+            AnyBlob::Blob(b) => Value::Blob(b),
+            AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
+            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+        }
+    }
+}
+
 impl Value {
     /// Downcast a `JSValue` to the `Body.Value` it owns, if any.
     ///
@@ -690,20 +702,6 @@ impl Value {
 }
 
 impl Value {
-    // We may not have all the data yet
-    // So we can't know for sure if it's empty or not
-    // We CAN know that it is definitely empty.
-    pub(crate) fn is_definitely_empty(&self) -> bool {
-        match self {
-            Value::Null => true,
-            Value::Used | Value::Empty => true,
-            Value::InternalBlob(b) => b.slice_const().is_empty(),
-            Value::Blob(b) => b.size.get() == 0,
-            Value::WTFStringImpl(s) => wtf_impl(s).length() == 0,
-            Value::Error(_) | Value::Locked(_) => false,
-        }
-    }
-
     pub(crate) fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
             if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
@@ -722,11 +720,7 @@ impl Value {
         };
 
         if let Some(blob) = locked.to_any_blob() {
-            *self = match blob {
-                AnyBlob::Blob(b) => Value::Blob(b),
-                AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
-                AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
-            };
+            *self = Value::from(blob);
         }
     }
 
@@ -894,21 +888,7 @@ impl Value {
         reader.producer.set(locked.producer);
 
         reader.context.setup();
-
-        match drain_result {
-            DrainResult::EstimatedSize(estimated_size) => {
-                reader.context.high_water_mark = estimated_size as blob::SizeType;
-                reader
-                    .context
-                    .size_hint
-                    .set(estimated_size as blob::SizeType);
-            }
-            DrainResult::Owned { list, size_hint } => {
-                reader.context.buffer.set(list);
-                reader.context.size_hint.set(size_hint as blob::SizeType);
-            }
-            _ => {}
-        }
+        reader.context.apply_drain_result(drain_result);
 
         let context_ptr: *mut ByteStream = &raw mut reader.context;
         let stream_value = if text_mode {
@@ -1034,16 +1014,8 @@ impl Value {
                 webcore::readable_stream::Source::Blob(blob) => {
                     // SAFETY: `Source::Blob` holds a live *mut ByteBlobLoader for the
                     // lifetime of the ReadableStream JS wrapper.
-                    let result = if let Some(any_blob) = unsafe { (*blob).to_any_blob(global_this) }
-                    {
-                        match any_blob {
-                            AnyBlob::Blob(b) => Value::Blob(b),
-                            AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
-                            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
-                        }
-                    } else {
-                        Value::Empty
-                    };
+                    let result = unsafe { (*blob).to_any_blob(global_this) }
+                        .map_or(Value::Empty, Value::from);
                     readable.force_detach(global_this);
                     return Ok(result);
                 }
@@ -1533,21 +1505,7 @@ impl Value {
         );
 
         reader.context.setup();
-
-        match drain_result {
-            DrainResult::EstimatedSize(estimated_size) => {
-                reader.context.high_water_mark = estimated_size as blob::SizeType;
-                reader
-                    .context
-                    .size_hint
-                    .set(estimated_size as blob::SizeType);
-            }
-            DrainResult::Owned { list, size_hint } => {
-                reader.context.buffer.set(list);
-                reader.context.size_hint.set(size_hint as blob::SizeType);
-            }
-            _ => {}
-        }
+        reader.context.apply_drain_result(drain_result);
 
         // reshaped for borrowck — re-borrow locked after the early *self = Null path above.
         let Value::Locked(locked) = self else {

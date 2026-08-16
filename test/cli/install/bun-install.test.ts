@@ -4966,6 +4966,79 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // The root package.json is read on two paths: against a bun.lock that already lists
+  // dependencies, and when the lockfile has to be created. Both report it the same way.
+  describe.concurrent("root package.json that cannot be read or parsed", () => {
+    async function installWithBrokenRootPackageJson(
+      withLockfile: boolean,
+      breakPackageJson: (packageJsonPath: string) => Promise<void>,
+    ) {
+      using dir = tempDir("broken-root-package-json", {
+        "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { dep: "file:./dep" } }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      });
+      if (withLockfile) {
+        await using first = spawn({
+          cmd: [bunExe(), "install", "--lockfile-only"],
+          cwd: String(dir),
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [firstStdout, firstStderr, firstExitCode] = await Promise.all([
+          first.stdout.text(),
+          first.stderr.text(),
+          first.exited,
+        ]);
+        expect(firstExitCode, `bun install --lockfile-only failed: ${firstStdout}${firstStderr}`).toBe(0);
+        expect(await exists(join(String(dir), "bun.lock"))).toBe(true);
+      }
+      await breakPackageJson(join(String(dir), "package.json"));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toStartWith("bun install v1.");
+      return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
+    }
+
+    const unparseable = (packageJsonPath: string) => writeFile(packageJsonPath, "foo");
+    const unreadable = async (packageJsonPath: string) => {
+      await rm(packageJsonPath);
+      await mkdir(packageJsonPath);
+    };
+
+    for (const [lockfile, withLockfile] of [
+      ["with a bun.lock", true],
+      ["without a bun.lock", false],
+    ] as const) {
+      it(`prints the parse error and the path ${lockfile}`, async () => {
+        const { stderr, exitCode } = await installWithBrokenRootPackageJson(withLockfile, unparseable);
+        expect(stderr).toBe(
+          [
+            "1 | foo",
+            "    ^",
+            "error: Unexpected foo",
+            "    at <dir>/package.json:1:1",
+            "ParserError: failed to parse '<dir>/package.json'",
+          ].join("\n"),
+        );
+        expect(exitCode).toBe(1);
+      });
+
+      it(`prints the read error and the path ${lockfile}`, async () => {
+        const { stderr, exitCode } = await installWithBrokenRootPackageJson(withLockfile, unreadable);
+        expect(stderr).toBe("EISDIR: failed to read '<dir>/package.json'");
+        expect(exitCode).toBe(1);
+      });
+    }
+  });
+
   test.serial("should report error on invalid format for dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       await writeFile(
@@ -9290,6 +9363,9 @@ describe.concurrent("bun-install", () => {
             } else if (fails) {
               expect(err).toContain(`Failed to join registry "${regURL}" and package "notapackage" URLs`);
             } else {
+              // "failed to resolve" is also printed when Bun refuses the manifest
+              // URL it built, so make sure the registry URL itself was accepted.
+              expect(err).not.toContain("is not on registry");
               expect(err).toContain("error: notapackage@0.0.2 failed to resolve");
             }
             // fails either way, since notapackage is, well, not a real package.
@@ -9378,6 +9454,126 @@ describe.concurrent("bun-install", () => {
       expect(err).toContain("warn: InvalidURL");
 
       expect(await exited).toBe(0);
+    });
+
+    // The manifest URL is built from the registry URL by the WHATWG parser,
+    // which accepts every spelling below and rewrites it to the canonical form.
+    // Everything else derived from the configured registry (the "is not on
+    // registry" check on that manifest URL, the same-origin check that decides
+    // whether a tarball request gets the Authorization header, the cache folder
+    // name) has to read the same canonical form, otherwise the install fails
+    // before or after the first request depending on the spelling.
+    describe.concurrent("spellings the WHATWG parser rewrites", () => {
+      const token = "registry-spelling-token";
+      const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+
+      // Serves `no-deps@1.0.0` under whatever directory the manifest is
+      // requested from and records the path and Authorization header of every
+      // request. `configure` returns either extra project files or extra
+      // `bun install` arguments for the registry at `origin`.
+      async function installNoDeps(configure: (origin: string) => Record<string, string> | string[]) {
+        const requests: { path: string; authorization: string | null }[] = [];
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req, server) {
+            const { pathname } = new URL(req.url);
+            requests.push({ path: pathname, authorization: req.headers.get("authorization") });
+            if (pathname.endsWith(".tgz")) {
+              return new Response(file(tgz));
+            }
+            return Response.json({
+              name: "no-deps",
+              "dist-tags": { latest: "1.0.0" },
+              versions: {
+                "1.0.0": {
+                  name: "no-deps",
+                  version: "1.0.0",
+                  dist: { tarball: `http://127.0.0.1:${server.port}${pathname}/-/no-deps-1.0.0.tgz` },
+                },
+              },
+            });
+          },
+        });
+
+        const origin = `http://127.0.0.1:${registry.port}`;
+        const config = configure(origin);
+        const [files, args] = Array.isArray(config) ? [{}, config] : [config, []];
+        using dir = tempDir("registry-url-spelling", {
+          "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+          ...files,
+        });
+        await using proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: String(dir),
+          env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const cache = (await exists(join(String(dir), ".bun-cache")))
+          ? await readdirSorted(join(String(dir), ".bun-cache"))
+          : [];
+        return { origin, cache, result: { requests, stdout, stderr, exitCode } };
+      }
+
+      // Both requests land in `directory` (the canonical form of the configured
+      // path) and both carry the same Authorization header.
+      function installedFrom(directory: string, authorization: string | null) {
+        return {
+          requests: [
+            { path: `${directory}no-deps`, authorization },
+            { path: `${directory}no-deps/-/no-deps-1.0.0.tgz`, authorization },
+          ],
+          stdout: expect.stringContaining("1 package installed"),
+          stderr: expect.stringContaining("Saved lockfile"),
+          exitCode: 0,
+        };
+      }
+
+      const singleColon = (origin: string) => origin.replace("http://", "http:");
+
+      it.each([
+        ["the scheme followed by a single colon", (origin: string) => `${singleColon(origin)}/npm/`, "/npm/"],
+        ["backslashes", (origin: string) => `${origin.replace("http://", "http:\\\\")}\\npm\\`, "/npm/"],
+        ["a dot segment", (origin: string) => `${origin}/npm/unused/../`, "/npm/"],
+        ["surrounding whitespace", (origin: string) => `  ${origin}/npm/  `, "/npm/"],
+        ["an unencoded space in the path", (origin: string) => `${origin}/npm dir/`, "/npm%20dir/"],
+        // Accepted before as well, but the tarball's same-origin check compared
+        // the scheme case-sensitively and withheld the token from the tarball.
+        ["an upper-case scheme", (origin: string) => `${origin.replace("http://", "HTTP://")}/npm/`, "/npm/"],
+      ])("bunfig.toml registry with %s", async (_, spell, directory) => {
+        const { result, cache } = await installNoDeps(origin => ({
+          "bunfig.toml": Bun.TOML.stringify({ install: { registry: { url: spell(origin), token } } }),
+        }));
+        expect(result).toEqual(installedFrom(directory, `Bearer ${token}`));
+        // The cache folder is named after the hostname read from the stored URL.
+        expect(cache).toContain("no-deps@1.0.0@@127.0.0.1@@@1");
+      });
+
+      it(".npmrc registry= with the scheme followed by a single colon", async () => {
+        const { result } = await installNoDeps(origin => ({ ".npmrc": `registry=${singleColon(origin)}/npm/\n` }));
+        expect(result).toEqual(installedFrom("/npm/", null));
+      });
+
+      it("--registry with a dot segment", async () => {
+        const { result } = await installNoDeps(origin => ["--registry", `${origin}/npm/unused/../`]);
+        expect(result).toEqual(installedFrom("/npm/", null));
+      });
+
+      it("still refuses a name that joins to a URL outside the registry directory", async () => {
+        const { result, origin } = await installNoDeps(origin => ({
+          "bunfig.toml": Bun.TOML.stringify({ install: { registry: { url: `${singleColon(origin)}/npm/`, token } } }),
+          "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "..": "1.0.0" } }),
+        }));
+        expect(result).toEqual({
+          requests: [],
+          stdout: expect.stringContaining("bun install v1."),
+          // The error quotes the registry in the form the check compared against.
+          stderr: expect.stringContaining(`manifest URL "${origin}/" is not on registry "${origin}/npm/"`),
+          exitCode: 1,
+        });
+      });
     });
   });
 

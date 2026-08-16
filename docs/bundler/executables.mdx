@@ -757,10 +757,12 @@ import styles from "./styles.css" with { type: "file" };
 import { file, serve } from "bun";
 
 serve({
+  // Inside the compiled executable, file() on an embedded path returns an
+  // in-memory Blob, which routes only accepts wrapped in a Response.
   routes: {
-    "/favicon.ico": file(favicon),
-    "/logo.png": file(logo),
-    "/styles.css": file(styles),
+    "/favicon.ico": new Response(file(favicon)),
+    "/logo.png": new Response(file(logo)),
+    "/styles.css": new Response(file(styles)),
   },
   fetch(req) {
     return new Response("Not found", { status: 404 });
@@ -875,7 +877,7 @@ const html = await Bun.file(path.join(publicDir, "index.html")).text();
 
 Pass `--asset` multiple times to embed several directories (for example `--asset ./client --asset ./prerendered` for a SvelteKit build). Bun embeds only regular files; it skips symlinks and empty subdirectories inside the tree.
 
-You can also embed individual files via the `with { type: "file" }` import attribute or by adding them as extra entry points. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
+You can also embed individual files via the `with { type: "file" }` import attribute or, for files that use the `file` loader (images, fonts, and so on) as well as `.wasm` and `.node` files, by adding them as extra entry points. Bun renames imported assets according to `--asset-naming` (default `[name]-[hash].[ext]`):
 
 ```ts
 import icon from "./public/assets/icon.png" with { type: "file" };

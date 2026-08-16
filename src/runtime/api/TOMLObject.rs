@@ -22,8 +22,8 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         b"input.toml",
-        true,
-        true,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::Throw,
         |arena, log, source| {
             let root = match TOML::parse(source, log, arena, false) {
                 Ok(v) => v,

@@ -644,10 +644,7 @@ impl Options {
                         self.scope.auth = Box::default();
                         self.scope.user = Box::default();
                     }
-                    let href = api_registry.url;
-                    self.scope.url_hash =
-                        Npm::registry::Scope::hash(bun_core::without_trailing_slash(&href));
-                    self.scope.url = bun_url::OwnedURL::from_href(href);
+                    self.scope.set_url(api_registry.url);
                 }
             }
         }

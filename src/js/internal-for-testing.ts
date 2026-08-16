@@ -41,6 +41,13 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
+// WTF StringImpl::hash() (24-bit-masked; what SourceCodeKey compares on).
+export const stringImplHash: (s: string) => number = $newCppFunction(
+  "BunString.cpp",
+  "Bun__stringImplHashForTesting",
+  1,
+);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {

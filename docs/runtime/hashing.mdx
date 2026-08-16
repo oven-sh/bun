@@ -90,7 +90,7 @@ await Bun.password.hash("hello", {
 Output:
 
 ```sh
-$2b$10$Lyj9kHYZtiyfxh2G60TEfeqs7xkkGiEFFDi3iJGc50ZG/XJ1sxIFi;
+$2b$10$Lyj9kHYZtiyfxh2G60TEfeqs7xkkGiEFFDi3iJGc50ZG/XJ1sxIFi
 ```
 
 The format is composed of:
@@ -229,15 +229,15 @@ hasher.update(new ArrayBuffer(10));
 
 For strings, an optional second parameter specifies the encoding (default `'utf-8'`). The following encodings are supported:
 
-| Category                   | Encodings                                   |
-| -------------------------- | ------------------------------------------- |
-| Binary encodings           | `"base64"` `"base64url"` `"hex"` `"binary"` |
-| Character encodings        | `"utf8"` `"utf-8"` `"utf16le"` `"latin1"`   |
-| Legacy character encodings | `"ascii"` `"binary"` `"ucs2"` `"ucs-2"`     |
+| Category                   | Encodings                                 |
+| -------------------------- | ----------------------------------------- |
+| Binary encodings           | `"base64"` `"base64url"` `"hex"`          |
+| Character encodings        | `"utf8"` `"utf-8"` `"utf16le"` `"latin1"` |
+| Legacy character encodings | `"ascii"` `"binary"` `"ucs2"` `"ucs-2"`   |
 
 ```ts
 hasher.update("hello world"); // defaults to utf8
-hasher.update("hello world", "hex");
+hasher.update("68656c6c6f", "hex");
 hasher.update("hello world", "base64");
 hasher.update("hello world", "latin1");
 ```
@@ -305,7 +305,7 @@ HMAC supports a more limited set of algorithms:
 
 Unlike the non-HMAC `Bun.CryptoHasher`, the HMAC `Bun.CryptoHasher` instance does not reset after you call `.digest()`. Using the same instance again throws an error.
 
-Other methods like `.copy()` and `.update()` are supported as long as you call them before `.digest()`, but methods like `.digest()` that finalize the hasher are not.
+Other methods like `.copy()` and `.update()` are supported as long as you call them before `.digest()`.
 
 ```ts
 const hasher = new Bun.CryptoHasher("sha256", "secret-key");

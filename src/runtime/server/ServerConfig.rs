@@ -174,6 +174,17 @@ pub enum RouteMethod {
     Specific(Method),
 }
 
+impl RouteMethod {
+    /// `None` for [`RouteMethod::Any`]: the method is not known until it is
+    /// read off the request.
+    pub(crate) fn specific(&self) -> Option<Method> {
+        match self {
+            RouteMethod::Any => None,
+            RouteMethod::Specific(method) => Some(*method),
+        }
+    }
+}
+
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {
@@ -1370,8 +1381,9 @@ impl ServerConfig {
             args.on_request = on_request_;
         } else if args.bake.is_none()
             && !args.is_node_http_server
-            && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
-                && !opts.has_user_routes)
+            && (args.static_routes.len() + args.user_routes_to_build.len()) == 0
+            && !opts.previous_fetch
+            && !(opts.previous_routes && !args.had_routes_object)
             && opts.is_fetch_required
         {
             if global.has_exception() {
@@ -1649,7 +1661,14 @@ impl ServerConfig {
 pub struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
     pub(crate) is_fetch_required: bool,
-    pub(crate) has_user_routes: bool,
+    /// What the running server keeps answering with when a `reload()` config
+    /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays
+    /// unless the new config replaces it, and callback routes stay as long as
+    /// the new config has no `routes` object at all (`routes: {}` replaces
+    /// them). Static routes and the node:http handler are replaced on every
+    /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
+    pub(crate) previous_fetch: bool,
+    pub(crate) previous_routes: bool,
 }
 
 impl Default for FromJSOptions {
@@ -1657,7 +1676,8 @@ impl Default for FromJSOptions {
         Self {
             allow_bake_config: true,
             is_fetch_required: true,
-            has_user_routes: false,
+            previous_fetch: false,
+            previous_routes: false,
         }
     }
 }

@@ -3485,10 +3485,18 @@ pub mod args {
                     _ => {
                         if val.is_object() {
                             encoding = get_encoding(val, ctx, encoding)?;
-                            if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
-                                recursive = r;
+                            // readdir/readdirSync skip the boolean check for a nullish
+                            // `recursive` (fs.promises.readdir coerces it in fs.promises.ts):
+                            // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1546-L1548
+                            if let Some(r) = val.get(ctx, "recursive")? {
+                                if !r.is_null() {
+                                    recursive = validators::validate_boolean(ctx, r, "recursive")?;
+                                }
                             }
-                            if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
+                            // Node never validates `withFileTypes`; every entry point
+                            // passes `!!options.withFileTypes`:
+                            // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L1557
+                            if let Some(w) = val.get_boolean_loose(ctx, "withFileTypes")? {
                                 with_file_types = w;
                             }
                         }

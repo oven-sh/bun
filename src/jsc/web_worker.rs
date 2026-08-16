@@ -381,26 +381,26 @@ impl WebWorker {
         // parent's. `--expose-gc` chains through inheriting workers, so an inheriting worker takes
         // it from its parent worker, or from the process argv when the parent is the main thread.
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        let (mut exec_argv, expose_gc): (virtual_machine::WorkerExecArgv, bool) = if inherit_exec_argv
-        {
-            let expose_gc = match parent_ref.worker_ref() {
-                Some(parent_worker) => parent_worker.expose_gc,
-                // SAFETY: `None` reads only process-constant state.
-                None => unsafe { (hooks.parse_worker_exec_argv)(None) }.expose_gc,
+        let (mut exec_argv, expose_gc): (virtual_machine::WorkerExecArgv, bool) =
+            if inherit_exec_argv {
+                let expose_gc = match parent_ref.worker_ref() {
+                    Some(parent_worker) => parent_worker.expose_gc,
+                    // SAFETY: `None` reads only process-constant state.
+                    None => unsafe { (hooks.parse_worker_exec_argv)(None) }.expose_gc,
+                };
+                (Default::default(), expose_gc)
+            } else {
+                // SAFETY: caller passed valid (ptr,len) borrowed from the C++ WorkerOptions, alive
+                // for the proxy's lifetime; the hook only reads the slice.
+                let parsed = unsafe {
+                    (hooks.parse_worker_exec_argv)(Some(bun_core::ffi::slice(
+                        exec_argv_ptr,
+                        exec_argv_len,
+                    )))
+                };
+                let expose_gc = parsed.expose_gc;
+                (parsed, expose_gc)
             };
-            (Default::default(), expose_gc)
-        } else {
-            // SAFETY: caller passed valid (ptr,len) borrowed from the C++ WorkerOptions, alive
-            // for the proxy's lifetime; the hook only reads the slice.
-            let parsed = unsafe {
-                (hooks.parse_worker_exec_argv)(Some(bun_core::ffi::slice(
-                    exec_argv_ptr,
-                    exec_argv_len,
-                )))
-            };
-            let expose_gc = parsed.expose_gc;
-            (parsed, expose_gc)
-        };
         // `--require`/`--import` specifiers join the worker's preload list; `load_preloads`
         // resolves them on the worker thread, so a bad path fails at runtime as in node.
         preloads.extend(core::mem::take(&mut exec_argv.preloads));

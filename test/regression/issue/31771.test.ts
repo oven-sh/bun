@@ -25,7 +25,7 @@ import path from "node:path";
 // completes well within the timeout under ASAN (the debug/gate build).
 const MODULE_COUNT = 500;
 const SMALL_N = 4;
-const LARGE_N = 14;
+const LARGE_N = 10;
 
 function makeFixtures() {
   const files: Record<string, string> = {};
@@ -110,5 +110,8 @@ test.skipIf(!isLinux)(
     // ASAN's noisier heap accounting).
     expect(perFile).toBeLessThan(0.5);
   },
-  90_000,
+  // Outlier per root CLAUDE.md: spawns two child `bun test --isolate` runs that
+  // each transpile a 500-module graph under debug+ASAN (~14s total), which no
+  // module count small enough to fit the default budget would still discriminate.
+  30_000,
 );

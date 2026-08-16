@@ -1088,6 +1088,54 @@ describe.concurrent(() => {
     });
   });
 
+  describe("process.threadCpuUsage", () => {
+    it("works", () => {
+      expect(process.threadCpuUsage()).toEqual({
+        user: expect.any(Number),
+        system: expect.any(Number),
+      });
+    });
+
+    it("throws for negative input", () => {
+      expect(() =>
+        process.threadCpuUsage({
+          user: -1,
+          system: 100,
+        }),
+      ).toThrow("The property 'prevValue.user' is invalid. Received -1");
+      expect(() =>
+        process.threadCpuUsage({
+          user: 100,
+          system: -1,
+        }),
+      ).toThrow("The property 'prevValue.system' is invalid. Received -1");
+    });
+
+    it("works with diff", () => {
+      const init = process.threadCpuUsage();
+      init.system = 0;
+      init.user = 0;
+      const delta = process.threadCpuUsage(init);
+      expect(delta.user).toBeGreaterThanOrEqual(0);
+      expect(delta.system).toBeGreaterThanOrEqual(0);
+    });
+
+    it("throws on invalid property", () => {
+      const fixtures = [
+        {},
+        { user: null },
+        { user: {} },
+        { user: "potato" },
+        { user: 123 },
+        { user: 123, system: null },
+        { user: 123, system: "potato" },
+      ];
+      for (const fixture of fixtures) {
+        expect(() => process.threadCpuUsage(fixture)).toThrow();
+      }
+    });
+  });
+
   if (process.platform !== "win32") {
     it("process.getegid", () => {
       expect(typeof process.getegid()).toBe("number");

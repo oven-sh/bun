@@ -1585,10 +1585,14 @@ mod draft {
 
         // An empty `_auth` never wins `hasAuth`, so it never reaches `apply_conf_item`.
         // npm walks past ancestor keys silently, so only a line naming a registry
-        // exactly is diagnosed.
+        // exactly is diagnosed, and only if it is the line the key collapsed to: one a
+        // later file overrides supplies nothing whatever its value.
         let own_keys: Vec<Vec<u8>> = registries.iter().map(RegistryKey::own_key).collect();
-        for conf_item in configs.iter() {
-            if !matches!(conf_item.optname, ConfigOpt::_Auth) || !conf_item.value.is_empty() {
+        for (i, conf_item) in configs.iter().enumerate() {
+            if !matches!(conf_item.optname, ConfigOpt::_Auth)
+                || !conf_item.value.is_empty()
+                || lookup(configs, &conf_item.registry_url, ConfigOpt::_Auth) != Some(i)
+            {
                 continue;
             }
             if own_keys

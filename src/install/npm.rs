@@ -483,6 +483,8 @@ pub mod registry {
                         if let Some(password) = embedded.password {
                             registry.password = password.into();
                         }
+                        // An embedded `_auth` is always terminal, so past this point
+                        // `auth` is still empty and each branch below sets it exactly once.
                         if embedded.terminal {
                             break 'outer;
                         }
@@ -492,7 +494,7 @@ pub mod registry {
                     // opaque blob or a blank password is a credential, not an error. The
                     // decode below only derives `user` for `bun pm whoami` and never
                     // gates the credential.
-                    if auth.is_empty() && !registry_auth.is_empty() {
+                    if !registry_auth.is_empty() {
                         auth = &registry_auth;
                         let decode_len = bun_base64::decode_len(&registry_auth);
                         let mut decoded = vec![0u8; decode_len].into_boxed_slice();
@@ -530,9 +532,7 @@ pub mod registry {
                         user_slice[registry.username.len() + 1..][..registry.password.len()]
                             .copy_from_slice(&registry.password);
                         user = user_slice;
-                        if auth.is_empty() {
-                            auth = bun_core::base64::standard_encode(output_buf, user);
-                        }
+                        auth = bun_core::base64::standard_encode(output_buf, user);
                         break 'outer;
                     }
                 }

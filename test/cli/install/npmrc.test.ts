@@ -502,46 +502,55 @@ ${Object.keys(opts)
     },
   );
 
-  test("empty _auth in the home .npmrc is diagnosed against a registry from the project .npmrc", async () => {
-    using dir = tempDir("npmrc-empty-auth-two-files", {
-      "home/.npmrc": `//somehost.com/:_auth=\n`,
-      ".npmrc": `registry=http://somehost.com/\n`,
-      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
-    });
-    const homeDir = join(String(dir), "home");
+  describe("empty _auth across the home and project .npmrc", () => {
+    const blob = Buffer.from("alice:s3cret").toString("base64");
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--dry-run"],
-      cwd: String(dir),
-      env: { ...env, HOME: homeDir, XDG_CONFIG_HOME: homeDir },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    // Returns whether the empty-`_auth` diagnostic was printed; the install itself
+    // must still succeed either way.
+    async function diagnosed(homeNpmrc: string, projectNpmrc: string) {
+      using dir = tempDir("npmrc-empty-auth-two-files", {
+        "home/.npmrc": homeNpmrc,
+        ".npmrc": projectNpmrc,
+        "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
+      });
+      const homeDir = join(String(dir), "home");
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("supplies no credentials");
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--dry-run"],
+        cwd: String(dir),
+        env: { ...env, HOME: homeDir, USERPROFILE: homeDir, XDG_CONFIG_HOME: homeDir },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
 
-  test("empty _auth that only matches a registry's path ancestor is not diagnosed", async () => {
-    using dir = tempDir("npmrc-empty-auth-ancestor", {
-      "home/.npmrc": `//somehost.com/:_auth=\n`,
-      ".npmrc": `@myorg:registry=https://somehost.com/api/v4/packages/npm/\n`,
-      "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }),
-    });
-    const homeDir = join(String(dir), "home");
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+      return stderr.includes("supplies no credentials");
+    }
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install", "--dry-run"],
-      cwd: String(dir),
-      env: { ...env, HOME: homeDir, XDG_CONFIG_HOME: homeDir },
-      stdout: "pipe",
-      stderr: "pipe",
+    test("a home line is diagnosed against a registry the project declares", async () => {
+      expect(await diagnosed(`//somehost.com/:_auth=\n`, `registry=http://somehost.com/\n`)).toBe(true);
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("supplies no credentials");
-    expect(exitCode).toBe(0);
+    test("a line that only matches a registry's path ancestor is not diagnosed", async () => {
+      expect(
+        await diagnosed(`//somehost.com/:_auth=\n`, `@myorg:registry=https://somehost.com/api/v4/packages/npm/\n`),
+      ).toBe(false);
+    });
+
+    // The key collapses to the project's value, so the home line supplies nothing
+    // either way and the credential is sent.
+    test("a home line the project overrides with a value is not diagnosed", async () => {
+      expect(
+        await diagnosed(`//somehost.com/:_auth=\n`, `registry=http://somehost.com/\n//somehost.com/:_auth=${blob}\n`),
+      ).toBe(false);
+    });
+
+    test("a project line that clears the home file's value is diagnosed", async () => {
+      expect(
+        await diagnosed(`//somehost.com/:_auth=${blob}\n`, `registry=http://somehost.com/\n//somehost.com/:_auth=\n`),
+      ).toBe(true);
+    });
   });
 
   await makeTest([["email", "user@example.com"]], result => {

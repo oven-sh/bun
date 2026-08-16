@@ -846,6 +846,14 @@ impl FileReader {
             return streams::Result::Done;
         }
 
+        // A used-up window ends the stream before any read: on a pollable fd the
+        // poll is already armed, so waiting for it would park until a byte
+        // arrives (and drop it) or until EOF.
+        if self.window_remaining() == Some(0) {
+            self.end_at_window();
+            return streams::Result::Done;
+        }
+
         if !self.reader().has_pending_read() && self.flowing.get() {
             // `read_into` does not go through `on_read_chunk`, so the slice window is applied here: the read is cut to what is left of it (an empty destination reads nothing).
             let len = self

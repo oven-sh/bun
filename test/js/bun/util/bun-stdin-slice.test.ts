@@ -61,6 +61,13 @@ describe("Bun.stdin.slice(0, N).stream() over a pipe that stays open", () => {
     });
   }
 
+  test.concurrent.skipIf(isWindows)("a zero-length slice ends without waiting for a byte", async () => {
+    await using proc = spawnSliceEcho(0);
+    // Nothing is ever written; the stream must still end and let the child exit.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
   test.concurrent.skipIf(isWindows)("ends after N bytes of a larger write", async () => {
     await using proc = spawnSliceEcho(3);
     proc.stdin.write("0123456789");

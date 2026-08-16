@@ -224,6 +224,89 @@ it("process.env.TZ writes inside a worker do not change the main thread's timezo
   });
 });
 
+it("a main-thread process.env.TZ change reaches a worker's no-argument Date toLocale*String formatters on its next turn", async () => {
+  // A worker only takes over a time zone change when it next enters JS from
+  // its event loop. This pins down what happens to its three per-global
+  // formatters around that: the ones built before the change, and anything
+  // touched while it is still inside the script run that was blocked across
+  // the change, keep agreeing with the old zone it still sees everywhere else,
+  // and on the next turn they have to be rebuilt together with the rest of its
+  // time zone state instead of staying pinned to the zone they were built in.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker } = require("node:worker_threads");
+        const gate = new Int32Array(new SharedArrayBuffer(4));
+        const worker = new Worker(
+          \`
+            const { parentPort, workerData: gate } = require("node:worker_threads");
+            const d = new Date(Date.UTC(2024, 5, 15, 20, 0));
+            const snapshot = () => ({
+              zone: new Intl.DateTimeFormat().resolvedOptions().timeZone,
+              noArg: [d.toLocaleString(), d.toLocaleDateString(), d.toLocaleTimeString()],
+              fresh: [
+                d.toLocaleString(undefined, {}),
+                d.toLocaleDateString(undefined, {}),
+                d.toLocaleTimeString(undefined, {}),
+              ],
+            });
+            // Build the formatters under the starting zone, then block inside
+            // this same run while the main thread changes TZ.
+            const primed = snapshot();
+            parentPort.postMessage("ready");
+            Atomics.wait(gate, 0, 0);
+            const midRun = snapshot();
+            parentPort.once("message", () => {
+              parentPort.postMessage({ primed, midRun, nextTurn: snapshot() });
+            });
+          \`,
+          { eval: true, workerData: gate },
+        );
+        worker.on("message", message => {
+          if (message === "ready") {
+            process.env.TZ = "Asia/Tokyo";
+            Atomics.store(gate, 0, 1);
+            Atomics.notify(gate, 0);
+            // Delivered once the worker's script run has finished, i.e. on a
+            // later turn of its event loop.
+            worker.postMessage("next");
+            return;
+          }
+          console.log(JSON.stringify(message));
+          worker.terminate();
+        });
+        worker.on("error", error => {
+          console.error(error);
+          process.exit(1);
+        });
+      `,
+    ],
+    env: { ...bunEnv, TZ: "America/Los_Angeles" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { primed, midRun, nextTurn } = JSON.parse(stdout);
+  // The zones show which state the worker was in at each point: the blocked
+  // run really did still see the old zone, the next turn really has the new one.
+  expect([primed.zone, midRun.zone, nextTurn.zone]).toEqual([
+    "America/Los_Angeles",
+    "America/Los_Angeles",
+    "Asia/Tokyo",
+  ]);
+  expect(primed.noArg).toEqual(primed.fresh);
+  expect(midRun.noArg).toEqual(midRun.fresh);
+  expect(nextTurn.noArg).toEqual(nextTurn.fresh);
+  // June 15th 13:00 in Los Angeles versus June 16th 05:00 in Tokyo: the next
+  // turn has to differ from what was built before the change in all three
+  // methods.
+  expect(nextTurn.noArg.map((s, i) => s !== primed.noArg[i])).toEqual([true, true, true]);
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
   // new Worker(file, { env: {...} }) seeds process.env from a snapshot dict;
   // writes inside the worker must still coerce to string, reject symbol keys,
@@ -2088,6 +2171,94 @@ it("delete process.env.TZ invalidates existing Date instances", async () => {
     afterReSet: 7,
     exitCode: 0,
   });
+});
+
+it("process.env.TZ changes reach the no-argument Date toLocale*String formatters of every realm", async () => {
+  // The no-argument toLocaleString / toLocaleDateString / toLocaleTimeString
+  // paths format through three Intl.DateTimeFormat objects JSC keeps per
+  // global object, built the first time they are used. Node drops V8's
+  // equivalent caches on every TZ write (DateTimeConfigurationChangeNotification).
+  // Every realm (a vm context, a ShadowRealm, the main global) is primed before
+  // each change so a stale formatter shows up, and each of the three changes
+  // (set, set, delete) lets a different one of the three methods be the first
+  // call afterwards, i.e. the one that has to notice the change.
+  // Comparing against the explicit `(undefined, {})` form, which builds a fresh
+  // formatter with the same defaults, keeps the assertions locale-independent.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+       const ms = Date.UTC(2024, 5, 15, 20, 0);
+       const d = new Date(ms);
+       const methods = ["toLocaleString", "toLocaleDateString", "toLocaleTimeString"];
+       // Calls the three methods starting with methods[lead]; results are
+       // returned in the methods order.
+       function inOrder(lead, call) {
+         const out = [];
+         for (let i = 0; i < methods.length; i++) {
+           const k = (lead + i) % methods.length;
+           out[k] = call(methods[k]);
+         }
+         return out;
+       }
+       // The Date has to be created inside the realm: the method is looked up on
+       // the Date's own prototype and runs against its realm's formatters, so
+       // calling a main-realm Date from inside a context would only exercise the
+       // main realm again.
+       const inContext = (context, lead) =>
+         inOrder(lead, name => vm.runInContext("new Date(ms)." + name + "()", context));
+       const context = vm.createContext({ ms });
+       const inShadowRealm = new ShadowRealm().evaluate("(ms, name) => new Date(ms)[name]()");
+       let lateContext;
+       function snapshot(lead) {
+         const realms = {
+           context: inContext(context, lead),
+           shadowRealm: inOrder(lead, name => inShadowRealm(ms, name)),
+         };
+         if (lateContext) realms.lateContext = inContext(lateContext, lead);
+         realms.main = inOrder(lead, name => d[name]());
+         return { fresh: methods.map(name => d[name](undefined, {})), realms };
+       }
+       // Build every realm's formatters under the starting zone (UTC) first, so
+       // that already the Los Angeles phase is a change noticed by a primed
+       // formatter rather than a first build.
+       snapshot(0);
+       process.env.TZ = "America/Los_Angeles";
+       const la = snapshot(0);
+       process.env.TZ = "Asia/Tokyo";
+       lateContext = vm.createContext({ ms });
+       const tokyo = snapshot(1);
+       delete process.env.TZ;
+       const afterDelete = snapshot(2);
+       console.log(JSON.stringify({ la, tokyo, afterDelete }));`,
+    ],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { la, tokyo, afterDelete } = JSON.parse(stdout);
+  expect(la.realms).toEqual({ context: la.fresh, shadowRealm: la.fresh, main: la.fresh });
+  expect(tokyo.realms).toEqual({
+    context: tokyo.fresh,
+    shadowRealm: tokyo.fresh,
+    lateContext: tokyo.fresh,
+    main: tokyo.fresh,
+  });
+  expect(afterDelete.realms).toEqual({
+    context: afterDelete.fresh,
+    shadowRealm: afterDelete.fresh,
+    lateContext: afterDelete.fresh,
+    main: afterDelete.fresh,
+  });
+  // 2024-06-15T20:00Z is June 15th 13:00 in Los Angeles and June 16th 05:00 in
+  // Tokyo, so the results every realm was just compared against have to differ
+  // in all three methods; agreeing on a zone that never changed would prove
+  // nothing.
+  expect(tokyo.fresh.map((s, i) => s !== la.fresh[i])).toEqual([true, true, true]);
+  expect(exitCode).toBe(0);
 });
 
 it("process.traceDeprecation set at runtime prints a stack", async () => {

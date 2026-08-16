@@ -6809,8 +6809,7 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
-/// Runs the `Bun.plugin()` `onResolve` hooks for `resolve_maybe_needs_trailing_slash`.
-/// Returns `None` when no plugin claimed the specifier.
+/// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
     namespace: bun_core::String,

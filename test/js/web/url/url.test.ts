@@ -140,6 +140,41 @@ describe("url", () => {
     expect(hn.hostname).toBe("xn--s5a.com");
   });
 
+  it("rejects invalid punycode labels however they are spelled in the input (like Node)", () => {
+    for (const input of [
+      "https://xn--a.com/",
+      "https://XN--a.com/",
+      "https://x%6E--a.com/",
+      "https://x\tn--a.com/",
+      "https://xn-\n-a/",
+      "https://xn-\r-a/",
+      "  https://xn--a/",
+      "https:xn--a/",
+      "https:\\\\u:p@xn--a\\p",
+    ]) {
+      expect(() => new URL(input)).toThrow(TypeError);
+      expect(URL.canParse(input)).toBe(false);
+      expect(URL.parse(input)).toBe(null);
+    }
+    for (const [input, base] of [
+      ["/p", "https://x%6E--a.com/"],
+      ["//xn--a/p", "https://example.com/"],
+      ["xn--a", "https://example.com/"],
+    ]) {
+      if (input === "xn--a") {
+        // A relative path never supplies a host.
+        expect(new URL(input, base).href).toBe("https://example.com/xn--a");
+        continue;
+      }
+      expect(() => new URL(input, base)).toThrow(TypeError);
+      expect(URL.canParse(input, base)).toBe(false);
+      expect(URL.parse(input, base)).toBe(null);
+    }
+    expect(new URL("https://xn--ls8h.com/?q=%E3%81#xn--a").href).toBe("https://xn--ls8h.com/?q=%E3%81#xn--a");
+    expect(new URL("https://\u{1F4A9}.com/p%20q?xn--a").hostname).toBe("xn--ls8h.com");
+    expect(new URL("https://\u{1F4A9}.com/xn--a/%41").pathname).toBe("/xn--a/%41");
+  });
+
   it("prints", () => {
     // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
     // Bun.inspect matches node's util.inspect output.

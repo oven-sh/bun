@@ -192,6 +192,7 @@ impl PackageManagerCommand {
   <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
   <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
   <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
+  <d>├<r> <d>bun pm diff axios@1.6.0:lib 1.6.1<r>  only files under lib/ <d>(also<r> <d>:file.js<r><d>, or paths after the two sides)<r>\n\
   <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks\n\
   <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
   <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)\n\

@@ -69,11 +69,22 @@ pub(crate) fn exec(
     flags: DiffFlags,
     original_cwd: &[u8],
 ) -> Result<(), crate::Error> {
-    let typed: Vec<&[u8]> = diff_args
-        .iter()
-        .chain(positionals.iter().skip(1))
-        .copied()
-        .collect();
+    // `:path` (alone, or as a suffix on a registry spec) and anything after the two sides narrow the diff to files.
+    let mut filters: Vec<Vec<u8>> = Vec::new();
+    let mut typed: Vec<&[u8]> = Vec::new();
+    for &arg in diff_args.iter().chain(positionals.iter().skip(1)) {
+        if let Some(only) = arg.strip_prefix(b":") {
+            filters.push(only.to_vec());
+        } else if typed.len() == 2 {
+            filters.push(arg.to_vec());
+        } else if let Some((spec, only)) = split_filter(arg) {
+            typed.push(spec);
+            filters.push(only.to_vec());
+        } else {
+            typed.push(arg);
+        }
+    }
+    filters.retain(|f| !f.is_empty());
     let args: Vec<Vec<u8>> = typed
         .iter()
         .map(|&arg| {
@@ -89,10 +100,6 @@ pub(crate) fn exec(
             }
         })
         .collect();
-    if args.len() > 2 {
-        Output::err_generic("bun pm diff takes at most two package specs or paths", ());
-        Global::exit(1);
-    }
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
@@ -138,9 +145,58 @@ pub(crate) fn exec(
             }
         }
     }
+    if !filters.is_empty() {
+        let (before_l, before_r) = (left.files.len(), right.files.len());
+        for tree in [&mut left, &mut right] {
+            tree.files
+                .retain(|path, _| filters.iter().any(|f| filter_matches(f, path)));
+            tree.modes
+                .retain(|path, _| filters.iter().any(|f| filter_matches(f, path)));
+        }
+        if left.files.is_empty() && right.files.is_empty() && before_l + before_r > 0 {
+            Output::err_generic(
+                "no file in either side matches {}",
+                (BStr::new(&filters.join(&b", "[..])),),
+            );
+            Global::exit(1);
+        }
+    }
     print_diff(&left, &right, flags);
     Output::flush();
     Ok(())
+}
+
+/// `name@1.2.3:lib/x.js` → (`name@1.2.3`, `lib/x.js`). Paths, URLs and drive letters keep their colons.
+fn split_filter(arg: &[u8]) -> Option<(&[u8], &[u8])> {
+    if looks_like_path(arg)
+        || strings::contains(arg, b"://")
+        || strings::has_prefix_comptime(arg, b"file:")
+        || strings::has_prefix_comptime(arg, b"npm:")
+    {
+        return None;
+    }
+    let at = strings::index_of_char(arg, b':')? as usize;
+    (at > 0).then(|| (&arg[..at], &arg[at + 1..]))
+}
+
+/// A filter names a file exactly, a directory (prefix), a bare file name anywhere in the package, or a glob.
+fn filter_matches(filter: &[u8], path: &[u8]) -> bool {
+    let filter = filter.strip_prefix(b"./").unwrap_or(filter);
+    let filter = filter.strip_suffix(b"/").unwrap_or(filter);
+    if path == filter
+        || (path.len() > filter.len() && path.starts_with(filter) && path[filter.len()] == b'/')
+    {
+        return true;
+    }
+    if filter
+        .iter()
+        .any(|&b| matches!(b, b'*' | b'?' | b'[' | b'{'))
+    {
+        return bun_glob::r#match(filter, path).matches()
+            || (!strings::contains_char(filter, b'/')
+                && bun_glob::r#match(filter, bun_paths::basename(path)).matches());
+    }
+    !strings::contains_char(filter, b'/') && bun_paths::basename(path) == filter
 }
 
 // ─── spec resolution ────────────────────────────────────────────────────────

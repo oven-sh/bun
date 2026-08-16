@@ -193,6 +193,26 @@ diffme@1.0.0 → diffme@2.0.0
     expect(stat.stdout).not.toContain("@@");
   });
 
+  test("':path' on a spec, a bare ':path', or trailing paths narrow the diff to those files", async () => {
+    const only = (r: { stdout: string }) => r.stdout.split("\n").filter(l => /^[AMD] /.test(l));
+    // spec suffix; a bare file name matches anywhere in the package
+    expect(only(await diff(["diffme@1.0.0:index.js", "2.0.0", "--name-only"]))).toStrictEqual(["M index.js"]);
+    // trailing args after both sides: an exact file and a glob
+    expect(only(await diff(["diffme@1.0.0", "diffme@2.0.0", "gone.txt", "*.js", "--name-only"]))).toStrictEqual([
+      "D gone.txt",
+      "M index.js",
+      "A setup.js",
+    ]);
+    // bare :path with the one-argument form
+    expect(only(await diff(["diffme@1.0.0..2.0.0", ":package.json", "--name-only"]))).toStrictEqual([
+      "M package.json",
+    ]);
+    // nothing matches: an error, not an empty success
+    const none = await diff(["diffme@1.0.0:nope.js", "2.0.0"]);
+    expect(none.stderr).toContain("no file in either side matches nope.js");
+    expect(none.exitCode).toBe(1);
+  });
+
   test("-U changes the context around a hunk", async () => {
     const { stdout } = await diff(["diffme@1.0.0", "2.0.0", "-U", "1"]);
     expect(stdout).toContain("@@ -5,3 +5,3 @@\n line c\n-line d\n+line d changed\n line e\n");

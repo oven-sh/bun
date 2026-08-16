@@ -257,6 +257,15 @@ On a terminal, code is compared by meaning and shown as written. Both sides of e
 - The summary at the end calls out what a reviewer looks for first: new `install`/`postinstall` scripts, dependency and entry-point changes, a file that newly imports `child_process`/`fs`/`net`/`http`/`vm`/…, new package imports, growth in `eval()` / `new Function()` / `process.env` / `fetch()` use, newly executable files, and terminal escape sequences or bidirectional-text controls appearing in a release. `*.map` files are summarised as regenerated rather than shown. Files over 8 MB are diffed as text (`too large to normalize`).
 - Nothing in a package can drive your terminal: control characters, escape sequences and bidirectional-text overrides in file contents are drawn as `␛`, `^M`, `‹U+202E›`. Permission changes show as `mode 644 → 755` / `new file mode 100755`.
 
+To look at part of a package, name the files: as a `:path` suffix on a spec, as a bare `:path` argument, or as extra arguments after the two sides. A path matches a file exactly, a directory, a file name anywhere in the package, or a glob:
+
+```bash
+$ bun pm diff axios@1.6.0:lib/adapters 1.6.1          # one directory
+$ bun pm diff axios@1.6.0 axios@1.6.1 dist/node/axios.cjs README.md
+$ bun pm diff lodash :trimEnd.js                       # installed → latest, one file
+$ bun pm diff react-dom@18.2.0 18.3.1 '*.min.js'
+```
+
 Piped or with `NO_COLOR`, the output is a plain unified patch of the real file contents (so `bun pm diff a b > changes.patch` applies), and `--raw` turns the re-print off on a terminal too.
 
 | Flag                     | Description                                                                                          |

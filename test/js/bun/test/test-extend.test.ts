@@ -381,9 +381,9 @@ function events(stderr: string): string[] {
 }
 
 describe.concurrent("test.extend lifecycle", () => {
-  test("fixtures are set up after beforeEach and torn down after afterEach", async () => {
+  test("fixtures are set up after beforeEach and torn down after afterEach, before onTestFinished", async () => {
     const { stderr, exitCode } = await runFixtureFile(`
-      import { test, beforeEach, afterEach } from "bun:test";
+      import { test, beforeEach, afterEach, onTestFinished } from "bun:test";
       beforeEach(() => console.error("event: beforeEach"));
       afterEach(() => console.error("event: afterEach"));
       const t = test.extend<{ f: number }>({
@@ -395,6 +395,7 @@ describe.concurrent("test.extend lifecycle", () => {
       });
       t("ordering", ({ f }) => {
         afterEach(() => console.error("event: afterEach registered inside the test"));
+        onTestFinished(() => console.error("event: onTestFinished"));
         console.error("event: body");
       });
     `);
@@ -405,7 +406,43 @@ describe.concurrent("test.extend lifecycle", () => {
       "afterEach registered inside the test",
       "afterEach",
       "teardown",
+      "onTestFinished",
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("fixtures registered inside an AsyncLocalStorage context see its store", async () => {
+    const { stderr, exitCode } = await runFixtureFile(`
+      import { test, expect } from "bun:test";
+      import { AsyncLocalStorage } from "node:async_hooks";
+      const als = new AsyncLocalStorage<string>();
+      const t = test.extend<{ f: string }>({
+        f: async ({}, use) => {
+          console.error("event: setup sees " + als.getStore());
+          await use("f");
+          console.error("event: teardown sees " + als.getStore());
+        },
+      });
+      als.run("store", () => {
+        t("plain", ({ f }) => {
+          expect(f).toBe("f");
+          console.error("event: body sees " + als.getStore());
+        });
+        t.each([1])("each %d", (n, { f }) => {
+          expect(f).toBe("f");
+          console.error("event: each " + n + " sees " + als.getStore());
+        });
+      });
+    `);
+    expect(events(stderr)).toEqual([
+      "setup sees store",
+      "body sees store",
+      "teardown sees store",
+      "setup sees store",
+      "each 1 sees store",
+      "teardown sees store",
+    ]);
+    expect(stderr).toContain("2 pass");
     expect(exitCode).toBe(0);
   });
 

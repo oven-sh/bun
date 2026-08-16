@@ -821,3 +821,66 @@ describe("relative colors with an origin outside the sRGB gamut", () => {
     });
   });
 });
+
+// Every channel of lab(), lch(), oklab() and oklch() is `<percentage> | <number> | none`.
+// 100% of the lightness is the number 100 in lab()/lch() and 1 in oklab()/oklch(); 100% of
+// a/b is 125 in lab() and 0.4 in oklab(); 100% of the chroma is 150 in lch() and 0.4 in
+// oklch(). Only the percentage lightness with number a/b/chroma used to parse (#16727).
+// https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+// https://www.w3.org/TR/css-color-4/#specifying-oklab-oklch
+// lightningcss 1.30 produces the same values for every input below.
+describe("lab-family channels written as numbers or percentages", () => {
+  test.each([
+    ["lab(50 40 -50)", "lab(50% 40 -50)", "#965dcd"],
+    ["lch(50 60 120)", "lch(50% 60 120)", "#548404"],
+    ["oklab(0.5 0.1 -0.1)", "oklab(50% .1 -.1)", "#81459a"],
+    ["oklch(0.5 0.1 120)", "oklch(50% .1 120)", "#5c6b21"],
+    // Tailwind v4's red-500, which is documented as #fb2c36.
+    ["oklch(0.637 0.237 25.331)", "oklch(63.7% .237 25.331)", "#fb2c36"],
+    ["lab(50% 32% -40%)", "lab(50% 40 -50)", "#965dcd"],
+    ["lch(50% 40% 120)", "lch(50% 60 120)", "#548404"],
+    ["oklab(50% 25% -25%)", "oklab(50% .1 -.1)", "#81459a"],
+    ["oklch(50% 25% 120)", "oklch(50% .1 120)", "#5c6b21"],
+    ["lab(50 32% -50)", "lab(50% 40 -50)", "#965dcd"],
+    // The example in the Bun.color docs.
+    ["lab(50% 50% 50%)", "lab(50% 62.5 62.5)", "#db3702"],
+    ["lab(50 40 -50 / 0.5)", "lab(50% 40 -50 / .5)", "#965dcd"],
+    ["lab(calc(50) 40 -50)", "lab(50% 40 -50)", "#965dcd"],
+    ["lab(50% calc(32%) -50)", "lab(50% 40 -50)", "#965dcd"],
+    ["lab(50 none none)", "lab(50% none none)", "#777777"],
+    ["color-mix(in oklch, oklch(0.5 0.1 120), oklch(50% 0.1 120))", "oklch(50% .1 120)", "#5c6b21"],
+    // A negative lightness or chroma clamps to 0, like the forms that already parsed.
+    ["lab(-10 0 0)", "lab(0% 0 0)", "#000000"],
+    ["lch(50 -20% 120)", "lch(50% 0 120)", "#777777"],
+  ])("%s", (input, css, hex) => {
+    expect([color(input, "css"), color(input, "hex")]).toEqual([css, hex]);
+  });
+
+  test.each(["lab(50 40)", "lab(50, 40, -50)", "oklch(0.5 0.1 120 0.5)", "lab(50deg 0 0)", "lch(50 60 120%)"])(
+    "%s is still invalid",
+    input => {
+      expect(color(input, "css")).toBeNull();
+    },
+  );
+});
+
+describe("relative colors in the lab family", () => {
+  test.each([
+    ["oklch(from red 0.5 c h)", "oklch(50% .257683 29.2339)"],
+    ["lab(from red 50 a b)", "lab(50% 80.8049 69.891)"],
+    ["lab(from red l 50% b)", "lab(54.2905% 62.5 69.891)"],
+    // The channel keywords resolve as before, unscaled.
+    ["lab(from red l a b)", "lab(54.2905% 80.8049 69.891)"],
+    ["lab(from lab(50% 20 30) calc(l * 1.2) a b)", "lab(60% 20 30)"],
+    // Origins written this way parse now too: an in-gamut one resolves, an out-of-gamut one
+    // resolves into the unbounded functions only.
+    ["rgb(from oklch(0.5 0.1 120) r g b)", "#5c6b21"],
+    ["hsl(from lab(50 40 -50) h s l)", "#965dcd"],
+    ["lab(from oklch(1 0.399 336.3) l a b)", "lab(94.0205% 119.644 -57.6823)"],
+    ["color(from lab(100 104.3 -50.9) srgb r g b)", "color(srgb 1.5935 .587758 1.40555)"],
+    ["rgb(from lab(100 104.3 -50.9) r g b)", null],
+    ["hwb(from oklch(1 0.399 336.3) h w b)", null],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});

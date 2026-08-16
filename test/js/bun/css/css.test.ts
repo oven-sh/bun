@@ -7666,6 +7666,58 @@ describe("css tests", () => {
     minify_test(".foo{grid-template-areas:none}", ".foo{grid-template-areas:none}");
   });
 
+  // Every channel of the lab family is `<percentage> | <number> | none`; only the percentage
+  // lightness with number a/b/chroma used to parse, so the other spellings (the number
+  // lightness is what Tailwind v4 emits) went through as unknown tokens and got no fallbacks.
+  // https://www.w3.org/TR/css-color-4/#specifying-lab-lch
+  describe("lab-family colors written as numbers or percentages", () => {
+    minify_test(".foo { color: lab(50 40 -50) }", ".foo{color:lab(50% 40 -50)}");
+    minify_test(".foo { color: lch(50 60 120) }", ".foo{color:lch(50% 60 120)}");
+    minify_test(".foo { color: oklab(0.5 0.1 -0.1) }", ".foo{color:oklab(50% .1 -.1)}");
+    minify_test(".foo { color: oklch(0.5 0.1 120) }", ".foo{color:oklch(50% .1 120)}");
+    minify_test(".foo { color: lab(50% 32% -40%) }", ".foo{color:lab(50% 40 -50)}");
+    minify_test(".foo { color: lch(50% 40% 120) }", ".foo{color:lch(50% 60 120)}");
+    minify_test(".foo { color: oklab(50% 25% -25%) }", ".foo{color:oklab(50% .1 -.1)}");
+    minify_test(".foo { color: oklch(50% 25% 120) }", ".foo{color:oklch(50% .1 120)}");
+    minify_test(".foo { color: var(--x, oklch(0.5 0.1 120)) }", ".foo{color:var(--x,oklch(50% .1 120))}");
+
+    // Both spellings get the same fallbacks for targets without oklch().
+    for (const lightness of ["0.5", "50%"]) {
+      prefix_test(
+        `.foo { color: oklch(${lightness} 0.1 120) }`,
+        indoc`
+          .foo {
+            color: #5c6b21;
+            color: lab(42.8512% -14.3178 37.8447);
+          }
+        `,
+        {
+          chrome: 95 << 16,
+        },
+      );
+    }
+
+    describe("relative colors", () => {
+      minify_test(".foo { color: lab(from lab(50 20 30) l a b) }", ".foo{color:lab(50% 20 30)}");
+      minify_test(".foo { color: oklch(from red 0.5 c h) }", ".foo{color:oklch(50% .257683 29.2339)}");
+      minify_test(".foo { color: rgb(from oklch(0.5 0.1 120) r g b) }", ".foo{color:#5c6b21}");
+      minify_test(
+        ".foo { color: color(from lab(100 104.3 -50.9) srgb r g b) }",
+        ".foo{color:color(srgb 1.5935 .587758 1.40555)}",
+      );
+      // An out-of-gamut origin is left alone like its percentage spelling; it is a parsed
+      // color now, which is why it comes back out serialized.
+      minify_test(
+        ".foo { color: rgb(from lab(100 104.3 -50.9) r g b) }",
+        ".foo{color:rgb(from lab(100% 104.3 -50.9) r g b)}",
+      );
+      minify_test(
+        ".foo { color: hwb(from oklch(1 0.399 336.3) h w b) }",
+        ".foo{color:hwb(from oklch(100% .399 336.3) h w b)}",
+      );
+    });
+  });
+
   // rgb(), hsl() and hwb() cannot hold an origin outside the sRGB gamut. Browsers keep the
   // out-of-gamut channels and clip them when painting (w3c/csswg-drafts#8444), so resolving
   // these by gamut mapping the origin, as before (#fff and #00f942 below), painted a

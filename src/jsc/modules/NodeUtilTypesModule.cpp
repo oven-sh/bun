@@ -750,8 +750,7 @@ static bool compareBranch(JSC::JSGlobalObject* globalObject, JSC::MarkedArgument
         return withCycleGuard(globalObject, gcBuffer, cycles, scope, actual, expected, objectSubset);
     }
 
-    // Not an ErrorInstance (name/message are prototype accessors, so the own-property walk sees
-    // nothing), and kept ahead of and apart from the Error arm: node rejects DOMException vs Error.
+    // Not an ErrorInstance; kept ahead of and apart from the Error arm (node rejects DOMException vs Error).
     const bool actualIsDOMException = actual.isCell() && actual.asCell()->inherits<WebCore::JSDOMException>();
     const bool expectedIsDOMException = expected.isCell() && expected.asCell()->inherits<WebCore::JSDOMException>();
     if (actualIsDOMException || expectedIsDOMException) {

@@ -489,10 +489,8 @@ impl Expect {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
                     global_this
                         .bun_vm()
-                        .as_mut()
                         .wait_for_promise_blocking_js(promise)
                         .map_err(|stopped| stopped.throw(global_this))?;
 
@@ -863,40 +861,69 @@ impl Expect {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<(Option<JSValue>, JSValue)> {
+        // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
+        let vm = global_this.bun_vm().as_mut();
+
+        let mut return_value_from_function: JSValue = JSValue::ZERO;
+
         if !value.js_type().is_function() {
             if self.flags.get().promise() != Promise::None {
-                return Ok((Some(value), JSValue::ZERO));
+                return Ok((Some(value), return_value_from_function));
             }
             return Err(global_this.throw(format_args!("Expected value must be a function")));
         }
 
-        let return_value_from_function: JSValue = match value.call(global_this, JSValue::UNDEFINED, &[]) {
+        let mut return_value: JSValue = JSValue::ZERO;
+
+        // An error the call reports as uncaught instead of throwing (a native
+        // EventEmitter's listener throwing, say) is what the function threw.
+        // The capture covers the call only: a rejection is not reportable before
+        // the test yields, so whatever rejects during the call or the wait below
+        // is left for the checkpoint after the test gets control back, like any
+        // other rejection in the test body.
+        let scope = vm.unhandled_rejection_scope();
+        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
+        vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
+        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),
         };
+        vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
+        scope.apply(vm);
 
-        if let Some(promise) = return_value_from_function.as_any_promise() {
-            // Same as `process_promise`: the matcher consumes this promise's
-            // outcome, so only its rejection is marked handled. Anything else
-            // that rejects meanwhile is reported once the test gets control back.
-            promise.set_handled(global_this.vm());
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise_blocking_js(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
-            return match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
-                js_promise::Unwrapped::Fulfilled(_) => Ok((None, return_value_from_function)),
-                js_promise::Unwrapped::Rejected(rejected) => {
-                    // since we know for sure it rejected, we should always return the error
-                    Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function))
-                }
-                js_promise::Unwrapped::Pending => unreachable!(),
-            };
+        if return_value.is_empty() {
+            return_value = return_value_from_function;
         }
 
-        Ok((return_value_from_function.to_error(), return_value_from_function))
+        if let Some(promise) = return_value.as_any_promise() {
+            // As in `process_promise`: the matcher consumes this promise's
+            // outcome, so its rejection alone is marked handled.
+            promise.set_handled(global_this.vm());
+            vm.wait_for_promise_blocking_js(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
+            match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
+                js_promise::Unwrapped::Fulfilled(_) => {
+                    return Ok((None, return_value_from_function));
+                }
+                js_promise::Unwrapped::Rejected(rejected) => {
+                    // since we know for sure it rejected, we should always return the error
+                    return Ok((Some(rejected.to_error().unwrap_or(rejected)), return_value_from_function));
+                }
+                js_promise::Unwrapped::Pending => unreachable!(),
+            }
+        }
+
+        if return_value != return_value_from_function {
+            if let Some(existing) = return_value_from_function.as_any_promise() {
+                existing.set_handled(global_this.vm());
+            }
+        }
+
+        Ok((
+            return_value.to_error().or_else(|| return_value_from_function.to_error()),
+            return_value_from_function,
+        ))
     }
 
     pub(crate) fn fn_to_err_string_or_undefined(
@@ -1464,10 +1491,8 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
                 .bun_vm()
-                .as_mut()
                 .wait_for_promise_blocking_js(promise)
                 .map_err(|stopped| stopped.throw(global_this))?;
 

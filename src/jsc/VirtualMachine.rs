@@ -183,6 +183,7 @@ pub struct VirtualMachine {
     /// counter stays at zero).
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
+    pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     /// LAYERING: the real type is `bun_runtime`'s
     /// `html_rewriter::RewriterPipe` (a forward dep), stored type-erased.
     ///
@@ -301,13 +302,13 @@ pub struct VirtualMachine {
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: OnUnhandledRejection,
+    pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
     /// Host functions currently blocking the JS that called them in
     /// [`Self::wait_for_promise_blocking_js`]. While non-zero,
     /// [`JSGlobalObject::handle_rejected_promises`] reports nothing. `Cell` for
-    /// the same reason as [`Self::is_inside_deferred_task_queue`]: the waits
-    /// hold `&mut` into this VM while the loop reads it. Zero-valid.
+    /// the same reason as [`Self::is_inside_deferred_task_queue`]; zero-valid.
     pub(crate) promise_waits_blocking_js: core::cell::Cell<u32>,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
@@ -433,6 +434,20 @@ pub enum GCLevel {
     None = 0,
     Mild = 1,
     Aggressive = 2,
+}
+
+pub struct UnhandledRejectionScope {
+    pub ctx: Option<*mut c_void>,
+    pub(crate) on_unhandled_rejection: OnUnhandledRejection,
+    pub(crate) count: usize,
+}
+
+impl UnhandledRejectionScope {
+    pub fn apply(&self, vm: &mut VirtualMachine) {
+        vm.on_unhandled_rejection = self.on_unhandled_rejection;
+        vm.on_unhandled_rejection_ctx = self.ctx;
+        vm.unhandled_error_counter = self.count;
+    }
 }
 
 /// Thread-local VM holder. Wired to the
@@ -1214,12 +1229,25 @@ impl VirtualMachine {
         self.event_loop_mut().wakeup();
     }
 
-    pub(crate) fn on_quiet_unhandled_rejection_handler(
+    pub fn on_quiet_unhandled_rejection_handler_capture_value(
         this: &mut VirtualMachine,
         _: &JSGlobalObject,
-        _: JSValue,
+        value: JSValue,
     ) {
         this.unhandled_error_counter += 1;
+        value.ensure_still_alive();
+        if let Some(ptr) = this.unhandled_pending_rejection_to_capture {
+            // SAFETY: caller passed &mut stack_var (see LIFETIMES.tsv)
+            unsafe { *ptr = value };
+        }
+    }
+
+    pub fn unhandled_rejection_scope(&self) -> UnhandledRejectionScope {
+        UnhandledRejectionScope {
+            on_unhandled_rejection: self.on_unhandled_rejection,
+            ctx: self.on_unhandled_rejection_ctx,
+            count: self.unhandled_error_counter,
+        }
     }
 
     pub(crate) fn handled_promise(&self, global_object: &JSGlobalObject, promise: JSValue) -> bool {
@@ -2631,8 +2659,15 @@ impl VirtualMachine {
     /// using `wait_for_promise`: nothing is left to handle those rejections,
     /// and such a wait may never end (a top-level `await` that holds the
     /// process open), so they report as they go.
+    ///
+    /// `&self`, not `&mut self`: a `&mut` receiver is `noalias`, and the
+    /// checkpoint reads the counter through the thread-local VM pointer from
+    /// inside the wait, which `noalias` rules out, so release builds folded
+    /// the two stores away and reported during the wait after all. A shared
+    /// reference to this (interior-mutable) struct makes no such promise. Same
+    /// hazard as the R-2 note on [`EventLoop::run_callback`].
     pub fn wait_for_promise_blocking_js(
-        &mut self,
+        &self,
         promise: jsc::AnyPromise,
     ) -> Result<(), jsc::Stopped> {
         let waits = &self.promise_waits_blocking_js;

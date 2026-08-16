@@ -757,7 +757,7 @@ test("unhandled rejections around a matcher's synchronous promise wait", async (
     stderr: "pipe",
     env: bunEnv,
   });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   // One line per test: its status, then the errors reported against it (printed
   // right before its status line). Errors reported against no test end up last.

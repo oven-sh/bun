@@ -373,8 +373,6 @@ impl FileRoute {
             }
         });
 
-        // The blob's window clamped to the file as it is now (a slice past EOF
-        // is cut short or empty), as `RequestContext::do_sendfile` does.
         let (can_serve_file, offset, size, file_type, pollable) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
@@ -469,9 +467,7 @@ impl FileRoute {
             return;
         }
 
-        // A regular file always gets a length (even 0), so the body sent is
-        // exactly the Content-Length written below; pipes and sockets are
-        // read to EOF.
+        // `None` (read to EOF) is only for pipes and sockets; a file's body is its Content-Length.
         let (body_offset, body_len): (u64, Option<u64>) = match range {
             RangeRequest::Result::Satisfiable { .. } => {
                 let (start, len) = write_content_range(resp, range, size).unwrap();

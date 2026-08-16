@@ -550,4 +550,102 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal }, resolve));
     expectNodeAbortError(writeErr, signal.reason);
   });
+
+  // FileHandle#appendFile and FileHandle#writeFile rebuild the options they hand
+  // to writeFile(fd, ...); node's are both `writeFile(this, data, options)`, so
+  // the signal has to survive that.
+  test.each([
+    ["appendFile", "a"],
+    ["writeFile", "r+"],
+  ])("FileHandle#%s with a pre-aborted signal leaves the file alone", async (method, flags) => {
+    await using dir = tempDir(`fs-abort-filehandle-${method}`, { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), flags);
+    const signal = AbortSignal.abort();
+    expect.assertions(5);
+    try {
+      await fh[method]("data", { signal });
+    } catch (err) {
+      expectNodeAbortError(err, signal.reason);
+    }
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
+  });
+
+  test("FileHandle#appendFile of an async iterable aborted between chunks", async () => {
+    await using dir = tempDir("fs-abort-filehandle-appendfile-iter", { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    const ac = new AbortController();
+    expect.assertions(5);
+    try {
+      await fh.appendFile(
+        (async function* () {
+          yield "a";
+          ac.abort();
+          yield "b";
+        })(),
+        { signal: ac.signal },
+      );
+    } catch (err) {
+      expectNodeAbortError(err, ac.signal.reason);
+    }
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seeda");
+  });
+
+  test("FileHandle#appendFile with a signal that never aborts appends", async () => {
+    await using dir = tempDir("fs-abort-filehandle-appendfile-live", { "f.txt": "seed" });
+    await using fh = await fsPromises.open(join(dir, "f.txt"), "a");
+    await fh.appendFile("data", { signal: new AbortController().signal });
+    expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seeddata");
+  });
+});
+
+// node validates options.signal in getOptions() before touching the file, for
+// any kind of data, and names it "options.signal".
+describe.concurrent("FileHandle#appendFile and FileHandle#writeFile validate options.signal", () => {
+  // The middle of the message ("of type" / "an instance of") comes from the
+  // shared ERR_INVALID_ARG_TYPE renderer, not from fs; don't pin it here.
+  function expectInvalidSignal(err, received) {
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(err.message).toStartWith('The "options.signal" property must be ');
+    expect(err.message).toEndWith(` AbortSignal. Received ${received}`);
+  }
+
+  const invalidSignals = [
+    [null, "null"],
+    [1, "type number (1)"],
+    ["", "type string ('')"],
+    [{}, "an instance of Object"],
+  ];
+
+  for (const method of ["appendFile", "writeFile"]) {
+    test.each(invalidSignals)(`FileHandle#${method}(string, { signal: %p }) rejects`, async (signal, received) => {
+      await using dir = tempDir(`fs-filehandle-${method}-bad-signal`, { "f.txt": "seed" });
+      await using fh = await fsPromises.open(join(dir, "f.txt"), "r+");
+      const err = await fh[method]("data", { signal }).then(
+        () => "resolved",
+        e => e,
+      );
+      expectInvalidSignal(err, received);
+      expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
+    });
+
+    test(`FileHandle#${method}(asyncIterable, { signal: 1 }) rejects without pulling the iterable`, async () => {
+      await using dir = tempDir(`fs-filehandle-${method}-iter-bad-signal`, { "f.txt": "seed" });
+      await using fh = await fsPromises.open(join(dir, "f.txt"), "r+");
+      let pulled = false;
+      const err = await fh[method](
+        (async function* () {
+          pulled = true;
+          yield "data";
+        })(),
+        { signal: 1 },
+      ).then(
+        () => "resolved",
+        e => e,
+      );
+      expectInvalidSignal(err, "type number (1)");
+      expect(pulled).toBe(false);
+      expect(await fsPromises.readFile(join(dir, "f.txt"), "utf8")).toBe("seed");
+    });
+  }
 });

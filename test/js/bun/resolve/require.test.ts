@@ -1,4 +1,4 @@
-import { bunRun, tempDirWithFiles } from "harness";
+import { bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -43,6 +43,35 @@ describe("require(specifier)", () => {
     it.todo("require('*.html') synchronously produces a string");
     it.todo("require('*.wasm') produces a WebAssembly.Module");
     it.todo("require('*.db') wraps a sqlite file in a Database object and exports it");
+  });
+
+  describe("when specifier is a builtin alias", () => {
+    // main.js is transpiled on the JS thread, the file it imports by the
+    // concurrent transpiler. Both must print the require() as written: the
+    // runtime resolves an alias by its name, not by the path it maps to
+    // (internal/cluster/round_robin_handle maps to internal:cluster/RoundRobinHandle,
+    // which is not itself resolvable).
+    it("require() resolves the alias on both transpile paths", async () => {
+      const probe = /* js */ `
+        module.exports = {
+          roundRobinHandle: typeof require("internal/cluster/round_robin_handle"),
+          ffi: require("ffi") === require("bun:ffi"),
+        };
+      `;
+      using dir = tempDir("require-builtin-alias", {
+        "via-require.cjs": probe,
+        "via-import.cjs": probe,
+        "main.js": /* js */ `
+          const viaRequire = require("./via-require.cjs");
+          const { default: viaImport } = await import("./via-import.cjs");
+          console.log(JSON.stringify({ viaRequire, viaImport }));
+        `,
+      });
+      const expected = { roundRobinHandle: "function", ffi: true };
+      expect(await bunRun(["--expose-internals", path.join(String(dir), "main.js")])).toSpawn(
+        JSON.stringify({ viaRequire: expected, viaImport: expected }),
+      );
+    });
   });
 
   describe("require.main", () => {

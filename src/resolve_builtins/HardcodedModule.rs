@@ -958,16 +958,21 @@ impl Alias {
     /// module; the runtime resolve hook serves those, so callers are done with
     /// the record either way.
     ///
-    /// A `require()` / `require.resolve()` of a node builtin keeps the
-    /// specifier as written instead of the canonical `node:` path: like node,
-    /// the runtime resolves it when the call runs, so `require.resolve("fs")`
-    /// returns `"fs"`, `require("fs")` honors `require.cache["fs"]`, and a
-    /// `Module._resolveFilename` override sees `"fs"`.
+    /// A `require()` / `require.resolve()` of a builtin keeps the specifier as
+    /// written; the runtime resolve hook maps it to the module when the call
+    /// runs. The hook takes the names in this table, not every `path` in it
+    /// (`internal/cluster/round_robin_handle` resolves, its path
+    /// `internal:cluster/RoundRobinHandle` does not), and for node builtins it
+    /// implements node's behavior, which depends on the written form:
+    /// `require.resolve("fs")` returns `"fs"`, `require("fs")` honors
+    /// `require.cache["fs"]`, a `Module._resolveFilename` override sees `"fs"`.
+    /// `"bun"` (`Tag::Bun`) is the exception: the printer turns it into
+    /// `globalThis.Bun`.
     pub fn rewrite_import_record(record: &mut ImportRecord, target: Target, cfg: Cfg) -> bool {
         let Some(alias) = Self::get(record.path.text, target, cfg) else {
             return false;
         };
-        if alias.node_builtin && record.kind.is_common_js() {
+        if alias.tag == import_record::Tag::Builtin && record.kind.is_common_js() {
             return true;
         }
         record.path.text = alias.path.as_bytes();

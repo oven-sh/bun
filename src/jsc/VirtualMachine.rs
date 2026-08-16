@@ -4316,6 +4316,16 @@ impl VirtualMachine {
         slice
     }
 
+    /// Builtin alias table configuration for specifiers resolved at runtime.
+    /// A `require()` of a builtin reaches the resolver with the specifier as
+    /// written (`Alias::rewrite_import_record`), so under `bun test` the
+    /// `@jest/globals` / `vitest` entries have to apply here too.
+    fn builtin_alias_cfg(&self) -> ModuleLoader::HardcodedModule::Cfg {
+        ModuleLoader::HardcodedModule::Cfg {
+            rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
+        }
+    }
+
     /// Note: `is_a_file_path` is a runtime
     /// arg to avoid duplicating the body for both monomorphizations.
     pub(crate) fn _resolve(
@@ -4359,7 +4369,7 @@ impl VirtualMachine {
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
             specifier,
             bun_ast::Target::Bun,
-            Default::default(),
+            self.builtin_alias_cfg(),
         ) {
             ret.result = None;
             ret.path = result.path.as_bytes();
@@ -4593,7 +4603,7 @@ impl VirtualMachine {
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
             bun_ast::Target::Bun,
-            Default::default(),
+            jsc_vm.builtin_alias_cfg(),
         ) {
             *res = ErrorableString::ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {

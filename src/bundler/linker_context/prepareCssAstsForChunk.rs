@@ -10,7 +10,7 @@ use crate::bun_css::css_parser::{
     BundlerSupportsRule, ImportRule, LayerName, LayerStatementRule, Location, ParserOptions,
     SmallList,
 };
-use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions};
+use crate::bun_css::{BundlerStyleSheet, ImportConditions, ImportInfo, PrinterOptions, Targets};
 use crate::bun_fs::Path;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag, Index as AstIndex};
 use bun_ast::{Loc, Range};
@@ -18,7 +18,7 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_resolver::DataURL;
 
-use crate::chunk::{Content, CssImportOrderKind};
+use crate::chunk::{Content, CssImportOrder, CssImportOrderKind};
 
 // Raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
@@ -84,7 +84,6 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
     // across the log write below (split borrow).
     let parse_graph = unsafe { &*c.parse_graph };
     let asts = c.graph.ast.items_css();
-    let targets = c.css_targets_for_chunk(chunk);
 
     // Prepare CSS asts
     // Remove duplicate rules across files. This must be done in serial, not
@@ -98,6 +97,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         let Content::Css(css_chunk) = &mut chunk.content else {
             unreachable!()
         };
+        let targets = chunk_targets(&css_chunk.imports_in_chunk_in_order, asts);
         let mut i: usize = css_chunk.imports_in_chunk_in_order.len() as usize;
         while i != 0 {
             i -= 1;
@@ -150,6 +150,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
                         options: ParserOptions::default(None),
+                        targets,
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -325,6 +326,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         source_map_urls: Default::default(),
                         license_comments: Default::default(),
                         options: ParserOptions::default(None),
+                        targets,
                         composes: Default::default(),
                         ..BundlerStyleSheet::empty()
                     };
@@ -432,6 +434,26 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
             }
         }
     }
+}
+
+/// The targets for the style sheets this pass synthesizes for a chunk (layer
+/// statements, external `@import`s and their `data:` URL wrappers). Every
+/// stylesheet in a chunk comes from the same module graph and so carries the
+/// same `StyleSheet::targets`; the first one speaks for the chunk. A chunk
+/// always contains at least one stylesheet, so the default is never reached.
+fn chunk_targets(order: &[CssImportOrder], asts: &[crate::bundled_ast::CssCol]) -> Targets {
+    order
+        .iter()
+        .find_map(|entry| match entry.kind {
+            CssImportOrderKind::SourceIndex(idx) => Some(
+                asts[idx.get() as usize]
+                    .as_deref()
+                    .expect("css ast present")
+                    .targets,
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// Builds a `BundlerCssRuleList` whose backing storage is arena-owned.

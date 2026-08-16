@@ -1014,10 +1014,10 @@ body {
 
   // A stylesheet linked from an HTML file is built for the browser even when the
   // build itself targets bun or node (the HTML is imported from server code for
-  // Bun.serve, or passed to a server build as an entry point). Minifying already
-  // used the default browser targets; printing has to use them too, since
-  // nesting, media range syntax and light-dark() are only lowered while
-  // printing. This fixture reaches every place the linker prints CSS:
+  // Bun.serve, or passed to a server build as an entry point), so it is minified
+  // for the default browser targets. It has to be printed for the same targets:
+  // nesting, media range syntax and light-dark() references are only lowered
+  // while printing. This fixture reaches every place the linker prints CSS:
   //
   // - the stylesheet itself (nesting, the @media range, light-dark() references)
   // - the preserved external @import, whose media condition is printed on its own
@@ -1025,6 +1025,8 @@ body {
   //   printed into a data: URL stylesheet while the chunk is prepared
   // - the bare "@layer foo;" left behind by the deduplicated layer import,
   //   printed together with its wrapping media condition
+  // - an empty stylesheet (which the bundler never minifies), whose import
+  //   conditions are still printed around it as "@layer bar;"
   const browserTargetFiles = {
     "/index.html": `
 <!DOCTYPE html>
@@ -1040,6 +1042,7 @@ body {
 @import "./other.css";
 @import "./dup.css" layer(foo) (width >= 600px);
 @import "./nested.css" (width >= 700px);
+@import "./empty.css" layer(bar) (width >= 1000px);
 :root {
   color-scheme: light dark;
 }
@@ -1059,6 +1062,7 @@ body {
     "/nested.css": `
 @import "https://example.com/nested.css" (width >= 900px);
 .nested { color: red; }`,
+    "/empty.css": "",
   };
 
   function expectPrintedForBrowsers(css: string) {
@@ -1071,7 +1075,23 @@ body {
       '@import "data:text/css,@import \\"https://example.com/nested.css\\" (min-width: 900px);" (min-width: 700px);',
     );
     expect(css).toContain("@media (min-width: 600px) {\n  @layer foo;\n}");
+    expect(css).toContain("@media (min-width: 1000px) {\n  @layer bar;\n}");
     expect(css).not.toContain(">=");
+  }
+
+  // The same fixture printed for targets that support everything it uses.
+  function expectPrintedAsWritten(css: string) {
+    expect(css).toContain("& .b {");
+    expect(css).toContain("color: light-dark(#fff, #000);");
+    expect(css).not.toContain("--buncss-");
+    expect(css).toContain("@media (width >= 800px)");
+    expect(css).toContain('@import "https://example.com/external.css" screen and (width >= 500px);');
+    expect(css).toContain(
+      '@import "data:text/css,@import \\"https://example.com/nested.css\\" (width >= 900px);" (width >= 700px);',
+    );
+    expect(css).toContain("@media (width >= 600px) {\n  @layer foo;\n}");
+    expect(css).toContain("@media (width >= 1000px) {\n  @layer bar;\n}");
+    expect(css).not.toContain("min-width");
   }
 
   function readLinkedStylesheet(api: BundlerTestBundleAPI, htmlFile: string) {
@@ -1118,31 +1138,33 @@ console.log(html);`,
     },
   });
 
-  // The same stylesheet imported by the server code itself is part of the bun
-  // build, not of the browser one: it keeps the build's own (runtime) CSS
-  // targets for both minifying and printing.
-  itBundled("html/css-browser-targets/imported-by-server-code-keeps-runtime-targets", {
+  // When the server code also imports the stylesheet itself, that copy belongs to
+  // the server build and is minified for whatever targets the build uses for its
+  // own target. Which targets those are is not pinned here; what matters is that
+  // each of the two emitted copies is printed for the targets it was minified
+  // for. The light-dark() polyfill shows which half ran: minifying declares the
+  // --buncss-* variables and printing rewrites the references, and either half
+  // on its own is broken.
+  itBundled("html/css-browser-targets/stylesheet-shared-with-server-code", {
     outdir: "out/",
     target: "bun",
     files: {
       ...browserTargetFiles,
       "/server.ts": `
+import html from "./index.html";
 import "./styles.css";
-console.log("server");`,
+console.log(html);`,
     },
     entryPoints: ["/server.ts"],
     onAfterBundle(api) {
-      const css = api.readFile("out/server.css");
-      expect(css).toContain("& .b {");
-      expect(css).toContain("color: light-dark(#fff, #000);");
-      expect(css).not.toContain("--buncss-light");
-      expect(css).toContain("@media (width >= 800px)");
-      expect(css).toContain('@import "https://example.com/external.css" screen and (width >= 500px);');
-      expect(css).toContain(
-        '@import "data:text/css,@import \\"https://example.com/nested.css\\" (width >= 900px);" (width >= 700px);',
-      );
-      expect(css).toContain("@media (width >= 600px) {\n  @layer foo;\n}");
-      expect(css).not.toContain("min-width");
+      expectPrintedForBrowsers(readLinkedStylesheet(api, "out/index.html"));
+
+      const serverCopy = api.readFile("out/server.css");
+      if (serverCopy.includes("--buncss-light: initial;")) {
+        expectPrintedForBrowsers(serverCopy);
+      } else {
+        expectPrintedAsWritten(serverCopy);
+      }
     },
   });
 });

@@ -25,6 +25,7 @@ use bun_sys::{Fd, File};
 use super::jwt;
 use crate::webcore::cloud::cache::{Expiring, now_secs};
 use crate::webcore::cloud::env::Env;
+use crate::webcore::cloud::form_encode;
 use crate::webcore::cloud::io::{ChainFuture, HttpError, HttpRequest, HttpResponse, Io};
 use crate::webcore::cloud::json;
 
@@ -240,17 +241,6 @@ macro_rules! fail {
 fn snippet(body: &[u8]) -> &BStr {
     let body = body.trim_ascii();
     BStr::new(&body[..body.len().min(300)])
-}
-
-fn form_encode(out: &mut Vec<u8>, pairs: &[(&[u8], &[u8])]) {
-    for (i, (k, v)) in pairs.iter().enumerate() {
-        if i > 0 {
-            out.push(b'&');
-        }
-        uri_encode_into(out, k, false);
-        out.push(b'=');
-        uri_encode_into(out, v, false);
-    }
 }
 
 /// `{"error": "...", "error_description": "..."}` from Google's token endpoint.

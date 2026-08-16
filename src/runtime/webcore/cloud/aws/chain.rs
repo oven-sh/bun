@@ -29,6 +29,7 @@ use bun_sys::{Fd, File};
 
 use super::config::ChainConfig;
 use super::ini::{IniFile, Profile, SectionKind};
+use crate::webcore::cloud::form_encode;
 use crate::webcore::cloud::io::{
     ChainFuture, HttpError, HttpRequest, HttpResponse, Io, SpawnRequest,
 };
@@ -136,17 +137,6 @@ fn is_valid_region(region: &[u8]) -> bool {
         && region
             .iter()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-')
-}
-
-fn form_encode(out: &mut Vec<u8>, pairs: &[(&[u8], &[u8])]) {
-    for (i, (k, v)) in pairs.iter().enumerate() {
-        if i > 0 {
-            out.push(b'&');
-        }
-        sigv4::uri_encode_into(out, k, false);
-        out.push(b'=');
-        sigv4::uri_encode_into(out, v, false);
-    }
 }
 
 fn snippet(body: &[u8]) -> &BStr {

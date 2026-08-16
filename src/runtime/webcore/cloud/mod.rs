@@ -11,6 +11,18 @@ pub mod gcp;
 pub mod io;
 pub mod json;
 
+/// `application/x-www-form-urlencoded` body from key/value pairs.
+pub(crate) fn form_encode(out: &mut Vec<u8>, pairs: &[(&[u8], &[u8])]) {
+    for (i, (k, v)) in pairs.iter().enumerate() {
+        if i > 0 {
+            out.push(b'&');
+        }
+        bun_s3_signing::sigv4::uri_encode_into(out, k, false);
+        out.push(b'=');
+        bun_s3_signing::sigv4::uri_encode_into(out, v, false);
+    }
+}
+
 /// Per-VM state (lives in `RareData`, dropped with the VM): the credential
 /// providers, the resolutions currently in flight and their waiters, for
 /// both clouds. A Worker has its own, so its own `env` yields its own

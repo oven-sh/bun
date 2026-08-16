@@ -300,33 +300,39 @@ impl AwsSignOptions {
         global: &JSGlobalObject,
         host: &[u8],
         creds: &AwsCredentials,
-    ) -> Result<(Box<[u8]>, Box<[u8]>), String> {
+    ) -> Result<(Box<[u8]>, Box<[u8]>), ScopeError> {
         let (inferred_service, inferred_region) = if self.service.is_none() || self.region.is_none()
         {
             sigv4::infer_service_region(host)
         } else {
             (None, None)
         };
-        let service = self.service.clone().or(inferred_service).ok_or_else(|| {
-            format!(
-                "cannot tell which AWS service \"{}\" is; pass service: \"...\"",
-                BStr::new(host)
-            )
-        })?;
+        let service = self
+            .service
+            .clone()
+            .or(inferred_service)
+            .ok_or_else(|| ScopeError::UnknownService(Box::from(host)))?;
         let region = self
             .region
             .clone()
             .or(inferred_region)
             .or_else(|| env_region(global))
             .or_else(|| creds.region.clone())
-            .ok_or_else(|| {
-                format!(
-                    "cannot tell which AWS region \"{}\" is in; pass region: \"...\" or set AWS_REGION",
-                    BStr::new(host)
-                )
-            })?;
+            .ok_or_else(|| ScopeError::UnknownRegion(Box::from(host)))?;
         Ok((service, region))
     }
+}
+
+/// Which part of the signing scope could not be worked out for a host.
+#[derive(Debug, thiserror::Error)]
+pub enum ScopeError {
+    #[error("cannot tell which AWS service \"{}\" is; pass service: \"...\"", BStr::new(.0))]
+    UnknownService(Box<[u8]>),
+    #[error(
+        "cannot tell which AWS region \"{}\" is in; pass region: \"...\" or set AWS_REGION",
+        BStr::new(.0)
+    )]
+    UnknownRegion(Box<[u8]>),
 }
 
 pub enum EndpointError {

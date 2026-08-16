@@ -381,7 +381,8 @@ describe.concurrent("Bun.aws.credentials", () => {
       region: "eu-central-1",
       source: "assume-role",
     });
-    const hit = hits.sts.slice(before).find(h => h.body.includes("Action=AssumeRole"))!;
+    // (other tests in this concurrent block hit the same mock STS with AssumeRoleWithWebIdentity)
+    const hit = hits.sts.slice(before).find(h => new URLSearchParams(h.body).get("Action") === "AssumeRole")!;
     expect(hit.method).toBe("POST");
     const body = new URLSearchParams(hit.body);
     expect(body.get("RoleArn")).toBe("arn:aws:iam::123456789012:role/app");
@@ -454,7 +455,9 @@ describe.concurrent("Bun.aws.credentials", () => {
       accountId: "123456789012",
       source: "container",
     });
-    expect(hits.container.at(-1)!.path).toBe("/v2/credentials?x=1");
+    expect(
+      hits.container.some(h => h.path === "/v2/credentials?x=1" && h.headers.authorization === "container-auth-token"),
+    ).toBe(true);
 
     // the env token works too; a wrong one is a hard error (configured but failing)
     const wrong = await creds({

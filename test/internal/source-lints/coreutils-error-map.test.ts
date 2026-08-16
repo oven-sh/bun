@@ -10,9 +10,11 @@ import path from "node:path";
 // or FreeBSD rows. The macOS rows had been transcribed from the comments in
 // Apple's <sys/errno.h> rather than from strerror() (EEXIST -> "File or folder
 // exists", EPROCLIM -> "quotas & mush. Too many processes") and shipped that
-// way for years. These lints check the tables as source text: the macOS table
-// against Apple's sys_errlist, and both deltas against the SystemErrno enum
-// (src/errno/<os>_errno.rs) whose variant names they are keyed by.
+// way for years. These lints check the tables as source text, against each
+// OS's sys_errlist and against the SystemErrno enum (src/errno/<os>_errno.rs)
+// whose variant names the tables are keyed by. The Node-facing libuv texts
+// (src/sys/libuv_error_map.rs) are a different table with a different
+// reference (uv.h) and are not covered here.
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 
@@ -128,71 +130,92 @@ const DARWIN_SYS_ERRLIST: [errno: number, name: string, text: string][] = [
   [106, "EQFULL", "Interface output queue is full"],
 ];
 
+// FreeBSD lib/libc/gen/errlst.c. Both lists descend from 4.4BSD's, so FreeBSD
+// words every errno it shares with Darwin the same way except these four, and
+// adds four of its own; everything else must read as on Darwin.
+const FREEBSD_SYS_ERRLIST_DIFFERENCES: Record<string, string> = {
+  EBUSY: "Device busy",
+  EOPNOTSUPP: "Operation not supported",
+  EMULTIHOP: "Multihop attempted",
+  ENOLINK: "Link has been severed",
+  ECAPMODE: "Not permitted in capability mode",
+  EDOOFUS: "Programming error",
+  EINTEGRITY: "Integrity check failed",
+  ENOTCAPABLE: "Capabilities insufficient",
+};
+
 // Linux has no text for these two: they are aliases of EAGAIN and EDEADLK in
 // <errno.h>, and the enum only reserves their historical slots (41 and 58,
 // for which glibc itself says "Unknown error 41").
 const LINUX_ERRNOS_WITHOUT_TEXT = ["EWOULDBLOCK", "EDEADLOCK"];
 
-test("macOS: BASE + DELTA resolve every Darwin errno to Apple's strerror() text", () => {
-  const base = parseStringMap("BASE");
-  const delta = parseStringMap("DELTA", "macos");
+const BSD_TARGETS: [targetOs: string, enumFile: string][] = [
+  ["macos", "darwin_errno.rs"],
+  ["freebsd", "freebsd_errno.rs"],
+];
 
-  expect(parseSystemErrno("darwin_errno.rs")).toEqual(
-    new Map(DARWIN_SYS_ERRLIST.map(([errno, name]) => [name, errno])),
-  );
+test.each(BSD_TARGETS)("%s: BASE + DELTA resolve every errno to the OS's strerror() text", (targetOs, enumFile) => {
+  const base = parseStringMap("BASE");
+  const delta = parseStringMap("DELTA", targetOs);
+  const reference = strerrorTexts(targetOs, enumFile);
 
   const wrong: string[] = [];
-  for (const [errno, name, text] of DARWIN_SYS_ERRLIST) {
+  for (const [name, text] of reference) {
     const actual = delta.get(name) ?? base.get(name);
-    if (actual !== text) {
-      wrong.push(`${name} (${errno}): ${JSON.stringify(actual)}, strerror() says ${JSON.stringify(text)}`);
-    }
+    if (actual !== text) wrong.push(`${name}: ${JSON.stringify(actual)}, strerror() says ${JSON.stringify(text)}`);
   }
   expect(wrong).toEqual([]);
 });
 
-test("macOS: DELTA holds exactly the errnos whose Darwin text differs from BASE", () => {
+// A row whose text is already BASE's is dead weight; a key the OS's enum does
+// not have can never be looked up.
+test.each(BSD_TARGETS)("%s: DELTA holds exactly the errnos whose text differs from BASE", (targetOs, enumFile) => {
   const base = parseStringMap("BASE");
-  const delta = parseStringMap("DELTA", "macos");
+  const delta = parseStringMap("DELTA", targetOs);
+  const reference = strerrorTexts(targetOs, enumFile);
 
-  const divergent = DARWIN_SYS_ERRLIST.filter(([, name, text]) => base.get(name) !== text).map(([, name]) => name);
+  const divergent = [...reference].filter(([name, text]) => base.get(name) !== text).map(([name]) => name);
   expect([...delta.keys()].sort()).toEqual(divergent.sort());
 });
 
-test("FreeBSD: every DELTA row names a FreeBSD errno and differs from BASE", () => {
+test("BASE has a text for every Linux errno and no row that no OS can reach", () => {
   const base = parseStringMap("BASE");
-  const delta = parseStringMap("DELTA", "freebsd");
-  const errnos = parseSystemErrno("freebsd_errno.rs");
+  const linux = [...parseSystemErrno("linux_errno.rs").keys()];
 
-  const violations: string[] = [];
-  for (const [name, text] of delta) {
-    if (!errnos.has(name)) violations.push(`${name}: not a FreeBSD SystemErrno variant`);
-    if (base.get(name) === text) violations.push(`${name}: same text as BASE`);
-  }
-  expect(violations).toEqual([]);
-});
-
-test("every errno of each POSIX SystemErrno enum has a text", () => {
-  const base = parseStringMap("BASE");
-  const tables: [enumFile: string, delta: Map<string, string>, exempt: string[]][] = [
-    ["darwin_errno.rs", parseStringMap("DELTA", "macos"), []],
-    ["freebsd_errno.rs", parseStringMap("DELTA", "freebsd"), []],
-    ["linux_errno.rs", new Map(), LINUX_ERRNOS_WITHOUT_TEXT],
-  ];
-
-  const missing: string[] = [];
-  const referenced = new Set<string>();
-  for (const [enumFile, delta, exempt] of tables) {
-    for (const name of parseSystemErrno(enumFile).keys()) {
-      referenced.add(name);
-      if (!delta.has(name) && !base.has(name) && !exempt.includes(name)) missing.push(`${enumFile}: ${name}`);
-    }
-  }
+  const missing = linux.filter(name => !base.has(name) && !LINUX_ERRNOS_WITHOUT_TEXT.includes(name));
   expect(missing).toEqual([]);
 
-  const dead = [...base.keys()].filter(name => !referenced.has(name));
-  expect(dead).toEqual([]);
+  const reachable = new Set(linux);
+  for (const [, enumFile] of BSD_TARGETS) {
+    for (const name of parseSystemErrno(enumFile).keys()) reachable.add(name);
+  }
+  expect([...base.keys()].filter(name => !reachable.has(name))).toEqual([]);
 });
+
+// Variant name -> strerror() text for every variant of the OS's SystemErrno.
+// Also cross-checks the enum against the reference list: on Darwin the enum
+// must define exactly sys_errlist's errnos under sys_errlist's numbers; on
+// FreeBSD every variant must be in the differences table or in Darwin's list.
+function strerrorTexts(targetOs: string, enumFile: string): Map<string, string> {
+  const errnos = parseSystemErrno(enumFile);
+  const darwin = new Map(DARWIN_SYS_ERRLIST.map(([, name, text]) => [name, text]));
+
+  if (targetOs === "macos") {
+    expect(errnos).toEqual(new Map(DARWIN_SYS_ERRLIST.map(([errno, name]) => [name, errno])));
+    return darwin;
+  }
+
+  expect(Object.keys(FREEBSD_SYS_ERRLIST_DIFFERENCES).filter(name => !errnos.has(name))).toEqual([]);
+  const texts = new Map<string, string>();
+  const unknown: string[] = [];
+  for (const name of errnos.keys()) {
+    const text = FREEBSD_SYS_ERRLIST_DIFFERENCES[name] ?? darwin.get(name);
+    if (text === undefined) unknown.push(name);
+    else texts.set(name, text);
+  }
+  expect(unknown).toEqual([]);
+  return texts;
+}
 
 // The `"ENOENT" => "No such file or directory",` rows of one
 // `comptime_string_map! { static <name>: ... }` block in result.rs; the DELTA

@@ -277,9 +277,13 @@ void WorkerMessagingProxy::rejectAllCrossVMRequests()
 // a fixed count rather than "everything that was queued when the drain began": with a producer on
 // another thread that snapshot can be arbitrarily large, and the receiving loop's timers and I/O
 // wait behind it. `UntilEmpty` is for the sender having exited: the queue is finite and everything
-// in it precedes 'close'. Worker inboxes never change owner, so up to a budget's worth is moved out
-// under one lock acquisition and dispatched uncontended; the queue itself is only swapped out whole
-// when it fits the budget, so a continuation never has to hand a tail back.
+// in it precedes 'close'.
+//
+// drainScheduled is cleared before any user JS runs: a handler (or a promise continuation its
+// microtask drain unblocks) can park this loop in a nested event-loop wait, and a send arriving
+// then has to post a fresh wakeup task or that wait never wakes (#37189). Messages move
+// queue -> `draining` a small batch per lock acquisition and are popped from `draining` one at a
+// time, so such a nested drain observes the shared deques and delivery stays FIFO.
 enum class DrainBudget { Bounded,
     UntilEmpty };
 static constexpr size_t drainBatchLimit = 1024;
@@ -288,39 +292,47 @@ template<typename Dispatch>
 static bool drainInbox(WorkerMessagingProxy::MessageInbox& inbox, Zig::GlobalObject& globalObject, ScriptExecutionContext& context, DrainBudget budget, Dispatch&& dispatch)
 {
     size_t remaining = budget == DrainBudget::UntilEmpty ? std::numeric_limits<size_t>::max() : drainBatchLimit;
+    static constexpr size_t takeAtOnce = 64;
+
+    {
+        Locker locker { inbox.lock };
+        inbox.drainScheduled = false;
+    }
 
     while (true) {
-        Deque<MessageWithMessagePorts> batch;
+        std::optional<MessageWithMessagePorts> message;
         {
             Locker locker { inbox.lock };
-            if (inbox.queue.isEmpty()) {
-                inbox.drainScheduled = false;
-                return false;
+            if (inbox.draining.isEmpty()) {
+                if (inbox.queue.isEmpty())
+                    return false;
+                if (!remaining) {
+                    // Budget spent; yield. If a racing send already posted a
+                    // wakeup let that task drain the rest, else claim the flag
+                    // and have the caller reschedule.
+                    if (inbox.drainScheduled)
+                        return false;
+                    inbox.drainScheduled = true;
+                    return true;
+                }
+                size_t n = std::min({ takeAtOnce, remaining, static_cast<size_t>(inbox.queue.size()) });
+                for (size_t i = 0; i < n; ++i)
+                    inbox.draining.append(inbox.queue.takeFirst());
+                if (budget == DrainBudget::Bounded)
+                    remaining -= n;
             }
-            if (!remaining)
-                return true; // budget spent, messages left
-            if (inbox.queue.size() <= remaining)
-                batch = std::exchange(inbox.queue, {});
-            else {
-                for (size_t i = 0; i < remaining; ++i)
-                    batch.append(inbox.queue.takeFirst());
-            }
+            message = inbox.draining.takeFirst();
         }
-        if (budget == DrainBudget::Bounded)
-            remaining -= batch.size();
 
-        while (!batch.isEmpty()) {
-            // The receiving VM is being stopped: nothing more is delivered (the
-            // rest is dropped with the proxy).
-            if (context.isJSExecutionForbidden())
-                return false;
-            auto message = batch.takeFirst();
-            auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));
-            auto event = MessageEvent::create(globalObject, message.message.releaseNonNull(), nullptr, WTF::move(ports));
-            dispatch(event.event);
-            if (globalObject.drainMicrotasks())
-                return false; // termination pending
-        }
+        // The receiving VM is being stopped: nothing more is delivered (the
+        // rest is dropped with the proxy).
+        if (context.isJSExecutionForbidden())
+            return false;
+        auto ports = MessagePort::entanglePorts(context, WTF::move(message->transferredPorts));
+        auto event = MessageEvent::create(globalObject, message->message.releaseNonNull(), nullptr, WTF::move(ports));
+        dispatch(event.event);
+        if (globalObject.drainMicrotasks())
+            return false; // termination pending
     }
 }
 
@@ -344,6 +356,7 @@ void WorkerMessagingProxy::drainMessagesToWorkerObject(ScriptExecutionContext& c
     if (!m_workerObject) {
         Locker locker { m_toParent.lock };
         m_toParent.queue.clear();
+        m_toParent.draining.clear();
         m_toParent.drainScheduled = false;
         return;
     }

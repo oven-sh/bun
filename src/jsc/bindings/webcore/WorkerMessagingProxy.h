@@ -113,6 +113,10 @@ public:
     struct MessageInbox {
         Lock lock;
         Deque<MessageWithMessagePorts> queue WTF_GUARDED_BY_LOCK(lock);
+        // Messages taken out of `queue` for dispatch, popped one at a time so a
+        // nested drain observes the same order (see drainInbox).
+        Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
+        // True only while a posted drain task has not yet started draining.
         bool drainScheduled WTF_GUARDED_BY_LOCK(lock) { false };
     };
 

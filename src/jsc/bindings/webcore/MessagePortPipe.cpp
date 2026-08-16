@@ -101,6 +101,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     RefPtr<MessagePort> port;
     size_t limit;
+    bool ownsDispatching = false;
     {
         Locker locker { s.lock };
         // This task was posted to `expectedCtx` (and is running there). If
@@ -117,20 +118,36 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             return;
         }
         limit = 1024;
+        // Trade DrainScheduled for Dispatching before user JS runs: a handler
+        // can park this loop in a nested event-loop wait, and a send() arriving
+        // then must post a fresh drain task (#37189). Dispatching keeps
+        // hasPendingActivity() true across the dispatch window DrainScheduled
+        // used to cover. A nested drain (posted by such a send) finds the bit
+        // already set and leaves clearing it to this outer invocation.
+        ownsDispatching = !(st & Dispatching);
+        s.state.store((st & ~DrainScheduled) | Dispatching, std::memory_order_release);
     }
+
+    // Clear Dispatching only if this invocation set it and still owns the
+    // side; after a detach the bit belongs to the next owner's drain.
+    auto finish = [&] {
+        if (!ownsDispatching)
+            return;
+        Locker locker { s.lock };
+        if (s.ctxId == expectedCtx && s.port.get() == port)
+            s.state.fetch_and(~uint64_t(Dispatching), std::memory_order_acq_rel);
+    };
 
     // All 'message' listeners removed: the port is paused. Leave the inbox buffered
     // and stop draining; a later addEventListener re-schedules this drain.
     if (!port->hasMessageEventListener()) {
-        Locker locker { s.lock };
-        s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
+        finish();
         return;
     }
 
     auto* context = port->scriptExecutionContext();
     if (!context || !context->globalObject()) {
-        Locker locker { s.lock };
-        s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
+        finish();
         return;
     }
     auto* globalObject = defaultGlobalObject(context->globalObject());
@@ -147,19 +164,28 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             // MessagePort, so compare port identity too — dispatching to
             // the stale (now m_isDetached) `port` would silently drop.
             // The new owner's attach() scheduled its own drain, and detach()
-            // already returned anything we had taken to the inbox.
+            // already returned anything we had taken to the inbox (and reset
+            // the flags).
             if (s.ctxId != expectedCtx || s.port.get() != port)
-                break;
+                return;
             uint64_t st = s.state.load(std::memory_order_relaxed);
             if (!(st & Attached) || (s.draining.isEmpty() && s.inbox.isEmpty())) {
-                s.state.store(st & ~DrainScheduled, std::memory_order_release);
+                if (ownsDispatching)
+                    s.state.store(st & ~uint64_t(Dispatching), std::memory_order_release);
                 break;
             }
             if (s.draining.isEmpty()) {
                 if (!limit) {
-                    // Yield to the rest of the event loop; DrainScheduled stays
-                    // set so concurrent sends don't double-schedule.
-                    rescheduleCtx = s.ctxId;
+                    // Budget spent; yield. If a racing send already posted a
+                    // wakeup let that task drain the rest, else claim the flag
+                    // and reschedule after the loop has polled.
+                    if (!(st & DrainScheduled)) {
+                        st |= DrainScheduled;
+                        rescheduleCtx = s.ctxId;
+                    }
+                    if (ownsDispatching)
+                        st &= ~uint64_t(Dispatching);
+                    s.state.store(st, std::memory_order_release);
                     break;
                 }
                 // Refill: this is the only acquisition that contends with senders
@@ -178,17 +204,21 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         // Node's MakeCallback wraps each emit in an InternalCallbackScope,
         // which drains nextTick + microtasks on exit; match that so
         // queueMicrotask(cb) inside onmessage runs before the next message.
-        if (globalObject->drainMicrotasks())
-            break; // termination pending
+        if (globalObject->drainMicrotasks()) {
+            finish();
+            return; // termination pending
+        }
 
         // Listeners may have been removed mid-drain (port.off()); pause like the
         // pre-loop check instead of dispatching the rest to zero listeners.
         if (!port->hasMessageEventListener()) {
-            Locker locker { s.lock };
-            while (!s.draining.isEmpty())
-                s.inbox.prepend(s.draining.takeLast());
-            s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
-            break;
+            {
+                Locker locker { s.lock };
+                while (!s.draining.isEmpty())
+                    s.inbox.prepend(s.draining.takeLast());
+            }
+            finish();
+            return;
         }
     }
 
@@ -271,12 +301,12 @@ void MessagePortPipe::detach(uint8_t side)
         s.inbox.prepend(s.draining.takeLast());
     s.ctxId = 0;
     s.port = nullptr;
-    // Drop Attached and DrainScheduled. A drain task already in flight on
-    // the old context can't be recalled, but it captured the old ctxId and
-    // drainAndDispatch()'s s.ctxId != expectedCtx check makes it a no-op —
-    // even if a new owner attach()es to a different context before it runs.
-    // Messages remain queued for the next owner.
-    s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled), std::memory_order_acq_rel);
+    // Drop Attached, DrainScheduled and Dispatching. A drain task already in
+    // flight on the old context can't be recalled, but it captured the old
+    // ctxId and drainAndDispatch()'s s.ctxId != expectedCtx check makes it a
+    // no-op — even if a new owner attach()es to a different context before
+    // it runs. Messages remain queued for the next owner.
+    s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled | Dispatching), std::memory_order_acq_rel);
 }
 
 void MessagePortPipe::close(uint8_t side, CloseKind kind)

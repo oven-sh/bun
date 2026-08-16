@@ -713,3 +713,63 @@ test("buffered extract does not hold the decompressed local tarball in memory", 
   expect(maxRssBytes).toBeGreaterThan(1024 * 1024);
   expect(maxRssBytes).toBeLessThan(2 * PAYLOAD_SIZE);
 });
+
+test("streaming extract skips a damaged header block and extracts the entries after it byte-for-byte while more data is still arriving", async () => {
+  const pkgJson = Buffer.from(JSON.stringify({ name: "stream-pkg", version: "1.0.0" }) + "\n");
+  const before = Buffer.alloc(4 * 1024 * 1024, 0);
+  const after = Buffer.alloc(16 * 1024 * 1024, 0);
+  const tail = Buffer.alloc(8 * 1024 * 1024);
+  let seed = createHash("sha512").update("tail.bin").digest();
+  for (let off = 0; off < tail.length; off += seed.length) {
+    seed.copy(tail, off);
+    seed = createHash("sha512").update(seed).digest();
+  }
+
+  const damaged = Buffer.alloc(512, 0);
+  damaged.write("junk", 0, "utf8");
+  damaged.fill(" ", 148, 156);
+
+  const damagedEntries: Entry[] = [
+    { path: "package.json", body: pkgJson },
+    { path: "before.bin", body: before },
+    { path: "after.bin", body: after },
+    { path: "tail.bin", body: tail },
+  ];
+  const tar = Buffer.concat([
+    ...tarFile("package/package.json", pkgJson),
+    ...tarFile("package/before.bin", before),
+    damaged,
+    ...tarFile("package/after.bin", after),
+    ...tarFile("package/tail.bin", tail),
+    Buffer.alloc(1024, 0),
+  ]);
+  const damagedTgz = gzipSync(tar);
+  const damagedShasum = createHash("sha1").update(damagedTgz).digest("hex");
+  const damagedIntegrity = "sha512-" + createHash("sha512").update(damagedTgz).digest("base64");
+  expect(damagedTgz.length).toBeGreaterThan(2 * 1024 * 1024);
+
+  await using reg = await makeRegistry(damagedTgz, damagedShasum, damagedIntegrity, 4096);
+  const registry = reg.url;
+
+  using dir = tempDir("streaming-extract-damaged-block", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "stream-pkg": "1.0.0" },
+    }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry } }),
+  });
+
+  const { stderr, exitCode } = await runInstall(String(dir));
+  expect(stderr).not.toContain("extracting tarball for");
+  expect(stderr).not.toContain("error:");
+  expect(stderr).toContain("Streamed ");
+  expect(reg.tarballHits).toBe(1);
+
+  const pkgRoot = join(String(dir), "node_modules", "stream-pkg");
+  for (const { path, body } of damagedEntries) {
+    const got = readFileSync(join(pkgRoot, path));
+    expect([path, got.length, got.equals(body)]).toEqual([path, body.length, true]);
+  }
+  expect(exitCode).toBe(0);
+});

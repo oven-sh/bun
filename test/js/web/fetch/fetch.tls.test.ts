@@ -676,6 +676,71 @@ describe.concurrent("fetch-tls", () => {
     });
   });
 
+  for (const mode of ["main thread", "SHARE_ENV worker"]) {
+    it(`delete process.env.NODE_TLS_REJECT_UNAUTHORIZED restores certificate verification (${mode})`, async () => {
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        tls: CERT_EXPIRED,
+        fetch() {
+          return new Response("Hello World");
+        },
+      });
+      const steps = `
+        async function attempt() {
+          try {
+            const res = await fetch(process.env.SERVER, { keepalive: false });
+            return await res.text();
+          } catch (e) {
+            return e.code;
+          }
+        }
+        async function run() {
+          const out = [];
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+          out.push(await attempt());
+          delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+          out.push(String(process.env.NODE_TLS_REJECT_UNAUTHORIZED));
+          out.push(await attempt());
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+          out.push(await attempt());
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = "1";
+          out.push(await attempt());
+          return out;
+        }
+      `;
+      const script =
+        mode === "SHARE_ENV worker"
+          ? `
+        const { Worker, SHARE_ENV } = require("worker_threads");
+        const worker = new Worker(
+          ${JSON.stringify(steps + `run().then(out => require("worker_threads").parentPort.postMessage(out));`)},
+          { eval: true, env: SHARE_ENV },
+        );
+        worker.on("message", out => console.log(JSON.stringify(out)));
+        worker.on("error", e => { console.error(e); process.exit(1); });
+        worker.on("exit", code => { if (code !== 0) process.exit(code); });
+      `
+          : steps + `console.log(JSON.stringify(await run()));`;
+      const { NODE_TLS_REJECT_UNAUTHORIZED: _, ...env } = bunEnv as Record<string, string | undefined>;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...env, SERVER: `https://127.0.0.1:${server.port}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout ? JSON.parse(stdout) : stderr).toEqual([
+        "Hello World",
+        "undefined",
+        "CERT_HAS_EXPIRED",
+        "Hello World",
+        "CERT_HAS_EXPIRED",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+  }
+
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,

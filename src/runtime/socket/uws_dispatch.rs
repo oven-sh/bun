@@ -210,13 +210,13 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
         // SAFETY: `twin` holds a live +1 ref to the `[raw, _]` half, so `raw`
         // is live for `ThisPtr::new`; dispatch is single-threaded so no
         // aliasing `&mut` exists.
-        unsafe {
+        crate::dispatch::fold(unsafe {
             TLSSocket::on_data(
                 bun_ptr::ThisPtr::new(raw),
                 NewSocketHandler::<true>::from(s),
                 slice,
             )
-        };
+        });
     }
     s
 }
@@ -252,7 +252,7 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    TLSSocket::on_session(tls, slice);
+    crate::dispatch::fold(TLSSocket::on_session(tls, slice));
 }
 
 /// Hands an NSS key-log line parked by the keylog callback to the JS
@@ -283,5 +283,5 @@ pub(crate) unsafe extern "C" fn us_dispatch_keylog(
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    TLSSocket::on_keylog(tls, slice);
+    crate::dispatch::fold(TLSSocket::on_keylog(tls, slice));
 }

@@ -7,7 +7,6 @@ use bun_sys::{self, Fd, FdExt};
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
-use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SourceHandle;
@@ -166,7 +165,6 @@ impl<'a> Writable<'a> {
         // act, so this must be the final access.
         process.on_stdin_destroyed();
     }
-    pub fn on_ready(&mut self, _: Option<BlobSizeType>, _: Option<BlobSizeType>) {}
 
     pub(crate) fn init(
         stdio: &mut Stdio,
@@ -424,7 +422,7 @@ impl<'a> Writable<'a> {
                         .contains(Flags::HAS_STDIN_DESTRUCTOR_CALLED)
                 {
                     // `Writable::init()` already called `subprocess.ref()` and
-                    // set `deref_on_stdin_destroyed`. `on_attached_process_exit()`
+                    // set `DEREF_ON_STDIN_DESTROYED`. `on_attached_process_exit()`
                     // → `writer.close()` → `pipe.source` → `Writable::on_close`
                     // → `on_stdin_destroyed()` balances that ref, so a ref-count
                     // drop across this call is expected (previously these

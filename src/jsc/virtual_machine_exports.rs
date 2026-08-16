@@ -72,7 +72,7 @@ pub fn is_bun_main(global: &JSGlobalObject, str: &BunString) -> bool {
 }
 
 // HOST_EXPORT(Bun__reportUnhandledError, c)
-pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValue {
+pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
@@ -82,7 +82,6 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
             crate::virtual_machine::UncaughtExceptionOrigin::Exception,
         );
     }
-    JSValue::UNDEFINED
 }
 
 /// `ScriptExecutionContext::postTask` — the context addresses the thread's VM

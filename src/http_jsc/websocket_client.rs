@@ -217,12 +217,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         let had_tunnel = this.proxy_tunnel.get().is_some();
         this.clear_data();
 
-        if SSL {
-            // we still want to send pending SSL buffer + close_notify
-            this.tcp.get().close(uws::CloseKind::Normal);
-        } else {
-            this.tcp.get().close(uws::CloseKind::Failure);
-        }
+        // Failure still sends close_notify best-effort but never waits for the peer's reply.
+        this.tcp.get().close(uws::CloseKind::Failure);
 
         // In tunnel mode tcp is .detached so close() above is a no-op and
         // handle_close() never fires. Mirror what handle_close() does for
@@ -489,7 +485,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return 0;
         }
 
-        self.buffer_payload(data).expect("unreachable");
+        bun_core::handle_oom(self.buffer_payload(data));
         if frame_complete {
             self.receive_body_remain.set(0);
             if is_final {
@@ -506,9 +502,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         kind: Opcode,
         is_final: bool,
     ) -> usize {
-        if !data.is_empty() && self.buffer_payload(data).is_err() {
-            self.terminate(ErrorCode::Closed);
-            return 0;
+        if !data.is_empty() {
+            bun_core::handle_oom(self.buffer_payload(data));
         }
 
         if data.len() == left_in_fragment {
@@ -1004,9 +999,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let frame_size = WebsocketHeader::frame_size_including_mask(compressed.len());
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let Ok(writable) = send_buffer.writable_with_size(frame_size) else {
-                return false;
-            };
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(frame_size));
             Copy::copy_compressed(
                 &self.global_this,
                 &mut writable[..frame_size],
@@ -1031,9 +1024,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         {
             let mut send_buffer = self.send_buffer.borrow_mut();
-            let writable = send_buffer
-                .writable_with_size(write_len)
-                .expect("unreachable");
+            let writable = bun_core::handle_oom(send_buffer.writable_with_size(write_len));
             bytes.copy(
                 &self.global_this,
                 &mut writable[..write_len],
@@ -1741,12 +1732,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         if !this.tcp.get().is_closed() {
-            // no need to be .failure we still wanna to send pending SSL buffer + close_notify
-            if SSL {
-                this.tcp.get().close(uws::CloseKind::Normal);
-            } else {
-                this.tcp.get().close(uws::CloseKind::Failure);
-            }
+            this.tcp.get().close(uws::CloseKind::Failure);
         }
     }
 
@@ -2045,26 +2031,21 @@ pub enum ErrorCode {
     Closed = 14,
     FailedToWrite = 15,
     FailedToConnect = 16,
-    HeadersTooLarge = 17,
     Ended = 18,
     FailedToAllocateMemory = 19,
     ControlFrameIsFragmented = 20,
     InvalidControlFrame = 21,
     CompressionUnsupported = 22,
     InvalidCompressedData = 23,
-    CompressionFailed = 24,
     UnexpectedMaskFromServer = 25,
-    ExpectedControlFrame = 26,
     UnsupportedControlFrame = 27,
     UnexpectedOpcode = 28,
     InvalidUtf8 = 29,
     TlsHandshakeFailed = 30,
     MessageTooBig = 31,
-    ProtocolError = 32,
     // Proxy error codes
     ProxyConnectFailed = 33,
     ProxyAuthenticationRequired = 34,
-    ProxyConnectionRefused = 35,
     ProxyTunnelFailed = 36,
     UnexpectedRsv1 = 37,
 }

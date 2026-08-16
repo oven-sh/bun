@@ -117,9 +117,7 @@ String retrieveErrorMessage(JSGlobalObject& lexicalGlobalObject, VM& vm, JSValue
     return errorMessage;
 }
 
-// JSC::addErrorInfo(), except every property is DontEnum: JSDOMException is not an
-// ErrorInstance, so addErrorInfo() would make line/column/sourceURL enumerable.
-// The error printer (ZigException.cpp) reads them back to locate uncaught DOMExceptions.
+// JSC::addErrorInfo() would make these enumerable (JSDOMException is not an ErrorInstance); ZigException.cpp reads them back.
 static void addDOMExceptionErrorInfo(JSGlobalObject* lexicalGlobalObject, JSObject* exception)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

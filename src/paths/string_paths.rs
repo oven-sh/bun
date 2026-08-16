@@ -460,8 +460,7 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     without_trailing_slash_windows(input)
 }
 
-/// Windows rules on any host: strips trailing separators, but a drive root keeps
-/// its own (`C:\foo\` -> `C:\foo`, `C:\\` -> `C:\`; a bare `C:` is not the root).
+/// Windows rules on any host: trailing separators go, a drive root's own stays (`C:\\` -> `C:\`).
 pub fn without_trailing_slash_windows(input: &[u8]) -> &[u8] {
     if input.len() < 3 || input[1] != b':' {
         return without_trailing_slash(input);

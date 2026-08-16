@@ -1,5 +1,6 @@
-//! JSC entry points into the JSC-free `bun_paths`: the cwd join that
-//! `PathInlines.h` calls, and the `bun:internal-for-testing` bridges.
+//! C++ export that joins a path against the VM's cwd. Lives in `jsc/` because
+//! it reaches into `globalObject.bunVM().transpiler.fs`; `paths/` is JSC-free.
+//! Referenced from `PathInlines.h`.
 
 use crate::JSGlobalObject;
 use bun_core::String as BunString;

@@ -201,6 +201,96 @@ it("should support optional catch-all routes", () => {
   }
 });
 
+it("a root-level optional catch-all route matches / when there is no index route", () => {
+  const { dir } = make(["[[...slug]].tsx", "about.tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // Every spelling of the root path resolves to the optional catch-all with no params,
+  // just like `/posts` resolves to `posts/[[...slug]].tsx`.
+  for (const pathname of ["/", "", "/index", "/index/", "//", "/?q=1"]) {
+    const match = router.match(pathname);
+    expect({
+      pathname,
+      match: match && {
+        name: match.name,
+        kind: match.kind,
+        filePath: match.filePath,
+        pathname: match.pathname,
+        params: match.params,
+        query: match.query,
+      },
+    }).toEqual({
+      pathname,
+      match: {
+        name: "/[[...slug]]",
+        kind: "optional-catch-all",
+        filePath: `${dir}/[[...slug]].tsx`,
+        pathname: pathname === "" ? "/" : pathname,
+        params: {},
+        query: pathname === "/?q=1" ? { q: "1" } : {},
+      },
+    });
+  }
+
+  // Static routes still take precedence, and non-empty paths still populate the param.
+  expect(router.match("/about")).toMatchObject({ name: "/about", params: {} });
+  expect(router.match("/a")).toMatchObject({ name: "/[[...slug]]", params: { slug: "a" } });
+  expect(router.match("/a/b?q=1")).toMatchObject({
+    name: "/[[...slug]]",
+    params: { slug: "a/b" },
+    query: { slug: "a/b", q: "1" },
+  });
+});
+
+it("the index route wins over a root-level optional catch-all route for /", () => {
+  const { dir } = make(["index.tsx", "[[...slug]].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  for (const pathname of ["/", "/index", "/?q=1"]) {
+    expect({ pathname, match: router.match(pathname) }).toMatchObject({
+      pathname,
+      match: { name: "/", filePath: `${dir}/index.tsx`, params: {} },
+    });
+  }
+  expect(router.match("/a/b")).toMatchObject({ name: "/[[...slug]]", params: { slug: "a/b" } });
+});
+
+it("only a root-level optional catch-all route can match / without an index route", () => {
+  // None of these patterns accepts an empty path: a dynamic segment needs a value and a
+  // catch-all needs at least one segment, so / stays unmatched.
+  const dynamicOnly = ["[id].tsx", "[...rest].tsx", "[team]/[[...rest]].tsx", "docs/[[...slug]].tsx"];
+  {
+    const { dir } = make(dynamicOnly);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+    for (const pathname of ["/", "/index", "//"]) {
+      expect({ pathname, match: router.match(pathname) }).toEqual({ pathname, match: null });
+    }
+  }
+
+  // Adding the root-level optional catch-all makes / resolve to it, and only to it, even
+  // though the other dynamic routes are tried first.
+  {
+    const { dir } = make([...dynamicOnly, "[[...slug]].tsx"]);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+    for (const pathname of ["/", "/index", "//"]) {
+      const match = router.match(pathname);
+      expect({ pathname, match: match && { name: match.name, params: match.params } }).toEqual({
+        pathname,
+        match: { name: "/[[...slug]]", params: {} },
+      });
+    }
+    expect(router.match("/x")).toMatchObject({ name: "/[id]", params: { id: "x" } });
+  }
+});
+
 it("should support catch-all routes", () => {
   // set up the test
   const { dir } = make([
@@ -969,6 +1059,9 @@ it("match() returns null when the URL has fewer segments than a dynamic route re
       params: { org: "acme", id: "x" },
     });
     expect(router.match("/acme")).toBeNull();
+    // One segment short: the trailing dynamic segment must not match as "".
+    expect(router.match("/acme/settings")).toBeNull();
+    expect(router.match("/acme/settings/")).toBeNull();
   }
 
   {
@@ -983,6 +1076,49 @@ it("match() returns null when the URL has fewer segments than a dynamic route re
       params: { team: "acme", rest: "a/b" },
     });
     expect(router.match("/acme")).toBeNull();
+  }
+
+  {
+    const { dir } = make(["posts/[id].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/posts/1")).toMatchObject({ name: "/posts/[id]", params: { id: "1" } });
+    for (const pathname of ["/posts", "/posts/", "/posts/index"]) {
+      expect({ pathname, match: router.match(pathname) }).toEqual({ pathname, match: null });
+    }
+  }
+
+  {
+    // A dynamic segment followed by an optional catch-all still needs the dynamic segment.
+    const { dir } = make(["posts/[id]/[[...rest]].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    expect(router.match("/posts/1")!.params).toEqual({ id: "1" });
+    expect(router.match("/posts/1/a/b")!.params).toEqual({ id: "1", rest: "a/b" });
+    for (const pathname of ["/posts", "/posts/"]) {
+      expect({ pathname, match: router.match(pathname) }).toEqual({ pathname, match: null });
+    }
+  }
+
+  {
+    // The rejected candidate must not leave its params behind for the route that does match.
+    const { dir } = make(["[org]/settings/[id].tsx", "[[...slug]].tsx"]);
+    const router = new Bun.FileSystemRouter({
+      dir,
+      style: "nextjs",
+    });
+
+    const match = router.match("/acme/settings")!;
+    expect({ name: match.name, params: match.params }).toEqual({
+      name: "/[[...slug]]",
+      params: { slug: "acme/settings" },
+    });
   }
 });
 

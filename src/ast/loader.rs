@@ -26,6 +26,9 @@ use enum_map::Enum;
 )]
 // The lower_snake names are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
+// test/internal/source-lints/loader-names.test.ts checks the bun-types `Loader`
+// union and the docs against these names; a variant kept out of the union is
+// listed there with the reason.
 #[strum(serialize_all = "snake_case")]
 pub enum Loader {
     Jsx = 0,

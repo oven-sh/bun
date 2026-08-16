@@ -1,15 +1,15 @@
 {
   "_meta": {
-    "generated_at": "2026-08-16T00:37:40.331Z",
+    "generated_at": "2026-08-16T00:40:08.901Z",
     "generated_by": "scripts/update-parallel-allowlist.mjs",
     "builds_scanned": 300,
     "build_range": [97649, 97948],
     "fast_ms": 15000,
-    "rule": "a bun test file qualifies when its slowest lane median in expected-durations.json is <= 15000ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service, stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles",
+    "rule": "a bun test file qualifies when its slowest lane median in expected-durations.json is <= 15000ms (or it has no entry) and it had zero flaky/failed annotations in the scanned builds; docker-service (prestart-map prefixes or describeWithContainer callers), stress-named and cli/install tests (shared bin/cache dirs; hosted-git-info and migration exempt) never qualify. Every directory with a qualifying file is listed and its other files go in excludeFiles",
     "stats": {
       "dirs": 285,
-      "files": 1694,
-      "excluded": 215
+      "files": 1692,
+      "excluded": 217
     }
   },
   "dirs": [
@@ -432,6 +432,7 @@
     "js/sql/postgres-datestyle.test.ts",
     "js/sql/postgres-listen-notify.test.ts",
     "js/sql/postgres-multi-statement-fields.test.ts",
+    "js/sql/postgres-prepared-pipeline-reorder.test.ts",
     "js/sql/postgres-simple-query-pipeline.test.ts",
     "js/sql/sql-mariadb-json.test.ts",
     "js/sql/sql-mysql-auth-short-nonce.test.ts",
@@ -457,6 +458,7 @@
     "js/sql/sql-onconnect-onclose-throw.test.ts",
     "js/sql/sql-postgres-datetime-roundtrip.test.ts",
     "js/sql/sql-prepare-false.test.ts",
+    "js/sql/sql-statement-cache-hash-collision.test.ts",
     "js/sql/sql.test.ts",
     "js/sql/tls-sql.test.ts",
     "js/third_party/body-parser/express-memory-leak.test.ts",

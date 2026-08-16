@@ -964,8 +964,10 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject*, 
 {
 #if USE(MEMORY_FOOTPRINT_API)
     return JSValue::encode(jsNumber(WTF::percentAvailableMemoryInUse()));
-#else
+#elif OS(WINDOWS) || OS(FREEBSD)
     return JSValue::encode(jsNull());
+#else
+#error "USE(MEMORY_FOOTPRINT_API) is off on a platform that had it: WebKit renamed the gate again, or this platform belongs in the null branch above"
 #endif
 }
 

@@ -139,27 +139,14 @@ declare module "bun:jsc" {
   function memoryUsage(): MemoryUsage;
 
   /**
-   * Returns how much of the memory available to the process is in use, as a
-   * fraction from `0` to `1`: the process's physical memory footprint divided
-   * by the amount of memory JavaScriptCore sizes its heap against (the cgroup
-   * memory limit when running in a container that has one, otherwise the
-   * machine's RAM), clamped to `1`.
+   * Returns the reading JavaScriptCore's garbage collector compares against its
+   * critical memory threshold (0.8 by default; `BUN_JSC_criticalGCMemoryThreshold`
+   * changes it) to decide whether to collect more aggressively: the process's
+   * memory footprint divided by `process.constrainedMemory()`, clamped to `1`.
    *
-   * This is the same reading JavaScriptCore's garbage collector uses to decide
-   * the process is running out of memory: above 0.8 by default, it collects
-   * much more aggressively. For the footprint in bytes, use
-   * {@link memoryUsage}.
-   *
-   * Returns `null` on Windows, where JavaScriptCore does not take this
-   * measurement.
-   *
-   * @example
-   * ```ts
-   * import { percentAvailableMemoryInUse } from "bun:jsc";
-   *
-   * const inUse = percentAvailableMemoryInUse();
-   * if (inUse !== null && inUse > 0.9) console.warn(`${Math.round(inUse * 100)}% of available memory in use`);
-   * ```
+   * Returns `null` on Windows and FreeBSD, where JavaScriptCore does not take
+   * this reading. To monitor a program's own memory use, prefer
+   * `process.memoryUsage()` or {@link memoryUsage}.
    */
   function percentAvailableMemoryInUse(): number | null;
 

@@ -25,7 +25,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isFreeBSD, isMacOS, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -68,17 +68,16 @@ describe("bun:jsc", () => {
   });
   it("percentAvailableMemoryInUse", () => {
     const inUse = percentAvailableMemoryInUse();
-    if (isWindows) {
-      // JavaScriptCore does not measure the process footprint on Windows.
+    if (isWindows || isFreeBSD) {
+      // JavaScriptCore does not take this reading (USE(MEMORY_FOOTPRINT_API)) there.
       expect(inUse).toBeNull();
       return;
     }
-    // The process's footprint as a fraction of the memory JavaScriptCore sizes
-    // its heap against (physical RAM, or the cgroup limit), clamped to 1.
+    // The process footprint divided by process.constrainedMemory(), clamped to 1.
     expect(inUse).toBeNumber();
     expect(inUse).toBeGreaterThanOrEqual(0);
     expect(inUse).toBeLessThanOrEqual(1);
-    // On Linux the footprint half of the ratio is currently parsed as 0
+    // On Linux, WTF currently parses the footprint out of /proc/self/statm as 0
     // (oven-sh/WebKit#449); on macOS it comes from task_info and a running
     // process always has one.
     if (isMacOS) expect(inUse).toBeGreaterThan(0);

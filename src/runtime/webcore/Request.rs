@@ -469,11 +469,8 @@ impl Request {
 
 impl Request {
     #[inline]
-    pub(crate) fn get_body_readable_stream(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        <Self as BodyMixin>::get_body_readable_stream(self, global_object)
+    pub(crate) fn get_body_readable_stream(&self) -> Option<ReadableStream> {
+        <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
@@ -645,7 +642,7 @@ impl Request {
                     }
                 }
                 BodyValue::Locked(_) => {
-                    if let Some(stream) = self.get_body_readable_stream(formatter.global_this()) {
+                    if let Some(stream) = self.get_body_readable_stream() {
                         writer.write_str("\n")?;
                         formatter.write_indent(writer)?;
                         formatter

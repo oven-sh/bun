@@ -839,7 +839,7 @@ impl FetchTasklet {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
-            if let Some(readable) = response.get_body_readable_stream(&global_this) {
+            if let Some(readable) = response.get_body_readable_stream() {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived CurrentResponse BodyReadableStream"

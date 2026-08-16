@@ -1111,7 +1111,7 @@ impl RewriterPipe {
 
         // ── wire input ──────────────────────────────────────────────────────
         let value = original.get_body_value();
-        let owned_readable_stream = original.get_body_readable_stream(&this.global);
+        let owned_readable_stream = original.get_body_readable_stream();
 
         Self::wire_input(this, global, value, owned_readable_stream);
 

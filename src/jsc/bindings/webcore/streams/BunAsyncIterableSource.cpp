@@ -123,11 +123,15 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
     }
 }
 
-// The abrupt completion was the VM's termination (takeAbruptCompletion left it pending and returned
-// nothing): no error to deliver and no script may run — drop the iterator and the pull promise unsettled
-// and let the termination propagate.
-static void asyncIterStandDown(JSAsyncIteratorSourceOperation* op)
+// The pump met an abrupt completion. An ordinary one is delivered through the error tail; the VM's
+// termination (takeAbruptCompletion leaves it pending and returns nothing) has no error to deliver and no
+// script may run over it: drop the iterator and the pull promise unsettled and let it propagate.
+static void asyncIterFinishAbrupt(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, TopExceptionScope& scope)
 {
+    if (JSValue error = takeAbruptCompletion(globalObject, scope)) [[likely]] {
+        asyncIterFinishWithError(globalObject, op, error);
+        return;
+    }
     op->m_done = true;
     op->m_running = false;
     op->m_iterator.clear();
@@ -146,11 +150,7 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
         MarkedArgumentBuffer noArgs;
         endResult = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).endPublicName(), noArgs);
         if (scope.exception()) [[unlikely]] {
-            JSValue error = takeAbruptCompletion(globalObject, scope);
-            if (!error) [[unlikely]]
-                asyncIterStandDown(op);
-            else
-                asyncIterFinishWithError(globalObject, op, error);
+            asyncIterFinishAbrupt(globalObject, op, scope);
             return;
         }
     }
@@ -316,11 +316,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
     return NextStep::ContinueLoop;
 
 abrupt:
-    JSValue error = takeAbruptCompletion(globalObject, scope);
-    if (!error) [[unlikely]]
-        asyncIterStandDown(op);
-    else
-        asyncIterFinishWithError(globalObject, op, error);
+    asyncIterFinishAbrupt(globalObject, op, scope);
     return NextStep::Finished;
 }
 
@@ -361,11 +357,7 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
                 nextResult = JSC::call(globalObject, nextFunction, iterator, nextArgs, "iterator.next is not a function"_s);
             }
             if (scope.exception()) [[unlikely]] {
-                JSValue error = takeAbruptCompletion(globalObject, scope);
-                if (!error) [[unlikely]]
-                    asyncIterStandDown(op);
-                else
-                    asyncIterFinishWithError(globalObject, op, error);
+                asyncIterFinishAbrupt(globalObject, op, scope);
                 return;
             }
         }
@@ -378,11 +370,7 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
             // `await` semantics: adopt thenables; plain results become fulfilled promises.
             nextPromise = promiseResolvedWith(globalObject, nextResult);
             if (scope.exception()) [[unlikely]] {
-                JSValue error = takeAbruptCompletion(globalObject, scope);
-                if (!error) [[unlikely]]
-                    asyncIterStandDown(op);
-                else
-                    asyncIterFinishWithError(globalObject, op, error);
+                asyncIterFinishAbrupt(globalObject, op, scope);
                 return;
             }
         }

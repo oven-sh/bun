@@ -72,7 +72,8 @@ static int32_t tagOfStream(JSReadableStream* stream, void** ptr)
 extern "C" int32_t ReadableStreamTag__taggedStream(JSC::EncodedJSValue value, void** ptr)
 {
     *ptr = nullptr;
-    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(value));
+    JSValue decoded = JSValue::decode(value);
+    auto* stream = decoded.isEmpty() ? nullptr : dynamicDowncast<JSReadableStream>(decoded);
     return stream ? tagOfStream(stream, ptr) : -1;
 }
 

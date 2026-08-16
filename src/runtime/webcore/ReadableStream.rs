@@ -122,9 +122,10 @@ unsafe extern "C" {
         out1: &mut JSValue,
         out2: &mut JSValue,
     ) -> bool;
+    /// A held `JSReadableStream`'s tag and native source (`Invalid` if `value` is anything else). Pure.
+    safe fn ReadableStreamTag__taggedStream(value: JSValue, ptr: &mut *mut c_void) -> Tag;
     /// `possible_readable_stream` is read+overwritten in place; `ptr` is a
     /// stack out-param. Reference params discharge the only preconditions.
-    safe fn ReadableStreamTag__taggedStream(value: JSValue, ptr: &mut *mut c_void) -> Tag;
     safe fn ReadableStreamTag__tagged(
         global_object: &JSGlobalObject,
         possible_readable_stream: &mut JSValue,
@@ -177,10 +178,10 @@ impl ReadableStream {
         if !ok {
             return Ok(None);
         }
-        let Some(out_stream2) = ReadableStream::from_js(out2, global_this)? else {
-            return Ok(None);
-        };
-        let Some(out_stream1) = ReadableStream::from_js(out1, global_this)? else {
+        let (Some(out_stream1), Some(out_stream2)) = (
+            ReadableStream::from_held(out1),
+            ReadableStream::from_held(out2),
+        ) else {
             return Ok(None);
         };
         Ok(Some((out_stream1, out_stream2)))

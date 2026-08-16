@@ -347,11 +347,8 @@ mod shim {
     use super::*;
 
     #[inline]
-    pub(super) fn response_body_stream(
-        r: &mut Response,
-        g: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        r.get_body_readable_stream(g)
+    pub(super) fn response_body_stream(r: &mut Response) -> Option<ReadableStream> {
+        r.get_body_readable_stream()
     }
     #[inline]
     pub(super) fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
@@ -1409,7 +1406,7 @@ where
             }
 
             if let Some(response) = this.response_mut() {
-                if let Some(stream) = shim::response_body_stream(response, global_this) {
+                if let Some(stream) = shim::response_body_stream(response) {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     shim::response_detach_stream(response, global_this);
                     stream.abort(global_this);
@@ -2145,10 +2142,7 @@ where
             || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len() == 0);
 
         if !stream.is_locked(global_this) && !is_in_progress {
-            // TODO: properly propagate exception upwards
-            if let Ok(Some(comparator)) =
-                WebCore::ReadableStream::from_js(stream.value, global_this)
-            {
+            if let Some(comparator) = WebCore::ReadableStream::from_held(stream.value) {
                 if core::mem::discriminant(&comparator.ptr) == core::mem::discriminant(&stream.ptr)
                 {
                     stream_log!("is not locked");
@@ -2521,7 +2515,7 @@ where
                 // source's cancel() runs and its resources are released.
                 // SAFETY: sole `&mut Response`; render_metadata's reborrow ended.
                 let response = unsafe { &mut *response_ptr };
-                if let Some(stream) = response.get_body_readable_stream(global_this) {
+                if let Some(stream) = response.get_body_readable_stream() {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     response.detach_readable_stream(global_this);
                     // Unread stream has no reader; `cancel()` would no-op.
@@ -2757,7 +2751,7 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
-            if let Some(stream) = resp.get_body_readable_stream(global_this) {
+            if let Some(stream) = resp.get_body_readable_stream() {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
 
@@ -2860,7 +2854,7 @@ where
         if let Some(resp) = self.response_mut() {
             // NOTE: the body value is read after the stream calls (the check
             // observes the post-detach state).
-            if let Some(stream) = resp.get_body_readable_stream(global_this) {
+            if let Some(stream) = resp.get_body_readable_stream() {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
                 stream.done(global_this);
@@ -3371,10 +3365,9 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        let global_this = self.server().global_this();
         let (value, owned_readable) = {
             let response: &mut Response = self.response_mut().unwrap();
-            let owned_readable = response.get_body_readable_stream(global_this);
+            let owned_readable = response.get_body_readable_stream();
             (
                 std::ptr::from_mut(response.get_body_value()),
                 owned_readable,

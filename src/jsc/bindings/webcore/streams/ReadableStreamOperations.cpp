@@ -72,17 +72,14 @@ static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream
     return nullptr;
 }
 
-// Null-safe tee-branch controller recovery (same as JSReadRequest.cpp's): a torn-down branch has
-// no controller, and a tee whose construction was cut short after a branch queued its start
-// reaction has unset branches. Either way the branch is terminal; skip it.
-static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
+JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
 {
     if (!branch || branch->m_controllerKind != ControllerKind::Default)
         return nullptr;
     return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
 }
 
-static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
+JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
 {
     if (!branch || branch->m_controllerKind != ControllerKind::Byte)
         return nullptr;
@@ -1234,7 +1231,11 @@ std::pair<JSReadableStream*, JSReadableStream*> readableStreamDefaultTee(JSGloba
     teeState->m_branch1.set(vm, teeState, branch1);
 
     auto* branch2 = createReadableStream(globalObject, SourceKind::TeeBranch, teeState, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, failure);
+    if (scope.exception()) [[unlikely]] {
+        // branch1's start reaction is already queued: make the half-built tee inert for it.
+        teeState->m_canceled1 = teeState->m_canceled2 = true;
+        return failure;
+    }
     defaultControllerOf(branch2)->m_algorithms.teeBranchIndex = 1;
     teeState->m_branch2.set(vm, teeState, branch2);
 
@@ -1496,7 +1497,11 @@ std::pair<JSReadableStream*, JSReadableStream*> readableByteStreamTee(JSGlobalOb
     teeState->m_branch1.set(vm, teeState, branch1);
 
     auto* branch2 = createReadableByteStream(globalObject, SourceKind::ByteTeeBranch, teeState);
-    RETURN_IF_EXCEPTION(scope, failure);
+    if (scope.exception()) [[unlikely]] {
+        // branch1's start reaction is already queued: make the half-built tee inert for it.
+        teeState->m_canceled1 = teeState->m_canceled2 = true;
+        return failure;
+    }
     byteControllerOf(branch2)->m_algorithms.teeBranchIndex = 1;
     teeState->m_branch2.set(vm, teeState, branch2);
 

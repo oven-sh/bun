@@ -17,14 +17,14 @@ function cleanAnsiEscapes(output: string) {
 test.concurrent("no color", async () => {
   const noColorSpawn = Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/diffexample.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
+    stdio: ["inherit", "ignore", "pipe"],
     env: {
       ...bunEnv,
       FORCE_COLOR: "0",
     },
   });
-  await noColorSpawn.exited;
-  const noColorStderr = cleanOutput(await noColorSpawn.stderr.text());
+  const [noColorStderrRaw] = await Promise.all([noColorSpawn.stderr.text(), noColorSpawn.exited]);
+  const noColorStderr = cleanOutput(noColorStderrRaw);
   expect(noColorStderr).toMatchInlineSnapshot(`
     "
     test/js/bun/test/printing/diffexample.fixture.ts:

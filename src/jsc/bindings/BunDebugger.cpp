@@ -833,7 +833,10 @@ static void collectHandshakeSessions(ScriptExecutionContextIdentifier contextId,
     }
 }
 
-extern "C" void BunDebugger__waitForDebuggerToDisconnect(uint32_t scriptId, bool isWorker)
+// Main thread only: `vm.debugger` is never set on a worker (workers publish no CDP target), so
+// the Rust caller returns early there and this has no per-worker branch, unlike Node's
+// Agent::WaitForDisconnect.
+extern "C" void BunDebugger__waitForDebuggerToDisconnect(uint32_t scriptId)
 {
     if (debuggerScriptExecutionContext == nullptr)
         return;
@@ -842,8 +845,7 @@ extern "C" void BunDebugger__waitForDebuggerToDisconnect(uint32_t scriptId, bool
 
     // Stop accepting first, then snapshot — the set must shrink monotonically (same benign
     // in-flight-upgrade race as Node: https://github.com/nodejs/node/blob/main/src/inspector_agent.cc).
-    if (!isWorker)
-        notAcceptingConnectionsContext.store(scriptId);
+    notAcceptingConnectionsContext.store(scriptId);
 
     Vector<RefPtr<BunInspectorConnection>, 8> sessions;
     collectHandshakeSessions(contextId, sessions);
@@ -851,16 +853,11 @@ extern "C" void BunDebugger__waitForDebuggerToDisconnect(uint32_t scriptId, bool
     if (sessions.isEmpty())
         return;
 
-    if (!isWorker) {
-        fputs("Waiting for the debugger to disconnect...\n", stderr);
-        fflush(stderr);
-    }
+    fputs("Waiting for the debugger to disconnect...\n", stderr);
+    fflush(stderr);
 
     for (auto& connection : sessions)
         connection->sendMessageToFrontend("{\"method\":\"Bun.waitingForDisconnect\"}"_s);
-
-    if (isWorker)
-        return;
 
     auto* context = ScriptExecutionContext::getScriptExecutionContext(contextId);
     if (context == nullptr)

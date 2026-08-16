@@ -165,7 +165,7 @@ impl Default for Debugger {
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
     safe fn BunDebugger__notifyWaitingForDebugger(ctx_id: u32);
-    safe fn BunDebugger__waitForDebuggerToDisconnect(ctx_id: u32, is_worker: bool);
+    safe fn BunDebugger__waitForDebuggerToDisconnect(ctx_id: u32);
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
@@ -698,7 +698,7 @@ pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
     if ctx_id == 0 {
         return;
     }
-    BunDebugger__waitForDebuggerToDisconnect(ctx_id, !vm.is_main_thread());
+    BunDebugger__waitForDebuggerToDisconnect(ctx_id);
 }
 
 // HOST_EXPORT(Debugger__clearDebugEnd, c)

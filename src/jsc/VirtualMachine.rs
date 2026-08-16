@@ -535,10 +535,9 @@ impl VMHolder {
             }
         }
         if let Some(directory) = vm.sampling_profiler_directory.take() {
-            if let Err(e) = crate::bun_cpu_profiler::write_sampling_profiler_report(
-                vm.jsc_vm_mut(),
-                &directory,
-            ) {
+            if let Err(e) =
+                crate::bun_cpu_profiler::write_sampling_profiler_report(vm.jsc_vm_mut(), &directory)
+            {
                 bun_core::Output::err(
                     <&'static str>::from(e),
                     "Failed to write sampling profiler report",

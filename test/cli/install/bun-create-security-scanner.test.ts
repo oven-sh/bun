@@ -76,7 +76,10 @@ it("bun create succeeds when install.security.scanner is set in global bunfig", 
 
   // Pre-fix, the child `bun install` resolved the file: dep and then died on
   // the scanner-not-in-deps guard; post-fix the scanner is skipped and the
-  // fully-offline install succeeds.
+  // fully-offline install succeeds. The "$ bun install" line proves the
+  // scanner-guarded install path actually ran (the `.not.toContain` checks
+  // would pass vacuously if it were skipped).
+  expect(out).toContain("$ bun install");
   expect(out + err).not.toContain("SecurityScannerNotInDependencies");
   expect(out + err).not.toContain("is configured in bunfig.toml but is not installed");
   expect(out).toContain(`Created ${testTemplate} project successfully`);

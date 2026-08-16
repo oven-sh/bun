@@ -297,6 +297,7 @@ pub mod features {
         #[unsafe(export_name = "Bun__Feature__webview_webkit")]
         57 => (webview_webkit, "webview_webkit"),
         58 => (xml_parse, "xml_parse", core = XML_PARSE),
+        59 => (memory_pressure, "memory_pressure"),
     }
 
     // C++ declares these as `extern "C" size_t Bun__...;` and

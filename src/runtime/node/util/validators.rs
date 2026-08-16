@@ -472,11 +472,8 @@ pub(crate) fn validate_function(
     Ok(value)
 }
 
-/// `validateAbortSignal(value, name)`, returning a ref to the native signal.
-/// Callers skip `undefined` themselves (Node's `options.signal !== undefined`)
-/// and pass everything else, so `null` and `""` are rejected like any other
-/// non-signal. Only a real `AbortSignal` passes: it is the only kind the native
-/// abort paths can listen to.
+/// Node's `validateAbortSignal`, except that an `aborted`-shaped object is rejected
+/// too: the native abort paths need a real `AbortSignal`.
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L444-L451
 pub(crate) fn validate_abort_signal(
     global_this: &JSGlobalObject,

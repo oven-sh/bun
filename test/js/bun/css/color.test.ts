@@ -681,6 +681,124 @@ describe("rgb() channel order and legacy syntax", () => {
   });
 });
 
+// color-mix(in srgb, ...) prints its result as an 8-bit color when it fits in the sRGB
+// gamut. A result outside of it (css-color-4 interpolates out-of-gamut channels as they
+// are) is printed as the color(srgb ...) value browsers compute for it, the same value
+// color(from <operand> srgb r g b) prints; it used to be gamut mapped into a different
+// 8-bit color (a mix of two display-p3 greens came out as #00f942, browsers paint it as
+// #00ff00 on an sRGB screen and as the display-p3 green on a wider one).
+describe("color-mix() results outside the sRGB gamut", () => {
+  const srgbChannels = (css: string | null) => {
+    expect(css).toStartWith("color(srgb ");
+    return css!
+      .slice("color(srgb ".length, -1)
+      .split(/ \/ | /)
+      .map(Number);
+  };
+  const expectSrgb = (input: string, expected: number[]) => {
+    const actual = srgbChannels(color(input, "css"));
+    expect(actual).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(actual[i]).toBeCloseTo(expected[i], 3);
+    }
+  };
+
+  // References are the css-color-4 conversions in double precision. These go through
+  // pow(), so they are compared numerically.
+  const p3Green = [-0.5116, 1.01827, -0.31067];
+  test("a display-p3 operand mixed with itself", () => {
+    expectSrgb("color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))", p3Green);
+    expectSrgb("color-mix(in srgb, color(display-p3 0 1 0) 100%, red)", p3Green);
+    expectSrgb("color-mix(in srgb, color(display-p3 0 1 0 / 0.5), color(display-p3 0 1 0 / 0.5))", [...p3Green, 0.5]);
+  });
+
+  test("the mix is the same value the relative color form prints", () => {
+    expect(color("color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))", "css")).toBe(
+      color("color(from color(display-p3 0 1 0) srgb r g b)", "css")!,
+    );
+  });
+
+  // lab(100% 104.3 -50.9) is color(srgb 1.5935 0.58776 1.40555); browsers paint the mix as
+  // rgb(255, 75, 179). It used to fold to #ff9fbc.
+  test("a lab() operand pushes the mix out of gamut", () => {
+    expectSrgb("color-mix(in srgb, lab(100% 104.3 -50.9), red)", [1.29675, 0.29388, 0.70277]);
+  });
+
+  // 12.92 * channel is the linear segment of the sRGB transfer function, so these
+  // srgb-linear operands convert to srgb exactly: -0.003 is -0.03876, -0.001 is -0.01292.
+  test.each([
+    ["color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.003 1 0))", "color(srgb -.03876 1 0)"],
+    ["color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.001 1 0))", "color(srgb -.02584 1 0)"],
+    ["color-mix(in srgb, color(srgb-linear -0.003 1 0) 25%, lime)", "color(srgb -.00969 1 0)"],
+    ["color-mix(in srgb, color(srgb-linear 0 0 -0.003), color(srgb-linear 0 0 0.001))", "color(srgb 0 0 -.01292)"],
+    [
+      "color-mix(in srgb, color(srgb-linear -0.003 1 0 / 0.5), color(srgb-linear -0.003 1 0 / 0.5))",
+      "color(srgb -.03876 1 0 / .5)",
+    ],
+    [
+      "color-mix(in srgb, light-dark(color(srgb-linear -0.003 1 0), red), light-dark(color(srgb-linear -0.003 1 0), blue))",
+      "light-dark(color(srgb -.03876 1 0), purple)",
+    ],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test("the output is a color Bun.color parses back unchanged", () => {
+    for (const input of [
+      "color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.001 1 0))",
+      "color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0))",
+      "color-mix(in srgb, color(display-p3 0 0 1), color(display-p3 0 0 1))",
+    ]) {
+      const css = color(input, "css") as string;
+      expect(color(css, "css")).toBe(css);
+    }
+  });
+
+  describe("channels within conversion noise of the gamut are snapped onto it", () => {
+    // Converting this lab() red back to srgb leaves g and b around -1e-6.
+    test("a boundary color converted from lab() still folds to the 8-bit color", () => {
+      expect(color("color-mix(in srgb, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891))", "css")).toBe(
+        "red",
+      );
+    });
+
+    // display-p3 blue is color(srgb 0 -2e-7 1.04202): the blue channel is kept and the
+    // noise in the green channel is dropped rather than printed.
+    test("only the channels that are out of gamut keep their value", () => {
+      expect(color("color-mix(in srgb, color(display-p3 0 0 1), color(display-p3 0 0 1))", "css")).toMatch(
+        /^color\(srgb 0 0 1\.042\d*\)$/,
+      );
+      expect(color("color-mix(in srgb, color(display-p3 1 1 0), color(display-p3 1 1 0))", "css")).toMatch(
+        /^color\(srgb 1 1 -\.346\d*\)$/,
+      );
+    });
+
+    test("the tolerance is 1e-4", () => {
+      // 12.92 * -0.00001 = -0.0001292 is out of gamut.
+      expect(color("color-mix(in srgb, color(srgb-linear -0.00001 1 0), color(srgb-linear -0.00001 1 0))", "css")).toBe(
+        "color(srgb -.0001292 1 0)",
+      );
+      // 12.92 * -0.000005 / 2 = -0.0000323 is noise.
+      expect(color("color-mix(in srgb, color(srgb-linear -0.000005 1 0), lime)", "css")).toBe("#0f0");
+    });
+  });
+
+  test.each([
+    ["color-mix(in srgb, red, blue)", "purple"],
+    ["color-mix(in srgb, red 25%, blue)", "#4000bf"],
+    ["color-mix(in srgb, rgb(255 0 0 / 0.5), blue)", "#5500aac0"],
+    ["color-mix(in srgb, rgb(none 0 0), rgb(none 0 0))", "#000"],
+    ["color-mix(in srgb, color(srgb-linear 1 0.2 0.001), color(srgb-linear 1 0.2 0.001))", "#ff7c03"],
+    ["color-mix(in hsl, red, blue)", "#f0f"],
+    ["color-mix(in hsl, hsl(120 100% 50% / 0.5), hsl(240 100% 50%))", "#00ffffc0"],
+    ["color-mix(in hsl, hsl(none 100% 50%), hsl(none 100% 50%))", "red"],
+    ["color-mix(in hwb, red, blue)", "#f0f"],
+    ["color-mix(in hwb, hwb(120 0% 0% / 0.5), hwb(240 0% 0%))", "#00ffffc0"],
+  ])("%s still folds to %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
 describe("conversions between color spaces", () => {
   // Each case converts a color whose channels all differ, so a channel landing
   // in another channel's place shows up in the output. Mixing a color with

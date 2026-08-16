@@ -7633,6 +7633,166 @@ describe("css tests", () => {
     );
   });
 
+  // color-mix() in srgb, hsl or hwb folds to an 8-bit color, which can only hold colors inside
+  // the sRGB gamut. css-color-4 interpolates out-of-gamut channels as they are, so operands
+  // from a wider space can produce a result outside of it; that result is emitted as the
+  // color(srgb ...) value browsers compute (the value color(from <operand> srgb r g b) emits,
+  // with the fallbacks any color() gets) instead of being gamut mapped into a different 8-bit
+  // color. Browsers clip it per channel when painting to an sRGB screen.
+  //
+  // The srgb-linear operands convert to srgb exactly (12.92 * channel is the linear segment
+  // of the transfer function: -0.003 is -0.03876, -0.001 is -0.01292), so those expectations
+  // are exact strings. display-p3 and lab() go through pow() and are compared numerically.
+  describe("color-mix() results outside the sRGB gamut", () => {
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.003 1 0)) }",
+      ".foo{color:color(srgb -.03876 1 0)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.001 1 0)) }",
+      ".foo{color:color(srgb -.02584 1 0)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear -0.003 1 0) 25%, lime) }",
+      ".foo{color:color(srgb -.00969 1 0)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear 0 0 -0.003), color(srgb-linear 0 0 0.001)) }",
+      ".foo{color:color(srgb 0 0 -.01292)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, color(srgb-linear -0.003 1 0 / 0.5), color(srgb-linear -0.003 1 0 / 0.5)) }",
+      ".foo{color:color(srgb -.03876 1 0/.5)}",
+    );
+    minify_test(
+      ".foo { color: color-mix(in srgb, light-dark(color(srgb-linear -0.003 1 0), red), light-dark(color(srgb-linear -0.003 1 0), blue)) }",
+      ".foo{color:light-dark(color(srgb -.03876 1 0),purple)}",
+    );
+    minify_test(
+      ".foo { background: linear-gradient(color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.003 1 0)), red) }",
+      ".foo{background:linear-gradient(color(srgb -.03876 1 0),red)}",
+    );
+    // The same value written out by hand.
+    minify_test(".foo { color: color(srgb -0.03876 1 0) }", ".foo{color:color(srgb -.03876 1 0)}");
+
+    const srgbChannels = (source: string) => {
+      const output = minify_test_with_options(source, "");
+      expect(output).toStartWith(".foo{color:color(srgb ");
+      return output.slice(".foo{color:color(srgb ".length, -")}".length).split(/\/| /).map(Number);
+    };
+    const expectSrgb = (source: string, expected: number[]) => {
+      const actual = srgbChannels(source);
+      expect(actual).toHaveLength(expected.length);
+      for (let i = 0; i < expected.length; i++) {
+        expect(actual[i]).toBeCloseTo(expected[i], 3);
+      }
+    };
+
+    // References are the css-color-4 conversions in double precision. These used to fold to
+    // #00f942 (browsers paint the mix as #00ff00) and #ff9fbc (browsers: rgb(255, 75, 179)).
+    test("display-p3 green mixed with itself", () => {
+      expectSrgb(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0), color(display-p3 0 1 0)) }",
+        [-0.5116, 1.01827, -0.31067],
+      );
+      expectSrgb(
+        ".foo { color: color-mix(in srgb, color(display-p3 0 1 0 / 0.5), color(display-p3 0 1 0 / 0.5)) }",
+        [-0.5116, 1.01827, -0.31067, 0.5],
+      );
+    });
+    test("lab(100% 104.3 -50.9) mixed with red", () => {
+      expectSrgb(".foo { color: color-mix(in srgb, lab(100% 104.3 -50.9), red) }", [1.29675, 0.29388, 0.70277]);
+    });
+
+    describe("channels within conversion noise of the gamut are snapped onto it", () => {
+      // Converting this lab() red back to srgb leaves g and b around -1e-6.
+      minify_test(
+        ".foo { color: color-mix(in srgb, lab(54.2905% 80.8049 69.891), lab(54.2905% 80.8049 69.891)) }",
+        ".foo{color:red}",
+      );
+      // display-p3 blue is color(srgb 0 -2e-7 1.04202) and display-p3 yellow is
+      // color(srgb 1 1 -0.346268): the noise is dropped, the out-of-gamut channel is kept.
+      test("only the channels that are out of gamut keep their value", () => {
+        expect(
+          minify_test_with_options(
+            ".foo { color: color-mix(in srgb, color(display-p3 0 0 1), color(display-p3 0 0 1)) }",
+            "",
+          ),
+        ).toMatch(/^\.foo\{color:color\(srgb 0 0 1\.042\d*\)\}$/);
+        expect(
+          minify_test_with_options(
+            ".foo { color: color-mix(in srgb, color(display-p3 1 1 0), color(display-p3 1 1 0)) }",
+            "",
+          ),
+        ).toMatch(/^\.foo\{color:color\(srgb 1 1 -\.346\d*\)\}$/);
+      });
+      // 12.92 * -0.00001 = -0.0001292 is out of gamut; 12.92 * -0.000005 / 2 = -0.0000323 is noise.
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb-linear -0.00001 1 0), color(srgb-linear -0.00001 1 0)) }",
+        ".foo{color:color(srgb -.0001292 1 0)}",
+      );
+      minify_test(".foo { color: color-mix(in srgb, color(srgb-linear -0.000005 1 0), lime) }", ".foo{color:#0f0}");
+    });
+
+    describe("the result gets the fallbacks of a color() value", () => {
+      prefix_test(
+        ".foo { color: color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.003 1 0)) }",
+        `.foo {
+          color: #0f0;
+          color: color(srgb -.03876 1 0);
+        }
+        `,
+        { chrome: Some(90 << 16) },
+      );
+      prefix_test(
+        ".foo { color: color-mix(in srgb, light-dark(color(srgb-linear -0.003 1 0), red), light-dark(color(srgb-linear -0.003 1 0), blue)) }",
+        `.foo {
+          color: var(--buncss-light, #0f0) var(--buncss-dark, purple);
+          color: var(--buncss-light, color(srgb -.03876 1 0)) var(--buncss-dark, purple);
+        }
+        `,
+        { chrome: Some(90 << 16) },
+      );
+      // Every browser with color-mix() has color(), so targets that have it get the value alone.
+      prefix_test(
+        ".foo { color: color-mix(in srgb, color(srgb-linear -0.003 1 0), color(srgb-linear -0.003 1 0)) }",
+        `.foo {
+          color: color(srgb -.03876 1 0);
+        }
+        `,
+        { chrome: Some(111 << 16) },
+      );
+    });
+
+    describe("results inside the gamut still fold to an 8-bit color", () => {
+      minify_test(".foo { color: color-mix(in srgb, red, blue) }", ".foo{color:purple}");
+      minify_test(".foo { color: color-mix(in srgb, red 25%, blue) }", ".foo{color:#4000bf}");
+      minify_test(".foo { color: color-mix(in srgb, rgb(255 0 0 / 0.5), blue) }", ".foo{color:#5500aac0}");
+      minify_test(".foo { color: color-mix(in srgb, rgb(none 0 0), rgb(none 0 0)) }", ".foo{color:#000}");
+      minify_test(
+        ".foo { color: color-mix(in srgb, color(srgb-linear 1 0.2 0.001), color(srgb-linear 1 0.2 0.001)) }",
+        ".foo{color:#ff7c03}",
+      );
+      minify_test(".foo { color: color-mix(in srgb, color(display-p3 0 1 0) 0%, red) }", ".foo{color:red}");
+      minify_test(".foo { color: color-mix(in hsl, red, blue) }", ".foo{color:#f0f}");
+      minify_test(
+        ".foo { color: color-mix(in hsl, hsl(120 100% 50% / 0.5), hsl(240 100% 50%)) }",
+        ".foo{color:#00ffffc0}",
+      );
+      minify_test(".foo { color: color-mix(in hsl, hsl(none 100% 50%), hsl(none 100% 50%)) }", ".foo{color:red}");
+      minify_test(".foo { color: color-mix(in hwb, red, blue) }", ".foo{color:#f0f}");
+      minify_test(".foo { color: color-mix(in hwb, hwb(120 0% 0% / 0.5), hwb(240 0% 0%)) }", ".foo{color:#00ffffc0}");
+      prefix_test(
+        ".foo { color: color-mix(in srgb, red, blue) }",
+        `.foo {
+          color: purple;
+        }
+        `,
+        { chrome: Some(90 << 16) },
+      );
+    });
+  });
+
   describe("font-palette-values", () => {
     minify_test(
       "@font-palette-values --x{font-family:Foo;base-palette:2}",

@@ -125,6 +125,8 @@ Bun's CSS bundler evaluates these color mixes at build time when all color value
 }
 ```
 
+A mix of wide-gamut operands, such as `display-p3` or `lab()` colors, can produce a result outside the sRGB gamut. A hex color cannot hold that result. Bun emits it as a `color(srgb ...)` value with the out-of-gamut channels kept, and adds the same RGB fallbacks it adds for the `color()` function below.
+
 ### Relative colors
 
 Relative color syntax modifies individual components of an existing color. Adjust attributes like lightness, saturation, or individual channels without recalculating the entire color.

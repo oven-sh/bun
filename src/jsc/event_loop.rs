@@ -693,9 +693,12 @@ impl EventLoop {
                 || scope.has_exception()
             {
                 // Every task's exception was folded by the drain above; one
-                // still pending here escaped whoever produced it.
+                // still pending here escaped whoever produced it. A parked
+                // watch exit also stops the drain, with its termination
+                // already cleared.
                 debug_assert!(
-                    global.has_pending_termination_exception(),
+                    global.has_pending_termination_exception()
+                        || self.vm_ref().watch_exit_requested,
                     "a task returned Ok with a JS exception pending"
                 );
                 self.entered_event_loop_count -= 1;

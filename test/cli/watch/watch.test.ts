@@ -337,6 +337,12 @@ it.skipIf(isWindows)("--watch: SIGINT after a watch exit ends the parked watcher
   const waiter = stdoutWaiter(proc);
   await waiter.waitFor("READY", out => `watcher exited before READY. stdout so far: ${JSON.stringify(out)}`);
 
+  // Sit through at least one of the parked loop's ~1s idle wakeups: those
+  // tick with the watch exit's termination already cleared, which used to
+  // trip a debug assert. The time itself is the condition here.
+  await Bun.sleep(1500);
+  expect(proc.exitCode).toBeNull();
+
   proc.kill("SIGINT");
   expect(await proc.exited).toBe(3);
   await waiter.cancel();

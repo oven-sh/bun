@@ -1,12 +1,13 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  isWindows,
   readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
@@ -2668,5 +2669,113 @@ describe("packages whose version label is longer than 512 bytes", () => {
     expect(await file(join(packageDir, "node_modules", "baz", "index.js")).text()).toBe(
       '#! /usr/bin/env node\n\nconsole.log("patched baz");\n',
     );
+  });
+});
+
+// #39357: `bun install` must identify the project root by the path it was
+// invoked through. It used to realpath the root package.json fd, so workspace
+// discovery and lockfile keys were computed against a different root than
+// `top_level_dir` (the cwd). On Windows a subst drive or cross-drive junction
+// put the two roots on different drive letters, where no relative path exists:
+// the hoisted linker wrote machine-absolute workspace keys into bun.lock and
+// the isolated linker looped forever. On POSIX a symlinked root package.json
+// made workspace discovery run in the symlink target's directory.
+describe("aliased project root", () => {
+  test.concurrent.skipIf(isWindows)("workspaces install when the root package.json is a symlink", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "real", "package.json"),
+        JSON.stringify({
+          name: "ws-root",
+          private: true,
+          workspaces: ["packages/*"],
+          devDependencies: { "pkg-a": "workspace:*" },
+        }),
+      ),
+      write(
+        join(packageDir, "ws", "packages", "a", "package.json"),
+        JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+      ),
+    ]);
+    symlinkSync(join("..", "real", "package.json"), join(packageDir, "ws", "package.json"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "ws"),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toContain("No packages!");
+    expect(exitCode).toBe(0);
+
+    const lockfile = await file(join(packageDir, "ws", "bun.lock")).text();
+    expect(lockfile).toContain('"packages/a"');
+    expect(lockfile).not.toContain("real/packages");
+    expect(await exists(join(packageDir, "ws", "node_modules", "pkg-a", "package.json"))).toBe(true);
+  });
+
+  test.skipIf(!isWindows)("workspaces install when cwd is a subst drive for the project's real path", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "ws", "package.json"),
+        JSON.stringify({
+          name: "ws-root",
+          private: true,
+          workspaces: ["packages/*"],
+          devDependencies: { "pkg-a": "workspace:*" },
+        }),
+      ),
+      write(
+        join(packageDir, "ws", "packages", "a", "package.json"),
+        JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+      ),
+    ]);
+
+    // Map a free drive letter onto packageDir so the cwd's drive letter
+    // differs from the files' physical drive.
+    let drive: string | undefined;
+    for (const letter of "ZYXWVUTSRQONMLKJIHGFE") {
+      const { exitCode } = Bun.spawnSync({ cmd: ["cmd", "/c", "subst", `${letter}:`, packageDir], env });
+      if (exitCode === 0) {
+        drive = letter;
+        break;
+      }
+    }
+    if (!drive) throw new Error("no free drive letter available for subst");
+
+    try {
+      for (const linker of ["hoisted", "isolated"]) {
+        rmSync(join(packageDir, "ws", "node_modules"), { recursive: true, force: true });
+        rmSync(join(packageDir, "ws", "bun.lock"), { force: true });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", `--linker=${linker}`],
+          cwd: `${drive}:\\ws`,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+          // the unfixed isolated linker spins forever; kill instead of hanging the runner
+          timeout: 120_000,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ linker, stderr }).toEqual({ linker, stderr: expect.not.stringContaining("error:") });
+        expect({ linker, exitCode }).toEqual({ linker, exitCode: 0 });
+
+        const lockfile = await file(join(packageDir, "ws", "bun.lock")).text();
+        // workspace keys must stay relative, never the machine-absolute realpath
+        expect(lockfile).toContain('"packages/a"');
+        expect(lockfile).not.toContain(packageDir.replaceAll("\\", "/"));
+        expect(await exists(join(packageDir, "ws", "node_modules", "pkg-a", "package.json"))).toBe(true);
+      }
+    } finally {
+      Bun.spawnSync({ cmd: ["cmd", "/c", "subst", `${drive}:`, "/d"], env });
+    }
   });
 });

@@ -64,15 +64,12 @@ test.each([
   "TEXT/JAVASCRIPT",
   " text/javascript ",
   "",
-])(
-  "percent-encoded module with a '.' executes for MIME %j",
-  async mime => {
-    const code = `export const x = Number.parseFloat("1.5");`;
-    const mod = await import(`data:${mime},` + encodeURIComponent(code));
-    expect(Object.keys(mod)).toEqual(["x"]);
-    expect(mod.x).toBe(1.5);
-  },
-);
+])("percent-encoded module with a '.' executes for MIME %j", async mime => {
+  const code = `export const x = Number.parseFloat("1.5");`;
+  const mod = await import(`data:${mime},` + encodeURIComponent(code));
+  expect(Object.keys(mod)).toEqual(["x"]);
+  expect(mod.x).toBe(1.5);
+});
 
 test("URL text ending in a known file extension is not sniffed as a loader", async () => {
   // The fake ".json" extension previously routed this through the JSON loader.

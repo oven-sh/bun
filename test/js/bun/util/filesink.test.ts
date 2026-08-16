@@ -837,8 +837,9 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
 });
 
 describe("truncation", () => {
-  // Options.truncate (default true) was ignored by the open path: writing a
-  // shorter payload over a longer existing file left the old tail in place.
+  // https://github.com/oven-sh/bun/issues/25968
+  // Opening by path did not pass O_TRUNC: writing a shorter payload over a
+  // longer existing file left the old tail in place.
   it("Bun.file(path).writer() truncates an existing longer file", async () => {
     const filePath = join(tmpdirSync(), "filesink-truncate.txt");
     fs.writeFileSync(filePath, Buffer.alloc(1024, "X").toString());

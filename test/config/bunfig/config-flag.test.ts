@@ -75,14 +75,22 @@ describe.concurrent("bare -c / --config requires a value", () => {
   );
 });
 
-describe.concurrent("bun <script> --config path binding", () => {
-  test.each(spellings)("%p loads the named config and runs the script positional", async (...flag) => {
+// The subcommand keyword is picked before flag values are parsed, so only the
+// single-token spellings can precede `run`; the space forms go after it.
+const scriptArgv = [
+  ...spellings,
+  ...spellings.map(flag => ["run", ...flag]),
+  ...spellings.filter(flag => flag.length === 1).map(flag => [...flag, "run"]),
+];
+
+describe.concurrent("bun [run] --config path binding", () => {
+  test.each(scriptArgv.map(argv => [argv]))("bun %p app.ts loads the named config and runs app.ts", async argv => {
     using dir = tempDir("config-flag-run", {
       "app.ts": `console.log(JSON.stringify({ fromCfg: process.env.FROM_CFG ?? "no", argv: process.argv.slice(2) }));`,
       "cfg.toml": `[define]\n"process.env.FROM_CFG" = '"yes"'\n`,
     });
 
-    const { stdout, stderr, exitCode } = await run(String(dir), [...flag, join(String(dir), "app.ts"), "pass-through"]);
+    const { stdout, stderr, exitCode } = await run(String(dir), [...argv, join(String(dir), "app.ts"), "pass-through"]);
     // The config path must not be treated as the entry point.
     expect(stderr).not.toContain("cfg.toml");
     expect(JSON.parse(stdout.trim())).toEqual({ fromCfg: "yes", argv: ["pass-through"] });

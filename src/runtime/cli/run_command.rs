@@ -1102,7 +1102,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             vm,
             entry_path: run_entry,
         }
-        .start()
+        .start();
+        Ok(())
     }
 
     /// Entry point for
@@ -1213,7 +1214,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             vm,
             entry_path: entry,
         }
-        .start()
+        .start();
+        Ok(())
     }
 }
 
@@ -1275,17 +1277,26 @@ impl Run<'_> {
 
     /// `Run.start`: take the JSC API lock, load the entry point, run the event
     /// loop until idle, fire `beforeExit`/`exit`, then `globalExit`. The lock
-    /// guard is never dropped because this never returns.
-    fn start(self) -> ! {
+    /// guard is never dropped: this never returns, except under an embedding
+    /// host (`bun_embed_run`), where [`finish`](Self::finish) tears the VM
+    /// down and returns so the host gets its thread back.
+    fn start(self) {
         let Run {
             ctx,
             vm,
             entry_path: mut entry,
         } = self;
-        let _api_lock = vm.global().vm().get_api_lock();
+        let api_lock = vm.global().vm().get_api_lock();
+        // Released by process exit, or never: the embedded return path
+        // destroys the JSC VM the guard would unlock.
+        ::core::mem::forget(api_lock);
 
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+        vm.embedded_loop_active = Global::is_embedded();
+        if vm.embedded_loop_active {
+            crate::node::process::embedded_loop_started(vm);
+        }
 
         // ── CPU profiler ────────────────────────────────────────────────────
         if ctx.runtime_options.cpu_prof.enabled {
@@ -1414,6 +1425,9 @@ impl Run<'_> {
         }
 
         match vm.load_entry_point(entry) {
+            // A `process.exit()` in the entry point (embedded: a termination
+            // request, not the end of the process) leaves nothing to inspect.
+            _ if vm.exit_requested => {}
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
@@ -1440,7 +1454,7 @@ impl Run<'_> {
                         // uniquely accessed here.
                         vm.event_loop_ref().tick();
                     } else {
-                        exit_with_unhandled_note(vm);
+                        return exit_with_unhandled_note(vm);
                     }
                 }
 
@@ -1452,11 +1466,13 @@ impl Run<'_> {
                     log_clear_msgs(vm);
                 }
             }
-            Err(err) => entry_point_load_failed(vm, &err.into()),
+            Err(err) => return entry_point_load_failed(vm, &err.into()),
         }
 
         // don't run the GC if we don't actually need to
-        if vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0 {
+        if !vm.exit_requested
+            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+        {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
             // GC; it would only be a memory-usage hint, not correctness.
@@ -1473,7 +1489,10 @@ impl Run<'_> {
         }
 
         // ── core run-loop ──────────────────────────────────────────────────
-        if vm.is_watcher_enabled() {
+        if vm.exit_requested {
+            // Embedded: `process.exit()` already ran the exit listeners; go
+            // straight to shutdown.
+        } else if vm.is_watcher_enabled() {
             vm.report_exception_in_hot_reloaded_module_if_needed();
             loop {
                 while vm.is_event_loop_alive() {
@@ -1491,10 +1510,13 @@ impl Run<'_> {
         } else {
             while vm.is_event_loop_alive() {
                 vm.tick();
+                if vm.exit_requested {
+                    break;
+                }
                 vm.auto_tick_active();
             }
 
-            if ctx.runtime_options.eval.eval_and_print {
+            if ctx.runtime_options.eval.eval_and_print && !vm.exit_requested {
                 let to_print: JSValue = 'brk: {
                     let result = vm
                         .entry_point_result
@@ -1516,7 +1538,7 @@ impl Run<'_> {
                                 );
                                 vm.tick();
                                 vm.auto_tick_active();
-                                while vm.is_event_loop_alive() {
+                                while vm.is_event_loop_alive() && !vm.exit_requested {
                                     vm.tick();
                                     vm.auto_tick_active();
                                 }
@@ -1541,7 +1563,9 @@ impl Run<'_> {
                 }
             }
 
-            vm.on_before_exit();
+            if !vm.exit_requested {
+                vm.on_before_exit();
+            }
         }
 
         if log_has_msgs(vm) {
@@ -1567,6 +1591,18 @@ impl Run<'_> {
         crate::napi::fix_dead_code_elimination();
         crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
+        Self::finish(vm);
+    }
+
+    /// The last thing `Run::start` does: end the process with the VM's exit
+    /// code — or, under an embedding host, tear the VM down and return the
+    /// code to it (see `bun_embed_run`).
+    fn finish(vm: &mut VirtualMachine) {
+        if vm.embedded_loop_active {
+            crate::node::process::embedded_loop_finished();
+            vm.global_exit_embedded();
+            return;
+        }
         vm.global_exit();
     }
 }
@@ -1618,14 +1654,14 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
+fn exit_with_unhandled_note(vm: &mut VirtualMachine) {
     vm.exit_handler.exit_code = 1;
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
         pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
     }
-    vm.global_exit();
+    Run::finish(vm);
 }
 
 /// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
@@ -1635,7 +1671,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -1646,7 +1682,7 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
         );
         Output::flush();
     }
-    exit_with_unhandled_note(vm);
+    exit_with_unhandled_note(vm)
 }
 
 /// Cold tail of `Run::start` when `ANY_UNHANDLED` tripped on an otherwise-clean

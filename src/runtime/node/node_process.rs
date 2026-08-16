@@ -72,6 +72,9 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
         worker.exit();
+    } else if vm.request_embedded_exit() {
+        // An embedding host's run loop returns the exit code; like the worker
+        // above, script stops at the next safepoint and this call returns.
     } else {
         // A watch-reload kill-signal handler may call process.exit; node restarts the child
         // regardless. `process.exit()` must never return control to JS, so replace the process
@@ -88,6 +91,73 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         vm.on_exit();
         vm.global_exit();
     }
+}
+
+// ───────────────────────────── exit requested by an embedding host ────────
+//
+// `bun_embed_request_exit` (src/bun_bin/embed.rs) may be called from any
+// thread; the request is carried to the JS thread as a task that does what
+// `process.exit(code)` does there.
+
+/// The main VM's handle for as long as `Run::start` drives it for an
+/// embedding host.
+static HOST_VM: bun_core::Mutex<Option<bun_jsc::VmHandle>> = bun_core::Mutex::new(None);
+/// A host exit request that arrived before the run loop was up (`-1`: none).
+static PENDING_HOST_EXIT: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
+
+pub fn embedded_loop_started(vm: &bun_jsc::virtual_machine::VirtualMachine) {
+    let handle = vm.handle();
+    let pending = PENDING_HOST_EXIT.swap(-1, core::sync::atomic::Ordering::AcqRel);
+    if pending >= 0 {
+        post_host_exit(&handle, pending as u8);
+    }
+    *HOST_VM.lock() = Some(handle);
+}
+
+pub fn embedded_loop_finished() {
+    *HOST_VM.lock() = None;
+}
+
+/// `bun_embed_request_exit`: as `process.exit(code)` from a task on the JS
+/// thread. Before the loop is up the request is kept for it; after the run
+/// it is dropped.
+pub fn request_exit_from_host(code: core::ffi::c_int) {
+    // `process.exit()` truncates the same way.
+    let code = code as u8;
+    let vm = HOST_VM.lock();
+    match &*vm {
+        Some(handle) => post_host_exit(handle, code),
+        None => PENDING_HOST_EXIT.store(
+            core::ffi::c_int::from(code),
+            core::sync::atomic::Ordering::Release,
+        ),
+    }
+}
+
+fn post_host_exit(handle: &bun_jsc::VmHandle, code: u8) {
+    let task = bun_jsc::event_loop::ConcurrentTaskItem::create(
+        bun_jsc::event_loop::ManagedTask::ManagedTask::new_owned(
+            bun_core::heap::into_raw(Box::new(code)),
+            host_exit_task,
+        ),
+    );
+    if let bun_jsc::Posted::Refused(task) = handle.post(bun_jsc::LoopKind::Regular, task) {
+        // SAFETY: refused ⇒ the task (and its boxed code) is ours to free.
+        unsafe { bun_jsc::event_loop::ConcurrentTaskItem::release_refused(task) };
+    }
+}
+
+fn host_exit_task(code: *mut u8) -> bun_jsc::JsResult<()> {
+    // SAFETY: the box `post_host_exit` handed over, run exactly once.
+    let code = *unsafe { bun_core::heap::take(code) };
+    let vm = bun_jsc::virtual_machine::VirtualMachine::get().as_mut();
+    vm.exit_handler.exit_code = code;
+    // 'exit' listeners, then the exit itself — `process.exit()`'s two steps.
+    bun_jsc::virtual_machine::ExitHandler::dispatch_on_exit(vm);
+    // A listener may have set `process.exitCode`.
+    let code = vm.exit_handler.exit_code;
+    exit(vm.global(), code);
+    Ok(())
 }
 
 // ───────────────────────────── misc exports ─────────────────────────────

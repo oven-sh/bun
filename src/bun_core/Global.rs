@@ -496,6 +496,13 @@ pub const package_json_version: &str = if env::IS_DEBUG {
 /// `print_version_and_exit` is a single `write_all` (one syscall).
 pub const package_json_version_nl: &str = concatcp!(package_json_version, "\n");
 
+/// `package_json_version` as a C string (`bun_embed_version`).
+pub const package_json_version_z: &core::ffi::CStr =
+    match core::ffi::CStr::from_bytes_with_nul(concatcp!(package_json_version, "\0").as_bytes()) {
+        Ok(s) => s,
+        Err(_) => panic!("version string contains a NUL"),
+    };
+
 /// This is used for `bun` without any arguments, it `package_json_version` but with canary if it is a canary build.
 /// like "1.0.0-canary.12"
 pub const package_json_version_with_canary: &str = if env::IS_DEBUG {
@@ -712,6 +719,10 @@ pub fn exit(code: u32) -> ! {
     // Flush output before exiting to ensure all messages are visible
     Output::flush();
 
+    if is_embedded() {
+        embedded_park(code);
+    }
+
     #[cfg(target_os = "macos")]
     {
         libc_exit(code as i32)
@@ -728,6 +739,67 @@ pub fn exit(code: u32) -> ! {
             libc_exit(code as i32);
         }
         quick_exit(code as c_int);
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Embedded mode — a host program runs Bun in-process (`bun_embed_run`)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Set once by `bun_embed_run` before Bun starts: the process belongs to the
+/// host, so nothing here may end it.
+static EMBEDDED: AtomicBool = AtomicBool::new(false);
+/// `bun_embed_run`'s `on_exit` callback and its user pointer.
+static EMBED_ON_EXIT: crate::Mutex<Option<(EmbedExitFn, usize)>> = crate::Mutex::new(None);
+/// Set by [`finish_embedded_run`], read back by `bun_embed_run` as its result.
+static EMBED_EXIT_CODE: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+static EMBED_FINISHED: AtomicBool = AtomicBool::new(false);
+
+pub type EmbedExitFn = extern "C" fn(code: c_int, user: *mut core::ffi::c_void);
+
+/// Enter embedded mode. Called once, before any other Bun code runs.
+pub fn enter_embedded_mode(on_exit: Option<EmbedExitFn>, user: *mut core::ffi::c_void) {
+    *EMBED_ON_EXIT.lock() = on_exit.map(|f| (f, user as usize));
+    EMBEDDED.store(true, Ordering::Release);
+}
+
+/// A host program is running Bun in-process via `bun_embed_run`.
+#[inline]
+pub fn is_embedded() -> bool {
+    EMBEDDED.load(Ordering::Relaxed)
+}
+
+/// The exit code the embedded run settled on (0 until [`finish_embedded_run`]).
+pub fn embedded_exit_code() -> c_int {
+    EMBED_EXIT_CODE.load(Ordering::Acquire)
+}
+
+/// Embedded counterpart of the process ending: run the exit callbacks
+/// `Bun__onExit` would run from `atexit`, record `code`, and tell the host.
+/// Idempotent — the first caller decides the code.
+pub fn finish_embedded_run(code: c_int) {
+    if EMBED_FINISHED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    Bun__onExit();
+    EMBED_EXIT_CODE.store(code, Ordering::Release);
+    let on_exit = *EMBED_ON_EXIT.lock();
+    if let Some((f, user)) = on_exit {
+        f(code, user as *mut core::ffi::c_void);
+    }
+}
+
+/// [`exit`] in embedded mode. Bun asked to end the process from a call
+/// stack that has no way back to the host (JS frames, a CLI subcommand's
+/// error path): tell the host the exit code and park this thread instead.
+/// The paths that can return — `Run::start` draining, `process.exit()`
+/// under it — never get here.
+#[cold]
+#[inline(never)]
+fn embedded_park(code: u32) -> ! {
+    finish_embedded_run(code as c_int);
+    loop {
+        std::thread::park();
     }
 }
 

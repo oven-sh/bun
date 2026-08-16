@@ -217,6 +217,14 @@ pub struct VirtualMachine {
     pub(crate) hide_bun_stackframes: bool,
 
     pub is_shutting_down: bool,
+    /// An embedding host (`bun_embed_run`) is running this VM: `Run::start`
+    /// returns to it when the run is over instead of ending the process, so
+    /// `process.exit()` becomes a termination request (see
+    /// [`request_embedded_exit`](Self::request_embedded_exit)).
+    pub embedded_loop_active: bool,
+    /// Set by [`request_embedded_exit`](Self::request_embedded_exit);
+    /// `Run::start` leaves its loop when it sees this.
+    pub exit_requested: bool,
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
@@ -598,7 +606,7 @@ impl ExitHandler {
     /// parent via `container_of` would escape the provenance of `&mut self`
     /// (which only covers the `ExitHandler` field). Callers pass the VM
     /// reference instead; the body re-enters JS so no `&mut` is held.
-    pub(crate) fn dispatch_on_exit(vm: &VirtualMachine) {
+    pub fn dispatch_on_exit(vm: &VirtualMachine) {
         let exit_code = vm.exit_handler.exit_code;
         // `process.on('exit')` handlers are user script (see `on_exit`).
         if vm.script_allowed() && !vm.exit_handler.skip_exit_listeners {
@@ -1738,6 +1746,36 @@ impl VirtualMachine {
             self.close_sqlite_databases_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+    }
+
+    /// [`global_exit`](Self::global_exit) for a VM an embedding host runs:
+    /// the process goes on without Bun, so the VM is always torn down and the
+    /// exit code goes to the host instead of `exit`. Returns to `Run::start`.
+    pub fn global_exit_embedded(&mut self) {
+        debug_assert!(self.is_shutting_down());
+        let code = self.exit_handler.exit_code;
+        // SAFETY: main-thread VM on the thread that runs it; exit handlers have run.
+        unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
+        bun_core::Global::finish_embedded_run(i32::from(code));
+    }
+
+    /// `process.exit()` while an embedding host runs this VM: stop script at
+    /// the next safepoint (a JSC termination, as a worker's exit) and let
+    /// `Run::start` return the exit code, rather than ending the process.
+    /// `false` when no run loop would return, and the caller exits as usual.
+    pub fn request_embedded_exit(&mut self) -> bool {
+        if !self.embedded_loop_active {
+            return false;
+        }
+        self.exit_requested = true;
+        unsafe extern "C" {
+            safe fn JSGlobalObject__requestTermination(global: &JSGlobalObject);
+        }
+        // Materializes the TerminationException the trap below throws — a
+        // main-thread VM has none until asked (a worker's is created up front).
+        JSGlobalObject__requestTermination(self.global());
+        self.handle.request_termination();
+        true
     }
 
     /// Checkpoint + close the sqlite connections *this* VM opened, while it is

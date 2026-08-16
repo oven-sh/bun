@@ -41,6 +41,7 @@ use bun_threading::{Condvar, Guarded};
 
 use crate::event_loop::EventLoop;
 use crate::virtual_machine::VirtualMachine;
+use bun_collections::index_sort;
 use bun_event_loop::ConcurrentTask::ConcurrentTask as ConcurrentTaskItem;
 
 pub use bun_event_loop::Posted;
@@ -480,7 +481,7 @@ impl VmHandle {
         let live = self.0.debug.live.lock();
         let mut sites: Vec<(&'static str, u32)> =
             live.at.values().map(|l| (l.file(), l.line())).collect();
-        sites.sort_unstable();
+        index_sort::sort_slice_unstable_by(&mut sites, |a, b| a.cmp(b));
         let w = bun_core::output::error_writer();
         let _ = writeln!(
             w,

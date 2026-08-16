@@ -124,7 +124,7 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
       // A Buffer over 1000 bytes starts out without an ArrayBuffer behind it. Pad
       // with "./" by hand (join() would normalize it away) to just past that,
       // staying under macOS's 1024-byte PATH_MAX.
-      const longDir = process.argv[2] + "/" + "./".repeat(Math.ceil((1004 - process.argv[2].length) / 2));
+      const longDir = process.argv[2] + "/" + Buffer.alloc(Math.ceil((1004 - process.argv[2].length) / 2) * 2, "./").toString();
       const existingLong = longDir + "hello.txt";
       const protectedBefore = heapStats().protectedObjectCount;
       const uint8Before = heapStats().objectTypeCounts.Uint8Array ?? 0;
@@ -144,7 +144,7 @@ test("Bun.file() with a Buffer/Uint8Array path survives GC of the blobs", async 
       Bun.gc(true);
       const stats = heapStats();
       // The threadpool open/copy paths read the store's path off the JS thread.
-      await Bun.write(Bun.file(Buffer.from(longDir + "sub/out.txt")), "x".repeat(300 * 1024));
+      await Bun.write(Bun.file(Buffer.from(longDir + "sub/out.txt")), Buffer.alloc(300 * 1024, "x").toString());
       await Bun.write(Bun.file(new TextEncoder().encode(longDir + "copy.txt")), keep[3]);
       console.log(JSON.stringify({
         longPathBytes: Buffer.from(existingLong).length > 1000 && Buffer.from(existingLong).length < 1024,

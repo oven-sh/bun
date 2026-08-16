@@ -981,6 +981,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine, waiting_on: Option<AnyPromise>) {
         // is normally one of those microtasks (an await continuation), and the
         // wait's next `tick()` would only run them after the poll below: run
         // them now so the poll sees the promise settled.
+        //
+        // A stop found by the drain is the wait's to act on at its gate, as is
+        // one found by the immediates above or by `get_timeout`'s timers: the
+        // rest of the tick runs gated exactly as after those, and requesting
+        // the stop woke the loop, so the poll returns at once.
         // SAFETY: as above.
         let _ = unsafe { (*el).drain_microtasks() };
     }

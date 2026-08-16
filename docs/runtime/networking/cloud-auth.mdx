@@ -118,6 +118,24 @@ const queue = await Bun.aws.presign("/123456789012/jobs?Action=ReceiveMessage", 
 
 It returns a promise because the credentials may still have to be fetched; the signing itself is local. For `s3://`-style paths and ACLs, [`S3File.presign()`](/runtime/s3#presigning-urls) is usually more convenient.
 
+### `client.eventStream(response)`
+
+AWS streaming APIs (Bedrock `InvokeModelWithResponseStream` / `ConverseStream`, Lambda response streaming, S3 Select, …) answer with `application/vnd.amazon.eventstream` frames rather than SSE. `eventStream()` turns such a response (or any `ReadableStream` / async iterable of bytes) into an async iterator of messages, verifying checksums as it goes.
+
+```ts
+const res = await Bun.aws.fetch(`https://bedrock-runtime.us-east-1.amazonaws.com/model/${modelId}/converse-stream`, {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ messages: [{ role: "user", content: [{ text: "Write a haiku about Bun" }] }] }),
+});
+for await (const message of Bun.aws.eventStream(res)) {
+  // message.event: "messageStart" | "contentBlockDelta" | "messageStop" | …
+  if (message.event === "contentBlockDelta") process.stdout.write(message.json().delta.text);
+}
+```
+
+Each message has `headers`, `payload` (`Uint8Array`), `type` / `event` / `contentType` shortcuts for the `:message-type` / `:event-type` / `:content-type` headers, and `text()` / `json()`. An `exception` or `error` frame ends the iteration by throwing an `Error` whose `name` is the exception type exactly as the service sends it (Bedrock uses `throttlingException`, `validationException`, …); a non-2xx response is thrown before any message, with its `status`, `headers` and `body`.
+
 ## Google Cloud
 
 ### Where tokens come from

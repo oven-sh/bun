@@ -21,6 +21,10 @@ export default [
         fn: "credentials",
         length: 1,
       },
+      eventStream: {
+        builtin: "awsEventStreamEventStreamCodeGenerator",
+        length: 1,
+      },
       region: {
         getter: "getRegion",
       },

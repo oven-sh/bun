@@ -5149,6 +5149,54 @@ declare module "bun" {
         method?: "GET" | "PUT" | "POST" | "DELETE" | "HEAD" | "PATCH" | (string & {});
       },
     ): Promise<string>;
+
+    /**
+     * Decode an `application/vnd.amazon.eventstream` body — the framing AWS
+     * uses for streaming responses (Bedrock `InvokeModelWithResponseStream` /
+     * `ConverseStream`, Lambda response streaming, S3 Select, …) — into its
+     * messages as they arrive. Checksums are verified; an `exception` or
+     * `error` frame is thrown as an `Error` whose `name` is the exception
+     * type as the service spells it (e.g. Bedrock's `throttlingException`)
+     * with the frame's `headers` and text `body`; a non-2xx `Response` is
+     * thrown with `status`, `headers` and `body`.
+     *
+     * @example
+     * ```ts
+     * const res = await Bun.aws.fetch(`https://bedrock-runtime.us-east-1.amazonaws.com/model/${modelId}/converse-stream`, {
+     *   method: "POST",
+     *   headers: { "content-type": "application/json" },
+     *   body: JSON.stringify({ messages: [{ role: "user", content: [{ text: "Hello" }] }] }),
+     * });
+     * for await (const message of Bun.aws.eventStream(res)) {
+     *   if (message.event === "contentBlockDelta") process.stdout.write(message.json().delta.text);
+     * }
+     * ```
+     */
+    eventStream(
+      source:
+        | Response
+        | ReadableStream<ArrayBufferView | ArrayBuffer>
+        | AsyncIterable<ArrayBufferView | ArrayBuffer>
+        | Blob
+        | ArrayBufferView
+        | ArrayBuffer,
+    ): AsyncIterableIterator<AWSEventStreamMessage>;
+  }
+
+  interface AWSEventStreamMessage {
+    /** All headers of the frame. `long` values are `bigint`s, `timestamp`s are `Date`s, `uuid`s are strings. */
+    readonly headers: Record<string, string | number | bigint | boolean | Date | Uint8Array<ArrayBuffer>>;
+    readonly payload: Uint8Array<ArrayBuffer>;
+    /** The `:message-type` header: `"event"` for data frames. */
+    readonly type: string | undefined;
+    /** The `:event-type` header (e.g. `"chunk"`, `"contentBlockDelta"`). */
+    readonly event: string | undefined;
+    /** The `:content-type` header. */
+    readonly contentType: string | undefined;
+    /** The payload as UTF-8 text. */
+    text(): string;
+    /** The payload parsed as JSON. */
+    json(): any;
   }
 
   /**

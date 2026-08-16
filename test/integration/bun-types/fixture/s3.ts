@@ -39,6 +39,10 @@ doFileOps(
   const url: Promise<string> = Bun.aws.presign("https://b.s3.amazonaws.com/k", { expiresIn: 60, method: "PUT" });
   await Bun.aws.fetch("https://sqs.us-east-1.amazonaws.com/");
   await Bun.aws.fetch("/?Action=ListQueues", { service: "sqs", method: "GET" });
+  for await (const m of Bun.aws.eventStream(await Bun.aws.fetch("https://bedrock-runtime.us-east-1.amazonaws.com/x"))) {
+    const h: string | number | bigint | boolean | Date | Uint8Array | undefined = m.headers[":event-type"];
+    console.log(m.type, m.event, m.contentType, m.payload.byteLength, m.text(), m.json(), h);
+  }
   const prod = new Bun.AWSClient({ profile: "prod", region: "eu-west-1", endpoint: "http://localhost:4566" });
   const r: Response = await prod.fetch("https://example.com/", {
     service: "execute-api",

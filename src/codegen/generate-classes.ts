@@ -241,7 +241,7 @@ function propRow(
   if (builtin !== undefined) {
     if (typeof builtin !== "string") throw new Error('"builtin" should be string');
     return `
-{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, ${builtin}, ${
+{ "${name}"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin${extraPropertyAttributes}), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, ${builtin}, ${
       length || 0
     } } }
 `.trim();

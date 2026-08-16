@@ -1133,15 +1133,13 @@ enum BatchSegment {
 }
 
 impl BatchSegment {
-    // SAFETY: the send_data call that recorded the segment must still be running (`Ext`
-    // borrows its payload).
-    unsafe fn bytes(self, batch: &[u8]) -> &[u8] {
+    /// Start and length of the bytes this segment puts on the wire. Dereference only
+    /// while the send_data call that recorded the segment is still running.
+    #[inline(always)]
+    fn raw_parts(self, batch: &[u8]) -> (*const u8, usize) {
         match self {
-            BatchSegment::Batch { off, len } => &batch[off as usize..off as usize + len as usize],
-            // SAFETY: caller contract; `ptr`/`len` came from a `&[u8]`.
-            BatchSegment::Ext { ptr, len } => unsafe {
-                core::slice::from_raw_parts(ptr, len as usize)
-            },
+            BatchSegment::Batch { off, len } => (batch[off as usize..].as_ptr(), len as usize),
+            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
         }
     }
 }
@@ -3520,16 +3518,14 @@ impl H2FrameParser {
                     iov.clear();
                     iov.reserve(segments.len());
                     for seg in segments {
-                        // SAFETY: flush_batch_buffer runs inside the send_data call that
-                        // recorded these segments, so Ext payloads are still alive.
-                        let bytes = unsafe { seg.bytes(batch) };
-                        if bytes.is_empty() {
+                        let (ptr, len) = seg.raw_parts(batch);
+                        if len == 0 {
                             continue;
                         }
-                        total += bytes.len();
+                        total += len;
                         iov.push(bun_uws_sys::UsIoVec {
-                            base: bytes.as_ptr().cast(),
-                            len: bytes.len(),
+                            base: ptr.cast(),
+                            len,
                         });
                     }
                     if total == 0 {
@@ -3543,8 +3539,10 @@ impl H2FrameParser {
                 // to preserve order.
                 let mut all: Vec<u8> = Vec::new();
                 for seg in segments {
-                    // SAFETY: as in the iovec build above.
-                    all.extend_from_slice(unsafe { seg.bytes(batch) });
+                    let (ptr, len) = seg.raw_parts(batch);
+                    // SAFETY: Batch ranges were recorded inside `batch`, and Ext slices are
+                    // valid for the send_data call duration, which is still running.
+                    all.extend_from_slice(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
                 let _ = self._write(&all);
                 return;
@@ -3555,13 +3553,13 @@ impl H2FrameParser {
             let mut skip = total_written;
             let mut buffered: usize = 0;
             for seg in segments {
-                // SAFETY: as in the iovec build above.
-                let bytes = unsafe { seg.bytes(batch) };
-                if skip >= bytes.len() {
-                    skip -= bytes.len();
+                let (ptr, len) = seg.raw_parts(batch);
+                if skip >= len {
+                    skip -= len;
                     continue;
                 }
-                let rest = &bytes[skip..];
+                // SAFETY: same as the copy path above; skip < len
+                let rest = unsafe { core::slice::from_raw_parts(ptr.add(skip), len - skip) };
                 skip = 0;
                 let _ = self.write_buffer.with_mut(|wb| wb.write(rest));
                 buffered += rest.len();

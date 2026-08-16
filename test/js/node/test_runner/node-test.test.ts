@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -343,6 +343,368 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+// Drives node:test's run() over the given files and digests its stream: every
+// test:pass/test:fail verdict in order (name, details.type, directive, error),
+// the `suites N` diagnostic, the per-file and run-level test:summary (the fields
+// suite reporting affects) and the children's stdout.
+const kRunDriver = `
+  import { basename } from "node:path";
+  import { run } from "node:test";
+
+  const out = { verdicts: [], suitesDiagnostic: undefined, summaries: {}, stdout: "" };
+  for await (const { type, data } of run({ files: process.argv.slice(2) })) {
+    if (type === "test:pass" || type === "test:fail") {
+      const verdict = { type, name: data.name, kind: data.details.type };
+      if (data.skip !== undefined) verdict.skip = data.skip;
+      if (data.todo !== undefined) verdict.todo = data.todo;
+      const { error } = data.details;
+      if (error !== undefined) {
+        verdict.error = error.message;
+        if (error.failureType !== undefined) verdict.failureType = error.failureType;
+        if (error.cause !== undefined) verdict.cause = error.cause.message;
+      }
+      out.verdicts.push(verdict);
+    } else if (type === "test:diagnostic" && data.message.startsWith("suites ")) {
+      out.suitesDiagnostic = data.message;
+    } else if (type === "test:summary") {
+      const { tests, suites, passed, failed, skipped, todo } = data.counts;
+      out.summaries[data.file === undefined ? "<run>" : basename(data.file)] = {
+        success: data.success,
+        tests,
+        suites,
+        passed,
+        failed,
+        skipped,
+        todo,
+      };
+    } else if (type === "test:stdout") {
+      out.stdout += data.message;
+    }
+  }
+  console.log(JSON.stringify(out));
+`;
+
+type RunVerdict = {
+  type: "test:pass" | "test:fail";
+  name: string;
+  kind: "test" | "suite";
+  skip?: boolean | string;
+  todo?: boolean | string;
+  error?: string;
+  failureType?: string;
+  cause?: string;
+};
+
+type RunDigest = {
+  verdicts: RunVerdict[];
+  suitesDiagnostic: string | undefined;
+  summaries: Record<string, Record<string, number | boolean>>;
+  stdout: string;
+};
+
+async function digestRun(files: Record<string, string>): Promise<RunDigest> {
+  using dir = tempDir("node-test-run", { ...files, "driver.mjs": kRunDriver });
+  await using proc = spawn({
+    cmd: [bunExe(), "driver.mjs", ...Object.keys(files)],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout);
+}
+
+describe("node:test run()", () => {
+  // Unless a comment says otherwise, every expectation below is what node
+  // v26.3.0 reports for the same file. Two shape differences hold throughout:
+  // bun's child does not label test code failures with failureType
+  // "testCodeFailure", and it attaches the first failure as the cause of a
+  // "N subtests failed" error where node repeats the message.
+  //
+  // Each case spawns a driver process that in turn spawns one debug+ASAN
+  // `bun test` child (about 4.5s locally), hence the generous timeouts.
+  test.concurrent(
+    "reports a verdict for every suite registered with bun:test, after its children, and counts it in suites",
+    async () => {
+      const { verdicts, suitesDiagnostic, summaries } = await digestRun({
+        "suites.js": `
+          const { describe, it, test, suite } = require("node:test");
+
+          describe.skip("skipped suite", () => {
+            it("never declared", () => {});
+          });
+
+          describe("outer", () => {
+            it("ok", () => {});
+            describe("inner", () => {
+              it("bad", () => {
+                throw new Error("bad child");
+              });
+            });
+            it("ok2", () => {});
+          });
+
+          suite("empty suite", () => {});
+
+          describe.todo("todo suite", () => {
+            it("fails inside a todo suite", () => {
+              throw new Error("x");
+            });
+          });
+
+          describe("suite with directives", () => {
+            it.todo("todo child", () => {
+              throw new Error("y");
+            });
+            it("skipped child", { skip: "why" }, () => {});
+          });
+
+          test("parent test", () => {
+            describe("inline suite", () => {
+              it("inline child", () => {});
+            });
+          });
+        `,
+      });
+
+      expect(verdicts).toEqual([
+        { type: "test:pass", name: "skipped suite", kind: "suite", skip: true },
+        { type: "test:pass", name: "ok", kind: "test" },
+        { type: "test:fail", name: "bad", kind: "test", error: "bad child" },
+        // A failing child fails its suite, and that failure the enclosing suite.
+        {
+          type: "test:fail",
+          name: "inner",
+          kind: "suite",
+          error: "1 subtest failed",
+          failureType: "subtestsFailed",
+          cause: "bad child",
+        },
+        { type: "test:pass", name: "ok2", kind: "test" },
+        {
+          type: "test:fail",
+          name: "outer",
+          kind: "suite",
+          error: "1 subtest failed",
+          failureType: "subtestsFailed",
+          cause: "1 subtest failed",
+        },
+        { type: "test:pass", name: "empty suite", kind: "suite" },
+        // Children of a todo suite are todo themselves, so their failures do
+        // not fail it; the suite reports after them, carrying the directive.
+        { type: "test:fail", name: "fails inside a todo suite", kind: "test", todo: true, error: "x" },
+        { type: "test:pass", name: "todo suite", kind: "suite", todo: true },
+        { type: "test:fail", name: "todo child", kind: "test", todo: true, error: "y" },
+        { type: "test:pass", name: "skipped child", kind: "test", skip: "why" },
+        { type: "test:pass", name: "suite with directives", kind: "suite" },
+        { type: "test:pass", name: "inline child", kind: "test" },
+        { type: "test:pass", name: "inline suite", kind: "suite" },
+        { type: "test:pass", name: "parent test", kind: "test" },
+      ]);
+      expect(suitesDiagnostic).toBe("suites 7");
+      const counts = { success: false, tests: 8, suites: 7, passed: 4, failed: 1, skipped: 1, todo: 2 };
+      expect(summaries).toEqual({ "suites.js": counts, "<run>": counts });
+    },
+    60_000,
+  );
+
+  test.concurrent(
+    "a failing after() hook fails its suite and the run, and is not mistaken for a file-level failure",
+    async () => {
+      const { verdicts, summaries, stdout } = await digestRun({
+        "after-hook.js": `
+          const { describe, it, after } = require("node:test");
+
+          describe("suite", () => {
+            after(() => {
+              throw new Error("after boom");
+            });
+            after(() => {
+              console.log("SECOND_AFTER_HOOK_RAN");
+            });
+            it("ok", () => {});
+          });
+        `,
+      });
+
+      // The child exits nonzero over the hook, but the suite's own verdict
+      // accounts for that: no synthesized verdict for after-hook.js itself.
+      expect(verdicts).toEqual([
+        { type: "test:pass", name: "ok", kind: "test" },
+        {
+          type: "test:fail",
+          name: "suite",
+          kind: "suite",
+          error: "failed running after hook",
+          failureType: "hookFailed",
+          cause: "after boom",
+        },
+      ]);
+      // `failed` counts tests only; the failed suite still makes the run fail.
+      const counts = { success: false, tests: 1, suites: 1, passed: 1, failed: 0, skipped: 0, todo: 0 };
+      expect(summaries).toEqual({ "after-hook.js": counts, "<run>": counts });
+      // node stops at the first failing hook.
+      expect(stdout).not.toContain("SECOND_AFTER_HOOK_RAN");
+    },
+    60_000,
+  );
+
+  test.concurrent(
+    "a todo suite's own failures are reported on the suite but do not fail the run",
+    async () => {
+      const { verdicts, summaries } = await digestRun({
+        "todo-suites.js": `
+          const { describe, it, before, after } = require("node:test");
+
+          describe.todo("before fails", () => {
+            before(() => {
+              throw new Error("before boom");
+            });
+            it("child of before-fails", () => {});
+          });
+
+          describe("after fails", { todo: "later" }, () => {
+            after(() => {
+              throw new Error("after boom");
+            });
+            it("child of after-fails", () => {});
+          });
+
+          describe.todo("callback throws", () => {
+            it("child of callback-throws", () => {});
+            throw new Error("todo build boom");
+          });
+        `,
+      });
+
+      expect(verdicts).toEqual([
+        // node cancels the children of the first and third suite instead
+        // (test:fail, still todo); bun:test has no way to cancel a test yet, so
+        // they run. Either way they are counted as todo.
+        { type: "test:pass", name: "child of before-fails", kind: "test", todo: true },
+        {
+          type: "test:fail",
+          name: "before fails",
+          kind: "suite",
+          todo: true,
+          error: "failed running before hook",
+          failureType: "hookFailed",
+          cause: "before boom",
+        },
+        { type: "test:pass", name: "child of after-fails", kind: "test", todo: true },
+        {
+          type: "test:fail",
+          name: "after fails",
+          kind: "suite",
+          todo: "later",
+          error: "failed running after hook",
+          failureType: "hookFailed",
+          cause: "after boom",
+        },
+        { type: "test:pass", name: "child of callback-throws", kind: "test", todo: true },
+        { type: "test:fail", name: "callback throws", kind: "suite", todo: true, error: "todo build boom" },
+      ]);
+      // Nothing here makes the child process exit nonzero, so the file gets no
+      // synthesized verdict and the run succeeds, as in node.
+      const counts = { success: true, tests: 3, suites: 3, passed: 0, failed: 0, skipped: 0, todo: 3 };
+      expect(summaries).toEqual({ "todo-suites.js": counts, "<run>": counts });
+    },
+    60_000,
+  );
+
+  test.concurrent(
+    "a failing before() hook fails its suite",
+    async () => {
+      const { verdicts, summaries, stdout } = await digestRun({
+        "before-hook.js": `
+          const { describe, it, before, after } = require("node:test");
+
+          describe("suite", () => {
+            before(() => {
+              throw new Error("before boom");
+            });
+            after(() => {
+              console.log("AFTER_HOOK_RAN");
+            });
+            it("child", () => {});
+          });
+        `,
+      });
+
+      // What becomes of the child is bun:test's call (node cancels it), so only
+      // the suite's own verdict is pinned here.
+      expect(verdicts.filter(verdict => verdict.kind === "suite")).toEqual([
+        {
+          type: "test:fail",
+          name: "suite",
+          kind: "suite",
+          error: "failed running before hook",
+          failureType: "hookFailed",
+          cause: "before boom",
+        },
+      ]);
+      expect(verdicts.map(verdict => verdict.name)).not.toContain("before-hook.js");
+      expect(summaries["before-hook.js"]).toMatchObject({ success: false, suites: 1, failed: 0 });
+      expect(summaries["<run>"]).toMatchObject({ success: false, suites: 1, failed: 0 });
+      // node runs the after hooks of a suite whose before hook failed.
+      expect(stdout).toContain("AFTER_HOOK_RAN");
+    },
+    60_000,
+  );
+
+  test.concurrent(
+    "a describe() callback that throws or rejects fails its suite, which fails the enclosing suite",
+    async () => {
+      const { verdicts, suitesDiagnostic, summaries } = await digestRun({
+        "build-failures.js": `
+          const { describe, it, test } = require("node:test");
+
+          describe("outer", () => {
+            it("ok", () => {});
+            describe("inner", () => {
+              throw new Error("build boom");
+            });
+          });
+
+          describe("async", async () => {
+            await Promise.resolve();
+            throw new Error("async build boom");
+          });
+
+          test("sibling", () => {});
+        `,
+      });
+
+      // bun:test drops a scope whose callback threw, so such a suite is reported
+      // as soon as it is declared rather than in node's execution order; compare
+      // by name.
+      const expected: RunVerdict[] = [
+        { type: "test:fail", name: "async", kind: "suite", error: "async build boom" },
+        { type: "test:fail", name: "inner", kind: "suite", error: "build boom" },
+        { type: "test:pass", name: "ok", kind: "test" },
+        {
+          type: "test:fail",
+          name: "outer",
+          kind: "suite",
+          error: "1 subtest failed",
+          failureType: "subtestsFailed",
+          cause: "build boom",
+        },
+        { type: "test:pass", name: "sibling", kind: "test" },
+      ];
+      const byName = (a: RunVerdict, b: RunVerdict) => a.name.localeCompare(b.name);
+      expect(verdicts.toSorted(byName)).toEqual(expected.toSorted(byName));
+      expect(suitesDiagnostic).toBe("suites 3");
+      const counts = { success: false, tests: 2, suites: 3, passed: 2, failed: 0, skipped: 0, todo: 0 };
+      expect(summaries).toEqual({ "build-failures.js": counts, "<run>": counts });
+    },
+    60_000,
+  );
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

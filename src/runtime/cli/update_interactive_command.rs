@@ -254,6 +254,17 @@ impl UpdateInteractiveCommand {
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
+        let cli = CommandLineArguments::parse(Subcommand::Update)?;
+        Self::exec_with_cli(ctx, cli)
+    }
+
+    /// `bun update -i` gets here from `UpdateCommand::exec`, which has already
+    /// parsed argv; `CommandLineArguments::parse` chdirs into `--cwd`, so it
+    /// must not run a second time.
+    pub(crate) fn exec_with_cli(
+        ctx: Command::Context,
+        cli: CommandLineArguments,
+    ) -> crate::Result<()> {
         bun_core::prettyln!(
             "<r><b>bun update --interactive <r><d>v{}<r>",
             Global::package_json_version_with_sha
@@ -281,7 +292,6 @@ impl UpdateInteractiveCommand {
             Global::exit(1);
         }
 
-        let cli = CommandLineArguments::parse(Subcommand::Update)?;
         let groups = cli.update_groups;
         let silent = cli.log_level.is_silent();
 

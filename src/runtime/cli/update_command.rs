@@ -12,10 +12,9 @@ impl UpdateCommand {
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
 
         if cli.interactive {
-            UpdateInteractiveCommand::exec(ctx)?;
+            UpdateInteractiveCommand::exec_with_cli(ctx, cli)
         } else {
-            update_package_json_and_install_catch_error(ctx, Subcommand::Update)?;
+            update_package_json_and_install_catch_error(ctx, Subcommand::Update, cli)
         }
-        Ok(())
     }
 }

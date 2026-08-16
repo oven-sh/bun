@@ -1172,6 +1172,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
     }
 
+    /// Call once per process: besides building the struct this chdirs into
+    /// `--cwd`, so a second call resolves a relative `--cwd` from inside the
+    /// directory the first call already entered. Code that needs the arguments
+    /// again takes the parsed value (it is `Clone`) instead of re-parsing.
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {
         Output::set_is_verbose(Output::is_verbose());
 

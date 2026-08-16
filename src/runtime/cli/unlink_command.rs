@@ -26,13 +26,10 @@ impl UnlinkCommand {
 
 fn unlink(ctx: &mut ContextData) -> crate::Result<()> {
     let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
-    let (manager, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
+    let (manager, _original_cwd) = match pm::init(&mut *ctx, cli.clone(), Subcommand::Unlink) {
         Ok(v) => v,
         Err(bun_install::Error::MissingPackageJSON) => {
             attempt_to_create_package_json()?;
-            // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
-            // is deterministic over process argv.
-            let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
             pm::init(&mut *ctx, cli, Subcommand::Unlink)?
         }
         Err(e) => return Err(e.into()),

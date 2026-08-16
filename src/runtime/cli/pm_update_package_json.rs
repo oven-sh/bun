@@ -22,8 +22,9 @@ use crate::command::{self, Context, ContextData};
 pub(crate) fn update_package_json_and_install_catch_error(
     ctx: Context,
     subcommand: Subcommand,
+    cli: CommandLineArguments,
 ) -> Result<(), Error> {
-    match update_package_json_and_install(ctx, subcommand) {
+    match update_package_json_and_install(ctx, subcommand, cli) {
         Ok(()) => Ok(()),
         Err(
             crate::Error::InstallFailed
@@ -47,11 +48,8 @@ pub(crate) fn update_package_json_and_install_catch_error(
 pub(crate) fn update_package_json_and_install(
     ctx: Context,
     subcommand: Subcommand,
+    mut cli: CommandLineArguments,
 ) -> Result<(), Error> {
-    // Calling with runtime `subcommand` here; if
-    // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
-    let mut cli = CommandLineArguments::parse(subcommand)?;
-
     // The way this works:
     // 1. Run the bundler on source files
     // 2. Rewrite positional arguments to act identically to the developer

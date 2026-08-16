@@ -2834,4 +2834,50 @@ describe("bun update <name> semantics", () => {
       expect(exitCode).toBe(1);
     });
   });
+
+  // The project is <dir>/app and bun runs from <dir>, which has no package.json, so only `--cwd` can reach it.
+  // A relative `--cwd` has to be applied exactly once: `bun update` used to parse its flags (which chdirs) a second
+  // time after the first parse had already entered app/, so the second chdir("app") failed with ENOENT.
+  describe("--cwd", () => {
+    async function setupApp(json: Json) {
+      const dir = await createDir({ "app/package.json": manifest(json) });
+      const app = join(dir, "app");
+      await verdaccio.writeBunfig(app, { saveTextLockfile: true, linker: "hoisted" });
+      await install(app);
+      return { dir, app };
+    }
+
+    async function staleApp() {
+      const { dir, app } = await setupApp(SIBLINGS_PINNED);
+      await writeFile(join(app, "package.json"), stringify(manifest(SIBLINGS_WIDENED)));
+      expect(await install(app)).toContain("Saved lockfile");
+      expect(await lockedVersions(app, "no-deps")).toStrictEqual(["1.0.0"]);
+      expect(await lockedVersions(app, "a-dep")).toStrictEqual(["1.0.1"]);
+      return { dir, app };
+    }
+
+    it.concurrent.each([
+      [["--cwd", "app"], { "no-deps": "^1.1.0", "a-dep": "^1.0.10" }, "1.1.0", "1.0.10"],
+      [["--cwd", "./app"], { "no-deps": "^1.1.0", "a-dep": "^1.0.10" }, "1.1.0", "1.0.10"],
+      [["no-deps", "--cwd", "app"], { "no-deps": "^1.1.0", "a-dep": "^1.0.1" }, "1.1.0", "1.0.1"],
+    ])("bun update %p run from the parent directory updates app/", async (args, expected, noDeps, aDep) => {
+      const { dir, app } = await staleApp();
+      const { stderr, exitCode } = await runFrom(dir, app, "update", ...args);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      await expectInSync(app, expected);
+      expect(await lockedVersions(app, "no-deps")).toStrictEqual([noDeps]);
+      expect(await lockedVersions(app, "a-dep")).toStrictEqual([aDep]);
+      expect(await installedVersion(app, "no-deps")).toBe(noDeps);
+      expect(await installedVersion(app, "a-dep")).toBe(aDep);
+    });
+
+    it.concurrent("bun update -i --cwd app run from the parent directory reads app/", async () => {
+      const { dir, app } = await setupApp({ "no-deps": "^2.0.0" });
+      const { stdout, stderr, exitCode } = await runFrom(dir, app, "update", "-i", "--cwd", "app");
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain("Checked 1 dependency, nothing to update");
+      expect(exitCode).toBe(0);
+    });
+  });
 });

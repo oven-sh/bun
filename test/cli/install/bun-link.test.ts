@@ -7,6 +7,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  tempDir,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
@@ -470,4 +471,59 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// link and unlink create a package.json when the directory has none and then retry. The retry used to re-parse the
+// flags, which applies `--cwd` again; a relative `--cwd` then resolved from inside the directory it had already
+// entered and failed with ENOENT. Bun runs from the parent here, so `--cwd` is the only way into app/, and the link
+// registry is pointed at a directory of its own so these tests never see the real global folder.
+async function runFromParent(dir: string, ...args: string[]) {
+  await using proc = spawn({
+    cmd: [bunExe(), ...args],
+    cwd: dir,
+    env: {
+      ...env,
+      BUN_INSTALL: join(dir, ".bun"),
+      BUN_INSTALL_GLOBAL_DIR: join(dir, ".bun", "install", "global"),
+      BUN_INSTALL_BIN: join(dir, ".bun", "bin"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+it("bun link <name> --cwd <relative dir> links into a directory that has no package.json yet", async () => {
+  using dir = tempDir("link-relative-cwd", {
+    "pkg/package.json": JSON.stringify({ name: "link-cwd-pkg", version: "1.0.0" }),
+  });
+  await mkdir(join(String(dir), "app"));
+
+  const registered = await runFromParent(String(dir), "link", "--cwd", "pkg");
+  expect(registered.stderr).toBe("");
+  expect(registered.stdout).toContain('Success! Registered "link-cwd-pkg"');
+  expect(registered.exitCode).toBe(0);
+
+  const linked = await runFromParent(String(dir), "link", "link-cwd-pkg", "--cwd", "app");
+  expect(linked.stderr).not.toContain("error:");
+  expect(linked.stdout).toContain("installed link-cwd-pkg@link:link-cwd-pkg");
+  expect(linked.exitCode).toBe(0);
+  expect(await file(join(String(dir), "app", "package.json")).json()).toEqual({ dependencies: {} });
+  expect(await file(join(String(dir), "app", "node_modules", "link-cwd-pkg", "package.json")).json()).toEqual({
+    name: "link-cwd-pkg",
+    version: "1.0.0",
+  });
+});
+
+it("bun unlink --cwd <relative dir> reaches a directory that has no package.json yet", async () => {
+  using dir = tempDir("unlink-relative-cwd", {});
+  await mkdir(join(String(dir), "app"));
+
+  // The package.json bun creates has no name, so there is nothing to unlink; the retry has to get far enough to say so.
+  const { stderr, exitCode } = await runFromParent(String(dir), "unlink", "--cwd", "app");
+  expect(stderr).toContain('error: package.json missing "name"');
+  expect(exitCode).toBe(1);
+  expect(await file(join(String(dir), "app", "package.json")).json()).toEqual({ dependencies: {} });
 });

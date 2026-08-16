@@ -891,8 +891,12 @@ export const linkerFlags: Flag[] = [
     // never collapsed onto another symbol, it becomes a tail-call thunk that
     // keeps its own distinct address. That is exactly the property whose loss
     // forced 218430c731 to revert ICF (identical JS constructor host
-    // functions folded to one address broke `expect.any(Ctor)`). Full-LTO
-    // links only: under ThinLTO the pass runs per module and merges little.
+    // functions folded to one address broke `expect.any(Ctor)`).
+    // Under ThinLTO (the link above) the pass runs inside each backend
+    // thread, so it only folds duplicates that land in the same module after
+    // cross-module importing; it found far more under the full-LTO link this
+    // was first measured against. The CI binary-size annotation is the
+    // authority on what it is worth now; drop it if that reads ~0.
     flag: ["-Wl,-mllvm,-enable-merge-functions"],
     when: c => c.unix && !c.darwin && c.lto && c.release,
     desc: "Merge structurally identical functions during LTO codegen (address-identity-safe, unlike ICF)",

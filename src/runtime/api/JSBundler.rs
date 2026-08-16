@@ -1837,36 +1837,34 @@ pub mod js_bundler {
     }
 
     /// # Safety
-    /// `plugin` must be a live `JSBundlerPlugin` opaque handle. `ctx` must be
-    /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
-    /// `which == 1`) previously handed to C++ via `dispatch`; sole owner on
-    /// the JS thread.
+    /// The plugin's answer to a request it still held is an error. `plugin` is the live `JSBundlerPlugin`
+    /// handle; `ctx` the live `*mut Resolve` (`kind == 0`) or `*mut Load` (`kind == 1`) handed over by
+    /// `dispatch`. JS thread.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn JSBundlerPlugin__addError(
         ctx: *mut c_void,
         plugin: *mut Plugin,
         exception: JSValue,
-        which: JSValue,
+        kind: u8,
     ) {
-        // SAFETY: plugin is valid opaque FFI handle; ctx is *mut Resolve or *mut Load
+        // SAFETY: per fn contract.
         let plugin = unsafe { &mut *plugin };
-        match which.as_int32() {
+        match kind {
             0 => {
-                // SAFETY: C++ caller passes the live `*mut Resolve` it received from `Resolve::dispatch` as
-                // `ctx` when `which == 0`, for a request the plugin object still held: its one answer.
+                // SAFETY: per fn contract; the request's one answer.
                 let resolve = unsafe { bun_ptr::callback_ctx::<Resolve>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &resolve.import_record.source_file, exception);
                 resolve.value = ResolveValue::Err(msg);
                 bv2_mut(resolve.bv2).on_resolve_async(resolve);
             }
             1 => {
-                // SAFETY: as for `which == 0`, with the live `*mut Load` from `Load::dispatch`.
+                // SAFETY: per fn contract; the request's one answer.
                 let load = unsafe { bun_ptr::callback_ctx::<Load>(ctx) };
                 let msg = plugin_msg_from_js(plugin, &load.path, exception);
                 load.value = LoadValue::Err(msg);
                 bv2_mut(load.bv2).on_load_async(load);
             }
-            _ => panic!("invalid error type"),
+            _ => unreachable!(),
         }
     }
 

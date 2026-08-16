@@ -659,6 +659,31 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
   // A plugin that calls defer() without awaiting it and answers straight away must not corrupt the pass's
   // accounting or let the pass finish under its own defer hop (use-after-free under ASAN). Run in a child so
   // a regression fails the child instead of taking this file down.
+  test("defer() called after the build settled is refused", async () => {
+    using dir = tempDir("defer-after-settle", {
+      "index.ts": `import "./a.ts"; console.log("index");`,
+      "a.ts": `console.log("a");`,
+    });
+    let late: (() => Promise<void>) | undefined;
+    const build = await Bun.build({
+      entrypoints: [path.join(String(dir), "index.ts")],
+      plugins: [
+        {
+          name: "keeps-defer",
+          setup(build) {
+            build.onLoad({ filter: /a\.ts$/ }, ({ defer }) => {
+              late = defer;
+              return { contents: `console.log("replaced");`, loader: "ts" };
+            });
+          },
+        },
+      ],
+    });
+    expect(build.success).toBe(true);
+    expect(late).toBeFunction();
+    expect(() => late!()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+  });
+
   test("an un-awaited defer() with an immediate answer neither corrupts the queue nor outlives the pass", async () => {
     using dir = tempDir("defer-unawaited", {
       "entry.ts": `import { x, foo } from "./shared"; console.log(x, foo());`,

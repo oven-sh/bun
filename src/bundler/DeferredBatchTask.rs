@@ -1,8 +1,8 @@
 //! Once every other parse/resolve of a pass is done while some onLoad plugins have called `.defer()`, this
 //! hops to the plugins' (JS) thread and resolves those `.defer()` promises so the plugins resume; then it
-//! comes back. It is embedded in its `BundleV2`, and the pass is not done — cannot finish and be freed —
-//! until it has come back (a plugin may answer a deferred load without awaiting `.defer()`, so nothing else
-//! orders the pass's completion after this hop).
+//! comes back. It is embedded in its `BundleV2` and counts as one of the pass's pending items while it is
+//! out, so the pass cannot finish and be freed under it (a plugin may answer a deferred load without
+//! awaiting `.defer()`, so nothing else orders the pass's completion after this hop).
 
 use crate::BundleV2;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
@@ -38,7 +38,7 @@ impl DeferredBatchTask {
         }
     }
 
-    /// Bundle thread. The caller has marked the hop outstanding (`Graph::defer_hop_out`).
+    /// Bundle thread. The caller has counted the hop as a pending item (`Graph::drain_deferred_tasks`).
     pub(crate) fn schedule(&mut self) {
         let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
         self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
@@ -56,20 +56,20 @@ impl DeferredBatchTask {
         self.come_back();
     }
 
-    /// Plugins' (JS) thread → bundle thread: the hop is no longer outstanding.
+    /// Plugins' (JS) thread → bundle thread: the hop's pending item is consumed there.
     fn come_back(&mut self) {
         let this: *mut Self = self;
         let bv2 = self.get_bundle_v2();
         match bv2.any_loop_mut() {
             // bake: the plugins run on the loop that runs the bundle; already there.
-            bun_event_loop::AnyEventLoop::Js { .. } => bv2.on_defer_hop_back(),
+            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
             bun_event_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
                 // the bundle thread runs this.
                 unsafe {
                     mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
                         this,
-                        |_, bv2| (*bv2).on_defer_hop_back(),
+                        |_, bv2| (*bv2).decrement_scan_counter(),
                         core::mem::offset_of!(Self, returned),
                     );
                 }

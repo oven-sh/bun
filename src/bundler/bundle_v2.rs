@@ -2064,8 +2064,7 @@ pub mod bv2_impl {
                 );
             }
 
-            // Not while the defer hop is out: it holds `self` (see `DeferredBatchTask`).
-            if self.graph.pending_items == 0 && !self.graph.defer_hop_out {
+            if self.graph.pending_items == 0 {
                 let this: *mut Self = self;
                 // reshaped for borrowck — `&self.graph` and
                 // `self` go to the same call. Take a raw ptr so the two `&mut` don't
@@ -2079,15 +2078,6 @@ pub mod bv2_impl {
             }
 
             false
-        }
-
-        /// The defer hop is back from the plugins' thread (bundle thread): the pass may finish again — and
-        /// if everything else finished while it was out, it finishes now (an async pass re-evaluates
-        /// doneness only on events; `Bun.build`'s Mini loop polls it).
-        pub(crate) fn on_defer_hop_back(&mut self) {
-            debug_assert!(self.graph.defer_hop_out);
-            self.graph.defer_hop_out = false;
-            self.on_after_decrement_scan_counter();
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
@@ -2958,6 +2948,7 @@ pub mod bv2_impl {
 
         pub(crate) fn decrement_scan_counter(&mut self) {
             self.thread_lock.assert_locked();
+            debug_assert!(self.graph.pending_items > 0);
             self.graph.pending_items -= 1;
             bun_core::scoped_log!(
                 scan_counter,

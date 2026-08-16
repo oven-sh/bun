@@ -48,7 +48,7 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 #define UNWRAP_BUNDLER_PLUGIN(callFrame) reinterpret_cast<void*>(std::bit_cast<uintptr_t>(callFrame->argument(0).asDouble()))
 
 /// These are native callbacks to be run after their associated JS version is run
-extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, uint8_t);
 extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onVirtualModulePlugin(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
@@ -428,13 +428,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addError, (JSC::JSGlobalObject 
 {
     JSBundlerPlugin* thisObject = uncheckedDowncast<JSBundlerPlugin>(callFrame->thisValue());
     void* context = UNWRAP_BUNDLER_PLUGIN(callFrame);
-    if (auto kind = thisObject->plugin.takeRequest(context)) {
-        thisObject->plugin.addError(
-            context,
-            thisObject,
-            JSValue::encode(callFrame->argument(1)),
-            JSValue::encode(jsNumber(static_cast<uint8_t>(*kind))));
-    }
+    if (auto kind = thisObject->plugin.takeRequest(context))
+        thisObject->plugin.addError(context, thisObject, JSValue::encode(callFrame->argument(1)), static_cast<uint8_t>(*kind));
 
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
@@ -533,95 +528,68 @@ extern "C" bool JSBundlerPlugin__anyMatches(Bun::JSBundlerPlugin* pluginObject, 
 
 extern "C" void JSBundlerPlugin__answerCancelled(uint8_t kind, void* context);
 
-// The bundle thread hands an onLoad request over to the plugins' (this) thread. From here it is answered
-// exactly once, on this thread: by the plugin, or as cancelled if the plugin can no longer run.
-extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
+// The bundle thread hands an onResolve / onLoad request over to the plugins' (this) thread. From here it is
+// answered exactly once, on this thread: by the plugin, or as cancelled if the plugin can no longer run.
+template<typename BuildArguments>
+static void dispatchRequest(Bun::JSBundlerPlugin* plugin, BundlerPlugin::RequestKind kind, void* context, JSFunction* function, BuildArguments&& buildArguments)
 {
     JSC::JSGlobalObject* globalObject = plugin->globalObject();
-
-    JSFunction* function = plugin->onLoadFunction.get(plugin);
     JSC::CallData callData = function ? JSC::getCallData(function) : JSC::CallData {};
     if (plugin->plugin.tombstoned || callData.type == JSC::CallData::Type::None) [[unlikely]] {
-        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(BundlerPlugin::RequestKind::Load), context);
+        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
         return;
     }
-    plugin->plugin.holdRequest(BundlerPlugin::RequestKind::Load, context);
+    plugin->plugin.holdRequest(kind, context);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
-    // Could not even call the plugin (building its arguments threw): the request is answered as cancelled;
-    // the exception (a termination, in practice) stays for the landing frame.
-    auto bail = [&] {
-        if (plugin->plugin.takeRequest(BundlerPlugin::RequestKind::Load, context))
-            JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(BundlerPlugin::RequestKind::Load), context);
+    // The request could not be put to the plugin, or the plugin was terminated over it: it is answered as
+    // cancelled (if the plugin has not answered already); the termination stays for the landing frame.
+    auto cancel = [&] {
+        if (plugin->plugin.takeRequest(kind, context))
+            JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(kind), context);
     };
     JSC::MarkedArgumentBuffer arguments;
-    arguments.append(WRAP_BUNDLER_PLUGIN(context));
-    arguments.append(path->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, bail());
-    arguments.append(namespaceString->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, bail());
-    arguments.append(JSC::jsNumber(defaultLoaderId));
-    arguments.append(JSC::jsBoolean(isServerSide));
+    buildArguments(globalObject, scope, arguments);
+    RETURN_IF_EXCEPTION(scope, cancel());
 
     call(globalObject, function, callData, plugin, arguments);
 
-    if (scope.exception()) [[unlikely]] {
-        auto exception = scope.exception();
-        (void)scope.tryClearException();
-        if (plugin->plugin.takeRequest(BundlerPlugin::RequestKind::Load, context)) {
-            // which = 1 (Load). JSBundlerPlugin__addError casts ctx based on this value.
-            plugin->plugin.addError(
-                context,
-                plugin,
-                JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(1)));
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException()) {
+            cancel();
+            return;
         }
+        // The plugin threw before answering: that is its answer.
+        if (plugin->plugin.takeRequest(kind, context))
+            plugin->plugin.addError(context, plugin, JSC::JSValue::encode(exception), static_cast<uint8_t>(kind));
     }
 }
 
-// As JSBundlerPlugin__matchOnLoad, for an onResolve request.
+extern "C" void JSBundlerPlugin__matchOnLoad(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, void* context, uint8_t defaultLoaderId, bool isServerSide)
+{
+    dispatchRequest(plugin, BundlerPlugin::RequestKind::Load, context, plugin->onLoadFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments) {
+        arguments.append(WRAP_BUNDLER_PLUGIN(context));
+        arguments.append(path->transferToJS(globalObject));
+        RETURN_IF_EXCEPTION(scope, void());
+        arguments.append(namespaceString->transferToJS(globalObject));
+        RETURN_IF_EXCEPTION(scope, void());
+        arguments.append(JSC::jsNumber(defaultLoaderId));
+        arguments.append(JSC::jsBoolean(isServerSide));
+    });
+}
+
 extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, BunString* namespaceString, BunString* path, BunString* importer, void* context, uint8_t kindId)
 {
-    JSC::JSGlobalObject* globalObject = plugin->globalObject();
-
-    JSFunction* function = plugin->onResolveFunction.get(plugin);
-    JSC::CallData callData = function ? JSC::getCallData(function) : JSC::CallData {};
-    if (plugin->plugin.tombstoned || callData.type == JSC::CallData::Type::None) [[unlikely]] {
-        JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(BundlerPlugin::RequestKind::Resolve), context);
-        return;
-    }
-    plugin->plugin.holdRequest(BundlerPlugin::RequestKind::Resolve, context);
-
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(plugin->vm());
-    auto bail = [&] {
-        if (plugin->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, context))
-            JSBundlerPlugin__answerCancelled(static_cast<uint8_t>(BundlerPlugin::RequestKind::Resolve), context);
-    };
-    JSC::MarkedArgumentBuffer arguments;
-    arguments.append(path->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, bail());
-    arguments.append(namespaceString->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, bail());
-    arguments.append(importer->transferToJS(globalObject));
-    RETURN_IF_EXCEPTION(scope, bail());
-    arguments.append(WRAP_BUNDLER_PLUGIN(context));
-    arguments.append(JSC::jsNumber(kindId));
-
-    call(globalObject, function, callData, plugin, arguments);
-
-    if (scope.exception()) [[unlikely]] {
-        auto exception = JSValue(scope.exception());
-        (void)scope.tryClearException();
-        if (plugin->plugin.takeRequest(BundlerPlugin::RequestKind::Resolve, context)) {
-            // which = 0 (Resolve). JSBundlerPlugin__addError casts ctx based on this value.
-            plugin->plugin.addError(
-                context,
-                plugin,
-                JSC::JSValue::encode(exception),
-                JSValue::encode(jsNumber(0)));
-        }
-        return;
-    }
+    dispatchRequest(plugin, BundlerPlugin::RequestKind::Resolve, context, plugin->onResolveFunction.get(plugin), [&](auto* globalObject, auto& scope, auto& arguments) {
+        arguments.append(path->transferToJS(globalObject));
+        RETURN_IF_EXCEPTION(scope, void());
+        arguments.append(namespaceString->transferToJS(globalObject));
+        RETURN_IF_EXCEPTION(scope, void());
+        arguments.append(importer->transferToJS(globalObject));
+        RETURN_IF_EXCEPTION(scope, void());
+        arguments.append(WRAP_BUNDLER_PLUGIN(context));
+        arguments.append(JSC::jsNumber(kindId));
+    });
 }
 
 extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* globalObject, BunPluginTarget target)

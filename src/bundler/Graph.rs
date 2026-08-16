@@ -55,9 +55,6 @@ pub struct Graph<'a> {
     /// When `pending_items` hits zero and there are deferred pending tasks, those
     /// tasks will be run, and the count is "moved" back to `pending_items`
     pub(crate) deferred_pending: u32,
-    /// The pass's `DeferredBatchTask` is on (or on its way back from) the plugins' thread; the pass is
-    /// not done until it is back. Bundle thread only.
-    pub(crate) defer_hop_out: bool,
 
     /// onLoad requests currently handed to the plugins' thread (dispatched, not yet answered), so
     /// `drain_deferred_tasks` can reach the ones that called `.defer()`. Bundle thread only.
@@ -170,7 +167,6 @@ impl<'a> Graph<'a> {
             ast: MultiArrayList::default(),
             pending_items: 0,
             deferred_pending: 0,
-            defer_hop_out: false,
             outstanding_loads: OutstandingList::default(),
             cancelled: false,
             build_graphs: EnumMap::default(),
@@ -232,9 +228,10 @@ impl<'a> Graph<'a> {
         transpiler.thread_lock.assert_locked();
 
         if self.deferred_pending > 0 {
-            self.pending_items += self.deferred_pending;
+            // Their units are back in `pending_items`, plus one for the hop itself: the pass is not done
+            // until it is back (see `DeferredBatchTask`).
+            self.pending_items += self.deferred_pending + 1;
             self.deferred_pending = 0;
-            // Their units are back in `pending_items`.
             let mut load = self.outstanding_loads.head;
             while !load.is_null() {
                 // SAFETY: linked ⇒ arena-live; bundle thread.
@@ -244,7 +241,6 @@ impl<'a> Graph<'a> {
                 }
             }
 
-            self.defer_hop_out = true;
             transpiler.drain_defer_task.schedule();
 
             return true;

@@ -569,22 +569,20 @@ impl ShellCpTask {
             .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
     }
 
-    /// `path` is `operand` resolved against the shell's cwd; the error names
-    /// `operand` as the user wrote it, which is what the message prints.
-    fn is_dir(path: &bun_core::ZStr, operand: &[u8]) -> bun_sys::Maybe<bool> {
+    fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
         #[cfg(windows)]
         {
             match bun_sys::get_file_attributes(path) {
                 Some(attrs) => Ok(attrs.is_directory),
                 None => Err(
                     bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::copyfile)
-                        .with_path(operand),
+                        .with_path(path.as_bytes()),
                 ),
             }
         }
         #[cfg(not(windows))]
         {
-            let st = bun_sys::lstat(path).map_err(|e| e.with_path(operand))?;
+            let st = bun_sys::lstat(path)?;
             Ok(bun_sys::S::ISDIR(st.st_mode as _))
         }
     }
@@ -627,9 +625,12 @@ impl ShellCpTask {
         //   folder -> folder
         // We need to check dest to see what it is; if it doesn't exist we
         // need to create it.
-        let src_is_dir = match Self::is_dir(src, &self.src) {
+        //
+        // Errors about an operand name it as the user wrote it (like the other
+        // builtins), not the resolved path the check ran on.
+        let src_is_dir = match Self::is_dir(src) {
             Ok(x) => x,
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Some(ShellErr::new_sys(&e.with_path(&self.src))),
         };
 
         // Any source directory without -R is an error.
@@ -652,13 +653,13 @@ impl ShellCpTask {
             ));
         }
 
-        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt, &self.tgt) {
+        let (tgt_is_dir, tgt_exists) = match Self::is_dir(tgt) {
             Ok(is_dir) => (is_dir, true),
             Err(e) if e.get_errno() == bun_sys::E::ENOENT => {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Some(ShellErr::new_sys(&e)),
+            Err(e) => return Some(ShellErr::new_sys(&e.with_path(&self.tgt))),
         };
 
         let mut _copying_many = false;

@@ -37,7 +37,6 @@ test/cli/install/bun-pack.test.ts
 test/cli/install/bun-pm-pkg.test.ts
 test/cli/install/bun-pm-version.test.ts
 test/cli/install/bun-pm.test.ts
-test/cli/install/bun-repl.test.ts
 test/cli/run/filter-workspace.test.ts
 test/js/bun/repl/repl.test.ts
 test/cli/install/bun-update.test.ts
@@ -352,24 +351,16 @@ test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
 
-# There are some leaks related to the dev server closing on process exit, the fix is to
-# tick the event loop on globalExit but this breaks like 50 tests. Since the
-# leak is when process exits it should be fine for now but it should be fixed at
-# some point.
-test/bake/dev/react-response.test.ts
-test/bake/dev/react-cookies.test.ts
-test/bake/dev/server-sourcemap.test.ts
-
-# Watcher Thread
-test/bake/dev-and-prod.test.ts
+# Dev server processes that still leak at exit; remove each entry once the fix
+# for its leak lands.
+# bundle.test.ts, "removing 'use client' from a component with a pending
+#   resolution failure": the ServerComponentParseTask boxed in
+#   BundleV2::enqueue_server_component_generated_file (336 bytes), fix in #38004.
+# css.test.ts, "changing html file with link tag works" and "css import before
+#   create": the path copied by Watcher::add_directory for a DirectoryWatchStore
+#   entry is lost when the entry is evicted (30 bytes), fix in #39197.
 test/bake/dev/bundle.test.ts
 test/bake/dev/css.test.ts
-test/bake/dev/esm.test.ts
-test/bake/dev/hot.test.ts
-test/bake/dev/react-spa.test.ts
-test/bake/dev/sourcemap.test.ts
-test/bake/dev/ssg-pages-router.test.ts
-test/bake/dev/deinitialization.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts

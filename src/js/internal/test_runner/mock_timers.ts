@@ -254,8 +254,7 @@ class MockTimers {
     Object.defineProperty(nodeTimersPromises, "setInterval", this.#realPromisifiedSetInterval);
   }
 
-  // Deviates from node, which restores a copy bound to this MockTimers: the real wait() is an
-  // inherited Scheduler.prototype method that checks its receiver, so that copy throws ERR_INVALID_THIS.
+  // Unlike node, not restored as a copy bound to this: Scheduler.prototype.wait checks its receiver.
   #restoreOriginalSchedulerWait() {
     const { scheduler } = nodeTimersPromises;
     if (this.#realTimersPromisifiedSchedulerWait === undefined) {

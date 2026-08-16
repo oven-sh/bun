@@ -934,13 +934,24 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             minify_syntax: flags.minify,
             dce: false,
         };
+        // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
+        // so it gets the gentler display print. One parse+print per side either way.
+        let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
+            && !flags.unminify
+            && !old.is_some_and(normalize::looks_minified)
+            && !new.is_some_and(normalize::looks_minified);
+        let popts = if readable_js {
+            normalize::Options::KEY
+        } else {
+            nopts
+        };
         // Canonical re-print: same parser and printer on both sides, so only meaning survives.
         let (norm_old, norm_new) = if flags.raw {
             (None, None)
         } else {
             (
-                old.and_then(|b| normalize::normalize(path, b, nopts)),
-                new.and_then(|b| normalize::normalize(path, b, nopts)),
+                old.and_then(|b| normalize::normalize(path, b, popts)),
+                new.and_then(|b| normalize::normalize(path, b, popts)),
             )
         };
         if !flags.raw && normalize::kind_for(path).is_some() {
@@ -1018,13 +1029,10 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
                     }
                 }
             }
-            (Some(o), Some(n), Some(_), Some(_)) if style.pretty && js_family => {
+            (Some(o), Some(n), Some(ko), Some(kn)) if style.pretty && js_family => {
                 // Readable code: decide on the aggressive canonical form, show the author's lines.
-                match (
-                    normalize::normalize(path, o, normalize::Options::KEY),
-                    normalize::normalize(path, n, normalize::Options::KEY),
-                ) {
-                    (Some(ko), Some(kn)) if !ko.map.is_empty() && !kn.map.is_empty() => {
+                match (ko, kn) {
+                    (ko, kn) if !ko.map.is_empty() && !kn.map.is_empty() => {
                         let (old_v, new_v) = (view_bytes(o), view_bytes(n));
                         let projection = semantic::project(&old_v, &new_v, &ko, &kn);
                         let shown = projection

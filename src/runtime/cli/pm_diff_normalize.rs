@@ -126,7 +126,7 @@ pub(crate) fn normalize_minified_pair(
     Some((o, n))
 }
 
-fn looks_minified(bytes: &[u8]) -> bool {
+pub(crate) fn looks_minified(bytes: &[u8]) -> bool {
     bytes.len() > 256 && bun_core::strings::count_char(bytes, b'\n') * 200 < bytes.len()
 }
 

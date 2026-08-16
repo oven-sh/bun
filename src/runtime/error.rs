@@ -218,6 +218,10 @@ pub enum Error {
     MissingPackageJSON,
     #[error("InstallFailed")]
     InstallFailed,
+    /// `bun build --app` failed and has already printed why; `bake::production::build_command`
+    /// exits 1 through the build VM.
+    #[error("BakeBuildFailed")]
+    BakeBuildFailed,
     #[error("InvalidPackageJSON")]
     InvalidPackageJSON,
     #[error("HTTPForbidden")]
@@ -679,6 +683,7 @@ impl Error {
             Self::FailedToBindPipe => "FailedToBindPipe",
             Self::MissingPackageJSON => "MissingPackageJSON",
             Self::InstallFailed => "InstallFailed",
+            Self::BakeBuildFailed => "BakeBuildFailed",
             Self::InvalidPackageJSON => "InvalidPackageJSON",
             Self::HTTPForbidden => "HTTPForbidden",
             Self::ExampleNotFound => "ExampleNotFound",

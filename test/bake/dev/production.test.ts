@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps } from "../bake-harness";
+import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -394,41 +394,65 @@ export default function Docs() {
     }
   });
 
+  // The failure is reported with the directory's path and, like a build whose page throws, the
+  // process exits through the build VM: the config's 'exit' handler runs and, with
+  // BUN_DESTRUCT_VM_ON_EXIT set, the VM is torn down before the exit code is returned.
   describe.concurrent("output directory that cannot be opened", () => {
     const app = {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "src/index.tsx": `
+        process.on("exit", code => console.log("exit event: " + code));
+        export default { app: { framework: "react" } };
+      `,
       "pages/index.tsx": `export default function IndexPage() { return <p>index</p>; }`,
     };
 
     async function build(dir: string) {
-      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
         .cwd(dir)
-        .env(bunEnv)
+        .env({ ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" })
+        .quiet()
         .throws(false);
-      return { exitCode, stderr: stderr.toString() };
+      return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
     }
 
-    test("a file at dist is reported with its path", async () => {
-      const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-file", {
-        ...app,
-        "dist": "a file in the way of the output directory",
-      });
+    // Each case bundles a react app, which on a debug build takes most of the default timeout;
+    // this is the budget bake-harness gives its production builds.
+    const timeout = 30_000 * WAIT_MULTIPLIER;
 
-      const { exitCode, stderr } = await build(dir);
-      expect(stderr).toContain(`ENOTDIR: Not a directory: could not open output directory "${path.join(dir, "dist")}"`);
-      expect(stderr).not.toContain("An internal error occurred");
-      expect(exitCode).toBe(1);
-    });
+    test(
+      "a file at dist",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-file", {
+          ...app,
+          "dist": "a file in the way of the output directory",
+        });
 
-    test.skipIf(isWindows)("a dangling symlink at dist is reported with its path", async () => {
-      const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-dangling-symlink", app);
-      symlinkSync("does-not-exist", path.join(dir, "dist"));
+        const { exitCode, stdout, stderr } = await build(dir);
+        expect(stderr).toContain(
+          `ENOTDIR: Not a directory: could not open output directory "${path.join(dir, "dist")}"`,
+        );
+        expect(stderr).not.toContain("An internal error occurred");
+        expect(stdout).toBe("exit event: 1\n");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
 
-      const { exitCode, stderr } = await build(dir);
-      expect(stderr).toContain(`could not open output directory "${path.join(dir, "dist")}"`);
-      expect(stderr).not.toContain("missing a better error");
-      expect(exitCode).toBe(1);
-    });
+    test.skipIf(isWindows)(
+      "a dangling symlink at dist",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-dangling-symlink", app);
+        symlinkSync("does-not-exist", path.join(dir, "dist"));
+
+        const { exitCode, stdout, stderr } = await build(dir);
+        expect(stderr).toContain(
+          `ENOENT: No such file or directory: could not open output directory "${path.join(dir, "dist")}"`,
+        );
+        expect(stdout).toBe("exit event: 1\n");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
   });
 
   test("client-side component with default import should work", async () => {

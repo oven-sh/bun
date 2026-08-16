@@ -116,7 +116,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
-    // re-borrows on the JSError path).
+    // re-borrows below).
     let _vm_guard = scopeguard::guard(vm_ptr, |p| {
         // SAFETY: p is the unique live VM on this thread; its loop is alive, so
         // queued work is released here rather than by a thread teardown.
@@ -211,28 +211,25 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    match build_with_vm(ctx, &cwd, &mut pt) {
-        Ok(()) => {}
+    let result = build_with_vm(ctx, &cwd, &mut pt);
+    // SAFETY: `build_with_vm` has returned, so its reborrows through `pt.vm` are
+    // dead; the VM is live until `global_exit` (or `_vm_guard`) destroys it.
+    let vm = unsafe { &mut *vm_ptr };
+    match result {
+        Ok(()) => return Ok(()),
         Err(crate::Error::JSError) => {
-            // SAFETY: vm.global is live for VM lifetime.
-            let global = unsafe { &*(*vm_ptr).global };
-            let err_value = global.take_exception(jsc::JsError::Thrown);
-            // SAFETY: see above.
-            unsafe {
-                (*vm_ptr)
-                    .print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value))
-            };
-            // SAFETY: see above.
-            let vm = unsafe { &mut *vm_ptr };
-            if vm.exit_handler.exit_code == 0 {
-                vm.exit_handler.exit_code = 1;
-            }
-            vm.on_exit();
-            vm.global_exit();
+            let err_value = vm.global().take_exception(jsc::JsError::Thrown);
+            vm.print_error_like_object_to_console(err_value.to_error().unwrap_or(err_value));
         }
+        // Already reported by `build_with_vm`.
+        Err(crate::Error::BakeBuildFailed) => {}
         Err(e) => return Err(e),
     }
-    Ok(())
+    if vm.exit_handler.exit_code == 0 {
+        vm.exit_handler.exit_code = 1;
+    }
+    vm.on_exit();
+    vm.global_exit()
 }
 
 /// Ported inline from `bun.bun_js.failWithBuildError` to avoid the
@@ -654,7 +651,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 "could not open output directory {}",
                 (bun_core::fmt::quote(&root_dir_path),),
             );
-            Global::crash();
+            return Err(crate::Error::BakeBuildFailed);
         }
     };
 

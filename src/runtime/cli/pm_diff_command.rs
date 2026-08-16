@@ -1074,12 +1074,33 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             && change.semantic == Semantic::Text
             && (old.is_none() || new.is_none())
         {
-            // Whole-file add/remove: render every line as +/-.
+            // Whole-file add/remove: render every line as +/- (a minified bundle in its readable re-print).
+            let readable = |raw: &[u8], norm: &Option<normalize::Normalized>| -> Vec<u8> {
+                match norm {
+                    Some(nz) if style.pretty && nz.was_minified => nz.text.clone(),
+                    _ => raw.to_vec(),
+                }
+            };
+            let body_owned;
             let (op, body) = match (new, old) {
-                (Some(n), _) => (Operation::Insert, n),
-                (None, Some(o)) => (Operation::Delete, o),
+                (Some(n), _) => {
+                    body_owned = readable(n, &norm_new);
+                    (Operation::Insert, body_owned.as_slice())
+                }
+                (None, Some(o)) => {
+                    body_owned = readable(o, &norm_old);
+                    (Operation::Delete, body_owned.as_slice())
+                }
                 (None, None) => unreachable!(),
             };
+            if body.len() != new.or(old).map_or(0, <[u8]>::len) {
+                change.semantic = Semantic::Normalized;
+                if op == Operation::Insert {
+                    change.added = count_lines(body)
+                } else {
+                    change.removed = count_lines(body)
+                }
+            }
             let n = count_lines(body);
             let range = if new.is_some() {
                 (0, 0, 1, n)
@@ -2019,8 +2040,10 @@ impl Style {
                 c.old.map_or(0, <[u8]>::len),
                 c.new.map_or(0, <[u8]>::len)
             ),
-            (None, Some(_), _) => format!("\x1b[32mnew\x1b[0m \x1b[32m+{}\x1b[0m", c.added),
-            (Some(_), None, _) => format!("\x1b[31mdeleted\x1b[0m \x1b[31m-{}\x1b[0m", c.removed),
+            (None, Some(_), _) => format!("{note}\x1b[32mnew\x1b[0m \x1b[32m+{}\x1b[0m", c.added),
+            (Some(_), None, _) => {
+                format!("{note}\x1b[31mdeleted\x1b[0m \x1b[31m-{}\x1b[0m", c.removed)
+            }
             _ => {
                 let mut s = String::from(note);
                 if c.added > 0 {

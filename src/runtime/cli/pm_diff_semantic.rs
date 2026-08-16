@@ -87,7 +87,7 @@ impl<'a> Side<'a> {
                 && !t.get(1).is_some_and(|b| {
                     b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$' || *b == b'['
                 });
-            if t.starts_with(b"/*") || t.starts_with(b"//") || continues_block || t == b"*/" {
+            if t.starts_with(b"/*") || t.starts_with(b"//") || continues_block {
                 if let Some(c) = key_changed.get_mut(g) {
                     *c = false;
                 }

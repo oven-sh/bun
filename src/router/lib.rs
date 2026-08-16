@@ -1188,6 +1188,13 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
+                        // A dynamic segment needs a non-empty URL segment: `docs/[page]` does
+                        // not match "/docs", and `a/[x]/[y]` does not match "/a//b".
+                        if path_.is_empty() || path_[0] == b'/' {
+                            params.clear(); // shrinkRetainingCapacity(0)
+                            return false;
+                        }
+
                         if let Some(i) = strings::index_of_char_usize(path_, b'/') {
                             params.push(Param {
                                 name: dynamic.str(name),
@@ -1696,6 +1703,14 @@ mod tests {
             (b"404/[[...slug]]", b"404", &[]),
             (b"404a/[[...slug]]", b"404a", &[]),
             (
+                b"docs/[page]/[[...rest]]",
+                b"docs/intro",
+                &[Entry {
+                    name: b"page",
+                    value: b"intro",
+                }],
+            ),
+            (
                 b"[teamSlug]/lemon/[project]/[[...slug]]",
                 b"team/lemon/lemon/slugggg",
                 &[
@@ -1775,6 +1790,36 @@ mod tests {
 
         assert!(run(regular_list) == 0);
         assert!(run(optional_catch_all) == 0);
+    }
+
+    #[test]
+    fn pattern_rejects_empty_dynamic_segment() {
+        let no_match: &[(&[u8], &[u8])] = &[
+            // the URL ends where the dynamic segment starts
+            (b"docs/[page]", b"docs"),
+            (b"docs/[page]/[[...rest]]", b"docs"),
+            (b"[org]/settings/[id]", b"acme/settings"),
+            // the URL has an empty segment where the dynamic segment is
+            (b"blog/[slug]/[id]", b"blog//42"),
+            (b"blog/[slug]/[[...rest]]", b"blog//42"),
+        ];
+        for (route, url) in no_match {
+            let mut params = route_param::List::default();
+            let matched = Pattern::match_::<true>(url, route, route, &mut params);
+            assert!(
+                !matched,
+                "route {:?} should not match {:?}",
+                bstr::BStr::new(route),
+                bstr::BStr::new(url),
+            );
+            assert!(
+                params.is_empty(),
+                "route {:?} left {} param(s) behind after rejecting {:?}",
+                bstr::BStr::new(route),
+                params.len(),
+                bstr::BStr::new(url),
+            );
+        }
     }
 
     // The route-loader integration tests ("Github

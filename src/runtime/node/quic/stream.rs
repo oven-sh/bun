@@ -80,11 +80,18 @@ const PULL_STATUS_DATA: f64 = 1.0;
 const PULL_STATUS_BLOCKED: f64 = 2.0;
 const PULL_STATUS_ERROR: f64 = -1.0;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum PendingEnd {
+    #[default]
+    None,
+    Fin,
+    Trailers,
+}
+
 #[derive(Default)]
 pub(super) struct Outbound {
     pub data: VecDeque<u8>,
-    pub fin_pending: bool,
-    pub trailers_pending: bool,
+    pub end: PendingEnd,
     pub started: bool,
 }
 
@@ -343,7 +350,7 @@ impl QuicStream {
     }
     pub(super) fn has_undelivered_outbound(&self) -> bool {
         let out = self.outbound.get();
-        if !out.data.is_empty() || out.fin_pending {
+        if !out.data.is_empty() || out.end == PendingEnd::Fin {
             return true;
         }
         self.ls().is_some_and(|s| s.has_unacked_data())
@@ -390,8 +397,7 @@ impl QuicStream {
         self.mark_reset(code);
         self.outbound.with_mut(|o| {
             o.data.clear();
-            o.fin_pending = false;
-            o.trailers_pending = false;
+            o.end = PendingEnd::None;
         });
         self.with_state(|st| st.write_ended = 1);
         if let Some(s) = self.ls() {
@@ -491,21 +497,20 @@ impl QuicStream {
                 break;
             }
         }
-        let (empty, fin) = {
+        let (empty, end) = {
             let out = self.outbound.get();
-            (out.data.is_empty(), out.fin_pending)
+            (out.data.is_empty(), out.end)
         };
         if empty {
-            if fin {
+            if end == PendingEnd::Fin {
                 s.shutdown(1);
                 self.wrote_to_lsquic.set(true);
-                self.outbound.with_mut(|o| o.fin_pending = false);
+                self.outbound.with_mut(|o| o.end = PendingEnd::None);
                 self.with_state(|s| s.fin_sent = 1);
                 if self.stream_id() & STREAM_ID_UNI_BIT != 0 {
                     s.shutdown(0);
                 }
-            } else if self.outbound.get().trailers_pending && !self.trailers_requested.replace(true)
-            {
+            } else if end == PendingEnd::Trailers && !self.trailers_requested.replace(true) {
                 if let Some(session) = self.session_ref() {
                     session.push_event(SessionEvent::StreamWantsTrailers {
                         stream: core::ptr::from_ref(self).cast_mut(),
@@ -671,7 +676,7 @@ impl QuicStream {
         self.outbound.with_mut(|o| {
             o.started = true;
             o.data.extend(bytes.iter().copied());
-            o.fin_pending = true;
+            o.end = PendingEnd::Fin;
         });
         self.with_state(|s| s.has_outbound = 1);
         self.kick_write();
@@ -732,11 +737,11 @@ impl QuicStream {
         let wants_trailers = self.with_state(|s| s.wants_trailers != 0);
         self.outbound.with_mut(|o| {
             o.started = true;
-            if wants_trailers {
-                o.trailers_pending = true;
+            o.end = if wants_trailers {
+                PendingEnd::Trailers
             } else {
-                o.fin_pending = true;
-            }
+                PendingEnd::Fin
+            };
         });
         if let Some(session) = self.session_ref() {
             session.note_stream_write();
@@ -765,14 +770,15 @@ impl QuicStream {
                     .session_ref()
                     .is_some_and(|session| session.has_deferred_abort(s.raw()));
                 if !deferred {
-                    let send_ended = write_done || {
-                        let out = self.outbound.get();
-                        out.fin_pending || out.trailers_pending
-                    };
+                    let send_ended = write_done || self.outbound.get().end != PendingEnd::None;
                     if code != 0 || !send_ended {
                         s.reset(code);
                     } else {
-                        self.outbound.with_mut(|o| o.trailers_pending = false);
+                        self.outbound.with_mut(|o| {
+                            if o.end == PendingEnd::Trailers {
+                                o.end = PendingEnd::None;
+                            }
+                        });
                         self.drain_outbound();
                         if self.outbound.get().data.is_empty() {
                             s.close();
@@ -806,8 +812,7 @@ impl QuicStream {
         });
         self.outbound.with_mut(|o| {
             o.data.clear();
-            o.fin_pending = false;
-            o.trailers_pending = false;
+            o.end = PendingEnd::None;
         });
         if let Some(s) = self.ls() {
             s.reset(code);
@@ -865,8 +870,7 @@ impl QuicStream {
             });
             self.outbound.with_mut(|o| {
                 o.data.clear();
-                o.fin_pending = false;
-                o.trailers_pending = false;
+                o.end = PendingEnd::None;
             });
         }
         if let Some(s) = self.ls() {

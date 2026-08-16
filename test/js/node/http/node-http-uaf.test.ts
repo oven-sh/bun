@@ -120,3 +120,22 @@ test("'connection' and 'clientError' callbacks survive GC", async () => {
     server.close();
   }
 });
+
+test("'request' and 'clientError' still dispatch on a connection that outlives server.close() and a GC", async () => {
+  // The fixture also runs under `node --expose-gc` and prints the same result.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-http-server-close-gc-fixture.mjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    results: Array.from({ length: 3 }, () => ({
+      statuses: ["HTTP/1.1 200 OK", "HTTP/1.1 200 OK"],
+      clientErrors: ["HPE_INVALID_HEADER_TOKEN"],
+    })),
+    stderr: "",
+    exitCode: 0,
+  });
+});

@@ -1567,6 +1567,7 @@ impl<'a> Transpiler<'a> {
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
+                    lower_toml_datetimes: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -2707,48 +2708,16 @@ impl<'a> Transpiler<'a> {
 
         // Only the main-thread transpiler reaches here; worker option clones
         // carry `output_dir_handle: None` and would route output to stdout.
-        if self.options.output_dir_handle.is_none() {
-            let outstream = TransformOutstream::Stdout;
-            match self.options.import_path_format {
-                options::ImportPathFormat::Relative => {
-                    self.process_resolve_queue(options::ImportPathFormat::Relative, outstream)?;
-                }
-                options::ImportPathFormat::AbsoluteUrl => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsoluteUrl, outstream)?;
-                }
-                options::ImportPathFormat::AbsolutePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsolutePath, outstream)?;
-                }
-                options::ImportPathFormat::PackagePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::PackagePath, outstream)?;
-                }
-            }
-        } else {
-            let Some(output_dir) = self
-                .options
-                .output_dir_handle
-                .as_ref()
-                .map(bun_sys::Dir::fd)
-            else {
-                bun_core::Output::print_error("Invalid or missing output directory.");
-                bun_core::Global::crash();
-            };
-            let outstream = TransformOutstream::Dir(output_dir);
-            match self.options.import_path_format {
-                options::ImportPathFormat::Relative => {
-                    self.process_resolve_queue(options::ImportPathFormat::Relative, outstream)?;
-                }
-                options::ImportPathFormat::AbsoluteUrl => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsoluteUrl, outstream)?;
-                }
-                options::ImportPathFormat::AbsolutePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::AbsolutePath, outstream)?;
-                }
-                options::ImportPathFormat::PackagePath => {
-                    self.process_resolve_queue(options::ImportPathFormat::PackagePath, outstream)?;
-                }
-            }
-        }
+        let outstream = match self
+            .options
+            .output_dir_handle
+            .as_ref()
+            .map(bun_sys::Dir::fd)
+        {
+            None => TransformOutstream::Stdout,
+            Some(output_dir) => TransformOutstream::Dir(output_dir),
+        };
+        self.process_resolve_queue(self.options.import_path_format, outstream)?;
 
         if bun_core::FeatureFlags::TRACING
             && self.options.log().level.at_least(bun_ast::Level::Info)

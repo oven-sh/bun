@@ -86,6 +86,41 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     ).toEqual(Array.from({ length: 32 }, (_, i) => i));
   });
 
+  it("a message the serializer rejects throws from send() and leaves the channel usable", async () => {
+    // JSON.stringify rejects cycles; structured clone rejects functions. Both
+    // surface from the native serializer as a pending exception that send()
+    // must rethrow without having written anything to the channel.
+    const rejected =
+      mode === "json" ? `const rejected = {}; rejected.self = rejected;` : `const rejected = { callback() {} };`;
+    const childSource = [
+      rejected,
+      `let thrown = null;`,
+      `try {`,
+      `  process.send(rejected);`,
+      `} catch (error) {`,
+      `  thrown = { name: error.name, message: error.message };`,
+      `}`,
+      `process.send({ thrown });`,
+      `process.on("message", () => {});`,
+    ].join("\n");
+    const { promise, resolve, reject } = Promise.withResolvers<any>();
+    await using child = spawn([bunExe(), "-e", childSource], {
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+      serialization: mode,
+      ipc: message => resolve(message),
+      onExit(_subprocess, exitCode, signalCode) {
+        reject(new Error(`child exited (${exitCode}, ${signalCode}) before a message arrived`));
+      },
+    });
+    expect(await promise).toEqual({
+      thrown:
+        mode === "json"
+          ? { name: "TypeError", message: "JSON.stringify cannot serialize cyclic structures." }
+          : { name: "DataCloneError", message: "The object can not be cloned." },
+    });
+  });
+
   // On the waiter-thread exit path (no usable pidfd, forced here with the feature flag) the
   // child's exit reaches the parent as a task, which runs before the event loop polls the IPC
   // socket. The parent used to close the channel on exit without reading it, dropping whatever

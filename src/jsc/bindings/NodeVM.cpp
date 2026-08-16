@@ -1660,9 +1660,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSValue optionsArg = callFrame->argument(1);
 
-    // Validate options argument
-    if (!optionsArg.isUndefined() && !optionsArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
+    if (!optionsArg.isUndefined()) {
+        V::validateObject(scope, globalObject, optionsArg, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue importer;
@@ -1941,12 +1941,9 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
     bool any = false;
 
     if (!optionsArg.isUndefined()) {
-        if (optionsArg.isObject()) {
-            options = asObject(optionsArg);
-        } else {
-            auto _ = ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
-            return false;
-        }
+        V::validateObject(scope, globalObject, optionsArg, "options"_s);
+        RETURN_IF_EXCEPTION(scope, false);
+        options = asObject(optionsArg);
 
         auto filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
         RETURN_IF_EXCEPTION(scope, false);

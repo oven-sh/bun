@@ -1554,6 +1554,25 @@ it("mkdtemp() non-exist dir #2568", done => {
   });
 });
 
+describe("mkdtemp empty prefix", () => {
+  // Node.js rejects an empty prefix with EINVAL; previously Bun would create
+  // a bare six-random-character directory in the process cwd.
+  it("mkdtempSync('') throws EINVAL", () => {
+    expect(() => mkdtempSync("")).toThrow(expect.objectContaining({ code: "EINVAL", syscall: "mkdtemp" }));
+  });
+
+  it("mkdtemp('') callback receives EINVAL", async () => {
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+    mkdtemp("", (err, folder) => resolve(err));
+    const err = await promise;
+    expect(err).toMatchObject({ code: "EINVAL", syscall: "mkdtemp" });
+  });
+
+  it("fs.promises.mkdtemp('') rejects with EINVAL", async () => {
+    await expect(promises.mkdtemp("")).rejects.toMatchObject({ code: "EINVAL", syscall: "mkdtemp" });
+  });
+});
+
 describe("mkdtemp encoding option", () => {
   const base = tmpdirSync();
   const prefix = join(base, "mkenc-dé-");
@@ -2718,6 +2737,29 @@ describe("writeFileSync", () => {
     for (let i = 0; i < buffer.length; i++) {
       expect(buffer[i]).toBe(out[i]);
     }
+  });
+});
+
+describe("writeFile/appendFile data argument", () => {
+  it("rejects a String wrapper object on the sync and callback paths, like node", () => {
+    // Node only accepts primitive strings here (`new String("x")` is an
+    // object), unlike most other string-or-buffer arguments, which unwrap it.
+    // The callback forms validate before scheduling anything, so they throw
+    // synchronously too. (fs.promises.* is different: there node accepts any
+    // iterable, which a String object is.)
+    using dir = tempDir("fs-data-string-object", {});
+    const file = (name: string) => join(String(dir), name);
+    const data = new String("data") as any;
+
+    expect(() => writeFileSync(file("write-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFileSync(file("append-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.writeFile(file("write-cb.txt"), data, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFile(file("append-cb.txt"), data, () => {})).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+
+    expect(readdirSync(String(dir))).toEqual([]);
   });
 });
 

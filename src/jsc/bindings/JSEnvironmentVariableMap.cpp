@@ -352,9 +352,9 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
 }
 
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
-extern "C" int Bun__setTLSRejectUnauthorizedValue(int value);
+extern "C" void Bun__setTLSRejectUnauthorizedValue(int value);
 extern "C" int Bun__getVerboseFetchValue();
-extern "C" int Bun__setVerboseFetchValue(int value);
+extern "C" void Bun__setVerboseFetchValue(int value);
 
 ALWAYS_INLINE static Identifier NODE_TLS_REJECT_UNAUTHORIZED_PRIVATE_PROPERTY(VM& vm)
 {

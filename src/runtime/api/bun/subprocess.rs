@@ -208,12 +208,8 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
-    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any)
-    /// for the caller to `deref()`. Clears `started` so `StaticPipeWriter::
-    /// on_write`'s own release site becomes a no-op if a queued write-complete
-    /// callback still fires after the caller closes the pipe (Windows: a
-    /// `uv_write` whose I/O already completed is delivered with its real
-    /// status after `uv_close`, not `ECANCELED`).
+    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
+    /// the caller to `deref()` after closing the writer; see `StaticPipeWriter`.
     fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
         match self.stdin.get() {
             Writable::Buffer(buffer) => {
@@ -443,6 +439,11 @@ impl Subprocess<'_> {
 
     pub(crate) fn update_has_pending_activity(&self) {
         if self.flags.get().contains(Flags::IS_SYNC) {
+            return;
+        }
+        // The wrapper is gone (finalize() closing stdio that a stopped worker
+        // left pending): there is nothing to keep alive or release.
+        if self.this_value.get().is_finalized() {
             return;
         }
 
@@ -1352,7 +1353,7 @@ impl Subprocess<'_> {
 
         if let Some(ipc_data) = this.ipc_data.take() {
             // In normal operation the socket is already `.closed` by the time we
-            // get here (that is what allowed `computeHasPendingActivity` to drop
+            // get here (that is what allowed `compute_has_pending_activity` to drop
             // to false and let GC collect us). Detach and release our ref; any
             // still-queued close task holds its own ref and frees the SendQueue
             // when it runs.

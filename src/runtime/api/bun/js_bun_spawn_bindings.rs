@@ -289,7 +289,7 @@ pub(crate) fn spawn(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<false>(global_this, args, secondary_args_value)
+    spawn_maybe_sync::<false>(global_this, args, secondary_args_value, &mut None)
 }
 
 /// Bun.spawnSync() calls this.
@@ -298,13 +298,39 @@ pub(crate) fn spawn_sync(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
+    let mut bun_test_deadline: Option<Timespec> = None;
+    let result = spawn_maybe_sync::<true>(
+        global_this,
+        args,
+        secondary_args_value,
+        &mut bun_test_deadline,
+    );
+    // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
+    if let Some(deadline) = bun_test_deadline
+        && result.is_ok()
+        && !global_this.has_exception()
+        && let Some(runner) = crate::test_runner::jest::Jest::runner()
+        && let Some(active_file) = runner.bun_test_root.active_file.clone()
+    {
+        let vm = global_this.bun_vm().as_mut();
+        runner.remove_active_timeout(vm);
+        crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
+            &active_file,
+            &deadline,
+            vm,
+        );
+        if global_this.has_exception() {
+            return Ok(JSValue::ZERO);
+        }
+    }
+    result
 }
 
 fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
+    bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
     if IS_SYNC {
         // We skip this on Windows due to test failures.
@@ -1194,7 +1220,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                // string we built above (lives in `arg0_backing`/`arg_backing`).
+                // string we built above (lives in `cstr_storage`).
                 ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
             } else {
                 ZStr::EMPTY
@@ -1241,7 +1267,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `arg0_backing`/`arg_backing`).
+                            // string we built above (lives in `cstr_storage`).
                             ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
                         } else {
                             ZStr::EMPTY
@@ -1657,8 +1683,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
-            let ts =
-                Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
+            let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
             // Note: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
@@ -1875,7 +1900,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
         let mut absolute_timespec = Timespec::EPOCH;
-        let mut now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let mut now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut user_timespec: Timespec = if let Some(timeout_ms) = timeout {
             now.add_ms(i64::from(timeout_ms))
         } else {
@@ -1889,8 +1914,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(abort_signal_timeout) = signal.get_timeout() {
                 // Note: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
+                //
+                // A fake-heap deadline is on the mocked clock, which cannot
+                // advance while this call blocks; only a real-heap one is
+                // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
+                    && abort_signal_timeout.event_loop_timer.in_heap
+                        == crate::timer::InHeap::Regular
                 {
                     let next = &abort_signal_timeout.event_loop_timer.next;
                     let next_ts = Timespec {
@@ -1959,7 +1990,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }) {
                 TickState::Completed => {}
                 TickState::Timeout => {
-                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
+                    now = Timespec::now(TimespecMockMode::ForceRealTime);
                     let did_user_timeout = has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)
                             || user_timespec.order(&now) == core::cmp::Ordering::Less);
@@ -1972,39 +2003,24 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // Support bun:test timeouts AND spawnSync() timeout.
                     // There is a scenario where inside of spawnSync() a totally
                     // different test fails, and that SHOULD be okay.
-                    if has_bun_test_timeout {
-                        if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
-                            bun_test_fired = true;
-                            let mut active_file_strong = crate::test_runner::jest::Jest::runner()
-                                .unwrap()
-                                .bun_test_root
-                                .active_file
-                                // TODO: add a .cloneNonOptional()?
-                                .clone();
-
-                            let taken_active_file = active_file_strong.take().unwrap();
-
-                            // SAFETY: jsc_vm_ptr is the live thread VM.
-                            crate::test_runner::jest::Jest::runner()
-                                .unwrap()
-                                .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
-
-                            // This might internally call `kill(2)` on this
-                            // spawnSync process. Even if we do that, we still
-                            // need to reap the process. So we may go through
-                            // the event loop again, but it should wake up
-                            // ~instantly so we can drain the events.
-                            crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-                                &taken_active_file,
-                                &absolute_timespec,
-                                // SAFETY: jsc_vm_ptr is the live thread VM.
-                                unsafe { &*jsc_vm_ptr },
-                            );
-                            // The direct child may already be reaped (and
-                            // gone from the auto-killer), so kill it here too.
-                            let _ = subprocess.try_kill(subprocess.kill_signal);
-                            // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
+                    // Kill the dangling processes now so this loop can drain, but leave the runner's timeout callback to `spawn_sync`: it re-enters the test runner and must not run while this isolated loop is still active.
+                    if has_bun_test_timeout
+                        && bun_test_timeout.order(&now) == core::cmp::Ordering::Less
+                    {
+                        bun_test_fired = true;
+                        *bun_test_deadline = Some(absolute_timespec);
+                        if let Some(active_file) = crate::test_runner::jest::Jest::runner()
+                            .unwrap()
+                            .bun_test_root
+                            .active_file
+                            .clone()
+                        {
+                            active_file
+                                .get()
+                                .execution
+                                .kill_dangling_processes_on_timeout(global_this);
                         }
+                        let _ = subprocess.try_kill(subprocess.kill_signal);
                     }
                 }
             }

@@ -1797,7 +1797,7 @@ impl fmt::Display for PrettyBuf {
 /// Positional-argument bundle for runtime template substitution.
 pub trait FmtTuple {
     /// Write the `idx`-th positional into `f`. Returns `false` if `idx` is out
-    /// of range (caller emits the literal `{}` then).
+    /// of range.
     fn write_nth(&self, idx: usize, f: &mut dyn fmt::Write) -> Result<bool, fmt::Error>;
     fn len(&self) -> usize;
 }
@@ -1877,7 +1877,7 @@ impl_fmt_tuple!(0 A, 1 B, 2 C, 3 D, 4 E, 5 F, 6 G, 7 H);
 
 /// Substitute `{}` / `{s}` / `{d}` / `{any}` / `{f}` placeholders in `template`
 /// with successive entries from `args`. `{{` / `}}` are emitted as literal
-/// braces. Unrecognised specs are passed through verbatim.
+/// braces. The spec inside any other `{...}` is ignored.
 fn substitute_template(
     template: &[u8],
     args: &impl FmtTuple,
@@ -1901,7 +1901,14 @@ fn substitute_template(
             }
             if j < t.len() {
                 // consume placeholder
-                if args.write_nth(argi, f)? {
+                let filled = args.write_nth(argi, f)?;
+                debug_assert!(
+                    filled,
+                    "template has more placeholders than the {} arg(s) passed with it (a format_args! counts as one; pass a tuple): {:?}",
+                    args.len(),
+                    bstr::BStr::new(t),
+                );
+                if filled {
                     argi += 1;
                 }
                 i = j + 1;

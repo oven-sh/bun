@@ -60,8 +60,6 @@ private:
     char16_t m_backslashAsCurrencySymbol;
 };
 
-PAL_EXPORT const TextEncoding& UTF8Encoding();
-
 inline String TextEncoding::decode(std::span<const uint8_t> characters) const
 {
     bool ignored;

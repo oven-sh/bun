@@ -60,7 +60,7 @@ impl All {
                         vm,
                         // Be careful to avoid adding extra calls to bun.timespec.now()
                         // when it's not needed.
-                        &Timespec::now(TimespecMockMode::AllowMockedTime),
+                        &Timespec::now(TimespecMockMode::ForceRealTime),
                     );
                 }
             }

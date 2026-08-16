@@ -1363,8 +1363,7 @@ extern "C" fn BakeProdResolve(
 /// to enqueue the entry points.
 ///
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
+/// tier) so the bundler and runtime share ONE nominal type.
 pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 

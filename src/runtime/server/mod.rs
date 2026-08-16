@@ -1729,7 +1729,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
             // from `self.listener`; deref'd once to read the socket fd. `vm` is a
-            // STATIC ref (see `ServerLike::vm_mut`) — non-null for the server's
+            // STATIC ref (see `NewServer::vm_mut`) — non-null for the server's
             // lifetime, so the raw→`&mut` deref is sound.
             unsafe {
                 let fd = (*listener).socket().fd();
@@ -1985,7 +1985,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
-            // SAFETY: `vm` is a STATIC ref (see `ServerLike::vm_mut`) — non-null
+            // SAFETY: `vm` is a STATIC ref (see `NewServer::vm_mut`) — non-null
             // for the server's lifetime, so the raw→`&mut` deref is sound.
             unsafe { (*self.vm_mut()).add_listening_socket_for_watch_mode(fd) };
         }

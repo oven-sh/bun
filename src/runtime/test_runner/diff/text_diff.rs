@@ -1535,15 +1535,15 @@ fn common_overlap(x: &[u8], y: &[u8], fail: &mut Vec<u32>) -> usize {
 
 const OVERLAP_MAX: usize = 64 << 10;
 
-/// Widens each hunk so that no edge falls inside a UTF-8 sequence. Edges only
-/// ever move outward through the neighbouring equality (whose bytes are the
-/// same on both sides), so the diff stays valid; a hunk just gains a shared
-/// lead byte or two, and hunks whose separating equality is consumed merge.
 /// Whether `s[i]` exists and is a UTF-8 continuation byte.
 pub(crate) fn is_utf8_cont(s: &[u8], i: usize) -> bool {
     i < s.len() && (s[i] & 0xC0) == 0x80
 }
 
+/// Widens each hunk so that no edge falls inside a UTF-8 sequence. Edges only
+/// ever move outward through the neighbouring equality (whose bytes are the
+/// same on both sides), so the diff stays valid; a hunk just gains a shared
+/// lead byte or two, and hunks whose separating equality is consumed merge.
 fn align_to_utf8(hunks: &mut Vec<Hunk>, a: &[u8]) {
     let is_cont = is_utf8_cont;
     let mut w = 0;

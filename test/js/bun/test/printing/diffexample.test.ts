@@ -734,19 +734,28 @@ function getDiffPart(stderr: string): string {
 }
 
 test.concurrent("color", async () => {
-  const spawn = Bun.spawn({
-    cmd: [bunExe(), import.meta.dir + "/diffexample-color.fixture.ts"],
-    stdio: ["inherit", "pipe", "pipe"],
-    env: {
-      ...bunEnv,
-      FORCE_COLOR: "1",
-    },
-  });
+  const spawnFixture = (FORCE_COLOR: string) =>
+    Bun.spawn({
+      cmd: [bunExe(), import.meta.dir + "/diffexample-color.fixture.ts"],
+      stdio: ["inherit", "pipe", "pipe"],
+      env: {
+        ...bunEnv,
+        FORCE_COLOR,
+      },
+    });
+  const spawn = spawnFixture("1");
+  const plainSpawn = spawnFixture("0");
   await spawn.exited;
   const stderr = await spawn.stderr.text();
+  const stdout = await spawn.stdout.text();
+
+  // Colour only ever adds escape sequences; the text underneath must be what
+  // the uncoloured renderer prints.
+  await plainSpawn.exited;
+  expect(cleanAnsiEscapes(stdout)).toEqual(await plainSpawn.stdout.text());
 
   expect(stderr).toMatchInlineSnapshot(`""`);
-  expect(await spawn.stdout.text()).toMatchInlineSnapshot(`
+  expect(stdout).toMatchInlineSnapshot(`
     "\x1B[2mexpect(\x1B[0m\x1B[31mreceived\x1B[0m\x1B[2m).\x1B[0mtoEqual\x1B[2m(\x1B[0m\x1B[32mexpected\x1B[0m\x1B[2m)\x1B[0m
 
       \x1B[0m\x1B[2m"a\x1B[0m

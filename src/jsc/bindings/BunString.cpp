@@ -94,11 +94,13 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsEmptyString(vm));
     }
     if (simdutf::validate_ascii(ptr, length)) {
+        if (length > WTF::String::MaxLength) [[unlikely]] {
+            return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        }
         return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
-    EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -441,7 +443,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(bytes), length });
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length });
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
@@ -557,27 +559,6 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     }
 
     return JSValue::encode(array);
-}
-
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toWTFString(BunString* bunString)
-{
-    WTF::String str;
-    if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
-            str = Zig::toString(bunString->impl.zig);
-        } else {
-            str = Zig::toStringCopy(bunString->impl.zig);
-        }
-
-    } else if (bunString->tag == BunStringTag::StaticZigString) {
-        str = Zig::toStringStatic(bunString->impl.zig);
-    } else {
-        return;
-    }
-
-    auto impl = str.releaseImpl();
-    bunString->impl.wtf = impl.leakRef();
-    bunString->tag = BunStringTag::WTFStringImpl;
 }
 
 extern "C" BunString URL__getFileURLString(BunString* filePath)

@@ -224,35 +224,13 @@ pub(crate) fn filetime_to_timespec(filetime: i64) -> bun_libuv_sys::uv_timespec_
     }
 }
 
-/// Convert a [`TimeLike`](crate::TimeLike) (seconds + nanoseconds since the
-/// Unix epoch) into a Windows `FILETIME`.
-#[inline]
-pub fn timespec_to_filetime(t: crate::TimeLike) -> FILETIME {
-    let ticks = (t.sec as i64 * 10_000_000 + t.nsec as i64 / 100 + EPOCH_DIFFERENCE_100NS) as u64;
-    FILETIME {
-        dwLowDateTime: ticks as u32,
-        dwHighDateTime: (ticks >> 32) as u32,
-    }
-}
-
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
 pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
-pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
-    b'\\' as u16,
-    b'?' as u16,
-    b'?' as u16,
-    b'\\' as u16,
-    b'U' as u16,
-    b'N' as u16,
-    b'C' as u16,
-    b'\\' as u16,
-];
 pub(crate) const LONG_PATH_PREFIX: [u16; 4] =
     [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
 pub(crate) const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
-pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
 #[cfg(windows)]
@@ -1402,7 +1380,7 @@ pub mod rescle {
 
             // Basic validation: check format and ranges
             let mut parts_count: u32 = 0;
-            for part in v.split(|b| *b == b'.').filter(|s| !s.is_empty()) {
+            for part in bun_core::strings::tokenize(v, b".") {
                 if parts_count >= 4 {
                     return Err(RescleError::InvalidVersionFormat.into());
                 }

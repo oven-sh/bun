@@ -36,7 +36,16 @@ pub(crate) fn view(
             'from_package_json: {
                 // `root_dir` is set once by `PackageManager::init()` and points
                 // into the resolver's directory cache for the process lifetime.
-                if !manager.root_dir.has_comptime_query(b"package.json") {
+                // `.data` probes must hold `entries_mutex` (uncontended on
+                // this single-threaded CLI path).
+                let has_package_json = {
+                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                        .fs
+                        .entries_mutex
+                        .lock_guard();
+                    manager.root_dir.has_comptime_query(b"package.json")
+                };
+                if !has_package_json {
                     break 'from_package_json;
                 }
                 let fd = manager.root_dir.fd;

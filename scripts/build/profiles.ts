@@ -232,6 +232,15 @@ export const profiles = {
     webkit: "prebuilt",
   },
 
+  /** CI: deps + C++ + cargo + link on one agent; libbun-*.a, libbun_rust.a and dep libs are uploaded as artifacts. */
+  "ci-build": {
+    buildType: "Release",
+    mode: "archive-link",
+    ci: true,
+    buildkite: true,
+    webkit: "prebuilt",
+  },
+
   /** CI full build with LTO. */
   "ci-release": {
     buildType: "Release",

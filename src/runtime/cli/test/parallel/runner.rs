@@ -185,7 +185,7 @@ pub(crate) fn run_as_coordinator(
         live_workers: 0,
         crashed_files: Vec::new(),
         aborted: None,
-        bailed: false,
+        stop_reason: None,
         last_printed_dot: false,
         #[cfg(windows)]
         windows_job: Coordinator::create_windows_kill_on_close_job(),
@@ -453,6 +453,7 @@ fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static st
         L::yaml => "yaml",
         L::json5 => "json5",
         L::md => "md",
+        L::xml => "xml",
         L::_none => "_none",
     }
 }
@@ -570,7 +571,7 @@ impl<'a> WorkerLoop<'a> {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
             if vm.test_isolation_enabled {
-                crate::jsc_hooks::close_isolation_handles(vm);
+                crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                 vm.swap_global_for_test_isolation();
                 self.reporter
                     .jest
@@ -681,10 +682,13 @@ pub(crate) fn run_as_worker(
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
     vm_ref.exit_handler.exit_code = 0;
-    vm_ref.is_shutting_down = true;
+    vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
-        unsafe { (*vm).global_exit() }
+        unsafe {
+            (*vm).on_exit();
+            (*vm).global_exit()
+        }
     });
     {
         Global::exit(0);

@@ -67,6 +67,15 @@ impl Default for AnyEventLoop {
 }
 
 impl AnyEventLoop {
+    /// Owning thread: the weak poster other threads use to deliver JS-loop
+    /// tasks to this loop's VM; `None` for a mini loop.
+    pub fn js_poster(&self) -> Option<JsPoster> {
+        match self {
+            AnyEventLoop::Js { owner } => Some(owner.js_poster()),
+            AnyEventLoop::Mini(_) => None,
+        }
+    }
+
     pub fn iteration_number(&self) -> u64 {
         match self {
             AnyEventLoop::Js { owner } => owner.iteration_number(),
@@ -235,14 +244,6 @@ fn mini_mut<'a>(mini: &'a mut BackRef<MiniEventLoop, Mut>) -> &'a mut MiniEventL
     // SAFETY: see fn doc — per-thread `!Send` singleton, exclusive for the
     // returned borrow's duration.
     unsafe { mini.get_mut() }
-}
-
-/// Untagged pointer to either kind of concurrent task. Tag is the surrounding
-/// `EventLoopHandle` discriminant.
-#[derive(Copy, Clone)]
-pub union EventLoopTaskPtr {
-    pub js: *mut ConcurrentTask,
-    pub mini: *mut AnyTaskWithExtraContext,
 }
 
 /// Owned storage for either kind of concurrent task.
@@ -432,21 +433,13 @@ impl EventLoopHandle {
         EnteredEventLoop(self)
     }
 
-    pub fn enqueue_task_concurrent(self, task: EventLoopTaskPtr) {
+    /// Owning thread: the weak poster other threads use to deliver JS-loop
+    /// tasks to this handle's VM; `None` for a mini loop (post to it directly —
+    /// it is owned by, and outlives the work of, its thread).
+    pub fn js_poster(&self) -> Option<JsPoster> {
         match self {
-            EventLoopHandle::Js { owner } => {
-                // SAFETY: caller guarantees `task.js` is the active union member
-                // when `self` is `Js`, and points at a live `ConcurrentTask`
-                // (non-null).
-                owner.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task.js) })
-            }
-            EventLoopHandle::Mini(mut mini) => {
-                // SAFETY: caller guarantees `task.mini` is the active union
-                // member when `self` is `Mini`, and that it points at a live
-                // `AnyTaskWithExtraContext` (always non-null).
-                let task = unsafe { NonNull::new_unchecked(task.mini) };
-                mini_mut(&mut mini).enqueue_task_concurrent(task);
-            }
+            EventLoopHandle::Js { owner } => Some(owner.js_poster()),
+            EventLoopHandle::Mini(_) => None,
         }
     }
 
@@ -527,5 +520,76 @@ impl EventLoopHandle {
                 unsafe { (*env.as_ptr()).map.create_null_delimited_env_map() }
             }
         }
+    }
+}
+
+// ─────────────────────────── JsPoster ──────────────────────────────────────
+//
+// How code below `bun_jsc` reaches a JS VM from another thread: an erased,
+// *uncounted* `bun_jsc::VmHandle` (`bun_jsc` fills the vtable) — what something
+// that merely refers to a VM holds (spawn's process-wide waiter thread, a
+// bundle owned by a JS loop). Its `post` is deliver-or-refuse: once the VM has
+// closed, the task comes back and the caller releases it — its own payload —
+// on its own thread. Work that a VM must *wait* for holds a `bun_jsc::Ticket`
+// instead (a `Bun.build`'s completion task carries one for the bundle thread).
+
+/// Result of a weak post to a JS loop from another thread: it was queued, or
+/// the loop's VM is closed and the caller has the task back to release on this
+/// thread.
+#[must_use = "a refused task must be released by its producer"]
+pub enum Posted {
+    Queued,
+    Refused(NonNull<ConcurrentTask>),
+}
+
+pub struct JsPosterVTable {
+    pub post: unsafe fn(data: *const (), task: NonNull<ConcurrentTask>) -> Posted,
+    pub clone: unsafe fn(data: *const ()) -> *const (),
+    pub drop: unsafe fn(data: *const ()),
+}
+
+pub struct JsPoster {
+    data: *const (),
+    vtable: &'static JsPosterVTable,
+}
+
+// SAFETY: `data` is an erased `Arc<VmHandle inner>`; the vtable fns are the
+// thread-safe VmHandle operations.
+unsafe impl Send for JsPoster {}
+// SAFETY: as above.
+unsafe impl Sync for JsPoster {}
+
+impl JsPoster {
+    /// # Safety
+    /// `data`/`vtable` come from one of `bun_jsc::vm_handle`'s `to_js_poster`
+    /// implementations (`VmHandle` / the isolated poster).
+    #[inline]
+    pub unsafe fn from_raw(data: *const (), vtable: &'static JsPosterVTable) -> Self {
+        Self { data, vtable }
+    }
+
+    /// Queue `task` on the VM this poster was created for and wake it, or hand
+    /// it back if the VM has closed.
+    #[inline]
+    pub fn post(&self, task: NonNull<ConcurrentTask>) -> Posted {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.post)(self.data, task) }
+    }
+}
+
+impl Clone for JsPoster {
+    fn clone(&self) -> Self {
+        Self {
+            // SAFETY: vtable contract.
+            data: unsafe { (self.vtable.clone)(self.data) },
+            vtable: self.vtable,
+        }
+    }
+}
+
+impl Drop for JsPoster {
+    fn drop(&mut self) {
+        // SAFETY: vtable contract.
+        unsafe { (self.vtable.drop)(self.data) }
     }
 }

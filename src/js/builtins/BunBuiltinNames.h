@@ -56,7 +56,6 @@ using namespace JSC;
     macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
-    macro(bunNativeType) \
     macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
@@ -76,7 +75,6 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
-    macro(disturbed) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \
@@ -108,6 +106,8 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(internal) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
@@ -172,6 +172,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
+    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \

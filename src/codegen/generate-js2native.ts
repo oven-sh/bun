@@ -88,6 +88,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
+  "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
@@ -188,10 +189,6 @@ function normalizeSymbolPathPrefix(input: string) {
   }
 
   return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
-}
-
-function cppPointer(call: NativeCall) {
-  return `&${symbol(call)}`;
 }
 
 export function getJS2NativeCPP() {

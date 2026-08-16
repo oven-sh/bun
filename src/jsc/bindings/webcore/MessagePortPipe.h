@@ -9,12 +9,13 @@
 // deciding whether to schedule a wakeup) can observe a consistent snapshot.
 //
 // Wakeups are coalesced: a burst of N sends schedules one cross-thread drain
-// task on the receiving context. The drain task loops, popping one message at
-// a time under the lock and dispatching it, draining microtasks between each
-// (matching Node's MakeCallback / InternalCallbackScope behavior), up to
-// max(initial-queue-size, 1000) iterations before yielding back to the event
-// loop. Messages stay in the inbox until the instant they are dispatched, so
-// a port transferred mid-loop carries the remaining queue to the new owner.
+// task on the receiving context. The drain task moves messages inbox ->
+// `Side::draining` a small batch per lock acquisition and dispatches them one
+// at a time, draining microtasks between each (matching Node's MakeCallback /
+// InternalCallbackScope behavior), up to a fixed 1024 per task before
+// continuing on the loop's next iteration. A port transferred mid-loop carries
+// the whole remaining queue to the new owner: detach() puts `draining` back in
+// front of the inbox, in order.
 //
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.
@@ -95,6 +96,11 @@ private:
     struct Side {
         WTF::Lock lock;
         WTF::Deque<MessageWithMessagePorts> inbox WTF_GUARDED_BY_LOCK(lock);
+        // Messages the owner's drain has taken out of `inbox` (a small batch per lock
+        // acquisition) but not dispatched yet. Still counted as queued in `state`. If the
+        // handler transfers the port mid-batch, detach() puts them back in front of `inbox`
+        // so the next owner sees everything, in order; close() drops them with the rest.
+        WTF::Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
         ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) { 0 };
         ThreadSafeWeakPtr<MessagePort> port WTF_GUARDED_BY_LOCK(lock);
         // Packed flags + count. Written only while holding `lock`; read locklessly.

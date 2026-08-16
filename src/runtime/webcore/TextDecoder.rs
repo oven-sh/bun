@@ -2,6 +2,7 @@ use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
+use bun_jsc::HostReturn as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -367,7 +368,9 @@ impl TextDecoder {
                                 return Err(global_this
                                     .err(
                                         jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                                        format_args!("Invalid byte sequence"),
+                                        format_args!(
+                                            "The encoded data was not valid for encoding utf-8"
+                                        ),
                                     )
                                     .throw());
                             }
@@ -450,11 +453,10 @@ impl TextDecoder {
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            // "UTF-16LE" / "UTF-16BE" (NOT `get_label()`,
-                            // which is lowercase "utf-16le"/"utf-16be").
+                            // Node formats the message with the lowercase canonical label.
                             format_args!(
-                                "The encoded data was not valid {} data",
-                                if big_endian { "UTF-16BE" } else { "UTF-16LE" }
+                                "The encoded data was not valid for encoding {}",
+                                if big_endian { "utf-16be" } else { "utf-16le" }
                             ),
                         )
                         .throw());
@@ -544,7 +546,7 @@ impl TextDecoder {
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
                             format_args!(
-                                "The encoded data was not valid {} data",
+                                "The encoded data was not valid for encoding {}",
                                 bstr::BStr::new(encoding_name)
                             ),
                         )
@@ -717,7 +719,7 @@ pub extern "C" fn TextDecoder__createForStream(
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn TextDecoder__destroyForStream(this: *mut TextDecoder) {
     if !this.is_null() {
-        // SAFETY: `this` was returned by `__createForStream` and has not been
+        // SAFETY: `this` was returned by `TextDecoder__createForStream` and has not been
         // freed (the C++ cell clears its pointer before calling).
         unsafe { bun_core::heap::destroy(this) };
     }
@@ -755,5 +757,5 @@ pub extern "C" fn TextDecoder__decodeForStream(
     } else {
         this.decode_slice::<true>(global, slice)
     };
-    result.unwrap_or(JSValue::ZERO)
+    result.or_pending_exception()
 }

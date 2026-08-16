@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 #![forbid(unsafe_code)]
-use core::fmt;
 
 use bun_alloc::AllocError;
 use bun_ast::Loc;
@@ -41,7 +40,7 @@ pub(crate) fn is_quoted(val: &[u8]) -> bool {
 
 #[inline]
 pub(crate) fn next_dot(key: &[u8]) -> Option<usize> {
-    key.iter().position(|&b| b == b'.')
+    bun_core::strings::index_of_char_usize(key, b'.')
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -95,16 +94,14 @@ pub enum ConfigOpt {
     Keyfile,
 }
 
-impl ConfigOpt {
-    pub(crate) fn is_base64_encoded(self) -> bool {
-        matches!(self, ConfigOpt::_Auth | ConfigOpt::_Password)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // ConfigItem
 // ──────────────────────────────────────────────────────────────────────────
 
+/// One `//<key>:<opt>=<value>` line, from whichever `.npmrc` declared it. Every
+/// file's lines are collected into one flat list and resolved together, the way
+/// npm collapses its config files into a single map before reading credentials.
+#[derive(Clone)]
 pub struct ConfigItem {
     /// npm's registry key: the raw text between `//` and `:<optname>=`, so
     /// `//127.0.0.1:1234/api/:_authToken=T` yields `127.0.0.1:1234/api/`. Matched
@@ -113,48 +110,24 @@ pub struct ConfigItem {
     pub(crate) optname: ConfigOpt,
     pub(crate) value: Box<[u8]>,
     pub(crate) loc: Loc,
+    pub(crate) optname_loc: Loc,
     /// Index into the `.npmrc` files parsed by `load_npmrc_config`, so a
     /// diagnostic points at the file the line came from.
     pub(crate) source_idx: u32,
 }
 
 impl ConfigItem {
-    /// Duplicate ConfigIterator.Item
-    pub(crate) fn dupe(&self) -> OOM<ConfigItem> {
-        Ok(ConfigItem {
-            registry_url: Box::<[u8]>::from(&*self.registry_url),
-            optname: self.optname,
-            value: Box::<[u8]>::from(&*self.value),
-            loc: self.loc,
-            source_idx: self.source_idx,
-        })
-    }
-
     /// Duplicate the value, decoding it if it is base64 encoded. Decoding
     /// matches npm's `Buffer.from(value, "base64")`: it never fails — invalid
     /// bytes are skipped and as much data as possible is decoded.
     pub(crate) fn dupe_value_decoded(&self) -> OOM<Box<[u8]>> {
-        if self.optname.is_base64_encoded() {
+        if matches!(self.optname, ConfigOpt::_Auth | ConfigOpt::_Password) {
             let len = bun_base64::decode_lenient_len(self.value.len());
             let mut slice = vec![0u8; len].into_boxed_slice();
             let count = bun_base64::decode_lenient(&mut slice[..], &self.value, false);
             return Ok(Box::<[u8]>::from(&slice[..count]));
         }
         Ok(Box::<[u8]>::from(&*self.value))
-    }
-
-    // deinit -> Drop: Box<[u8]> fields drop automatically.
-}
-
-impl fmt::Display for ConfigItem {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            writer,
-            "//{}:{}={}",
-            bstr::BStr::new(&self.registry_url),
-            <&'static str>::from(self.optname),
-            bstr::BStr::new(&self.value),
-        )
     }
 }
 
@@ -176,12 +149,9 @@ bun_core::comptime_string_map! {
 }
 
 pub use draft::{
-    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
-    load_npmrc_config,
+    ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, apply_registry_auth,
+    load_npmrc, load_npmrc_config,
 };
-pub mod config_iterator {
-    pub use super::{ConfigItem as Item, ConfigIterator as Iter, ConfigOpt as Opt};
-}
 
 mod draft {
 
@@ -267,7 +237,7 @@ mod draft {
             let src = self.src;
             let env = self.env;
             let source_path = self.source.path.text;
-            let mut iter = src.split(|&b| b == b'\n');
+            let mut iter = bun_core::strings::split(src, b"\n");
             // `StoreRef` is the arena-backed handle `ExprData` already stores;
             // it is `Copy`, so keeping the root and the current-section head as
             // separate values is a split borrow, not an alias.
@@ -295,7 +265,9 @@ mod draft {
                     let mut treat_as_key = false;
                     'treat_as_key: {
                         skip_until_next_section = false;
-                        let Some(close_bracket_idx) = line.iter().position(|&b| b == b']') else {
+                        let Some(close_bracket_idx) =
+                            bun_core::strings::index_of_char_usize(line, b']')
+                        else {
                             // Skip the whole line: treat_as_key stays false and
                             // we fall through to `continue` below.
                             break 'treat_as_key;
@@ -381,7 +353,7 @@ mod draft {
                 let line_offset = i32::try_from(line.as_ptr() as usize - src.as_ptr() as usize)
                     .expect("int cast");
 
-                let maybe_eq_sign_idx = line.iter().position(|&b| b == b'=');
+                let maybe_eq_sign_idx = bun_core::strings::index_of_char_usize(line, b'=');
 
                 let key_raw: &[u8] = Self::prepare_str(
                     env,
@@ -1117,11 +1089,21 @@ mod draft {
                                 let url_part = &key[2..index];
                                 if let Some(value_expr) = prop.value {
                                     if let Some(value) = value_expr.as_utf8_string_literal() {
+                                        // `put` stamps the key with the value's loc, so walk back over `<key>=` to the option name.
+                                        let optname_loc = match keyexpr.loc.to_nullable() {
+                                            Some(loc) => Loc {
+                                                start: loc.start
+                                                    - i32::try_from(key.len() - index)
+                                                        .expect("int cast"),
+                                            },
+                                            None => keyexpr.loc,
+                                        };
                                         return Some(IniOption::Some(ConfigItem {
                                             registry_url: Box::<[u8]>::from(url_part),
                                             value: Box::<[u8]>::from(value),
                                             optname: opt,
                                             loc: keyexpr.loc,
+                                            optname_loc,
                                             source_idx: self.source_idx,
                                         }));
                                     }
@@ -1204,12 +1186,14 @@ mod draft {
         env: &DotEnvLoader,
         auto_loaded: bool,
         npmrc_paths: &[&ZStr],
-    ) {
+    ) -> Vec<ConfigItem> {
         let mut log = Log::init();
 
         // npm collapses every `.npmrc` into one flat config map before resolving
         // credentials, so all lines are accumulated and resolved once after the loop.
         // Each `Source` stays alive so a diagnostic can name the file its line is in.
+        // The collapsed list is returned so `apply_registry_auth` can resolve the
+        // registries `bunfig.toml` declares against the same config.
         let mut configs: Vec<ConfigItem> = Vec::new();
         let mut sources: Vec<Source> = Vec::new();
 
@@ -1261,6 +1245,7 @@ mod draft {
             .and_then(|msg| msg.data.location.as_ref())
             .map_or_else(Box::default, |loc| Box::from(&*loc.file));
         report_log(&mut log, &path);
+        configs
     }
 
     /// Print and clear `log`. Errors get a header naming the file they came from;
@@ -1557,7 +1542,7 @@ mod draft {
             }
             let mut normalized: Vec<ConfigItem> = Vec::with_capacity(configs.len());
             for conf_item in configs.iter() {
-                let mut dup = conf_item.dupe()?;
+                let mut dup = conf_item.clone();
                 dup.registry_url = normalize_conf_key(&conf_item.registry_url, default_port);
                 normalized.push(dup);
             }
@@ -1592,35 +1577,71 @@ mod draft {
 
         let default_items = credential_items(configs, &default_host, &default_pathname);
         if !default_items.is_empty() {
-            let v: &mut NpmRegistry = 'brk: {
-                if let Some(r) = install.default_registry.as_mut() {
-                    break 'brk r;
-                }
-                install.default_registry = Some(NpmRegistry {
-                    password: Box::default(),
-                    token: Box::default(),
-                    auth: Box::default(),
-                    username: Box::default(),
-                    url: Box::<[u8]>::from(
-                        bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL.as_bytes(),
-                    ),
-                    email: Box::default(),
-                });
-                install.default_registry.as_mut().unwrap()
-            };
+            let v = install.default_registry.get_or_insert_with(|| NpmRegistry {
+                url: bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
+                    .as_bytes()
+                    .into(),
+                ..Default::default()
+            });
             for &i in &default_items {
                 apply_conf_item(v, &configs[i])?;
             }
         }
 
         for (url_bytes, v) in scope_urls.iter().zip(registry_map.scopes.values_mut()) {
-            let (host, pathname) = registry_key_parts(&URL::parse(url_bytes));
-            for &i in &credential_items(configs, &host, &pathname) {
-                apply_conf_item(v, &configs[i])?;
-            }
+            apply_to_registry(configs, url_bytes, v)?;
         }
 
         install.scoped = Some(registry_map);
+        Ok(())
+    }
+
+    /// Walk `configs` for the registry at `url_bytes` and write what it supplies onto `v`.
+    fn apply_to_registry(configs: &[ConfigItem], url_bytes: &[u8], v: &mut NpmRegistry) -> OOM<()> {
+        let (host, pathname) = registry_key_parts(&URL::parse(url_bytes));
+        for &i in &credential_items(configs, &host, &pathname) {
+            apply_conf_item(v, &configs[i])?;
+        }
+        Ok(())
+    }
+
+    /// Resolve the registries `bunfig.toml` declares against the collapsed `.npmrc`
+    /// config returned by `load_npmrc_config`. A registry whose `bunfig.toml` entry
+    /// already carries credentials keeps them: project config beats `.npmrc`.
+    pub fn apply_registry_auth(install: &mut BunInstall, configs: &[ConfigItem]) {
+        if configs.is_empty() {
+            return;
+        }
+        match apply_registry_auth_impl(install, configs) {
+            Ok(()) => {}
+            Err(AllocError) => bun_core::out_of_memory(),
+        }
+    }
+
+    fn apply_registry_auth_impl(install: &mut BunInstall, configs: &[ConfigItem]) -> OOM<()> {
+        if let Some(registry) = install.default_registry.as_mut() {
+            if !registry.has_credentials() {
+                // `apply_to_registry` writes to `registry` while the key is derived
+                // from its URL, so the URL is copied out first.
+                let url: Box<[u8]> = if registry.url.is_empty() {
+                    bun_install_types::NodeLinker::npm::Registry::DEFAULT_URL
+                        .as_bytes()
+                        .into()
+                } else {
+                    registry.url.clone()
+                };
+                apply_to_registry(configs, &url, registry)?;
+            }
+        }
+        if let Some(scoped) = install.scoped.as_mut() {
+            for registry in scoped.scopes.values_mut() {
+                if registry.has_credentials() {
+                    continue;
+                }
+                let url = registry.url.clone();
+                apply_to_registry(configs, &url, registry)?;
+            }
+        }
         Ok(())
     }
 
@@ -1851,6 +1872,12 @@ mod draft {
                 };
         }
 
+        if let Some(hoist_expr) = out.get(b"hoist") {
+            if let Some(hoist) = hoist_expr.as_bool() {
+                install.hoist = Some(hoist);
+            }
+        }
+
         let mut registry_map = install.scoped.take().unwrap_or_default();
 
         let out_ref = parser
@@ -1890,7 +1917,7 @@ mod draft {
 
             while let Some(val) = iter.next()? {
                 if let Some(result) = val.get() {
-                    let registry = result.registry.dupe();
+                    let registry = result.registry.clone();
                     registry_map.scopes.put(&*result.scope, registry)?;
                 }
             }
@@ -1907,37 +1934,20 @@ mod draft {
             };
 
             while let Some(val) = iter.next() {
-                if let Some(conf_item_) = val.get() {
-                    // `conf_item.registry_url` will look like:
-                    //
-                    // - localhost:4873/
-                    // - somewhere-else.com/myorg/
-                    //
-                    // Scoped registries are set like this:
-                    // - @myorg:registry=https://somewhere-else.com/myorg
-                    let conf_item: &ConfigItem = &conf_item_;
-                    match conf_item.optname {
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => {
-                            bun_ast::add_warning_pretty!(
-                                iter.log,
-                                Some(source),
-                                iter.config
-                                    .properties
-                                    .at(iter.prop_idx - 1)
-                                    .key
-                                    .as_ref()
-                                    .unwrap()
-                                    .loc,
-                                "The following .npmrc registry option was not applied:\n\n  <b>{}<r>\n\nBecause we currently don't support the <b>{}<r> option.",
-                                conf_item,
-                                <&'static str>::from(conf_item.optname),
-                            );
-                            continue;
-                        }
-                        _ => {}
-                    }
-                    configs.push(conf_item_.dupe()?);
+                let Some(conf_item) = val.get() else {
+                    continue;
+                };
+                if matches!(conf_item.optname, ConfigOpt::Certfile | ConfigOpt::Keyfile) {
+                    bun_ast::add_warning_pretty!(
+                        iter.log,
+                        Some(source),
+                        conf_item.optname_loc,
+                        "<b>{}<r> is not supported; ignoring this .npmrc option",
+                        <&'static str>::from(conf_item.optname),
+                    );
+                    continue;
                 }
+                configs.push(conf_item);
             }
         }
 

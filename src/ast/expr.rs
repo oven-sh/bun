@@ -2153,6 +2153,7 @@ impl Data {
                     end: el.end,
                     rope_len: el.rope_len,
                     is_utf16: el.is_utf16,
+                    toml_datetime: el.toml_datetime,
                 });
                 Ok(Data::EString(StoreRef::from_bump(item)))
             }

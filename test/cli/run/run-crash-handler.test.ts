@@ -243,9 +243,10 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
 
   // `RtlFillMemory` has no `__try`/`__except` around its store. With the VEH
   // now returning CONTINUE_SEARCH for out-of-image PCs, the catch point is
-  // JSC's jscJITSEHHandler (registered for JIT frames), which routes to
-  // Bun__crashHandlerFromJSCFrame, or UEF. This exercises that the crash is
-  // still reported and the report carries the fault address.
+  // JSC's jscJITSEHHandler (the handler of both the JIT pool's and LLInt's
+  // unwind info), which routes to Bun__crashHandlerFromJSCFrame, or UEF. This
+  // exercises that the crash is still reported and the report carries the
+  // fault address.
   test("unguarded fault still crash-reports", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -269,18 +270,20 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
     expect(exitCode).not.toBe(0);
   });
 
-  // Validate WebKit's registerJITUnwindInfo against the actual unwinder:
-  // RtlLookupFunctionEntry must return a RUNTIME_FUNCTION for a JIT pool PC.
-  // This is the smoke test for the hand-encoded UNWIND_INFO / .xdata bytes.
-  // LLInt PCs are not covered here: LLInt lives in image .text and Windows
-  // only consults static .pdata for in-module PCs; that needs build-time
-  // .seh_* emission in offlineasm (follow-up).
-  test("RtlLookupFunctionEntry resolves JSC JIT pool PCs", async () => {
+  // Validate WebKit's hand-encoded unwind info against the actual unwinder.
+  // registerJITUnwindInfo registers a dynamic function table for the JIT pool;
+  // LowLevelInterpreter.cpp emits a static .pdata entry over the offlineasm
+  // code in bun's own image (jsc_llint_begin..jsc_llint_end: LLInt,
+  // vmEntryToJavaScript, ...), which a dynamic table cannot cover because
+  // Windows consults only the image's static .pdata for an in-image PC.
+  // RtlLookupFunctionEntry must return a RUNTIME_FUNCTION for a PC in either,
+  // and the LLInt entry must be one entry spanning exactly that range.
+  test("RtlLookupFunctionEntry resolves JSC JIT pool and LLInt PCs", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const { dlopen, FFIType, ptr } = require("bun:ffi");
+        `const { dlopen, FFIType, ptr, read } = require("bun:ffi");
          const { symbols } = dlopen("ntdll.dll", {
            RtlLookupFunctionEntry: {
              args: [FFIType.u64, FFIType.pointer, FFIType.pointer],
@@ -288,12 +291,26 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
            },
          });
          const { jscInternals } = require("bun:internal-for-testing");
-         const pool = jscInternals.startOfFixedExecutableMemoryPool();
          const imageBase = new BigUint64Array(1);
-         const jitEntry = symbols.RtlLookupFunctionEntry(pool + 0x100n, ptr(imageBase), null);
+         const lookup = pc => {
+           imageBase[0] = 0n;
+           const entry = symbols.RtlLookupFunctionEntry(pc, ptr(imageBase), null);
+           // RUNTIME_FUNCTION starts with BeginAddress (an RVA) on x64 and ARM64 alike.
+           return entry === null ? null : { entry, begin: imageBase[0] + BigInt(read.u32(entry, 0)) };
+         };
+         const pool = jscInternals.startOfFixedExecutableMemoryPool();
+         const { begin, end } = jscInternals.llintCodeRange();
+         const first = lookup(begin);
+         const last = lookup(end - 4n);
+         const past = lookup(end);
          console.log(JSON.stringify({
-           pool: pool.toString(16),
-           jitEntry: jitEntry === null ? "null" : "ok",
+           jitEntry: lookup(pool + 0x100n) !== null,
+           llintSize: Number(end - begin),
+           firstResolves: first !== null,
+           lastResolves: last !== null,
+           oneEntry: first !== null && last !== null && first.entry === last.entry,
+           entryBeginsAtRangeStart: first !== null && first.begin === begin,
+           endIsExclusive: past === null || first === null || past.entry !== first.entry,
          }));`,
       ],
       env: noReportEnv,
@@ -303,7 +320,79 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
 
     expect(stderr).toBe("");
     const out = JSON.parse(stdout.trim());
-    expect(out.jitEntry).toBe("ok");
+    // The interpreter is a few hundred KB of code; a tiny range would mean the
+    // labels no longer bracket it and the assertions below prove nothing.
+    expect(out.llintSize).toBeGreaterThan(100 * 1024);
+    expect(out).toMatchObject({
+      jitEntry: true,
+      firstResolves: true,
+      lastResolves: true,
+      oneEntry: true,
+      entryBeginsAtRangeStart: true,
+      endIsExclusive: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The unwind codes in the LLInt entry, applied by the real unwinder.
+  // jscInternals.unwindCurrentStack() (JSCTestingHelpers.cpp) does the walk
+  // bun's crash handler does from a fault CONTEXT (capture_from_context in
+  // src/bun_core/debug.rs), and the one SEH dispatch, ETW and debuggers do:
+  // RtlLookupFunctionEntry + RtlVirtualUnwind, stopping at the first PC that
+  // has no RUNTIME_FUNCTION. Without the LLInt entry that is the first
+  // interpreter frame. (RtlCaptureStackBackTrace would not show this on ARM64,
+  // where it follows the frame-pointer chain instead; and the walk has to run
+  // inside the call chain, while the frames it reads are still live, which is
+  // why it is a native helper rather than FFI calls from JS.)
+  //
+  // Each function here runs exactly once, so they all execute in LLInt; their
+  // return addresses, the module body's and vmEntryToJavaScript's lie in the
+  // offlineasm range, and the frames after the last of those are the C++ that
+  // entered JS.
+  test("RtlVirtualUnwind walks through LLInt frames", async () => {
+    const depth = 5;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { jscInternals } = require("bun:internal-for-testing");
+         const { begin, end } = jscInternals.llintCodeRange();
+         // The calls are deliberately not in tail position: in strict code JSC
+         // implements a tail call by dropping the caller's frame.
+         let capture = () => {
+           const pcs = jscInternals.unwindCurrentStack();
+           return pcs;
+         };
+         for (let i = 0; i < ${depth}; i++) {
+           const next = capture;
+           capture = () => {
+             const pcs = next();
+             return pcs;
+           };
+         }
+         const pcs = capture();
+         const isInterpreter = pc => pc >= begin && pc < end;
+         const lastInterpreterFrame = pcs.findLastIndex(isInterpreter);
+         console.log(JSON.stringify({
+           count: pcs.length,
+           interpreterFrames: pcs.filter(isInterpreter).length,
+           framesBelowInterpreter: lastInterpreterFrame === -1 ? 0 : pcs.length - 1 - lastInterpreterFrame,
+         }));`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    // The depth wrappers, the innermost closure and the module body are LLInt
+    // frames, and vmEntryToJavaScript is in the range too. Unfixed, the walk
+    // stops at the first of them, so this is 1.
+    expect(out.interpreterFrames).toBeGreaterThanOrEqual(depth + 3);
+    // JSC::Interpreter and bun's module evaluation below vmEntryToJavaScript;
+    // unfixed, the walk never gets there.
+    expect(out.framesBelowInterpreter).toBeGreaterThanOrEqual(2);
     expect(exitCode).toBe(0);
   });
 
@@ -342,6 +431,28 @@ describe.if(isWindows)("Windows VEH handler and first-chance faults in external 
 
     expect(stderr).toContain("Segmentation fault at address 0xE8");
     expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // The handler side of the LLInt unwind info. With the JIT off there is no
+  // pool and no pool handler: the interpreter calls the host function directly,
+  // so the only JSC frame between the fault and the C++ that entered JS is an
+  // LLInt one, and the report can only come from the handler named by the
+  // LLInt entry. segfaultInDll faults inside ntdll, which the VEH (in-image
+  // faults only) leaves to SEH dispatch; without the entry, dispatch derails
+  // on that frame and the process dies with no report at all. (bun:ffi needs
+  // the JIT, hence the fixture, and no clearing of the UEF the way the test
+  // above does.)
+  test("jitless: fault under an interpreted frame crash-reports via the LLInt handler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "segfaultInDll"],
+      env: { ...noReportEnv, BUN_JSC_useJIT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Segmentation fault at address 0xDEADBEEF");
     expect(exitCode).not.toBe(0);
   });
 });

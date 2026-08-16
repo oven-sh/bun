@@ -188,7 +188,6 @@ public:
 
     WebCore::ScriptExecutionContext* scriptExecutionContext() const;
 
-
     WebCore::DOMConstructors& constructors() { return *m_constructors; }
 
     Lock& gcLock() WTF_RETURNS_LOCK(m_gcLock) { return m_gcLock; }

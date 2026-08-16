@@ -577,7 +577,9 @@ private:
     {
     }
 };
-template<> struct DOMStructureSlotOf<CookieMapIterator> { static constexpr DOMStructureSlot value = DOMStructureSlot::CookieMapIterator; };
+template<> struct DOMStructureSlotOf<CookieMapIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::CookieMapIterator;
+};
 
 using CookieMapIteratorPrototype = JSDOMIteratorPrototype<JSCookieMap, CookieMapIteratorTraits>;
 JSC_ANNOTATE_HOST_FUNCTION(CookieMapIteratorPrototypeNext, CookieMapIteratorPrototype::next);

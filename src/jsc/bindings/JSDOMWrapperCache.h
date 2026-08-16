@@ -37,7 +37,6 @@
 
 namespace WebCore {
 
-
 template<typename WrapperClass> JSC::Structure* getDOMStructure(JSC::VM&, JSDOMGlobalObject&);
 template<typename WrapperClass> JSC::JSObject* getDOMPrototype(JSC::VM&, JSDOMGlobalObject&);
 

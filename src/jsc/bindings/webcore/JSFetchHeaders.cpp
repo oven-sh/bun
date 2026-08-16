@@ -552,7 +552,9 @@ private:
     {
     }
 };
-template<> struct DOMStructureSlotOf<FetchHeadersIterator> { static constexpr DOMStructureSlot value = DOMStructureSlot::FetchHeadersIterator; };
+template<> struct DOMStructureSlotOf<FetchHeadersIterator> {
+    static constexpr DOMStructureSlot value = DOMStructureSlot::FetchHeadersIterator;
+};
 
 using FetchHeadersIteratorPrototype = JSDOMIteratorPrototype<JSFetchHeaders, FetchHeadersIteratorTraits>;
 JSC_ANNOTATE_HOST_FUNCTION(FetchHeadersIteratorPrototypeNext, FetchHeadersIteratorPrototype::next);

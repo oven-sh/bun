@@ -351,7 +351,7 @@ Treat all tests as `test.concurrent()` tests, as if you passed the `--concurrent
 concurrent = true
 ```
 
-Equivalent CLI flag: `--concurrent`. CLI flags override the `bunfig.toml` value entirely.
+Equivalent CLI flag: `--concurrent`. When both values are valid, the CLI value takes precedence. Invalid `test.concurrent` values still fail validation.
 
 ### `test.concurrentTestGlob`
 

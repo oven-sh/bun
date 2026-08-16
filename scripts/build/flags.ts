@@ -1008,9 +1008,21 @@ export const linkerFlags: Flag[] = [
 
   // ─── macOS ───
   {
-    flag: ["-Wl,-no_compact_unwind", `-Wl,-stack_size,${DARWIN_STACK_SIZE}`, "-fno-keep-static-consts"],
+    // The stack size is an executable's: libbun runs on the host's threads.
+    flag: c => [
+      "-Wl,-no_compact_unwind",
+      ...(c.sharedLib ? [] : [`-Wl,-stack_size,${DARWIN_STACK_SIZE}`]),
+      "-fno-keep-static-consts",
+    ],
     when: c => c.darwin,
     desc: "18MB stack, skip compact unwind",
+  },
+  {
+    // @loader_path: the shim dylibs (shims.ts) sit next to libbun, not next
+    // to the host executable.
+    flag: ["-dynamiclib", "-install_name", "@rpath/libbun.dylib", "-Wl,-rpath,@loader_path"],
+    when: c => c.darwin && c.sharedLib,
+    desc: "libbun: link as a shared library, located via @rpath",
   },
   {
     // Force the linker to reserve + emit LC_CODE_SIGNATURE on arm64 cross
@@ -1103,7 +1115,11 @@ export const linkerFlags: Flag[] = [
     desc: "Suppress all linker warnings (workaround: no selective suppress for alignment warnings as of 2025-07)",
   },
   {
-    flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${c.buildDir}/${bunExeName(c)}.linker-map`],
+    flag: c => [
+      "-dead_strip",
+      "-dead_strip_dylibs",
+      ...(c.sharedLib ? [] : [`-Wl,-map,${c.buildDir}/${bunExeName(c)}.linker-map`]),
+    ],
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
   },
@@ -1114,7 +1130,7 @@ export const linkerFlags: Flag[] = [
     // linker deletes after the link, which would leave the debug map dangling
     // and the dSYM empty. -object_path_lto persists the LTO-codegen'd object
     // at a stable path inside the build dir and points the debug map at it.
-    flag: c => `-Wl,-object_path_lto,${c.buildDir}/${bunExeName(c)}.lto.o`,
+    flag: c => `-Wl,-object_path_lto,${c.buildDir}/${c.sharedLib ? "libbun" : bunExeName(c)}.lto.o`,
     when: c => c.darwin && c.lto,
     desc: "Persist the LTO-generated object so dsymutil can extract its DWARF into the dSYM",
   },
@@ -1128,7 +1144,7 @@ export const linkerFlags: Flag[] = [
     // nothing else. Unknown names are silently skipped, so a stale file only
     // costs part of the win.
     flag: c => `-Wl,-order_file,${orderFilePath(c)}`,
-    when: c => c.darwin && usesOrderFile(c),
+    when: c => c.darwin && !c.sharedLib && usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
   },
 
@@ -1343,8 +1359,15 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: c => ["-exported_symbols_list", `${c.cwd}/src/symbols.txt`],
-    when: c => c.darwin,
+    when: c => c.darwin && !c.sharedLib,
     desc: "Exported symbol list",
+  },
+  {
+    // Generated at configure time from src/symbols.txt + src/symbols.embed.txt
+    // (see shared-lib.ts).
+    flag: c => ["-exported_symbols_list", sharedLibExportsPath(c)],
+    when: c => c.darwin && c.sharedLib,
+    desc: "libbun: exported symbol list (napi/v8 surface + the embed API)",
   },
   {
     flag: c => [
@@ -1451,6 +1474,11 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
   return join(cfg.buildDir, "linker.order");
 }
 
+/** libbun's exported-symbol list — written by `emitSharedLib` (shared-lib.ts). */
+export function sharedLibExportsPath(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "libbun.exports");
+}
+
 /**
  * Files the linker reads via flags above. Return as implicit inputs so
  * ninja relinks when exported symbols / version script change.
@@ -1462,6 +1490,7 @@ export function linkDepends(cfg: Config): string[] {
   // The release symbol ordering file: listing it here is what makes
   // regenerating it relink, and only relink.
   if (cfg.darwin) {
+    if (cfg.sharedLib) return [sharedLibExportsPath(cfg)];
     const darwin = [join(cfg.cwd, "src/symbols.txt")];
     if (usesOrderFile(cfg)) darwin.push(orderFilePath(cfg));
     return darwin;

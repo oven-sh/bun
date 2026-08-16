@@ -193,6 +193,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `cargo-config.ts`              | Generates the git-ignored `.cargo/config.toml` (per-target `linker` from `cfg.hostCxx`)                                 |
 | `bun.ts`                       | `emitBun()` — assembles deps+codegen+rust+compile+link                                                                  |
 | `shims.ts`                     | Platform/toolchain workaround dylibs, `emitShims()`                                                                     |
+| `shared-lib.ts`                | `libbun` — the embeddable shared library (`--target=libbun`, macOS), `emitSharedLib()`                                  |
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                               |
 | `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                   |
 | `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`                          |

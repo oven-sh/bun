@@ -40,6 +40,7 @@ import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.t
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
+import { canBuildSharedLib, emitSharedLib } from "./shared-lib.ts";
 import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { computeDepLibs, resolveDep, type ResolvedDep } from "./source.ts";
@@ -510,6 +511,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // ─── Step 7: post-link (strip, dsymutil, smoke test) ───
   const { strippedExe, dsym } = emitPostLink(n, cfg, exe, exeName, flags.stripflags);
+
+  // ─── libbun (opt-in: `--target=libbun`) — same objects, linked as a dylib ───
+  if (canBuildSharedLib(cfg)) {
+    emitSharedLib(n, cfg, linkObjects, depLibs, systemLibs(cfg), shims);
+  }
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects, uploadStamps };
 }

@@ -119,6 +119,14 @@ export interface Config {
   debug: boolean;
   release: boolean;
   mode: BuildMode;
+  /**
+   * The link being described produces `libbun` (the embeddable shared
+   * library, `scripts/build/shared-lib.ts`) instead of the executable.
+   * Always false in the resolved config; `emitSharedLib` evaluates the link
+   * flag table against `{...cfg, sharedLib: true}` so the executable-only
+   * flags (stack size, order file, exported-symbol list) drop out.
+   */
+  sharedLib: boolean;
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
@@ -1196,6 +1204,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     debug,
     release,
     mode: partial.mode ?? "full",
+    sharedLib: false,
     lto,
     crossLangLto,
     pgoGenerate,

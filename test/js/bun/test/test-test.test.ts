@@ -911,8 +911,9 @@ describe("a module load returns as soon as an immediate settles the module's pro
   ])("%s", async (_, args, what) => {
     using dir = tempDir("module-load-settled-by-immediate", files);
     await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain(`${what}: returned`);
+    expect(stderr).not.toContain("error");
     expect(exitCode).toBe(0);
   });
 

@@ -8,7 +8,7 @@ use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 
 use crate::vlq::decode as decode_vlq;
-use crate::{LineColumnOffset, Ordinal, ParseResult, ParseResultFail, ParsedSourceMap};
+use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
 
 declare_scope!(SourceMap, visible);
 
@@ -63,13 +63,13 @@ impl Default for Mapping {
 /// Optimization: if we don't care about the "names" column, then don't store the names.
 #[derive(Clone, Copy, Default)]
 pub struct MappingWithoutName {
-    pub generated: LineColumnOffset,
-    pub original: LineColumnOffset,
-    pub source_index: i32,
+    pub(crate) generated: LineColumnOffset,
+    pub(crate) original: LineColumnOffset,
+    pub(crate) source_index: i32,
 }
 
 impl MappingWithoutName {
-    pub(crate) fn to_named(&self) -> Mapping {
+    fn to_named(&self) -> Mapping {
         Mapping {
             generated: self.generated,
             original: self.original,
@@ -106,23 +106,20 @@ macro_rules! both_lists {
 }
 
 impl ListValue {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         both_lists!(self, |list| list.memory_cost())
     }
 
-    pub(crate) fn ensure_total_capacity(
-        &mut self,
-        count: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
         both_lists!(self, |list| list.ensure_total_capacity(count))
     }
 }
 
 #[derive(Default)]
 pub struct List {
-    pub r#impl: ListValue,
-    pub names: Box<[SemverString]>,
-    pub names_buffer: Vec<u8>,
+    pub(crate) r#impl: ListValue,
+    pub(crate) names: Box<[SemverString]>,
+    pub(crate) names_buffer: Vec<u8>,
 }
 
 impl List {
@@ -187,7 +184,7 @@ impl List {
         None
     }
 
-    pub fn sort(&mut self) {
+    pub(crate) fn sort(&mut self) {
         // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
         // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
         // it (that aliased the swap before this rewrite). Instead capture the
@@ -200,7 +197,7 @@ impl List {
         })
     }
 
-    pub fn append(&mut self, mapping: &Mapping) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn append(&mut self, mapping: &Mapping) -> Result<(), bun_alloc::AllocError> {
         match &mut self.r#impl {
             ListValue::WithoutNames(list) => {
                 list.append(MappingWithoutName {
@@ -216,7 +213,7 @@ impl List {
         Ok(())
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         both_lists!(&self.r#impl, |list| list.len())
     }
 
@@ -245,11 +242,11 @@ impl List {
         both_lists!(&self.r#impl, |list| list.items_generated())
     }
 
-    pub fn original(&self) -> &[LineColumnOffset] {
+    pub(crate) fn original(&self) -> &[LineColumnOffset] {
         both_lists!(&self.r#impl, |list| list.items_original())
     }
 
-    pub fn source_index(&self) -> &[i32] {
+    pub(crate) fn source_index(&self) -> &[i32] {
         both_lists!(&self.r#impl, |list| list.items_source_index())
     }
 
@@ -274,13 +271,16 @@ impl List {
         None
     }
 
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         self.r#impl.memory_cost()
             + self.names_buffer.memory_cost()
             + (self.names.len() * size_of::<SemverString>())
     }
 
-    pub fn ensure_total_capacity(&mut self, count: usize) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn ensure_total_capacity(
+        &mut self,
+        count: usize,
+    ) -> Result<(), bun_alloc::AllocError> {
         self.r#impl.ensure_total_capacity(count)
     }
 }
@@ -460,11 +460,9 @@ pub fn parse(
 
     if let Some(count) = estimated_mapping_count {
         if mapping.ensure_total_capacity(count).is_err() {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Out of memory",
+            return Err(ParseFail {
                 err: crate::Error::Alloc(bun_alloc::AllocError),
                 loc: Loc::default(),
-                ..Default::default()
             });
         }
     }
@@ -510,11 +508,9 @@ pub fn parse(
                 );
             }
             SimdResult::OutOfMemory => {
-                return ParseResult::Fail(ParseResultFail {
-                    msg: b"Out of memory",
+                return Err(ParseFail {
                     err: crate::Error::Alloc(bun_alloc::AllocError),
                     loc: Loc::default(),
-                    ..Default::default()
                 });
             }
         }
@@ -543,8 +539,7 @@ pub fn parse(
         let generated_column_delta = decode_vlq(remain, 0);
 
         if generated_column_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Missing generated column value",
+            return Err(ParseFail {
                 err: crate::Error::MissingGeneratedColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -554,16 +549,19 @@ pub fn parse(
 
         needs_sort = needs_sort || generated_column_delta.value < 0;
 
-        generated.columns = generated.columns.add_scalar(generated_column_delta.value);
-        if generated.columns.zero_based() < 0 {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid generated column value",
+        let generated_column = generated
+            .columns
+            .zero_based()
+            .wrapping_add(generated_column_delta.value);
+        if generated_column < 0 {
+            return Err(ParseFail {
                 err: crate::Error::InvalidGeneratedColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
+        generated.columns = Ordinal::from_zero_based(generated_column);
 
         remain = &remain[generated_column_delta.start..];
 
@@ -589,20 +587,17 @@ pub fn parse(
         // Read the original source
         let source_index_delta = decode_vlq(remain, 0);
         if source_index_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid source index delta",
+            return Err(ParseFail {
                 err: crate::Error::InvalidSourceIndexDelta,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
-                ..Default::default()
             });
         }
-        source_index += source_index_delta.value;
+        source_index = source_index.wrapping_add(source_index_delta.value);
 
         if source_index < 0 || source_index >= sources_count {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid source index value",
+            return Err(ParseFail {
                 err: crate::Error::InvalidSourceIndexValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -614,33 +609,33 @@ pub fn parse(
         // Read the original line
         let original_line_delta = decode_vlq(remain, 0);
         if original_line_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Missing original line",
+            return Err(ParseFail {
                 err: crate::Error::MissingOriginalLine,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
-                ..Default::default()
             });
         }
 
-        original.lines = original.lines.add_scalar(original_line_delta.value);
-        if original.lines.zero_based() < 0 {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid original line value",
+        let original_line = original
+            .lines
+            .zero_based()
+            .wrapping_add(original_line_delta.value);
+        if original_line < 0 {
+            return Err(ParseFail {
                 err: crate::Error::InvalidOriginalLineValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
+        original.lines = Ordinal::from_zero_based(original_line);
         remain = &remain[original_line_delta.start..];
 
         // Read the original column
         let original_column_delta = decode_vlq(remain, 0);
         if original_column_delta.start == 0 {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Missing original column value",
+            return Err(ParseFail {
                 err: crate::Error::MissingOriginalColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
@@ -648,16 +643,19 @@ pub fn parse(
             });
         }
 
-        original.columns = original.columns.add_scalar(original_column_delta.value);
-        if original.columns.zero_based() < 0 {
-            return ParseResult::Fail(ParseResultFail {
-                msg: b"Invalid original column value",
+        let original_column = original
+            .columns
+            .zero_based()
+            .wrapping_add(original_column_delta.value);
+        if original_column < 0 {
+            return Err(ParseFail {
                 err: crate::Error::InvalidOriginalColumnValue,
                 loc: Loc {
                     start: i32::try_from(bytes.len() - remain.len()).unwrap_or(i32::MAX),
                 },
             });
         }
+        original.columns = Ordinal::from_zero_based(original_column);
         remain = &remain[original_column_delta.start..];
 
         if remain.len() > 0 {
@@ -674,8 +672,7 @@ pub fn parse(
                     // Read the name index
                     let name_index_delta = decode_vlq(remain, 0);
                     if name_index_delta.start == 0 {
-                        return ParseResult::Fail(ParseResultFail {
-                            msg: b"Invalid name index delta",
+                        return Err(ParseFail {
                             err: crate::Error::InvalidNameIndexDelta,
                             loc: Loc {
                                 start: i32::try_from(bytes.len() - remain.len())
@@ -686,17 +683,15 @@ pub fn parse(
                     remain = &remain[name_index_delta.start..];
 
                     if options.allow_names {
-                        name_index += name_index_delta.value;
+                        name_index = name_index.wrapping_add(name_index_delta.value);
                         if !has_names {
                             if mapping.ensure_with_names().is_err() {
-                                return ParseResult::Fail(ParseResultFail {
-                                    msg: b"Out of memory",
+                                return Err(ParseFail {
                                     err: crate::Error::Alloc(bun_alloc::AllocError),
                                     loc: Loc {
                                         start: i32::try_from(bytes.len() - remain.len())
                                             .unwrap_or(i32::MAX),
                                     },
-                                    ..Default::default()
                                 });
                             }
                         }
@@ -742,7 +737,7 @@ pub fn parse(
     let mut psm = ParsedSourceMap::default();
     psm.mappings = mapping;
     psm.input_line_count = input_line_count;
-    ParseResult::Success(psm)
+    Ok(psm)
 }
 
 enum SimdResult {

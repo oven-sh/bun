@@ -1023,3 +1023,99 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
     expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
   });
 });
+
+describe("patchedDependencies contents_hash", () => {
+  // A patch that creates node_modules/is-odd/m.js; `hunk` is the @@ line.
+  const patchHeader = (hunk: string) =>
+    "diff --git a/m.js b/m.js\n" +
+    "new file mode 100644\n" +
+    "index 0000000..1111111\n" +
+    "--- /dev/null\n" +
+    "+++ b/m.js\n" +
+    `${hunk}\n`;
+
+  const mkProject = (name: string, patch: string) =>
+    tempDir(`patch-hash-${name}`, {
+      "package.json": JSON.stringify({
+        name,
+        patchedDependencies: { "is-odd@3.0.1": "patches/p.patch" },
+        dependencies: { "is-odd": "3.0.1" },
+      }),
+      patches: { "p.patch": patch },
+    });
+
+  const install = async (cwd: string, cacheDir: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  };
+
+  const installedMjs = (dir: string) => Bun.file(join(dir, "node_modules", "is-odd", "m.js")).text();
+
+  test("two distinct patches that collided under the old wyhash contents_hash do not share a cache entry", async () => {
+    // https://github.com/oven-sh/bun/issues/32741
+    // Under Wyhash11(seed=0) both patches hash to 0x429d7ca64c60f3d1, so
+    // before this change projB reused projA's cached patched package (and
+    // observed AAAAAAAA) instead of applying its own patch.
+    const header = patchHeader("@@ -0,0 +1 @@");
+    const patchA = header + `+module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPAAAAAAAAgMsUw5DUklmnopqrstuvwxyz";\n`;
+    const patchB = header + `+module.exports="xxx07QaaaaaU18fmtAHABCDEFGHIJKLMNOPBBBBBBBBgMsUw5DUklmnopqrstuvwxyz";\n`;
+    // Regenerating this pair at runtime would require the internal Wyhash11
+    // (not exposed to JS), so the colliding pair is fixed. Both patches are
+    // the same length and differ only in the 8-byte payload.
+    expect(patchA.length).toBe(patchB.length);
+    expect(patchA).not.toBe(patchB);
+
+    using sharedCache = tempDir("patch-hash-cache", {});
+    using projA = mkProject("proj-a", patchA);
+    using projB = mkProject("proj-b", patchB);
+    const cache = String(sharedCache);
+
+    await install(String(projA), cache);
+    expect(await installedMjs(String(projA))).toContain("AAAAAAAA");
+
+    await install(String(projB), cache);
+    const mB = await installedMjs(String(projB));
+    expect(mB).toContain("BBBBBBBB");
+    expect(mB).not.toContain("AAAAAAAA");
+
+    // A non-colliding control patch (different size, different content) has
+    // always gone to its own cache entry.
+    using projC = mkProject("proj-ctl", header + `+module.exports="control payload";\n`);
+    await install(String(projC), cache);
+    expect(await installedMjs(String(projC))).toContain("control payload");
+  });
+
+  test("patches that differ only after the first 64 KiB get distinct cache entries", async () => {
+    // The content hash used to be computed by repeatedly reading from file
+    // offset 0, so any two patches with an identical leading chunk hashed the
+    // same no matter what followed. Both patches here share a >64 KiB prefix
+    // (a long comment line) and differ only in the final exported payload.
+    const padding = "+// " + Buffer.alloc(80 * 1024, "p").toString() + "\n";
+    const header = patchHeader("@@ -0,0 +1,2 @@");
+    const patchA = header + padding + `+module.exports="TAIL_AAAA";\n`;
+    const patchB = header + padding + `+module.exports="TAIL_BBBB";\n`;
+    expect(patchA.length).toBe(patchB.length);
+    expect(patchA).not.toBe(patchB);
+
+    using sharedCache = tempDir("patch-tail-cache", {});
+    using projA = mkProject("proj-a", patchA);
+    using projB = mkProject("proj-b", patchB);
+    const cache = String(sharedCache);
+
+    await install(String(projA), cache);
+    expect(await installedMjs(String(projA))).toContain("TAIL_AAAA");
+
+    await install(String(projB), cache);
+    const mB = await installedMjs(String(projB));
+    // Compare just the tail so a failure doesn't dump the 80 KiB padding.
+    expect({ hasB: mB.includes("TAIL_BBBB"), hasA: mB.includes("TAIL_AAAA") }).toEqual({ hasB: true, hasA: false });
+  });
+});

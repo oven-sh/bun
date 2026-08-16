@@ -63,7 +63,7 @@ bun_core::declare_scope!(RuntimeTranspilerStore, hidden);
 // the caller's `&mut TranspilerJob` (which is stored inside
 // `vm.transpiler_store`). Only the `source_mappings` leaf field is touched,
 // under its own internal lock.
-pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
+fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer: &BufferPrinter) {
     dump_source_string(vm, specifier, printer.ctx.get_written());
 }
 
@@ -78,7 +78,7 @@ pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], 
 // safe code (replaces the prior split `Mutex` + `RacyCell` pair).
 static BUN_DEBUG_HOLDER: Guarded<Option<Dir>> = Guarded::new(None);
 
-pub(crate) fn dump_source_string_failiable(
+fn dump_source_string_failiable(
     vm: NonNull<VirtualMachine>,
     specifier: &[u8],
     written: &[u8],
@@ -199,10 +199,10 @@ pub fn set_break_point_on_first_line() -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RuntimeTranspilerStore {
-    pub generation_number: AtomicU32,
-    pub store: TranspilerJobStore,
+    pub(crate) generation_number: AtomicU32,
+    pub(crate) store: TranspilerJobStore,
     pub enabled: bool,
-    pub queue: Queue,
+    pub(crate) queue: Queue,
 }
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -220,15 +220,45 @@ impl Default for RuntimeTranspilerStore {
 
 impl Taskable for RuntimeTranspilerStore {
     const TAG: TaskTag = task_tag::RuntimeTranspilerStore;
+    /// The "drain my finished jobs" ping owns nothing (`this` is the VM's
+    /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
+    unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl RuntimeTranspilerStore {
-    pub fn init() -> RuntimeTranspilerStore {
+    pub(crate) fn init() -> RuntimeTranspilerStore {
         // The HiveArrayFallback uses the global mimalloc
         // (PORTING.md §Allocators).
         Self::default()
     }
 
+    /// VM teardown (JS thread, heap alive, script forbidden; called on every
+    /// turn of the wait): jobs already handed back whose completion will not
+    /// run release their source, log and module promise here instead. Queued ⇒
+    /// the pool thread's last touch of the slot was the push (its ticket was
+    /// moved out first), so the slot is this thread's again.
+    pub fn release_queued_jobs_for_teardown(&mut self) {
+        let batch = self.queue.pop_batch();
+        let mut iter = batch.iterator();
+        loop {
+            let job = iter.next();
+            if job.is_null() {
+                break;
+            }
+            // SAFETY: a live job popped from the intrusive queue; see fn doc.
+            unsafe {
+                (*job).promise.deinit();
+                (*job).reset_for_pool();
+                self.store.put(job);
+            }
+        }
+    }
+
+    /// Fulfil every completed job's module promise. This drain is a dispatcher:
+    /// each fulfilment is a JS entry of its own, so what one leaves pending is
+    /// folded here and the drain goes on; the VM's termination ends it, with
+    /// the rest of the batch back on the queue (each still has its own posted
+    /// task, or the teardown release, to pick it up).
     // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
@@ -242,34 +272,44 @@ impl RuntimeTranspilerStore {
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut iter = batch.iterator();
-        let first = iter.next();
-        if first.is_null() {
-            return;
-        }
-        // we run just one job first to see if there are more
-        // SAFETY: `first` is a live job popped from the intrusive queue.
-        if let Err(err) = unsafe { (*first).run_from_js_thread() } {
-            global.report_uncaught_exception_from_error(err);
-        }
-        loop {
-            let job = iter.next();
-            if job.is_null() {
-                break;
+        let mut job = iter.next();
+        let mut first = true;
+        while !job.is_null() {
+            if !first {
+                // if there are more, we need to drain the microtasks from the previous run
+                // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
+                let drained =
+                    unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) };
+                if drained.is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
             }
-            // if there are more, we need to drain the microtasks from the previous run
-            // SAFETY: `event_loop` is the VM's live event-loop self-pointer.
-            if unsafe { (*event_loop.as_ptr()).drain_microtasks_with_global(global, jsc_vm) }
-                .is_err()
-            {
-                return;
-            }
+            first = false;
             // SAFETY: `job` is a live job popped from the intrusive queue.
-            if let Err(err) = unsafe { (*job).run_from_js_thread() } {
-                global.report_uncaught_exception_from_error(err);
+            let fulfilled = unsafe { (*job).run_from_js_thread() };
+            job = iter.next();
+            if let Err(err) = fulfilled {
+                if crate::task::report_error_or_terminate(global, err).is_err() {
+                    self.requeue(job, &mut iter);
+                    return;
+                }
             }
         }
-
         // immediately after this is called, the microtasks will be drained again.
+    }
+
+    /// Put `job` and the rest of a popped batch back: each still has its posted
+    /// task (or the teardown release) to pick it up.
+    fn requeue(
+        &mut self,
+        mut job: *mut TranspilerJob,
+        iter: &mut unbounded_queue::BatchIterator<TranspilerJob>,
+    ) {
+        while let Some(unrun) = NonNull::new(job) {
+            job = iter.next();
+            self.queue.push(unrun);
+        }
     }
 
     pub fn transpile(
@@ -321,6 +361,7 @@ impl RuntimeTranspilerStore {
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
+                ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
@@ -369,28 +410,32 @@ pub struct TranspilerJob {
     pub path: bun_paths::fs::Path<'static>,
     /// RAII: `Drop` derefs the WTF refcount — torn down by
     /// `HiveArray::put` → `drop_in_place` (not in `reset_for_pool`).
-    pub non_threadsafe_input_specifier: OwnedString,
-    pub non_threadsafe_referrer: OwnedString,
-    pub loader: Loader,
-    pub promise: StrongOptional,
+    pub(crate) non_threadsafe_input_specifier: OwnedString,
+    pub(crate) non_threadsafe_referrer: OwnedString,
+    pub(crate) loader: Loader,
+    pub(crate) promise: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
-    pub vm: *mut VirtualMachine,
+    pub(crate) vm: *mut VirtualMachine,
+    /// Held from `schedule` until the pool thread has dispatched the job back:
+    /// the job's own slot, the transpiler it copies and the store queue it
+    /// pushes to are all VM-owned, and the VM's teardown waits for the ticket.
+    pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
-    pub fetcher: Fetcher,
-    pub poll_ref: KeepAlive,
-    pub generation_number: u32,
-    pub log: bun_ast::Log,
-    pub parse_error: Option<crate::CrateError>,
+    pub(crate) fetcher: Fetcher,
+    pub(crate) poll_ref: KeepAlive,
+    pub(crate) generation_number: u32,
+    pub(crate) log: bun_ast::Log,
+    pub(crate) parse_error: Option<crate::CrateError>,
     /// RAII-owned: holds +1 on `source_code`/`source_url`/`specifier`/
     /// `bytecode_origin_path` until `run_from_js_thread` `take()`s and
     /// `into_ffi()`s to C++. Dropped (via `HiveArray::put` → `drop_in_place`)
     /// on any path that skips `run_from_js_thread` derefs them.
-    pub resolved_source: OwnedResolvedSource,
-    pub work_task: WorkPoolTask,
+    pub(crate) resolved_source: OwnedResolvedSource,
+    pub(crate) work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
-    pub next: unbounded_queue::Link<TranspilerJob>,
+    pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
@@ -484,21 +529,20 @@ impl TranspilerJob {
         // replacement a second time).
     }
 
-    pub(crate) fn dispatch_to_main_thread(&mut self) {
+    /// Pool thread: hand the slot back. `ticket` was moved out of `self`
+    /// first — the JS thread may reuse the slot the moment it is queued.
+    fn dispatch_to_main_thread(&mut self, ticket: &crate::Ticket) {
         let vm = self.vm;
-        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
+        // SAFETY: the VM outlives the ticket (it owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
-        // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
-        unsafe { &*(*vm).event_loop() }
-            .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        ticket.post(ConcurrentTask::create_from(transpiler_store));
     }
 
-    pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
+    fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
@@ -554,24 +598,39 @@ impl TranspilerJob {
         )
     }
 
-    pub(crate) fn schedule(&mut self) {
+    fn schedule(&mut self) {
         // Note: the KeepAlive takes an
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+        // SAFETY: JS thread; the VM owns the store this slot lives in.
+        self.ticket = Some(unsafe { (*self.vm).ticket() });
         WorkPool::schedule(&raw mut self.work_task);
     }
 
-    pub(crate) unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
+    unsafe fn run_from_worker_thread(work_task: *mut WorkPoolTask) {
         // SAFETY: only reachable via `WorkPoolTask::callback` (unsafe-fn-ptr
         // slot — safe-fn coerces) for the `work_task` field initialised in
         // `transpile`; the WorkPool calls back with exactly that field, so
-        // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
-        let this = unsafe { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
-        this.run();
+        // `from_field_ptr!` recovers the live `TranspilerJob` parent.
+        let this = unsafe { bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
+        // The slot lives inside the VM, which waits for this ticket, so it is
+        // alive throughout. Transpile only while the VM still runs script;
+        // either way hand the job back to the JS thread, which completes or
+        // releases it.
+        // SAFETY: as above; set in `schedule`.
+        let ticket =
+            unsafe { (*this).ticket.take() }.expect("scheduled transpile job holds a ticket");
+        if ticket.script_allowed() {
+            // SAFETY: live slot, exclusively ours until dispatched.
+            unsafe { (*this).run(&ticket) };
+        } else {
+            // SAFETY: as above.
+            unsafe { (*this).dispatch_to_main_thread(&ticket) };
+        }
     }
 
-    pub(crate) fn run(&mut self) {
+    fn run(&mut self, ticket: &crate::Ticket) {
         // Stack-local per call, bulk-freed on return. An earlier version hoisted
         // this to a per-worker-thread leaked `Box<MimallocArena>` (and a second
         // one inside a leaked `ASTMemoryAllocator`) and only `reset()` it at
@@ -593,7 +652,7 @@ impl TranspilerJob {
         scopeguard::defer! {
             // SAFETY: `self` outlives this guard (guard drops before fn return);
             // no other &mut alias is live at drop time.
-            unsafe { (*this_ptr).dispatch_to_main_thread() };
+            unsafe { (*this_ptr).dispatch_to_main_thread(ticket) };
         }
 
         // SAFETY contract: `vm` outlives the job (BACKREF — VM owns the store).
@@ -710,7 +769,6 @@ impl TranspilerJob {
         // as the `Transpiler<'_>` cast above.
         transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
-        let mut fd: Option<Fd> = None;
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
@@ -719,24 +777,12 @@ impl TranspilerJob {
         // leaked in `enable_hot_module_reloading`, so the `ParentRef` invariant
         // holds for this transpile job's duration). Raw `(*vm)` field
         // projection avoids forming `&VirtualMachine` per the `vm` note.
-        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher>> =
+        let import_watcher: Option<bun_ptr::ParentRef<ImportWatcher, bun_ptr::Mut>> =
             unsafe { bun_ptr::ParentRef::from_nullable_mut((*vm).bun_watcher.cast()) };
         if let Some(iw) = import_watcher {
-            // The watchlist *is* mutated cross-thread (the watcher thread's
-            // `flush_evictions` closes fds and `swap_remove`s), so snapshot
-            // under the watcher mutex — see
-            // `ImportWatcher::snapshot_fd_and_package_json` doc for the EBADF
-            // race this closes.
-            (fd, package_json) = iw.snapshot_fd_and_package_json(hash);
-            // On Linux, `addFileByPathSlow` inserts watchlist entries with
-            // `fd = invalid_fd` (only kqueue needs the descriptor). Treat
-            // invalid as "no cached fd" so `readFileWithAllocator` opens the
-            // file instead of calling `seekTo` on a bogus handle. The snapshot
-            // helper already filtered `!is_valid()`; additionally reject
-            // stdio-tagged fds here.
-            if fd.is_some_and(|f| f.stdio_tag().is_some()) {
-                fd = None;
-            }
+            // Never read through the watchlist's stored fd; see
+            // `ImportWatcher::snapshot_package_json`.
+            package_json = iw.snapshot_package_json(hash);
         }
 
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
@@ -769,15 +815,13 @@ impl TranspilerJob {
         // only, so skipping `Drop` is sound.
         let mut fallback_source = core::mem::MaybeUninit::<bun_ast::Source>::uninit();
 
-        // Usually, we want to close the input file automatically.
-        //
-        // If we're re-using the file descriptor from the fs watcher
-        // Do not close it because that will break the kqueue-based watcher
+        // Close the input file automatically unless the watcher adopts the
+        // descriptor after the parse (`add_file` below).
         //
         // Note: stored in a `Cell` so the scopeguard closure can capture
         // `&Cell<bool>` and the post-parse writes are visible to it without
         // raw-pointer laundering (which the unused-assignment lint can't see).
-        let should_close_input_file_fd = Cell::new(fd.is_none());
+        let should_close_input_file_fd = Cell::new(true);
 
         let mut input_file_fd: Fd = Fd::INVALID;
 
@@ -798,7 +842,7 @@ impl TranspilerJob {
             path,
             loader,
             dirname_fd: Fd::INVALID,
-            file_descriptor: fd,
+            file_descriptor: None,
             // SAFETY: `input_file_fd` is a stack local declared above and
             // outlives `parse_options`; `addr_of_mut!` avoids forming an
             // intermediate `&mut` so the close-guard's later borrow stays sound.
@@ -808,6 +852,7 @@ impl TranspilerJob {
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,
+            use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
             virtual_source: None,
             replace_exports: Default::default(),
             dont_bundle_twice: true,
@@ -887,12 +932,11 @@ impl TranspilerJob {
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    should_close_input_file_fd.set(false);
                     if let Some(iw) = import_watcher {
                         // SAFETY: BACKREF — process-lifetime watcher; no other
                         // `&ImportWatcher` is live here, and `add_file` is
                         // thread-safe via watcher mutex.
-                        let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
                             input_file_fd,
                             path.text,
                             hash,
@@ -900,6 +944,9 @@ impl TranspilerJob {
                             Fd::INVALID,
                             package_json,
                         );
+                        if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                            should_close_input_file_fd.set(false);
+                        }
                     }
                 }
             }
@@ -913,12 +960,11 @@ impl TranspilerJob {
                 && bun_paths::is_absolute(path.text)
                 && !strings::contains(path.text, b"node_modules")
             {
-                should_close_input_file_fd.set(false);
                 if let Some(iw) = import_watcher {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
-                    let _ = unsafe { iw.assume_mut() }.add_file::<true>(
+                    let added = unsafe { iw.assume_mut() }.add_file::<true>(
                         input_file_fd,
                         path.text,
                         hash,
@@ -926,6 +972,9 @@ impl TranspilerJob {
                         Fd::INVALID,
                         package_json,
                     );
+                    if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                        should_close_input_file_fd.set(false);
+                    }
                 }
             }
         }

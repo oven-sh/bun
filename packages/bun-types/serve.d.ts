@@ -579,7 +579,48 @@ declare module "bun" {
 
     type Handler<Req extends Request, S, Res> = (request: Req, server: S) => MaybePromise<Res>;
 
-    type BaseRouteValue = Response | false | HTMLBundle | BunFile;
+    /**
+     * Serve a directory tree at a URL prefix.
+     *
+     * The route path **must** end in `/*`. The part of the request URL after
+     * the prefix is percent-decoded once and opened relative to `dir`.
+     * Non-canonical paths (containing `.`, `..`, empty segments, `%2F`, or a
+     * `%XX` sequence encoding a character that may appear literally in a path
+     * segment) are rejected with `404` so the served path is always the path
+     * the router matched. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`,
+     * so symlinks that would escape `dir` are clamped by the kernel. Routing
+     * is case-sensitive but filesystems on macOS and Windows are not by
+     * default: do not place access-controlled content inside `dir` and rely
+     * on an overlapping route to gate it.
+     *
+     * Responses carry `Content-Type` (from the file extension),
+     * `Last-Modified`, a weak `ETag`, and support single-range `Range`
+     * requests. A request that resolves to a directory without a trailing
+     * `/` is redirected (`301`) to the trailing-slash URL; with the trailing
+     * slash, `index.html` from that directory is served. Missing files
+     * return `404`.
+     *
+     * @example
+     * ```ts
+     * Bun.serve({
+     *   routes: {
+     *     "/static/*": { dir: "./public" },
+     *   },
+     * });
+     * ```
+     */
+    interface DirectoryRouteOptions {
+      /** Path to the directory to serve. */
+      dir: string;
+      /**
+       * Cache formatted `Last-Modified` strings per path so repeated requests
+       * for an unchanged file skip the date formatter. Uses ~20 KB per route.
+       * @default true
+       */
+      statCache?: boolean;
+    }
+
+    type BaseRouteValue = Response | false | HTMLBundle | BunFile | DirectoryRouteOptions;
 
     type Routes<WebSocketData, R extends string> = {
       [Path in R]:
@@ -869,12 +910,28 @@ declare module "bun" {
     /**
      * Stop listening to prevent new connections from being accepted.
      *
-     * By default, it does not cancel in-flight requests or websockets. That means it may take some time before all network activity stops.
+     * By default, it does not cancel in-flight requests or websockets. Idle
+     * keep-alive connections are closed right away, and connections with a
+     * request in flight close as soon as their response completes. That means
+     * it may take some time before all network activity stops.
+     *
+     * The returned promise resolves once every connection is closed.
      *
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
      * @default false
      */
     stop(closeActiveConnections?: boolean): Promise<void>;
+
+    /**
+     * Close every connection that is not currently sending a request or
+     * waiting for a response, without stopping the server.
+     *
+     * In-flight requests and open WebSockets are untouched, and the server
+     * keeps accepting new connections.
+     *
+     * @returns The number of connections that were closed.
+     */
+    closeIdleConnections(): number;
 
     /**
      * Update the `fetch` and `error` handlers without restarting the server.

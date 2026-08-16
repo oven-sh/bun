@@ -61,7 +61,6 @@ tcc_externs! {
     fn tcc_add_library_path(s: *mut TCCState, pathname: *const c_char) -> c_int;
     fn tcc_add_library(s: *mut TCCState, libraryname: *const c_char) -> c_int;
     fn tcc_add_symbol(s: *mut TCCState, name: *const c_char, val: *const c_void) -> c_int;
-    fn tcc_run(s: *mut TCCState, argc: c_int, argv: *mut *mut c_char) -> c_int;
     fn tcc_relocate(s1: *mut TCCState) -> c_int;
     fn tcc_get_symbol(s: *mut TCCState, name: *const c_char) -> *mut c_void;
 }
@@ -161,7 +160,7 @@ where
 
 impl State {
     /// Create a new TCC compilation context
-    pub fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
+    pub(crate) fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
         // SAFETY: tcc_new has no preconditions.
         NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)
     }
@@ -223,7 +222,7 @@ impl State {
     }
 
     /// Set error/warning display callback
-    pub fn set_error_func<Context>(
+    pub(crate) fn set_error_func<Context>(
         &mut self,
         error_opaque: Option<*mut Context>,
         error_func: ErrorFunc<Context>,
@@ -247,7 +246,7 @@ impl State {
     // libtcc.h and would fail to link if referenced.
 
     /// Set options as from command line (multiple supported)
-    pub fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
+    pub(crate) fn set_options(&mut self, str_: &ZStr) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState; str_ is NUL-terminated.
         if unsafe { tcc_set_options(self, str_.as_ptr()) } != 0 {
             return Err(Error::InvalidOptions);
@@ -334,7 +333,7 @@ impl State {
     // ======================== Linking Commands ========================
 
     /// Set output type. MUST BE CALLED before any compilation
-    pub fn set_output_type(&mut self, output_type: OutputFormat) -> Result<(), Error> {
+    pub(crate) fn set_output_type(&mut self, output_type: OutputFormat) -> Result<(), Error> {
         // SAFETY: self is a valid *mut TCCState.
         if unsafe { tcc_set_output_type(self, output_type as c_int) } == -1 {
             return Err(Error::InvalidOutputType);
@@ -396,14 +395,6 @@ impl State {
             }
         }
         Ok(())
-    }
-
-    /// Link and run `main()` function and return its value. DO NOT call `relocate` before.
-    /// Returns the status code returned by the program's `main()` function.
-    pub fn run(&mut self, argc: c_int, argv: *const *const c_char) -> c_int {
-        // SAFETY: self is a valid *mut TCCState; argv points to argc NUL-terminated C strings.
-        // Cast const away to match the C ABI (tcc does not mutate argv).
-        unsafe { tcc_run(self, argc, argv as *mut *mut c_char) }
     }
 
     /// Do all relocations (needed before using `get_symbol`)

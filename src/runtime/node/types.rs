@@ -59,6 +59,42 @@ pub use bun_sys::PlatformIoVec;
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Whether a call is serviced on the JS thread before it returns (`Sync`) or
+/// handed to the thread pool (`Async`). A few FS operations take a different
+/// path per flavor (`read_file`'s scratch buffer, recursive `readdir`), and
+/// the arguments parsed for an async call must outlive it off the JS thread:
+/// strings are copied or re-referenced thread-safely, buffers are pinned and
+/// `protect()`ed until the owner calls [`bun_jsc::Unprotect::unprotect`].
+#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
+pub enum Flavor {
+    Sync,
+    Async,
+}
+
+/// Whether a `String` wrapper object (`new String("..")`) counts as a string
+/// when parsing a string-or-buffer argument. Node's `fs.writeFile` family
+/// rejects wrapper objects; everything else unwraps them.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum StringObjects {
+    Allow,
+    /// Only primitive strings match; a wrapper object parses as "not a string
+    /// or buffer", so the caller throws its own type error.
+    Reject,
+}
+
+/// What [`BlobOrStringOrBuffer`] parsing does with a file-backed `Blob`
+/// (`Bun.file(..)`). Nothing here reads the file: an allowed one is returned
+/// as [`BlobOrStringOrBuffer::Blob`] like an in-memory blob, and its `slice()`
+/// is empty.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum FileBlobs {
+    Allow,
+    /// Throws "File blob cannot be used here".
+    Reject,
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+
 pub enum BlobOrStringOrBuffer {
     Blob(Box<Blob>),
     StringOrBuffer(StringOrBuffer),
@@ -78,25 +114,26 @@ impl Drop for BlobOrStringOrBuffer {
 }
 
 impl BlobOrStringOrBuffer {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::Blob(blob) => blob.shared_view(),
             Self::StringOrBuffer(str) => str.slice(),
         }
     }
 
-    pub fn byte_length(&self) -> usize {
+    pub(crate) fn byte_length(&self) -> usize {
         self.slice().len()
     }
 
-    pub fn from_js_maybe_file_maybe_async(
+    pub(crate) fn from_js_maybe_file_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
-        allow_file: bool,
-        is_async: bool,
+        file_blobs: FileBlobs,
+        flavor: Flavor,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         // Check StringOrBuffer first because it's more common and cheaper.
-        let str = match StringOrBuffer::from_js_maybe_async(global, value, is_async, true)? {
+        let str = StringOrBuffer::from_js_maybe_async(global, value, flavor, StringObjects::Allow)?;
+        let str = match str {
             Some(s) => s,
             None => {
                 // `as_class_ref` is the safe shared-borrow downcast (centralised
@@ -106,12 +143,12 @@ impl BlobOrStringOrBuffer {
                 let Some(blob) = value.as_class_ref::<Blob>() else {
                     return Ok(None);
                 };
-                if allow_file && blob.needs_to_read_file() {
+                if file_blobs == FileBlobs::Reject && blob.needs_to_read_file() {
                     return Err(global
                         .throw_invalid_arguments(format_args!("File blob cannot be used here")));
                 }
 
-                if is_async {
+                if flavor == Flavor::Async {
                     // For async/cross-thread usage, copy the blob data to an owned slice
                     // rather than referencing the store which isn't thread-safe
                     let blob_data = blob.shared_view();
@@ -129,33 +166,33 @@ impl BlobOrStringOrBuffer {
         Ok(Some(Self::StringOrBuffer(str)))
     }
 
-    pub fn from_js_maybe_file(
+    pub(crate) fn from_js_maybe_file(
         global: &JSGlobalObject,
         value: JSValue,
-        allow_file: bool,
+        file_blobs: FileBlobs,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, allow_file, false)
+        Self::from_js_maybe_file_maybe_async(global, value, file_blobs, Flavor::Sync)
     }
 
     pub fn from_js(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file(global, value, true)
+        Self::from_js_maybe_file(global, value, FileBlobs::Reject)
     }
 
-    pub fn from_js_async(
+    pub(crate) fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        Self::from_js_maybe_file_maybe_async(global, value, true, true)
+        Self::from_js_maybe_file_maybe_async(global, value, FileBlobs::Reject, Flavor::Async)
     }
 
     /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
     /// already-parsed [`Encoding`], so callers that must inspect the encoding
     /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
     /// twice.
-    pub fn from_js_with_encoding(
+    pub(crate) fn from_js_with_encoding(
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
@@ -171,7 +208,7 @@ impl BlobOrStringOrBuffer {
         }
     }
 
-    pub fn from_js_with_encoding_value_allow_request_response(
+    pub(crate) fn from_js_with_encoding_value_allow_request_response(
         global: &JSGlobalObject,
         value: JSValue,
         encoding_value: JSValue,
@@ -220,12 +257,11 @@ impl BlobOrStringOrBuffer {
             _ => {}
         }
 
-        let allow_string_object = true;
         match StringOrBuffer::from_js_with_encoding_value_allow_string_object(
             global,
             value,
             encoding_value,
-            allow_string_object,
+            StringObjects::Allow,
         )? {
             Some(s) => Ok(Some(Self::StringOrBuffer(s))),
             None => Ok(None),
@@ -249,9 +285,9 @@ impl Default for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    pub const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
+    pub(crate) const EMPTY: StringOrBuffer = StringOrBuffer::EncodedSlice(ZigStringSlice::EMPTY);
 
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         match self {
             Self::String(str) => str.slice(),
             Self::ThreadsafeString(str) => str.slice(),
@@ -294,8 +330,8 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 impl bun_jsc::Unprotect for StringOrBuffer {
     /// JS-side half of cleanup — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
-    /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
-    /// `Drop`.
+    /// `from_js_maybe_async(.., Flavor::Async, ..)`. Owned slices are released
+    /// by `Drop`.
     #[inline]
     fn unprotect(&mut self) {
         if let Self::Buffer(buffer) = self {
@@ -309,7 +345,7 @@ impl bun_jsc::Unprotect for StringOrBuffer {
 }
 
 impl StringOrBuffer {
-    pub fn to_thread_safe(&mut self) {
+    pub(crate) fn to_thread_safe(&mut self) {
         match self {
             Self::String(s) => {
                 s.to_thread_safe();
@@ -324,7 +360,7 @@ impl StringOrBuffer {
         }
     }
 
-    pub fn from_js_to_owned_slice(
+    pub(crate) fn from_js_to_owned_slice(
         global_object: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Vec<u8>> {
@@ -356,14 +392,14 @@ impl StringOrBuffer {
                 if buffer.buffer.value != JSValue::ZERO {
                     return Ok(buffer.buffer.value);
                 }
-                Ok(buffer.to_node_buffer(ctx))
+                buffer.to_node_buffer(ctx)
             }
         }
     }
 
     /// Returns the buffer payload if this is `Self::Buffer`.
     #[inline]
-    pub fn buffer(&self) -> Option<&Buffer> {
+    pub(crate) fn buffer(&self) -> Option<&Buffer> {
         if let Self::Buffer(b) = self {
             Some(b)
         } else {
@@ -381,21 +417,21 @@ impl StringOrBuffer {
     /// to ~128B of `vmovups` stack-to-stack copies per call which the
     /// `Option<>`-returning wrappers below cannot always NRVO away.
     #[inline]
-    pub fn from_js_maybe_async_into(
+    pub(crate) fn from_js_maybe_async_into(
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
-        is_async: bool,
-        allow_string_object: bool,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<bool> {
         use jsc::JSType;
         match value.js_type() {
             str_type @ (JSType::String | JSType::StringObject | JSType::DerivedStringObject) => {
-                if !allow_string_object && str_type != JSType::String {
+                if string_objects == StringObjects::Reject && str_type != JSType::String {
                     return Ok(false);
                 }
                 let mut str = bun_core::String::from_js(value, global)?;
-                if is_async {
+                if flavor == Flavor::Async {
                     let mut possible_clone = str;
                     let mut sliced = possible_clone.to_thread_safe_slice();
                     sliced.report_extra_memory(global.vm());
@@ -437,14 +473,14 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
+                let buffer = if flavor == Flavor::Async {
                     Buffer::from_js_pinned(global, value)
                         .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
                 } else {
                     Buffer::from_array_buffer(global, value)
                 };
 
-                if is_async {
+                if flavor == Flavor::Async {
                     buffer.buffer.value.protect();
                 }
 
@@ -456,14 +492,14 @@ impl StringOrBuffer {
     }
 
     #[inline]
-    pub fn from_js_maybe_async(
+    pub(crate) fn from_js_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
-        is_async: bool,
-        allow_string_object: bool,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<Option<StringOrBuffer>> {
         let mut out = Self::EMPTY;
-        if Self::from_js_maybe_async_into(&mut out, global, value, is_async, allow_string_object)? {
+        if Self::from_js_maybe_async_into(&mut out, global, value, flavor, string_objects)? {
             Ok(Some(out))
         } else {
             Ok(None)
@@ -472,49 +508,62 @@ impl StringOrBuffer {
 
     #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
-        Self::from_js_maybe_async(global, value, false, true)
+        Self::from_js_maybe_async(global, value, Flavor::Sync, StringObjects::Allow)
     }
 
     #[inline]
-    pub fn from_js_with_encoding(
+    pub(crate) fn from_js_with_encoding(
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
     ) -> JsResult<Option<StringOrBuffer>> {
-        Self::from_js_with_encoding_maybe_async(global, value, encoding, false, true)
+        Self::from_js_with_encoding_maybe_async(
+            global,
+            value,
+            encoding,
+            Flavor::Sync,
+            StringObjects::Allow,
+        )
     }
 
     /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
     #[inline]
-    pub fn from_js_with_encoding_into(
+    pub(crate) fn from_js_with_encoding_into(
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
     ) -> JsResult<bool> {
-        Self::from_js_with_encoding_maybe_async_into(out, global, value, encoding, false, true)
+        Self::from_js_with_encoding_maybe_async_into(
+            out,
+            global,
+            value,
+            encoding,
+            Flavor::Sync,
+            StringObjects::Allow,
+        )
     }
 
     /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
     /// `*out` and returns `Ok(true)` on success, `Ok(false)` for not-a-
     /// string-or-buffer. See [`from_js_maybe_async_into`] for rationale.
     #[inline]
-    pub fn from_js_with_encoding_maybe_async_into(
+    pub(crate) fn from_js_with_encoding_maybe_async_into(
         out: &mut StringOrBuffer,
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-        is_async: bool,
-        allow_string_object: bool,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
+            let buffer = if flavor == Flavor::Async {
                 Buffer::from_js_pinned(global, value)
                     .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
             } else {
                 Buffer::from_array_buffer(global, value)
             };
-            if is_async {
+            if flavor == Flavor::Async {
                 buffer.buffer.value.protect();
             }
             *out = Self::Buffer(buffer);
@@ -522,25 +571,13 @@ impl StringOrBuffer {
         }
 
         if encoding == Encoding::Utf8 {
-            return Self::from_js_maybe_async_into(
-                out,
-                global,
-                value,
-                is_async,
-                allow_string_object,
-            );
+            return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
         }
 
         if value.is_string() {
             let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
             if str.is_empty() {
-                return Self::from_js_maybe_async_into(
-                    out,
-                    global,
-                    value,
-                    is_async,
-                    allow_string_object,
-                );
+                return Self::from_js_maybe_async_into(out, global, value, flavor, string_objects);
             }
 
             use crate::webcore::encoding::BunStringEncode as _;
@@ -555,12 +592,12 @@ impl StringOrBuffer {
     }
 
     #[inline]
-    pub fn from_js_with_encoding_maybe_async(
+    pub(crate) fn from_js_with_encoding_maybe_async(
         global: &JSGlobalObject,
         value: JSValue,
         encoding: Encoding,
-        is_async: bool,
-        allow_string_object: bool,
+        flavor: Flavor,
+        string_objects: StringObjects,
     ) -> JsResult<Option<StringOrBuffer>> {
         let mut out = Self::EMPTY;
         if Self::from_js_with_encoding_maybe_async_into(
@@ -568,8 +605,8 @@ impl StringOrBuffer {
             global,
             value,
             encoding,
-            is_async,
-            allow_string_object,
+            flavor,
+            string_objects,
         )? {
             Ok(Some(out))
         } else {
@@ -577,11 +614,11 @@ impl StringOrBuffer {
         }
     }
 
-    pub fn from_js_with_encoding_value_allow_string_object(
+    pub(crate) fn from_js_with_encoding_value_allow_string_object(
         global: &JSGlobalObject,
         value: JSValue,
         encoding_value: JSValue,
-        allow_string_object: bool,
+        string_objects: StringObjects,
     ) -> JsResult<Option<StringOrBuffer>> {
         let encoding: Encoding = 'brk: {
             if !encoding_value.is_cell() {
@@ -589,13 +626,12 @@ impl StringOrBuffer {
             }
             break 'brk Encoding::from_js(encoding_value, global)?.unwrap_or(Encoding::Utf8);
         };
-        let is_async = false;
         Self::from_js_with_encoding_maybe_async(
             global,
             value,
             encoding,
-            is_async,
-            allow_string_object,
+            Flavor::Sync,
+            string_objects,
         )
     }
 }
@@ -680,7 +716,7 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-pub fn js_assert_encoding_valid(
+pub(crate) fn js_assert_encoding_valid(
     global: &JSGlobalObject,
     call_frame: &CallFrame,
 ) -> JsResult<JSValue> {
@@ -691,7 +727,7 @@ pub fn js_assert_encoding_valid(
 
 impl Encoding {
     /// Caller must verify the value is a string
-    pub fn from(slice: &[u8]) -> Option<Encoding> {
+    pub(crate) fn from(slice: &[u8]) -> Option<Encoding> {
         ENCODING_MAP.get_ascii_case_insensitive(slice).copied()
     }
 
@@ -699,7 +735,7 @@ impl Encoding {
     /// (`bun.String.inMapCaseInsensitive`): UTF-16 code units are narrowed
     /// into a stack buffer (any non-ASCII unit ⇒ miss — no encoding name
     /// contains one) before the map lookup.
-    pub fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
+    pub(crate) fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
         s.in_map_case_insensitive(&ENCODING_MAP)
     }
 }
@@ -712,7 +748,7 @@ impl Encoding {
         Ok(Self::from_bun_string(&str))
     }
 
-    pub fn assert(
+    pub(crate) fn assert(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -731,7 +767,7 @@ impl Encoding {
         }
     }
 
-    pub fn from_js_with_default_on_empty(
+    pub(crate) fn from_js_with_default_on_empty(
         value: JSValue,
         global_object: &JSGlobalObject,
         default: Encoding,
@@ -743,7 +779,10 @@ impl Encoding {
         Ok(Self::from(str.to_utf8().slice()))
     }
 
-    pub fn throw_encoding_error(global_object: &JSGlobalObject, value: JSValue) -> jsc::JsError {
+    pub(crate) fn throw_encoding_error(
+        global_object: &JSGlobalObject,
+        value: JSValue,
+    ) -> jsc::JsError {
         global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -757,7 +796,7 @@ impl Encoding {
 
     /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
     /// `EVP_MAX_MD_SIZE` etc.
-    pub fn encode_with_max_size(
+    pub(crate) fn encode_with_max_size(
         self,
         global_object: &JSGlobalObject,
         max_size: usize,
@@ -1291,7 +1330,7 @@ impl PathLikeExt for PathLike {
 pub struct Valid;
 
 impl Valid {
-    pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
         match len {
             // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
             // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
@@ -1306,7 +1345,7 @@ impl Valid {
         }
     }
 
-    pub fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn path_buffer(buffer: &Buffer, ctx: &JSGlobalObject) -> JsResult<()> {
         let slice = buffer.slice();
         match slice.len() {
             0 => {
@@ -1326,7 +1365,7 @@ impl Valid {
         }
     }
 
-    pub fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
+    pub(crate) fn path_null_bytes(slice: &[u8], global: &JSGlobalObject) -> JsResult<()> {
         if strings::index_of_char(slice, 0).is_some() {
             return Err(global
                 .err(
@@ -1348,21 +1387,17 @@ pub struct VectorArrayBuffer {
     // bare JSValue field — only sound while this lives on the stack.
     // Stored in a stack-local during writev; never heap-allocated.
     pub value: JSValue,
-    pub buffers: Vec<PlatformIoVec>,
+    pub(crate) buffers: Vec<PlatformIoVec>,
     /// The collected elements, in order. Rooted (and their backing stores
     /// pinned) for the lifetime of an async operation; see [`Self::release`].
-    pub views: Vec<JSValue>,
+    pub(crate) views: Vec<JSValue>,
     pinned: bool,
 }
 
 impl VectorArrayBuffer {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        self.value
-    }
-
     /// Release the per-element roots and pins taken by `from_js(.., pin: true)`.
     /// Must run on the JS thread, exactly once, after the I/O completes.
-    pub fn release(&mut self) {
+    pub(crate) fn release(&mut self) {
         if !self.pinned {
             return;
         }
@@ -1576,7 +1611,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 /// Non-exhaustive set of flag values; newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub struct FileSystemFlags(pub c_int);
+pub struct FileSystemFlags(c_int);
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FileSystemFlagsKind {
@@ -1589,14 +1624,14 @@ impl FileSystemFlags {
     // type (unstable). Dropped — callers use `c_int` directly.
 
     /// Open file for appending. The file is created if it does not exist.
-    pub const A: Self = Self(O::APPEND | O::WRONLY | O::CREAT);
+    pub(crate) const A: Self = Self(O::APPEND | O::WRONLY | O::CREAT);
     /// Open file for reading. An exception occurs if the file does not exist.
-    pub const R: Self = Self(O::RDONLY);
+    pub(crate) const R: Self = Self(O::RDONLY);
     /// Open file for writing. The file is created (if it does not exist) or truncated (if it exists).
-    pub const W: Self = Self(O::TRUNC | O::CREAT | O::WRONLY);
+    pub(crate) const W: Self = Self(O::TRUNC | O::CREAT | O::WRONLY);
 
     #[inline]
-    pub fn as_int(self) -> c_int {
+    pub(crate) fn as_int(self) -> c_int {
         self.0
     }
 }
@@ -1653,7 +1688,7 @@ impl FileSystemFlags {
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    pub fn from_js_number_only(
+    pub(crate) fn from_js_number_only(
         global: &JSGlobalObject,
         value: JSValue,
         kind: FileSystemFlagsKind,
@@ -1755,7 +1790,7 @@ pub struct Dirent {
     pub name: bun_core::String,
     pub path: bun_core::String,
     // not publicly exposed
-    pub kind: DirentKind,
+    pub(crate) kind: DirentKind,
 }
 
 pub type DirentKind = bun_sys::FileKind;
@@ -1777,7 +1812,7 @@ unsafe extern "C" {
 }
 
 impl Dirent {
-    pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_constructor(global: &JSGlobalObject) -> JSValue {
         Bun__JSDirentObjectConstructor(global)
     }
 
@@ -1812,7 +1847,7 @@ impl Dirent {
         })
     }
 
-    pub fn to_js_newly_created(
+    pub(crate) fn to_js_newly_created(
         &mut self,
         global_object: &JSGlobalObject,
         previous_jsstring: Option<&mut *mut jsc::JSString>,
@@ -1837,7 +1872,7 @@ pub enum PathOrBlob {
 }
 
 impl PathOrBlob {
-    pub fn from_js_no_copy(
+    pub(crate) fn from_js_no_copy(
         ctx: &JSGlobalObject,
         args: &mut ArgumentsSlice,
     ) -> JsResult<PathOrBlob> {

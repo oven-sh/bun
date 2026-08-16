@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSURLPattern.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -472,21 +471,6 @@ void JSURLPattern::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (RefPtr context = thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, context->url().string()));
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSURLPatternOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSURLPatternOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    SUPPRESS_MEMORY_UNSAFE_CAST auto* jsURLPattern = static_cast<JSURLPattern*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, jsURLPattern->protectedWrapped().ptr(), jsURLPattern);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

@@ -45,11 +45,6 @@
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
-extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__WTFStringImpl__hasPrefix(const WTF::StringImpl* impl, const char* bytes, size_t length)
-{
-    return impl->startsWith({ bytes, length });
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__deref(WTF::StringImpl* impl)
 {
     impl->deref();
@@ -99,11 +94,13 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsEmptyString(vm));
     }
     if (simdutf::validate_ascii(ptr, length)) {
+        if (length > WTF::String::MaxLength) [[unlikely]] {
+            return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        }
         return JSValue::encode(jsString(vm, WTF::String(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(ptr), length))));
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(ptr), length });
-    EXCEPTION_ASSERT(str.isNull() == !!scope.exception());
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -446,7 +443,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
         return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
-    auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const Latin1Character*>(bytes), length });
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length });
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
@@ -564,27 +561,6 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
     return JSValue::encode(array);
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toWTFString(BunString* bunString)
-{
-    WTF::String str;
-    if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
-            str = Zig::toString(bunString->impl.zig);
-        } else {
-            str = Zig::toStringCopy(bunString->impl.zig);
-        }
-
-    } else if (bunString->tag == BunStringTag::StaticZigString) {
-        str = Zig::toStringStatic(bunString->impl.zig);
-    } else {
-        return;
-    }
-
-    auto impl = str.releaseImpl();
-    bunString->impl.wtf = impl.leakRef();
-    bunString->tag = BunStringTag::WTFStringImpl;
-}
-
 extern "C" BunString URL__getFileURLString(BunString* filePath)
 {
     return Bun::toStringRef(WTF::URL::fileURLWithFileSystemPath(filePath->toWTFString()).stringWithoutFragmentIdentifier());
@@ -682,14 +658,6 @@ extern "C" BunString URL__getHrefJoin(BunString* baseStr, BunString* relativeStr
     return Bun::toStringRef(url.string());
 }
 
-extern "C" BunString URL__hash(WTF::URL* url)
-{
-    const auto& fragment = url->fragmentIdentifier().isEmpty()
-        ? emptyString()
-        : url->fragmentIdentifierWithLeadingNumberSign().toStringWithoutCopying();
-    return Bun::toStringRef(fragment);
-}
-
 extern "C" BunString URL__fragmentIdentifier(WTF::URL* url)
 {
     const auto& fragment = url->fragmentIdentifier().isEmpty()
@@ -731,11 +699,6 @@ extern "C" BunString URL__username(WTF::URL* url)
 extern "C" BunString URL__password(WTF::URL* url)
 {
     return Bun::toStringRef(url->password());
-}
-
-extern "C" BunString URL__search(WTF::URL* url)
-{
-    return Bun::toStringRef(url->query().toStringWithoutCopying());
 }
 
 /// Returns the host WITHOUT the port.

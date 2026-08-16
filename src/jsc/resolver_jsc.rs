@@ -1,18 +1,16 @@
 //! Host fns / C++ exports for `node:module` `_nodeModulePaths`. Lives here so
 //! `resolver/` has no JSC references.
 
+use crate::HostReturn as _;
 use bstr::BStr;
 
 use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::{OwnedString, String as BunString};
+use bun_core::{OwnedString, String as BunString, strings};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
 #[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
-pub(crate) fn node_module_paths_for_js(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     crate::mark_binding!();
     let argument: JSValue = frame.argument(0);
 
@@ -25,7 +23,7 @@ pub(crate) fn node_module_paths_for_js(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
+extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObject) -> JSValue {
     crate::mark_binding!();
 
     let in_str = BunString::static_(b".");
@@ -36,7 +34,7 @@ pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObje
 // `bun_core::String` is `Copy` with no `Drop` impl, so receiving it by value
 // never releases the caller's ref.
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
-pub(crate) extern "C" fn node_module_paths_js_value(
+extern "C" fn node_module_paths_js_value(
     in_str: BunString,
     global: &JSGlobalObject,
     use_dirname: bool,
@@ -51,7 +49,7 @@ pub(crate) extern "C" fn node_module_paths_js_value(
     };
     let mut buf = bun_paths::path_buffer_pool::get();
 
-    let full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+    let mut full_path: &[u8] = resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
         bun_paths::fs::FileSystem::instance().top_level_dir(),
         &mut **buf,
         &[base_path],
@@ -66,6 +64,12 @@ pub(crate) extern "C" fn node_module_paths_js_value(
             1
         }
     };
+    // Node begins with `path.resolve(from)`: no trailing separator past root.
+    while full_path.len() > root_index
+        && Platform::AUTO.is_separator(full_path[full_path.len() - 1])
+    {
+        full_path = &full_path[..full_path.len() - 1];
+    }
     let mut root_path: &[u8] = &full_path[0..root_index];
     if full_path.len() > root_path.len() {
         // Manual backwards-split iteration: we need both the remaining buffer
@@ -74,7 +78,7 @@ pub(crate) extern "C" fn node_module_paths_js_value(
         let mut index: Option<usize> = Some(suffix.len());
         while let Some(end) = index {
             let part: &[u8];
-            match suffix[..end].iter().rposition(|&b| b == SEP) {
+            match strings::last_index_of_char(&suffix[..end], SEP) {
                 Some(delim) => {
                     part = &suffix[delim + 1..end];
                     index = Some(delim);
@@ -115,7 +119,7 @@ pub(crate) extern "C" fn node_module_paths_js_value(
 
     OwnedString::as_raw_slice(&list)
         .to_js_array(global)
-        .unwrap_or(JSValue::ZERO)
+        .or_pending_exception()
 }
 
 /// `[bun.String]::to_js_array` lives on the `StringArrayJsc` ext trait below.

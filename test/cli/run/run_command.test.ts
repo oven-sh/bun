@@ -40,11 +40,11 @@ describe("bun", () => {
   });
 });
 
-test.if(isWindows)("[windows] A file in drive root runs", () => {
+test.if(isWindows)("[windows] A file in drive root runs", async () => {
   const path = "C:\\root-file" + Math.random().toString().slice(2) + ".js";
   try {
     writeFileSync(path, "console.log(`PASS`);");
-    const { stdout } = bunRun("C:\\root-file.js", {});
+    const { stdout } = await bunRun("C:\\root-file.js", {});
     expect(stdout).toBe("PASS");
   } catch {
     rmSync(path);

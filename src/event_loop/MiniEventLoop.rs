@@ -47,11 +47,8 @@ unsafe extern "Rust" {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
-pub const PIPE_READ_BUFFER_SIZE: usize = 256 * 1024;
-pub type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
-
 /// Intrusive MPSC queue over `AnyTaskWithExtraContext` linked via its `.next` field.
-pub type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
+type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<AnyTaskWithExtraContext>`.
 unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
@@ -66,8 +63,8 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
 type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
 
 pub struct MiniEventLoop {
-    pub tasks: Queue,
-    pub concurrent_tasks: ConcurrentTaskQueue,
+    pub(crate) tasks: Queue,
+    pub(crate) concurrent_tasks: ConcurrentTaskQueue,
     // Raw pointer because the loop is C-owned
     // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
     pub loop_: *mut UwsLoop,
@@ -80,9 +77,9 @@ pub struct MiniEventLoop {
     // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
     // Opaque ctx assigned externally; only read/cleared here.
-    pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
-    pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
+    pub(crate) after_event_loop_callback_ctx: Option<NonNull<c_void>>,
+    pub(crate) after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
+    pub pipe_read_scratch: Box<bun_io::PipeReadScratch>,
 }
 
 thread_local! {
@@ -187,6 +184,14 @@ impl MiniEventLoop {
         self.loop_
     }
 
+    /// Make a poll in progress (or the next one) return immediately, so the
+    /// `is_done` predicate a `tick` loop spins on is evaluated again. Any thread.
+    pub fn wakeup(&self) {
+        // SAFETY: `loop_` is the live uws loop; `us_wakeup_loop` is thread-safe
+        // and takes the raw pointer (no `&mut Loop` formed).
+        unsafe { bun_uws::us_wakeup_loop(self.loop_) };
+    }
+
     /// Raw pointer to the `DotEnv::Loader` backref.
     ///
     /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
@@ -203,16 +208,8 @@ impl MiniEventLoop {
     /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
     /// loader set in `init_global` that outlives `self` (never freed).
     #[inline]
-    pub fn env_ptr(&self) -> Option<NonNull<DotEnvLoader>> {
+    pub(crate) fn env_ptr(&self) -> Option<NonNull<DotEnvLoader>> {
         self.env
-    }
-
-    pub fn pipe_read_buffer(&mut self) -> &mut [u8] {
-        // `boxed_zeroed` avoids the 256 KiB stack temporary `Box::new([0u8; N])`
-        // would create in debug builds.
-        &mut self
-            .pipe_read_buffer
-            .get_or_insert_with(bun_core::boxed_zeroed::<PipeReadBuffer>)[..]
     }
 
     pub fn on_after_event_loop(&mut self) {
@@ -242,7 +239,7 @@ impl MiniEventLoop {
     /// live `&mut` to `file_polls` itself across this call. (Not eligible for
     /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
     /// `this`; the body cannot discharge that precondition.)
-    pub unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
+    pub(crate) unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
         // SAFETY: caller guarantees `this` points to a live `MiniEventLoop` (see fn `# Safety`);
         // `addr_of_mut!` projects to `file_polls` without forming `&mut Self`.
         unsafe {
@@ -259,7 +256,7 @@ impl MiniEventLoop {
         }
     }
 
-    pub fn init() -> MiniEventLoop {
+    pub(crate) fn init() -> MiniEventLoop {
         MiniEventLoop {
             tasks: Queue::init(),
             concurrent_tasks: ConcurrentTaskQueue::default(),
@@ -269,11 +266,11 @@ impl MiniEventLoop {
             top_level_dir: Box::default(),
             after_event_loop_callback_ctx: None,
             after_event_loop_callback: None,
-            pipe_read_buffer: None,
+            pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
         }
     }
 
-    pub fn tick_concurrent_with_count(&mut self) -> usize {
+    pub(crate) fn tick_concurrent_with_count(&mut self) -> usize {
         let concurrent = self.concurrent_tasks.pop_batch();
         let count = concurrent.count;
         if count == 0 {
@@ -331,7 +328,22 @@ impl MiniEventLoop {
         }
     }
 
-    pub fn tick_without_idle(&mut self, context: *mut c_void) {
+    /// Run everything already delivered (concurrent + local queues) without
+    /// blocking for more.
+    pub fn run_ready(&mut self, context: *mut c_void) {
+        loop {
+            let _ = self.tick_concurrent_with_count();
+            if self.tasks.readable_length() == 0 {
+                break;
+            }
+            while let Some(task) = self.tasks.read_item() {
+                // SAFETY: see tick_once.
+                unsafe { (*task).run(context) };
+            }
+        }
+    }
+
+    pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
         loop {
             let _ = self.tick_concurrent_with_count();
             while let Some(task) = self.tasks.read_item() {
@@ -410,17 +422,12 @@ bun_io::link_impl_EventLoopCtx! {
         file_polls_ptr()  => MiniEventLoop::file_polls_raw(this),
         // Mini has no pending_unref_counter; the upstream deliberately panics.
         increment_pending_unref_counter() => panic!("FIXME TODO"),
-        // `KeepAlive::{,un}refConcurrently` is JS-VM-only (statically rejected
-        // on Mini upstream); preserve that invariant rather than racily
-        // mutating uws counters off-thread.
-        ref_concurrently()   => unreachable!("KeepAlive::refConcurrently is JS-VM-only"),
-        unref_concurrently() => unreachable!("KeepAlive::unrefConcurrently is JS-VM-only"),
         after_event_loop_callback() => (*this).after_event_loop_callback,
         set_after_event_loop_callback(cb, ctx) => {
             (*this).after_event_loop_callback = cb;
             (*this).after_event_loop_callback_ctx = ctx;
         },
-        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
+        pipe_read_scratch() => &raw const *(*this).pipe_read_scratch,
     }
 }
 

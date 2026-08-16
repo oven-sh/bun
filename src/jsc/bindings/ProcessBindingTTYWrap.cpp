@@ -190,8 +190,6 @@ const ClassInfo TTYWrapObject::s_info = {
     &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapObject)
 };
 
-JSC::EncodedJSValue Process_functionInternalGetWindowSize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-
 JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
 #if OS(WINDOWS)
@@ -234,7 +232,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
         throwTypeError(globalObject, scope, "state must be a Uint8Array of rawModeStateSize bytes"_s);
         return {};
     }
-    int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector());
+    int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector(), 1);
     return JSValue::encode(jsNumber(err));
 #endif
 }
@@ -271,7 +269,7 @@ JSC_DEFINE_HOST_FUNCTION(TTYWrap_functionSetMode,
     int err = uv_tty_set_mode(ttyWrap->handle->tty(), mode.toInt32(globalObject));
 #else
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
-    int err = Bun__ttySetMode(fd, mode.toInt32(globalObject), &ttyWrap->ttyState);
+    int err = Bun__ttySetMode(fd, mode.toInt32(globalObject), &ttyWrap->ttyState, 1);
 #endif
     return JSValue::encode(jsNumber(err));
 }

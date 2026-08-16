@@ -17,7 +17,7 @@ use crate::JSGlobalObject;
 use bun_ptr::BackRef;
 
 pub struct PluginRunner {
-    pub global_object: BackRef<JSGlobalObject>,
+    pub(crate) global_object: BackRef<JSGlobalObject>,
 }
 
 // Re-export the JSC-free static helpers so callers in this crate can keep
@@ -53,13 +53,7 @@ impl PluginResolver for PluginRunner {
         target: BunPluginTarget,
     ) -> bun_bundler::Result<Option<FsPath<'static>>> {
         let global = self.global();
-        let js_err = |e: crate::JsError| {
-            bun_bundler::Error::Js(match e {
-                crate::JsError::Thrown => bun_core::JsError::Thrown,
-                crate::JsError::OutOfMemory => bun_core::JsError::OutOfMemory,
-                crate::JsError::Terminated => bun_core::JsError::Terminated,
-            })
-        };
+        let js_err = bun_bundler::Error::Js;
 
         let namespace_slice = Self::extract_namespace(specifier);
         let namespace = if !namespace_slice.is_empty() && namespace_slice != b"file" {

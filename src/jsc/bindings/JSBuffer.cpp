@@ -18,7 +18,6 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/ExceptionScope.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -87,7 +86,12 @@ extern "C" bool Bun__Node__ZeroFillBuffers;
 
 // SIMD-optimized search functions from highway_strings.cpp
 extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
+extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
+extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
 extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
@@ -402,8 +406,10 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
-    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
-    scope.assertNoException();
+    // JSUint8Array::create throws only on OOM — or with a termination request
+    // pending on this VM (a worker being stopped), which any exception check
+    // materialises. Either way there is no buffer.
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
@@ -1566,6 +1572,8 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
     return byteOffset + static_cast<int64_t>(static_cast<const uint8_t*>(result) - haystackPtr);
 }
 
+// UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
+// so a match can only start on an even byte offset.
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     if (thisLength == 1) return -1;
@@ -1573,16 +1581,13 @@ static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8
     thisLength /= 2;
     valueLength /= 2;
     byteOffset /= 2;
-    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), thisLength).subspan(byteOffset);
-    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
-    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    auto idx = byteOffset + std::distance(haystack.begin(), it);
-    return idx * 2;
+    const uint16_t* haystack = reinterpret_cast<const uint16_t*>(thisPtr);
+    size_t result = highway_memmem16(haystack + byteOffset, static_cast<size_t>(thisLength - byteOffset),
+        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return (byteOffset + static_cast<int64_t>(result)) * 2;
 }
 
-// UCS2 searches operate on whole uint16_t units (Node's SearchString<uint16_t>),
-// so a match can only start on an even byte offset.
 static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
     if (thisLength == 1) return -1;
@@ -1590,22 +1595,22 @@ static int64_t lastIndexOf16(const uint8_t* thisPtr, int64_t thisLength, const u
     thisLength /= 2;
     valueLength /= 2;
     byteOffset /= 2;
-    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), std::min(thisLength, byteOffset + valueLength));
-    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
-    auto it = std::find_end(haystack.begin(), haystack.end(), needle.begin(), needle.end());
-    if (it == haystack.end()) return -1;
-    return std::distance(haystack.begin(), it) * 2;
+    int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
+    if (haystackLen < valueLength) return -1;
+    size_t result = highway_memrmem16(reinterpret_cast<const uint16_t*>(thisPtr), static_cast<size_t>(haystackLen),
+        reinterpret_cast<const uint16_t*>(valuePtr), static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return static_cast<int64_t>(result) * 2;
 }
 
 static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    auto start = thisPtr;
-    auto end = thisPtr + std::min(thisLength, byteOffset + valueLength);
-    auto it = std::find_end(start, end, valuePtr, valuePtr + valueLength);
-    if (it != end) {
-        return it - thisPtr;
-    }
-    return -1;
+    int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
+    if (haystackLen < valueLength) return -1;
+    size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
+        valuePtr, static_cast<size_t>(valueLength));
+    if (result == kHighwayNotFound) return -1;
+    return static_cast<int64_t>(result);
 }
 
 // Port of the search-range handling in Node's src/node_buffer.cc
@@ -1657,15 +1662,15 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (!computeIndexOfRange(byteLength, byteOffsetD, endD, 1, !last, false, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
 
-    auto span = std::span<const uint8_t>(typedVector, searchEnd);
     if (last) {
-        span = span.subspan(0, byteOffset + 1);
-        return WTF::reverseFind(span, byteValue);
+        size_t len = byteOffset + 1;
+        size_t result = highway_last_index_of_char(typedVector, len, byteValue);
+        return result == len ? -1 : static_cast<int64_t>(result);
     }
-    span = span.subspan(byteOffset);
-    auto result = WTF::find<uint8_t>(span, byteValue);
-    if (result == WTF::notFound) return -1;
-    return result + byteOffset;
+    size_t len = searchEnd - byteOffset;
+    size_t result = highway_index_of_char(typedVector + byteOffset, len, byteValue);
+    if (result == len) return -1;
+    return static_cast<int64_t>(result + byteOffset);
 }
 
 // ucs2 and utf16le name the same encoding (the parser normalizes every alias
@@ -2385,30 +2390,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
-// DOMJIT makes it slower! TODO: investigate why
-// JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::JSUint8Array* thisValue, JSC::JSString* encodingValue));
-
-// JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     IGNORE_WARNINGS_BEGIN("frame-address")
-//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-//     IGNORE_WARNINGS_END
-//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-
-//     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
-//     if (!encoded) {
-//         auto scope = DECLARE_THROW_SCOPE(vm);
-
-//         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-//         return {};
-//     }
-
-//     auto encoding = encoded.value();
-
-//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
-// }
-
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
 // the other encodings use jsBufferPrototypeFunction_StringWriteWithEncoding below.
@@ -2441,13 +2422,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         }
     }
 
-    // Re-check if detached after potential JS execution
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
-        return {};
-    }
-
-    // Now safe to cache byteLength after all JS calls
+    // Now safe to cache byteLength after all JS calls. A detached view reports 0, so it
+    // goes through the same bounds checks as an empty buffer and writes nothing, as in node.
     size_t byteLength = castedThis->byteLength();
 
     // Node.js JS wrapper checks: if (offset < 0 || offset > this.byteLength)
@@ -2499,11 +2475,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
 
     if (!castedThis) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-        return {};
-    }
-
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
 

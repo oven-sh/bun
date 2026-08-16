@@ -13,8 +13,8 @@ use crate::hir::visitors::{
 use crate::hir::{
     ArrayElement, AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
     IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
-    ManualMemoDependencyRoot, NonLocalBinding, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
-    StoreStr, Terminal, Type, hir_vec,
+    ManualMemoDependencyRoot, NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr,
+    Terminal, Type, hir_vec,
 };
 use bun_core::BStr;
 use core::fmt::Write as _;
@@ -28,7 +28,7 @@ use core::fmt::Write as _;
 /// Note: takes `&mut HirFunction` (deviating from the read-only validation convention)
 /// because it sets `has_invalid_deps` on StartMemoize instructions when validation
 /// errors are found, so that ValidatePreservedManualMemoization can skip those blocks.
-pub fn validate_exhaustive_dependencies(
+pub(crate) fn validate_exhaustive_dependencies(
     func: &mut HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
@@ -38,10 +38,7 @@ pub fn validate_exhaustive_dependencies(
 
     let mut temporaries: IdMap<IdentifierId, Temporary> = IdMap::new();
     for param in &func.params {
-        let place = match param {
-            ParamPattern::Place(p) => p,
-            ParamPattern::Spread(s) => &s.place,
-        };
+        let place = param.place();
         temporaries.insert(
             place.identifier,
             Temporary::Local {
@@ -179,6 +176,15 @@ fn is_stable_type(ty: &Type) -> bool {
         ),
         Type::Object { shape_id: Some(id) } => matches!(*id, "BuiltInUseRefId"),
         _ => false,
+    }
+}
+
+fn effect_report_mode(mode: ExhaustiveEffectDepsMode) -> &'static str {
+    match mode {
+        ExhaustiveEffectDepsMode::All => "all",
+        ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
+        ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
+        ExhaustiveEffectDepsMode::Off => unreachable!(),
     }
 }
 
@@ -469,10 +475,7 @@ fn collect_dependencies(
 
     if is_function_expression {
         for param in &func.params {
-            let place = match param {
-                ParamPattern::Place(p) => p,
-                ParamPattern::Spread(s) => &s.place,
-            };
+            let place = param.place();
             locals.insert(place.identifier);
         }
     }
@@ -897,12 +900,8 @@ fn collect_dependencies(
                                         }),
                                     ) = (fn_deps, manual_deps)
                                     {
-                                        let effect_report_mode = match &cb.validate_effect {
-                                            ExhaustiveEffectDepsMode::All => "all",
-                                            ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
-                                            ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
-                                            ExhaustiveEffectDepsMode::Off => unreachable!(),
-                                        };
+                                        let effect_report_mode =
+                                            effect_report_mode(cb.validate_effect);
                                         // Convert manual deps to ManualMemoDependency format
                                         let manual_memo_deps: Vec<ManualMemoDependency> =
                                             manual_dep_list
@@ -1014,12 +1013,8 @@ fn collect_dependencies(
                                         }),
                                     ) = (fn_deps, manual_deps)
                                     {
-                                        let effect_report_mode = match &cb.validate_effect {
-                                            ExhaustiveEffectDepsMode::All => "all",
-                                            ExhaustiveEffectDepsMode::MissingOnly => "missing-only",
-                                            ExhaustiveEffectDepsMode::ExtraOnly => "extra-only",
-                                            ExhaustiveEffectDepsMode::Off => unreachable!(),
-                                        };
+                                        let effect_report_mode =
+                                            effect_report_mode(cb.validate_effect);
                                         let manual_memo_deps: Vec<ManualMemoDependency> =
                                             manual_dep_list
                                                 .iter()
@@ -1086,10 +1081,7 @@ fn collect_dependencies(
                     visit_candidate_dependency(receiver, temporaries, &mut dependencies, &locals);
                     // Skip property — matches TS behavior
                     for arg in args {
-                        let place = match arg {
-                            PlaceOrSpread::Place(p) => p,
-                            PlaceOrSpread::Spread(s) => &s.place,
-                        };
+                        let place = arg.place();
                         visit_candidate_dependency(place, temporaries, &mut dependencies, &locals);
                     }
                 }

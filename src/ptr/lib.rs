@@ -40,7 +40,7 @@ pub use tagged_pointer::TaggedPtr;
 pub mod ref_count;
 pub use ref_count::{
     AnyRefCounted, CellRefCounted, RefCount, RefCounted, RefPtr, ScopedRef, ThreadSafeRefCount,
-    ThreadSafeRefCounted, finalize_js_box, finalize_js_box_noop,
+    ThreadSafeRefCounted, destroy_box_with, finalize_js_box, finalize_js_box_noop,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
 // expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
@@ -59,7 +59,7 @@ pub use weak_ptr::WeakPtr;
 // (lowest tier, every crate can reach them); re-exported here so callers can
 // spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
 pub use bun_core::{
-    IntrusiveField, container_of, container_of_const, from_field_ptr, impl_field_parent,
+    IntrusiveField, assert_not_freeze, container_of, from_field_ptr, impl_field_parent,
     intrusive_field,
 };
 
@@ -85,16 +85,18 @@ pub use bun_core::callback_ctx;
 // `usize` length so it is a drop-in replacement for any `*const [T]` field.
 // ─────────────────────────────────────────────────────────────────────────────
 
+pub struct Shared;
+pub struct Mut;
+
 /// Non-owning, non-null back-reference to an object that outlives `self`.
-///
 /// For struct fields where the pointee is the owner/parent and is
 /// guaranteed live for the holder's entire lifetime (owner-creates-child).
 /// `Copy` + `Deref` so call sites read `self.owner.method()` instead of
 /// `unsafe { &*self.owner }.method()`.
 #[repr(transparent)]
-pub struct BackRef<T: ?Sized>(core::ptr::NonNull<T>);
+pub struct BackRef<T: ?Sized, P = Shared>(core::ptr::NonNull<T>, core::marker::PhantomData<P>);
 
-impl<T: ?Sized> BackRef<T> {
+impl<T: ?Sized> BackRef<T, Shared> {
     /// Wrap a reference to the owner. Safe: no lifetime is forged at
     /// construction; the back-reference invariant (pointee outlives holder) is
     /// the caller's structural guarantee, enforced at the *type* boundary by
@@ -102,16 +104,10 @@ impl<T: ?Sized> BackRef<T> {
     /// holder.
     #[inline]
     pub fn new(r: &T) -> Self {
-        BackRef(core::ptr::NonNull::from(r))
+        BackRef(core::ptr::NonNull::from(r), core::marker::PhantomData)
     }
 
-    /// Wrap a mutable reference to the owner (same invariant as `new`).
-    #[inline]
-    pub fn new_mut(r: &mut T) -> Self {
-        BackRef(core::ptr::NonNull::from(r))
-    }
-
-    /// Wrap a raw pointer.
+    /// Wrap a raw pointer as a read-only back-reference.
     ///
     /// # Safety
     /// `p` must be non-null, properly aligned, and point to a `T` that will
@@ -120,11 +116,71 @@ impl<T: ?Sized> BackRef<T> {
     #[inline]
     pub const unsafe fn from_raw(p: *mut T) -> Self {
         // SAFETY: caller contract — `p` is non-null.
-        BackRef(unsafe { core::ptr::NonNull::new_unchecked(p) })
+        BackRef(
+            unsafe { core::ptr::NonNull::new_unchecked(p) },
+            core::marker::PhantomData,
+        )
+    }
+}
+
+impl<T: ?Sized> BackRef<T, Mut> {
+    #[inline]
+    pub fn new_mut(r: &mut T) -> Self {
+        BackRef(core::ptr::NonNull::from(r), core::marker::PhantomData)
+    }
+
+    /// Wrap a write-capable raw pointer.
+    ///
+    /// # Safety
+    /// Same contract as [`BackRef::from_raw`]; additionally `p` must have been
+    /// derived with mutable provenance (`ptr::from_mut`, `&raw mut`,
+    /// `Box::into_raw`, ...).
+    #[inline]
+    pub const unsafe fn from_raw_mut(p: *mut T) -> Self {
+        // SAFETY: caller contract — `p` is non-null.
+        BackRef(
+            unsafe { core::ptr::NonNull::new_unchecked(p) },
+            core::marker::PhantomData,
+        )
+    }
+
+    /// Mutably borrow the pointee.
+    ///
+    /// # Safety
+    /// Caller must guarantee no other `&` or `&mut` to the pointee is live for
+    /// the returned borrow's duration (same uniqueness rule as
+    /// `NonNull::as_mut`). The `BackRef` invariant guarantees liveness and
+    /// alignment but *not* exclusivity — that is a per-call-site obligation.
+    #[inline]
+    pub unsafe fn get_mut(&mut self) -> &mut T {
+        // SAFETY: caller guarantees exclusivity; BackRef invariant guarantees
+        // liveness/alignment; `Mut` records write provenance.
+        unsafe { self.0.as_mut() }
     }
 
     #[inline]
+    pub const fn shared(self) -> BackRef<T, Shared> {
+        BackRef(self.0, core::marker::PhantomData)
+    }
+}
+
+impl<T, P> BackRef<T, P> {
+    #[inline]
+    pub const fn dangling() -> Self {
+        BackRef(core::ptr::NonNull::dangling(), core::marker::PhantomData)
+    }
+}
+
+impl<T: ?Sized> BackRef<T, Mut> {
+    #[inline]
     pub const fn as_ptr(self) -> *mut T {
+        self.0.as_ptr()
+    }
+}
+
+impl<T: ?Sized, P> BackRef<T, P> {
+    #[inline]
+    pub const fn as_const_ptr(self) -> *const T {
         self.0.as_ptr()
     }
 
@@ -138,36 +194,20 @@ impl<T: ?Sized> BackRef<T> {
     #[inline]
     pub fn get(&self) -> &T {
         // SAFETY: BackRef invariant — pointee outlives holder; non-null,
-        // aligned, dereferenceable. No `&mut` alias is live: owners hand out
-        // `BackRef` only to children they themselves own, and child access is
-        // single-threaded per the runtime's `!Send` event-loop affinity.
+        // aligned, dereferenceable.
         unsafe { self.0.as_ref() }
-    }
-
-    /// Mutably borrow the pointee.
-    ///
-    /// # Safety
-    /// Caller must guarantee no other `&` or `&mut` to the pointee is live for
-    /// the returned borrow's duration (same uniqueness rule as
-    /// `NonNull::as_mut`). The `BackRef` invariant guarantees liveness and
-    /// alignment but *not* exclusivity — that is a per-call-site obligation.
-    #[inline]
-    pub unsafe fn get_mut(&mut self) -> &mut T {
-        // SAFETY: caller guarantees exclusivity; BackRef invariant guarantees
-        // liveness/alignment.
-        unsafe { self.0.as_mut() }
     }
 }
 
-impl<T: ?Sized> Copy for BackRef<T> {}
-impl<T: ?Sized> Clone for BackRef<T> {
+impl<T: ?Sized, P> Copy for BackRef<T, P> {}
+impl<T: ?Sized, P> Clone for BackRef<T, P> {
     #[inline]
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<T: ?Sized> core::ops::Deref for BackRef<T> {
+impl<T: ?Sized, P> core::ops::Deref for BackRef<T, P> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
@@ -175,26 +215,33 @@ impl<T: ?Sized> core::ops::Deref for BackRef<T> {
     }
 }
 
-impl<T: ?Sized> From<core::ptr::NonNull<T>> for BackRef<T> {
+impl<T: ?Sized> From<core::ptr::NonNull<T>> for BackRef<T, Shared> {
     #[inline]
     fn from(p: core::ptr::NonNull<T>) -> Self {
-        BackRef(p)
+        BackRef(p, core::marker::PhantomData)
     }
 }
 
-impl<T: ?Sized> core::fmt::Debug for BackRef<T> {
+impl<T: ?Sized, P> From<BackRef<T, P>> for core::ptr::NonNull<T> {
+    #[inline]
+    fn from(b: BackRef<T, P>) -> Self {
+        b.0
+    }
+}
+
+impl<T: ?Sized, P> core::fmt::Debug for BackRef<T, P> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("BackRef").field(&self.0).finish()
     }
 }
 
-impl<T: ?Sized> PartialEq for BackRef<T> {
+impl<T: ?Sized, P> PartialEq for BackRef<T, P> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         core::ptr::addr_eq(self.0.as_ptr(), other.0.as_ptr())
     }
 }
-impl<T: ?Sized> Eq for BackRef<T> {}
+impl<T: ?Sized, P> Eq for BackRef<T, P> {}
 
 /// Detach a slice borrow from its borrowck lifetime.
 ///
@@ -420,11 +467,6 @@ impl Interned {
     }
 
     #[inline]
-    pub const fn len(self) -> usize {
-        self.0.len()
-    }
-
-    #[inline]
     pub const fn is_empty(self) -> bool {
         self.0.is_empty()
     }
@@ -587,15 +629,118 @@ where
     }
 }
 
-// SAFETY: `BackRef<T>` is morally `&T` (Deref/get) with an unsafe `get_mut`
-// escape hatch whose exclusivity is the caller's per-site obligation. Match
-// `&T` auto-trait bounds: `&T: Send ⇔ T: Sync`, `&T: Sync ⇔ T: Sync`. Holders
-// that additionally call `get_mut` across threads must separately ensure
-// `T: Send` at the call site (no different from `NonNull<T>` today).
-unsafe impl<T: ?Sized + Sync> Send for BackRef<T> {}
-// SAFETY: `&BackRef<T>` only yields `&T` (via `get`/`Deref`); `&T: Sync` holds
-// exactly when `T: Sync`, so sharing the back-reference across threads is sound.
-unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
+// SAFETY: `BackRef<T, P>` is morally `&T` (Deref/get) with, for `P = Mut`, an
+// unsafe `get_mut` escape hatch whose exclusivity is the caller's per-site
+// obligation. Match `&T` auto-trait bounds: `&T: Send ⇔ T: Sync`,
+// `&T: Sync ⇔ T: Sync`. Holders that additionally call `get_mut` across
+// threads must separately ensure `T: Send` at the call site (no different
+// from `NonNull<T>` today).
+unsafe impl<T: ?Sized + Sync, P> Send for BackRef<T, P> {}
+// SAFETY: `&BackRef<T, P>` only yields `&T` (via `get`/`Deref`); `&T: Sync`
+// holds exactly when `T: Sync`, so sharing the back-reference across threads is
+// sound.
+unsafe impl<T: ?Sized + Sync, P> Sync for BackRef<T, P> {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DetachablePtr<T> — scoped `&mut T` parked behind `&self` for re-entrant reads.
+//
+// Pattern: a Rust/C library hands a handler closure `&mut X` for the duration
+// of one synchronous call; the handler needs to expose `X` to re-entrant code
+// (JS host-fns) that can only reach it through `&self` on a long-lived wrapper.
+// The handler erases the lifetime and parks the pointer with [`set`]; host-fns
+// read it via [`get_mut`]; a scopeguard calls [`detach`] before the closure
+// returns the borrow to the library. A detached slot reads as `None`, so a
+// wrapper retained past its handler scope never reaches a dangling pointer.
+//
+// This is the `&mut`-yielding sibling of [`BackRef`]. Like `BackRef`, the
+// safety obligation is a TYPE invariant discharged at the *set* site (not a
+// per-`get` `unsafe` block): whoever parks a pointer must arrange the paired
+// `detach()` before the original `&mut T` borrow ends, and every `get_mut()`
+// caller consumes the result within its own synchronous frame without holding
+// it across a call that could reach the same slot. Under that protocol the
+// single `unsafe` in [`get_mut`] is sound; keeping it here (rather than at
+// each host-fn call site) is the same centralisation trade-off `BackRef::get`
+// / `LaunderedSelf::r` already make in this crate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A nullable slot for a lifetime-erased `&mut T` borrowed from an outer scope.
+/// See the module comment above for the full protocol.
+///
+/// # Type invariant
+/// Whenever the slot is non-null, the pointee is a live, exclusively-borrowed
+/// `T` whose originating `&mut T` scope has not yet ended (the setter has
+/// arranged a [`detach`](Self::detach) that runs before it does). Each
+/// [`get_mut`](Self::get_mut) borrow is the sole live `&mut T` for its use —
+/// callers take it once per host-fn body and never hold it across a re-entry
+/// that could reach the same slot.
+#[repr(transparent)]
+pub struct DetachablePtr<T>(core::cell::Cell<*mut T>);
+
+impl<T> DetachablePtr<T> {
+    /// A detached (null) slot.
+    #[inline]
+    pub const fn null() -> Self {
+        DetachablePtr(core::cell::Cell::new(core::ptr::null_mut()))
+    }
+
+    /// Construct with an initial parked pointer. Establishes the type
+    /// invariant: `ptr` (if non-null) must satisfy the contract on [`set`].
+    #[inline]
+    pub const fn new(ptr: *mut T) -> Self {
+        DetachablePtr(core::cell::Cell::new(ptr))
+    }
+
+    /// Park / retarget the slot. Safe: no reference is forged here. The type
+    /// invariant is the caller's structural guarantee — `ptr` is the
+    /// lifetime-erased address of a live `&mut T`, and a paired [`detach`]
+    /// will run before that borrow ends.
+    #[inline]
+    pub fn set(&self, ptr: *mut T) {
+        self.0.set(ptr);
+    }
+
+    /// Null the slot. After this, [`get_mut`] returns `None` and the wrapper's
+    /// host-fns become harmless no-ops.
+    #[inline]
+    pub fn detach(&self) {
+        self.0.set(core::ptr::null_mut());
+    }
+
+    /// `true` once [`detach`] has run (or the slot was never set).
+    #[inline]
+    pub fn is_detached(&self) -> bool {
+        self.0.get().is_null()
+    }
+
+    /// Recover the raw pointer (for forwarding / identity checks).
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.get()
+    }
+
+    /// Load the parked `&mut T`, or `None` if detached.
+    ///
+    /// # Safety (encapsulated)
+    /// Sound under the `DetachablePtr` type invariant: a non-null load means
+    /// the pointee is still inside the setter's live exclusive borrow — valid,
+    /// aligned, and lent to nobody else. The unbounded `'a` is the caller's
+    /// obligation per the invariant: consume within the current synchronous
+    /// frame, never across a re-entry that could reach this slot.
+    #[inline]
+    pub fn get_mut<'a>(&self) -> Option<&'a mut T> {
+        // SAFETY: `DetachablePtr` type invariant — non-null ⇒ pointee is a
+        // live `&mut T` whose originating borrow has not ended; the paired
+        // `detach()` nulls the slot before it does. Sole live `&mut` per call.
+        unsafe { self.0.get().as_mut() }
+    }
+}
+
+impl<T> Default for DetachablePtr<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::null()
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AsCtxPtr — `&self` → `*mut Self` for FFI / C-callback ctx slots.
@@ -636,3 +781,135 @@ pub trait AsCtxPtr {
     }
 }
 impl<T: ?Sized> AsCtxPtr for T {}
+
+#[cfg(test)]
+mod container_of_tests {
+    //! The shapes `container_of` / `impl_field_parent!` are used in, kept
+    //! Miri-clean under Tree Borrows (`bun run rust:miri`). Stacked Borrows
+    //! rejects every reference-derived form by design; only
+    //! `raw_place_projection` is defined under both models.
+    use core::cell::{Cell, UnsafeCell};
+
+    struct Parent {
+        count: Cell<u32>,
+        plain: u32,
+        by_mut: ByMut,
+        by_shared: UnsafeCell<ByShared>,
+    }
+    /// A `Freeze` child reached through `&mut self`.
+    struct ByMut {
+        hits: u32,
+    }
+    /// A `!Freeze` child reached through `&self`, itself sitting in an
+    /// interior-mutable slot the parent writes through (the `JsCell` shape).
+    struct ByShared {
+        hits: Cell<u32>,
+    }
+
+    bun_core::impl_field_parent! { ByMut => Parent.by_mut; fn parent; fn mut parent_ptr; }
+    bun_core::impl_field_parent! { ByShared => Parent.by_shared; fn shared parent; }
+
+    impl Parent {
+        fn boxed() -> *mut Parent {
+            bun_core::heap::into_raw(Box::new(Parent {
+                count: Cell::new(0),
+                plain: 0,
+                by_mut: ByMut { hits: 0 },
+                by_shared: UnsafeCell::new(ByShared { hits: Cell::new(0) }),
+            }))
+        }
+        /// Parent method that reaches back into the child it was called from.
+        fn bump_shared_child(&self) {
+            // SAFETY: single-threaded test; no `&mut ByShared` is live.
+            unsafe {
+                (*self.by_shared.get())
+                    .hits
+                    .set((*self.by_shared.get()).hits.get() + 1)
+            };
+            self.count.set(self.count.get() + 1);
+        }
+    }
+
+    impl ByMut {
+        fn touch(&mut self) {
+            self.hits += 1;
+            self.parent().count.set(10);
+            // SAFETY: `plain` is disjoint from `by_mut`; deref at point of use.
+            unsafe { (*self.parent_ptr()).plain = 20 };
+            self.hits += 1;
+        }
+    }
+
+    impl ByShared {
+        fn touch(&self) {
+            self.hits.set(1);
+            self.parent().count.set(30);
+            self.parent().bump_shared_child();
+            assert_eq!(self.hits.get(), 2);
+        }
+    }
+
+    #[test]
+    fn raw_place_projection() {
+        let p = Parent::boxed();
+        // SAFETY: `p` is live; the field pointer keeps whole-`Parent` provenance.
+        unsafe {
+            let field = &raw mut (*p).by_mut;
+            let back: *mut Parent = bun_core::from_field_ptr!(Parent, by_mut, field);
+            assert!(core::ptr::eq(back, p));
+            (*back).plain = 1;
+            (*back).by_mut.hits = 1;
+            assert_eq!(((*p).plain, (*p).by_mut.hits), (1, 1));
+            drop(bun_core::heap::take(p));
+        }
+    }
+
+    /// `&mut self` arms, called the way the runtime calls them: through a
+    /// `&mut Parent` that is a protected function argument.
+    #[test]
+    fn mut_receiver_under_parent_borrow() {
+        fn drive(parent: &mut Parent) {
+            parent.by_mut.touch();
+            assert_eq!(
+                (parent.count.get(), parent.plain, parent.by_mut.hits),
+                (10, 20, 2)
+            );
+        }
+        let p = Parent::boxed();
+        // SAFETY: `p` is live and uniquely owned here.
+        unsafe {
+            drive(&mut *p);
+            drop(bun_core::heap::take(p));
+        }
+    }
+
+    /// `shared` arm: `&self` on a `!Freeze` child, writing the parent's cells
+    /// and letting the parent write back into the child mid-call.
+    #[test]
+    fn shared_receiver_with_reentrant_parent() {
+        fn drive(parent: &Parent) {
+            // SAFETY: single-threaded test; no `&mut ByShared` is live.
+            unsafe { (*parent.by_shared.get()).touch() };
+            assert_eq!(parent.count.get(), 31);
+        }
+        let p = Parent::boxed();
+        // SAFETY: `p` is live.
+        unsafe {
+            drive(&*p);
+            drop(bun_core::heap::take(p));
+        }
+    }
+
+    #[test]
+    fn freeze_detection() {
+        use bun_core::__NotFreeze as _;
+        const {
+            assert!(<bun_core::__IsFreeze<ByMut>>::IS_FREEZE);
+            assert!(!<bun_core::__IsFreeze<ByShared>>::IS_FREEZE);
+            assert!(!<bun_core::__IsFreeze<Parent>>::IS_FREEZE);
+            // Interior mutability behind a pointer does not count.
+            assert!(<bun_core::__IsFreeze<Box<Cell<u32>>>>::IS_FREEZE);
+        }
+        bun_core::assert_not_freeze!(ByShared, Parent);
+    }
+}

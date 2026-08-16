@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformanceObserverEntryList.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMBinding.h"
@@ -247,21 +246,6 @@ void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& ana
     if (thisObject->scriptExecutionContext())
         analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
-}
-
-bool JSPerformanceObserverEntryListOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSPerformanceObserverEntryListOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsPerformanceObserverEntryList = static_cast<JSPerformanceObserverEntryList*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsPerformanceObserverEntryList->wrapped(), jsPerformanceObserverEntryList);
 }
 
 #if ENABLE(BINDING_INTEGRITY)

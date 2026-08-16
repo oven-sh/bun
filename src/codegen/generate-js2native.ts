@@ -45,6 +45,7 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 // requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
   "bun.rs": "bun.rs",
+  "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/FrameworkRouter.rs",
   "Listener.rs": "runtime/socket/Listener.rs",
@@ -65,7 +66,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "http/H3Client.rs": "http/H3Client.rs",
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
-  "ipc.rs": "jsc/ipc.rs",
   "jest.rs": "runtime/test_runner/jest.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
@@ -88,6 +88,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
+  "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
   "runtime/webcore/FileSink.rs": "runtime/webcore/FileSink.rs",
   "shell.rs": "runtime/shell/shell.rs",
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
@@ -188,10 +189,6 @@ function normalizeSymbolPathPrefix(input: string) {
   }
 
   return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
-}
-
-function cppPointer(call: NativeCall) {
-  return `&${symbol(call)}`;
 }
 
 export function getJS2NativeCPP() {
@@ -299,6 +296,7 @@ export function getJS2NativeRust() {
   const handExported = new Set<string>([
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
+    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
   ]);
 
   const srcRoot = path.resolve(import.meta.dir, "..");
@@ -344,6 +342,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $rust(${path.basename(call.filename)}, ${call.symbol})`,
       `bun_jsc::jsc_host_abi! {`,
+      `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject) -> JSValue {`,
       `        host_fn::host_fn_lazy(global, |g| ${target}(g))`,
@@ -365,6 +364,7 @@ export function getJS2NativeRust() {
     thunks.push(
       `// $rust(${path.basename(x.filename)}, ${x.symbol_target})`,
       `bun_jsc::jsc_host_abi! {`,
+      `    #[allow(dead_code, unreachable_pub, unused)]`,
       `    #[unsafe(no_mangle)]`,
       `    pub unsafe fn ${sym}(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {`,
       `        host_fn::host_fn_static(global, callframe, |g, cf| ${target}(g, cf))`,
@@ -385,6 +385,7 @@ export function getJS2NativeRust() {
     `// Calling convention: \`jsc.conv\` is plain \`extern "C"\` on every target except`,
     `// Windows-x64 (\`extern "sysv64"\`); see generated_classes.rs for the same note.`,
     ``,
+    `#[allow(dead_code, unreachable_pub, unused)]`,
     `#[allow(unused_imports)] // emitted for thunk shapes that vary per build`,
     `use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};`,
     ``,

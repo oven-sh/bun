@@ -299,10 +299,7 @@ impl S3Ext for S3 {
                 Box::new(init)
             }
 
-            fn resolve(
-                result: S3DeleteResult<'_>,
-                opaque_self: *mut c_void,
-            ) -> Result<(), bun_jsc::JsTerminated> {
+            fn resolve(result: S3DeleteResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
                 // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
                 let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
@@ -385,10 +382,7 @@ impl S3Ext for S3 {
         }
 
         impl Wrapper {
-            fn resolve(
-                result: S3ListObjectsResult<'_>,
-                opaque_self: *mut c_void,
-            ) -> Result<(), bun_jsc::JsTerminated> {
+            fn resolve(result: S3ListObjectsResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
                 // SAFETY: opaque_self was created via heap::alloc below.
                 let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
                 // `defer self.deinit()` → Box drops at scope exit.
@@ -540,7 +534,7 @@ impl BytesExt for Bytes {
 /// deallocator callback for buffers backed by a `Blob.Store`. C++ stashes a
 /// `*mut Store` as the deallocator context; this releases that ref.
 #[unsafe(no_mangle)]
-pub extern "C" fn BlobArrayBuffer_deallocator(
+pub(crate) extern "C" fn BlobArrayBuffer_deallocator(
     _bytes: *mut core::ffi::c_void,
     blob: *mut core::ffi::c_void,
 ) {

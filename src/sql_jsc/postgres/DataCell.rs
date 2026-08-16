@@ -10,9 +10,8 @@ use bun_sql::postgres::postgres_types::AnyPostgresError;
 use bun_sql::shared::data::Data;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
-pub use crate::shared::sql_data_cell::SQLDataCell;
+pub(crate) use crate::shared::sql_data_cell::SQLDataCell;
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
-use bun_sql::shared::column_identifier::ColumnIdentifier;
 
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
@@ -712,7 +711,7 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
     })
 }
 
-pub(crate) fn from_bytes(
+fn from_bytes(
     binary: bool,
     bigint: bool,
     oid: types::Tag,
@@ -981,7 +980,7 @@ enum PGNummericString<'a> {
 }
 
 impl<'a> PGNummericString<'a> {
-    pub(crate) fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         match self {
             PGNummericString::Static(value) => value,
             PGNummericString::Dynamic(value) => value,
@@ -1129,11 +1128,11 @@ fn parse_binary_numeric<'a>(
 }
 
 // The binary-parse return type varies per tag, so it is split into per-tag fns.
-pub fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
+pub(crate) fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
     Ok(f64::from_bits(parse_binary_int8(bytes)? as u64))
 }
 
-pub fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
+pub(crate) fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
     // pq_getmsgfloat8
     if bytes.len() != 8 {
         return Err(AnyPostgresError::InvalidBinaryData);
@@ -1141,7 +1140,7 @@ pub fn parse_binary_int8(bytes: &[u8]) -> Result<i64, AnyPostgresError> {
     Ok(i64::from_ne_bytes(bytes[0..8].try_into().expect("infallible: size matches")).swap_bytes())
 }
 
-pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
+pub(crate) fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
     // pq_getmsgint
     match bytes.len() {
         1 => Ok(bytes[0] as i32),
@@ -1155,7 +1154,7 @@ pub fn parse_binary_int4(bytes: &[u8]) -> Result<i32, AnyPostgresError> {
     }
 }
 
-pub fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
+pub(crate) fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
     match bytes.len() {
         1 => Ok(bytes[0] as u32),
         2 => Ok(pg_ntoh16(u16::from_ne_bytes(
@@ -1168,7 +1167,7 @@ pub fn parse_binary_oid(bytes: &[u8]) -> Result<u32, AnyPostgresError> {
     }
 }
 
-pub fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
+pub(crate) fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
     // pq_getmsgint
     match bytes.len() {
         1 => Ok(bytes[0] as i16),
@@ -1184,7 +1183,7 @@ pub fn parse_binary_int2(bytes: &[u8]) -> Result<i16, AnyPostgresError> {
     }
 }
 
-pub fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError> {
+pub(crate) fn parse_binary_float4(bytes: &[u8]) -> Result<f32, AnyPostgresError> {
     // pq_getmsgfloat4
     Ok(f32::from_bits(parse_binary_int4(bytes)? as u32))
 }
@@ -1272,20 +1271,10 @@ impl<'a> Putter<'a> {
             };
         }
         self.count += 1;
-        cell.index = match &field.name_or_index {
-            // The indexed columns can be out of order.
-            ColumnIdentifier::Index(i) => *i,
-            _ => index,
-        };
-
         // TODO: when duplicate and we know the result will be an object
         // and not a .values() array, we can discard the data
         // immediately.
-        cell.is_indexed_column = match &field.name_or_index {
-            ColumnIdentifier::Duplicate => 2,
-            ColumnIdentifier::Index(_) => 1,
-            ColumnIdentifier::Name(_) => 0,
-        };
+        cell.set_column(index, &field.name_or_index);
         Ok(true)
     }
 

@@ -45,8 +45,6 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import { readdirRecursive, writeIfNotChanged } from "./helpers";
 
-if (process.env.BUN_SILENT === "1") console.log = () => {};
-
 const argv = process.argv.slice(2);
 const outBase = argv.pop();
 if (!outBase) {
@@ -357,7 +355,8 @@ function emitNoMangle(
 ): string {
   const qual = unsafeFn ? "unsafe " : "";
   const item = (abiStr: string, cfg: string) =>
-    `${cfg}#[unsafe(no_mangle)]
+    `${cfg}#[allow(dead_code, unreachable_pub, unused)]
+#[unsafe(no_mangle)]
 pub ${qual}extern "${abiStr}" fn ${symbol}(${sig}) -> ${ret} {
 ${body}
 }`;
@@ -431,6 +430,7 @@ ${emitNoMangle(e.abi, e.symbol, "g: &JSGlobalObject", "JSValue", body)}`;
       const call = e.params.map(p => p.name).join(", ");
       return `
 // ${loc}
+#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
 pub extern "Rust" fn ${e.symbol}(${sig}) -> ${e.ret} {
     ${impl}(${call})
@@ -507,9 +507,11 @@ const importCandidates: Array<[string, string]> = [
 ];
 const importLines: string[] = [];
 for (const [modPath, name] of importCandidates) {
-  if (new RegExp("\\b" + name + "\\b").test(body)) importLines.push("use " + modPath + "::" + name + ";");
+  if (new RegExp("\\b" + name + "\\b").test(body))
+    importLines.push("#[allow(dead_code, unreachable_pub, unused)] use " + modPath + "::" + name + ";");
 }
-if (/\bBunString\b/.test(body)) importLines.push("use bun_core::String as BunString;");
+if (/\bBunString\b/.test(body))
+  importLines.push("#[allow(dead_code, unreachable_pub, unused)] use bun_core::String as BunString;");
 const imports = importLines.join("\n") + "\n\n";
 
 const externAudit =

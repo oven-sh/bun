@@ -10,7 +10,7 @@ use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;
 
 use crate::LinkerContext;
-use crate::chunk::{Content, Flags as ChunkFlags};
+use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -28,7 +28,7 @@ use bun_sys::{
 /// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
-pub fn write_output_files_to_disk(
+pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,
     root_path: &[u8],
     chunks: &mut [Chunk],
@@ -247,8 +247,8 @@ pub fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                false,
-                false,
+                ReferencePathStyle::ImporterRelative,
+                SourceMapShiftTracking::Disabled,
                 scc,
             ) {
                 Ok(r) => r,
@@ -265,11 +265,10 @@ pub fn write_output_files_to_disk(
                 chunk,
                 chunks,
                 Some(&mut display_size),
-                resolver_opts.compile
-                    && !chunk
-                        .flags
-                        .contains(ChunkFlags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD),
-                chunk.content.sourcemap(c.options.source_maps) != SourceMapOption::None,
+                ReferencePathStyle::for_chunk(chunk, resolver_opts.compile),
+                SourceMapShiftTracking::for_source_map(
+                    chunk.content.sourcemap(c.options.source_maps),
+                ),
             ) {
                 Ok(r) => r,
                 Err(_e) => bun_core::Output::panic(format_args!(

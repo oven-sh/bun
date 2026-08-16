@@ -53,10 +53,10 @@ pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
 }
 
 /// Formerly `npm.PackageManifest.bindings` — testing-only (`internal-for-testing.ts`).
-pub struct ManifestBindings;
+pub(crate) struct ManifestBindings;
 
 impl ManifestBindings {
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
         use bun_jsc::JSFunction;
         let obj = JSValue::create_empty_object(global, 1);
         obj.put(
@@ -80,9 +80,9 @@ impl ManifestBindings {
 // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
 // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
 #[bun_jsc::host_fn]
-pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bstr::BStr;
-    use bun_core::{String as BunString, strings};
+    use bun_core::String as BunString;
     use bun_install::npm;
     use bun_jsc::JsError;
     use std::io::Write as _;
@@ -119,17 +119,8 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
         }
     };
 
-    // The `Scope.url` field
-    // is `OwnedURL`, which stores only the href buffer and re-derives components
-    // via `URL::parse` on demand. `load_by_file`/`read_all` only consult
-    // `scope.url_hash` and `scope.url.href().len()`, so copying the raw href is
-    // sufficient and drops the unsafe lifetime-extension hack the earlier draft
-    // needed.
-    let scope = npm::registry::Scope {
-        url_hash: npm::registry::Scope::hash(strings::without_trailing_slash(registry.slice())),
-        url: bun_url::OwnedURL::from_href(Box::from(registry.slice())),
-        ..Default::default()
-    };
+    let mut scope = npm::registry::Scope::default();
+    scope.set_url(Box::from(registry.slice()));
 
     let maybe_package_manifest =
         match npm::package_manifest::Serializer::load_by_file(&scope, &manifest_file) {

@@ -12,7 +12,7 @@ use bun_sys::{self, E, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
-pub struct InstallCompletionsCommand;
+pub(crate) struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
     #[cfg(not(windows))]
@@ -40,26 +40,26 @@ impl InstallCompletionsCommand {
 
         // first try installing the symlink into the same directory as the bun executable
         let exe = bun_core::self_exe_path()?;
-        let mut target_buf = PathBuffer::uninit();
-        let target = buf_print_z(
-            &mut target_buf,
+        let mut link_buf = PathBuffer::uninit();
+        let link_path = buf_print_z(
+            &mut link_buf,
             format_args!(
                 "{}/{}",
                 bstr::BStr::new(bun_core::dirname(exe).expect("exe has dirname")),
                 Self::BUNX_NAME
             ),
         );
-        if bun_sys::symlink(exe, target).is_ok() {
+        if bun_sys::symlink(exe, link_path).is_ok() {
             return Ok(());
         }
 
         'outer: {
             if let Some(install_dir) = env_var::BUN_INSTALL.get() {
-                let target = buf_print_z(
-                    &mut target_buf,
+                let link_path = buf_print_z(
+                    &mut link_buf,
                     format_args!("{}/bin/{}", bstr::BStr::new(install_dir), Self::BUNX_NAME),
                 );
-                if bun_sys::symlink(exe, target).is_err() {
+                if bun_sys::symlink(exe, link_path).is_err() {
                     break 'outer;
                 }
                 return Ok(());
@@ -69,11 +69,11 @@ impl InstallCompletionsCommand {
         // if that fails, try $HOME/.bun/bin
         'outer: {
             if let Some(home_dir) = env_var::HOME.get() {
-                let target = buf_print_z(
-                    &mut target_buf,
+                let link_path = buf_print_z(
+                    &mut link_buf,
                     format_args!("{}/.bun/bin/{}", bstr::BStr::new(home_dir), Self::BUNX_NAME),
                 );
-                if bun_sys::symlink(exe, target).is_err() {
+                if bun_sys::symlink(exe, link_path).is_err() {
                     break 'outer;
                 }
                 return Ok(());
@@ -83,15 +83,15 @@ impl InstallCompletionsCommand {
         // if that fails, try $HOME/.local/bin
         'outer: {
             if let Some(home_dir) = env_var::HOME.get() {
-                let target = buf_print_z(
-                    &mut target_buf,
+                let link_path = buf_print_z(
+                    &mut link_buf,
                     format_args!(
                         "{}/.local/bin/{}",
                         bstr::BStr::new(home_dir),
                         Self::BUNX_NAME
                     ),
                 );
-                if bun_sys::symlink(exe, target).is_err() {
+                if bun_sys::symlink(exe, link_path).is_err() {
                     break 'outer;
                 }
                 return Ok(());
@@ -111,10 +111,8 @@ impl InstallCompletionsCommand {
         // `bunx.exe` on windows is a hardlink to `bun.exe`
         // for this to work, we need to delete and recreate the hardlink every time
         let image_path: &[u16] = windows::exe_path_w();
-        let last_sep = image_path
-            .iter()
-            .rposition(|&c| c == b'\\' as u16)
-            .expect("unreachable");
+        let last_sep =
+            strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
         let image_dirname = &image_path[..last_sep + 1];
 
         let mut bunx_path_buf = WPathBuffer::uninit();
@@ -181,10 +179,8 @@ impl InstallCompletionsCommand {
         // powershell `install.ps1` was used to install.
 
         let image_path: &[u16] = windows::exe_path_w();
-        let last_sep = image_path
-            .iter()
-            .rposition(|&c| c == b'\\' as u16)
-            .expect("unreachable");
+        let last_sep =
+            strings::last_index_of_char_t(image_path, u16::from(b'\\')).expect("unreachable");
         let image_dirname = &image_path[..last_sep];
 
         if !image_dirname.ends_with(w!("bun\\bin")) {
@@ -208,7 +204,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    pub fn exec() -> Result<(), crate::Error> {
+    pub(crate) fn exec() -> Result<(), crate::Error> {
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
             1
@@ -395,7 +391,7 @@ impl InstallCompletionsCommand {
                     }
                     Shell::Zsh => {
                         if let Some(fpath) = env_var::fpath.get() {
-                            for dir in fpath.split(|b| *b == b' ') {
+                            for dir in strings::split(fpath, b" ") {
                                 completions_dir = dir;
                                 if let Ok(d) = bun_sys::open_dir_absolute(dir) {
                                     break 'found d;
@@ -557,10 +553,11 @@ impl InstallCompletionsCommand {
 
             // Check if they need to load the zsh completions file into their .zshrc
             if shell == Shell::Zsh {
-                let mut completions_absolute_path_buf = PathBuffer::uninit();
-                let completions_path =
-                    bun_sys::get_fd_path(output_file.handle, &mut completions_absolute_path_buf)
-                        .expect("unreachable");
+                let mut completions_path_buf = PathBuffer::uninit();
+                let completions_path: &[u8] = resolve_path::join_string_buf::<platform::Auto>(
+                    &mut completions_path_buf,
+                    &[completions_dir, filename],
+                );
                 let mut zshrc_filepath = PathBuffer::uninit();
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
@@ -697,8 +694,8 @@ impl InstallCompletionsCommand {
                 if needs_to_tell_them_to_add_completions_file {
                     pretty_errorln!(
                         "<r>To enable completions, add this to your .zshrc:\n      <b>[ -s \"{}\" ] && source \"{}\"",
-                        bstr::BStr::new(&*completions_path),
-                        bstr::BStr::new(&*completions_path),
+                        bstr::BStr::new(completions_path),
+                        bstr::BStr::new(completions_path),
                     );
                 }
             }

@@ -26,33 +26,46 @@
 #include "config.h"
 #include "DOMURL.h"
 
-#include "ActiveDOMObject.h"
-// #include "Blob.h"
-// #include "BlobURL.h"
-// #include "MemoryCache.h"
-// #include "PublicURLManager.h"
-// #include "ResourceRequest.h"
-#include "ScriptExecutionContext.h"
-// #include "SecurityOrigin.h"
+#include "NodeURLHelpers.h"
 #include "URLSearchParams.h"
-#include <wtf/MainThread.h>
-
-class URLRegistrable {
-public:
-};
-
-class Blob {
-public:
-};
 
 namespace WebCore {
 
-static inline String redact(const String& input)
+// The WHATWG parser (WebKit) fast-paths all-ASCII hosts without validating
+// xn-- labels; Node's ada rejects invalid punycode in special-scheme hosts.
+// `input` is the string the host was parsed from (a base URL's host was checked when the base was parsed).
+static bool hasValidParsedHost(const URL& url, const String& input)
 {
-    if (input.contains('@'))
-        return "<redacted>"_s;
-
-    return makeString('"', input, '"');
+    auto host = url.host();
+    if (host.length() < 4 || !host.contains("xn--"_s))
+        return true;
+    // Non-special schemes have opaque hosts and skip IDNA entirely.
+    if (!url.hasSpecialScheme())
+        return true;
+    // An xn-- label that ICU produced from a Unicode host is valid by construction; only one that was literally in the
+    // input needs checking. If this input supplied the host, it did so from its authority: after the scheme and any
+    // slashes, up to the next slash, '?' or '#'. Tabs and newlines are removed anywhere and percent-encoding is decoded
+    // in hosts, so either could hide a literal label.
+    StringView view(input);
+    if (view.find([](char16_t character) { return character == '\t' || character == '\n' || character == '\r'; }) != notFound)
+        return Bun::hasValidPunycodeHost(host);
+    unsigned start = 0;
+    while (start < view.length() && view[start] <= ' ')
+        ++start;
+    if (start < view.length() && isASCIIAlpha(view[start])) {
+        unsigned schemeEnd = start + 1;
+        while (schemeEnd < view.length() && (isASCIIAlphanumeric(view[schemeEnd]) || view[schemeEnd] == '+' || view[schemeEnd] == '-' || view[schemeEnd] == '.'))
+            ++schemeEnd;
+        if (schemeEnd < view.length() && view[schemeEnd] == ':')
+            start = schemeEnd + 1;
+    }
+    while (start < view.length() && (view[start] == '/' || view[start] == '\\'))
+        ++start;
+    auto authority = view.substring(start);
+    authority = authority.left(std::min<size_t>(authority.find([](char16_t character) { return character == '/' || character == '\\' || character == '?' || character == '#'; }), authority.length()));
+    if (authority.find('%') == notFound && !authority.containsIgnoringASCIICase("xn--"_s))
+        return true;
+    return Bun::hasValidPunycodeHost(host);
 }
 
 inline DOMURL::DOMURL(URL&& completeURL)
@@ -62,29 +75,33 @@ inline DOMURL::DOMURL(URL&& completeURL)
     ASSERT(m_url.isValid());
 }
 
+// The Exception message carries the input and its extra the raw base string
+// (null if none was given); the JS error's message stays "Invalid URL" and
+// they surface as `error.input` / `error.base` like Node's ERR_INVALID_URL
+// (see createDOMException).
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
 {
     URL completeURL { url };
-    if (!completeURL.isValid())
-        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
+        return Exception { InvalidURLError, url };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
-ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
+ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base, const String& baseInput)
 {
     ASSERT(base.isValid() || base.isNull());
     URL completeURL { base, url };
-    if (!completeURL.isValid())
-        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
+        return Exception { InvalidURLError, url, baseInput };
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 {
     URL baseURL { base };
-    if (!base.isNull() && !baseURL.isValid())
-        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL against "_s, redact(base)) };
-    return create(url, baseURL);
+    if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL, base)))
+        return Exception { InvalidURLError, url, base };
+    return create(url, baseURL, base);
 }
 
 DOMURL::~DOMURL() = default;
@@ -92,9 +109,12 @@ DOMURL::~DOMURL() = default;
 static URL parseInternal(const String& url, const String& base)
 {
     URL baseURL { base };
-    if (!base.isNull() && !baseURL.isValid())
+    if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL, base)))
         return {};
-    return { baseURL, url };
+    URL result { baseURL, url };
+    if (result.isValid() && !hasValidParsedHost(result, url))
+        return {};
+    return result;
 }
 
 RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base)
@@ -113,10 +133,8 @@ bool DOMURL::canParse(const String& url, const String& base)
 ExceptionOr<void> DOMURL::setHref(const String& url)
 {
     URL completeURL { URL {}, url };
-    if (!completeURL.isValid()) {
-
-        return Exception { InvalidURLError, makeString(redact(url), " cannot be parsed as a URL."_s) };
-    }
+    if (!completeURL.isValid() || !hasValidParsedHost(completeURL, url))
+        return Exception { InvalidURLError, url };
     m_url = WTF::move(completeURL);
     m_searchParamsDirty = false;
     if (m_searchParams)
@@ -143,46 +161,11 @@ void DOMURL::flushPendingSearchParamsUpdate() const
         self->m_url.setQuery(WTF::move(serialized));
 }
 
-String DOMURL::createObjectURL(ScriptExecutionContext& scriptExecutionContext, Blob& blob)
-{
-    UNUSED_PARAM(blob);
-    UNUSED_PARAM(scriptExecutionContext);
-    return String();
-    // return createPublicURL(scriptExecutionContext, blob);
-}
-
-String DOMURL::createPublicURL(ScriptExecutionContext& scriptExecutionContext, URLRegistrable& registrable)
-{
-    // URL publicURL = BlobURL::createPublicURL(scriptExecutionContext.securityOrigin());
-    // if (publicURL.isEmpty())
-    //     return String();
-
-    // scriptExecutionContext.publicURLManager().registerURL(publicURL, registrable);
-
-    // return publicURL.string();
-    UNUSED_PARAM(scriptExecutionContext);
-    UNUSED_PARAM(registrable);
-    return String();
-}
-
 URLSearchParams& DOMURL::searchParams()
 {
     if (!m_searchParams)
         m_searchParams = URLSearchParams::create(search(), this);
     return *m_searchParams;
-}
-
-void DOMURL::revokeObjectURL(ScriptExecutionContext& scriptExecutionContext, const String& urlString)
-{
-    // URL url { urlString };
-    // ResourceRequest request(url);
-    // request.setDomainForCachePartition(scriptExecutionContext.domainForCachePartition());
-
-    // MemoryCache::removeRequestFromSessionCaches(scriptExecutionContext, request);
-
-    // scriptExecutionContext.publicURLManager().revoke(url);
-    UNUSED_PARAM(scriptExecutionContext);
-    UNUSED_PARAM(urlString);
 }
 
 } // namespace WebCore

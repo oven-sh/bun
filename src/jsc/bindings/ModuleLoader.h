@@ -16,7 +16,6 @@ class GlobalObject;
 
 namespace JSC {
 class JSPromise;
-class JSModuleLoader;
 }
 
 namespace Bun {
@@ -105,10 +104,6 @@ JSValue fetchCommonJSModule(
     String specifier,
     BunString* referrer,
     BunString* typeAttribute);
-
-// Call right before the loader looks `key` up for a load, so that a fetch that
-// failed earlier is retried instead of replayed.
-void evictFetchFailedModuleRegistryEntry(JSC::JSModuleLoader* moduleLoader, const JSC::Identifier& key);
 
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(

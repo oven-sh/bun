@@ -3619,8 +3619,12 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
-static JSC::Identifier resolveModuleSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader* loader, JSValue key,
+    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
 {
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+
     ErrorableString res;
     res.success = false;
 
@@ -3698,21 +3702,6 @@ static JSC::Identifier resolveModuleSpecifier(Zig::GlobalObject* globalObject, J
         throwException(scope, res.result.err, globalObject);
         return globalObject->vm().propertyNames->emptyIdentifier;
     }
-}
-
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
-    JSModuleLoader* loader, JSValue key,
-    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
-{
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    JSC::Identifier resolved = resolveModuleSpecifier(globalObject, key, referrer);
-    RETURN_IF_EXCEPTION(scope, resolved);
-
-    // The only host hook that runs before the registry lookup for static imports as well as import().
-    Bun::evictFetchFailedModuleRegistryEntry(loader, resolved);
-    return resolved;
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,

@@ -200,12 +200,17 @@ describe.concurrent("a macro that fails is reported once per failure", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds trace every macro call to stdout; nothing else is expected there.
+    const output = stdout
+      .split(/\r?\n/)
+      .filter(line => line !== "" && !line.startsWith("[macro] call "))
+      .join("\n");
+    return { stdout: output, stderr, exitCode };
   }
 
   test("a promise that rejects with an Error", async () => {
-    const { stderr, exitCode } = await run(
+    const { stdout, stderr, exitCode } = await run(
       {
         "macro.ts": `export async function m() {\n  await Promise.resolve();\n  throw new Error("macro rejected");\n}\n`,
         "entry.ts": `import { m } from "./macro.ts" with { type: "macro" };\nconsole.log(m());\n`,
@@ -216,14 +221,15 @@ describe.concurrent("a macro that fails is reported once per failure", () => {
     expect({
       rejections: countLines(stderr, "error: macro rejected"),
       failedCalls: countLines(stderr, "error: macro threw exception"),
+      stdout,
       exitCode,
-    }).toEqual({ rejections: 1, failedCalls: 1, exitCode: 1 });
+    }).toEqual({ rejections: 1, failedCalls: 1, stdout: "", exitCode: 1 });
   });
 
   // Every call of the macro is rejected with the one BuildMessage the module
   // registry keeps for bad.js, so three calls print it three times.
   test("a promise that rejects with the build error of an imported module, once per call", async () => {
-    const { stderr, exitCode } = await run(
+    const { stdout, stderr, exitCode } = await run(
       {
         "bad.js": "function bad( {",
         "macro.ts": `export async function m() {\n  await import("./bad.js");\n}\n`,
@@ -241,12 +247,13 @@ describe.concurrent("a macro that fails is reported once per failure", () => {
     expect({
       buildErrors: countLines(stderr, "error: Expected identifier but found end of file"),
       failedCalls: countLines(stderr, "error: macro threw exception"),
+      stdout,
       exitCode,
-    }).toEqual({ buildErrors: 3, failedCalls: 3, exitCode: 1 });
+    }).toEqual({ buildErrors: 3, failedCalls: 3, stdout: "", exitCode: 1 });
   });
 
   test("a macro module that fails to load", async () => {
-    const { stderr, exitCode } = await run(
+    const { stdout, stderr, exitCode } = await run(
       {
         "bad.js": "function bad( {",
         "macro.ts": `import "./bad.js";\nexport function m() {\n  return 1;\n}\n`,
@@ -258,8 +265,9 @@ describe.concurrent("a macro that fails is reported once per failure", () => {
     expect({
       buildErrors: countLines(stderr, "error: Expected identifier but found end of file"),
       loadErrors: countLines(stderr, 'error: "MacroLoadError" error in macro'),
+      stdout,
       exitCode,
-    }).toEqual({ buildErrors: 1, loadErrors: 1, exitCode: 1 });
+    }).toEqual({ buildErrors: 1, loadErrors: 1, stdout: "", exitCode: 1 });
   });
 });
 

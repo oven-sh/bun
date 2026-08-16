@@ -7,9 +7,6 @@ use crate::{
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 #[derive(Default)]
-// R-2 (`sharedThis`): every JS-facing host-fn takes `&self`, and nothing is
-// mutated after construction, so re-entrant JS cannot stack two `&mut` to the
-// same `m_ctx`.
 pub struct BuildMessage {
     pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,

@@ -8,8 +8,6 @@ use crate::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
 };
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`, and both
-// fields are read-only after construction.
 #[crate::JsClass]
 #[derive(Default)]
 pub struct ResolveMessage {

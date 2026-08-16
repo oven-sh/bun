@@ -35,11 +35,6 @@ common.expectWarning({
       'These APIs are for internal testing only. Do not use them.',
     ]
   } : {}),
-  // For calling `dns.lookup` with falsy `hostname`.
-  'DeprecationWarning': {
-    DEP0118: 'The provided hostname "false" is not a valid ' +
-      'hostname, and is supported in the dns module solely for compatibility.'
-  }
 });
 
 assert.throws(() => {
@@ -151,12 +146,13 @@ assert.throws(() => dnsPromises.lookup(false, () => {}),
 (async function() {
   let res;
 
-  res = await dnsPromises.lookup(false, {
+  assert.throws(() => dnsPromises.lookup(false, {
     hints: 0,
     family: 0,
     all: true
+  }), {
+    code: 'ERR_INVALID_ARG_VALUE',
   });
-  assert.deepStrictEqual(res, []);
 
   res = await dnsPromises.lookup('127.0.0.1', {
     hints: 0,
@@ -173,14 +169,13 @@ assert.throws(() => dnsPromises.lookup(false, () => {}),
   assert.deepStrictEqual(res, { address: '127.0.0.1', family: 4 });
 })().then(common.mustCall());
 
-dns.lookup(false, {
+assert.throws(() => dns.lookup(false, {
   hints: 0,
   family: 0,
   all: true
-}, common.mustSucceed((result, addressType) => {
-  assert.deepStrictEqual(result, []);
-  assert.strictEqual(addressType, undefined);
-}));
+}, common.mustNotCall()), {
+  code: 'ERR_INVALID_ARG_VALUE',
+});
 
 dns.lookup('127.0.0.1', {
   hints: 0,

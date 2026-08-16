@@ -1,6 +1,6 @@
 --- a/src/win/poll.c
 +++ b/src/win/poll.c
-@@ -269,57 +269,150 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
+@@ -269,57 +269,152 @@ static DWORD WINAPI uv__slow_poll_thread_proc(void* arg) {
    int r;
    uv_single_fd_set_t rfds, wfds, efds;
    struct timeval timeout;
@@ -30,8 +30,10 @@
 +     * second: uv_poll_start/uv_poll_stop on the loop thread change the
 +     * subscription mid-flight, and when both requests are checked out
 +     * (see uv__slow_poll_submit_poll_req) this lap refresh is the only
-+     * thing that converges a parked request onto the new subscription. */
-+    events = handle->events;
++     * thing that converges a parked request onto the new subscription.
++     * volatile: the loop thread writes this field while we are parked,
++     * and this cross-thread re-read is what the convergence rests on. */
++    events = *(volatile unsigned char*) &handle->events;
 +
 +    /* Watch readability for UV_DISCONNECT too: winsock select() has no
 +     * disconnect event, but a peer FIN or RST makes the socket readable
@@ -191,7 +193,7 @@
      }
    }
  
-@@ -346,7 +439,15 @@ static void uv__slow_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
+@@ -346,7 +441,15 @@ static void uv__slow_poll_submit_poll_req(uv_loop_t* loop, uv_poll_t* handle) {
      handle->mask_events_1 = handle->events;
      handle->mask_events_2 = 0;
    } else {
@@ -208,7 +210,7 @@
      return;
    }
  
-@@ -403,6 +504,32 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+@@ -403,6 +506,32 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
  }
  
  
@@ -241,7 +243,7 @@
  int uv_poll_init(uv_loop_t* loop, uv_poll_t* handle, int fd) {
    return uv_poll_init_socket(loop, handle, (SOCKET) uv__get_osfhandle(fd));
  }
-@@ -457,7 +584,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
+@@ -457,7 +586,10 @@ int uv_poll_init_socket(uv_loop_t* loop, uv_poll_t* handle,
    /* Get the peer socket that is needed to enable fast poll. If the returned
     * value is NULL, the protocol is not implemented by MSAFD and we'll have to
     * use slow mode. */

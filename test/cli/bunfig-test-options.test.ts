@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 describe("bunfig.toml test options", () => {
   test("randomize with seed produces consistent order", async () => {
@@ -195,5 +196,107 @@ describe("bunfig.toml test options", () => {
     const output = stdout + stderr;
     // 2 tests * 2 reruns = 4 total test runs
     expect(output).toContain("4 pass");
+  });
+
+  test.concurrent("test.concurrent option runs all tests concurrently", async () => {
+    const testFile = (tag: string) => `
+import { test, expect } from "bun:test";
+import { appendFileSync } from "fs";
+import { join } from "path";
+
+const logFile = join(import.meta.dir, "execution.log");
+
+test("${tag}-1", async () => {
+  appendFileSync(logFile, "${tag}-1-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "${tag}-1-end\\n");
+  expect(1).toBe(1);
+});
+
+test("${tag}-2", async () => {
+  appendFileSync(logFile, "${tag}-2-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "${tag}-2-end\\n");
+  expect(2).toBe(2);
+});
+`;
+
+    using dir = tempDir("bunfig-test-concurrent", {
+      "bunfig.toml": `[test]\nconcurrent = true`,
+      "a.test.ts": testFile("a"),
+      "b.test.ts": testFile("b"),
+      "execution.log": "",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout + stderr).toContain("4 pass");
+
+    // With concurrent execution, each file's tests start before either finishes.
+    const logPath = join(String(dir), "execution.log");
+    const lines = (await Bun.file(logPath).text()).trim().split("\n").filter(Boolean);
+    const firstEndIndex = lines.findIndex(line => line.includes("-end"));
+    const startsBeforeFirstEnd = lines.slice(0, firstEndIndex).filter(line => line.includes("-start")).length;
+    expect(startsBeforeFirstEnd).toBeGreaterThan(1);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("CLI --concurrent overrides test.concurrent", async () => {
+    const testFile = (tag: string) => `
+import { test, expect } from "bun:test";
+import { appendFileSync } from "fs";
+import { join } from "path";
+
+const logFile = join(import.meta.dir, "override.log");
+
+test("${tag}-1", async () => {
+  appendFileSync(logFile, "${tag}-1-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "${tag}-1-end\\n");
+  expect(1).toBe(1);
+});
+
+test("${tag}-2", async () => {
+  appendFileSync(logFile, "${tag}-2-start\\n");
+  await Bun.sleep(50);
+  appendFileSync(logFile, "${tag}-2-end\\n");
+  expect(2).toBe(2);
+});
+`;
+
+    using dir = tempDir("bunfig-test-concurrent-cli", {
+      "bunfig.toml": `[test]\nconcurrent = false`,
+      "a.test.ts": testFile("a"),
+      "b.test.ts": testFile("b"),
+      "override.log": "",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--concurrent"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout + stderr).toContain("4 pass");
+
+    // The CLI flag wins: tests run concurrently even though the config says false.
+    const logPath = join(String(dir), "override.log");
+    const lines = (await Bun.file(logPath).text()).trim().split("\n").filter(Boolean);
+    const firstEndIndex = lines.findIndex(line => line.includes("-end"));
+    const startsBeforeFirstEnd = lines.slice(0, firstEndIndex).filter(line => line.includes("-start")).length;
+    expect(startsBeforeFirstEnd).toBeGreaterThan(1);
+    expect(exitCode).toBe(0);
   });
 });

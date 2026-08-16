@@ -1100,7 +1100,7 @@ impl Arguments {
         if let Some(options_or_callable) = arguments.next_eat() {
             // options
             if options_or_callable.is_object() {
-                // Like node, which spreads the options (own keys) and never validates these.
+                // Like node, which spreads the options object and never validates these two.
                 persistent = options_or_callable
                     .get_own(global, &bun_core::String::static_("persistent"))?
                     .is_none_or(JSValue::to_boolean);

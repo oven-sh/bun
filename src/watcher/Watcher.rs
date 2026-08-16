@@ -1053,9 +1053,9 @@ impl fmt::Display for Op {
 // ─── WatchItem ────────────────────────────────────────────────────────────
 
 pub struct WatchItem {
-    /// `Borrowed` from an interned, process-lifetime path, or `Owned` when the
-    /// entry was added with `CLONE_FILE_PATH`; an owned path lives until
-    /// `flush_evictions` removes the entry.
+    /// `Owned` when the entry was added with `CLONE_FILE_PATH`, and freed when
+    /// `flush_evictions` removes the entry. Otherwise `Borrowed`, and the caller
+    /// must keep the bytes alive for as long as the entry exists.
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,

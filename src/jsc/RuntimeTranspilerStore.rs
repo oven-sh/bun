@@ -92,6 +92,13 @@ fn dump_source_string_failiable(
     {
         return Ok(());
     }
+    // Not every specifier is a filesystem path: a `data:` URL carries the
+    // whole module source inline and can exceed MAX_PATH_BYTES, which
+    // `resolve_path::z` treats as a caller bug (debug panic). The dump is
+    // best-effort tooling, so skip anything whose dump path cannot fit.
+    if specifier.len() + b".map".len() >= bun_paths::MAX_PATH_BYTES {
+        return Ok(());
+    }
 
     let mut holder = BUN_DEBUG_HOLDER.lock();
 

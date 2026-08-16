@@ -359,6 +359,96 @@ it("rm and promises.rm report ERR_FS_EISDIR for directories like rmSync", async 
   expect(fs.existsSync(target)).toBe(false);
 });
 
+// node validates the options (validateRmOptions in lib/internal/fs/utils.js)
+// before the lstat that produces ERR_FS_EISDIR, so on a directory target an
+// invalid option is what gets reported. Expected codes and messages are node
+// v26.3.0's.
+describe("rm option validation runs before the ERR_FS_EISDIR check", () => {
+  const cases = [
+    [
+      { force: "x" },
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.force" property must be of type boolean. Received type string ('x')`,
+    ],
+    [
+      { recursive: 0 },
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.recursive" property must be of type boolean. Received type number (0)`,
+    ],
+    [
+      { recursive: undefined },
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.recursive" property must be of type boolean. Received undefined`,
+    ],
+    [
+      { maxRetries: "x" },
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.maxRetries" property must be of type number. Received type string ('x')`,
+    ],
+    [
+      { maxRetries: -1 },
+      "ERR_OUT_OF_RANGE",
+      `The value of "options.maxRetries" is out of range. It must be >= 0 && <= 4294967295. Received -1`,
+    ],
+    [
+      { retryDelay: "x" },
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.retryDelay" property must be of type number. Received type string ('x')`,
+    ],
+    [
+      { retryDelay: 2 ** 31 },
+      "ERR_OUT_OF_RANGE",
+      `The value of "options.retryDelay" is out of range. It must be >= 0 && <= 2147483647. Received 2147483648`,
+    ],
+    ["x", "ERR_INVALID_ARG_TYPE", `The "options" argument must be of type object. Received type string ('x')`],
+    [null, "ERR_INVALID_ARG_TYPE", `The "options" argument must be of type object. Received null`],
+    [[], "ERR_INVALID_ARG_TYPE", `The "options" argument must be of type object. Received an instance of Array`],
+    // node checks force first, then recursive, retryDelay, maxRetries
+    [
+      { recursive: "x", force: "x" },
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.force" property must be of type boolean. Received type string ('x')`,
+    ],
+    [
+      { maxRetries: "x", retryDelay: "x" },
+      "ERR_INVALID_ARG_TYPE",
+      `The "options.retryDelay" property must be of type number. Received type string ('x')`,
+    ],
+  ];
+
+  test.each(cases)("options %p", async (options, code, message) => {
+    using dir = tempDir("rm-options-before-eisdir", { "sub/a.txt": "x" });
+    const target = join(String(dir), "sub");
+    const expected = { name: code === "ERR_OUT_OF_RANGE" ? "RangeError" : "TypeError", code, message };
+
+    expect(() => fs.rmSync(target, options)).toThrow(expect.objectContaining(expected));
+    // the callback form reports invalid options by throwing, not through the callback
+    expect(() => fs.rm(target, options, () => expect.unreachable("callback must not run"))).toThrow(
+      expect.objectContaining(expected),
+    );
+    await expect(fsPromises.rm(target, options)).rejects.toMatchObject(expected);
+
+    expect(fs.existsSync(join(target, "a.txt"))).toBe(true);
+  });
+
+  test("valid options still reach the native rm", async () => {
+    using dir = tempDir("rm-options-valid", { "a.txt": "", "b.txt": "", "c.txt": "", "sub/a.txt": "x" });
+    const root = String(dir);
+    fs.rmSync(join(root, "a.txt"), { force: true, maxRetries: 2, retryDelay: 0 });
+    const { promise, resolve } = Promise.withResolvers();
+    fs.rm(join(root, "b.txt"), { recursive: false }, resolve);
+    expect(await promise).toBeNull();
+    await fsPromises.rm(join(root, "c.txt"), {});
+    // a missing target is still an lstat ENOENT unless force is set
+    expect(() => fs.rmSync(join(root, "a.txt"))).toThrow(expect.objectContaining({ code: "ENOENT", syscall: "lstat" }));
+    fs.rmSync(join(root, "a.txt"), { force: true });
+    // and a directory is still refused once the options are fine
+    expect(() => fs.rmSync(join(root, "sub"))).toThrow(expect.objectContaining({ code: "ERR_FS_EISDIR" }));
+    await fsPromises.rm(join(root, "sub"), { recursive: true });
+    expect(fs.readdirSync(root)).toEqual([]);
+  });
+});
+
 it("close() while an operation is in flight actually closes the fd", async () => {
   await using dir = tempDir("deferred-close", { "x.txt": "hello" });
   const fh = await fsPromises.open(join(dir, "x.txt"), "r");

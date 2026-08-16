@@ -9,6 +9,8 @@ const {
   validateObject,
   validateAbortSignal,
   validateEncoding,
+  validateInt32,
+  validateUint32,
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
@@ -207,6 +209,70 @@ async function opendir(dir: string, options) {
   return promise;
 }
 
+// fs.rm, fs.rmSync and fs.promises.rm all go through node's validateRmOptions
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L905-L1006):
+// the options are checked first, then the path is lstat'ed and a directory is
+// refused with ERR_FS_EISDIR unless `recursive` is set. Keeping that order is
+// what makes a bad option win over ERR_FS_EISDIR when both apply. The option
+// half is shared here; the lstat half differs per flavor (sync below, async in
+// rmValidated). Any lstat failure is left for the native rm to report, since it
+// already implements node's `force`/ENOENT handling.
+const defaultRmOptions = {
+  recursive: false,
+  force: false,
+  retryDelay: 100,
+  maxRetries: 0,
+};
+
+function validateRmOptions(options) {
+  if (options === undefined) return { ...defaultRmOptions };
+  validateObject(options, "options");
+  // Like node, the spread copies own enumerable keys only, so an own
+  // `recursive: undefined` overrides the default and is rejected below.
+  options = { ...defaultRmOptions, ...options };
+  validateBoolean(options.force, "options.force");
+  validateBoolean(options.recursive, "options.recursive");
+  validateInt32(options.retryDelay, "options.retryDelay", 0);
+  validateUint32(options.maxRetries, "options.maxRetries");
+  return options;
+}
+
+function rmEisdirError(path) {
+  return require("internal/fs/cp-sync").fsEisdirError({
+    code: "EISDIR",
+    message: "is a directory",
+    path,
+    syscall: "rm",
+    errno: $processBindingConstants.os.errno.EISDIR,
+  });
+}
+
+function validateRmOptionsSync(path, options) {
+  options = validateRmOptions(options);
+  if (!options.recursive) {
+    let stats;
+    try {
+      stats = fs.lstatSync(path);
+    } catch {}
+    if (stats?.isDirectory()) throw rmEisdirError(path);
+  }
+  return options;
+}
+
+// `options` must already have been through validateRmOptions. fs.rm runs that
+// itself before calling this so that, as in node, invalid options throw
+// synchronously instead of reaching the callback.
+async function rmValidated(path, options) {
+  if (!options.recursive) {
+    let stats;
+    try {
+      stats = await fs.lstat(path);
+    } catch {}
+    if (stats?.isDirectory()) throw rmEisdirError(path);
+  }
+  return fs.rm(path, options);
+}
+
 // Node.js closes a FileHandle's fd in its native finalizer and raises
 // ERR_INVALID_STATE (DEP0137 end-of-life) when collected without close().
 // Mirror that with a FinalizationRegistry so dropped handles don't leak fds.
@@ -235,6 +301,10 @@ const private_symbols = {
   kTransferList,
   kDeserialize,
   FileHandle: null as any,
+  // shared with node:fs, whose rm/rmSync are the callback and sync flavors of rm below
+  validateRmOptions,
+  validateRmOptionsSync,
+  rmValidated,
 };
 
 const _readFile = fs.readFile.bind(fs);
@@ -333,32 +403,7 @@ const exports = {
   utimes: asyncWrap(fs.utimes, "utimes"),
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
   rm: async function rm(path, options) {
-    if (typeof options === "object" && options !== null) {
-      // Node merges the caller's options over the defaults with a spread, which
-      // copies own enumerable keys only -- including ones holding `undefined`.
-      // Normalize here so the native parser sees exactly that set.
-      options = { ...options };
-    }
-    if (!options?.recursive) {
-      // node validates in JS and reports ERR_FS_EISDIR for directories
-      // (same check as rmSync)
-      let stats;
-      try {
-        stats = await fs.lstat(path);
-      } catch {
-        // let the native call produce the error (respects force/ENOENT)
-      }
-      if (stats?.isDirectory()) {
-        throw require("internal/fs/cp-sync").fsEisdirError({
-          code: "EISDIR",
-          message: "is a directory",
-          path,
-          syscall: "rm",
-          errno: $processBindingConstants.os.errno.EISDIR,
-        });
-      }
-    }
-    return fs.rm(path, options);
+    return rmValidated(path, validateRmOptions(options));
   },
   rmdir: async function rmdir(path, options) {
     // node throws for any defined `recursive`, not just truthy ones
@@ -387,7 +432,7 @@ const exports = {
   opendir,
 
   // "$data" is reuse of private symbol
-  // this is used to export the private symbols to internal/fs/streams and node:http2 without making them public.
+  // this is used to export the private symbols and helpers to node:fs, internal/fs/streams and node:http2 without making them public.
   $data: private_symbols,
 };
 export default exports;

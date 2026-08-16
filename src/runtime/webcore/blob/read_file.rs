@@ -502,22 +502,32 @@ impl ReadFile {
         io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
-    /// Returns a raw `(ptr, len)` into either `stack_buffer` or
-    /// `self.buffer`'s spare capacity. Raw (not `&mut [u8]`) so the caller in
-    /// `do_read_loop` can carry it across the `&mut self` `do_read` call
-    /// without two live `&mut` covering overlapping memory (Stacked-Borrows
-    /// UB). The slice is materialised only at the syscall boundary.
-    #[cfg(all(not(windows), not(target_env = "ohos")))]
-    fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
-        // `spare_capacity_mut()` is the safe spelling of
-        // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately
-        // decay it to a raw `(ptr, len)` so the borrow does not outlive this
-        // call (the caller carries the raw pair across `&mut self`).
-        let spare = self.buffer.spare_capacity_mut();
+    /// Pick the read target: `buffer`'s spare capacity if it is at least as
+    /// large as `stack_buffer`, otherwise `stack_buffer`; capped by
+    /// `max_length - read_off`. Returns `(use_stack, target)` so the caller
+    /// keys its `extend_from_slice`/`commit_spare` decision off the same
+    /// branch taken here.
+    #[cfg(not(windows))]
+    fn remaining_buffer<'a>(
+        buffer: &'a mut Vec<u8>,
+        stack_buffer: &'a mut [u8],
+        max_length: SizeType,
+        read_off: SizeType,
+    ) -> (bool, &'a mut [u8]) {
+        let cap = (max_length.saturating_sub(read_off)) as usize;
+        let spare = buffer.spare_capacity_mut();
         if spare.len() < stack_buffer.len() {
-            (stack_buffer.as_mut_ptr(), stack_buffer.len())
+            let n = stack_buffer.len().min(cap);
+            (true, &mut stack_buffer[..n])
         } else {
-            (spare.as_mut_ptr().cast::<u8>(), spare.len())
+            let n = spare.len().min(cap);
+            // SAFETY: `spare` is `&mut [MaybeUninit<u8>]` over the Vec's spare
+            // capacity. The bytes are only written by the `read()`/`recv()`
+            // syscall below and `commit_spare` advances `len` by exactly the
+            // kernel-reported initialized count; no uninit byte is ever read.
+            let target =
+                unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), n) };
+            (false, target)
         }
     }
 
@@ -814,29 +824,13 @@ impl ReadFile {
             // held as a safe `&mut [u8]` across the `&mut self` call.
             let mut buffer = core::mem::take(&mut self.buffer);
             while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-                // reshaped for borrowck — keep the read target as a raw
-                // (ptr, len) across the `&mut self` `do_read` call; no `&mut [u8]`
-                // to `self.buffer`'s spare capacity is ever live alongside
-                // `&mut self`.
-                let stack_ptr = stack_buffer.as_mut_ptr();
-                // OHOS anti-aliasing fix: when spare >= 64KB, the original code
-                // passed self.buffer's spare pointer into do_read while do_read
-                // also holds &mut self. Under Stacked Borrows this is UB and
-                // manifests on OHOS as Vec.len() appearing to grow during do_read
-                // even though do_read never touches self.buffer (verified via
-                // instrumented trace). Always read into the stack buffer first,
-                // then extend_from_slice into self.buffer — this keeps the &mut
-                // self borrow in do_read disjoint from self.buffer's storage.
-                #[cfg(target_env = "ohos")]
-                let (buf_ptr, buf_len, use_stack) = (stack_ptr, stack_buffer.len(), true);
-                #[cfg(not(target_env = "ohos"))]
-                let (buf_ptr, buf_len, use_stack) = {
-                    let (ptr, len) = self.remaining_buffer(&mut stack_buffer);
-                    (ptr, len, ptr == stack_ptr)
-                };
+                let (use_stack, buf) = Self::remaining_buffer(
+                    &mut buffer,
+                    &mut stack_buffer,
+                    self.max_length,
+                    self.read_off,
+                );
 
-                // SAFETY: reconstructed from the raw (ptr, len) pair above.
-                let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
                 if !buf.is_empty() && self.errno.is_none() && !self.read_eof {
                     let mut read_amount: usize = 0;
                     let mut retry = false;

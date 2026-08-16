@@ -84,9 +84,7 @@ pub enum PromptBehaviour {
     /// `-f`, `--interactive=never` (default)
     #[default]
     Never,
-    /// `-i`/`--interactive=always` (before every removal) or `-I`/`--interactive=once`.
-    /// Prompting is not implemented: once the flags are parsed this is rejected,
-    /// naming the option as it was given.
+    /// `-i`, `-I`, `--interactive=once|always`, spelled as given so the rejection can name it.
     Prompt { flag: &'static [u8] },
 }
 
@@ -159,8 +157,7 @@ impl Rm {
                                     opts.remove_empty_dirs = true;
                                 }
                             }
-                            // Checked only once every flag is parsed so that a later
-                            // `-f` still cancels an earlier `-i`.
+                            // After all flags, so a later `-f` cancels an earlier `-i`.
                             if let PromptBehaviour::Prompt { flag } =
                                 Self::state_mut(interp, cmd).opts.prompt_behaviour
                             {

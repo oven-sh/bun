@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -568,6 +568,134 @@ test("jest.setTimeout will change default timeout", () => {
   const err = stderr!.toString();
   expect(err).not.toContain("error:");
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent("setDefaultTimeout() is read when a test or hook starts, not when it is registered", () => {
+  // `args` names the files as `./x.test.ts` so bun runs exactly those, in that order, instead of
+  // treating the names as filters.
+  async function runFixture(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("set-default-timeout", files);
+    await using proc = spawn({
+      cmd: [bunExe(), "test", ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr: normalizeBunSnapshot(stderr), exitCode };
+  }
+
+  test.each([
+    ["at the top level", "setDefaultTimeout(60_000);"],
+    ["inside beforeAll", "beforeAll(() => { setDefaultTimeout(60_000); }, 60_000);"],
+  ])("raising the default %s applies to tests and hooks without their own timeout", async (_, setDefault) => {
+    // --timeout is 10ms; the hook and the test each sleep well past it, so they only pass
+    // if the 60s default set by the fixture is the one applied to them.
+    const code = /* ts */ `
+      import { beforeAll, beforeEach, setDefaultTimeout, test } from "bun:test";
+      ${setDefault}
+      beforeEach(async () => { await Bun.sleep(50); });
+      test("outlives --timeout", async () => { await Bun.sleep(50); });
+    `;
+    expect(await runFixture({ "fixture.test.ts": code }, ["--timeout", "10", "./fixture.test.ts"]))
+      .toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": 
+      "fixture.test.ts:
+      (pass) outlives --timeout
+
+       1 pass
+       0 fail
+      Ran 1 test across 1 file."
+      ,
+      }
+    `);
+  });
+
+  test("lowering the default inside beforeAll applies to that file's tests without their own timeout", async () => {
+    const files = {
+      "a.test.ts": /* ts */ `
+        import { beforeAll, jest, test } from "bun:test";
+        beforeAll(() => { jest.setTimeout(50); }, 60_000);
+        const hang = () => new Promise(() => {});
+        test("uses the default set in beforeAll", hang);
+        test("keeps its own timeout", hang, 75);
+      `,
+      "b.test.ts": /* ts */ `
+        import { test } from "bun:test";
+        test("next file is back on --timeout", () => new Promise(() => {}));
+      `,
+    };
+    expect(await runFixture(files, ["--timeout", "100", "./a.test.ts", "./b.test.ts"])).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "a.test.ts:
+      (fail) uses the default set in beforeAll
+        ^ this test timed out after 50ms.
+      (fail) keeps its own timeout
+        ^ this test timed out after 75ms.
+
+      b.test.ts:
+      (fail) next file is back on --timeout
+        ^ this test timed out after 100ms.
+
+       0 pass
+       3 fail
+      Ran 3 tests across 2 files."
+      ,
+      }
+    `);
+  });
+
+  // Preload hooks run in every file (registered once per global, or once per file under --isolate),
+  // and a preload's setDefaultTimeout() is the default every file starts from. So the hooks must get
+  // it in every file, including files after the first and the run-level afterAll (which runs in the
+  // last file, or in every file when the worker cannot know which file is its last).
+  test.each([
+    ["one shared global", []],
+    ["--isolate", ["--isolate"]],
+    // The huge scale-up delay keeps the run on one worker, so that worker runs both files.
+    ["--parallel --no-isolate", ["--parallel=2", "--parallel-delay=1000000", "--no-isolate"]],
+    ["--parallel", ["--parallel=2", "--parallel-delay=1000000"]],
+  ])("hooks registered by a preload get the preload's default in every file: %s", async (_, flags) => {
+    const files = {
+      "preload.ts": /* ts */ `
+        import { afterAll, beforeEach, setDefaultTimeout } from "bun:test";
+        // Registered before the call on purpose: only the value in effect when a hook runs may matter.
+        beforeEach(async () => { await Bun.sleep(50); });
+        afterAll(async () => { await Bun.sleep(50); });
+        setDefaultTimeout(60_000);
+      `,
+      "a.test.ts": /* ts */ `
+        import { test } from "bun:test";
+        test("a", () => {});
+      `,
+      "b.test.ts": /* ts */ `
+        import { test } from "bun:test";
+        test("b", () => {});
+      `,
+    };
+    const args = [...flags, "--timeout", "10", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"];
+    expect(await runFixture(files, args)).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": 
+      "a.test.ts:
+      (pass) a
+
+      b.test.ts:
+      (pass) b
+
+       2 pass
+       0 fail
+      Ran 2 tests across 2 files."
+      ,
+      }
+    `);
+  });
 });
 
 it("expect().toEqual() on objects with property indices doesn't print undefined", () => {

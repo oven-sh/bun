@@ -888,6 +888,25 @@ describe("bun test", () => {
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
     });
+    test("should annotate a hook timeout", () => {
+      const stderr = runTest({
+        input: `
+          import { beforeEach, test } from "bun:test";
+          beforeEach(async () => {
+            await Bun.sleep(1000);
+          }, 1);
+          test("never starts", () => {});
+        `,
+        env: {
+          FORCE_COLOR: "1",
+          GITHUB_ACTIONS: "true",
+        },
+      });
+      const annotations = stderr.split("\n").filter(line => line.startsWith("::error"));
+      expect(annotations).toEqual([
+        `::error title=error: a beforeEach/afterEach hook timed out for test "never starts"::`,
+      ]);
+    });
   });
   describe(".each", () => {
     test("should run tests with test.each", () => {

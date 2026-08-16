@@ -1883,8 +1883,8 @@ pub enum HookTag {
 
 #[derive(Copy, Clone, Default)]
 pub struct ExecutionEntryCfg {
-    /// 0 = unlimited timeout
-    pub(crate) timeout: u32,
+    /// The entry's own timeout (0 = unlimited); `None` = the file's default when the entry starts.
+    pub(crate) timeout: Option<u32>,
     pub(crate) has_done_parameter: bool,
     /// Number of times to retry a failed test (0 = no retries)
     pub(crate) retry_count: u32,
@@ -1902,7 +1902,9 @@ pub enum AddedInPhase {
 pub struct ExecutionEntry {
     pub(crate) base: BaseScope,
     pub callback: Option<Strong>,
-    /// 0 = unlimited timeout
+    /// See `ExecutionEntryCfg::timeout`.
+    pub(crate) explicit_timeout: Option<u32>,
+    /// Timeout this run of the entry started with (0 = unlimited); set by `Execution::on_entry_started`.
     pub(crate) timeout: u32,
     pub(crate) has_done_parameter: bool,
     /// '.epoch' = not set
@@ -1931,7 +1933,8 @@ impl ExecutionEntry {
         let mut entry = Box::new(ExecutionEntry {
             base: BaseScope::init(base, name_not_owned, parent, cb.is_some()),
             callback: None,
-            timeout: cfg.timeout,
+            explicit_timeout: cfg.timeout,
+            timeout: 0,
             has_done_parameter: cfg.has_done_parameter,
             added_in_phase: phase,
             retry_count: cfg.retry_count,

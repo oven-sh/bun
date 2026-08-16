@@ -423,6 +423,11 @@ pub struct BunTestRoot {
     // gpa dropped — global mimalloc
     pub(crate) active_file: BunTestPtrOptional,
     pub(crate) hook_scope: Box<DescribeScope>,
+    /// `setDefaultTimeout()` called while the `--preload` scripts evaluate. Same lifetime as
+    /// `hook_scope`: preloads run once per global, so it applies to every file run in that
+    /// global and is dropped with the hooks when `--isolate` swaps it. A file's own
+    /// `setDefaultTimeout()` (`TestRunner::default_timeout_override`) takes precedence.
+    pub(crate) preload_default_timeout_override: Option<u32>,
     /// `RefData` pointers handed to `Promise.then()`. Tracked here (process-lifetime)
     /// so a never-settled promise's `+1` stays reachable; do not free orphans —
     /// a queued reaction may still consume them.
@@ -448,15 +453,18 @@ impl BunTestRoot {
         BunTestRoot {
             active_file: None,
             hook_scope,
+            preload_default_timeout_override: None,
             pending_then_refs: std::cell::RefCell::new(Vec::new()),
             file_generation: 0,
         }
     }
 
-    /// Drop preload-level hooks registered in the previous global. The next
-    /// file's `loadPreloads()` re-registers them against the fresh global.
+    /// Drop what the preloads registered in the previous global (hooks and their
+    /// `setDefaultTimeout()`). The next file's `loadPreloads()` re-registers them
+    /// against the fresh global.
     pub(crate) fn reset_hook_scope_for_test_isolation(&mut self) {
         debug_assert!(self.hook_scope.entries.is_empty());
+        self.preload_default_timeout_override = None;
         // drop old, create fresh
         self.hook_scope = DescribeScope::create(BaseScope {
             parent: None,

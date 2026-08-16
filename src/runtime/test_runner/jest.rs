@@ -131,12 +131,10 @@ pub struct TestRunner<'a> {
 
     pub(crate) default_timeout_ms: u32,
 
-    /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
+    /// from `setDefaultTimeout() or jest.setTimeout()` in the current file; reset after every
+    /// file. A preload's call lands in `bun_test_root.preload_default_timeout_override` instead.
+    /// maxInt(u32) means override not set.
     pub(crate) default_timeout_override: u32,
-
-    /// `default_timeout_override` as the `--preload` scripts left it. They evaluate once
-    /// per global, not once per file, so this is what each file starts from. maxInt(u32) means not set.
-    pub(crate) preload_default_timeout_override: u32,
 
     pub(crate) test_options: &'a TestOptions,
 
@@ -213,15 +211,6 @@ impl<'a> TestRunner<'a> {
         bun_test::vm_timer().remove(&raw mut active_file.timer);
     }
 
-    /// Drops the `setDefaultTimeout()` of the file that just finished. Under `--isolate` the
-    /// preloads' value goes too: the next file gets a fresh global and re-evaluates them
-    /// (see `BunTestRoot::reset_hook_scope_for_test_isolation`).
-    pub(crate) fn reset_default_timeout_override_for_next_file(&mut self, isolate: bool) {
-        if isolate {
-            self.preload_default_timeout_override = u32::MAX;
-        }
-        self.default_timeout_override = self.preload_default_timeout_override;
-    }
 
     pub(crate) fn should_file_run_concurrently(&self, file_id: FileId) -> bool {
         // Check if global concurrent flag is set
@@ -521,9 +510,11 @@ pub mod Jest {
             u32::try_from(arguments[0].coerce::<i32>(global_object)?.max(0)).unwrap();
 
         if let Some(test_runner) = runner() {
-            test_runner.default_timeout_override = timeout_ms;
+            // Same split as hooks registered during preload (`generic_hook_impl`).
             if global_object.bun_vm().is_in_preload {
-                test_runner.preload_default_timeout_override = timeout_ms;
+                test_runner.bun_test_root.preload_default_timeout_override = Some(timeout_ms);
+            } else {
+                test_runner.default_timeout_override = timeout_ms;
             }
         }
 

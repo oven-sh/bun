@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { existsSync, symlinkSync } from "fs";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -392,6 +392,43 @@ export default function Docs() {
       expect(stderr.toString()).not.toContain("reached unreachable code");
       expect(stderr.toString()).not.toContain("assert(this.cap > 0)");
     }
+  });
+
+  describe.concurrent("output directory that cannot be opened", () => {
+    const app = {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `export default function IndexPage() { return <p>index</p>; }`,
+    };
+
+    async function build(dir: string) {
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      return { exitCode, stderr: stderr.toString() };
+    }
+
+    test("a file at dist is reported with its path", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-file", {
+        ...app,
+        "dist": "a file in the way of the output directory",
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain(`ENOTDIR: Not a directory: could not open output directory "${path.join(dir, "dist")}"`);
+      expect(stderr).not.toContain("An internal error occurred");
+      expect(exitCode).toBe(1);
+    });
+
+    test.skipIf(isWindows)("a dangling symlink at dist is reported with its path", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-dangling-symlink", app);
+      symlinkSync("does-not-exist", path.join(dir, "dist"));
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain(`could not open output directory "${path.join(dir, "dist")}"`);
+      expect(stderr).not.toContain("missing a better error");
+      expect(exitCode).toBe(1);
+    });
   });
 
   test("client-side component with default import should work", async () => {

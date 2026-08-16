@@ -646,7 +646,17 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     Output::flush();
 
     // mkdir -p + open.
-    let root_dir = bun_sys::Dir::cwd().make_open_path(b"dist", Default::default())?;
+    let root_dir = match bun_sys::Dir::cwd().make_open_path(b"dist", Default::default()) {
+        Ok(dir) => dir,
+        Err(err) => {
+            Output::err(
+                err,
+                "could not open output directory {}",
+                (bun_core::fmt::quote(&root_dir_path),),
+            );
+            Global::crash();
+        }
+    };
 
     let mut maybe_runtime_file_index: Option<u32> = None;
 

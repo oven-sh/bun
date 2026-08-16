@@ -1203,11 +1203,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         // `args` must stay alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
-        // `'static`; inner `&[u8]` are argv-backed and already `'static`. A few
-        // subcommands (e.g. `bun update [-i]`) re-enter `parse` with the same
-        // argv + same `Subcommand`, so the cell may already be populated on
-        // subsequent calls; the first parse's `Args` is canonical and is what
-        // survives for the program duration.
+        // `'static`; inner `&[u8]` are argv-backed and already `'static`.
+        // Some subcommands (e.g. `bun update [-i]`) re-enter `parse` with the
+        // same argv; the first parse's `Args` is canonical.
         static PARSED_ARGS: OnceLock<clap::Args<clap::Help>> = OnceLock::new();
         let args: &'static clap::Args<clap::Help> = match clap::parse::<clap::Help>(
             params,
@@ -1218,10 +1216,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             },
         ) {
             Ok(a) => {
-                // On re-entry (e.g. `bun update` calls `parse` twice) `set`
-                // returns `Err(a)`; drop the fresh parse and fall through to
-                // the cached first one — argv is identical so the two are
-                // equivalent.
+                // On re-entry `set` fails; reuse the cached first parse.
                 let _ = PARSED_ARGS.set(a);
                 PARSED_ARGS.get().unwrap()
             }
@@ -1552,13 +1547,9 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
         }
 
-        // Only apply `--cwd` once per process. Some subcommands (e.g.
-        // `bun update [-i]`) re-enter `parse` after the first call already
-        // moved the process into the target directory; a second `chdir` with
-        // the same relative path would resolve against the already-changed
-        // cwd and hit ENOENT (or walk into a wrong absolute path). After the
-        // first successful chdir the process cwd IS the requested target, so
-        // the subsequent parse can safely skip.
+        // Apply `--cwd` only on the first parse: `bun update [-i]` re-enters
+        // `parse`, and a second relative `chdir` would resolve from the
+        // already-changed cwd and hit ENOENT (#31152).
         static CWD_APPLIED: core::sync::atomic::AtomicBool =
             core::sync::atomic::AtomicBool::new(false);
         if let Some(cwd_) = args.option(b"--cwd") {

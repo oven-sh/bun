@@ -406,9 +406,9 @@ describe("bun test", () => {
   });
   // Preloads are evaluated once per global: once per run by default, once per file
   // under --isolate. A file's own setDefaultTimeout() is dropped when the file
-  // finishes; the preload's must not be. Every run below passes --timeout 100, and
-  // each test file holds one test that never settles, so the "timed out after Nms"
-  // line it fails with reports which default timeout the file ended up with.
+  // finishes; the preload's must not be. Every run below passes --timeout 100, and the
+  // test files hold one test each that never settles, so the "timed out after Nms"
+  // line a file fails with reports the default timeout that file ran with.
   describe.concurrent("setDefaultTimeout() in a preload", () => {
     const hangingTest = `
       import { test } from "bun:test";
@@ -437,7 +437,8 @@ describe("bun test", () => {
         const timedOut = /this test timed out after (\d+)ms/.exec(line);
         if (timedOut) timeouts[file] = Number(timedOut[1]);
       }
-      return { timeouts, exitCode };
+      // Callers pass `stderr` as the expect() failure message so a mismatch shows the run's output.
+      return { result: { timeouts, exitCode }, stderr };
     }
 
     // A huge scale-up delay keeps the run on a single worker, so that worker runs every
@@ -450,7 +451,7 @@ describe("bun test", () => {
       ["--parallel --no-isolate", [...oneWorker, "--no-isolate"]],
       ["--parallel", oneWorker],
     ])("applies to every file: %s", async (_, flags) => {
-      const { timeouts, exitCode } = await timeoutPerFile(
+      const { result, stderr } = await timeoutPerFile(
         { "preload.ts": preload, "a.test.ts": hangingTest, "b.test.ts": hangingTest, "c.test.ts": hangingTest },
         ...flags,
         "--preload",
@@ -459,12 +460,11 @@ describe("bun test", () => {
         "./b.test.ts",
         "./c.test.ts",
       );
-      expect(timeouts).toEqual({ "a.test.ts": 10, "b.test.ts": 10, "c.test.ts": 10 });
-      expect(exitCode).toBe(1);
+      expect(result, stderr).toEqual({ timeouts: { "a.test.ts": 10, "b.test.ts": 10, "c.test.ts": 10 }, exitCode: 1 });
     });
 
     test("jest.setTimeout() is the same setting", async () => {
-      const { timeouts, exitCode } = await timeoutPerFile(
+      const { result, stderr } = await timeoutPerFile(
         {
           "preload.ts": `
             import { jest } from "bun:test";
@@ -478,8 +478,7 @@ describe("bun test", () => {
         "./a.test.ts",
         "./b.test.ts",
       );
-      expect(timeouts).toEqual({ "a.test.ts": 10, "b.test.ts": 10 });
-      expect(exitCode).toBe(1);
+      expect(result, stderr).toEqual({ timeouts: { "a.test.ts": 10, "b.test.ts": 10 }, exitCode: 1 });
     });
 
     test("setDefaultTimeout(0) turns the timeout off for every file", async () => {
@@ -487,7 +486,7 @@ describe("bun test", () => {
         import { test } from "bun:test";
         test("outlives --timeout 100", () => Bun.sleep(150));
       `;
-      const { timeouts, exitCode } = await timeoutPerFile(
+      const { result, stderr } = await timeoutPerFile(
         {
           "preload.ts": `
             import { setDefaultTimeout } from "bun:test";
@@ -501,12 +500,11 @@ describe("bun test", () => {
         "./a.test.ts",
         "./b.test.ts",
       );
-      expect(timeouts).toEqual({});
-      expect(exitCode).toBe(0);
+      expect(result, stderr).toEqual({ timeouts: {}, exitCode: 0 });
     });
 
     test("a file's own setDefaultTimeout() wins in that file only", async () => {
-      const { timeouts, exitCode } = await timeoutPerFile(
+      const { result, stderr } = await timeoutPerFile(
         {
           "preload.ts": preload,
           "a.test.ts": hangingTest,
@@ -523,12 +521,11 @@ describe("bun test", () => {
         "./b.test.ts",
         "./c.test.ts",
       );
-      expect(timeouts).toEqual({ "a.test.ts": 10, "b.test.ts": 20, "c.test.ts": 10 });
-      expect(exitCode).toBe(1);
+      expect(result, stderr).toEqual({ timeouts: { "a.test.ts": 10, "b.test.ts": 20, "c.test.ts": 10 }, exitCode: 1 });
     });
 
     test("without a preload, a file's setDefaultTimeout() does not reach the next file", async () => {
-      const { timeouts, exitCode } = await timeoutPerFile(
+      const { result, stderr } = await timeoutPerFile(
         {
           "a.test.ts": `
             import { setDefaultTimeout } from "bun:test";
@@ -540,15 +537,14 @@ describe("bun test", () => {
         "./a.test.ts",
         "./b.test.ts",
       );
-      expect(timeouts).toEqual({ "a.test.ts": 20, "b.test.ts": 100 });
-      expect(exitCode).toBe(1);
+      expect(result, stderr).toEqual({ timeouts: { "a.test.ts": 20, "b.test.ts": 100 }, exitCode: 1 });
     });
 
     test.each([
       ["--isolate", ["--isolate"]],
       ["--parallel", oneWorker],
     ])("a fresh global gets what its own evaluation of the preload set: %s", async (_, flags) => {
-      const { timeouts, exitCode } = await timeoutPerFile(
+      const { result, stderr } = await timeoutPerFile(
         {
           // Evaluated once per file when each file gets a fresh global; only the first
           // evaluation sets a timeout, so the second file must be back on --timeout.
@@ -569,8 +565,7 @@ describe("bun test", () => {
         "./a.test.ts",
         "./b.test.ts",
       );
-      expect(timeouts).toEqual({ "a.test.ts": 10, "b.test.ts": 100 });
-      expect(exitCode).toBe(1);
+      expect(result, stderr).toEqual({ timeouts: { "a.test.ts": 10, "b.test.ts": 100 }, exitCode: 1 });
     });
   });
   describe("support for Github Actions", () => {

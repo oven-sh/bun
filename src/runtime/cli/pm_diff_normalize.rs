@@ -176,7 +176,7 @@ pub(crate) fn normalize_minified_pair(
             ast_o.symbols.as_mut_slice(),
             ast_n.symbols.as_mut_slice(),
         );
-        namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0);
+        namer.plan(Some(&ast_o.module_scope), Some(&ast_n.module_scope), 0, 0);
     }
     let mut o = print_js(&arena_o, ast_o, &source_o, options)?;
     let mut n = print_js(&arena_n, ast_n, &source_n, options)?;
@@ -327,6 +327,8 @@ struct Namer<'s> {
     /// Short names some global already answers to (`$`, `_`, `ga`); never handed out.
     taken: Vec<Vec<u8>>,
     scratch: Vec<u8>,
+    /// Subtree member counts, computed once per scope.
+    weights: WeightMemo,
 }
 
 #[derive(Clone, Copy)]
@@ -360,6 +362,7 @@ impl<'s> Namer<'s> {
         }
         Namer {
             arenas: [arena_o, arena_n],
+            weights: Default::default(),
             renamed: [vec![false; old.len()], vec![false; new.len()]],
             symbols: [old, new],
             taken,
@@ -436,9 +439,16 @@ impl<'s> Namer<'s> {
         self.renamed[side][symbol] = true;
     }
 
-    fn plan(&mut self, old: Option<&bun_ast::Scope>, new: Option<&bun_ast::Scope>, depth: usize) {
+    /// `depth` is the naming digit (only scopes that named something bump it); `level` is the real nesting.
+    fn plan(
+        &mut self,
+        old: Option<&bun_ast::Scope>,
+        new: Option<&bun_ast::Scope>,
+        depth: usize,
+        level: usize,
+    ) {
         // One frame per nesting level; past this the input is pathological and its names can stay as they are.
-        if depth > 256 {
+        if level > 256 {
             return;
         }
         let co = old.map_or(Vec::new(), |s| self.candidates(0, s));
@@ -461,8 +471,8 @@ impl<'s> Namer<'s> {
             old.map_or(Vec::new(), |s| s.children.iter().map(|c| &**c).collect());
         let kn: Vec<&bun_ast::Scope> =
             new.map_or(Vec::new(), |s| s.children.iter().map(|c| &**c).collect());
-        for (o, n) in pair_scopes(&ko, &kn) {
-            self.plan(o, n, child_depth);
+        for (o, n) in pair_scopes(&ko, &kn, &mut self.weights) {
+            self.plan(o, n, child_depth, level + 1);
         }
     }
 }
@@ -470,21 +480,40 @@ impl<'s> Namer<'s> {
 /// Which child scope on the old side is "the same" scope on the new side. Only scopes that declare a lot need a
 /// good answer (small ones name positionally either way), so those are matched by kind and closest member count
 /// first; the rest fall to an in-order alignment on kind.
+type WeightMemo = bun_collections::HashMap<*const bun_ast::Scope, usize>;
+
 fn pair_scopes<'a>(
     old: &[&'a bun_ast::Scope],
     new: &[&'a bun_ast::Scope],
+    memo: &mut WeightMemo,
 ) -> Vec<(Option<&'a bun_ast::Scope>, Option<&'a bun_ast::Scope>)> {
     const BIG: usize = 24;
-    fn weight(root: &bun_ast::Scope) -> usize {
-        let (mut total, mut stack) = (0usize, vec![root]);
+    // Post-order fill: every scope's subtree count lands in `memo` the first time any ancestor asks.
+    fn weight(root: &bun_ast::Scope, memo: &mut WeightMemo) -> usize {
+        if let Some(&w) = memo.get(&std::ptr::from_ref(root)) {
+            return w;
+        }
+        let mut order: Vec<&bun_ast::Scope> = Vec::new();
+        let mut stack = vec![root];
         while let Some(s) = stack.pop() {
-            total += s.members.len();
+            if memo.contains_key(&std::ptr::from_ref(s)) {
+                continue;
+            }
+            order.push(s);
             stack.extend(s.children.iter().map(|c| &**c));
         }
-        total
+        for s in order.into_iter().rev() {
+            let w = s.members.len()
+                + s.children
+                    .iter()
+                    .map(|c| memo.get(&std::ptr::from_ref(&**c)).copied().unwrap_or(0))
+                    .sum::<usize>();
+            memo.insert(std::ptr::from_ref(s), w);
+        }
+        memo.get(&std::ptr::from_ref(root)).copied().unwrap_or(0)
     }
-    let wo: Vec<usize> = old.iter().map(|s| weight(s)).collect();
-    let wn: Vec<usize> = new.iter().map(|s| weight(s)).collect();
+    let wo: Vec<usize> = old.iter().map(|s| weight(s, memo)).collect();
+    let wn: Vec<usize> = new.iter().map(|s| weight(s, memo)).collect();
     let mut out = Vec::with_capacity(old.len().max(new.len()));
     let mut old_used = vec![false; old.len()];
     let mut new_used = vec![false; new.len()];
@@ -652,8 +681,15 @@ fn align_by<A, B>(
 }
 
 fn normalize_css(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
-    // The CSS parser wants a `'static` arena; one per process is plenty for the handful of stylesheets in a package.
+    // The CSS parser wants a `'static` arena and this command runs on one thread; a `'static` arena cannot be
+    // reset in safe code, so the total CSS fed through it is capped and anything past that diffs as text.
     static ARENA: std::sync::LazyLock<Arena> = std::sync::LazyLock::new(Arena::new);
+    static FED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    const CSS_BUDGET: usize = 64 * 1024 * 1024;
+    if FED.fetch_add(bytes.len(), core::sync::atomic::Ordering::Relaxed) + bytes.len() > CSS_BUDGET
+    {
+        return None;
+    }
     let alloc: &'static Arena = &ARENA;
     let mut opts = bun_css::ParserOptions::default(None);
     opts.filename = alloc.alloc_slice_copy(path);

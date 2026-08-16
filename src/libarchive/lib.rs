@@ -661,7 +661,7 @@ pub mod lib {
 
         /// Reads the body of the entry `next()` just returned.
         pub fn read_entry_data(
-            &self,
+            &mut self,
             next: &NextEntry,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
             next.read_entry_data(self.archive())

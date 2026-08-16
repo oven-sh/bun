@@ -567,10 +567,14 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
       "b/notes.txt": "same line\nnew value here\n",
       "a/eol.txt": "one\r\ntwo\r\n",
       "b/eol.txt": "one\ntwo\n",
+      // A stray CR at end of file (no newline after it) on one side only.
+      "a/bare.txt": "same\nfoo\r",
+      "b/bare.txt": "same\nbar",
     });
     expect(stderr).toBe("");
     expect(text).toContain("    1 │  same line\n    2 │- old value here\n    2 │+ new value here\n");
     expect(text).toMatch(/\neol\.txt ─+ line endings only\n/);
+    expect(text).toContain("    1 │  same\n    2 │- foo\n    2 │+ bar\n");
     expect(text).not.toContain("\r");
     expect(exitCode).toBe(0);
   });
@@ -728,6 +732,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       const { symlinkSync, chmodSync } = require("node:fs");
       symlinkSync("real/index.js", join(String(dir), "b/index.js"));
       symlinkSync("..", join(String(dir), "b/loop"));
+      symlinkSync("does-not-exist.js", join(String(dir), "b/dangling.js"));
       const run = async (args: string[]) => {
         await using p = Bun.spawn({
           cmd: [bunExe(), "pm", "diff", ...args, "--name-only"],

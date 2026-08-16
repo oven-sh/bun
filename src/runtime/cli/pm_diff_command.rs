@@ -432,20 +432,31 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 rel.push(b'/');
             }
             rel.extend_from_slice(name);
-            let kind = match entry.kind {
-                // Some filesystems leave d_type blank; symlinks are followed to what they point at.
-                #[cfg(not(windows))]
-                bun_sys::FileKind::Unknown | bun_sys::FileKind::SymLink => {
-                    match bun_sys::fstatat(dir, entry.name.as_zstr()) {
-                        Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
-                        Err(err) => fail(err, &rel),
-                    }
-                }
+            // Some filesystems leave d_type blank: ask lstat what the entry itself is first.
+            #[cfg(not(windows))]
+            let own_kind = match entry.kind {
+                bun_sys::FileKind::Unknown => match bun_sys::lstatat(dir, entry.name.as_zstr()) {
+                    Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
+                    Err(err) => fail(err, &rel),
+                },
                 k => k,
             };
+            #[cfg(windows)]
+            let own_kind = entry.kind;
+            // A symlink is read through to a file; a dangling one has nothing to show and a linked folder could loop.
+            #[cfg(not(windows))]
+            let kind = if own_kind == bun_sys::FileKind::SymLink {
+                match bun_sys::fstatat(dir, entry.name.as_zstr()) {
+                    Ok(st) => bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode),
+                    Err(_) => continue,
+                }
+            } else {
+                own_kind
+            };
+            #[cfg(windows)]
+            let kind = own_kind;
             match kind {
-                // A symlinked folder could loop back up the tree, and a published package cannot contain one anyway.
-                bun_sys::FileKind::Directory if entry.kind == bun_sys::FileKind::SymLink => {}
+                bun_sys::FileKind::Directory if own_kind == bun_sys::FileKind::SymLink => {}
                 bun_sys::FileKind::Directory => match bun_sys::open_dir_at(dir, name) {
                     Ok(sub) => stack.push((sub, rel)),
                     Err(err) => fail(err, &rel),
@@ -787,10 +798,11 @@ fn defang(text: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     std::borrow::Cow::Owned(out)
 }
 
+/// Drops a `\r` that ends a line (before `\n` or at end of file); a CR in the middle of a line stays (and is drawn).
 fn strip_cr(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     for (i, &b) in bytes.iter().enumerate() {
-        if !(b == b'\r' && bytes.get(i + 1) == Some(&b'\n')) {
+        if !(b == b'\r' && bytes.get(i + 1).is_none_or(|&n| n == b'\n')) {
             out.push(b);
         }
     }
@@ -1832,7 +1844,12 @@ impl Style {
         }
         // Nothing from the package may drive the terminal: CR, ESC and friends become visible marks.
         let text = text.strip_suffix(b"\r").unwrap_or(text);
-        let emph = emph.map(|(lo, hi)| (defang(&text[..lo]).len(), defang(&text[..hi]).len()));
+        let emph = emph.map(|(lo, hi)| {
+            (
+                defang(&text[..lo.min(text.len())]).len(),
+                defang(&text[..hi.min(text.len())]).len(),
+            )
+        });
         let text: &[u8] = &defang(text);
         // Changed lines get a tinted background so the foreground is free for syntax colours.
         let (num, accent, bg, strong) = match op {
@@ -2076,14 +2093,15 @@ fn unified_hunks(
     };
     // The terminal view compares CRLF files as if they were LF, so a line-ending flip is not a wall of -/+.
     let (old_lf, new_lf);
-    let (old, new) =
-        if style.pretty && (strings::contains(old, b"\r\n") || strings::contains(new, b"\r\n")) {
-            old_lf = strip_cr(old);
-            new_lf = strip_cr(new);
-            (old_lf.as_slice(), new_lf.as_slice())
-        } else {
-            (old, new)
-        };
+    let (old, new) = if style.pretty
+        && (strings::contains_char(old, b'\r') || strings::contains_char(new, b'\r'))
+    {
+        old_lf = strip_cr(old);
+        new_lf = strip_cr(new);
+        (old_lf.as_slice(), new_lf.as_slice())
+    } else {
+        (old, new)
+    };
     let mut dmp = DiffMatchPatch::<usize>::default();
     dmp.config.diff_timeout = 1000;
     let l2c = bun_core::handle_oom(diff_match_patch::diff_lines_to_chars(old, new));

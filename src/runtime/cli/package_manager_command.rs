@@ -193,7 +193,8 @@ impl PackageManagerCommand {
   <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
   <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
   <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks\n\
-  <d>└<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
+  <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
+  <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)\n\
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
   <d>├<r> <cyan>--json<r>                    output as JSON\n\
   <d>├<r> <cyan>--prod<r>                    omit devDependencies\n\

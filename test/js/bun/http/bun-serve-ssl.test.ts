@@ -431,7 +431,9 @@ describe("Bun.serve per-serverName client certificate policy", () => {
   // check must fail closed: a gated Host on a connection whose policy can no
   // longer be verified gets 421, not served.
   test("a gated Host fails closed on a connection draining after server.stop()", async () => {
-    const server = Bun.serve({
+    // using: stop() is idempotent, and the scope-exit disposal is the only
+    // cleanup on the path where the handshake fails before secureConnect.
+    using server = Bun.serve({
       port: 0,
       tls: [
         { key: serverKey, cert: serverCert },

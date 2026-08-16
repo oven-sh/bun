@@ -483,7 +483,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"
         ),
         parse_param!(
-            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '<empty>' for opaque specifiers. Default is '*' (allow all)."
+            "--allow-unresolved <STR>...      Allow unresolved dynamic import()/require() specifiers matching these glob patterns. Use '\\<empty\\>' for opaque specifiers. Default is '*' (allow all)."
         ),
         parse_param!(
             "--reject-unresolved              Fail the build on any dynamic import()/require() specifier that cannot be resolved at build time."
@@ -566,7 +566,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     ),
     parse_param!("-u, --update-snapshots           Update snapshot files"),
     parse_param!(
-        "--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs"
+        "--rerun-each <NUMBER>            Re-run each test file \\<NUMBER\\> times, helps catch certain bugs"
     ),
     parse_param!(
         "--retry <NUMBER>                 Default retry count for all tests, overridden by per-test { retry: N }"
@@ -589,7 +589,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'."
     ),
     parse_param!(
-        "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
+        "--bail <NUMBER>?                 Exit the test suite after \\<NUMBER\\> failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
         "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
@@ -834,8 +834,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            let len = bun_sys::getcwd(&mut *outbuf)?;
-            &outbuf[..len]
+            bun_core::getcwd(&mut outbuf)?.as_bytes()
         };
         let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
         // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
@@ -869,8 +868,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
         let mut temp = PathBuffer::uninit();
-        let len = bun_sys::getcwd(&mut *temp)?;
-        Box::<[u8]>::from(&temp[..len])
+        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely

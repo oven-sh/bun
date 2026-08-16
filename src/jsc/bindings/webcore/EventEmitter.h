@@ -39,8 +39,10 @@ public:
     static Ref<EventEmitter> create(ScriptExecutionContext&);
     WEBCORE_EXPORT ~EventEmitter() = default;
 
-    using RefCounted::deref;
-    using RefCounted::ref;
+    // ContextDestructionObserver.
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+    USING_CAN_MAKE_WEAKPTR(CanMakeWeakPtr<EventEmitter>);
 
     ScriptExecutionContext* scriptExecutionContext() const { return ContextDestructionObserver::scriptExecutionContext(); };
 

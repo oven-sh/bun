@@ -8,7 +8,6 @@ import { registerNativeCall } from "./generate-js2native";
 export const replacements: ReplacementRule[] = [
   { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
-  { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
@@ -169,7 +168,6 @@ export interface ReplacementRule {
   from: RegExp;
   to?: string;
   toRaw?: string;
-  global?: boolean;
 }
 
 export const function_replacements = [

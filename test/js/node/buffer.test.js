@@ -2,6 +2,7 @@ import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
@@ -4170,6 +4171,56 @@ describe("*Write methods with NaN/invalid offset and length", () => {
   }
 });
 
+describe("utf8 write of a string ending in a lone high surrogate", () => {
+  function hasAVX2() {
+    if (process.arch !== "x64" || process.platform !== "linux") return false;
+    try {
+      return readFileSync("/proc/cpuinfo", "utf8").includes(" avx2");
+    } catch {
+      return false;
+    }
+  }
+
+  it("leaves bytes past the target range untouched for every SIMD block alignment", async () => {
+    const src = `
+      const lines = [];
+      for (let k = 0; k < 16; k++) {
+        const s = Buffer.alloc(k, "a").toString() + "\\u4e00" + Buffer.alloc(26 - k, "a").toString() + "\\ud800";
+        const viaLength = Buffer.alloc(48, "b");
+        const n = viaLength.write(s, 0, 29, "utf8");
+        const viaSubarray = Buffer.alloc(48, "b");
+        const m = viaSubarray.subarray(0, 29).write(s, "utf8");
+        const viaUtf8Write = Buffer.alloc(48, "b");
+        const w = viaUtf8Write.utf8Write(s, 0, 29);
+        const viaFill = Buffer.alloc(48, "b");
+        viaFill.fill(s, 0, 29, "utf8");
+        lines.push([k, n, m, w, viaLength.toString("hex"), viaSubarray.toString("hex"), viaUtf8Write.toString("hex"), viaFill.toString("hex")].join(" "));
+      }
+      console.log(lines.join("\\n"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: hasAVX2() ? { ...bunEnv, SIMDUTF_FORCE_IMPLEMENTATION: "haswell" } : bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const expected = [];
+    for (let k = 0; k < 16; k++) {
+      const hex = Buffer.concat([
+        Buffer.alloc(k, "a"),
+        Buffer.from([0xe4, 0xb8, 0x80]),
+        Buffer.alloc(26 - k, "a"),
+        Buffer.alloc(19, "b"),
+      ]).toString("hex");
+      expected.push([k, 29, 29, 29, hex, hex, hex, hex].join(" "));
+    }
+    expect(stdout.trim()).toBe(expected.join("\n"));
+    expect(exitCode).toBe(0);
+  });
+});
+
 // These raw prototype methods come straight from Node's C++ bindings, not from the
 // documented toString()/write() wrappers, and they have looser bounds rules:
 // https://github.com/nodejs/node/blob/v26.3.0/src/node_buffer.cc
@@ -4408,6 +4459,103 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
         stdout: `{"written":2,"length":2}`,
         stderr: expect.any(String),
         exitCode: 0,
+      });
+    });
+
+    // Node treats a detached buffer as empty: every writer returns 0, and offset/length
+    // are range-checked against its byteLength of 0 like for any other buffer.
+    describe("on a detached buffer", () => {
+      const detached = () => {
+        const ab = new ArrayBuffer(9);
+        const buf = Buffer.from(ab);
+        structuredClone(ab, { transfer: [ab] });
+        return buf;
+      };
+      // Latin-1 and UTF-16 strings go through different native encoders, so cover both.
+      const inputs = method => [source[method], source[method] + "\u00e9\u4e2d"];
+
+      it.each(strict)("%s returns 0", method => {
+        for (const str of inputs(method)) {
+          expect([
+            detached()[method](str),
+            detached()[method](str, 0),
+            detached()[method](str, 0, 0),
+            detached()[method](str, NaN),
+            detached()[method](str, 0, NaN),
+          ]).toEqual([0, 0, 0, 0, 0]);
+        }
+      });
+
+      it.each(strict)("%s reports an offset or length past the end as ERR_BUFFER_OUT_OF_BOUNDS", method => {
+        for (const str of inputs(method)) {
+          expect(() => detached()[method](str, 1)).toThrow(OUT_OF_BOUNDS);
+          expect(() => detached()[method](str, -1)).toThrow(OUT_OF_BOUNDS);
+          expect(() => detached()[method](str, 0, 1)).toThrow(OUT_OF_BOUNDS);
+        }
+      });
+
+      it.each(clamping)("%s returns 0 and still rejects an offset past the end", method => {
+        for (const str of inputs(method)) {
+          expect([detached()[method](str), detached()[method](str, 0, 1)]).toEqual([0, 0]);
+          expect(() => detached()[method](str, 1)).toThrow(OUT_OF_BOUNDS);
+        }
+      });
+
+      // Detaching from inside the offset/length coercion ends up in the same place: the
+      // byteLength read after coercion is 0, so the arguments are checked against that.
+      it.each(strict)("%s detached by an offset or length valueOf is checked against the empty buffer", method => {
+        const write = argsFor => {
+          const ab = new ArrayBuffer(9);
+          const buf = Buffer.from(ab);
+          const detaching = value => ({
+            valueOf() {
+              if (!ab.detached) structuredClone(ab, { transfer: [ab] });
+              return value;
+            },
+          });
+          return buf[method](source[method], ...argsFor(detaching));
+        };
+        expect(() => write(detaching => [detaching(5)])).toThrow(OUT_OF_BOUNDS);
+        expect(() => write(detaching => [0, detaching(5)])).toThrow(OUT_OF_BOUNDS);
+        expect(write(detaching => [detaching(0), 0])).toBe(0);
+        expect(write(detaching => [0, detaching(0)])).toBe(0);
+      });
+
+      // A detached view hands the native encoder a null destination pointer with length 0.
+      // Run the 16-bit string cases in a child process so a native abort in the encoder
+      // shows up as a non-zero exit code instead of taking down the test run.
+      it("write() and <enc>Write of a 16-bit string exit cleanly", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const detached = () => {
+               const ab = new ArrayBuffer(9);
+               const buf = Buffer.from(ab);
+               structuredClone(ab, { transfer: [ab] });
+               return buf;
+             };
+             const str = "h\\u00e9llo \\u4e2d";
+             console.log(JSON.stringify([
+               detached().write(str),
+               detached().write(str, 0),
+               detached().write(str, 0, 0),
+               detached().utf8Write(str),
+               detached().latin1Write(str),
+               detached().asciiWrite(str),
+               detached().utf8Write(str, NaN),
+               detached().write("hello"),
+             ]));`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: "[0,0,0,0,0,0,0,0]",
+          stderr: expect.any(String),
+          exitCode: 0,
+        });
       });
     });
   });

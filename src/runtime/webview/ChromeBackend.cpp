@@ -99,7 +99,7 @@ extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataD
     bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
-extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
+extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
@@ -329,7 +329,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // care about READABLE — writable events on a read-end pipe fire
     // constantly, but onWritable is a no-op when m_txQueue is empty so
     // they're harmless. kind=1 (.dynamic) → dispatch via s_cdpVTable.
-    m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0);
+    m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
     if (!m_readSock) {
         closefd(fd);
         m_dead = true;
@@ -1306,8 +1306,8 @@ void Transport::updateKeepAlive()
     bool want = !m_views.isEmpty() || !m_pending.isEmpty();
     if (want == m_sockRefd || !m_global) return;
     m_sockRefd = want;
-    Bun__eventLoop__incrementRefConcurrently(
-        WebCore::clientData(m_global->vm())->bunVM, want ? 1 : -1);
+    Bun__VmHandle__refKeepAlive(
+        WebCore::clientData(m_global->vm())->vmHandle, want ? 1 : -1);
 
     // WebSocket mode: close the connection when the last view is gone.
     // We're connected to the USER'S Chrome — keeping the WS open after

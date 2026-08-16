@@ -36,6 +36,21 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
     ZigString::from_utf8(out.as_bytes()).to_js(global_object)
 }
 
+/// A worker's `argv`/`execArgv` strings live in its parent-thread
+/// `WorkerOptions`; the worker thread gets its own copy (thread-affine
+/// refcounts), and an empty one is spelled as `BunString::empty()`.
+pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::OwnedString {
+    // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
+    let imp = unsafe { &*wtf };
+    bun_core::OwnedString::new(if imp.length() == 0 {
+        bun_core::String::empty()
+    } else if imp.is_8bit() {
+        bun_core::String::clone_latin1(imp.latin1_slice())
+    } else {
+        bun_core::String::clone_utf16(imp.utf16_slice())
+    })
+}
+
 // ───────────────────────────── argv (C++ accessor wrappers) ─────────────────
 
 pub(crate) extern "C" fn get_argv(global: &JSGlobalObject) -> JSValue {
@@ -279,23 +294,19 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                use bun_core::WTFStringImplExt as _;
-
                 let mut end = exec_argv.len();
                 let mut awaiting_value = false;
                 for (i, &wtf) in exec_argv.iter().enumerate() {
-                    if wtf.is_null() {
-                        awaiting_value = false;
-                        continue;
-                    }
-                    // SAFETY: each entry is a live `WTFStringImpl*` owned by
-                    // the worker's options for the worker's lifetime.
-                    let bytes_z = unsafe { &*wtf }.to_owned_slice_z();
-                    let bytes = bytes_z.as_bytes();
                     if awaiting_value {
                         awaiting_value = false;
                         continue;
                     }
+                    // SAFETY: non-null impl borrowed from the live `WorkerOptions`
+                    // (see `worker_option_string`); only read here, never retained.
+                    let imp = unsafe { &*wtf };
+                    // `--` and option names are ASCII, so a 16-bit entry is neither:
+                    // it is an ordinary token that terminates nothing and awaits nothing.
+                    let bytes: &[u8] = if imp.is_8bit() { imp.latin1_slice() } else { b"" };
                     if bytes == b"--" {
                         end = i;
                         break;
@@ -305,7 +316,7 @@ mod _impl {
                 return JSValue::create_array_from_iter(
                     global_object,
                     exec_argv[..end].iter(),
-                    |&wtf| BunString::init(wtf).to_js(global_object),
+                    |&wtf| super::worker_option_string(wtf).to_js(global_object),
                 );
             }
         }
@@ -448,10 +459,14 @@ mod _impl {
             }
         }
 
+        let mut worker_args: Vec<bun_core::OwnedString> = Vec::new();
         if let Some(worker) = worker {
-            for &arg in worker.argv() {
-                args_list.push(BunString::init(arg));
-            }
+            worker_args = worker
+                .argv()
+                .iter()
+                .map(|&arg| super::worker_option_string(arg))
+                .collect();
+            args_list.extend(worker_args.iter().map(|s| **s));
         } else {
             for arg in &vm.argv {
                 let str_ = BunString::borrow_utf8(arg);
@@ -460,7 +475,9 @@ mod _impl {
             }
         }
 
-        bun_string_jsc::to_js_array(global_object, &args_list).unwrap_or(JSValue::ZERO)
+        let array = bun_string_jsc::to_js_array(global_object, &args_list);
+        drop(worker_args);
+        bun_jsc::HostReturn::or_pending_exception(array)
     }
 
     // ───────────────────────────── eval ─────────────────────────────

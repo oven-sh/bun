@@ -72,6 +72,8 @@ test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_make_callback/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_threadsafe_function/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_worker_terminate_finalization/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_worker_terminate/do.test.ts
+test/napi/node-napi-tests/test/node-api/test_worker_buffer_callback/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_reference_by_node_api_version/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_env_teardown_gc/do.test.ts
 test/napi/node-napi-tests/test/node-api/test_general/do.test.ts
@@ -136,7 +138,3 @@ test/napi/napi.test.ts
 # unchecked at defineOwnNonIndexProperty. Moved here from expectations.txt.
 test/cli/run/require-cache.test.ts
 
-# The inspector's Runtime.evaluate / inspectee spawn hits an unchecked
-# getOwnNonIndexPropertyNames -> JSObjectInlines::get scope. Moved here from
-# expectations.txt so the whole file runs on ASAN without validateExceptionChecks.
-test/cli/inspect/inspect.test.ts

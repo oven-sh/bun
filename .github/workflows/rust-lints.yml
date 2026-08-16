@@ -1,0 +1,191 @@
+name: Rust lints
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/**/*.rs"
+      - "src/**/Cargo.toml"
+      - "src/**/*.classes.ts"
+      - "src/codegen/**"
+      - "scripts/build/**"
+      - "scripts/build.ts"
+      - "scripts/rust-miri.ts"
+      - "package.json"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "clippy.toml"
+      - "dylint.toml"
+      - "mordant-baseline.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/rust-lints.yml"
+      - ".github/actions/rust-lint-setup/**"
+      - ".github/actions/setup-bun/**"
+      - ".github/rust-matcher.json"
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: "1.3.14"
+  LLVM_VERSION_MAJOR: "21"
+  # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
+  # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
+  # to lint the host). Keep in sync with `channel` in rust-toolchain.toml.
+  RUSTUP_TOOLCHAIN: nightly-2026-07-20
+
+jobs:
+  clippy:
+    name: cargo clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          components: clippy
+          ninja-targets: codegen clone-lolhtml
+
+      - name: cargo clippy
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:clippy
+
+  miri:
+    name: cargo miri test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          components: miri rust-src
+
+      - name: cargo miri test
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: bun run rust:miri
+
+  lolhtml:
+    # The vendored lol-html is a fork (oven-sh/lol-html, `bun` branch) carrying
+    # content-handler suspension, and its own test suite is the only thing that
+    # guards the fork's invariants: nothing in the Bun test suite reaches, for
+    # example, the parser's suspension bookkeeping or `Arena::compact()`.
+    name: lol-html cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+
+      - name: cargo test
+        # `lol_html` is a path dependency, not a workspace member (it carries
+        # dev-dependencies the Bun workspace does not), so run it in place.
+        working-directory: vendor/lolhtml
+        run: cargo test
+
+  mordant:
+    name: mordant
+    runs-on: ubuntu-latest
+    if: github.event_name != 'merge_group'
+    # Advisory while the pack is new: shows up on the PR, does not block it.
+    continue-on-error: true
+    env:
+      DYLINT_VERSION: "6.0.3"
+      # Mordant (pinned in Cargo.toml's [workspace.metadata.dylint]) is built
+      # with, and lints us using, the nightly named in its own rust-toolchain
+      # file, which dylint selects itself; rustup fetches it on demand, so the
+      # pin is the only thing to bump. The outer cargo just needs to exist:
+      # point it at the runner's stable so rust-toolchain.toml's cross-target
+      # list is not installed.
+      RUSTUP_TOOLCHAIN: stable
+      RUSTUP_AUTO_INSTALL: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          ninja-targets: codegen clone-lolhtml
+
+      - name: Cache the dylint binaries
+        # Compiling cargo-dylint and dylint-link is ~100s; they only change on
+        # a DYLINT_VERSION bump.
+        id: dylint-bin
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-dylint
+            ~/.cargo/bin/dylint-link
+          key: dylint-bin-${{ runner.os }}-${{ env.DYLINT_VERSION }}
+
+      - name: Build the dylint binaries
+        if: steps.dylint-bin.outputs.cache-hit != 'true'
+        run: cargo install --locked cargo-dylint@"$DYLINT_VERSION" dylint-link@"$DYLINT_VERSION"
+
+      - name: Read the mordant pin
+        # The driver and library dylint builds are tied to the pinned mordant
+        # revision, so it is their cache key.
+        id: pin
+        run: |
+          rev=$(sed -n 's/.*scarletindustries\/mordant", rev = "\([0-9a-f]*\)".*/\1/p' Cargo.toml)
+          test -n "$rev"
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the dylint driver and the built mordant library
+        # Both are a pure function of the dylint version and the pinned
+        # revision (which names the nightly they are built for): ~50s and
+        # ~60s of the job. What remains uncached is checking bun itself.
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.dylint_drivers
+            target/dylint/libraries
+          key: dylint-lib-${{ runner.os }}-${{ env.DYLINT_VERSION }}-${{ steps.pin.outputs.rev }}
+
+      - name: mordant
+        env:
+          # Mordant's nightly is older than rust-toolchain.toml's, so `#[allow]`s
+          # of lints added since then are unknown to it.
+          DYLINT_RUSTFLAGS: "-A unknown_lints"
+        run: |
+          rm -f target/mordant/over-baseline.txt
+          cargo dylint --all --workspace -- --keep-going
+
+      - name: Fail on findings over the baseline
+        # In baseline mode mordant reports findings over mordant-baseline.toml
+        # as warnings and lists them in this file; absent or empty means clean.
+        run: test ! -s target/mordant/over-baseline.txt

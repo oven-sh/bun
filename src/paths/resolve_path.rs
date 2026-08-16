@@ -13,8 +13,12 @@ use bun_core::{ZStr, strings};
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
     static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
-    static PARSER_BUFFER: UnsafeCell<[u8; 1024]> = const { UnsafeCell::new([0u8; 1024]) };
+    static PARSER_BUFFER: UnsafeCell<[u8; PARSER_BUFFER_LEN]> =
+        const { UnsafeCell::new([0u8; PARSER_BUFFER_LEN]) };
 }
+
+/// Output capacity of [`normalize_string`].
+const PARSER_BUFFER_LEN: usize = 1024;
 
 /// Project `&'static mut` into a thread-local `UnsafeCell<[u8; N]>` scratch
 /// buffer. One `unsafe` site for all `PARSER_BUFFER` / `PARSER_JOIN_INPUT_BUFFER`
@@ -1260,10 +1264,30 @@ impl Platform {
     }
 }
 
+/// `str` must normalize into [`PARSER_BUFFER_LEN`] bytes; for input of
+/// arbitrary length use [`normalize_string_spill`].
 pub fn normalize_string<const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(str: &[u8]) -> &mut [u8] {
     // returns slice into thread-local PARSER_BUFFER; valid until the
     // next call on this thread.
     PARSER_BUFFER.with(|b| normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, tl_buf_mut(b)))
+}
+
+/// [`normalize_string`] (thread-local buffer) when the result fits, otherwise
+/// into `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn normalize_string_spill<'a, const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
+    spill: &'a mut Vec<u8>,
+    str: &'a [u8],
+) -> &'a [u8] {
+    // Normalizing only removes bytes, except that on Windows a drive-relative
+    // `C:` becomes `C:.` and a bare UNC volume gains its trailing separator.
+    let needed = str.len() + 1;
+    if needed <= PARSER_BUFFER_LEN {
+        return normalize_string::<ALLOW_ABOVE_ROOT, P>(str);
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, &mut spill[..])
 }
 
 pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -2428,3 +2452,113 @@ pub fn posix_to_platform_in_place<T: PathChar>(path_buffer: &mut [T]) {
 // `PathChar` is now canonical at `crate::path_char`; re-export for callers
 // that still path through `resolve_path::PathChar`.
 pub use crate::PathChar;
+
+// Run with `cargo test -p bun_paths` (also the Miri lane, `bun run rust:miri -p bun_paths`).
+// Normalizing reaches `bun_core::strings`' byte searches, whose highway kernels
+// are only linked into the full binary, so the two they reference are satisfied
+// below with scalar stubs (the simdutf counterparts live in string_paths.rs).
+// Under Miri the wrappers take their own scalar path and never call these.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Returns `haystack_len` when `needle` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        haystack
+            .iter()
+            .position(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    /// Returns `text_len` when no byte of `chars` occurs, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_index_of_any_char(
+        text: *const u8,
+        text_len: usize,
+        chars: *const u8,
+        chars_len: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (text, chars) = unsafe {
+            (
+                core::slice::from_raw_parts(text, text_len),
+                core::slice::from_raw_parts(chars, chars_len),
+            )
+        };
+        text.iter()
+            .position(|b| chars.contains(b))
+            .unwrap_or(text_len)
+    }
+
+    #[test]
+    fn normalize_string_spill_leaves_spill_untouched_when_the_input_fits() {
+        let mut spill = Vec::new();
+        let out =
+            normalize_string_spill::<true, platform::Loose>(&mut spill, b"./lib/../dist/./x.js");
+        assert_eq!(out, b"dist/x.js");
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_string_spill_spills_input_longer_than_the_thread_local_buffer() {
+        let segment = vec![b'b'; PARSER_BUFFER_LEN * 3];
+        let mut input = b"./".to_vec();
+        input.extend_from_slice(&segment);
+        input.extend_from_slice(b"/./x.js");
+        let mut expected = segment;
+        expected.extend_from_slice(b"/x.js");
+
+        let mut spill = Vec::new();
+        let out = normalize_string_spill::<true, platform::Loose>(&mut spill, &input);
+        assert_eq!(out, &expected[..]);
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_string_spill_reuses_the_spill_across_calls() {
+        let long = vec![b'a'; PARSER_BUFFER_LEN + 1];
+        let longer = vec![b'c'; PARSER_BUFFER_LEN * 2];
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_string_spill::<true, platform::Loose>(&mut spill, &long),
+            &long[..]
+        );
+        assert_eq!(
+            normalize_string_spill::<true, platform::Loose>(&mut spill, &longer),
+            &longer[..]
+        );
+        // A shorter input after a longer one must not leak the previous tail.
+        assert_eq!(
+            normalize_string_spill::<true, platform::Loose>(&mut spill, &long),
+            &long[..]
+        );
+    }
+
+    #[test]
+    fn normalize_string_spill_accounts_for_outputs_that_grow_by_one_byte() {
+        // A bare UNC volume exactly as long as the thread-local buffer
+        // normalizes to one byte more than its input.
+        let mut unc = b"\\\\".to_vec();
+        unc.resize(PARSER_BUFFER_LEN, b's');
+
+        let mut spill = Vec::new();
+        let out = normalize_string_spill::<true, platform::Windows>(&mut spill, &unc);
+        assert_eq!(out.len(), PARSER_BUFFER_LEN + 1);
+        assert_eq!(&out[..unc.len()], &unc[..]);
+        assert_eq!(out[unc.len()], SEP_WINDOWS);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_string_spill::<true, platform::Windows>(&mut spill, b"c:"),
+            b"C:."
+        );
+    }
+}

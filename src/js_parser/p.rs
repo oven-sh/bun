@@ -280,8 +280,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Used with unwrap_commonjs_packages
     pub(crate) imports_to_convert_from_require: List<'a, DeferredImportNamespace>,
     pub(crate) unwrap_all_requires: bool,
-    /// Names this file assigns to or declares twice, collected while parsing (hence by name)
-    /// so `visit_decls` knows whether `var x = require("pkg")` is rebound later in the file.
+    /// Names this file assigns to or declares twice; filled while parsing, read in `visit_decls`.
     pub(crate) rebound_names: HashMap<&'a [u8], ()>,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -772,8 +771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         expr
     }
 
-    /// `target` is an assignment target, `++`/`--` operand or `for (... in/of)` head; a default
-    /// inside a pattern (`[x = 1] = y`) is an assignment of its own and records itself when built.
+    /// A default inside a pattern (`[x = 1] = y`) is an assignment of its own and records itself.
     #[inline]
     pub(crate) fn record_rebound_target(&mut self, target: Expr) {
         if self.should_unwrap_common_js_to_esm() {

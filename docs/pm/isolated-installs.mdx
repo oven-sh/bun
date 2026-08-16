@@ -182,6 +182,8 @@ If you encounter issues, you can:
    bun install --linker hoisted
    ```
 
+   Switching linkers in either direction reinstalls the existing `node_modules` from scratch. The previous tree is moved to `node_modules/.old_modules-<random>`, which is safe to delete.
+
 2. **Report compatibility issues** to help improve isolated install support
 
 ### Performance considerations

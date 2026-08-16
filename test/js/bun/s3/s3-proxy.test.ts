@@ -182,7 +182,7 @@ describe.concurrent("s3 proxy env vars", () => {
     expect(proxyHits.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("write to an https endpoint uses HTTPS_PROXY, not HTTP_PROXY", async () => {
+  it("write to an https endpoint does not use HTTP_PROXY", async () => {
     const { endpoint, proxy, endpointHits, proxyHits } = servers(tls);
     using _endpoint = endpoint;
     using _proxy = proxy;

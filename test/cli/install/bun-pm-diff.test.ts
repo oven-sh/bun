@@ -405,6 +405,13 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     // --unformatted is --raw.
     const raw = await pretty(files, ["--unformatted"]);
     expect(raw.text).toMatch(/\nflags\.js ─+ \+1 -1\n/);
+    // Piped, -w still yields a complete patch for the whitespace-only file.
+    using dir = tempDir("pm-diff-w", files);
+    const piped = await diff(["./a", "./b", "-w"], String(dir));
+    expect(piped.stdout).toContain(
+      "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,2 +1,3 @@\n-one two\n-three\n+one  two\n+\tthree \n+\n",
+    );
+    expect(piped.exitCode).toBe(0);
   });
 
   test("package.json text in the summary is shown literally, angle brackets and all", async () => {

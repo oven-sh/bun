@@ -761,7 +761,8 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             changes.push(change);
             continue;
         }
-        if flags.ignore_space {
+        // Like `formatting only`, a terminal-view summary; piped output stays a complete patch.
+        if flags.ignore_space && style.pretty {
             if let (Some(o), Some(n)) = (old, new) {
                 if collapse_whitespace(o) == collapse_whitespace(n) {
                     change.semantic = Semantic::WhitespaceOnly;
@@ -989,10 +990,6 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) -> bool {
             (None, Some(_)) => Output::print(format_args!("new file\n")),
             (Some(_), None) => Output::print(format_args!("deleted file\n")),
             _ => {}
-        }
-        if c.semantic == Semantic::WhitespaceOnly {
-            Output::print(format_args!("Whitespace-only changes\n"));
-            continue;
         }
         if c.binary || c.sourcemap {
             Output::print(format_args!(

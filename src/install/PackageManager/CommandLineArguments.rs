@@ -209,7 +209,7 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
             "--minify                               Also normalise syntax (!0 vs true, quotes, parens…) so equivalent spellings collapse (bun pm diff)"
         ),
         clap::param!(
-            "-w, --ignore-space                     Treat files that differ only in whitespace as unchanged (bun pm diff)"
+            "-w, --ignore-space                     Show files that differ only in whitespace as 'whitespace only' instead of hunks (bun pm diff)"
         ),
         clap::param!(
             "--name-only                            Only list the files that differ (bun pm diff)"

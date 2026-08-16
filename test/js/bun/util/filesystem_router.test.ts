@@ -1059,9 +1059,6 @@ it("match() returns null when the URL has fewer segments than a dynamic route re
       params: { org: "acme", id: "x" },
     });
     expect(router.match("/acme")).toBeNull();
-    // One segment short: the trailing dynamic segment must not match as "".
-    expect(router.match("/acme/settings")).toBeNull();
-    expect(router.match("/acme/settings/")).toBeNull();
   }
 
   {
@@ -1077,47 +1074,104 @@ it("match() returns null when the URL has fewer segments than a dynamic route re
     });
     expect(router.match("/acme")).toBeNull();
   }
+});
+
+// A [param] segment stands for one non-empty URL segment, as in Next.js. The matcher
+// used to accept an empty one, both when the URL ended right before the dynamic
+// segment (params: { page: "" }) and when the URL had an empty segment in its place
+// ("/blog//42").
+it("match() does not give a dynamic segment an empty value", () => {
+  const cases: {
+    files: string[];
+    expected: Record<string, { name: string; params: Record<string, string> } | null>;
+  }[] = [
+    {
+      files: ["docs/[page].tsx"],
+      expected: {
+        "/docs/intro": { name: "/docs/[page]", params: { page: "intro" } },
+        "/docs": null,
+        "/docs/": null,
+        "/docs//": null,
+        "/docs/index": null,
+        "/docs?page=intro": null,
+      },
+    },
+    {
+      files: ["docs/[page]/[[...rest]].tsx"],
+      expected: {
+        "/docs/intro": { name: "/docs/[page]/[[...rest]]", params: { page: "intro" } },
+        "/docs/intro/a/b": { name: "/docs/[page]/[[...rest]]", params: { page: "intro", rest: "a/b" } },
+        "/docs": null,
+        "/docs/": null,
+      },
+    },
+    {
+      files: ["[org]/settings/[id].tsx"],
+      expected: {
+        "/acme/settings/7": { name: "/[org]/settings/[id]", params: { org: "acme", id: "7" } },
+        "/acme/settings": null,
+        "/acme/settings/": null,
+      },
+    },
+    {
+      files: ["blog/[slug]/[id].tsx"],
+      expected: {
+        "/blog/hello/42": { name: "/blog/[slug]/[id]", params: { slug: "hello", id: "42" } },
+        "/blog//42": null,
+        "/blog/hello": null,
+      },
+    },
+    {
+      files: ["blog/[slug]/[[...rest]].tsx"],
+      expected: {
+        "/blog/hello": { name: "/blog/[slug]/[[...rest]]", params: { slug: "hello" } },
+        "/blog//42": null,
+      },
+    },
+  ];
+
+  for (const { files, expected } of cases) {
+    const { dir } = make(files);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+    const actual: typeof expected = {};
+    for (const input of Object.keys(expected)) {
+      const match = router.match(input);
+      actual[input] = match && { name: match.name, params: match.params };
+    }
+    expect({ files, ...actual }).toEqual({ files, ...expected });
+  }
+});
+
+it("a dynamic route that rejects a URL leaves it to the routes tried after it", () => {
+  const pick = (match: ReturnType<FileSystemRouter["match"]>) => match && { name: match.name, params: match.params };
 
   {
-    const { dir } = make(["posts/[id].tsx"]);
-    const router = new Bun.FileSystemRouter({
-      dir,
-      style: "nextjs",
-    });
+    const { dir } = make(["docs/[page].tsx", "docs/[[...rest]].tsx"]);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
 
-    expect(router.match("/posts/1")).toMatchObject({ name: "/posts/[id]", params: { id: "1" } });
-    for (const pathname of ["/posts", "/posts/", "/posts/index"]) {
-      expect({ pathname, match: router.match(pathname) }).toEqual({ pathname, match: null });
-    }
+    // docs/[page] is tried first; it must reject "/docs" so that the optional
+    // catch-all, which does accept an empty remainder, gets to see it.
+    expect(pick(router.match("/docs"))).toEqual({ name: "/docs/[[...rest]]", params: {} });
+    expect(pick(router.match("/docs/"))).toEqual({ name: "/docs/[[...rest]]", params: {} });
+    expect(pick(router.match("/docs/intro"))).toEqual({ name: "/docs/[page]", params: { page: "intro" } });
+    expect(pick(router.match("/docs/a/b"))).toEqual({ name: "/docs/[[...rest]]", params: { rest: "a/b" } });
   }
 
   {
-    // A dynamic segment followed by an optional catch-all still needs the dynamic segment.
-    const { dir } = make(["posts/[id]/[[...rest]].tsx"]);
-    const router = new Bun.FileSystemRouter({
-      dir,
-      style: "nextjs",
+    const { dir } = make(["[org]/settings/[id].tsx", "[org]/[...rest].tsx"]);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+    // [org]/settings/[id] records org before it rejects "/acme/settings". That param
+    // must not survive into the catch-all's match, or org would come back as
+    // ["acme", "acme"].
+    expect(pick(router.match("/acme/settings"))).toEqual({
+      name: "/[org]/[...rest]",
+      params: { org: "acme", rest: "settings" },
     });
-
-    expect(router.match("/posts/1")!.params).toEqual({ id: "1" });
-    expect(router.match("/posts/1/a/b")!.params).toEqual({ id: "1", rest: "a/b" });
-    for (const pathname of ["/posts", "/posts/"]) {
-      expect({ pathname, match: router.match(pathname) }).toEqual({ pathname, match: null });
-    }
-  }
-
-  {
-    // The rejected candidate must not leave its params behind for the route that does match.
-    const { dir } = make(["[org]/settings/[id].tsx", "[[...slug]].tsx"]);
-    const router = new Bun.FileSystemRouter({
-      dir,
-      style: "nextjs",
-    });
-
-    const match = router.match("/acme/settings")!;
-    expect({ name: match.name, params: match.params }).toEqual({
-      name: "/[[...slug]]",
-      params: { slug: "acme/settings" },
+    expect(pick(router.match("/acme/settings/7"))).toEqual({
+      name: "/[org]/settings/[id]",
+      params: { org: "acme", id: "7" },
     });
   }
 });

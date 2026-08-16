@@ -1178,8 +1178,9 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
-                        // Out of URL segments: `foo/[id]` must not match "foo" with an empty id.
-                        if path_.is_empty() {
+                        // A dynamic segment needs a non-empty URL segment: `docs/[page]` does not
+                        // match "docs", and `a/[x]/[y]` does not match "a//b".
+                        if path_.is_empty() || path_[0] == b'/' {
                             params.clear();
                             return false;
                         }
@@ -1693,6 +1694,14 @@ mod tests {
             (b"404/[[...slug]]", b"404", &[]),
             (b"404a/[[...slug]]", b"404a", &[]),
             (
+                b"docs/[page]/[[...rest]]",
+                b"docs/intro",
+                &[Entry {
+                    name: b"page",
+                    value: b"intro",
+                }],
+            ),
+            (
                 b"[teamSlug]/lemon/[project]/[[...slug]]",
                 b"team/lemon/lemon/slugggg",
                 &[
@@ -1819,14 +1828,19 @@ mod tests {
     }
 
     #[test]
-    fn pattern_does_not_match_a_path_that_ends_before_a_dynamic_segment() {
+    fn pattern_rejects_empty_dynamic_segment() {
         let no_match: &[(&[u8], &[u8])] = &[
+            // the URL ends where the dynamic segment starts
             (b"[teamSlug]", b""),
             (b"[teamSlug]/[[...slug]]", b""),
             (b"[...slug]", b""),
             (b"hi/[teamSlug]", b"hi"),
             (b"hi/[teamSlug]/[[...slug]]", b"hi"),
             (b"[teamSlug]/hi/[project]", b"team/hi"),
+            // the URL has an empty segment where the dynamic segment is
+            (b"blog/[slug]/[id]", b"blog//42"),
+            (b"blog/[slug]/[[...rest]]", b"blog//42"),
+            (b"[teamSlug]/[project]", b"team//"),
         ];
         let mut params = route_param::List::default();
         for (pattern, pathname) in no_match {

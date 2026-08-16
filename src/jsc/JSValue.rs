@@ -356,6 +356,14 @@ impl JSValue {
     pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
     }
+    /// `ErrorInstance`, or `Error.prototype` is on its `getPrototypeDirect` chain.
+    #[inline]
+    pub fn is_error_like(self) -> bool {
+        if !self.is_cell() {
+            return false;
+        }
+        JSC__JSValue__isErrorLike(self)
+    }
     /// `JSValue.isJSXElement(globalObject)`. Checks via the
     /// global's `Symbol.for("react.element")` / `Symbol.for("react.transitional.element")`
     /// for `$$typeof`; may invoke a user getter and throw.
@@ -2110,6 +2118,7 @@ unsafe extern "C" {
         promise: &JSPromise,
     );
     safe fn JSC__JSValue__isAnyError(this: JSValue) -> bool;
+    safe fn JSC__JSValue__isErrorLike(this: JSValue) -> bool;
     // safe: `JSValue` is a by-value scalar; `&mut *const u8` / `&mut usize` are
     // ABI-identical to non-null `*mut` out-params the C++ side fills on success.
     safe fn JSC__JSValue__getClassInfoName(

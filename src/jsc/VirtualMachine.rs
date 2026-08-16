@@ -5970,7 +5970,6 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
-        use crate::JSType;
         use crate::console_object::formatter::TagOptions;
         use crate::console_object::{self, Tag, TagPayload};
 
@@ -6104,9 +6103,7 @@ impl VirtualMachine {
         let name = exception.name;
         let message = exception.message;
 
-        let is_error_instance = error_instance != JSValue::ZERO
-            && error_instance.is_cell()
-            && error_instance.js_type() == JSType::ErrorInstance;
+        let is_error_instance = error_instance != JSValue::ZERO && error_instance.is_error_like();
         // NOTE: cannot use `self.global()` — `global_ref` outlives a
         // `&mut self` recursion (`print_error_instance_js`) and is passed to
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
@@ -6327,7 +6324,7 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
+                if value.is_error_like() && !prev_had_errors {
                     if field.eql_comptime(b"cause") {
                         saw_cause = true;
                     }
@@ -6424,7 +6421,7 @@ impl VirtualMachine {
             if !saw_cause {
                 let key = bun_core::String::static_(b"cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
-                    if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
+                    if cause.is_error_like() {
                         cause.protect();
                         errors_to_append.push(cause);
                     }
@@ -6447,7 +6444,39 @@ impl VirtualMachine {
             }
         }
 
-        Self::print_stack_trace(writer, &exception.stack, allow_ansi_color)?;
+        let mut printed_stack_string = false;
+        if exception.stack.frames().is_empty() && is_error_instance && !error_instance.is_error() {
+            // `toZigException` leaves `frames` empty for a non-ErrorInstance.
+            match error_instance.get_own_truthy(global_ref, "stack") {
+                Ok(Some(stack)) if stack.is_string() => {
+                    let stack = bun_core::OwnedString::new(stack.to_bun_string(global_ref)?);
+                    let bytes = stack.to_utf8();
+                    let slice = bytes.slice();
+                    let tail = if bun_core::strings::has_prefix_comptime(slice, b"    at ") {
+                        slice
+                    } else if let Some(i) = bun_core::strings::index_of(slice, b"\n    at ") {
+                        &slice[i + 1..]
+                    } else {
+                        b""
+                    };
+                    let tail = bun_core::trim_right(tail, b"\n");
+                    if !tail.is_empty() {
+                        writer.write_all(tail)?;
+                        writer.write_all(b"\n")?;
+                    }
+                    printed_stack_string = true;
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    if global_ref.has_exception() {
+                        global_ref.clear_exception();
+                    }
+                }
+            }
+        }
+        if !printed_stack_string {
+            Self::print_stack_trace(writer, &exception.stack, allow_ansi_color)?;
+        }
 
         if !exception.browser_url.is_empty() {
             pretty_write!(

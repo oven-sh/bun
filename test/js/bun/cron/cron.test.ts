@@ -67,7 +67,10 @@ function readCrontab(): string {
     stdout: "pipe",
     stderr: "pipe",
   });
-  return result.exitCode === 0 ? result.stdout.toString() : "";
+  if (result.exitCode === 0) return result.stdout.toString();
+  // Exit code 1 is "no crontab for <user>"; Bun.cron reads it the same way.
+  if (result.exitCode === 1) return "";
+  throw new Error(`crontab -l exited with ${result.exitCode}: ${result.stderr.toString()}`);
 }
 
 function writeCrontab(content: string) {
@@ -112,15 +115,15 @@ function entryLines(crontab: string, title: string): string[] {
 }
 
 function removeStaleTestEntries() {
+  const marker = `# bun-cron: ${TEST_TITLE_PREFIX}`;
   const lines = readCrontab().split("\n");
-  const kept: string[] = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith(`# bun-cron: ${TEST_TITLE_PREFIX}`)) {
-      i++; // skip the command line that belongs to the marker
-    } else {
-      kept.push(lines[i]);
-    }
-  }
+  const kept = lines.filter((line, i) => {
+    if (line.startsWith(marker)) return false;
+    // A command line goes only together with the test marker right above it.
+    const previous = i > 0 ? lines[i - 1] : "";
+    if (!previous.startsWith(marker)) return true;
+    return !line.includes(` --cron-title=${previous.slice("# bun-cron: ".length)} `);
+  });
   if (kept.length !== lines.length) writeCrontab(kept.join("\n"));
 }
 
@@ -582,7 +585,7 @@ describe.skipIf(!hasCrontab)("cron registration (Linux)", () => {
     const [marker, command] = entryLines(readCrontab(), "test-register");
     expect(marker).toBe("# bun-cron: test-register");
     expect(command).toStartWith("30 2 * * 1 ");
-    expect(command).toContain(scriptPath);
+    expect(command).toEndWith(` '${scriptPath}'`);
   });
 
   test("crontab entry contains correct format", async () => {
@@ -755,6 +758,9 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
         "30 2 * * 1 /usr/bin/some-other-job",
         "# bun-cron: not-a-test-job",
         "* * * * * /usr/bin/not-a-test-job",
+        // A marker whose command line went missing: only the marker goes.
+        "# bun-cron: test-orphaned-marker",
+        "0 0 * * * /usr/bin/unrelated-line",
         "",
       ].join("\n"),
     );
@@ -766,6 +772,7 @@ describe.skipIf(!hasCrontab)("cron removal (Linux)", () => {
         "30 2 * * 1 /usr/bin/some-other-job",
         "# bun-cron: not-a-test-job",
         "* * * * * /usr/bin/not-a-test-job",
+        "0 0 * * * /usr/bin/unrelated-line",
         "",
       ].join("\n"),
     );

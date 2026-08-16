@@ -784,9 +784,7 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
                         }
                     }
 
-                    // Bun::addErrorInfoWithSourceMap() puts originalLine next to a line/column
-                    // that already went through the source map, so the printer must not remap
-                    // them again. Same as the ErrorInstance path in fromErrorInstance().
+                    // originalLine means line/column are already source-mapped, as in fromErrorInstance().
                     auto originalLine = obj->getIfPropertyExists(global, builtinNames(vm).originalLinePublicName());
                     if (scope.exception()) [[unlikely]] {
                         scope.clearExceptionExceptTermination();

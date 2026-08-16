@@ -12,8 +12,7 @@ pub mod credentials;
 pub mod sigv4;
 
 pub use aws_credentials::{
-    AwsCredentials, CredentialsProvider, CredentialsSource, ProviderError, ProviderResult,
-    SharedProvider,
+    AwsCredentials, CredentialsProvider, CredentialsSource, ProviderError, SharedProvider,
 };
 
 pub use acl::ACL;

@@ -855,42 +855,16 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         None
     };
 
-    // Ambient credentials (profile / SSO / container / metadata) resolve off
-    // the JS thread; once they are cached, run this same call again. A signal
-    // that is already aborted skips this so the rejection stays synchronous.
-    let credentials_ready = credentials_ready
-        || 'aborted: {
-            for obj in [
-                options_object.unwrap_or_default(),
-                request_init_object.unwrap_or_default(),
-            ] {
-                if !obj.is_empty()
-                    && let Some(sig) = obj.get(global_this, "signal")?
-                    && let Some(sig) = AbortSignal::from_js(sig)
-                {
-                    break 'aborted bun_opaque::opaque_deref(sig).aborted();
-                }
-            }
-            if let Some(req) = request_mut!()
-                && let Some(sig) = req.abort_signal()
-            {
-                break 'aborted sig.aborted();
-            }
-            false
-        };
+    // Ambient credentials (profile / SSO / container / metadata) resolve
+    // asynchronously; once they are cached, run this same call again. A
+    // signal that is already aborted skips this so the rejection stays
+    // synchronous.
     if !credentials_ready {
-        if let Some(gcp) = gcp_auth.as_ref().filter(|g| g.needs_resolution()) {
-            drop(s3_credentials.take());
-            let provider = std::sync::Arc::clone(&gcp.provider);
-            return defer_until_credentials::<ALLOW_GET_BODY, _>(
-                global_this,
-                arguments,
-                &provider,
-                false,
-                auth,
-            );
-        }
-        let pending = aws_sign
+        let gcp_pending = gcp_auth
+            .as_ref()
+            .filter(|g| g.needs_resolution())
+            .map(|g| std::sync::Arc::clone(&g.provider));
+        let aws_pending = aws_sign
             .as_ref()
             .and_then(|a| {
                 a.needs_credentials_resolution()
@@ -910,15 +884,47 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         .flatten()
                 })
             });
-        if let Some(provider) = pending {
-            drop(s3_credentials.take());
-            return defer_until_credentials::<ALLOW_GET_BODY, _>(
-                global_this,
-                arguments,
-                &provider,
-                url.is_s3(),
-                auth,
-            );
+        if gcp_pending.is_some() || aws_pending.is_some() {
+            let already_aborted = 'aborted: {
+                for obj in [
+                    options_object.unwrap_or_default(),
+                    request_init_object.unwrap_or_default(),
+                ] {
+                    if !obj.is_empty()
+                        && let Some(sig) = obj.get(global_this, "signal")?
+                        && let Some(sig) = AbortSignal::from_js(sig)
+                    {
+                        break 'aborted bun_opaque::opaque_deref(sig).aborted();
+                    }
+                }
+                if let Some(req) = request_mut!()
+                    && let Some(sig) = req.abort_signal()
+                {
+                    break 'aborted sig.aborted();
+                }
+                false
+            };
+            if !already_aborted {
+                drop(s3_credentials.take());
+                if let Some(provider) = gcp_pending {
+                    return defer_until_credentials::<ALLOW_GET_BODY, _>(
+                        global_this,
+                        arguments,
+                        &provider,
+                        false,
+                        auth,
+                    );
+                }
+                if let Some(provider) = aws_pending {
+                    return defer_until_credentials::<ALLOW_GET_BODY, _>(
+                        global_this,
+                        arguments,
+                        &provider,
+                        url.is_s3(),
+                        auth,
+                    );
+                }
+            }
         }
     }
 

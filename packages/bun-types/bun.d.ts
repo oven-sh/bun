@@ -5003,8 +5003,9 @@ declare module "bun" {
      * - `"sso"`: an IAM Identity Center profile (`aws sso login`)
      * - `"container"`: `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` / `_FULL_URI` (ECS, EKS Pod Identity, …)
      * - `"imds"`: EC2 instance metadata (IMDSv2)
+     * - `"explicit"`: `accessKeyId` / `secretAccessKey` passed to the client or call
      */
-    source: "env" | "profile" | "assume-role" | "web-identity" | "process" | "sso" | "container" | "imds";
+    source: "env" | "profile" | "assume-role" | "web-identity" | "process" | "sso" | "container" | "imds" | "explicit";
   }
 
   /**
@@ -5307,8 +5308,10 @@ declare module "bun" {
     /**
      * Get an OpenID Connect **identity** token asserting this workload's
      * identity to `audience` — what Cloud Run, Cloud Functions and IAP expect
-     * for service-to-service calls. Requires a service account (key or
-     * metadata server); user credentials cannot mint ID tokens.
+     * for service-to-service calls. Meant for service accounts (key or
+     * metadata server): with `gcloud auth application-default login` user
+     * credentials Google issues a token for gcloud's own client ID instead of
+     * `audience`, which Cloud Run and Cloud Functions accept but IAP does not.
      *
      * @example
      * ```ts

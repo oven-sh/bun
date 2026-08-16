@@ -1103,29 +1103,13 @@ impl Resolver {
             BStr::new(sso_region),
             dns_suffix(sso_region)
         );
-        let js = |s: &[u8]| -> Vec<u8> {
-            let mut out = Vec::with_capacity(s.len() + 2);
-            out.push(b'"');
-            for &c in s {
-                match c {
-                    b'"' => out.extend_from_slice(b"\\\""),
-                    b'\\' => out.extend_from_slice(b"\\\\"),
-                    0..=0x1f => {
-                        let _ = write!(&mut out, "\\u{:04x}", c);
-                    }
-                    _ => out.push(c),
-                }
-            }
-            out.push(b'"');
-            out
-        };
         let mut body = Vec::with_capacity(256 + refresh_token.len());
         body.extend_from_slice(b"{\"clientId\":");
-        body.extend_from_slice(&js(client_id));
+        json::push_string(&mut body, client_id);
         body.extend_from_slice(b",\"clientSecret\":");
-        body.extend_from_slice(&js(client_secret));
+        json::push_string(&mut body, client_secret);
         body.extend_from_slice(b",\"grantType\":\"refresh_token\",\"refreshToken\":");
-        body.extend_from_slice(&js(refresh_token));
+        json::push_string(&mut body, refresh_token);
         body.push(b'}');
         let req = HttpRequest::post(url, body)
             .header(b"content-type", b"application/json")
@@ -1173,14 +1157,7 @@ impl Resolver {
             iso.as_bytes(),
             new_refresh.as_deref(),
         ) {
-            if let Ok(f) = File::openat(
-                Fd::cwd(),
-                cache_path,
-                bun_sys::O::WRONLY | bun_sys::O::TRUNC,
-                0o600,
-            ) {
-                let _ = f.write_all(&updated);
-            }
+            write_sso_cache(cache_path, &updated);
         }
         Ok(Some(access_token))
     }
@@ -1537,6 +1514,37 @@ fn parse_json_credentials(
     Ok(creds(akid, secret, token, expiration, account_id, source))
 }
 
+/// Best-effort: replace the cache file whole or not at all (other tools read
+/// it), keeping its owner so `sudo bun …` does not lock the user out of it.
+fn write_sso_cache(cache_path: &[u8], contents: &[u8]) {
+    let mut tmp = cache_path.to_vec();
+    let _ = write!(
+        &mut tmp,
+        ".bun-{}-{:x}",
+        std::process::id(),
+        bun_core::time::nano_timestamp()
+    );
+    let tmp = bun_core::ZBox::from_vec(tmp);
+    let dest = bun_core::ZBox::from_bytes(cache_path);
+    let replaced = File::openat(
+        Fd::cwd(),
+        tmp.as_bytes(),
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
+        0o600,
+    )
+    .and_then(|f| {
+        #[cfg(unix)]
+        if let Ok(st) = bun_sys::fstatat(Fd::cwd(), &dest) {
+            let _ = bun_sys::fchown(f.handle(), st.st_uid as u32, st.st_gid as u32);
+        }
+        f.write_all(contents)
+    })
+    .and_then(|()| bun_sys::renameat(Fd::cwd(), &tmp, Fd::cwd(), &dest));
+    if replaced.is_err() {
+        let _ = bun_sys::unlinkat(Fd::cwd(), &tmp);
+    }
+}
+
 /// Replace `accessToken` / `expiresAt` (/ `refreshToken`) in the cached SSO
 /// token JSON, keeping every other key. Returns `None` if the document is not
 /// a flat JSON object we can round-trip.
@@ -1555,18 +1563,9 @@ fn rewrite_sso_cache(
                 out.push(b',');
             }
             first = false;
-            out.push(b'"');
-            out.extend_from_slice(k);
-            out.extend_from_slice(b"\":\"");
-            for &c in v {
-                match c {
-                    b'"' => out.extend_from_slice(b"\\\""),
-                    b'\\' => out.extend_from_slice(b"\\\\"),
-                    0..=0x1f => {}
-                    _ => out.push(c),
-                }
-            }
-            out.push(b'"');
+            json::push_string(out, k);
+            out.push(b':');
+            json::push_string(out, v);
         };
         for prop in o.0.properties() {
             let key = prop.key.slice();

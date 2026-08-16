@@ -114,6 +114,8 @@ pub fn parse_iso8601(s: &[u8]) -> Option<u64> {
         }
     };
     let (y, mo, d, h, mi, se);
+    // Seconds east of UTC (subtracted at the end).
+    let mut offset: i64 = 0;
     if s.len() >= 16 && s[8] == b'T' && s[4] != b'-' {
         y = digits(0..4)?;
         mo = digits(4..6)?;
@@ -128,39 +130,40 @@ pub fn parse_iso8601(s: &[u8]) -> Option<u64> {
         h = digits(11..13)?;
         mi = digits(14..16)?;
         se = digits(17..19)?;
-        // Optional fractional seconds, then `Z`, `+00:00` or `-00:00`. Any
-        // other offset is applied.
+        // Optional fractional seconds, then `Z`, `+HH:MM` or `+HHMM`.
         let mut rest = &s[19..];
         if let [b'.', tail @ ..] = rest {
             let n = tail.iter().take_while(|b| b.is_ascii_digit()).count();
             rest = &tail[n..];
         }
-        match rest {
-            [] | [b'Z'] | [b'z'] => {}
-            [sign @ (b'+' | b'-'), tail @ ..] if tail.len() >= 5 && tail[2] == b':' => {
-                if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60
-                {
+        offset = match rest {
+            [] | [b'Z'] | [b'z'] => 0,
+            [sign @ (b'+' | b'-'), tail @ ..]
+                if (tail.len() == 5 && tail[2] == b':') || tail.len() == 4 =>
+            {
+                let two = |d: &[u8]| match d {
+                    [a @ b'0'..=b'9', b @ b'0'..=b'9'] => {
+                        Some(i64::from(a - b'0') * 10 + i64::from(b - b'0'))
+                    }
+                    _ => None,
+                };
+                let (oh, om) = (two(&tail[..2])?, two(&tail[tail.len() - 2..])?);
+                if oh > 23 || om > 59 {
                     return None;
                 }
-                let oh: u64 = core::str::from_utf8(&tail[0..2]).ok()?.parse().ok()?;
-                let om: u64 = core::str::from_utf8(&tail[3..5]).ok()?.parse().ok()?;
-                let offset = oh * 3600 + om * 60;
-                let base = days_from_civil(y, mo, d)? * 86_400 + h * 3600 + mi * 60 + se;
-                return Some(if *sign == b'+' {
-                    base.checked_sub(offset)?
-                } else {
-                    base + offset
-                });
+                let secs = oh * 3600 + om * 60;
+                if *sign == b'+' { secs } else { -secs }
             }
             _ => return None,
-        }
+        };
     } else {
         return None;
     }
     if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
         return None;
     }
-    Some(days_from_civil(y, mo, d)? * 86_400 + h * 3600 + mi * 60 + se)
+    let utc = days_from_civil(y, mo, d)? * 86_400 + h * 3600 + mi * 60 + se;
+    utc.checked_add_signed(-offset)
 }
 
 // Howard Hinnant's `days_from_civil`, restricted to years >= 1970.
@@ -194,9 +197,13 @@ pub fn infer_service_region(host: &[u8]) -> (Option<Box<[u8]>>, Option<Box<[u8]>
         return (own(b"s3"), own(b"auto"));
     }
     if let Some(stem) = host.strip_suffix(b".backblazeb2.com".as_slice()) {
-        // s3.<region>.backblazeb2.com
+        // [<bucket>.]s3.<region>.backblazeb2.com
         let labels = labels_of(stem);
-        return (own(b"s3"), labels.get(1).copied().and_then(own));
+        let region = match labels.as_slice() {
+            [.., service, region] if *service == b"s3" => own(region),
+            _ => None,
+        };
+        return (own(b"s3"), region);
     }
     if let Some(stem) = host.strip_suffix(b".on.aws".as_slice()) {
         // <id>.lambda-url.<region>.on.aws
@@ -242,20 +249,29 @@ pub fn infer_service_region(host: &[u8]) -> (Option<Box<[u8]>>, Option<Box<[u8]>
         }
     } else {
         labels.pop();
-        // Region may sit *before* the service label (`domain.eu-west-1.es`).
-        let r = labels.iter().rev().copied().find(|l| looks_like_region(l));
+        // `<resource>.<region>.<service>` (rds, es, neptune, legacy
+        // `<region>.queue` …): the label before the service is the region —
+        // except for S3, where it is a bucket that may merely look like one.
+        let r = if last == b"s3" || last.starts_with(b"s3-") {
+            None
+        } else {
+            labels.last().copied().filter(|l| looks_like_region(l))
+        };
         if r.is_some() {
-            // Whatever precedes the region is a resource name, not a prefix.
             labels.clear();
         }
         (last, r)
     };
     let prefix = labels.last().copied();
 
+    if let Some(s) = service.strip_suffix(b"-fips".as_slice()) {
+        service = s;
+    }
     // Legacy S3 spellings: s3-us-west-2, s3-external-1, s3-accelerate,
-    // s3-website-us-east-1, s3-control. (But s3-outposts / s3-object-lambda
-    // are real signing names.)
+    // s3-website-us-east-1, s3-control, s3-accesspoint. (But s3-outposts /
+    // s3-object-lambda are real signing names.)
     if let Some(tail) = service.strip_prefix(b"s3-".as_slice()) {
+        let tail = tail.strip_prefix(b"fips-".as_slice()).unwrap_or(tail);
         if looks_like_region(tail) {
             region = region.or(Some(tail));
             service = b"s3";
@@ -264,13 +280,15 @@ pub fn infer_service_region(host: &[u8]) -> (Option<Box<[u8]>>, Option<Box<[u8]>
                 region = region.or(Some(r));
             }
             service = b"s3";
-        } else if matches!(tail, b"accelerate" | b"control" | b"website")
-            || tail.starts_with(b"external-")
+        } else if matches!(
+            tail,
+            b"accelerate" | b"control" | b"website" | b"accesspoint"
+        ) || tail.starts_with(b"external-")
         {
             service = b"s3";
         }
     }
-    let service: &[u8] = match service.strip_suffix(b"-fips".as_slice()).unwrap_or(service) {
+    let service: &[u8] = match service {
         b"email" => b"ses",
         b"queue" => b"sqs",
         b"bedrock-runtime" | b"bedrock-agent" | b"bedrock-agent-runtime" => b"bedrock",
@@ -898,6 +916,17 @@ mod tests {
             parse_iso8601(b"2015-08-30T14:36:00+02:00"),
             Some(1_440_938_160)
         );
+        assert_eq!(
+            parse_iso8601(b"2015-08-30T14:36:00+0200"),
+            Some(1_440_938_160)
+        );
+        assert_eq!(
+            parse_iso8601(b"2015-08-30T11:06:00.5-0130"),
+            Some(1_440_938_160)
+        );
+        assert_eq!(parse_iso8601(b"2015-08-30T14:36:00+020"), None);
+        assert_eq!(parse_iso8601(b"2015-08-30T14:36:00++100"), None);
+        assert_eq!(parse_iso8601(b"2015-08-30T14:36:00+9999"), None);
         assert_eq!(amz_datetime(1_440_938_160), *b"20150830T123600Z");
         assert_eq!(parse_iso8601(b"garbage"), None);
     }
@@ -914,6 +943,48 @@ mod tests {
         assert_eq!(
             t("dynamodb.us-west-2.amazonaws.com"),
             (Some("dynamodb".into()), Some("us-west-2".into()))
+        );
+        // A region-shaped bucket name on a regionless S3 host is a bucket.
+        assert_eq!(
+            t("my-data-1.s3.amazonaws.com"),
+            (Some("s3".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("my-data-1.s3-accelerate.amazonaws.com"),
+            (Some("s3".into()), Some("us-east-1".into()))
+        );
+        assert_eq!(
+            t("search-dom.eu-west-1.es.amazonaws.com"),
+            (Some("es".into()), Some("eu-west-1".into()))
+        );
+        assert_eq!(
+            t("my-bucket.s3.us-west-004.backblazeb2.com"),
+            (Some("s3".into()), Some("us-west-004".into()))
+        );
+        assert_eq!(
+            t("s3.eu-central-003.backblazeb2.com"),
+            (Some("s3".into()), Some("eu-central-003".into()))
+        );
+        assert_eq!(
+            t("mydb.abc123.eu-west-1.rds.amazonaws.com"),
+            (Some("rds".into()), Some("eu-west-1".into()))
+        );
+        assert_eq!(
+            t("eu-west-1.queue.amazonaws.com"),
+            (Some("sqs".into()), Some("eu-west-1".into()))
+        );
+        assert_eq!(
+            t("myap-123456789012.s3-accesspoint.us-west-2.amazonaws.com"),
+            (Some("s3".into()), Some("us-west-2".into()))
+        );
+        assert_eq!(
+            t("myap-123456789012.s3-accesspoint-fips.dualstack.us-west-2.amazonaws.com"),
+            (Some("s3".into()), Some("us-west-2".into()))
+        );
+        assert_eq!(t("f004.backblazeb2.com"), (Some("s3".into()), None));
+        assert_eq!(
+            t("bucket.s3-fips-us-gov-west-1.amazonaws.com"),
+            (Some("s3".into()), Some("us-gov-west-1".into()))
         );
         assert_eq!(
             t("sts.amazonaws.com"),

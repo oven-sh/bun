@@ -62,13 +62,6 @@ impl AwsCredentials {
         }
     }
 
-    pub fn is_fresh_at(&self, now_epoch_secs: u64) -> bool {
-        match self.expiration {
-            None => true,
-            Some(exp) => exp > now_epoch_secs + Self::REFRESH_WINDOW_SECONDS,
-        }
-    }
-
     pub fn sigv4(&self) -> crate::sigv4::Credentials<'_> {
         crate::sigv4::Credentials {
             access_key_id: &self.access_key_id,
@@ -120,8 +113,6 @@ impl ProviderError {
         }
     }
 }
-
-pub type ProviderResult = Result<Arc<AwsCredentials>, Arc<ProviderError>>;
 
 /// A source of credentials that may need I/O to produce them.
 pub trait CredentialsProvider: Send + Sync {

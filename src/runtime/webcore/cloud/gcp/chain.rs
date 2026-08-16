@@ -404,7 +404,7 @@ impl Resolver {
                 };
                 let token_uri = f.token_uri.as_deref().unwrap_or(DEFAULT_TOKEN_URI);
                 let mut t = self
-                    .authorized_user_token(id, secret, rt, token_uri)
+                    .authorized_user_token(path, id, secret, rt, token_uri)
                     .await?;
                 t.quota_project_id = f.quota_project_id;
                 Ok(t)
@@ -517,6 +517,7 @@ impl Resolver {
 
     async fn authorized_user_token(
         &self,
+        path: &[u8],
         client_id: &[u8],
         client_secret: &[u8],
         refresh_token: &[u8],
@@ -530,15 +531,20 @@ impl Resolver {
             (b"client_secret", client_secret),
             (b"refresh_token", refresh_token),
         ];
-        if let TokenRequest::Access { scopes } = request {
-            if &**scopes != DEFAULT_SCOPE {
+        match request {
+            TokenRequest::Access { scopes } if &**scopes != DEFAULT_SCOPE => {
                 pairs.push((b"scope", scopes));
             }
+            TokenRequest::Access { .. } => {}
+            // As google-auth-library's UserRefreshClient.fetchIdToken does;
+            // Google may still answer with a token for gcloud's own client
+            // ID, which Cloud Run / Cloud Functions accept and IAP does not.
+            TokenRequest::Identity { audience } => pairs.push((b"target_audience", audience)),
         }
         form_encode(&mut body, &pairs);
-        let what = "authorized user credentials";
-        let res = self.post_token_endpoint(what, token_uri, body).await?;
-        Self::token_from_response(what, &res.body, request, Source::AuthorizedUser)
+        let what = format!("authorized user credentials ({})", BStr::new(path));
+        let res = self.post_token_endpoint(&what, token_uri, body).await?;
+        Self::token_from_response(&what, &res.body, request, Source::AuthorizedUser)
     }
 
     /// `{access_token, expires_in, id_token?, token_type}`
@@ -582,14 +588,7 @@ impl Resolver {
             }
             TokenRequest::Identity { .. } => {
                 let Some(token) = id else {
-                    return Err(fail!(
-                        "{what}: token endpoint response has no id_token{}",
-                        if source == Source::AuthorizedUser {
-                            " (user credentials cannot mint ID tokens for an arbitrary audience; use a service account or the metadata server)"
-                        } else {
-                            ""
-                        }
-                    ));
+                    return Err(fail!("{what}: token endpoint response has no id_token"));
                 };
                 let expiration = jwt::unverified_exp(&token).unwrap_or(now + 3600);
                 Ok(Token {

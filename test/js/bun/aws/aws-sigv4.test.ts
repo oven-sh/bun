@@ -450,11 +450,6 @@ describe("Bun.aws.presign", () => {
     });
     expect(new URL(put).searchParams.get("X-Amz-Expires")).toBe("900");
     expect(new URL(put).searchParams.get("X-Amz-Date")).toBe(datetime);
-    expect(
-      referencePresignCheck(put, { method: "PUT", service: "s3", region: "us-east-1", secretAccessKey }),
-    ).toMatchObject({
-      actual: expect.any(String),
-    });
     const { expected, actual } = referencePresignCheck(put, {
       method: "PUT",
       service: "s3",

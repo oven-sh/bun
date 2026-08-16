@@ -52,3 +52,8 @@ pub fn parse<R>(body: &[u8], read: impl FnOnce(Obj<'_>) -> R) -> Option<R> {
     let obj = value.as_object()?;
     Some(read(Obj(obj)))
 }
+
+/// Append `s` as a JSON string literal (quotes included).
+pub fn push_string(out: &mut Vec<u8>, s: &[u8]) {
+    let _ = bun_core::fmt::encode_json_string(&mut bun_core::fmt::VecWriter(out), s);
+}

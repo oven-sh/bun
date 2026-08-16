@@ -10,24 +10,6 @@ fn b64url(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&bun_base64::simdutf_encode_url_safe_alloc(bytes));
 }
 
-fn json_string(out: &mut Vec<u8>, s: &[u8]) {
-    out.push(b'"');
-    for &c in s {
-        match c {
-            b'"' => out.extend_from_slice(b"\\\""),
-            b'\\' => out.extend_from_slice(b"\\\\"),
-            b'\n' => out.extend_from_slice(b"\\n"),
-            b'\r' => out.extend_from_slice(b"\\r"),
-            b'\t' => out.extend_from_slice(b"\\t"),
-            0..=0x1f => {
-                let _ = write!(out, "\\u{:04x}", c);
-            }
-            _ => out.push(c),
-        }
-    }
-    out.push(b'"');
-}
-
 pub struct Claims<'a> {
     pub iss: &'a [u8],
     /// Space-separated OAuth scopes (access tokens) …
@@ -45,24 +27,24 @@ pub fn unsigned(key_id: Option<&[u8]>, claims: &Claims<'_>) -> Vec<u8> {
     header.extend_from_slice(b"{\"alg\":\"RS256\",\"typ\":\"JWT\"");
     if let Some(kid) = key_id {
         header.extend_from_slice(b",\"kid\":");
-        json_string(&mut header, kid);
+        json::push_string(&mut header, kid);
     }
     header.push(b'}');
 
     let mut payload = Vec::with_capacity(256);
     payload.extend_from_slice(b"{\"iss\":");
-    json_string(&mut payload, claims.iss);
+    json::push_string(&mut payload, claims.iss);
     payload.extend_from_slice(b",\"sub\":");
-    json_string(&mut payload, claims.iss);
+    json::push_string(&mut payload, claims.iss);
     payload.extend_from_slice(b",\"aud\":");
-    json_string(&mut payload, claims.aud);
+    json::push_string(&mut payload, claims.aud);
     if let Some(scope) = claims.scope {
         payload.extend_from_slice(b",\"scope\":");
-        json_string(&mut payload, scope);
+        json::push_string(&mut payload, scope);
     }
     if let Some(aud) = claims.target_audience {
         payload.extend_from_slice(b",\"target_audience\":");
-        json_string(&mut payload, aud);
+        json::push_string(&mut payload, aud);
     }
     let _ = write!(
         &mut payload,

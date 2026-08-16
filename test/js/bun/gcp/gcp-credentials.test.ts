@@ -45,9 +45,10 @@ async function record(list: Hit[], req: Request) {
   return hit;
 }
 
+let home: ReturnType<typeof tempDir>;
 beforeAll(() => {
-  const home = tempDir("gcp-home", { ".config": { placeholder: "" } });
-  baseEnv = { ...bunEnv, HOME: home, USERPROFILE: home, APPDATA: home, NO_GCE_CHECK: "true" };
+  home = tempDir("gcp-home", { ".config": { placeholder: "" } });
+  baseEnv = { ...bunEnv, HOME: String(home), USERPROFILE: String(home), APPDATA: String(home), NO_GCE_CHECK: "true" };
   for (const k of STRIPPED) baseEnv[k] = undefined;
   baseEnv.NO_GCE_CHECK = "true";
 
@@ -93,7 +94,13 @@ beforeAll(() => {
           expires_in: 3599,
           scope: "https://www.googleapis.com/auth/cloud-platform",
           token_type: "Bearer",
-          id_token: fakeJwt({ aud: form.get("client_id"), exp: 4102444800 }),
+          // Google honours target_audience for some clients; model both.
+          id_token: fakeJwt({
+            aud: form.get("target_audience")?.startsWith("https://honoured.")
+              ? form.get("target_audience")
+              : form.get("client_id"),
+            exp: 4102444800,
+          }),
         });
       }
       return new Response("unknown grant", { status: 400 });
@@ -140,6 +147,7 @@ beforeAll(() => {
 
 afterAll(() => {
   for (const s of [tokenServer, metadata, echo]) s?.stop(true);
+  home?.[Symbol.dispose]();
 });
 
 async function run(code: string, env: Record<string, string | undefined>) {
@@ -270,6 +278,19 @@ describe.concurrent("Bun.gcp", () => {
     if (process.platform !== "win32") {
       expect(await token({ HOME: String(home) })).toMatchObject({ source: "authorized-user" });
     }
+    // ID tokens: `target_audience` is sent and whatever Google issues is
+    // returned, as google-auth-library does (for user credentials that is
+    // usually a token for gcloud's client ID, which Cloud Run accepts).
+    const aud = async (audience: string) =>
+      JSON.parse(
+        b64urlDecode(
+          (
+            await token({ CLOUDSDK_CONFIG: String(cfgdir) }, `Bun.gcp.idToken(${JSON.stringify(audience)})`)
+          ).token.split(".")[1],
+        ).toString(),
+      ).aud;
+    expect(await aud("https://honoured.run.app")).toBe("https://honoured.run.app");
+    expect(await aud("https://svc.a.run.app")).toBe("client.apps.googleusercontent.com");
     // unsupported credential types say so
     using ext = tempDir("gcp-ext", { "creds.json": JSON.stringify({ type: "external_account", audience: "x" }) });
     const e = await token({ GOOGLE_APPLICATION_CREDENTIALS: join(ext, "creds.json") });

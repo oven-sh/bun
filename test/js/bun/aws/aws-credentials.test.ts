@@ -46,7 +46,7 @@ const STRIPPED = [
   "https_proxy",
 ];
 
-let home: string;
+let home: ReturnType<typeof tempDir>;
 let baseEnv: Record<string, string | undefined>;
 
 // ── mock endpoints ─────────────────────────────────────────────────────────
@@ -54,10 +54,8 @@ let baseEnv: Record<string, string | undefined>;
 type Hit = { method: string; path: string; headers: Record<string, string>; body: string };
 let imds: Server, sts: Server, container: Server, s3: Server;
 const hits = { imds: [] as Hit[], sts: [] as Hit[], container: [] as Hit[], s3: [] as Hit[] };
-let imdsCredsExpiration = "2099-01-01T00:00:00Z";
-let imdsRole: string | null = "my-instance-role";
-let imdsTokenStatus = 200;
-let containerStatus = 200;
+const imdsCredsExpiration = "2099-01-01T00:00:00Z";
+const imdsRole = "my-instance-role";
 
 async function record(list: Hit[], req: Request) {
   const hit = {
@@ -85,7 +83,7 @@ function stsXml(action: string, akid: string) {
 
 beforeAll(() => {
   home = tempDir("aws-home", { ".aws": { placeholder: "" } });
-  baseEnv = { ...bunEnv, HOME: home, USERPROFILE: home, AWS_EC2_METADATA_DISABLED: "true" };
+  baseEnv = { ...bunEnv, HOME: String(home), USERPROFILE: String(home), AWS_EC2_METADATA_DISABLED: "true" };
   for (const k of STRIPPED) baseEnv[k] = undefined;
   baseEnv.AWS_EC2_METADATA_DISABLED = "true";
 
@@ -95,14 +93,12 @@ beforeAll(() => {
       const hit = await record(hits.imds, req);
       if (hit.path === "/latest/api/token") {
         if (req.method !== "PUT") return new Response("bad", { status: 405 });
-        if (imdsTokenStatus !== 200) return new Response("nope", { status: imdsTokenStatus });
         return new Response("IMDS-TOKEN");
       }
-      if (imdsTokenStatus === 200 && req.headers.get("x-aws-ec2-metadata-token") !== "IMDS-TOKEN") {
+      if (req.headers.get("x-aws-ec2-metadata-token") !== "IMDS-TOKEN") {
         return new Response("unauthorized", { status: 401 });
       }
       if (hit.path === "/latest/meta-data/iam/security-credentials/") {
-        if (!imdsRole) return new Response("not found", { status: 404 });
         return new Response(imdsRole + "\n");
       }
       if (hit.path === "/latest/meta-data/iam/security-credentials/" + imdsRole) {
@@ -143,7 +139,6 @@ beforeAll(() => {
     port: 0,
     async fetch(req) {
       await record(hits.container, req);
-      if (containerStatus !== 200) return new Response("container says no", { status: containerStatus });
       if (req.headers.get("authorization") !== "container-auth-token") {
         return new Response("missing auth", { status: 403 });
       }
@@ -170,6 +165,7 @@ beforeAll(() => {
 
 afterAll(() => {
   for (const s of [imds, sts, container, s3]) s?.stop(true);
+  home?.[Symbol.dispose]();
 });
 
 async function run(code: string, env: Record<string, string | undefined>) {

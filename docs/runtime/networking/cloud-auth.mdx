@@ -61,7 +61,7 @@ const creds = await Bun.aws.credentials();
 //   expiration: 2026-01-01T…,   // temporary credentials only
 //   region: "us-east-1",        // if AWS_REGION / the profile set one
 //   accountId: "123456789012",  // if the source reported it
-//   source: "sso",              // "env" | "profile" | "assume-role" | "web-identity" | "process" | "sso" | "container" | "imds"
+//   source: "sso",              // "env" | "profile" | "assume-role" | "web-identity" | "process" | "sso" | "container" | "imds" | "explicit"
 // }
 
 await Bun.aws.credentials({ refresh: true }); // ignore the cache

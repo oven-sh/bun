@@ -548,7 +548,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
+// `Builder` holds a live `&mut` view of the resolutions buffer (see
 // `Builder.lockfile` safety contract), so callers must thread `resolutions`
 // explicitly to avoid an aliasing read through the shared `&Lockfile`.
 pub(crate) fn is_filtered_dependency_or_workspace(

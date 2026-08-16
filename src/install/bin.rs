@@ -712,7 +712,8 @@ impl PriorityQueueContext {
         // for the entire install (the `PackageInstaller` that owns this queue
         // also borrows the same `Lockfile`). The Vecs may be reallocated by
         // `fix_cached_lockfile_package_slices`, which is why we re-deref the
-        // `BackRef<Vec>` (header) on every compare instead of caching a slice.
+        // `BackRef` (the vector header) on every compare instead of caching a
+        // slice.
         let deps = self.dependencies.as_slice();
         let buf = self.string_buf.as_slice();
         let a_name = deps[a].name.slice(buf);

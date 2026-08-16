@@ -911,9 +911,9 @@ impl<'a> PackageInstaller<'a> {
                 // Drain by move (`mem::take`) to transfer ownership without the
                 // O(pending_installs) extra `.clone()` allocations and to leave
                 // `pending_installs` empty as the spec's defer does.
-                // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy
-                // it out so the `&Resolution` argument below borrows the
-                // local, not `*self`, across the `&mut self` call.
+                // `self.resolutions` is `Copy`; copy it out so the
+                // `&Resolution` argument below borrows the local, not
+                // `*self`, across the `&mut self` call.
                 let resolutions = self.resolutions;
                 for context in core::mem::take(&mut self.trees[i].pending_installs) {
                     let package_id =
@@ -1145,8 +1145,8 @@ impl<'a> PackageInstaller<'a> {
                 return;
             }
 
-            // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out
-            // so the `&Resolution` argument borrows the local, not `*self`.
+            // `self.resolutions` is `Copy`; copy it out so the `&Resolution`
+            // argument borrows the local, not `*self`.
             let resolutions = self.resolutions;
             for cb in callbacks.iter() {
                 let TaskCallbackContext::DependencyInstallContext(context) = cb else {
@@ -2491,9 +2491,8 @@ impl<'a> PackageInstaller<'a> {
         let package_id = self.lockfile().buffers.resolutions.as_slice()[dep_id];
 
         let name = self.names[package_id];
-        // `self.resolutions` is `RawSlice<Resolution>` (Copy); copy out so the
-        // `&Resolution` argument borrows the local, not `*self`, across the
-        // `&mut self` call.
+        // `self.resolutions` is `Copy`; copy it out so the `&Resolution`
+        // argument borrows the local, not `*self`, across the `&mut self` call.
         let resolutions = self.resolutions;
 
         const NEEDS_VERIFY: bool = true;

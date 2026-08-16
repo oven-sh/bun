@@ -339,13 +339,13 @@ pub(crate) fn install_hoisted_packages(
             // so we want to make sure they're not accessible to the rest of this function
             // to make mistakes harder
             //
-            // BACKREF — the `PackageInstaller` slice fields are
-            // `bun_ptr::RawSlice<T>` (raw `*const [T]`, no lifetime), so
-            // wrapping each column with `RawSlice::new` stores the (ptr, len)
-            // without keeping a borrow live — no `&'a → &'a` detach
-            // round-trip needed. Derive through `lockfile_ptr` so the
-            // provenance root matches `installer.lockfile`/`installer.manager`.
-            // RawSlice invariant: `lockfile_ref` derived from `mgr_ptr`;
+            // BACKREF — the `PackageInstaller` column fields are
+            // `bun_ptr::BackRef<IdSlice<..>>` (no lifetime), so wrapping each
+            // column with `BackRef::new` stores the pointer without keeping a
+            // borrow live — no `&'a → &'a` detach round-trip needed. Derive
+            // through `lockfile_ptr` so the provenance root matches
+            // `installer.lockfile`/`installer.manager`.
+            // BackRef invariant: `lockfile_ref` derived from `mgr_ptr`;
             // the packages column buffers are not freed for the lifetime of
             // `installer` (only grow, which is why
             // `fix_cached_lockfile_package_slices` re-snapshots). Read-only

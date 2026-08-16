@@ -1401,8 +1401,8 @@ impl Lockfile {
         );
         let mut pkgs = self.packages.slice();
 
-        // `split_mut()` yields disjoint `&mut [_]` per column from one
-        // `&mut Slice` borrow.
+        // `split_mut()` yields a disjoint `&mut IdSlice<PackageID, _>` per
+        // column from one `&mut Slice` borrow.
         let self::package::PackageColumnsMut {
             name: pkg_names,
             name_hash: pkg_name_hashes,

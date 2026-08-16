@@ -84,8 +84,7 @@ impl HotMap {
         self._map.get(key).copied()
     }
 
-    /// Returns `false` (leaving the existing entry untouched) if `key` is
-    /// already registered.
+    /// Returns `false` and keeps the existing entry if `key` is already registered.
     pub fn insert_raw(&mut self, key: &[u8], entry: HotMapEntry) -> bool {
         let gop = bun_core::handle_oom(self._map.get_or_put(key));
         if gop.found_existing {

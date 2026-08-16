@@ -412,8 +412,7 @@ impl Handlers {
         self.binary_type.set(reloaded.binary_type);
     }
 
-    /// Like [`apply_reload`](Self::apply_reload), but `source`'s callbacks are
-    /// already context-wrapped by `from_generated`.
+    /// [`apply_reload`](Self::apply_reload) for callbacks `from_generated` already context-wrapped.
     pub(crate) fn copy_callbacks_from(&self, global_object: &JSGlobalObject, source: &Handlers) {
         self.cell
             .set_callbacks(global_object, &source.cell.callbacks());

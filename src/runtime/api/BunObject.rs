@@ -1603,8 +1603,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                         tag: $tag as u8,
                         ptr: server.cast::<()>(),
                     };
-                    // Key held by a non-server entry (a `Bun.listen` id):
-                    // stay unregistered so `stop()` leaves that entry alone.
+                    // Key held by a `Bun.listen` entry: stay unregistered so `stop()` leaves it alone.
                     if !hot.insert_raw(&server_ref.config.id, entry) {
                         server_ref.config.allow_hot = false;
                     }

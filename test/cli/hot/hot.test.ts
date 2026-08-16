@@ -809,6 +809,7 @@ describe("should reuse the listening socket on hot reload", () => {
               resolve(text.slice(0, nl));
               s.end();
             },
+            close: () => reject(new Error("socket closed before a full line arrived")),
             error: (_s, e) => reject(e),
             connectError: (_s, e) => reject(e),
           },

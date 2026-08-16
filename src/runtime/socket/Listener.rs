@@ -194,8 +194,7 @@ impl Listener {
         let ssl_enabled = socket_config.ssl.is_some();
         let socket_flags = socket_config.socket_flags();
 
-        // `--hot`: re-evaluating the entry module must reuse the listener the
-        // previous evaluation bound, as `Bun.serve` does. `id: null`/`""` opts out.
+        // `--hot` reuses the listener a previous evaluation bound (as `Bun.serve` does); `id: null`/`""` opts out.
         let hot_id: Box<[u8]> = match opts.get(global, "id")? {
             None => compute_hot_id(socket_config.hostname_or_unix.slice(), port, ssl_enabled),
             Some(id) if id.is_null() => Box::default(),
@@ -1838,8 +1837,7 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
     Err(global.throw(format_args!("Expected a Listener instance")))
 }
 
-/// Keyed on the *requested* address so `port: 0` maps to the same entry on every
-/// reload. Prefixed to stay disjoint from `ServerConfig::compute_id` keys.
+/// Keyed on the *requested* address so `port: 0` is stable across reloads; prefix keeps it disjoint from `ServerConfig::compute_id`.
 fn compute_hot_id(hostname_or_unix: &[u8], port: Option<u16>, ssl: bool) -> Box<[u8]> {
     use std::io::Write as _;
     // fd-based listeners have no address to key on.

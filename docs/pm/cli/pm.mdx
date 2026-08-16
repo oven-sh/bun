@@ -248,7 +248,7 @@ diff --bun a/index.js b/index.js
 ...
 ```
 
-On a terminal, code is compared by meaning and shown as written. Both sides of every `.js`/`.mjs`/`.cjs`/`.jsx`/`.ts`/`.tsx` file are parsed and re-printed in one canonical form (equivalent syntax folded, unreachable code dropped); that canonical form decides *what changed*, and the hunks show the *original* lines — comments, types, JSX and names intact:
+On a terminal, code is compared by meaning and shown as written. Both sides of every `.js`/`.mjs`/`.cjs`/`.jsx`/`.ts`/`.tsx` file are parsed and re-printed in one canonical form (equivalent syntax folded, unreachable code dropped); that canonical form decides _what changed_, and the hunks show the _original_ lines — comments, types, JSX and names intact:
 
 - `1 + 1` vs `2`, `'a'` vs `"a"`, `!0` vs `true`, a re-wrapped call or a whole-file reformat are not changes. Lines folded away this way are counted in the file header (`3 equivalent hidden`), and a file with nothing left reads `formatting only`.
 - A comment edit, a changed type annotation, or any change in control flow is a change, shown in the author's words.

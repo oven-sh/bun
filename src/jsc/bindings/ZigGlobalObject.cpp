@@ -4336,11 +4336,8 @@ extern "C" void Bun__GlobalObject__clearExceptionsForExit(Zig::GlobalObject* glo
 
 static void destroyVM(JSC::VM& vm)
 {
-    // Write any pending sampling profiler report and drop its registry entry
-    // while this thread (the VM's owner) is still alive. Must precede the
-    // deref loop below: the registry's Ref<VM> is one of the refs that loop
-    // releases, so a stale entry would point at a freed VM, and ~VM is what
-    // shuts the sampling thread down before its target thread exits.
+    // Flush the sampling profiler report and drop its registry entry before
+    // the deref loop below releases the registry's Ref<VM>.
     Bun::reportSamplingProfilerBeforeVMTeardown(vm);
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
     // Every JSLockHolder still on the native stack (process.exit() from inside a JS callback,

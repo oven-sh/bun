@@ -19,10 +19,8 @@ namespace {
 struct SamplingProfilerExitReporter {
     struct Entry {
         Ref<JSC::SamplingProfiler> profiler;
-        // Keeps the profiler's VM alive while registered
-        // (SamplingProfiler::m_vm is a bare VM&), so reporting can never
-        // touch a freed VM. reportSamplingProfilerBeforeVMTeardown releases
-        // it so ~VM can run during teardown.
+        // SamplingProfiler::m_vm is a bare VM&; this Ref keeps it valid
+        // until the entry is dropped.
         Ref<JSC::VM> vm;
         CString directory;
     };
@@ -54,10 +52,8 @@ struct SamplingProfilerExitReporter {
         });
     }
 
-    // Mirrors SamplingProfiler::reportDataToOptionFile(), minus the
-    // frozen-Options read. Both callers run on the thread that owns the
-    // VM's API lock, so the JSLockHolder acquisition is recursive and
-    // cannot block.
+    // Mirrors SamplingProfiler::reportDataToOptionFile() minus the
+    // frozen-Options read; callers already own the VM's API lock.
     void writeReport(Entry& entry) WTF_REQUIRES_LOCK(lock)
     {
         JSC::JSLockHolder holder(entry.vm.get());
@@ -76,19 +72,15 @@ struct SamplingProfilerExitReporter {
     {
         Locker locker { lock };
         for (auto& entry : entries) {
-            // A Bun VM's API lock is held by its owner thread for that
-            // thread's whole lifetime (see WebWorker::thread_main), so a VM
-            // whose lock this thread does not hold belongs to another,
-            // possibly already-exited, thread: locking it or sampling it
-            // here would hang the exit. Those VMs report in
-            // reportSamplingProfilerBeforeVMTeardown instead.
+            // Another thread's VM cannot be locked or sampled here without
+            // hanging the exit (its owner holds the API lock for the
+            // thread's lifetime); those VMs report at their own teardown.
             if (!entry.vm->currentThreadIsHoldingAPILock())
                 continue;
             writeReport(entry);
         }
-        // Entries are deliberately kept: the singleton is NeverDestroyed, so
-        // the Refs never release during exit and no VM teardown can start
-        // inside the exit callback.
+        // Entries stay registered so no VM teardown starts inside the exit
+        // callback.
     }
 
     void reportAndRemove(JSC::VM& vm)

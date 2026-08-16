@@ -453,11 +453,12 @@ describe("web worker", () => {
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
       w.onmessage = () => received++;
-      // Timer turns keep firing while the flood runs is the property; poll until
-      // the flood reaches us (worker startup outlasts a fixed turn count under
-      // debug/ASAN) rather than counting turns.
+      // Poll until the flood reaches us (worker startup outlasts a fixed turn
+      // count under debug/ASAN), then prove timers keep interleaving with it.
       while (received === 0) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      const before = received;
+      for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
+      expect(received).toBeGreaterThan(before);
       w.terminate();
       await once(w, "close");
     });

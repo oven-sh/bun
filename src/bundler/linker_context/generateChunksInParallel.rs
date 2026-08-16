@@ -1276,12 +1276,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {
-                            // The "use client" analysis is only meaningful when
-                            // server components are enabled; without them there
-                            // are no client boundaries, and every route would be
-                            // misclassified as fully static, dropping the
-                            // framework's client entry point from prerendered
-                            // pages.
+                            // Without server components there are no "use client"
+                            // boundaries, so the visitor would call every route static.
                             extra.route = if framework.server_components.is_some()
                                 && !static_route_visitor
                                     .has_transitive_use_client(chunk.entry_point.source_index())

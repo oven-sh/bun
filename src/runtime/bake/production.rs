@@ -781,10 +781,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
         }
     }
-    // Write the runtime file to disk if there are any client chunks. When no
-    // bundled module needs the runtime's wrapper functions (e.g. a small app
-    // on a custom framework), the runtime is not part of any chunk and there
-    // is nothing to write.
+    // Write the runtime file to disk if there are any client chunks. The runtime
+    // is absent when no bundled module uses any of its helpers.
     if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)

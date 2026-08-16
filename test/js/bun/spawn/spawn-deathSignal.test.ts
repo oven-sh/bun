@@ -91,7 +91,7 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     try {
       process.kill(middle.pid!, "SIGKILL");
       await middle.exited;
-      // sh must NOT die — it is simply orphaned.
+      // sh must NOT die; it is simply orphaned.
       const died = await waitUntilDead(shPid, 1000);
       expect(died).toBe(false);
     } finally {
@@ -99,7 +99,7 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     }
   });
 
-  test("deathSignal: 'SIGKILL' — child dies with its parent", async () => {
+  test("deathSignal: 'SIGKILL' kills the child when its parent dies", async () => {
     const { middle, shPid } = await spawnPair("SIGKILL");
     await using _ = middle;
     try {
@@ -114,7 +114,7 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     }
   });
 
-  test("deathSignal: 9 — numeric signal", async () => {
+  test("deathSignal: 9 (numeric signal)", async () => {
     const { middle, shPid } = await spawnPair(9);
     await using _ = middle;
     try {
@@ -127,7 +127,7 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
     }
   });
 
-  test("deathSignal: 'SIGTERM' — catchable signal is delivered", async () => {
+  test("deathSignal: 'SIGTERM' (catchable signal) is delivered", async () => {
     const { middle, shPid } = await spawnPair("SIGTERM");
     await using _ = middle;
     try {
@@ -150,32 +150,57 @@ describe.skipIf(!isLinux)("Bun.spawn deathSignal", () => {
       reap(shPid);
     }
   });
-
-  test("rejects invalid deathSignal", () => {
-    expect(() =>
-      Bun.spawn({
-        cmd: [bunExe(), "-e", ""],
-        env: bunEnv,
-        deathSignal: "NOT_A_SIGNAL" as any,
-      }),
-    ).toThrow();
-    expect(() =>
-      Bun.spawn({
-        cmd: [bunExe(), "-e", ""],
-        env: bunEnv,
-        deathSignal: -1 as any,
-      }),
-    ).toThrow();
-  });
 });
 
-// On macOS and Windows, deathSignal is accepted but ignored.
-test.skipIf(isLinux)("deathSignal is accepted (no-op) on non-Linux", async () => {
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", "process.exit(0)"],
-    env: bunEnv,
-    deathSignal: "SIGKILL",
+// Option validation happens before the platform-specific spawn, so it is the
+// same everywhere (on macOS and Windows a valid deathSignal is then ignored).
+describe("Bun.spawn deathSignal validation", () => {
+  // Returns the error thrown by Bun.spawn for these options. If nothing was
+  // thrown, the stray child is killed and the test fails.
+  async function spawnError(opts: Record<string, unknown>) {
+    let proc: Bun.Subprocess;
+    try {
+      proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv, ...opts });
+    } catch (e: any) {
+      return { name: e.name, code: e.code, message: e.message };
+    }
+    proc.kill();
+    await proc.exited;
+    throw new Error(`Bun.spawn(${JSON.stringify(opts)}) did not throw`);
+  }
+
+  test("rejects a signal name that does not exist", async () => {
+    expect(await spawnError({ deathSignal: "NOT_A_SIGNAL" })).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: expect.stringContaining("'SIGKILL'"),
+    });
   });
-  await proc.exited;
-  expect(proc.exitCode).toBe(0);
+
+  test("rejects a negative signal number", async () => {
+    expect(await spawnError({ deathSignal: -1 })).toEqual({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: "Invalid signal: must be >= 0",
+    });
+  });
+
+  test("rejects 0, exactly like killSignal: 0", async () => {
+    const expected = {
+      name: "TypeError",
+      code: "ERR_UNKNOWN_SIGNAL",
+      message: "Unknown signal: 0",
+    };
+    expect(await spawnError({ deathSignal: 0 })).toEqual(expected);
+    expect(await spawnError({ killSignal: 0 })).toEqual(expected);
+  });
+
+  test.concurrent.each([["SIGKILL"], [9], [undefined], [null]])("accepts deathSignal: %p", async deathSignal => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.exit(0)"],
+      env: bunEnv,
+      deathSignal: deathSignal as any,
+    });
+    expect(await proc.exited).toBe(0);
+  });
 });

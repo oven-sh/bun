@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 // Subprocess.killTree(signal): walks the process tree rooted at the
@@ -35,6 +36,12 @@ function reap(...pids: number[]) {
   }
 }
 
+// Linux only. The state char follows the parenthesised comm, which may itself contain spaces.
+function procState(pid: number): string {
+  const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  return stat.charAt(stat.lastIndexOf(")") + 2);
+}
+
 // root.js (bun) spawns child.js (bun) which spawns an outer sh, which
 // itself spawns an inner sh in the background. root.js prints the four
 // pids on one line once the whole chain is up, then everything idles.
@@ -59,7 +66,7 @@ const fixture = tempDir("spawn-killTree", {
     console.log(process.pid + " " + line.trim());
     setInterval(() => {}, 1e6);
   `,
-  // Outer sh backgrounds an inner sh ($!), prints both pids, then waits —
+  // Outer sh backgrounds an inner sh ($!), prints both pids, then waits,
   // so both stay alive and are distinct from gc.pid (== outer sh's $$).
   "child.js": `
     const gc = Bun.spawn({
@@ -111,7 +118,7 @@ async function spawnTree() {
   expect(childPid).toBeGreaterThan(1);
   expect(outerShPid).toBeGreaterThan(1);
   expect(innerShPid).toBeGreaterThan(1);
-  // Four distinct pids — no level of the tree is collapsed.
+  // Four distinct pids: no level of the tree is collapsed.
   expect(new Set([rootPid, childPid, outerShPid, innerShPid]).size).toBe(4);
   expect(isAlive(childPid)).toBe(true);
   expect(isAlive(outerShPid)).toBe(true);
@@ -157,7 +164,7 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
       await proc.exited;
 
       // The direct child becomes orphaned (reparented to init) but keeps
-      // running — this is what killTree() fixes.
+      // running. This is what killTree() fixes.
       const childDied = await waitUntilDead(childPid, 1000);
       expect(childDied).toBe(false);
     } finally {
@@ -188,10 +195,10 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
   });
 
   test("catchable signal is delivered (SIGCONT wakes stopped descendants)", async () => {
-    // SIGSTOP → verify → SIGTERM → SIGCONT: the descendant must actually
+    // SIGSTOP, verify, SIGTERM, SIGCONT: the descendant must actually
     // receive SIGTERM rather than stay frozen with it pending. Two levels
-    // (root bun → sh) is enough — we only need one stopped descendant to
-    // observe the wake-up.
+    // (root bun, then sh) is enough, since one stopped descendant is all
+    // it takes to observe the wake-up.
     using dir = tempDir("killTree-catchable", {
       "root.js": `
         const child = Bun.spawn({
@@ -257,8 +264,37 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
 
   test("rejects invalid signals the same way kill() does", async () => {
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "setTimeout(()=>{}, 1e6)"], env: bunEnv });
-    expect(() => proc.killTree(-1)).toThrow();
-    expect(() => proc.killTree("NOT_A_SIGNAL" as any)).toThrow();
+
+    function thrownBy(fn: () => void) {
+      try {
+        fn();
+      } catch (e: any) {
+        return { name: e.name, code: e.code, message: e.message };
+      }
+      throw new Error("expected a throw");
+    }
+
+    for (const sig of [-1, 32, 1.5, "NOT_A_SIGNAL", {}] as any[]) {
+      expect(thrownBy(() => proc.killTree(sig))).toEqual(thrownBy(() => proc.kill(sig)));
+    }
+
+    expect(() => proc.killTree(-1)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Invalid signal: must be >= 0",
+      }),
+    );
+    expect(() => proc.killTree("NOT_A_SIGNAL" as any)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining("'SIGTERM'"),
+      }),
+    );
+
+    // Nothing above may have signalled the process.
+    expect(proc.killed).toBe(false);
   });
 
   test("killTree(0) is a liveness probe and does not pause descendants", async () => {
@@ -266,14 +302,19 @@ describe.skipIf(!(isLinux || isMacOS))("Subprocess.killTree()", () => {
     await using _ = proc;
     try {
       expect(() => proc.killTree(0)).not.toThrow();
-      // Descendants must still be alive and, crucially, still running —
-      // not stuck SIGSTOPped. We can't directly observe run state
-      // portably, so just confirm liveness and that the root wasn't
-      // signalled.
       expect(isAlive(childPid)).toBe(true);
       expect(isAlive(outerShPid)).toBe(true);
       expect(isAlive(innerShPid)).toBe(true);
       expect(proc.killed).toBe(false);
+      if (isLinux) {
+        // Not merely alive, but not left SIGSTOPped (state "T") either.
+        const running = expect.stringMatching(/^[RSD]$/);
+        expect({
+          child: procState(childPid),
+          outerSh: procState(outerShPid),
+          innerSh: procState(innerShPid),
+        }).toEqual({ child: running, outerSh: running, innerSh: running });
+      }
     } finally {
       reap(childPid, outerShPid, innerShPid);
     }

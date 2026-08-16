@@ -798,7 +798,16 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(val) = args.get(global_this, "deathSignal")? {
                 if !val.is_empty_or_undefined_or_null() {
-                    death_signal = Some(signal_code_from_js(val, global_this)?);
+                    let sig = signal_code_from_js(val, global_this)?;
+                    if sig.0 == 0 {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::ERR_UNKNOWN_SIGNAL,
+                                format_args!("Unknown signal: 0"),
+                            )
+                            .throw());
+                    }
+                    death_signal = Some(sig);
                 }
             }
 

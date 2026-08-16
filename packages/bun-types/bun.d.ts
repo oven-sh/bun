@@ -7367,9 +7367,10 @@ declare module "bun" {
        * child cannot outlive its parent even if the parent is `SIGKILL`ed.
        *
        * Note that `PR_SET_PDEATHSIG` is keyed to the spawning *thread*, not
-       * the process — a child spawned from a `Worker` will receive this
+       * the process: a child spawned from a `Worker` will receive this
        * signal when that `Worker` terminates.
        *
+       * Must be a real signal; `0` is rejected, as it is for `killSignal`.
        * Ignored on platforms other than Linux.
        *
        * @default undefined (no signal; `"SIGKILL"` when `--no-orphans` is enabled)

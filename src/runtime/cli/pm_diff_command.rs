@@ -2366,8 +2366,14 @@ fn origin_of(norm: &normalize::Normalized) -> Vec<(u32, u32)> {
 
 /// What the terminal view compares and shows for a text file: line-ending CRs dropped.
 fn view_bytes(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
-    if strings::contains_char(bytes, b'\r') {
-        std::borrow::Cow::Owned(strip_cr(bytes))
+    // A missing newline at EOF is the patch's business (`\ No newline…`), not a visible -/+ pair of equal lines.
+    let terminated = bytes.is_empty() || bytes.ends_with(b"\n");
+    if strings::contains_char(bytes, b'\r') || !terminated {
+        let mut v = strip_cr(bytes);
+        if !v.is_empty() && !v.ends_with(b"\n") {
+            v.push(b'\n');
+        }
+        std::borrow::Cow::Owned(v)
     } else {
         std::borrow::Cow::Borrowed(bytes)
     }

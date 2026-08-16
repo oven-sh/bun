@@ -9,6 +9,12 @@
 #include <JavaScriptCore/Debugger.h>
 #include <utility>
 
+#if OS(WINDOWS)
+#include <stdlib.h> // _exit
+#else
+#include <unistd.h> // _exit
+#endif
+
 #include "InternalModuleRegistryConstants.h"
 #include "wtf/Forward.h"
 
@@ -101,10 +107,44 @@ ALWAYS_INLINE JSC::JSValue generateNativeModule(
 }
 
 #ifdef BUN_DYNAMIC_JS_LOAD_PATH
+#include "InternalModuleRegistry+generation.h"
+
+// bundle-modules.ts stamps every file it writes to BUN_DYNAMIC_JS_LOAD_PATH
+// with the generation hash of the codegen-assigned numeric IDs the file bakes
+// in; BUN_INTERNAL_MODULE_GENERATION is the hash this binary was generated
+// with. A different or missing stamp means the file's IDs may dispatch to the
+// wrong native code (rebuild in flight, aborted build, or a mid-write file).
+static bool hasMatchingGenerationStamp(const Vector<uint8_t>& contents)
+{
+    static constexpr char expected[] = "// @bun-internal-module-generation=" BUN_INTERNAL_MODULE_GENERATION;
+    static constexpr size_t expectedLength = sizeof(expected) - 1;
+
+    // The stamp must be the last line: trim trailing whitespace, then require
+    // the exact suffix (a matching stamp earlier in the file doesn't count).
+    size_t end = contents.size();
+    while (end > 0 && (contents[end - 1] == '\n' || contents[end - 1] == '\r' || contents[end - 1] == ' '))
+        end--;
+    if (end < expectedLength)
+        return false;
+    return memcmp(contents.span().data() + end - expectedLength, expected, expectedLength) == 0;
+}
+
 JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, const WTF::String& moduleName, WTF::String fileBase, const WTF::String& urlString)
 {
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTF::move(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
+        if (!hasMatchingGenerationStamp(contents.value())) [[unlikely]] {
+            fprintf(stderr,
+                "\nFATAL: bun-debug hot-reloads builtin JS from disk, but \"%s\" was written by a different codegen generation than this binary (expected %s).\n"
+                "Codegen-assigned numeric IDs may have shifted, so loading it could dispatch to the wrong native bindings.\n"
+                "This usually means a build is in progress, a previous build stopped after codegen, or the file is mid-write.\n"
+                "Re-run `bun bd` (or let the in-flight build finish) and try again.\n\n",
+                file.utf8().span().data(), BUN_INTERNAL_MODULE_GENERATION);
+            fflush(nullptr);
+            // Deliberate clean exit instead of CRASH(): this is a build-state
+            // error, not a bug worth a panic report.
+            _exit(1);
+        }
         auto string = WTF::String::fromUTF8(contents.value());
         return generateModule(globalObject, vm, string, moduleName, urlString);
     } else {

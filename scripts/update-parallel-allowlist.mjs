@@ -141,7 +141,8 @@ const slowest = file => {
 };
 // bun install / link / global tests share the user-level bin and cache dirs;
 // run together they race on linking (EEXIST) even though each passes alone.
-const sharedStatePrefixes = ["cli/install/"];
+// internal-module-dev-reload rewrites the build dir's hot-reload JS under test.
+const sharedStatePrefixes = ["cli/install/", "js/bun/internal-module-dev-reload.test.ts"];
 const sharedStateExempt = ["cli/install/hosted-git-info/", "cli/install/migration/"];
 const isGood = file => {
   if (dockerPrefixes.some(prefix => file.startsWith(prefix)) || usesContainer(file)) return false;

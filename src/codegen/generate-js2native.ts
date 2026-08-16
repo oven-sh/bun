@@ -174,6 +174,21 @@ export function registerNativeCall(
   return id;
 }
 
+/** The `$lazy` ID → native-function mapping registered so far, for the
+ * generation stamp bundle-modules.ts writes into hot-reloadable JS files.
+ * Filenames are relativized so the hash doesn't change with the checkout
+ * location (rust entries store absolute paths). */
+export function getJS2NativeSignature(): string {
+  return JSON.stringify(
+    nativeCalls.map(call => [
+      call.id,
+      call.type,
+      (path.isAbsolute(call.filename) ? path.relative(srcDir, call.filename) : call.filename).replaceAll(sep, "/"),
+      call.symbol,
+    ]),
+  );
+}
+
 function symbol(call: Pick<NativeCall, "type" | "symbol" | "filename">) {
   return call.type === "rust"
     ? `JS2Rust__${call.filename ? normalizeSymbolPathPrefix(call.filename) + "_" : ""}${call.symbol.replace(/[^A-Za-z]/g, "_")}`

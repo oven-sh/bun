@@ -100,20 +100,7 @@ impl ReplCommand {
         // ReplRunner construction to avoid a move-after-borrow.
 
         // Configure bundler options
-        // `BundleOptions.install` is `Option<NonNull<_>>` so no
-        // lifetime-extension cast is needed.
-        let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
-        b.options.install = install_ptr;
-        b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
-        let offline = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online);
-        b.resolver.opts.install_preference = offline;
-        b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.install_preference = offline;
-        b.resolver.env_loader = NonNull::new(b.env);
+        crate::cli::run_command::wire_install_options(b, ctx);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
 
@@ -286,4 +273,3 @@ unsafe extern "C" {
 }
 
 use bun_bundler::options::EnvBehavior;
-use bun_options_types::offline_mode::OfflineMode;

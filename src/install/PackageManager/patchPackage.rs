@@ -160,97 +160,9 @@ pub fn do_patch_commit(
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let (changes_dir, pkg): (Vec<u8>, Package) = match arg_kind {
-        PatchArgKind::Path => 'result: {
-            let package_json_path =
-                resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
-            let package_json_source: bun_ast::Source =
-                match bun_ast::to_source(package_json_path, Default::default()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        Output::err(
-                            e,
-                            "failed to read {f}",
-                            (bun_fmt::quote(package_json_path.as_bytes()),),
-                        );
-                        Global::crash();
-                    }
-                };
-
-            initialize_store();
-            let log = manager.log_mut();
-            let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
-                Ok(p) => p,
-                Err(err) => {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                    bun_core::pretty_errorln!(
-                        "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                        err.name(),
-                        bstr::BStr::new(package_json_source.path.pretty_dir()),
-                    );
-                    Global::crash();
-                }
-            };
-            let json = parsed.root;
-
-            let version: &[u8] = 'version: {
-                if let Some(v) = json.get(b"version") {
-                    if let bun_ast::ExprData::EString(s) = &v.data {
-                        let s = s.data.slice();
-                        break 'version s;
-                    }
-                }
-                bun_core::pretty_error!(
-                    "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
-                    bstr::BStr::new(package_json_source.path.text()),
-                );
-                Global::crash();
-            };
-
-            let mut resolver: () = ();
-            let mut package = Package::default();
-            let log = manager.log_mut();
-            package.parse_with_json::<()>(
-                &mut lockfile,
-                manager,
-                log,
-                &package_json_source,
-                json,
-                &mut resolver,
-                Features::FOLDER,
-            )?;
-
-            let actual_package = match lockfile.package_index.get(&package.name_hash) {
-                None => {
-                    bun_core::pretty_error!(
-                        "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                    );
-                    Global::crash();
-                }
-                Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
-                Some(PackageIndexEntry::Ids(ids)) => 'brk: {
-                    let mut resolution_label = Vec::new();
-                    for &id in ids.as_slice() {
-                        let pkg = *lockfile.packages.get(id as usize);
-                        if print_resolution_label(
-                            &mut resolution_label,
-                            &pkg.resolution,
-                            lockfile.buffers.string_bytes.as_slice(),
-                        ) == version
-                        {
-                            break 'brk pkg;
-                        }
-                    }
-                    bun_core::pretty_error!(
-                        "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
-                        bstr::BStr::new(
-                            package.name.slice(lockfile.buffers.string_bytes.as_slice())
-                        ),
-                    );
-                    Global::crash();
-                }
-            };
-
-            break 'result (argument.to_vec(), actual_package);
+        PatchArgKind::Path => {
+            let (_, actual_package) = load_path_package(manager, &mut lockfile, argument)?;
+            (argument.to_vec(), actual_package)
         }
         PatchArgKind::NameAndVersion => 'brk: {
             let (name, version) = Dependency::split_name_and_maybe_version(argument);
@@ -735,105 +647,18 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
-                let package_json_path =
-                    resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
-                let package_json_source: bun_ast::Source =
-                    match bun_ast::to_source(package_json_path, Default::default()) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            Output::err(
-                                e,
-                                "failed to read {f}",
-                                (bun_fmt::quote(package_json_path.as_bytes()),),
-                            );
-                            Global::crash();
-                        }
-                    };
-
-                initialize_store();
-                let log = manager.log_mut();
-                let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        bun_core::pretty_errorln!(
-                            "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                            err.name(),
-                            bstr::BStr::new(package_json_source.path.pretty_dir()),
-                        );
-                        Global::crash();
-                    }
-                };
-                let json = parsed.root;
-
-                let version: &[u8] = 'version: {
-                    if let Some(v) = json.get(b"version") {
-                        if let bun_ast::ExprData::EString(s) = &v.data {
-                            let s = s.data.slice();
-                            break 'version s;
-                        }
-                    }
-                    bun_core::pretty_error!(
-                        "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
-                        bstr::BStr::new(package_json_source.path.text()),
-                    );
-                    Global::crash();
-                };
-
-                let mut resolver: () = ();
-                let mut package = Package::default();
-                let log = manager.log_mut();
-                // borrowck — `parse_with_json` needs `&mut Lockfile` and
+                // borrowck — `load_path_package` needs `&mut Lockfile` and
                 // `&mut PackageManager` simultaneously, but the lockfile here is
                 // `manager.lockfile`. Temporarily move the Box out so the two
-                // borrows are disjoint; `parse_with_json` never reads `pm.lockfile`
-                // (it takes the lockfile as its own parameter). Restore before
-                // propagating any error so `manager` is never left half-torn.
+                // borrows are disjoint. Restore before propagating any error so
+                // `manager` is never left half-torn.
                 let mut lockfile: Box<Lockfile> = core::mem::take(&mut manager.lockfile);
-                let parse_result = package.parse_with_json::<()>(
-                    &mut lockfile,
-                    manager,
-                    log,
-                    &package_json_source,
-                    json,
-                    &mut resolver,
-                    Features::FOLDER,
-                );
+                let result = load_path_package(manager, &mut lockfile, argument);
                 manager.lockfile = lockfile;
-                parse_result?;
+                let (name, actual_package) = result?;
                 let lockfile: &Lockfile = &manager.lockfile;
                 let strbuf = lockfile.buffers.string_bytes.as_slice();
 
-                let actual_package = match lockfile.package_index.get(&package.name_hash) {
-                    None => {
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
-                        );
-                        Global::crash();
-                    }
-                    Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
-                    Some(PackageIndexEntry::Ids(ids)) => 'id: {
-                        let mut resolution_label = Vec::new();
-                        for &id in ids.as_slice() {
-                            let pkg = *lockfile.packages.get(id as usize);
-                            if print_resolution_label(
-                                &mut resolution_label,
-                                &pkg.resolution,
-                                strbuf,
-                            ) == version
-                            {
-                                break 'id pkg;
-                            }
-                        }
-                        bun_core::pretty_error!(
-                            "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
-                            bstr::BStr::new(package.name.slice(strbuf)),
-                        );
-                        Global::crash();
-                    }
-                };
-
-                let name = lockfile.str(&package.name).to_vec();
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
                     let mut name_and_version = Vec::new();
                     write!(
@@ -1247,6 +1072,104 @@ fn node_modules_folder_for_dependency_id(
         }
         return Some(node_modules.relative_path.as_bytes().to_vec());
     }
+}
+
+/// Shared `PatchArgKind::Path` handling for `bun patch` and `bun patch --commit`:
+/// parse `<argument>/package.json`, register it against the lockfile, and find
+/// the matching package in the lockfile's package index. Returns the package
+/// name and the lockfile's entry for the package.
+///
+/// `parse_with_json` never reads `manager.lockfile` (it takes the lockfile as
+/// its own parameter), so callers whose lockfile lives in `manager.lockfile`
+/// may temporarily move the Box out to make the two `&mut` borrows disjoint.
+fn load_path_package(
+    manager: &mut PackageManager,
+    lockfile: &mut Lockfile,
+    argument: &[u8],
+) -> crate::Result<(Vec<u8>, Package)> {
+    let package_json_path = resolve_path::join_z::<platform::Auto>(&[argument, b"package.json"]);
+    let package_json_source: bun_ast::Source =
+        match bun_ast::to_source(package_json_path, Default::default()) {
+            Ok(s) => s,
+            Err(e) => {
+                Output::err(
+                    e,
+                    "failed to read {f}",
+                    (bun_fmt::quote(package_json_path.as_bytes()),),
+                );
+                Global::crash();
+            }
+        };
+
+    initialize_store();
+    let log = manager.log_mut();
+    let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+        Ok(p) => p,
+        Err(err) => {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            bun_core::pretty_errorln!(
+                "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                err.name(),
+                bstr::BStr::new(package_json_source.path.pretty_dir()),
+            );
+            Global::crash();
+        }
+    };
+    let json = parsed.root;
+
+    let version: &[u8] = 'version: {
+        if let Some(v) = json.get(b"version") {
+            if let bun_ast::ExprData::EString(s) = &v.data {
+                break 'version s.data.slice();
+            }
+        }
+        bun_core::pretty_error!(
+            "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
+            bstr::BStr::new(package_json_source.path.text()),
+        );
+        Global::crash();
+    };
+
+    let mut resolver: () = ();
+    let mut package = Package::default();
+    package.parse_with_json::<()>(
+        lockfile,
+        manager,
+        log,
+        &package_json_source,
+        json,
+        &mut resolver,
+        Features::FOLDER,
+    )?;
+
+    let strbuf = lockfile.buffers.string_bytes.as_slice();
+    let actual_package = match lockfile.package_index.get(&package.name_hash) {
+        None => {
+            bun_core::pretty_error!(
+                "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
+            );
+            Global::crash();
+        }
+        Some(PackageIndexEntry::Id(id)) => *lockfile.packages.get(*id as usize),
+        Some(PackageIndexEntry::Ids(ids)) => 'brk: {
+            let mut resolution_label = Vec::new();
+            for &id in ids.as_slice() {
+                let pkg = *lockfile.packages.get(id as usize);
+                if print_resolution_label(&mut resolution_label, &pkg.resolution, strbuf) == version
+                {
+                    break 'brk pkg;
+                }
+            }
+            bun_core::pretty_error!(
+                "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
+                bstr::BStr::new(package.name.slice(strbuf)),
+            );
+            Global::crash();
+        }
+    };
+
+    let name = lockfile.str(&package.name).to_vec();
+    Ok((name, actual_package))
 }
 
 type IdPair = (DependencyID, PackageID);

@@ -5079,16 +5079,24 @@ describe.concurrent.skipIf(!isWindows)("libuv slow poll path (forced via BUN_FEA
         await opened.promise;
         client.write("x");
         // Let the paused server poll park with the byte pending (slot 1
-        // checked out, sleeping between peeks).
+        // checked out, sleeping between peeks). Nothing JS-observable marks
+        // "the slow-poll worker has parked", so a fixed window is the only
+        // way to reach that state.
         await Bun.sleep(400);
         paused.resume();
         await gotData.promise;
         // One settled loop turn so resume's request cycles back to a
         // parked readable wait (slot 2 checked out too).
-        await Bun.sleep(80);
+        await Bun.sleep(0);
         // The first partial write re-arms WRITABLE with both slots held:
         // the submission that used to have no slot to land in.
         pump(paused);
+        // The flood must actually have hit backpressure, or nothing was
+        // re-armed and the both-slots branch went unexercised.
+        if (sent >= TOTAL) {
+          console.log("FAIL no backpressure: " + sent + " bytes accepted outright");
+          process.exit(1);
+        }
         client.resume();
         await drained.promise;
         console.log("OK drained " + received);

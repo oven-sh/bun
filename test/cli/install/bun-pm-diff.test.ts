@@ -204,9 +204,7 @@ diffme@1.0.0 → diffme@2.0.0
       "A setup.js",
     ]);
     // bare :path with the one-argument form
-    expect(only(await diff(["diffme@1.0.0..2.0.0", ":package.json", "--name-only"]))).toStrictEqual([
-      "M package.json",
-    ]);
+    expect(only(await diff(["diffme@1.0.0..2.0.0", ":package.json", "--name-only"]))).toStrictEqual(["M package.json"]);
     // nothing matches: an error, not an empty success
     const none = await diff(["diffme@1.0.0:nope.js", "2.0.0"]);
     expect(none.stderr).toContain("no file in either side matches nope.js");

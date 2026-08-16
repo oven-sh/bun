@@ -71,6 +71,16 @@ test.concurrent("basic", async () => {
   expect(tarballEntries(join(dir, "pack-basic-1.2.3.tgz"))).toEqual(["package/package.json", "package/index.js"]);
 });
 
+test.concurrent("fails when package.json cannot be parsed", async () => {
+  using dir = tempDir("pack-bad-json", {
+    "package.json": '{"name": "pack-bad-json",',
+  });
+
+  const { err, exitCode } = await runPack(dir);
+  expect(err).toContain("failed to parse package.json: <dir>/package.json");
+  expect(exitCode).toBe(1);
+});
+
 test.concurrent("package.json integers stay plain digits", async () => {
   // The packed package.json is re-printed. Integers must not come out as 1e4.
   using dir = tempDir("pack-integers", {

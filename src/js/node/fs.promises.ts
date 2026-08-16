@@ -241,8 +241,7 @@ const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
 
-// Node validates `flush` for a FileHandle but only ever syncs a file it opened
-// itself; the native binding would sync any descriptor it is handed.
+// Node's promises API validates `flush` for a FileHandle but never syncs one; the binding would.
 function dropFlushForDescriptor(args: any[]) {
   const options = args[1];
   const flush = typeof options === "object" && options !== null ? options.flush : undefined;

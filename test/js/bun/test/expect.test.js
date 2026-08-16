@@ -295,8 +295,9 @@ describe("expect()", () => {
       expect(new Headers({ "a": "1" })).not.toEqual(new Headers({ "a": "1", "b": "2" }));
     });
 
-    // name, message and cause live behind getters rather than in own properties,
-    // so they are compared the same way they are for Error.
+    // name and message are prototype getters and cause is a non-enumerable own
+    // property, so none of them is visible to the own-property walk; they are
+    // compared the same way they are for Error.
     test("DOMException", () => {
       expect(new DOMException("boom", "AbortError")).toEqual(new DOMException("boom", "AbortError"));
       expect(new DOMException("boom", "AbortError")).toStrictEqual(new DOMException("boom", "AbortError"));

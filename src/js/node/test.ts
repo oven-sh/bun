@@ -2601,7 +2601,9 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         recordSuiteFailure(suite, err);
       }
     }
-    // Covers startInlineSuite too; a stopped suite drains as its children report.
+    // Covers startInlineSuite too. A stopped suite drains as its children
+    // report, once any hook they were in the middle of returns (Node moves on
+    // without waiting for such a hook).
     await drainSubtestChain(suite);
     suite.suiteStop?.dispose();
     // A suite that never started skips its after hooks too (Node).

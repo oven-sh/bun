@@ -1140,13 +1140,28 @@ pub mod pattern {
     }
 
     impl Pattern {
-        /// Match a filesystem route pattern to a URL path.
+        /// Match a filesystem route pattern to a URL path. On `false`, `params` is
+        /// truncated to its entry length so the next candidate starts clean.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
             // case-sensitive, must not have a leading slash
             name: &'a [u8],
             // case-insensitive, must not have a leading slash
+            match_name: &[u8],
+            params: &mut route_param::List<'a>,
+        ) -> bool {
+            let params_len = params.len();
+            if Self::match_inner::<ALLOW_OPTIONAL_CATCH_ALL>(path, name, match_name, params) {
+                return true;
+            }
+            params.truncate(params_len);
+            false
+        }
+
+        fn match_inner<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+            path: &'a [u8],
+            name: &'a [u8],
             match_name: &[u8],
             params: &mut route_param::List<'a>,
         ) -> bool {
@@ -1161,7 +1176,6 @@ pub mod pattern {
                         let segment = &path_
                             [0..strings::index_of_char_usize(path_, b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
-                            params.clear(); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1178,7 +1192,6 @@ pub mod pattern {
                     Value::Dynamic(dynamic) => {
                         // `[x]` takes one non-empty segment: `docs/[x]` serves neither "docs" nor "docs//a".
                         if path_.is_empty() || path_[0] == b'/' {
-                            params.clear();
                             return false;
                         }
 
@@ -1190,7 +1203,6 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.clear(); // shrinkRetainingCapacity(0)
                                 return false;
                             }
 
@@ -1214,7 +1226,6 @@ pub mod pattern {
                                 return true;
                             }
 
-                            params.clear(); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1852,6 +1863,41 @@ mod tests {
                 params.is_empty(),
                 "Pattern \"{}\" left params behind after rejecting \"{}\"",
                 bstr::BStr::new(pattern),
+                bstr::BStr::new(pathname)
+            );
+        }
+    }
+
+    #[test]
+    fn pattern_no_match_truncates_params_to_entry_length() {
+        // Each pattern records a param and then fails through a different exit.
+        let no_match: &[(&[u8], &[u8])] = &[
+            // catch-all with nothing left to take
+            (b"[org]/settings/[...rest]", b"acme/settings"),
+            // pattern exhausted while the URL still has segments
+            (b"[user]/settings", b"alice/settings/extra"),
+            // dynamic segment exhausted while the URL still has segments
+            (b"[user]/[id]", b"alice/1/extra"),
+            // static segment mismatch
+            (b"[user]/settings", b"alice/profile"),
+        ];
+        let seeded = Param {
+            name: b"seeded",
+            value: b"kept",
+        };
+        for (pattern, pathname) in no_match {
+            let mut params: route_param::List<'static> = vec![seeded];
+            assert!(
+                !Pattern::match_::<true>(pathname, pattern, pattern, &mut params),
+                "Expected pattern \"{}\" not to match \"{}\"",
+                bstr::BStr::new(pattern),
+                bstr::BStr::new(pathname)
+            );
+            assert!(
+                params.len() == 1 && params[0].name == seeded.name,
+                "Pattern \"{}\" left {} param(s) after rejecting \"{}\"",
+                bstr::BStr::new(pattern),
+                params.len(),
                 bstr::BStr::new(pathname)
             );
         }

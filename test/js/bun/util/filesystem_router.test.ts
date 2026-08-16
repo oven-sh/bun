@@ -1176,6 +1176,65 @@ it("a dynamic route that rejects a URL leaves it to the routes tried after it", 
   }
 });
 
+// Every candidate that fails must leave params as it found them, whichever way it
+// fails; the next candidate pushes into the same list. A leaked param used to come
+// back duplicated when the winning route has a param of that name, and crashed
+// .params when it does not.
+it("a rejected route leaves no params behind, whichever segment rejected the URL", () => {
+  const pick = (match: ReturnType<FileSystemRouter["match"]>) => match && { name: match.name, params: match.params };
+
+  {
+    // [org]/settings/[...id] records org, then its catch-all has nothing to take.
+    const { dir } = make(["[org]/settings/[...id].tsx", "[org]/[...rest].tsx"]);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+    expect(pick(router.match("/acme/settings"))).toEqual({
+      name: "/[org]/[...rest]",
+      params: { org: "acme", rest: "settings" },
+    });
+    expect(pick(router.match("/acme/settings/1/2"))).toEqual({
+      name: "/[org]/settings/[...id]",
+      params: { org: "acme", id: "1/2" },
+    });
+  }
+
+  {
+    // [user]/settings records user and matches its last segment, but the URL goes on.
+    const { dir } = make(["[user]/settings.tsx", "[user]/[...rest].tsx"]);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+    expect(pick(router.match("/alice/settings/extra"))).toEqual({
+      name: "/[user]/[...rest]",
+      params: { user: "alice", rest: "settings/extra" },
+    });
+    expect(pick(router.match("/alice/settings"))).toEqual({
+      name: "/[user]/settings",
+      params: { user: "alice" },
+    });
+  }
+
+  {
+    // Two candidates reject in a row before a route without an org param wins:
+    // [org]/settings/[id] used to take this URL with an empty id, and once it
+    // rejects it, [org]/settings/[...rest] records org and rejects too.
+    const { dir } = make(["[org]/settings/[id].tsx", "[org]/settings/[...rest].tsx", "[[...slug]].tsx"]);
+    const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+    expect(pick(router.match("/acme/settings"))).toEqual({
+      name: "/[[...slug]]",
+      params: { slug: "acme/settings" },
+    });
+    expect(pick(router.match("/acme/settings/7"))).toEqual({
+      name: "/[org]/settings/[id]",
+      params: { org: "acme", id: "7" },
+    });
+    expect(pick(router.match("/acme/settings/7/8"))).toEqual({
+      name: "/[org]/settings/[...rest]",
+      params: { org: "acme", rest: "7/8" },
+    });
+  }
+});
+
 it.skipIf(isWindows || isMacOS)(
   "src is computed for a route whose path is longer than the fast-path buffer",
   async () => {

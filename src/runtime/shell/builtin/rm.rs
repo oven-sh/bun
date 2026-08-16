@@ -824,8 +824,6 @@ impl ShellRmTask {
         }
     }
 
-    /// Records `path` for `-v`; only for an entry this worker actually removed.
-    ///
     /// Takes `dir_task` as a raw pointer (not `&mut DirTask`) so callers in
     /// `remove_entry*` — which already hold `&self: &ShellRmTask` and a
     /// `&ZStr` borrowed from `dir_task.path` — never materialise an aliasing

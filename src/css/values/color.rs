@@ -1742,7 +1742,7 @@ define_colorspace! {
     premultiply = rectangular;
     powerless = none;
     into_css = |srgb: &SRGB| {
-        // Not `into_rgba()`: browsers clip an out-of-gamut `color-mix()` result, not gamut map it.
+        // Not `into_rgba()`: an sRGB screen shows an out-of-gamut `color-mix()` result clipped, not gamut mapped.
         let srgb = srgb.resolve_missing().clip();
         CssColor::Rgba(RGBA::from_floats(srgb.r, srgb.g, srgb.b, srgb.alpha))
     };

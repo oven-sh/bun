@@ -7635,10 +7635,11 @@ describe("css tests", () => {
 
   // color-mix() in srgb (and hsl/hwb) folds to an 8-bit color. css-color-4 interpolates
   // out-of-gamut channels as they are, so wide-gamut operands can leave the result outside the
-  // sRGB gamut; browsers paint such a result by clipping each channel, and the fold clips too.
-  // It used to gamut map the result (the chroma reduction used for the #rrggbb fallback of a
-  // wide-gamut color), which is a different color: #00f942 for display-p3 green, plain white
-  // for the bright magentas below. The display-p3 green, lab() and oklch() operands are the ones
+  // sRGB gamut; an sRGB screen shows such a result with each channel clipped (a wider screen shows
+  // it as is, which an 8-bit fold cannot express), so the fold clips. It used to gamut map the
+  // result (the chroma reduction used for the #rrggbb fallback of a wide-gamut color), which is a
+  // different color on every screen: #00f942 for display-p3 green, plain white for the bright
+  // magentas below. The display-p3 green, lab() and oklch() operands are the ones
   // of WPT css/css-color/parsing/color-mix-out-of-gamut.html; the expected colors are the
   // computed values it lists (color(srgb 1.59343 0.58802 1.40564) for lab(100% 104.3 -50.9))
   // clipped to 8 bits. The other unclipped results are noted inline.

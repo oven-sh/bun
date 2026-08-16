@@ -221,11 +221,11 @@ ExceptionOr<Ref<PerformanceMark>> Performance::mark(JSC::JSGlobalObject& globalO
     return mark.releaseReturnValue();
 }
 
-void Performance::clearMarks(const String& markName)
+ExceptionOr<void> Performance::clearMarks(const String& markName)
 {
     if (!m_userTiming)
         m_userTiming = makeUnique<PerformanceUserTiming>(*this);
-    m_userTiming->clearMarks(markName);
+    return m_userTiming->clearMarks(markName);
 }
 
 ExceptionOr<Ref<PerformanceMeasure>> Performance::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)

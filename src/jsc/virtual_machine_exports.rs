@@ -57,6 +57,16 @@ pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
         / 1_000_000.0
 }
 
+/// `performance.nodeTiming` milestone `index` (a `NodeTimingMilestone`
+/// discriminant) in milliseconds since `timeOrigin`, or -1 until it is reached.
+// HOST_EXPORT(Bun__getNodeTimingMilestone, c)
+pub fn get_node_timing_milestone(vm: &VirtualMachine, index: u32) -> f64 {
+    match vm.node_timing_milestones.get(index as usize) {
+        Some(&nanos) if nanos >= 0 => nanos as f64 / 1_000_000.0,
+        _ => -1.0,
+    }
+}
+
 // HOST_EXPORT(Bun__VirtualMachine__exitDuringUncaughtException, c)
 pub fn exit_during_uncaught_exception(this: &mut VirtualMachine) {
     this.exit_on_uncaught_exception = true;

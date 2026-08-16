@@ -133,6 +133,32 @@ impl Default for InitOptions {
     }
 }
 
+/// The `performance.nodeTiming` milestones, stamped at Bun's equivalent of each
+/// Node startup phase. The discriminants index
+/// [`VirtualMachine::node_timing_milestones`] and are shared with the name
+/// table in `src/jsc/bindings/webcore/PerformanceUserTiming.cpp`.
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub(crate) enum NodeTimingMilestone {
+    /// The runtime started building this VM (a hair after `timeOrigin`).
+    NodeStart = 0,
+    /// Bun's own per-VM state exists; the JavaScriptCore VM is about to be created.
+    V8Start = 1,
+    /// The JSC VM and global object exist (`init` is done).
+    Environment = 2,
+    /// Pre-execution bootstrap is done; preloads and the entry point are about to run.
+    BootstrapComplete = 3,
+    /// The event loop polled for the first time, i.e. the entry point's
+    /// synchronous evaluation (and its microtasks) finished.
+    LoopStart = 4,
+    /// The event loop drained and 'exit' is about to be emitted.
+    LoopExit = 5,
+}
+
+impl NodeTimingMilestone {
+    pub(crate) const COUNT: usize = 6;
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -281,6 +307,9 @@ pub struct VirtualMachine {
 
     pub origin_timer: std::time::Instant,
     pub(crate) origin_timestamp: u64,
+    /// Nanoseconds since `origin_timer` at which each [`NodeTimingMilestone`]
+    /// was reached; `-1` until it is. Read by `Bun__getNodeTimingMilestone`.
+    pub(crate) node_timing_milestones: [i64; NodeTimingMilestone::COUNT],
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
     pub(crate) macro_event_loop: EventLoop,
@@ -1603,6 +1632,9 @@ impl VirtualMachine {
             self.exit_on_uncaught_exception = true;
             return;
         }
+        // A script with no async work never polled the loop; Node still
+        // reports it as having started (and, below, exited) around now.
+        self.record_node_timing_milestone(NodeTimingMilestone::LoopStart);
         ExitHandler::dispatch_on_before_exit(self);
         let mut dispatch = false;
         loop {
@@ -1635,6 +1667,11 @@ impl VirtualMachine {
             }
 
             break;
+        }
+        // Only a cleanly drained loop stamps this: `process.exit()` and a
+        // fatal exception leave it at -1 for the 'exit' listeners, as in Node.
+        if self.unhandled_error_counter == 0 {
+            self.record_node_timing_milestone(NodeTimingMilestone::LoopExit);
         }
     }
 
@@ -2471,6 +2508,8 @@ impl VirtualMachine {
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
+            addr_of_mut!((*vm).node_timing_milestones).write([-1; NodeTimingMilestone::COUNT]);
+            Self::record_node_timing_milestone_raw(vm, NodeTimingMilestone::NodeStart);
             addr_of_mut!((*vm).smol).write(opts.smol);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid
@@ -2551,6 +2590,10 @@ impl VirtualMachine {
             unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts)? };
         }
 
+        // SAFETY: `origin_timer` and `node_timing_milestones` were written in
+        // the block above.
+        unsafe { Self::record_node_timing_milestone_raw(vm, NodeTimingMilestone::V8Start) };
+
         // JSGlobalObject creation. `ensure_waker()` must run before the FFI.
         // SAFETY: `vm` is the unique live VM on this thread; raw-ptr deref so
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
@@ -2607,6 +2650,9 @@ impl VirtualMachine {
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
+        // SAFETY: see the `V8Start` stamp above.
+        unsafe { Self::record_node_timing_milestone_raw(vm, NodeTimingMilestone::Environment) };
+
         Ok(vm)
     }
 
@@ -2638,10 +2684,40 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
+    /// First write wins: `LoopStart` is recorded on every tick and
+    /// `BootstrapComplete` on every hot reload, and both mean the first time.
+    ///
+    /// # Safety
+    /// `(*vm).origin_timer` and `(*vm).node_timing_milestones` must be
+    /// initialized. Nothing else is touched and no `&mut VirtualMachine` is
+    /// formed, which lets [`init`](Self::init) stamp a partially built VM (see
+    /// the validity note there).
+    unsafe fn record_node_timing_milestone_raw(
+        vm: *mut VirtualMachine,
+        milestone: NodeTimingMilestone,
+    ) {
+        // SAFETY: per the contract above; only the two fields are projected.
+        unsafe {
+            let slots = core::ptr::addr_of_mut!((*vm).node_timing_milestones);
+            if (*slots)[milestone as usize] >= 0 {
+                return;
+            }
+            let elapsed = (*core::ptr::addr_of!((*vm).origin_timer)).elapsed();
+            (*slots)[milestone as usize] = elapsed.as_nanos() as i64;
+        }
+    }
+
+    #[inline]
+    pub(crate) fn record_node_timing_milestone(&mut self, milestone: NodeTimingMilestone) {
+        // SAFETY: a `&mut self` is a fully initialized VM.
+        unsafe { Self::record_node_timing_milestone_raw(self, milestone) }
+    }
+
     /// `eventLoop().autoTick()` — dispatched through the runtime hook
     /// (needs `Timer::All` for the poll timeout).
     #[inline]
     pub fn auto_tick(&mut self) {
+        self.record_node_timing_milestone(NodeTimingMilestone::LoopStart);
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: hook contract — `self` is the live per-thread VM.
             unsafe { (hooks.auto_tick)(self) };
@@ -2659,6 +2735,7 @@ impl VirtualMachine {
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
     pub fn auto_tick_active(&mut self) {
+        self.record_node_timing_milestone(NodeTimingMilestone::LoopStart);
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `self` is the live per-thread VM (hook contract).
             unsafe { (hooks.auto_tick_active)(self) };
@@ -2720,6 +2797,7 @@ impl VirtualMachine {
             // evaluating `internal/process/pre_execution`.
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
+        self.record_node_timing_milestone(NodeTimingMilestone::BootstrapComplete);
 
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {
@@ -4849,6 +4927,7 @@ impl VirtualMachine {
         self.event_loop_mut().ensure_waker();
 
         let _ = self.ensure_debugger(true);
+        self.record_node_timing_milestone(NodeTimingMilestone::BootstrapComplete);
 
         if !self.transpiler.options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {

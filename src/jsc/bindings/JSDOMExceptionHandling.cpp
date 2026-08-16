@@ -175,6 +175,9 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::EVENT_RECURSION:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_EVENT_RECURSION, message);
 
+    case ExceptionCode::InvalidArgValueError:
+        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
+
     default: {
         // FIXME: All callers to createDOMException need to pass in the correct global object.
         // For now, we're going to assume the lexicalGlobalObject. Which is wrong in cases like this:

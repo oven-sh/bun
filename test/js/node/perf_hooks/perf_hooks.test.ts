@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
 import perf, { PerformanceObserver } from "perf_hooks";
@@ -188,4 +188,236 @@ test("net entries are instanceof PerformanceEntry", async () => {
   expect(entry).toBeInstanceOf(PerformanceEntry);
   expect(entry.constructor.name).toBe("PerformanceNodeEntry");
   expect(entry.entryType).toBe("net");
+});
+
+// performance.nodeTiming reports each startup phase in ms since timeOrigin
+// (-1 until reached), and Node reserves the six milestone names in the User
+// Timing API: mark()/clearMarks() reject them and measure() resolves them to
+// nodeTiming's values. Behaviour verified against Node v26.3.0.
+describe("nodeTiming milestones", () => {
+  const milestones = ["nodeStart", "v8Start", "environment", "bootstrapComplete", "loopStart", "loopExit"] as const;
+
+  function thrown(fn: () => unknown) {
+    try {
+      fn();
+    } catch (e: any) {
+      return { isTypeError: e instanceof TypeError, code: e.code, message: e.message };
+    }
+    return "did not throw";
+  }
+
+  test("nodeTiming has Node's shape and its values are offsets from timeOrigin", () => {
+    const nodeTiming = perf.performance.nodeTiming;
+    expect(nodeTiming).toBeInstanceOf(PerformanceEntry);
+    expect(Object.keys(nodeTiming)).toEqual([
+      "name",
+      "entryType",
+      "startTime",
+      "duration",
+      "nodeStart",
+      "v8Start",
+      "environment",
+      "loopStart",
+      "loopExit",
+      "bootstrapComplete",
+      "idleTime",
+    ]);
+    for (const name of milestones) {
+      expect(Object.getOwnPropertyDescriptor(nodeTiming, name)).toEqual({
+        get: expect.any(Function),
+        set: undefined,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+
+    const { nodeStart, v8Start, environment, bootstrapComplete, loopStart } = nodeTiming;
+    expect(nodeStart).toBeGreaterThanOrEqual(0);
+    expect(v8Start).toBeGreaterThan(nodeStart);
+    expect(environment).toBeGreaterThan(v8Start);
+    expect(bootstrapComplete).toBeGreaterThan(environment);
+    expect(bootstrapComplete).toBeLessThanOrEqual(performance.now());
+    // The test runner entered the event loop before running this test body,
+    // and will not leave it until the file is done.
+    expect(loopStart).toBeGreaterThanOrEqual(0);
+    expect(nodeTiming.toJSON()).toEqual({
+      name: "node",
+      entryType: "node",
+      startTime: 0,
+      duration: expect.any(Number),
+      nodeStart,
+      v8Start,
+      bootstrapComplete,
+      environment,
+      loopStart,
+      loopExit: -1,
+      idleTime: 0,
+    });
+    expect(nodeTiming.duration).toBeLessThanOrEqual(performance.now());
+  });
+
+  test("measure() resolves the milestone names to nodeTiming's values", () => {
+    const nodeTiming = perf.performance.nodeTiming;
+    const timing = (entry: PerformanceMeasure) => ({ startTime: entry.startTime, duration: entry.duration });
+
+    // Like Node, an unreached milestone (loopExit) resolves to -1 rather than throwing.
+    for (const name of milestones) {
+      expect(performance.measure(`since ${name}`, name).startTime).toBe(nodeTiming[name]);
+    }
+    expect(timing(performance.measure("boot", "nodeStart", "bootstrapComplete"))).toEqual({
+      startTime: nodeTiming.nodeStart,
+      duration: nodeTiming.bootstrapComplete - nodeTiming.nodeStart,
+    });
+    expect(timing(performance.measure("jsc", { start: "v8Start", end: "environment" }))).toEqual({
+      startTime: nodeTiming.v8Start,
+      duration: nodeTiming.environment - nodeTiming.v8Start,
+    });
+    expect(timing(performance.measure("until bootstrap", undefined, "bootstrapComplete"))).toEqual({
+      startTime: 0,
+      duration: nodeTiming.bootstrapComplete,
+    });
+    const fromStart = performance.measure("after nodeStart", { start: "nodeStart", duration: 5 });
+    expect(fromStart.startTime).toBe(nodeTiming.nodeStart);
+    expect(fromStart.duration).toBeCloseTo(5, 6);
+    const untilEnd = performance.measure("before bootstrap", { end: "bootstrapComplete", duration: 5 });
+    expect(untilEnd.startTime).toBe(nodeTiming.bootstrapComplete - 5);
+    expect(untilEnd.duration).toBeCloseTo(5, 6);
+
+    // Only marks are looked up this way: a measure may be named after a
+    // milestone, and unknown mark names still throw.
+    expect(performance.measure("nodeStart").entryType).toBe("measure");
+    expect(() => performance.measure("m", "noSuchMark")).toThrow();
+    expect(() => performance.measure("m", { start: "nodeStart", end: "noSuchMark" })).toThrow();
+    performance.clearMeasures();
+  });
+
+  test("mark(), new PerformanceMark() and clearMarks() reject the milestone names", () => {
+    for (const name of milestones) {
+      const expected = {
+        isTypeError: true,
+        code: "ERR_INVALID_ARG_VALUE",
+        message: `The argument 'name' is invalid. Received '${name}'`,
+      };
+      expect(thrown(() => performance.mark(name))).toEqual(expected);
+      expect(thrown(() => new PerformanceMark(name))).toEqual(expected);
+      expect(thrown(() => performance.clearMarks(name))).toEqual(expected);
+      expect(performance.getEntriesByName(name, "mark")).toEqual([]);
+    }
+    // Only the six milestones are reserved; other nodeTiming property names are ordinary marks.
+    expect(performance.mark("idleTime").entryType).toBe("mark");
+    performance.clearMarks("idleTime");
+    expect(performance.getEntriesByName("idleTime", "mark")).toEqual([]);
+  });
+
+  test.concurrent("loopStart and loopExit follow the main script's lifecycle", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { performance } = require("perf_hooks");
+         const nodeTiming = performance.nodeTiming;
+         const seen = { topLevel: { loopStart: nodeTiming.loopStart, loopExit: nodeTiming.loopExit } };
+         setImmediate(() => {
+           seen.inLoop = {
+             loopStartAfterBootstrap: nodeTiming.loopStart >= nodeTiming.bootstrapComplete,
+             measureStartsAtLoopStart: performance.measure("loop", "loopStart").startTime === nodeTiming.loopStart,
+             loopExit: nodeTiming.loopExit,
+           };
+         });
+         process.on("beforeExit", () => {
+           seen.beforeExit = { loopExit: nodeTiming.loopExit };
+         });
+         process.on("exit", () => {
+           seen.exit = {
+             loopExitAfterLoopStart: nodeTiming.loopExit >= nodeTiming.loopStart,
+             measureStartsAtLoopExit: performance.measure("exit", "loopExit").startTime === nodeTiming.loopExit,
+           };
+           console.log(JSON.stringify(seen));
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      topLevel: { loopStart: -1, loopExit: -1 },
+      inLoop: { loopStartAfterBootstrap: true, measureStartsAtLoopStart: true, loopExit: -1 },
+      beforeExit: { loopExit: -1 },
+      exit: { loopExitAfterLoopStart: true, measureStartsAtLoopExit: true },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("process.exit() does not count as the loop exiting", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { performance } = require("perf_hooks");
+         process.on("exit", () => console.log(performance.nodeTiming.loopStart >= 0, performance.nodeTiming.loopExit));
+         setImmediate(() => process.exit(0));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("true -1\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a script with no async work still gets loopStart and loopExit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { nodeTiming } = require("perf_hooks").performance;
+         process.on("beforeExit", () => console.log("beforeExit", nodeTiming.loopStart >= nodeTiming.bootstrapComplete, nodeTiming.loopExit));
+         process.on("exit", () => console.log("exit", nodeTiming.loopExit >= nodeTiming.loopStart));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("beforeExit true -1\nexit true\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Workers boot through the same VM setup, so a worker's performance object
+  // gets a complete set of milestones of its own.
+  test.concurrent("worker threads report their own startup milestones", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("worker_threads");
+         const worker = new Worker(
+           \`const { parentPort } = require("worker_threads");
+            const { performance } = require("perf_hooks");
+            const { nodeStart, v8Start, environment, bootstrapComplete } = performance.nodeTiming;
+            let markRejected;
+            try { performance.mark("nodeStart"); } catch (e) { markRejected = e.code; }
+            parentPort.postMessage({
+              ordered: 0 <= nodeStart && nodeStart < v8Start && v8Start < environment && environment < bootstrapComplete,
+              bootMeasure: performance.measure("boot", "nodeStart", "bootstrapComplete").duration === bootstrapComplete - nodeStart,
+              markRejected,
+            });\`,
+           { eval: true },
+         );
+         worker.on("message", message => console.log(JSON.stringify(message)));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ ordered: true, bootMeasure: true, markRejected: "ERR_INVALID_ARG_VALUE" });
+    expect(exitCode).toBe(0);
+  });
 });

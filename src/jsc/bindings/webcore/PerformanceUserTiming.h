@@ -33,6 +33,7 @@
 
 namespace JSC {
 class JSGlobalObject;
+class VM;
 }
 
 namespace WebCore {
@@ -47,8 +48,18 @@ class PerformanceUserTiming {
 public:
     explicit PerformanceUserTiming(Performance&);
 
+    // Node reserves the PerformanceNodeTiming milestone names (nodeStart, v8Start, environment,
+    // loopStart, loopExit, bootstrapComplete): mark() and clearMarks() reject them, and measure()
+    // resolves them to performance.nodeTiming's values. Upstream WebKit does the same with the
+    // PerformanceTiming attribute names.
+    static bool isRestrictedMarkName(const String&);
+    static Exception restrictedMarkNameException(const String&);
+    // The milestone's value as performance.nodeTiming reports it (ms since timeOrigin, -1 until
+    // reached), or nullopt when `name` is not a milestone.
+    static std::optional<double> nodeTimingMilestone(JSC::VM&, const String& name);
+
     ExceptionOr<Ref<PerformanceMark>> mark(JSC::JSGlobalObject&, const String& markName, std::optional<PerformanceMarkOptions>&&);
-    void clearMarks(const String& markName);
+    ExceptionOr<void> clearMarks(const String& markName);
 
     using StartOrMeasureOptions = std::variant<String, PerformanceMeasureOptions>;
     ExceptionOr<Ref<PerformanceMeasure>> measure(JSC::JSGlobalObject&, const String& measureName, std::optional<StartOrMeasureOptions>&&, const String& endMark);

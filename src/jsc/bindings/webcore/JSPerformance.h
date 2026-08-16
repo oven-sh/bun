@@ -100,4 +100,7 @@ template<> struct JSDOMWrapperConverterTraits<Performance> {
     using ToWrappedReturnType = Performance*;
 };
 
+// (milestoneName) => the value performance.nodeTiming reports for it; backs node/perf_hooks.ts.
+JSC_DECLARE_HOST_FUNCTION(jsPerformance_getNodeTimingMilestone);
+
 } // namespace WebCore

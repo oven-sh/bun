@@ -94,7 +94,7 @@ public:
     void setResourceTimingBufferSize(unsigned);
 
     ExceptionOr<Ref<PerformanceMark>> mark(JSC::JSGlobalObject&, const String& markName, std::optional<PerformanceMarkOptions>&&);
-    void clearMarks(const String& markName);
+    ExceptionOr<void> clearMarks(const String& markName);
 
     using StartOrMeasureOptions = std::variant<String, PerformanceMeasureOptions>;
     ExceptionOr<Ref<PerformanceMeasure>> measure(JSC::JSGlobalObject&, const String& measureName, std::optional<StartOrMeasureOptions>&&, const String& endMark);

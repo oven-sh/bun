@@ -1728,9 +1728,9 @@ impl RewriterPipe {
         let pipe = core::ptr::from_ref(self).cast_mut();
         let context = native_promise_context::create(&self.global, pipe, cell);
         // The context destructor (promise GC'd unsettled) queues
-        // `abandon_suspension` (or, once the VM is shutting down and runs no
-        // more tasks, abandons inline: `abandon_at_shutdown`); this ref keeps
-        // the pipe alive until that or the settle reaction releases it.
+        // `abandon_suspension` (`DeferredDerefTask::schedule` runs it inline
+        // once the VM's task queue has closed); this ref keeps the pipe alive
+        // until that or the settle reaction releases it.
         self.ref_();
         promise.then_with_value(
             &self.global,

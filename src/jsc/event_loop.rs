@@ -476,13 +476,10 @@ impl EventLoop {
 
     /// `None`: a task's fold or the checkpoint after it met the VM's termination and landed it; the
     /// turn is over (`tick()` / `tick_tasks_only()` return rather than run more against that VM).
-    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Option<u32> {
+    fn tick_with_count(&mut self, virtual_machine: *mut VirtualMachine) -> Result<u32, Stopped> {
         let mut counter: u32 = 0;
-        if tick_queue_with_count(self, virtual_machine, &mut counter).is_err() {
-            crate::task::termination_landed(self.global_ref());
-            return None;
-        }
-        Some(counter)
+        tick_queue_with_count(self, virtual_machine, &mut counter)?;
+        Ok(counter)
     }
 
     fn tick_concurrent(&mut self) {
@@ -661,9 +658,14 @@ impl EventLoop {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
-        // The scope/counter cleanup is inlined at each return site below (a
-        // scopeguard closure would alias `&mut self`).
+        if self.tick_turn(&mut scope).is_err() {
+            // A fold or checkpoint met the VM's termination: this is its landing frame; the turn is over.
+            crate::task::termination_landed(self.global_ref());
+        }
+        self.entered_event_loop_count -= 1;
+    }
 
+    fn tick_turn(&mut self, scope: &mut crate::TopExceptionScope) -> Result<(), Stopped> {
         let ctx = self.vm();
         self.tick_concurrent();
         self.process_gc_timer();
@@ -676,13 +678,8 @@ impl EventLoop {
         let mut refills = 0u32;
         'tick: loop {
             loop {
-                match self.tick_with_count(ctx) {
-                    None => {
-                        self.entered_event_loop_count -= 1;
-                        return;
-                    }
-                    Some(0) => break,
-                    Some(_) => {}
+                if self.tick_with_count(ctx)? == 0 {
+                    break;
                 }
                 if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                     break 'tick;
@@ -691,21 +688,12 @@ impl EventLoop {
                 self.tick_concurrent();
                 self.global_ref().handle_rejected_promises();
             }
-            if self
-                .drain_microtasks_with_global(global, global_vm)
-                .is_err()
-            {
-                // The checkpoint met the VM's termination: this is its landing frame, and the turn is over.
-                crate::task::termination_landed(global);
-                self.entered_event_loop_count -= 1;
-                return;
-            }
+            self.drain_microtasks_with_global(global, global_vm)?;
             if scope.has_exception() {
                 // Every task's exception was folded above; one still pending here escaped whoever
                 // produced it.
                 debug_assert!(false, "a task returned Ok with a JS exception pending");
-                self.entered_event_loop_count -= 1;
-                return;
+                return Ok(());
             }
             if refills == Self::CONCURRENT_REFILLS_PER_TICK {
                 break;
@@ -719,22 +707,15 @@ impl EventLoop {
         }
 
         while refills < Self::CONCURRENT_REFILLS_PER_TICK {
-            match self.tick_with_count(ctx) {
-                None => {
-                    self.entered_event_loop_count -= 1;
-                    return;
-                }
-                Some(0) => break,
-                Some(_) => {
-                    refills += 1;
-                    self.tick_concurrent();
-                }
+            if self.tick_with_count(ctx)? == 0 {
+                break;
             }
+            refills += 1;
+            self.tick_concurrent();
         }
 
         self.global_ref().handle_rejected_promises();
-
-        self.entered_event_loop_count -= 1;
+        Ok(())
     }
 
     /// Tick the task queue without draining microtasks afterward.
@@ -746,12 +727,25 @@ impl EventLoop {
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
-        while let Some(1..) = self.tick_with_count(vm) {
-            self.tick_concurrent();
+        loop {
+            match self.tick_with_count(vm) {
+                Ok(0) => break,
+                Ok(_) => self.tick_concurrent(),
+                Err(Stopped) => {
+                    crate::task::termination_landed(self.global_ref());
+                    break;
+                }
+            }
         }
 
         self.vm_ref().suppress_microtask_drain.set(prev);
         // Note: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
+    }
+
+    /// Teardown has released the queue (after forbidding script); tasks arriving now are released on
+    /// arrival, never run.
+    pub fn is_closed_for_tasks(&self) -> bool {
+        self.closed_for_tasks
     }
 
     pub fn enqueue_task(&mut self, task: Task) {

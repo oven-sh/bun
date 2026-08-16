@@ -6802,11 +6802,12 @@ extern "C" void Bun__VM__terminationLanded(JSC::JSGlobalObject* globalObject)
         return;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     ASSERT(!scope.exception() || vm.isTerminationException(scope.exception()));
+    // Every termination that unwinds to loop level is the VM's stop (a node:vm run converts its own beneath).
+    ASSERT(!WebCore::clientData(vm)->scriptAllowed());
     scope.clearException();
     if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
         vm.clearHasTerminationRequest();
-    if (!WebCore::clientData(vm)->scriptAllowed())
-        vm.setExecutionForbidden();
+    vm.setExecutionForbidden();
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

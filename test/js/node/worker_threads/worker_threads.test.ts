@@ -2732,3 +2732,53 @@ describe("worker stop ordering as seen by the worker's own handlers", () => {
     expect(code).toBe(7);
   });
 });
+
+// Once a worker's VM has been stopped — by its own process.exit(), from a timer, from a subprocess
+// onExit callback (a foreign trampoline), or by the parent's terminate() landing mid-callback —
+// nothing it had queued may run: not the rest of the callback, not a nextTick, not a microtask.
+describe("nothing queued runs after the worker's VM stops", () => {
+  const cases: [string, string, (w: Worker) => void][] = [
+    [
+      "process.exit() in a timer",
+      `setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+         parentPort.postMessage("sync code after exit ran");
+       }, 5);`,
+      () => {},
+    ],
+    [
+      "process.exit() in Bun.spawn onExit",
+      `Bun.spawn({ cmd: [process.execPath, "-e", "0"], env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" }, onExit() {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         process.exit(0);
+       }});`,
+      () => {},
+    ],
+    [
+      "terminate() landing mid-callback",
+      `parentPort.on("message", () => {});
+       setTimeout(() => {
+         process.nextTick(() => parentPort.postMessage("nextTick ran"));
+         Promise.resolve().then(() => parentPort.postMessage("microtask ran"));
+         parentPort.postMessage("ready");
+         const t = Date.now(); while (Date.now() - t < 5000) {}
+         parentPort.postMessage("busy loop was not interrupted");
+       }, 5);`,
+      w => w.on("message", m => m === "ready" && w.terminate()),
+    ],
+  ];
+  for (const [name, body, arm] of cases) {
+    test(name, async () => {
+      const w = new Worker(`const { parentPort } = require("worker_threads");\n${body}`, { eval: true });
+      const messages: string[] = [];
+      w.on("message", m => m !== "ready" && messages.push(m));
+      arm(w);
+      const [code] = await once(w, "exit");
+      expect(messages).toEqual([]);
+      expect(typeof code).toBe("number");
+    });
+  }
+});

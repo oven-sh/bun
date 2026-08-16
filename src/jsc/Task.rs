@@ -51,11 +51,8 @@ pub fn termination_landed(global: &JSGlobalObject) {
 
 /// The fold: what a dispatcher does with the exception a callback it invoked left pending — report it
 /// as uncaught, or, if what came back is a termination, land it (`termination_landed`) and stand
-/// down (WebCore: `isTerminationException(returned)`). When this runs as the outermost frame (a
-/// foreign trampoline: uSockets, uWS, timers, pipe I/O), the scopes beneath it skipped their microtask
-/// checkpoint over the pending exception, so it runs here once the exception is taken — and lands a
-/// termination that checkpoint meets; beneath another dispatch or a host function that checkpoint is
-/// still the outer frame's, and a termination stays pending for it.
+/// down (WebCore: `isTerminationException(returned)`) — then run the microtask checkpoint the scopes
+/// beneath skipped over the pending exception.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     let ex = global.take_exception(proof);

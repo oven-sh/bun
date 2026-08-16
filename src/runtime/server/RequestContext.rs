@@ -635,21 +635,18 @@ where
         }
     }
 
-    /// The microtask checkpoint after this context called into script. `false` if the VM has been
-    /// stopped meanwhile (its termination met — and, this being a uWS callback's frame, landed —
-    /// here, or its script gate already closed): the caller leaves the request where it is; the stop
-    /// closes the server's connections.
-    #[must_use]
-    fn drain_microtasks(&self) -> bool {
+    /// The microtask checkpoint after a synchronously dispatched handler. `Err`: the VM has stopped (its
+    /// termination landed here — a uWS callback's frame — or is unwinding an outer frame); the caller
+    /// leaves the request where it is and the stop closes the server's connections.
+    fn drain_microtasks(&self) -> Result<(), bun_jsc::Stopped> {
         let Some(server) = self.server.get() else {
-            return true;
+            return Ok(());
         };
-        let vm = server.vm();
-        if !self.is_async() && vm.as_mut().event_loop_mut().drain_microtasks().is_err() {
-            bun_jsc::task::termination_landed(server.global_this());
-            return false;
+        if self.is_async() {
+            return Ok(());
         }
-        vm.script_allowed()
+        (server.vm().as_mut().event_loop_mut().drain_microtasks())
+            .inspect_err(|_| bun_jsc::task::termination_landed(server.global_this()))
     }
 
     pub(crate) fn set_abort_handler(&self) {
@@ -2029,7 +2026,7 @@ where
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if let Some(promise) = effective_result.as_any_promise() {
                 stream_log!("returned a promise");
-                if !this.drain_microtasks() {
+                if this.drain_microtasks().is_err() {
                     return;
                 }
 
@@ -2561,7 +2558,7 @@ where
         let ctx = self;
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
-        if !ctx.drain_microtasks() || ctx.is_aborted_or_ended() {
+        if ctx.drain_microtasks().is_err() || ctx.is_aborted_or_ended() {
             return;
         }
         // if you return a Response object or a Promise<Response>
@@ -2962,7 +2959,7 @@ where
         // SAFETY: `value` is the live body slot of the response being rendered.
         let value = unsafe { &mut *value };
         let this = self;
-        if !this.drain_microtasks() {
+        if this.drain_microtasks().is_err() {
             return;
         }
 

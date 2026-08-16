@@ -796,9 +796,8 @@ impl RewriterPipe {
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept. So only release the
-    /// cell's ref; the last holder frees the Box (at VM shutdown, where
-    /// deferred releases no longer run, `DeferredDerefTask::schedule` releases
-    /// inline instead).
+    /// cell's ref; the last holder frees the Box (once the VM's task queue
+    /// has closed, `DeferredDerefTask::schedule` releases inline instead).
     pub fn finalize(this: Box<Self>) {
         bun_ptr::finalize_js_box(this, |pipe| pipe.cell.set(JSValue::ZERO));
     }
@@ -834,17 +833,28 @@ impl RewriterPipe {
     /// cell was swept with the promise (`cell` is zeroed), every source that
     /// could have held a backref died with the cell, so clear the handles
     /// raw and fail the body through the Response native `+1`.
+    ///
+    /// Once the VM has stopped (a worker torn down with the handler still
+    /// parked; this may then be reached mid-sweep from `~VM`) nothing is
+    /// failed: script is over and the streams die with the VM, so the handles
+    /// are cleared raw and only the ref is released, so the pipe and its
+    /// rewriter do not outlive the worker.
     pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) {
         let this = &*pipe;
         this.end_suspension();
-        let cell_alive = this.cell.get().is_cell();
-        if !cell_alive {
+        let vm_stopped = !VirtualMachine::get().script_allowed();
+        if vm_stopped || !this.cell.get().is_cell() {
             this.input_source.set(SourceHandle::None);
             this.output.set(None);
         }
-        this.fail(webcore::body::ValueError::Message(BunString::static_(
-            "HTMLRewriter content handler returned a Promise that will never settle",
-        )));
+        if vm_stopped {
+            this.phase.set(RewritePhase::Done);
+            this.done.set(true);
+        } else {
+            this.fail(webcore::body::ValueError::Message(BunString::static_(
+                "HTMLRewriter content handler returned a Promise that will never settle",
+            )));
+        }
         Self::deref_nn(pipe.into());
     }
 
@@ -1744,25 +1754,6 @@ impl RewriterPipe {
         if let Some(wrapper) = self.suspended_wrapper.take() {
             wrapper.release();
         }
-    }
-
-    /// `abandon_suspension` for a VM that is shutting down and runs no more tasks (the promise
-    /// context's destructor fired during teardown or ~VM): nothing is failed or cancelled — script is
-    /// over and the streams die with the VM — the handles are cleared raw, and the ref released so the
-    /// pipe and its rewriter do not outlive the worker. GC-sweep safe: no JS is entered.
-    ///
-    /// # Safety
-    /// `this` is the live pipe the destroyed context held; JS thread; not touched after.
-    pub(crate) unsafe fn abandon_at_shutdown(this: *mut Self) {
-        // SAFETY: per fn contract.
-        let pipe = unsafe { &*this };
-        pipe.end_suspension();
-        pipe.phase.set(RewritePhase::Done);
-        pipe.done.set(true);
-        pipe.input_source.set(SourceHandle::None);
-        pipe.output.set(None);
-        // SAFETY: per fn contract; the suspension's ref.
-        Self::deref_nn(unsafe { NonNull::new_unchecked(this) });
     }
 
     /// Put `err` on the output `Response`'s body / ByteStream.

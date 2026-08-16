@@ -197,18 +197,20 @@ impl DeferredDerefTask {
         // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
         // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();
-        if vm.is_shutting_down() {
-            // The queue no longer drains. On the main thread the process is dying and the leak no
-            // longer matters; a worker's HTMLRewriter pipe would outlive it, so those are released
-            // here and now, script-free (this can be mid-sweep). Only GC destructors reach this
-            // during shutdown, and theirs is the last use of the pipe in that frame.
+        if vm.event_loop_ref().is_closed_for_tasks() {
+            // Teardown has forbidden script and released the queue; from here on only GC destructors
+            // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
+            // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
+            // sweep-safe; a RequestContext's deref is not sweep-safe and dies with the VM instead.
             match tag {
-                // SAFETY: the destroyed context held this live pipe; not touched after.
+                // SAFETY: the destroyed context held the suspension's ref on this live pipe.
                 Tag::HTMLRewriterSuspension => unsafe {
-                    html_rewriter::RewriterPipe::abandon_at_shutdown(ctx.cast())
+                    html_rewriter::RewriterPipe::abandon_suspension(bun_ptr::BackRef::from(
+                        NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),
+                    ))
                 },
-                // SAFETY: the detached controller handed over the pipe's last ref; not touched after
-                // (its destructor's trailing `finalize` is a no-op for this sink).
+                // SAFETY: the detached controller handed over the pipe's last ref (its destructor's
+                // trailing `finalize` is a no-op for this sink).
                 Tag::HTMLRewriterPipeFree => unsafe {
                     <html_rewriter::RewriterPipe as bun_ptr::CellRefCounted>::deref_nn(
                         NonNull::new_unchecked(ctx.cast::<html_rewriter::RewriterPipe>()),

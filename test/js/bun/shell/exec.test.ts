@@ -98,6 +98,22 @@ describe("bun exec", () => {
     }
   });
 
+  // Recognised but unimplemented options take the other branch of the same parser result.
+  describe.concurrent("unsupported option names the option", () => {
+    for (const [program, option] of [
+      ["cat", "-n"],
+      ["touch", "--no-create"],
+      ["cp", "-i"],
+    ]) {
+      TestBuilder.command`${BUN} exec ${`${program} ${option}`}`
+        .env({ ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" })
+        .exitCode(1)
+        .stderr(`${program}: unsupported option, please open a GitHub issue -- ${option}\n`)
+        .stdout("")
+        .runAsTest(`${program} ${option}`);
+    }
+  });
+
   TestBuilder.command`${BUN} exec cd`
     .env(bunEnv)
     .exitCode(0)

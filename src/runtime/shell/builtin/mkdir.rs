@@ -4,7 +4,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, illegal_flag, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -443,7 +443,7 @@ impl FlagParser for Opts {
         None
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short(&mut self, ch: u8) -> Option<ParseFlagResult> {
         match ch {
             b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-m "))),
             b'p' => {
@@ -454,7 +454,7 @@ impl FlagParser for Opts {
                 self.verbose = true;
                 None
             }
-            _ => Some(ParseFlagResult::IllegalOption(illegal_flag(smallflags, i))),
+            _ => Some(ParseFlagResult::IllegalOption(ch)),
         }
     }
 }

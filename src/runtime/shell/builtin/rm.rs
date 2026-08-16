@@ -92,10 +92,8 @@ pub enum PromptBehaviour {
 enum RmParseFlag {
     ContinueParsing,
     Done,
-    /// Unknown `--long` option.
-    IllegalOption,
-    /// Unknown short option: the rejected byte.
-    IllegalOptionWithFlag(u8),
+    /// The rejected option byte, as getopt(3) reports it (`-` for an unknown `--long` option).
+    IllegalOption(u8),
 }
 
 impl Rm {
@@ -242,28 +240,7 @@ impl Rm {
                             });
                             continue;
                         }
-                        RmParseFlag::IllegalOption => {
-                            return Self::write_err_literal(
-                                interp,
-                                cmd,
-                                idx,
-                                b"rm: illegal option -- -\n",
-                            );
-                        }
-                        RmParseFlag::IllegalOptionWithFlag(ch) => {
-                            if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-                                Self::state_mut(interp, cmd).state = RmState::ParseOpts {
-                                    idx,
-                                    wait_write_err: true,
-                                };
-                                let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                                return Builtin::of_mut(interp, cmd).stderr.enqueue_fmt(
-                                    child,
-                                    Some(Kind::Rm),
-                                    format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
-                                    safeguard,
-                                );
-                            }
+                        RmParseFlag::IllegalOption(ch) => {
                             let buf = Builtin::fmt_error_arena(
                                 interp,
                                 cmd,
@@ -271,8 +248,7 @@ impl Rm {
                                 format_args!("illegal option -- {}\n", bstr::BStr::new(&[ch])),
                             )
                             .to_vec();
-                            let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, &buf);
-                            return Builtin::done(interp, cmd, 1);
+                            return Self::write_err_literal(interp, cmd, idx, &buf);
                         }
                     }
                 }
@@ -517,7 +493,7 @@ impl Rm {
                     opts.prompt_behaviour = PromptBehaviour::Always;
                     RmParseFlag::ContinueParsing
                 }
-                _ => RmParseFlag::IllegalOption,
+                _ => RmParseFlag::IllegalOption(b'-'),
             };
         }
         for &ch in &flag[1..] {
@@ -531,7 +507,7 @@ impl Rm {
                 b'd' => opts.remove_empty_dirs = true,
                 b'i' => opts.prompt_behaviour = PromptBehaviour::Once { removed_count: 0 },
                 b'I' => opts.prompt_behaviour = PromptBehaviour::Always,
-                _ => return RmParseFlag::IllegalOptionWithFlag(ch),
+                _ => return RmParseFlag::IllegalOption(ch),
             }
         }
         RmParseFlag::ContinueParsing

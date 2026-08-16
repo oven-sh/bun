@@ -3,8 +3,7 @@ use std::sync::Arc;
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinIO, BuiltinInput, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    FlagParser, Interpreter, NodeId, ParseFlagResult, illegal_flag, parse_flags, shell_openat,
-    unsupported_flag,
+    FlagParser, Interpreter, NodeId, ParseFlagResult, parse_flags, shell_openat, unsupported_flag,
 };
 use crate::shell::io_reader::{ChildPtr as ReaderChildPtr, IOReader, ReaderTag};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
@@ -411,7 +410,7 @@ impl FlagParser for Opts {
         None
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short(&mut self, ch: u8) -> Option<ParseFlagResult> {
         match ch {
             b'b' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-b"))),
             b'e' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-e"))),
@@ -420,7 +419,7 @@ impl FlagParser for Opts {
             b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
             b'u' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-u"))),
             b'v' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-v"))),
-            _ => Some(ParseFlagResult::IllegalOption(illegal_flag(smallflags, i))),
+            _ => Some(ParseFlagResult::IllegalOption(ch)),
         }
     }
 }

@@ -2,7 +2,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, illegal_flag, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -364,7 +364,7 @@ impl FlagParser for Opts {
         }
     }
 
-    fn parse_short(&mut self, ch: u8, smallflags: &[u8], i: usize) -> Option<ParseFlagResult> {
+    fn parse_short(&mut self, ch: u8) -> Option<ParseFlagResult> {
         match ch {
             b'a' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-a"))),
             b'c' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-c"))),
@@ -373,7 +373,7 @@ impl FlagParser for Opts {
             b'm' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-m"))),
             b'r' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-r"))),
             b't' => Some(ParseFlagResult::Unsupported(unsupported_flag(b"-t"))),
-            _ => Some(ParseFlagResult::IllegalOption(illegal_flag(smallflags, i))),
+            _ => Some(ParseFlagResult::IllegalOption(ch)),
         }
     }
 }

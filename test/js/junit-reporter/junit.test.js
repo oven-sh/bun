@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
 const xml2js = require("xml2js");
@@ -553,6 +553,69 @@ describe("junit reporter", () => {
     // the ESC byte, so a leak would surface as bare CSI residue.
     expect(xmlContent).not.toMatch(/\[[\d;]*[A-HJKSTfm]/);
     expect(exitCode).toBe(1);
+  });
+
+  describe("time attribute", () => {
+    // Runs a file whose report mixes durations that are exactly zero (skipped
+    // tests), measured (the "runs N" tests) and, while describe.skip still
+    // reports its hooks, well under a microsecond. Returns every element's
+    // time="..." text plus the <testcase> ones keyed by name.
+    async function reportTimes() {
+      await using tmpDir = tempDir("junit-time", {
+        "package.json": "{}",
+        "time.test.js": `
+          import { beforeAll, describe, test } from "bun:test";
+          for (let i = 0; i < 12; i++) test("runs " + i, () => {});
+          test.skip("skipped", () => {});
+          describe.skip("skipped suite", () => {
+            beforeAll(() => {});
+            test("never runs", () => {});
+          });
+        `,
+      });
+
+      const junitPath = join(tmpDir, "junit.xml");
+      await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+        cwd: tmpDir,
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(exitCode).toBe(0);
+
+      const xmlContent = await file(junitPath).text();
+      const all = [...xmlContent.matchAll(/ time="([^"]*)"/g)].map(m => m[1]);
+      const testcases = Object.fromEntries(
+        [...xmlContent.matchAll(/<testcase name="([^"]*)"[^>]*? time="([^"]*)"/g)].map(m => [m[1], m[2]]),
+      );
+      return { all, testcases };
+    }
+
+    it("is a plain decimal with at most nanosecond precision on every element", async () => {
+      const { all, testcases } = await reportTimes();
+      // <testsuites>, the file and describe <testsuite>s, and the 14 <testcase>s.
+      expect(all.length).toBeGreaterThanOrEqual(17);
+      // Sub-microsecond durations used to render as time="0.", and a value that
+      // is not formatted straight from the nanosecond count shows up as digits
+      // past the ninth (0.000029999999999999997).
+      expect(all.filter(time => !/^\d+(\.\d{1,9})?$/.test(time))).toEqual([]);
+      expect(testcases["skipped"]).toBe("0");
+      expect(testcases["never runs"]).toBe("0");
+    });
+
+    // The sub-microsecond digits can only be observed where the monotonic clock
+    // itself is finer than a microsecond, which Linux's CLOCK_MONOTONIC is.
+    it.skipIf(!isLinux)("keeps the sub-microsecond digits of a test's duration", async () => {
+      const { testcases } = await reportTimes();
+      const ran = Object.entries(testcases)
+        .filter(([name]) => name.startsWith("runs "))
+        .map(([, time]) => time);
+      expect(ran).toHaveLength(12);
+      // Each duration is an exact nanosecond count; for none of the twelve to
+      // have a sub-microsecond part they would all have to be whole microseconds.
+      expect(ran.some(time => /\.\d{7,9}$/.test(time))).toBe(true);
+    });
   });
 });
 

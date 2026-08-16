@@ -184,6 +184,11 @@ pub(crate) struct DeferredDerefTask;
 
 impl Taskable for DeferredDerefTask {
     const TAG: TaskTag = task_tag::NativePromiseContextDeferredDerefTask;
+    /// `this` packs a context pointer and tag; the deref it defers is
+    /// script-free, so do it.
+    unsafe fn release_unrun(this: *mut Self) {
+        Self::run_from_js_thread(this as usize);
+    }
 }
 
 impl DeferredDerefTask {

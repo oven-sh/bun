@@ -45,7 +45,7 @@ ActiveDOMCallback::~ActiveDOMCallback() = default;
 bool ActiveDOMCallback::canInvokeCallback() const
 {
     ScriptExecutionContext* context = scriptExecutionContext();
-    return context && !context->activeDOMObjectsAreSuspended() && !context->activeDOMObjectsAreStopped();
+    return context && !context->activeDOMObjectsAreStopped();
 }
 
 } // namespace WebCore

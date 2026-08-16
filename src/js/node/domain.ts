@@ -215,7 +215,7 @@ class Domain extends EventEmitter {
       } as PropertyDescriptor);
       er.domainThrown = true;
     }
-    while (currentActive() === this) {
+    while (currentActive() === this && ArrayPrototypeLastIndexOf.$call(stack, this) !== -1) {
       this.exit();
     }
 

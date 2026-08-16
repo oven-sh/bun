@@ -96,6 +96,67 @@ test("dns.resolveSrv (_test._tcp.invalid.localhost)", () => {
   return promise;
 });
 
+// RFC 2782 says SRV targets must not be compressed, but a lot of deployed
+// resolvers (dnsmasq, mDNSResponder, older BIND, various corporate forwarders)
+// still compress them. c-ares 1.34.8 started rejecting these responses with
+// EBADRESP; make sure we keep accepting them.
+test.skipIf(isWindows)("dns.resolveSrv accepts compressed target in RDATA", async () => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.on("message", (query, rinfo) => {
+      // Find end of question section: QNAME + QTYPE(2) + QCLASS(2).
+      let off = 12;
+      while (off < query.length && query[off] !== 0) off += query[off] + 1;
+      off += 1 + 2 + 2;
+      const question = query.subarray(12, off);
+
+      const header = Buffer.alloc(12);
+      header[0] = query[0];
+      header[1] = query[1];
+      header[2] = 0x81; // QR=1, RD=1
+      header[3] = 0x80; // RA=1
+      header[5] = 1; // QDCOUNT
+      header[7] = 1; // ANCOUNT
+
+      // RDATA: priority=10, weight=50, port=80, target = "srv" + pointer to
+      // QNAME at offset 12. After decompression the target is
+      // srv.<query-name>.
+      const rdata = Buffer.from([
+        0x00,
+        0x0a, // priority
+        0x00,
+        0x32, // weight
+        0x00,
+        0x50, // port
+        0x03,
+        0x73,
+        0x72,
+        0x76, // "srv"
+        0xc0,
+        0x0c, // compression pointer -> offset 12
+      ]);
+      const answer = Buffer.concat([
+        Buffer.from([0xc0, 0x0c, 0x00, 0x21, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
+        Buffer.from([rdata.length >> 8, rdata.length & 0xff]),
+        rdata,
+      ]);
+      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const { port } = socket.address();
+
+    const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + port]);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    resolver.resolveSrv("_test._tcp.example.test", (err, records) => (err ? reject(err) : resolve(records)));
+    const records = await promise;
+    expect(records).toEqual([{ name: "srv._test._tcp.example.test", priority: 10, weight: 50, port: 80 }]);
+  } finally {
+    socket.close();
+  }
+});
+
 test("dns.resolveTxt (txt.socketify.dev)", () => {
   const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveTxt("txt.socketify.dev", (err, results) => {

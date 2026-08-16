@@ -102,6 +102,21 @@ test.concurrent("an unbalanced enter() does not leak the previous stack into lat
   expect(r.exitCode).toBe(1);
 });
 
+test.concurrent("_errorHandler terminates when the domain is active via the process.domain setter only", async () => {
+  // The setter activates d without pushing it, so exit() is a no-op; the
+  // unwind loop in _errorHandler used to spin forever here. Node emits and
+  // returns true.
+  const r = await run(`
+    const domain = require("domain");
+    const d = domain.create();
+    d.on("error", e => console.log("error-listener:" + e.message));
+    process.domain = d;
+    console.log("result:" + d._errorHandler(new Error("boom")));
+  `);
+  expect(r.stdout.trim().split("\n")).toEqual(["error-listener:boom", "result:true"]);
+  expect(r.exitCode).toBe(0);
+});
+
 test.concurrent(
   "child domain added to a parent routes error to the parent's listener without falling through to uncaughtException",
   async () => {

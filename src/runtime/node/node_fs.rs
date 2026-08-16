@@ -154,11 +154,13 @@ use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
+    VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
-// canonical path used by `cli/build_command.rs` et al.
-pub use super::types::PathOrFileDescriptor;
+// canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
+// by every caller that runs an operation directly (`read_file(.., Flavor::Sync)`).
+pub use super::types::{Flavor, PathOrFileDescriptor};
 
 /// Local alias for the many `node::foo` call sites below, routing to `super::*`.
 mod node {
@@ -472,15 +474,6 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `signal.pending_activity_ref()` / `signal.aborted()` resolve directly to the
 // `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
 // per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
-
-/// All async FS functions are run in a thread pool, but some implementations may
-/// decide to do something slightly different. For example, reading a file has
-/// an extra stack buffer in the async case.
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Flavor {
-    Sync,
-    Async,
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
@@ -4213,11 +4206,14 @@ pub mod args {
                     }
                 }
             }
+            let flavor = if arguments.will_be_async {
+                Flavor::Async
+            } else {
+                Flavor::Sync
+            };
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
-            let allow_string_object = false;
-            let is_async = arguments.will_be_async;
-            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
+            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, flavor, StringObjects::Reject)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile {
@@ -7145,32 +7141,33 @@ impl NodeFS {
         // If we manage to read the entire file, we don't need to call stat() at all.
         // This will make it slightly slower to read e.g. 512 KB files, but usually the OS won't return a full 512 KB in one read anyway.
         //
-        // The sync case borrows `vm.rareData().pipeReadBuffer()` (a per-VM
-        // 256 KB heap slab) when a VM is present, otherwise leaves the buffer
-        // zero-length so the loop is skipped and we fall through to fstat.
-        // The async path heap-allocates a 256 KB buffer instead (Zig used a
-        // comptime-sized stack array; Rust cannot size a stack array on
-        // `flavor`, so heap is forced, but the slab stays uninitialised: it
-        // is write-only, `Syscall::read` hands it straight to the kernel).
+        // The sync case claims the per-VM pipe-read scratch when it is free;
+        // otherwise (async, no VM, or a read further up the stack holds it)
+        // a heap buffer stands in. It stays uninitialised: it is write-only,
+        // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
-        let mut async_stack_buffer: Vec<u8> = Vec::new();
-        if flavor != Flavor::Sync && async_stack_buffer.try_reserve_exact(256 * 1024).is_ok() {
+        let mut scratch = match self.vm {
+            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM), which outlives this call.
+            Some(vm) if flavor == Flavor::Sync => unsafe {
+                (*(*vm.as_ptr()).rare_data_ptr()).pipe_read_scratch.claim()
+            },
+            _ => None,
+        };
+        let mut heap_buffer: Vec<u8> = Vec::new();
+        if scratch.is_none() && heap_buffer.try_reserve_exact(256 * 1024).is_ok() {
             // SAFETY: `u8` has no validity invariant; the buffer is handed
             // straight to the kernel which only stores into it. Only the
             // `[..total]` prefix actually filled by `read` is ever observed.
-            unsafe { async_stack_buffer.expand_to_capacity() };
+            unsafe { heap_buffer.expand_to_capacity() };
         }
-        let pre_stat_buf: &mut [u8] = if flavor == Flavor::Sync {
-            match self.vm {
-                // SAFETY: `self.vm` is the live owning `*mut VirtualMachine`;
-                // `rare_data()` lazily inits the heap slab and the returned
-                // `&mut [u8; 256*1024]` outlives this call (single-threaded VM).
-                Some(vm) => unsafe { &mut (*vm.as_ptr()).rare_data().pipe_read_buffer()[..] },
-                None => &mut [][..],
-            }
-        } else {
-            &mut async_stack_buffer[..]
+        let pre_stat_buf: &mut [u8] = match scratch.as_mut() {
+            Some(scratch) => &mut scratch[..],
+            None => &mut heap_buffer[..],
         };
+        let pre_stat_len = pre_stat_buf
+            .len()
+            .min(args.max_size.map_or(usize::MAX, |v| v as usize));
+        let pre_stat_buf = &mut pre_stat_buf[..pre_stat_len];
         let temporary_read_buffer_before_stat_call: &[u8] = {
             let mut available: &mut [u8] = &mut pre_stat_buf[..];
             while !available.is_empty() {
@@ -7192,9 +7189,7 @@ impl NodeFS {
                         if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine`
-                            // (per-thread singleton; see `pipe_read_buffer`
-                            // above) — `BackRef` invariant holds.
+                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,

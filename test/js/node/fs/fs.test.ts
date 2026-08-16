@@ -2740,6 +2740,29 @@ describe("writeFileSync", () => {
   });
 });
 
+describe("writeFile/appendFile data argument", () => {
+  it("rejects a String wrapper object on the sync and callback paths, like node", () => {
+    // Node only accepts primitive strings here (`new String("x")` is an
+    // object), unlike most other string-or-buffer arguments, which unwrap it.
+    // The callback forms validate before scheduling anything, so they throw
+    // synchronously too. (fs.promises.* is different: there node accepts any
+    // iterable, which a String object is.)
+    using dir = tempDir("fs-data-string-object", {});
+    const file = (name: string) => join(String(dir), name);
+    const data = new String("data") as any;
+
+    expect(() => writeFileSync(file("write-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFileSync(file("append-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.writeFile(file("write-cb.txt"), data, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFile(file("append-cb.txt"), data, () => {})).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+
+    expect(readdirSync(String(dir))).toEqual([]);
+  });
+});
+
 function triggerDOMJIT(target: fs.Stats, fn: (..._: any[]) => any, result: any) {
   for (let i = 0; i < 9999; i++) {
     if (fn.apply(target) !== result) {

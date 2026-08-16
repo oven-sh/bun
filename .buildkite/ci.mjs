@@ -186,10 +186,9 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
-  // The `latest` lane only has two agents behind it right now (the Studios
-  // came back on macOS 15 and can only host 15 guests), so until they are on
-  // 26 it runs on main and on opt-in (see darwinLatestLaneEnabled), not on
-  // every PR push.
+  // These three version-specific lanes run on main and on opt-in (see
+  // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
+  // agent can take (prDarwinTestPlatforms), so the whole arm64 pool serves PRs.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -411,7 +410,7 @@ function getTestAgent(platform, options) {
       queue: `test-${os}`,
       os,
       arch,
-      ...(arch === "aarch64" ? { "release-tier": tier } : {}),
+      ...(arch === "aarch64" && tier ? { "release-tier": tier } : {}),
     };
   }
 
@@ -803,6 +802,13 @@ function getTestBunStep(platform, options, testOptions = {}) {
     // source-tree lints and build-script unit tests that never touch the built
     // binary; run in .github/workflows/source-lints.yml instead
     args.push("--exclude=internal/source-lints");
+  }
+
+  // The untiered darwin lane PR builds get (see prDarwinTestPlatforms) skips
+  // the ~1% of files that take 10s or more; they are ~60% of a shard's wall
+  // time and still run on every other PR lane and on main's darwin lanes.
+  if (os === "darwin" && !platform.tier) {
+    args.push("--skip-slower-than=10000");
   }
 
   const depends = [];
@@ -1545,11 +1551,15 @@ async function getPipeline(options = {}) {
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
-  const darwinLatestLaneEnabled =
-    isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
+  /** @type {Platform[]} */
+  const prDarwinTestPlatforms = [{ os: "darwin", arch: "aarch64", release: "any" }];
+  const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
-  ).filter(({ os, tier }) => os !== "darwin" || tier !== "latest" || darwinLatestLaneEnabled);
+  )
+    .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms);
   /** @type {string[]} */
   const testStepKeys = [];
   {

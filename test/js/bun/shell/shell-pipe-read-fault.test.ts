@@ -407,6 +407,10 @@ test.concurrent.skipIf(!isLinux || !cc || !isASAN)(
 const mkfifo = Bun.which("mkfifo");
 const cat = Bun.which("cat");
 
+// The bulk recv (256 KB of 'A') is delivered, then the real recv picks up the
+// child's `printf AAAA` before the EAGAIN whose re-registration fails: the read
+// loop hands over everything it read before attempting the (failing, possibly
+// parent-freeing) re-arm, so all 256 KB + 4 bytes reach stdout.
 test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
   "shell delivers the already-read output and the reader error when the read fails while that output is still queued for stdout",
   async () => {
@@ -457,7 +461,7 @@ test.concurrent.skipIf(!isLinux || !cc || !mkfifo || !cat)(
       readerExitCode,
     }).toEqual({
       teedIsAllA: true,
-      teedLength: 256 * 1024,
+      teedLength: 256 * 1024 + "AAAA".length,
       parsed: { exitCode: ENOMEM },
       stderr: "",
       readerStderr: "",

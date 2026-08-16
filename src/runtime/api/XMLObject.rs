@@ -52,9 +52,9 @@ pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         b"input.xml",
-        true,
-        true,
-        true,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::Throw,
+        super::StringInput::AsIs,
         |arena, log, source, source_encoding| {
             let encoding = match source_encoding {
                 super::SourceEncoding::Bytes => xml::InputEncoding::Bytes,

@@ -2262,7 +2262,7 @@ impl Drop for PipeReader {
 bun_io::impl_buffered_reader_parent! {
     ShellPipeReader for PipeReader;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| PipeReader::on_reader_done(this);
     on_reader_error = |this, err| PipeReader::on_reader_error(this, &err);
     loop_           = |this| (*this).r#loop();

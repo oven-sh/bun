@@ -10,9 +10,6 @@
 // The fix exports `BUN_INTERNAL_SKIP_SECURITY_SCANNER=true` from `bun create`
 // so every descendant `bun install` short-circuits the scanner for that one
 // run. Standalone `bun install` is unaffected.
-//
-// This test is in its own file so the gate can evaluate it without being
-// confused by pre-existing GitHub/network-flaky tests in bun-create.test.ts.
 
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
@@ -20,9 +17,8 @@ import { bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { join } from "path";
 
 let x_dir: string;
-let testNumber = 0;
 beforeEach(() => {
-  x_dir = tmpdirSync(`bun-create-scanner-${testNumber++}`);
+  x_dir = tmpdirSync("bun-create-scanner");
 });
 
 it("bun create succeeds when install.security.scanner is set in global bunfig", async () => {
@@ -84,4 +80,4 @@ it("bun create succeeds when install.security.scanner is set in global bunfig", 
   expect(out + err).not.toContain("is configured in bunfig.toml but is not installed");
   expect(out).toContain(`Created ${testTemplate} project successfully`);
   expect(exitCode).toBe(0);
-}, 20_000);
+});

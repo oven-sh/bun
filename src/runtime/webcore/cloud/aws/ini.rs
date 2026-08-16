@@ -83,8 +83,9 @@ impl IniFile {
                 in_subsection = true;
                 continue;
             }
-            // Trailing ` # comment` / ` ; comment` (only when preceded by whitespace,
-            // so `#` inside values like ARNs or URLs survives).
+            // Inline comments as the AWS SDK for JavaScript v3 reads them
+            // (`(^|\s)[;#]`): `#`/`;` glued to the value (ARNs) stay.
+            // (botocore strips none; the JS SDK is the closer relative.)
             for marker in [b" #", b" ;", b"\t#", b"\t;"] {
                 if let Some(i) = strings::index_of(value, marker) {
                     value = strings::trim(&value[..i], b" \t");

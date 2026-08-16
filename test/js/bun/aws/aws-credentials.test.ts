@@ -271,7 +271,7 @@ describe.concurrent("Bun.aws.credentials", () => {
     using dir = tempDir("aws-static-profile", {
       ".aws": {
         // [default] is indented the way some editors leave it; [other] has an inline comment
-        credentials: `[default]\n  aws_access_key_id = AKIADEFAULT\n  aws_secret_access_key = default-secret\n\n[other]\naws_access_key_id=AKIAOTHER\naws_secret_access_key=other-secret # trailing comment\naws_session_token = other-token\n`,
+        credentials: `[default]\n  aws_access_key_id = AKIADEFAULT\n  aws_secret_access_key = default-secret\n\n[other]\naws_access_key_id=AKIAOTHER\naws_secret_access_key=other-secret\n# a comment line\naws_session_token = other;token #1\n`,
         config: `[default]\nregion = ap-south-1\n\n[profile other]\nregion=us-west-2\ns3 =\n  max_concurrent_requests = 20\n`,
       },
     });
@@ -285,7 +285,8 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(await creds({ HOME: dir, USERPROFILE: dir, AWS_PROFILE: "other" })).toEqual({
       accessKeyId: "AKIAOTHER",
       secretAccessKey: "other-secret",
-      sessionToken: "other-token",
+      // inline comments follow the AWS SDK for JavaScript: ` #1` is a comment, `;token` is not
+      sessionToken: "other;token",
       region: "us-west-2",
       source: "profile",
     });

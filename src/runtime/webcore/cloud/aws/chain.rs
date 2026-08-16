@@ -907,10 +907,6 @@ impl Resolver {
             },
             None => None,
         };
-        if token.is_some() && expiration.is_none() {
-            // The spec requires Expiration alongside temporary credentials;
-            // accept it but treat as short-lived so we re-run the process.
-        }
         Ok(creds(
             akid,
             secret,

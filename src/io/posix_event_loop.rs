@@ -571,9 +571,20 @@ impl FilePoll {
         &mut self,
         loop_: &mut Loop,
         flag: Flags,
-        one_shot: OneShotFlag,
+        mut one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
+        // OHOS kernel (HongMeng) never disarms EPOLLONESHOT interests after
+        // they fire, and one-shot state tracking on fds sharing a file
+        // description (Terminal dups the pty master into separate read/write
+        // fds) loses the co-registered read interest's events entirely.
+        // Scope the fix to pty fds only: pipes/sockets must keep one-shot
+        // (level-triggered registration there re-fires forever and hangs
+        // parallel multi-run output capture). isatty() distinguishes the two.
+        #[cfg(target_env = "ohos")]
+        if one_shot == OneShotFlag::OneShot && unsafe { libc::isatty(fd.native()) } == 1 {
+            one_shot = OneShotFlag::None;
+        }
         #[cfg(any(
             target_os = "linux",
             target_os = "android",

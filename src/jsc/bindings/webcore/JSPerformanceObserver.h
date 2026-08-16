@@ -81,11 +81,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, PerformanceObserver*
     return &owner.get();
 }
 
-inline void* wrapperKey(PerformanceObserver* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, PerformanceObserver&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, PerformanceObserver* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<PerformanceObserver>&&);

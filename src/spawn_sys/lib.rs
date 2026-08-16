@@ -90,8 +90,7 @@ pub mod ffi {
         /// Install SIGINT/SIGTERM/… handlers that record the signal for
         /// forwarding to [`Bun__currentSyncPID`].
         pub safe fn Bun__registerSignalsForForwarding();
-        /// Returns true when this was the outermost call and the previous
-        /// dispositions were restored.
+        /// Returns true if this was the outermost call (handlers were restored).
         pub safe fn Bun__unregisterSignalsForForwarding() -> bool;
 
         // macOS p_puniqueid descendant tracker — see NoOrphansTracker.cpp.

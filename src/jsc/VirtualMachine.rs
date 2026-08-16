@@ -5268,8 +5268,6 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) -> bool {
         if value.js_type() == jsc::JSType::DOMWrapper {
-            // The loader settles every later load of a failed module with this
-            // same object, and each of those loads is its own failure: always print.
             let msg: Option<&bun_ast::Msg> =
                 if let Some(build_error) = value.as_class_ref::<crate::BuildMessage>() {
                     Some(&build_error.msg)

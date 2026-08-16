@@ -1045,7 +1045,7 @@ fn cascade_merge_with_previous<R>(
     context: &mut MinifyContext<'_, '_>,
 ) {
     // The last rule was settled before cascading, so `merge_style_rules`'s
-    // pending flush (which targets its second argument) can't fire here.
+    // pending flush (which re-minifies `dst`, i.e. `prev` here) can't fire.
     debug_assert!(!state.pending_minify);
     while rules.len() >= 2 {
         let len = rules.len();
@@ -1083,42 +1083,44 @@ fn cached_is_compatible<R>(
     *cache.get_or_insert_with(|| rule.is_compatible(targets))
 }
 
-/// Merge `sty` into `last_style_rule` if their selectors/declarations allow.
-/// Returns `true` if merged (caller should drop `sty`).
+/// Merge `src` into `dst` if their selectors/declarations allow. Returns
+/// `true` if merged (caller should drop `src`).
+///
+/// `dst` is the rule that precedes `src` in the output: the forward merge in
+/// `minify_style_arm` merges the incoming rule into the last emitted one, and
+/// [`cascade_merge_with_previous`] merges the last emitted rule into the one
+/// before it.
 ///
 /// A declaration merge only concatenates the declaration lists and sets
 /// `pending_minify`; the re-minify is deferred to the end of the merge run
 /// (see [`StyleRuleMergeState`]). `pending_minify` may only be set on entry
-/// when `last_style_rule` is the rule it tracks (the forward merge in
-/// `minify_style_arm`); the cascade always settles it first.
-/// `sty_compat` / `last_compat` cache `is_compatible` for the respective
-/// argument.
+/// when `dst` is the rule it tracks (the forward merge); the cascade always
+/// settles it first. `src_compat` / `dst_compat` cache `is_compatible` for
+/// `src` / `dst`.
 fn merge_style_rules<R>(
-    sty: &mut style::StyleRule<R>,
-    last_style_rule: &mut style::StyleRule<R>,
+    src: &mut style::StyleRule<R>,
+    dst: &mut style::StyleRule<R>,
     context: &mut MinifyContext<'_, '_>,
     pending_minify: &mut bool,
-    sty_compat: &mut Option<bool>,
-    last_compat: &mut Option<bool>,
+    src_compat: &mut Option<bool>,
+    dst_compat: &mut Option<bool>,
 ) -> bool {
     use css::VendorPrefix;
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
     // Does not apply if css modules are enabled.
-    if sty.selectors.eql(&last_style_rule.selectors)
-        && cached_is_compatible(sty, sty_compat, context.targets)
-        && cached_is_compatible(last_style_rule, last_compat, context.targets)
-        && sty.rules.v.is_empty()
-        && last_style_rule.rules.v.is_empty()
-        && (!context.css_modules || sty.loc.source_index == last_style_rule.loc.source_index)
+    if src.selectors.eql(&dst.selectors)
+        && cached_is_compatible(src, src_compat, context.targets)
+        && cached_is_compatible(dst, dst_compat, context.targets)
+        && src.rules.v.is_empty()
+        && dst.rules.v.is_empty()
+        && (!context.css_modules || src.loc.source_index == dst.loc.source_index)
     {
-        last_style_rule
+        dst.declarations
             .declarations
-            .declarations
-            .extend(sty.declarations.declarations.drain(..));
-        last_style_rule
-            .declarations
+            .extend(src.declarations.declarations.drain(..));
+        dst.declarations
             .important_declarations
-            .extend(sty.declarations.important_declarations.drain(..));
+            .extend(src.declarations.important_declarations.drain(..));
         *pending_minify = true;
         return true;
     }
@@ -1127,57 +1129,51 @@ fn merge_style_rules<R>(
     // form, so settle any pending merged declarations first.
     if *pending_minify {
         *pending_minify = false;
-        last_style_rule.declarations.minify(
+        dst.declarations.minify(
             dc::decl_handler_static(&mut *context.handler),
             dc::decl_handler_static(&mut *context.important_handler),
             &mut context.handler_context,
         );
     }
 
-    if sty.declarations.eql(&last_style_rule.declarations)
-        && sty.rules.v.is_empty()
-        && last_style_rule.rules.v.is_empty()
-    {
+    if src.declarations.eql(&dst.declarations) && src.rules.v.is_empty() && dst.rules.v.is_empty() {
         // If both selectors are potentially vendor prefixable, and they are
         // equivalent minus prefixes, add the prefix to the last rule.
-        if !sty.vendor_prefix.is_empty()
-            && !last_style_rule.vendor_prefix.is_empty()
-            && css::selector::is_equivalent(
-                sty.selectors.v.slice(),
-                last_style_rule.selectors.v.slice(),
-            )
+        if !src.vendor_prefix.is_empty()
+            && !dst.vendor_prefix.is_empty()
+            && css::selector::is_equivalent(src.selectors.v.slice(), dst.selectors.v.slice())
         {
-            if sty.vendor_prefix.contains(VendorPrefix::NONE)
+            if src.vendor_prefix.contains(VendorPrefix::NONE)
                 && context.targets.should_compile_selectors()
             {
-                last_style_rule.vendor_prefix = sty.vendor_prefix;
+                dst.vendor_prefix = src.vendor_prefix;
             } else {
-                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+                dst.vendor_prefix.insert(src.vendor_prefix);
             }
             return true;
         }
 
         // Append the selectors to the last rule if the declarations are the same, and all selectors are compatible.
-        if cached_is_compatible(sty, sty_compat, context.targets)
-            && cached_is_compatible(last_style_rule, last_compat, context.targets)
+        if cached_is_compatible(src, src_compat, context.targets)
+            && cached_is_compatible(dst, dst_compat, context.targets)
         {
-            let moved = core::mem::take(&mut sty.selectors.v);
+            let moved = core::mem::take(&mut src.selectors.v);
             // `reserve` (not `ensure_total_capacity`) so capacity grows
             // super-linearly across repeated merges, keeping the N-way merge
             // amortized O(N).
-            last_style_rule.selectors.v.reserve(moved.len());
+            dst.selectors.v.reserve(moved.len());
             for sel in moved {
-                last_style_rule.selectors.v.append_assume_capacity(sel);
+                dst.selectors.v.append_assume_capacity(sel);
             }
             // Both sides were just proven compatible, so the combined selector
             // list is too.
-            *last_compat = Some(true);
-            if sty.vendor_prefix.contains(VendorPrefix::NONE)
+            *dst_compat = Some(true);
+            if src.vendor_prefix.contains(VendorPrefix::NONE)
                 && context.targets.should_compile_selectors()
             {
-                last_style_rule.vendor_prefix = sty.vendor_prefix;
+                dst.vendor_prefix = src.vendor_prefix;
             } else {
-                last_style_rule.vendor_prefix.insert(sty.vendor_prefix);
+                dst.vendor_prefix.insert(src.vendor_prefix);
             }
             return true;
         }

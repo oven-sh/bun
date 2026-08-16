@@ -409,6 +409,8 @@ const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
 const kGoawayCode = Symbol("goawayCode");
+// The Last-Stream-ID carried by a received GOAWAY (Node's state.goawayLastStreamID).
+const kGoawayLastStreamID = Symbol("goawayLastStreamID");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
 
@@ -2082,6 +2084,13 @@ class Http2Session extends EventEmitter {
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
   [kDeferWriteCallback] = setImmediate;
+  // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
+  get goawayCode() {
+    return this[kGoawayCode] || NGHTTP2_NO_ERROR;
+  }
+  get goawayLastStreamID() {
+    return this[kGoawayLastStreamID] || 0;
+  }
   [EventEmitter.captureRejectionSymbol](err, event, ...args) {
     switch (event) {
       case "stream": {
@@ -3425,6 +3434,8 @@ class ServerHttp2Stream extends Http2Stream {
     }
     headers = { ...headers };
     assertNoConnectionHeaders(headers);
+    // Thrown synchronously like node, before a promised stream id is reserved.
+    if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     const sensitives = headers[sensitiveHeaders];
     // Note: the sensitiveHeaders symbol stays on the object — the native header walk skips
     // symbol keys, and deleting it here would flip the object into dictionary mode,
@@ -4454,6 +4465,7 @@ class ServerHttp2Session extends Http2Session {
       if (!self) return;
       if (self.destroyed) return;
       self[kGoawayCode] = errorCode;
+      self[kGoawayLastStreamID] = lastStreamId;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
         // Graceful shutdown: no new streams, existing ones may finish.
@@ -5449,6 +5461,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       if (self.destroyed) return;
       self[kGoawayCode] = errorCode;
+      self[kGoawayLastStreamID] = lastStreamId;
       // node: once a GOAWAY is received, new streams cannot be created on this session -
       // request() throws ERR_HTTP2_GOAWAY_SESSION (clients like grpc rely on the throw to
       // fail over to a fresh connection).

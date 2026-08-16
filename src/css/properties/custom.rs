@@ -15,7 +15,7 @@ use crate::printer::Printer;
 
 use crate::values as css_values;
 use css_values::angle::Angle;
-use css_values::color::{ColorFallbackKind, CssColor, RGBA};
+use css_values::color::{ColorFallbackKind, CssColor};
 use css_values::ident::{
     CustomIdent, CustomIdentFns, DashedIdent, DashedIdentReference, Ident, IdentFns,
 };
@@ -650,16 +650,11 @@ impl TokenList {
                 }
                 Token::UnrestrictedHash(h) | Token::IdHash(h) => {
                     'brk: {
-                        let Some((r, g, b, a)) = css_parser::color::parse_hash_color(h) else {
+                        let Some(rgba) = css_parser::color::parse_hash_color(h) else {
                             tokens.push(TokenOrValue::Token(Token::UnrestrictedHash(*h)));
                             break 'brk;
                         };
-                        tokens.push(TokenOrValue::Color(CssColor::Rgba(RGBA::from_floats(
-                            r as f32 / 255.0,
-                            g as f32 / 255.0,
-                            b as f32 / 255.0,
-                            a,
-                        ))));
+                        tokens.push(TokenOrValue::Color(CssColor::Rgba(rgba)));
                     }
                     last_is_delim = false;
                     last_is_whitespace = false;
@@ -908,6 +903,7 @@ impl UnresolvedColor {
                     css_parser::to_css::integer(conv(*g), dest)?;
                     dest.delim(b',', false)?;
                     css_parser::to_css::integer(conv(*b), dest)?;
+                    dest.delim(b',', false)?;
                     alpha.to_css(dest, is_custom_property)?;
                     dest.write_char(b')')?;
                     return Ok(());
@@ -979,13 +975,14 @@ impl UnresolvedColor {
         depth: usize,
     ) -> Result<UnresolvedColor> {
         use css_values::color::{
-            ComponentParser, HSL, SRGB, parse_hsl_hwb_components, parse_rgb_components,
+            ComponentParser, HSL, RgbComponents, SRGB, parse_hsl_hwb_components,
+            parse_rgb_components,
         };
         let mut parser = ComponentParser::new(false);
         crate::match_ignore_ascii_case! { f, {
             b"rgb" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
-                    let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
+                    let RgbComponents { r, g, b, is_legacy } = parse_rgb_components(i, p)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }

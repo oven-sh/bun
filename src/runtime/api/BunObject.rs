@@ -1231,41 +1231,6 @@ fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     Ok(JSPromise::resolved_promise_value(global_object, value))
 }
 
-// HOST_EXPORT(Bun__resolve, c)
-pub fn bun_resolve(
-    global: &JSGlobalObject,
-    specifier: JSValue,
-    source: JSValue,
-    is_esm: bool,
-) -> JSValue {
-    let Ok(specifier_str) = specifier.to_bun_string(global) else {
-        return JSValue::ZERO;
-    };
-    let specifier_str = scopeguard::guard(specifier_str, |s| s.deref());
-
-    let Ok(source_str) = source.to_bun_string(global) else {
-        return JSValue::ZERO;
-    };
-    let source_str = scopeguard::guard(source_str, |s| s.deref());
-
-    let value = match do_resolve_with_args::<true>(
-        global,
-        *specifier_str,
-        *source_str,
-        ResolveMode::from_ffi_bools(is_esm, false),
-    ) {
-        Ok(v) => v,
-        Err(_) => {
-            let err = global.try_take_exception().unwrap();
-            return JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
-                global, err,
-            );
-        }
-    };
-
-    JSPromise::resolved_promise_value(global, value)
-}
-
 // HOST_EXPORT(Bun__resolveSync, c)
 pub fn bun_resolve_sync(
     global: &JSGlobalObject,
@@ -1496,7 +1461,8 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             crate::server::server_config::FromJSOptions {
                 allow_bake_config: bun_core::FeatureFlags::bake(),
                 is_fetch_required: true,
-                has_user_routes: false,
+                previous_fetch: false,
+                previous_routes: false,
             },
         )?;
 
@@ -1873,7 +1839,7 @@ fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
 }
 
-fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     // NOTE (layering): `RareData::s3_default_client` body lives in
     // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
     // That can't compile in `bun_jsc`, so port the body here where the S3
@@ -1888,7 +1854,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
     let env_ptr = vm.transpiler.env;
     let rare = vm.rare_data();
     if let Some(v) = rare.s3_default_client.get() {
-        return v;
+        return Ok(v);
     }
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
     // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
@@ -1908,10 +1874,8 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
     ) {
         Ok(v) => v,
         Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-        Err(err) => {
-            global_this.report_active_exception_as_unhandled(err);
-            return JSValue::UNDEFINED;
-        }
+        // Invalid S3 options in the environment throw from the `Bun.s3` getter.
+        Err(err) => return Err(err),
     };
     let client = S3Client {
         credentials: aws_options.credentials.dupe(),
@@ -1923,7 +1887,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue 
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
     rare.s3_default_client = StrongOptional::create(js_client, global_this);
-    js_client
+    Ok(js_client)
 }
 
 fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1931,7 +1895,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
 
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(global_this, &[JSValue::UNDEFINED]) {
         Ok(p) => p,
-        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =
                 global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
@@ -1947,7 +1911,7 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
     match SubscriptionCtx::init(valkey_ref) {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
-        Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
+        Err(jsc::JsError::Thrown) => return JSValue::ZERO,
         Err(err) => {
             let _ =
                 global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
@@ -2762,12 +2726,11 @@ pub mod JSZstd {
 
         let level = get_level(global_this, options_val)?;
 
-        let allow_string_object = true;
         if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
             global_this,
             buffer_value,
-            true,
-            allow_string_object,
+            node::Flavor::Async,
+            node::StringObjects::Allow,
         )? {
             return Ok((buffer, options_val, level));
         }
@@ -2843,7 +2806,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `is_async=true` (JS-backed buffer protected); the
+        /// Created with `Flavor::Async` (JS-backed buffer protected); the
         /// [`bun_jsc::ThreadSafe`] releases that with the job.
         pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,
@@ -2858,7 +2821,6 @@ pub mod JSZstd {
 
         fn run(
             this: &mut Self,
-            _vm: &jsc::vm_handle::Borrow,
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             let input = this.buffer.slice();

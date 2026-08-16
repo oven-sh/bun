@@ -580,7 +580,6 @@ impl JoinStyle {
 pub enum EntryKindHint {
     Idk,
     Dir,
-    File,
 }
 
 /// One per filepath argument; owns the root
@@ -711,8 +710,7 @@ impl ShellRmTask {
             let st = &raw mut (*this).task;
             (*st).task.callback = Self::work_pool_callback;
             (*st).keep_alive.ref_((*st).event_loop.as_event_loop_ctx());
-            // Counted until `ShellTask::on_finish` (see `ShellTask::schedule_no_ref`).
-            (*st).poster.embedded_work_scheduled();
+            (*st).arm();
             WorkPool::schedule(&raw mut (*st).task);
         }
     }
@@ -918,7 +916,7 @@ impl ShellRmTask {
         // `path` are read-only after construction.
         let (kind_hint, path) = unsafe { ((*dir_task).kind_hint, (*dir_task).path.as_zstr()) };
         match kind_hint {
-            EntryKindHint::Idk | EntryKindHint::File => {
+            EntryKindHint::Idk => {
                 let mut vtable = RemoveFileVTable {
                     task: self,
                     on_dir: OnDir::Recurse {
@@ -1492,18 +1490,19 @@ impl DirTask {
                 ShellRmTask::decr_pending_and_maybe_deinit(tm);
                 return;
             }
-            let poster = (*me.task_manager).task.poster.clone();
+            // The root rm task is still out (pending > 0), so its poster is set.
+            let poster = (*me.task_manager)
+                .task
+                .poster
+                .as_ref()
+                .expect("rm root task on the pool is armed")
+                .clone();
             (me, poster)
         };
         match &mut me.concurrent_task {
             EventLoopTask::Js(ct) => {
                 ct.from(this, AutoDeinit::ManualDeinit);
-                // Posted while the rm task is counted work: the VM has not closed.
-                let bun_jsc::vm_handle::Posted::Queued =
-                    poster.post_js(core::ptr::NonNull::from(ct))
-                else {
-                    unreachable!("VM handle closed with shell rm work outstanding");
-                };
+                poster.post_js(core::ptr::NonNull::from(ct));
             }
             EventLoopTask::Mini(at) => {
                 let at = at.from(this, dir_task_run_from_main_thread_mini);

@@ -74,11 +74,13 @@ pub struct Queue {
 
 /// What the resolver's `WakeHandler` carries as its opaque context: the
 /// module queue (for the JS-thread dependency-error callback) and the VM's
-/// handle (for wake-ups from install / HTTP threads). Allocated once per VM at
-/// registration and kept for the VM's lifetime.
+/// weak handle (for wake-ups from the process-wide install / HTTP threads,
+/// which outlive any one VM). Allocated once per VM at registration and kept
+/// for the VM's lifetime.
 pub struct WakeContext {
     pub queue: *mut Queue,
-    pub loop_handle: crate::LoopHandle,
+    pub handle: crate::VmHandle,
+    pub kind: crate::LoopKind,
 }
 
 impl Queue {
@@ -382,8 +384,8 @@ impl Queue {
         // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
         let ctx = unsafe { &*ctx.cast::<WakeContext>() };
         let task = ConcurrentTaskItem::create_from(ctx.queue);
-        if let crate::vm_handle::Posted::Refused(task) = ctx.loop_handle.post_task(task) {
-            // VM torn down: nobody is waiting on these modules any more.
+        if let crate::vm_handle::Posted::Refused(task) = ctx.handle.post(ctx.kind, task) {
+            // That VM has closed: nobody is waiting on these modules any more.
             // SAFETY: refused ⇒ we own the task box.
             unsafe { drop(bun_core::heap::take(task.as_ptr())) };
         }
@@ -688,7 +690,7 @@ impl AsyncModule {
         clippy::boxed_local,
         reason = "reclaim point for the box `done()` handed to the task queue"
     )]
-    pub fn on_done(mut this: Box<AsyncModule>) {
+    pub fn on_done(mut this: Box<AsyncModule>) -> JsResult<()> {
         jsc::mark_binding();
         // Copy the `GlobalRef` out (it is `Copy`) so the borrow of `this` ends
         // before `&mut this` reborrows below; deref via the local for the rest
@@ -739,7 +741,7 @@ impl AsyncModule {
 
         let mut spec = BunString::init(ZigString::from_bytes(this.specifier()).with_encoding());
         let mut ref_ = BunString::init(ZigString::from_bytes(this.referrer()).with_encoding());
-        let _ = jsc::from_js_host_call_generic(global_this, || {
+        jsc::from_js_host_call_generic(global_this, || {
             Bun__onFulfillAsyncModule(
                 global_this,
                 this.promise.get().unwrap(),
@@ -747,12 +749,12 @@ impl AsyncModule {
                 &mut spec,
                 &mut ref_,
             )
-        });
+        })
     }
 
-    // write! into Vec<u8>
-    // is infallible here; `.ok()` collapses the `fmt::Result`, so this never
-    // actually returns Err — the wide Result is kept for call-site uniformity.
+    // Never returns Err: the `write!`s below go into a `Vec<u8>` and their
+    // results are discarded with `let _ =`. The `Result` return type is kept
+    // for call-site uniformity with `download_error`.
     fn resolve_error(
         &mut self,
         vm: &mut VirtualMachine,
@@ -768,60 +770,53 @@ impl AsyncModule {
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
         if e == "PackageManifestHTTP400" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 400 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP401" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 401 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP402" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 402 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP403" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 403 while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP404" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "Package '{}' was not found",
                 bstr::BStr::new(result.name)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP4xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 4xx while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if e == "PackageManifestHTTP5xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 5xx while resolving package '{}' at '{}'",
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         } else if matches!(e, "DistTagNotFound" | "NoMatchingVersion") {
             // `Version::try_npm()` performs the tag guard and yields the
             // `NpmInfo` (whose `.version` is the semver query group).
@@ -835,23 +830,21 @@ impl AsyncModule {
                     b"No match found"
                 };
 
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} '{}' for package '{}' (but package exists)",
                 bstr::BStr::new(prefix),
                 bstr::BStr::new(vm.package_manager().lockfile.str(&result.version.literal)),
                 bstr::BStr::new(result.name)
-            )
-            .ok();
+            );
         } else {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} resolving package '{}' at '{}'",
                 e,
                 bstr::BStr::new(result.name),
                 bstr::BStr::new(result.url)
-            )
-            .ok();
+            );
         }
         // msg dropped at scope exit (defer bun.default_allocator.free(msg)).
 
@@ -986,71 +979,63 @@ impl AsyncModule {
         let mut msg: Vec<u8> = Vec::new();
         let e = result.err;
         if e == "TarballHTTP400" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 400 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP401" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 401 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP402" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 402 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP403" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 403 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP404" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 404 downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP4xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 4xx downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballHTTP5xx" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "HTTP 5xx downloading package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else if e == "TarballFailedToExtract" {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "Failed to extract tarball for package '{}@{}'",
                 bstr::BStr::new(result.name),
                 resolution_fmt
-            )
-            .ok();
+            );
         } else {
-            write!(
+            let _ = write!(
                 &mut msg,
                 "{} downloading package '{}@{}'",
                 e,
@@ -1063,8 +1048,7 @@ impl AsyncModule {
                         .as_slice(),
                     bun_core::fmt::PathSep::Any,
                 )
-            )
-            .ok();
+            );
         }
         // msg dropped at scope exit.
 

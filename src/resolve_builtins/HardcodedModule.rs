@@ -182,6 +182,8 @@ pub enum HardcodedModule {
     /// This is gated behind '--expose-internals'
     #[strum(serialize = "bun:internal-for-testing")]
     BunInternalForTesting,
+    #[strum(serialize = "internal:cluster/RoundRobinHandle")]
+    InternalClusterRoundRobinHandle,
     // Node internal modules exposed for the vendored Node.js test suite.
     // Gated like `bun:internal-for-testing` (debug builds / --expose-internals).
     #[strum(serialize = "internal:repl")]
@@ -213,6 +215,7 @@ bun_core::comptime_string_map! {
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
+        b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
         b"internal/repl" => HardcodedModule::NodeInternalRepl,
         b"internal/repl/await" => HardcodedModule::NodeInternalReplAwait,
         b"internal/repl/history" => HardcodedModule::NodeInternalReplHistory,
@@ -725,6 +728,15 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
+    (
+        b"internal/cluster/round_robin_handle",
+        Alias {
+            path: zstr!("internal:cluster/RoundRobinHandle"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
     // Node internal modules for the vendored Node.js test suite (gated in
     // jsc_hooks like bun:internal-for-testing: debug / --expose-internals).
     entry!("internal/repl"),

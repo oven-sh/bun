@@ -6,7 +6,6 @@ use core::ptr::NonNull;
 use bun_jsc::JsCell;
 use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
 
-use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
     JsResult, StringJsc as _,
@@ -216,12 +215,12 @@ pub struct Response {
     redirected: Cell<bool>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
-    pub(crate) ref_count: Cell<u32>,
+    ref_count: Cell<u32>,
     /// Bun.serve's RequestContext holds a weak reference so `onAbort` /
     /// `handleResolveStream` / `handleRejectStream` can safely observe that the
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
-    pub(crate) weak_ptr_data: WeakPtrData,
+    weak_ptr_data: WeakPtrData,
     js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
@@ -550,84 +549,6 @@ impl Response {
         }
     }
 }
-
-mod _jsc_host_fns {
-    use super::*;
-
-    #[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
-    #[bun_jsc::host_call]
-    fn js_function_request_or_response_has_body_value(
-        _global: *mut JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JSValue {
-        let [this_value] = callframe.arguments_as_array::<1>();
-        if this_value.is_empty_or_undefined_or_null() {
-            return JSValue::FALSE;
-        }
-
-        if let Some(response) = this_value.as_class_ref::<Response>() {
-            return JSValue::from(!response.body.get().value.get().is_definitely_empty());
-        } else if let Some(request) = this_value.as_class_ref::<Request>() {
-            return JSValue::from(!request.get_body_value().is_definitely_empty());
-        }
-
-        JSValue::FALSE
-    }
-
-    #[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
-    #[bun_jsc::host_call]
-    fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
-        global_object: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global_object, callframe) = (
-            bun_opaque::opaque_deref(global_object),
-            bun_opaque::opaque_deref(callframe),
-        );
-        let [this_value] = callframe.arguments_as_array::<1>();
-        if this_value.is_empty_or_undefined_or_null() {
-            return JSValue::UNDEFINED;
-        }
-
-        let body: &mut BodyValue = 'brk: {
-            if let Some(response) = this_value.as_class_ref::<Response>() {
-                // R-2: `get_body_value` projects `&mut` via `JsCell`.
-                break 'brk response.get_body_value();
-            } else if let Some(request) = this_value.as_class_ref::<Request>() {
-                break 'brk request.get_body_value();
-            }
-
-            return JSValue::UNDEFINED;
-        };
-
-        // Get the body if it's available synchronously.
-        match body {
-            BodyValue::Used | BodyValue::Empty | BodyValue::Null => JSValue::UNDEFINED,
-            BodyValue::Blob(blob) => {
-                if blob.is_bun_file() {
-                    return JSValue::UNDEFINED;
-                }
-                let result =
-                    match blob.to_array_buffer(global_object, crate::webcore::Lifetime::Transfer) {
-                        Ok(v) => v,
-                        Err(_) => JSValue::ZERO,
-                    };
-                *body = BodyValue::Used;
-                result
-            }
-            BodyValue::WTFStringImpl(_) | BodyValue::InternalBlob(_) => {
-                let mut any_blob = body.use_as_any_blob();
-                match any_blob.to_array_buffer_transfer(global_object) {
-                    Ok(v) => v,
-                    Err(_) => JSValue::ZERO,
-                }
-            }
-            BodyValue::Error(_) | BodyValue::Locked(_) => JSValue::UNDEFINED,
-        }
-    }
-} // mod _jsc_host_fns
 
 impl Response {
     pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {

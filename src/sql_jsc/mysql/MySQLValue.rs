@@ -11,6 +11,7 @@ use bun_core::{OwnedString, String as BunString};
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
+use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::shared::Data;
 
 use crate::jsc::webcore::Blob;
@@ -212,8 +213,12 @@ fn validate_bigint<T: bun_core::Integer>(
         .map_err(js_error_to_mysql)
 }
 
-impl Value {
-    pub(crate) fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
+impl ExecuteParam for Value {
+    fn is_null(&self) -> bool {
+        matches!(self, Value::Null)
+    }
+
+    fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
         let mut buffer = [0u8; 15]; // Large enough for all fixed-size types
 
         let pos: usize = match self {
@@ -276,7 +281,9 @@ impl Value {
 
         Data::create(&buffer[0..pos]).map_err(|_| any_mysql_error::Error::OutOfMemory)
     }
+}
 
+impl Value {
     pub(crate) fn from_js(
         value: JSValue,
         global_object: &JSGlobalObject,
@@ -354,15 +361,15 @@ impl Value {
                         // collect it (and free the backing store despite
                         // the pin) if user JS drops the last reference from
                         // a later parameter.
-                        2 => {
+                        kind @ (2 | 3) => {
                             roots.append(value);
                             Ok(Value::Bytes(Bytes {
-                                // SAFETY: backing ArrayBuffer is pinned (non-detachable) and
+                                // SAFETY: backing storage is pinned or held (bufferless view) and
                                 // rooted via `roots`; slice stays valid until Bytes::drop unpins.
                                 slice: ZigStringSlice::from_utf8_never_free(unsafe {
                                     core::slice::from_raw_parts(ptr, len)
                                 }),
-                                pinned: value,
+                                pinned: if kind == 2 { value } else { JSValue::ZERO },
                             }))
                         }
                         _ => unreachable!(),
@@ -420,13 +427,13 @@ impl Value {
 
 #[derive(Default, Clone, Copy)]
 pub struct DateTime {
-    pub(crate) year: u16,
-    pub(crate) month: u8,
-    pub(crate) day: u8,
-    pub(crate) hour: u8,
-    pub(crate) minute: u8,
-    pub(crate) second: u8,
-    pub(crate) microsecond: u32,
+    year: u16,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    microsecond: u32,
 }
 
 impl DateTime {
@@ -816,7 +823,8 @@ unsafe extern "C" {
     /// No caller-side preconditions → `safe fn`.
     safe fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (GC-movable — caller should dupe;
-    /// no unpin needed), 2 = pinned ArrayBuffer (caller must `unpinArrayBuffer`).
+    /// no unpin needed), 2 = pinned an existing ArrayBuffer (caller must
+    /// `unpinArrayBuffer`), 3 = held a bufferless OversizeTypedArray (nothing to unpin; root it as for 2).
     /// Out-params are `&mut` (same ABI as `*mut`), so the only obligation left
     /// is on the *returned* slice, not the call itself → `safe fn`.
     safe fn JSC__JSValue__borrowBytesForOffThread(

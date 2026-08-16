@@ -186,6 +186,9 @@ const testPlatforms = [
   // The darwin test suite runs on real macOS agents against the Linux-built
   // artifacts from the `darwin-<arch>-build-bun` steps (the only darwin build
   // lanes — see buildPlatforms).
+  // These three version-specific lanes run on main and on opt-in (see
+  // darwinTestsEnabled). PR builds instead get one aarch64 lane that any mac
+  // agent can take (prDarwinTestPlatforms), so the whole arm64 pool serves PRs.
   { os: "darwin", arch: "aarch64", release: "26", tier: "latest" },
   { os: "darwin", arch: "aarch64", release: "14", tier: "previous" },
   { os: "darwin", arch: "x64", release: "14", tier: "latest" },
@@ -375,54 +378,18 @@ function getEc2Agent(platform, options, ec2Options) {
  * @param {PipelineOptions} options
  * @returns {string}
  */
-function getCppAgent(platform, options) {
+function getBuildAgent(platform, options) {
   // Every build lane runs on the single debian-13 aarch64 host image
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
+  const { os, arch, abi, profile } = platform;
+  // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
+  const nonLto =
+    profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
   return getEc2Agent(buildHostPlatform, options, {
-    instanceType: "c8g.4xlarge",
+    // Replaces the c8g.4xlarge (C++) + r8g.2xlarge (cargo + ThinLTO link; r8g.4xlarge for asan) pair.
+    instanceType: nonLto ? "r8g.8xlarge" : "r8g.4xlarge",
   });
-}
-
-/**
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {string}
- */
-function getLinkBunAgent(platform, options) {
-  return getEc2Agent(buildHostPlatform, options, {
-    // rust-and-link runs cargo (~200 crates) then ThinLTO-links the full graph
-    // on one box; r8g.xlarge is too tight. ASAN's -Zbuild-std cargo pass
-    // doubles the IR, so size that lane for cores.
-    instanceType: platform.profile === "asan" ? "r8g.4xlarge" : "r8g.2xlarge",
-  });
-}
-
-// TEMPORARY (2026-08-10): the bare-metal macOS fleet behind `test-darwin` is
-// offline being reimaged. Until it is back, darwin tests run on Buildkite-hosted
-// M4 agents in this queue instead. Hosted agents are Apple Silicon only and the
-// queue is pinned to a single macOS 26 image, so only the aarch64 `latest` lane
-// can run there; and they bill per minute, so darwin tests run on main (the
-// canary gate) or when a commit subject opts in with `[macos tests]`, not on
-// every PR push. A manual (UI) build that picks a darwin lane in the options
-// form is its own opt-in. To go back to the fleet, revert the commit that added
-// this block: it also restores the tag-based `test-darwin` selector in
-// getTestAgent() and drops the filter in getPipeline().
-const darwinHostedQueue = "test-darwin-hosted";
-
-/**
- * @returns {boolean}
- */
-function darwinTestsEnabled() {
-  return isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
-}
-
-/**
- * @param {Platform} platform
- * @returns {boolean}
- */
-function isRunnableDarwinTestPlatform(platform) {
-  return platform.os !== "darwin" || (platform.arch === "aarch64" && platform.tier === "latest");
 }
 
 /**
@@ -434,9 +401,17 @@ function getTestAgent(platform, options) {
   const { os, arch, profile, tier } = platform;
 
   if (os === "darwin") {
-    // Hosted agents carry none of the fleet's os/arch/release-tier tags; the
-    // queue is the whole selector. See darwinHostedQueue above.
-    return { queue: darwinHostedQueue };
+    // `release-tier` is emitted by scripts/agent.mjs based on the box's macOS
+    // major version. arm64 splits into `latest` (current macOS) + `previous`
+    // (anything older). x64 is NOT tier-targeted — single entry, any Intel
+    // box — because the tier split bottlenecked the smaller pool and Intel
+    // can't run latest anyway.
+    return {
+      queue: `test-${os}`,
+      os,
+      arch,
+      ...(arch === "aarch64" && tier ? { "release-tier": tier } : {}),
+    };
   }
 
   // TODO: delete this block when we upgrade to mimalloc v3
@@ -488,7 +463,7 @@ function getTestAgent(platform, options) {
  *
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildArgs(target, options, mode) {
@@ -517,7 +492,7 @@ function getBuildArgs(target, options, mode) {
 /**
  * @param {Target} target
  * @param {PipelineOptions} options
- * @param {"cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
+ * @param {"build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link"} mode
  * @returns {string}
  */
 function getBuildCommand(target, options, mode) {
@@ -534,11 +509,13 @@ function getBuildCommand(target, options, mode) {
 }
 
 /**
+ * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_rust.a and the dep libs.
+ *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
  */
-function getBuildCppStep(platform, options) {
+function getBuildBunStep(platform, options) {
   const { os, arch } = platform;
   // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
   // (.buildkite/Dockerfile); best-effort install covers older images, and
@@ -551,34 +528,9 @@ function getBuildCppStep(platform, options) {
         ]
       : [];
   return {
-    key: `${getTargetKey(platform)}-build-cpp`,
-    label: `${getTargetLabel(platform)} - build-cpp`,
-    agents: getCppAgent(platform, options),
-    retry: getRetry(),
-    cancel_on_build_failing: isMergeQueue(),
-    // cpp-only builds deps + bun's C++ in one ninja graph (ninja pulls
-    // everything the archive transitively needs). The old two-command
-    // split (--target bun, --target dependencies) was a cmake artifact.
-    command: [...nasmSetup, getBuildCommand(platform, options, "cpp-only")],
-  };
-}
-
-/**
- * cargo build + link on one agent. Runs in parallel with build-cpp (no
- * depends_on); the build script runs `ninja bun-rust` first, then polls
- * `buildkite-agent step get outcome` for `<target>-build-cpp`, downloads
- * its archive, and links. Key is `-build-bun` (it produces the final zip)
- * so test/release/verify-baseline/binary-size depends_on stay unchanged.
- *
- * @param {Platform} platform
- * @param {PipelineOptions} options
- * @returns {Step}
- */
-function getBuildBunStep(platform, options) {
-  return {
     key: `${getTargetKey(platform)}-build-bun`,
     label: `${getTargetLabel(platform)} - build-bun`,
-    agents: getLinkBunAgent(platform, options),
+    agents: getBuildAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     timeout_in_minutes: 60,
@@ -587,7 +539,7 @@ function getBuildBunStep(platform, options) {
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    command: getBuildCommand(platform, options, "rust-and-link"),
+    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
   };
 }
 
@@ -852,6 +804,13 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push("--exclude=internal/source-lints");
   }
 
+  // The untiered darwin lane PR builds get (see prDarwinTestPlatforms) skips
+  // the ~1% of files that take 10s or more; they are ~60% of a shard's wall
+  // time and still run on every other PR lane and on main's darwin lanes.
+  if (os === "darwin" && !platform.tier) {
+    args.push("--skip-slower-than=10000");
+  }
+
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
@@ -864,11 +823,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     agents: getTestAgent(platform, options),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    // darwin: 10 while on hosted agents (see darwinHostedQueue), which scale
-    // one agent per shard; it was 2 for the bare-metal fleet's few boxes per
-    // lane. Each shard repeats ~2 min of checkout + artifact + install, so
-    // going much wider mostly buys setup time.
-    parallelism: os === "darwin" ? 10 : os === "windows" ? 8 : 20,
+    parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
     timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
@@ -1494,7 +1449,7 @@ async function getPipeline(options = {}) {
   }
 
   const { buildPlatforms = [], testPlatforms = [], buildImages, publishImages, imageFilter } = options;
-  // Every build lane runs on buildHostPlatform (see getCppAgent/getLinkBunAgent),
+  // Every build lane runs on buildHostPlatform (see getBuildAgent),
   // so the build-image set is exactly {buildHostPlatform} ∪ testPlatforms' native
   // images — buildPlatforms entries encode TARGET os/arch/abi, not a host image.
   const imagePlatforms = new Map(
@@ -1542,7 +1497,7 @@ async function getPipeline(options = {}) {
 
     steps.push(
       ...relevantBuildPlatforms.map(target => {
-        // build-cpp/build-bun always run on buildHostPlatform regardless of
+        // build-bun always runs on buildHostPlatform regardless of
         // target, so the only build-image dependency is the host's.
         const imageKey = getImageKey(buildHostPlatform);
         const dependsOn = [];
@@ -1550,14 +1505,12 @@ async function getPipeline(options = {}) {
           dependsOn.push(`${imageKey}-build-image`);
         }
 
-        const steps = [];
-        steps.push(getBuildCppStep(target, options));
-        steps.push(getBuildBunStep(target, options));
+        const steps = [getBuildBunStep(target, options)];
 
         if (needsBaselineVerification(target)) {
           // verify-baseline runs on a per-target-arch native host (see
           // getVerifyBaselineHost), not buildHostPlatform; its image dep goes
-          // on the step itself so build-cpp/build-bun don't wait for it.
+          // on the step itself so build-bun doesn't wait for it.
           const verifyImageKey = getImageKey(getVerifyBaselineHost(target));
           const verifyDeps =
             verifyImageKey !== imageKey && imagePlatforms.has(verifyImageKey) ? [`${verifyImageKey}-build-image`] : [];
@@ -1576,7 +1529,7 @@ async function getPipeline(options = {}) {
         );
         if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage()))) {
           // The trace host's image, same as verify-baseline: on the step, so
-          // build-cpp/build-bun don't wait for it. Darwin has no cloud image.
+          // build-bun doesn't wait for it. Darwin has no cloud image.
           const traceImageKey = getImageKey(traceOn.on);
           const traceDeps =
             traceImageKey !== imageKey && imagePlatforms.has(traceImageKey) ? [`${traceImageKey}-build-image`] : [];
@@ -1598,12 +1551,15 @@ async function getPipeline(options = {}) {
   // Tests run on main too so the canary release step below can gate on them.
   // ASAN is PR-only (see includeASAN above), so the asan test lane is dropped
   // on main along with its build.
-  // Darwin is further narrowed while the fleet is offline (see darwinHostedQueue):
-  // no darwin tests at all unless enabled, and only the lane hosted agents can
-  // run when it is.
-  const relevantTestPlatforms = (includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan"))
-    .filter(platform => platform.os !== "darwin" || darwinTestsEnabled())
-    .filter(isRunnableDarwinTestPlatform);
+  // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
+  /** @type {Platform[]} */
+  const prDarwinTestPlatforms = [{ os: "darwin", arch: "aarch64", release: "any" }];
+  const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  const relevantTestPlatforms = (
+    includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
+  )
+    .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
+    .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms);
   /** @type {string[]} */
   const testStepKeys = [];
   {

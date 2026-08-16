@@ -64,8 +64,6 @@ function computeVersions(cfg: Config): [string, string][] {
   }
 
   // ─── Non-dep versions ───
-  versions.push(["BUN_VERSION", cfg.version]);
-  versions.push(["NODEJS_COMPAT_VERSION", cfg.nodejsVersion]);
   // UWS/USOCKETS are vendored at packages/bun-usockets — the bun commit
   // IS their version.
   versions.push(["UWS", cfg.revision]);

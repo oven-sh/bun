@@ -2055,8 +2055,7 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
 function validateTestOptions(options: TestOptions): { ownTags: string[] | undefined } {
   const { concurrency, tags, plan } = options;
 
-  // Suites only validate timeout/signal (tests enforce them in executeTestNode);
-  // concurrency is only validated anywhere, subtests always run serially.
+  // Suites only validate timeout/signal (tests enforce them); concurrency is validate-only, subtests run serially.
   validateTimeoutAndSignal(options);
   if (concurrency != null && typeof concurrency !== "boolean") {
     if (typeof concurrency === "number") {
@@ -2172,8 +2171,7 @@ function invokeTestFn(fn: Function, arg: unknown) {
 
 let addAbortListener;
 
-// Node's stopTest(): armed before the body (a synchronous prefix counts) and raced against everything the
-// run then waits on. `promise` only ever rejects, with the timeout or the signal's reason. Callers must dispose().
+// Node's stopTest(): armed before the body starts, only ever rejects (timeout or signal reason); callers must dispose().
 function createStopController(timeout: number | undefined, signal: AbortSignal | undefined) {
   const hasTimeout = typeof timeout === "number" && Number.isFinite(timeout);
   if (!hasTimeout && signal === undefined) {

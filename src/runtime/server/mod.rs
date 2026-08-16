@@ -513,9 +513,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // formed (the count is a `Cell`), so this is sound when reached
             // from inside `app.close()` while `stop_listening` holds `&mut`.
             let this = unsafe { &*user_data.cast::<Self>() };
-            if opened == 1 {
-                this.note_connection_opened();
-                return;
+            // Count from accept (2 / -2), not from open (1 / -1): a TLS socket accepted but still
+            // handshaking is a connection too — it will dispatch once the handshake completes.
+            match opened {
+                2 => {
+                    this.note_connection_opened();
+                    return;
+                }
+                -2 => {}
+                _ => return,
             }
             this.note_connection_closed() && !this.has_listener() && !this.deinit_running.get()
         };
@@ -588,25 +594,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.js_value.try_get().expect("js_value alive")
     }
 
-    /// Returns the wrapper while it may take a dispatch: held `Strong` and its
-    /// VM may still run script. The wrapper's WriteBarrier slots are the only
-    /// GC root of the handler shadows (`config.on_*`, `on_clienterror`,
-    /// `on_connection`), so `deinit_if_we_can` keeps it `Strong` until
-    /// [`Self::is_drained`] — no listener, request, HTTP connection or
-    /// websocket left — and downgrades it then; from there the wrapper and
-    /// the shadows are the GC's, and a `Weak` `JsRef` (a bare `JSValue`)
-    /// cannot tell a collected-but-unswept wrapper from a live one. What can
-    /// still arrive after that — a TLS handshake that was in flight when the
-    /// listener closed (a connection counts only once its handshake is done)
-    /// — is answered natively. So is anything for a VM whose script gate has
-    /// closed (a worker that called `process.exit()` or was asked to
-    /// terminate, still draining the current loop tick before its stop phase
-    /// closes the listener): uWS requires every dispatched request to be
-    /// answered or adopted, so dispatch trampolines answer 503+close on `None`.
+    /// Returns the wrapper while it is alive (`Strong` or `Weak`) and its VM may still run script,
+    /// else `None`. It stays `Strong` — the WriteBarrier root of the handler shadows — until the
+    /// server is drained (no listener, request, connection or websocket left; connections count from
+    /// accept), so nothing dispatches through a wrapper the GC may have collected. A VM whose script
+    /// gate has closed (a worker that called `process.exit()` or was asked to terminate, still
+    /// draining the current loop tick before its stop phase closes the listener) must not have a
+    /// request built for it either; uWS requires every dispatched request to be answered or
+    /// adopted, so dispatch trampolines answer 503+close on `None`.
     pub(crate) fn js_value_for_dispatch(&self) -> Option<JSValue> {
-        if !self.js_value.is_strong() || !self.vm().script_allowed() {
+        if !self.vm().script_allowed() {
             return None;
         }
+        debug_assert!(
+            self.js_value.is_strong() || self.js_value.try_get().is_none(),
+            "a socket outlived the server's connection accounting"
+        );
         self.js_value.try_get()
     }
 }
@@ -1755,7 +1758,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Close idle keep-alive connections now and mark busy ones to
             // close once their in-flight work completes; open websockets are
             // untouched and drain on their own. Each close reaches
-            // `on_connection_filter(-1)` synchronously, so hold the guard so
+            // `on_connection_filter(-2)` synchronously, so hold the guard so
             // that path cannot form a second `&mut self` under this frame —
             // `stop()` runs `deinit_if_we_can` right after this returns.
             //

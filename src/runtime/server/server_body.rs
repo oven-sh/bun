@@ -2606,7 +2606,7 @@ where
         if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::js_number(0.0));
         }
-        // Each close reaches `on_connection_filter(-1)` synchronously; hold
+        // Each close reaches `on_connection_filter(-2)` synchronously; hold
         // the guard so it cannot re-derive `&mut self` while this frame owns
         // it. One-shot sweep (Node semantics): busy connections are spared
         // and are NOT marked to close later.

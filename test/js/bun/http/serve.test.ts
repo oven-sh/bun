@@ -4560,3 +4560,47 @@ it("applies backpressure to a ReadableStream response while the client drains", 
   // chunks into uWS's buffer by the time the client read 1 MB.
   expect(sentAtPartialDrain).toBeLessThan(chunkCount);
 });
+
+// A TLS connection the server accepted before stop() but whose handshake completes afterwards must still
+// be served like any connection accepted before a graceful stop — and through a wrapper the server still
+// holds strongly. Connections were counted from the end of the handshake, so such a socket was invisible:
+// stop() saw the server drained, released the wrapper (and its handlers) to the GC, and the request that
+// then arrived dispatched through whatever the GC had left of them.
+it("serves a TLS connection whose handshake completes after a graceful stop()", async () => {
+  const net = require("node:net");
+  const tlsmod = require("node:tls");
+  const { Duplex } = require("node:stream");
+  let server: Server | null = Bun.serve({ port: 0, tls, fetch: () => new Response("served") });
+  const raw = net.connect(server.port, "127.0.0.1");
+  await new Promise((res, rej) => (raw.on("connect", res), raw.on("error", rej)));
+  // Client→server bytes flow freely; server→client bytes are held until released, so the server has answered
+  // the ClientHello and is waiting mid-handshake when stop() runs.
+  let hold = true;
+  const held: Buffer[] = [];
+  const wire = new Duplex({
+    read() {},
+    write(chunk, enc, cb) {
+      raw.write(chunk, cb);
+    },
+  });
+  raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
+  raw.on("close", () => wire.push(null));
+  const client = tlsmod.connect({ socket: wire, rejectUnauthorized: false });
+  client.on("error", () => {});
+  for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
+  expect(held.length).toBeGreaterThan(0);
+
+  const stopped = server.stop();
+  server = null;
+  Bun.gc(true);
+
+  hold = false;
+  for (const d of held) wire.push(d);
+  // Written now, sent once the handshake completes.
+  client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+  let response = "";
+  await new Promise(res => (client.on("data", d => (response += d)), client.on("end", res), client.on("close", res)));
+  expect(response.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+  expect(response.split("\r\n\r\n")[1]).toBe("served");
+  await stopped;
+});

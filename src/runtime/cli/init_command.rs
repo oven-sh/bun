@@ -736,8 +736,27 @@ impl InitCommand {
                     true
                 };
 
-            need_run_bun_install =
-                needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
+            let needs_react_dependency = !minimal
+                && template == Template::Blank
+                && 'brk: {
+                    for key in [
+                        b"dependencies".as_slice(),
+                        b"devDependencies",
+                        b"peerDependencies",
+                    ] {
+                        if let Some(deps) = object.get(key) {
+                            if deps.has_any_property_named(&[b"react", b"@types/react"]) {
+                                break 'brk false;
+                            }
+                        }
+                    }
+                    true
+                };
+
+            need_run_bun_install = needs_dependencies
+                || needs_dev_dependencies
+                || needs_typescript_dependency
+                || needs_react_dependency;
 
             if needs_dependencies {
                 let mut dependencies_object = object.get(b"dependencies").unwrap_or_else(|| {
@@ -770,15 +789,35 @@ impl InitCommand {
                 object.put(&bump, b"devDependencies", obj)?;
             }
 
-            if needs_typescript_dependency {
+            if needs_react_dependency {
+                let mut obj = object.get(b"devDependencies").unwrap_or_else(|| {
+                    bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
+                });
+                obj.data
+                    .e_object_mut()
+                    .unwrap()
+                    .put_string(&bump, b"@types/react", b"^19")?;
+                object.put(&bump, b"devDependencies", obj)?;
+            }
+
+            if needs_typescript_dependency || needs_react_dependency {
                 let mut peer_dependencies = object.get(b"peerDependencies").unwrap_or_else(|| {
                     bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
                 });
-                peer_dependencies.data.e_object_mut().unwrap().put_string(
-                    &bump,
-                    b"typescript",
-                    b"^6",
-                )?;
+                if needs_typescript_dependency {
+                    peer_dependencies.data.e_object_mut().unwrap().put_string(
+                        &bump,
+                        b"typescript",
+                        b"^6",
+                    )?;
+                }
+                if needs_react_dependency {
+                    peer_dependencies
+                        .data
+                        .e_object_mut()
+                        .unwrap()
+                        .put_string(&bump, b"react", b"^19")?;
+                }
                 object.put(&bump, b"peerDependencies", peer_dependencies)?;
             }
         }

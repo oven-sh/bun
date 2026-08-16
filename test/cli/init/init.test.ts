@@ -47,9 +47,11 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "private": true,
       "devDependencies": {
         "@types/bun": "latest",
+        "@types/react": "^19",
       },
       "peerDependencies": {
         "typescript": "^6",
+        "react": "^19",
       },
     });
     const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
@@ -222,10 +224,12 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     {
       "devDependencies": {
         "@types/bun": "latest",
+        "@types/react": "^19",
       },
       "module": "index.ts",
       "name": "my edited package.json",
       "peerDependencies": {
+        "react": "^19",
         "typescript": "^6",
       },
       "private": true,
@@ -236,6 +240,80 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       `"my edited tsconfig.json"`,
     );
   });
+
+  // https://github.com/oven-sh/bun/issues/5056
+  // The blank scaffold's tsconfig sets `"jsx": "react-jsx"`, so a bare `.tsx`
+  // file must both run and typecheck without any manual `bun add`.
+  test("bun init -y: a .tsx file runs and typechecks out of the box", async () => {
+    await using temp = tempDir("bun-init-tsx-works", {});
+
+    await using init = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [, , initExit] = await Promise.all([init.stdout.text(), init.stderr.text(), init.exited]);
+    expect(initExit).toBe(0);
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg.peerDependencies).toHaveProperty("react");
+    expect(pkg.devDependencies).toHaveProperty("@types/react");
+    expect(fs.existsSync(path.join(temp, "node_modules/react"))).toBe(true);
+    expect(fs.existsSync(path.join(temp, "node_modules/@types/react"))).toBe(true);
+
+    const tsx = `function Component(props: { message: string }): any {
+  return (
+    <body>
+      <h1 style={{ color: "red" }}>{props.message}</h1>
+    </body>
+  );
+}
+console.log(<Component message="Hello world!" />);
+`;
+    fs.writeFileSync(path.join(temp, "react.tsx"), tsx);
+
+    await using run = Bun.spawn({
+      cmd: [bunExe(), "run", "react.tsx"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const [runOut, runErr, runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+    expect(runErr).not.toContain("Cannot find module");
+    expect(runOut).toContain("Hello world!");
+    expect(runExit).toBe(0);
+
+    await using tsc = Bun.spawn({
+      cmd: [nodeExe() ?? bunExe(), "node_modules/typescript/bin/tsc", "--noEmit"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: bunEnv,
+    });
+    const [tscOut, tscErr, tscExit] = await Promise.all([tsc.stdout.text(), tsc.stderr.text(), tsc.exited]);
+    expect({ tscOut, tscErr }).toEqual({ tscOut: "", tscErr: "" });
+    expect(tscExit).toBe(0);
+  }, 60_000);
+
+  test("bun init leaves an existing react dependency alone", async () => {
+    await using temp = tempDir("bun-init-existing-react", {
+      "package.json": JSON.stringify({ name: "existing", dependencies: { react: "^18" } }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "init", "-y"],
+      cwd: temp,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: initEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+
+    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg.dependencies).toEqual({ react: "^18" });
+    expect(pkg.peerDependencies ?? {}).not.toHaveProperty("react");
+    expect(pkg.devDependencies ?? {}).not.toHaveProperty("@types/react");
+  }, 30_000);
 
   test("bun init --react works", async () => {
     await using temp = tempDir("bun-init--react-works", {});
@@ -417,6 +495,11 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     // Should create package.json and tsconfig.json
     expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
     expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+
+    // --minimal stays minimal: no react/@types/react/typescript added
+    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    expect(pkg.peerDependencies).toBeUndefined();
+    expect(pkg.devDependencies).toEqual({ "@types/bun": "latest" });
 
     // Should NOT create these extra files with --minimal
     expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(false);
